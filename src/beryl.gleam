@@ -130,7 +130,13 @@ pub type StartError {
 /// }
 /// ```
 pub fn start(config: Config) -> Result(Channels, StartError) {
-  case coordinator.start() {
+  let coord_config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: config.heartbeat_interval_ms,
+      heartbeat_timeout_ms: config.heartbeat_timeout_ms,
+    )
+
+  case coordinator.start_with_config(coord_config) {
     Error(_) -> Error(CoordinatorStartFailed)
     Ok(coord) ->
       Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
