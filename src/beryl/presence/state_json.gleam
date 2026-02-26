@@ -8,10 +8,10 @@ import beryl/presence/state.{
   Up,
 }
 import gleam/dict
-import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
+import gleam/option
 import gleam/set
 
 /// Encode a CRDT State to JSON
@@ -103,7 +103,7 @@ fn encode_entry(entry: Entry) -> json.Json {
     #("topic", json.string(entry.topic)),
     #("key", json.string(entry.key)),
     #("pid", json.string(entry.pid)),
-    #("meta", entry.meta),
+    #("meta", json.string(json.to_string(entry.meta))),
   ])
 }
 
@@ -111,13 +111,16 @@ fn entry_decoder() -> decode.Decoder(Entry) {
   use topic <- decode.field("topic", decode.string)
   use key <- decode.field("key", decode.string)
   use pid <- decode.field("pid", decode.string)
-  use meta <- decode.field("meta", decode.dynamic)
-  decode.success(Entry(
-    topic: topic,
-    key: key,
-    pid: pid,
-    meta: dynamic_to_json(meta),
-  ))
+  use meta_str <- decode.field("meta", decode.string)
+  case json.parse(meta_str, json_value_decoder()) {
+    Ok(meta) ->
+      decode.success(Entry(topic: topic, key: key, pid: pid, meta: meta))
+    Error(_) ->
+      decode.failure(
+        Entry(topic: topic, key: key, pid: pid, meta: json.null()),
+        "valid JSON in meta field",
+      )
+  }
 }
 
 fn encode_values(values: dict.Dict(Tag, Entry)) -> json.Json {
@@ -174,46 +177,54 @@ fn replicas_decoder() -> decode.Decoder(dict.Dict(String, ReplicaStatus)) {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Convert a Dynamic value (from JSON decoding) back to json.Json.
-/// Handles strings, ints, floats, bools, null, lists, and objects.
-fn dynamic_to_json(value: decode.Dynamic) -> json.Json {
-  case decode.run(value, decode.string) {
-    Ok(s) -> json.string(s)
-    Error(_) ->
-      case decode.run(value, decode.int) {
-        Ok(i) -> json.int(i)
-        Error(_) ->
-          case decode.run(value, decode.float) {
-            Ok(f) -> json.float(f)
-            Error(_) ->
-              case decode.run(value, decode.bool) {
-                Ok(b) -> json.bool(b)
-                Error(_) -> dynamic_to_json_complex(value)
-              }
-          }
+/// Decoder that reconstructs a json.Json value from parsed JSON.
+/// Uses standard decoder combinators instead of BEAM-specific dynamic.classify.
+fn json_value_decoder() -> decode.Decoder(json.Json) {
+  decode.one_of(decode.string |> decode.map(json.string), [
+    decode.int |> decode.map(json.int),
+    decode.float |> decode.map(json.float),
+    decode.bool |> decode.map(json.bool),
+    decode.optional(decode.string)
+      |> decode.then(fn(opt) {
+        case opt {
+          option.None -> decode.success(json.null())
+          option.Some(_) -> decode.failure(json.null(), "null")
+        }
+      }),
+    decode.list(decode.dynamic)
+      |> decode.then(fn(items) { json_value_list(items, []) }),
+    decode.dict(decode.string, decode.dynamic)
+      |> decode.then(fn(d) {
+        let pairs = dict.to_list(d)
+        json_value_dict(pairs, [])
+      }),
+  ])
+}
+
+fn json_value_list(
+  items: List(decode.Dynamic),
+  acc: List(json.Json),
+) -> decode.Decoder(json.Json) {
+  case items {
+    [] -> decode.success(json.preprocessed_array(list.reverse(acc)))
+    [item, ..rest] ->
+      case decode.run(item, json_value_decoder()) {
+        Ok(val) -> json_value_list(rest, [val, ..acc])
+        Error(_) -> decode.failure(json.null(), "valid JSON value in array")
       }
   }
 }
 
-fn dynamic_to_json_complex(value: decode.Dynamic) -> json.Json {
-  case dynamic.classify(value) {
-    "Nil" -> json.null()
-    "Atom" -> json.null()
-    "List" ->
-      case decode.run(value, decode.list(decode.dynamic)) {
-        Ok(items) -> json.preprocessed_array(list.map(items, dynamic_to_json))
-        Error(_) -> json.null()
-      }
-    _ ->
-      case decode.run(value, decode.dict(decode.string, decode.dynamic)) {
-        Ok(d) -> {
-          let pairs =
-            d
-            |> dict.to_list
-            |> list.map(fn(pair) { #(pair.0, dynamic_to_json(pair.1)) })
-          json.object(pairs)
-        }
-        Error(_) -> json.null()
+fn json_value_dict(
+  pairs: List(#(String, decode.Dynamic)),
+  acc: List(#(String, json.Json)),
+) -> decode.Decoder(json.Json) {
+  case pairs {
+    [] -> decode.success(json.object(list.reverse(acc)))
+    [#(key, value), ..rest] ->
+      case decode.run(value, json_value_decoder()) {
+        Ok(val) -> json_value_dict(rest, [#(key, val), ..acc])
+        Error(_) -> decode.failure(json.null(), "valid JSON value in object")
       }
   }
 }
