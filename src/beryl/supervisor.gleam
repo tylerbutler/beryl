@@ -1,9 +1,12 @@
 //// Supervisor - OTP supervision tree for beryl subsystems
 ////
-//// Starts all configured beryl subsystems (coordinator, pubsub, presence,
-//// groups) under an OTP supervisor with a rest-for-one strategy. If the
-//// coordinator crashes, downstream subsystems (presence, groups) are also
-//// restarted since they hold references that become stale.
+//// Starts all configured beryl subsystems (coordinator, presence, groups)
+//// under an OTP supervisor with a rest-for-one strategy. If the coordinator
+//// crashes, downstream subsystems (presence, groups) are also restarted to
+//// maintain state consistency — a fresh coordinator has no knowledge of
+//// existing subscriptions, so presence/groups tracking stale topic data
+//// would be inconsistent. PubSub is not supervised here; it is backed by
+//// Erlang's `pg` module which has its own lifecycle.
 ////
 //// ## Example
 ////
@@ -65,7 +68,8 @@ pub type StartError {
 /// Start all configured beryl subsystems under an OTP supervisor
 ///
 /// Uses a rest-for-one strategy: if the coordinator crashes, presence and
-/// groups are also restarted since they hold references that become stale.
+/// groups are also restarted to maintain state consistency (a fresh coordinator
+/// has no knowledge of existing subscriptions or sockets).
 /// Child start order: coordinator -> presence (optional) -> groups (optional).
 ///
 /// The existing `beryl.start()` function is preserved for unsupervised use.
@@ -85,16 +89,18 @@ pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError)
     False -> None
   }
 
-  // Build coordinator config from channels config
+  // Build coordinator config from channels config.
+  // Server checks at half the timeout interval (same as beryl.start).
+  let check_interval = config.channels.heartbeat_timeout_ms / 2
   let coord_config =
     coordinator.CoordinatorConfig(
-      heartbeat_check_interval_ms: config.channels.heartbeat_interval_ms,
+      heartbeat_check_interval_ms: check_interval,
       heartbeat_timeout_ms: config.channels.heartbeat_timeout_ms,
     )
 
   // Build the supervisor with rest-for-one strategy.
-  // If the coordinator crashes, presence and groups restart too since they
-  // may hold stale references to socket PIDs.
+  // If the coordinator crashes, presence and groups restart too to maintain
+  // consistency — a fresh coordinator has empty state.
   let builder =
     static_supervisor.new(static_supervisor.RestForOne)
     |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
