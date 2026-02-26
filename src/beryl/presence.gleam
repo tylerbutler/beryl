@@ -21,14 +21,24 @@
 //// ```
 
 import beryl/presence/state.{type Diff, type State}
+import beryl/presence/state_json
 import beryl/pubsub.{type PubSub}
 import gleam/dict
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode as gdecode
+import gleam/erlang/atom
 import gleam/erlang/process.{type Subject}
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+
+/// Well-known PubSub topic for presence state replication
+const sync_topic = "beryl:presence:sync"
+
+/// PubSub event name for presence sync messages
+const sync_event = "presence_sync"
 
 /// A running Presence instance
 pub type Presence {
@@ -81,6 +91,8 @@ pub opaque type Message {
   )
   MergeRemote(remote: State)
   BroadcastTick
+  /// Incoming PubSub sync message from a remote replica
+  RemoteSync(pubsub_msg: pubsub.Message)
 }
 
 /// Internal actor state
@@ -90,6 +102,8 @@ type ActorState {
     config: Config,
     /// Track the latest diff from the last merge/mutation for push
     last_diff: Option(Diff),
+    /// The actor's own subject, needed for scheduling BroadcastTick
+    self_subject: Option(Subject(Message)),
   )
 }
 
@@ -100,16 +114,94 @@ pub fn default_config(replica: String) -> Config {
 
 /// Start the presence actor
 pub fn start(config: Config) -> Result(Presence, PresenceError) {
-  let crdt = state.new(config.replica)
-  let initial =
-    ActorState(crdt: crdt, config: config, last_diff: None)
-
-  actor.new(initial)
-  |> actor.on_message(handle_message)
+  build_presence(config)
   |> actor.start
   |> result.map(fn(started) { Presence(subject: started.data) })
   |> result.map_error(fn(_) { StartFailed })
 }
+
+/// Start the presence actor with a registered name (for supervision)
+pub fn start_named(
+  config: Config,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_presence(config)
+  |> actor.named(name)
+  |> actor.start
+}
+
+fn build_presence(
+  config: Config,
+) -> actor.Builder(ActorState, Message, Subject(Message)) {
+  let crdt = state.new(config.replica)
+
+  actor.new_with_initialiser(5000, fn(subject) {
+    let initial =
+      ActorState(
+        crdt: crdt,
+        config: config,
+        last_diff: None,
+        self_subject: Some(subject),
+      )
+
+    case config.pubsub {
+      Some(ps) -> {
+        // Subscribe to the well-known sync topic for replication
+        pubsub.subscribe(ps, sync_topic)
+
+        // Build selector: handle actor subject messages + PubSub record messages
+        // PubSub.Message on BEAM is {message, Topic, Event, Payload, From}
+        let selector =
+          process.new_selector()
+          |> process.select(subject)
+          |> process.select_record(
+            atom.create("message"),
+            4,
+            fn(raw: Dynamic) -> Message {
+              RemoteSync(coerce_to_pubsub_message(raw))
+            },
+          )
+
+        // Schedule the first broadcast tick if enabled
+        schedule_broadcast_tick(subject, config.broadcast_interval_ms)
+
+        actor.initialised(initial)
+        |> actor.selecting(selector)
+        |> actor.returning(subject)
+        |> Ok
+      }
+      None -> {
+        let no_pubsub_initial =
+          ActorState(
+            crdt: crdt,
+            config: config,
+            last_diff: None,
+            self_subject: None,
+          )
+        actor.initialised(no_pubsub_initial)
+        |> actor.returning(subject)
+        |> Ok
+      }
+    }
+  })
+  |> actor.on_message(handle_message)
+}
+
+/// Schedule the next broadcast tick if the interval is positive
+fn schedule_broadcast_tick(subject: Subject(Message), interval_ms: Int) -> Nil {
+  case interval_ms > 0 {
+    True -> {
+      let _ = process.send_after(subject, interval_ms, BroadcastTick)
+      Nil
+    }
+    False -> Nil
+  }
+}
+
+/// Coerce a Dynamic value to pubsub.Message.
+/// Safe because we match on the `message` record tag via select_record.
+@external(erlang, "beryl_ffi", "identity")
+fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
 /// Track a presence in a topic
 ///
@@ -140,16 +232,12 @@ pub fn untrack(
 
 /// Untrack all presences for a pid (e.g., when a socket disconnects)
 pub fn untrack_all(presence: Presence, pid: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) {
-    UntrackAll(pid, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { UntrackAll(pid, reply) })
 }
 
 /// List all presences for a topic
 pub fn list(presence: Presence, topic: String) -> List(PresenceEntry) {
-  process.call(presence.subject, 5000, fn(reply) {
-    List(topic, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { List(topic, reply) })
 }
 
 /// Get presences for a specific key within a topic
@@ -158,9 +246,7 @@ pub fn get_by_key(
   topic: String,
   key: String,
 ) -> List(#(String, json.Json)) {
-  process.call(presence.subject, 5000, fn(reply) {
-    GetByKey(topic, key, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { GetByKey(topic, key, reply) })
 }
 
 /// Get the current state as joins/leaves diff for a topic
@@ -170,9 +256,7 @@ pub fn get_diff(
   presence: Presence,
   topic: String,
 ) -> #(List(PresenceEntry), List(PresenceEntry)) {
-  process.call(presence.subject, 5000, fn(reply) {
-    GetDiff(topic, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { GetDiff(topic, reply) })
 }
 
 /// Send remote state to merge (fire and forget)
@@ -225,7 +309,6 @@ fn handle_message(
     GetDiff(topic, reply) -> {
       case actor_state.last_diff {
         None -> {
-          // No diff available, return current state as all joins
           let joins =
             state.get_by_topic(actor_state.crdt, topic)
             |> list.map(fn(t) { PresenceEntry(pid: t.0, key: t.1, meta: t.2) })
@@ -255,16 +338,85 @@ fn handle_message(
     }
 
     BroadcastTick -> {
-      // Broadcast current state via PubSub for replication
-      case actor_state.config.pubsub {
-        None -> actor.continue(actor_state)
-        Some(_ps) -> {
-          // TODO: Serialize CRDT state and broadcast via PubSub
-          // This requires a serialization format for the State type.
-          // For now, this is a placeholder for future delta replication.
+      case actor_state.config.pubsub, actor_state.self_subject {
+        Some(ps), Some(subject) -> {
+          // Serialize CRDT state to JSON string
+          let state_json_str = state_json.encode_to_string(actor_state.crdt)
+
+          // Build envelope: {"sender": replica, "state": "<json>"}
+          let payload =
+            json.object([
+              #("sender", json.string(actor_state.config.replica)),
+              #("state", json.string(state_json_str)),
+            ])
+
+          // Broadcast via PubSub
+          pubsub.broadcast(ps, sync_topic, sync_event, payload)
+
+          // Reschedule next tick
+          schedule_broadcast_tick(
+            subject,
+            actor_state.config.broadcast_interval_ms,
+          )
+
           actor.continue(actor_state)
+        }
+        _, _ -> actor.continue(actor_state)
+      }
+    }
+
+    RemoteSync(pubsub_msg) -> {
+      // Only process presence sync messages on the expected topic/event
+      case pubsub_msg.topic == sync_topic && pubsub_msg.event == sync_event {
+        False -> actor.continue(actor_state)
+        True -> {
+          // The payload is a json.Json object. Convert to string then parse.
+          let payload_str = json.to_string(pubsub_msg.payload)
+          handle_sync_payload(actor_state, payload_str)
         }
       }
     }
+  }
+}
+
+/// Parse the sync envelope and merge the remote state
+fn handle_sync_payload(
+  actor_state: ActorState,
+  payload_str: String,
+) -> actor.Next(ActorState, Message) {
+  case parse_sync_envelope(payload_str) {
+    Error(_) -> actor.continue(actor_state)
+    Ok(#(sender, state_json_str)) -> {
+      // Skip self-broadcasts
+      case sender == actor_state.config.replica {
+        True -> actor.continue(actor_state)
+        False -> {
+          // Deserialize remote CRDT state and merge
+          case state_json.decode_from_string(state_json_str) {
+            Ok(remote_state) -> {
+              let #(new_crdt, diff) =
+                state.merge(actor_state.crdt, remote_state)
+              actor.continue(
+                ActorState(..actor_state, crdt: new_crdt, last_diff: Some(diff)),
+              )
+            }
+            Error(_) -> actor.continue(actor_state)
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Parse the sync envelope JSON: {"sender": "...", "state": "..."}
+fn parse_sync_envelope(payload_str: String) -> Result(#(String, String), Nil) {
+  let decoder = {
+    use sender <- gdecode.field("sender", gdecode.string)
+    use state_str <- gdecode.field("state", gdecode.string)
+    gdecode.success(#(sender, state_str))
+  }
+  case json.parse(payload_str, decoder) {
+    Ok(result) -> Ok(result)
+    Error(_) -> Error(Nil)
   }
 }
