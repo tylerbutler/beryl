@@ -162,7 +162,7 @@ pub type Message {
 
 /// Erlang monotonic time in milliseconds
 @external(erlang, "beryl_ffi", "monotonic_time_ms")
-pub fn monotonic_time_ms() -> Int
+fn monotonic_time_ms() -> Int
 
 /// Start the coordinator actor without heartbeat enforcement
 pub fn start() -> Result(Subject(Message), actor.StartError) {
@@ -293,7 +293,7 @@ fn handle_socket_disconnected(
   state: State,
   socket_id: String,
 ) -> actor.Next(State, Message) {
-  actor.continue(disconnect_socket(state, socket_id))
+  actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
 fn handle_join(
@@ -526,7 +526,7 @@ fn handle_check_heartbeats(state: State) -> actor.Next(State, Message) {
 
   let state =
     list.fold(stale_socket_ids, state, fn(st, socket_id) {
-      disconnect_socket(st, socket_id)
+      disconnect_socket(st, socket_id, channel.HeartbeatTimeout)
     })
 
   case state.self_subject {
@@ -539,13 +539,17 @@ fn handle_check_heartbeats(state: State) -> actor.Next(State, Message) {
 
 /// Disconnect a socket, running terminate on all its channels.
 /// Shared logic used by both SocketDisconnected and CheckHeartbeats.
-fn disconnect_socket(state: State, socket_id: String) -> State {
+fn disconnect_socket(
+  state: State,
+  socket_id: String,
+  reason: StopReason,
+) -> State {
   case dict.get(state.sockets, socket_id) {
     Error(_) -> state
     Ok(socket_info) -> {
       let state =
         set.fold(socket_info.subscribed_topics, state, fn(st, topic_name) {
-          terminate_channel(st, socket_id, topic_name, channel.Normal)
+          terminate_channel(st, socket_id, topic_name, reason)
         })
 
       let new_topics =

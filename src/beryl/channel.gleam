@@ -48,10 +48,12 @@ pub type HandleResult(assigns) {
 
 /// Why a channel is stopping
 pub type StopReason {
-  /// Normal shutdown
+  /// Normal shutdown (client left or disconnected cleanly)
   Normal
   /// Server-initiated shutdown
   Shutdown
+  /// Client failed to send heartbeat within the configured timeout
+  HeartbeatTimeout
   /// Error occurred
   Error(String)
 }
