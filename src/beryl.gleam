@@ -130,7 +130,17 @@ pub type StartError {
 /// }
 /// ```
 pub fn start(config: Config) -> Result(Channels, StartError) {
-  case coordinator.start() {
+  // Server checks at half the timeout interval to detect stale sockets
+  // promptly. The client heartbeat_interval_ms is informational only
+  // (used by clients to know how often to send heartbeats).
+  let check_interval = config.heartbeat_timeout_ms / 2
+  let coord_config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: check_interval,
+      heartbeat_timeout_ms: config.heartbeat_timeout_ms,
+    )
+
+  case coordinator.start_with_config(coord_config) {
     Error(_) -> Error(CoordinatorStartFailed)
     Ok(coord) ->
       Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
