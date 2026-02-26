@@ -4,7 +4,7 @@
 //// - Handles track/untrack calls
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state and merges it
-//// - Pushes `"presence_state"` and `"presence_diff"` events to channels
+//// - Invokes `on_diff` callback when merges produce non-empty diffs
 ////
 //// ## Example
 ////
@@ -14,6 +14,7 @@
 ////   pubsub: ps,
 ////   replica: "node1",
 ////   broadcast_interval_ms: 1500,
+////   on_diff: None,
 //// )
 //// let assert Ok(p) = presence.start(config)
 //// let assert Ok(ref) = presence.track(p, "room:lobby", "user:1", meta)
@@ -23,16 +24,22 @@
 import beryl/presence/state.{type Diff, type State}
 import beryl/presence/state_json
 import beryl/pubsub.{type PubSub}
+import birch
+import birch/logger
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode as gdecode
 import gleam/erlang/atom
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import gleam/string
+
+const log_name = "beryl.presence"
 
 /// Well-known PubSub topic for presence state replication
 const sync_topic = "beryl:presence:sync"
@@ -54,6 +61,9 @@ pub type Config {
     replica: String,
     /// How often to broadcast state for replication (ms). 0 = disabled.
     broadcast_interval_ms: Int,
+    /// Optional callback invoked immediately when a merge produces a non-empty diff.
+    /// This ensures no diffs are lost when multiple merges occur in rapid succession.
+    on_diff: Option(fn(Diff) -> Nil),
   )
 }
 
@@ -85,10 +95,6 @@ pub opaque type Message {
     key: String,
     reply: Subject(List(#(String, json.Json))),
   )
-  GetDiff(
-    topic: String,
-    reply: Subject(#(List(PresenceEntry), List(PresenceEntry))),
-  )
   MergeRemote(remote: State)
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
@@ -100,8 +106,6 @@ type ActorState {
   ActorState(
     crdt: State,
     config: Config,
-    /// Track the latest diff from the last merge/mutation for push
-    last_diff: Option(Diff),
     /// The actor's own subject, needed for scheduling BroadcastTick
     self_subject: Option(Subject(Message)),
   )
@@ -109,7 +113,12 @@ type ActorState {
 
 /// Default configuration (no PubSub, no replication)
 pub fn default_config(replica: String) -> Config {
-  Config(pubsub: None, replica: replica, broadcast_interval_ms: 0)
+  Config(
+    pubsub: None,
+    replica: replica,
+    broadcast_interval_ms: 0,
+    on_diff: None,
+  )
 }
 
 /// Start the presence actor
@@ -137,17 +146,16 @@ fn build_presence(
 
   actor.new_with_initialiser(5000, fn(subject) {
     let initial =
-      ActorState(
-        crdt: crdt,
-        config: config,
-        last_diff: None,
-        self_subject: Some(subject),
-      )
+      ActorState(crdt: crdt, config: config, self_subject: Some(subject))
 
     case config.pubsub {
       Some(ps) -> {
         // Subscribe to the well-known sync topic for replication
         pubsub.subscribe(ps, sync_topic)
+        logger.debug(birch.new(log_name), "Subscribed to PubSub sync topic", [
+          #("topic", sync_topic),
+          #("replica", config.replica),
+        ])
 
         // Build selector: handle actor subject messages + PubSub record messages
         // PubSub.Message on BEAM is {message, Topic, Event, Payload, From}
@@ -172,12 +180,7 @@ fn build_presence(
       }
       None -> {
         let no_pubsub_initial =
-          ActorState(
-            crdt: crdt,
-            config: config,
-            last_diff: None,
-            self_subject: None,
-          )
+          ActorState(crdt: crdt, config: config, self_subject: None)
         actor.initialised(no_pubsub_initial)
         |> actor.returning(subject)
         |> Ok
@@ -249,16 +252,6 @@ pub fn get_by_key(
   process.call(presence.subject, 5000, fn(reply) { GetByKey(topic, key, reply) })
 }
 
-/// Get the current state as joins/leaves diff for a topic
-///
-/// Returns `#(joins, leaves)` where each is a list of PresenceEntry.
-pub fn get_diff(
-  presence: Presence,
-  topic: String,
-) -> #(List(PresenceEntry), List(PresenceEntry)) {
-  process.call(presence.subject, 5000, fn(reply) { GetDiff(topic, reply) })
-}
-
 /// Send remote state to merge (fire and forget)
 ///
 /// Used for cross-node replication. The remote state will be merged
@@ -276,12 +269,22 @@ fn handle_message(
   case message {
     Track(topic, key, pid, meta, reply) -> {
       let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
+      logger.debug(birch.new(log_name), "Presence tracked", [
+        #("topic", topic),
+        #("key", key),
+        #("pid", pid),
+      ])
       process.send(reply, pid)
       actor.continue(ActorState(..actor_state, crdt: new_crdt))
     }
 
     Untrack(topic, key, pid, reply) -> {
       let new_crdt = state.leave(actor_state.crdt, pid, topic, key)
+      logger.debug(birch.new(log_name), "Presence untracked", [
+        #("topic", topic),
+        #("key", key),
+        #("pid", pid),
+      ])
       process.send(reply, Nil)
       actor.continue(ActorState(..actor_state, crdt: new_crdt))
     }
@@ -306,35 +309,10 @@ fn handle_message(
       actor.continue(actor_state)
     }
 
-    GetDiff(topic, reply) -> {
-      case actor_state.last_diff {
-        None -> {
-          let joins =
-            state.get_by_topic(actor_state.crdt, topic)
-            |> list.map(fn(t) { PresenceEntry(pid: t.0, key: t.1, meta: t.2) })
-          process.send(reply, #(joins, []))
-          actor.continue(actor_state)
-        }
-        Some(diff) -> {
-          let joins =
-            dict.get(diff.joins, topic)
-            |> result.unwrap([])
-            |> list.map(fn(t) { PresenceEntry(pid: t.0, key: t.1, meta: t.2) })
-          let leaves =
-            dict.get(diff.leaves, topic)
-            |> result.unwrap([])
-            |> list.map(fn(t) { PresenceEntry(pid: t.0, key: t.1, meta: t.2) })
-          process.send(reply, #(joins, leaves))
-          actor.continue(actor_state)
-        }
-      }
-    }
-
     MergeRemote(remote) -> {
       let #(new_crdt, diff) = state.merge(actor_state.crdt, remote)
-      actor.continue(
-        ActorState(..actor_state, crdt: new_crdt, last_diff: Some(diff)),
-      )
+      maybe_invoke_on_diff(actor_state.config, diff)
+      actor.continue(ActorState(..actor_state, crdt: new_crdt))
     }
 
     BroadcastTick -> {
@@ -343,12 +321,19 @@ fn handle_message(
           // Build envelope with state as nested JSON object (not double-encoded string)
           let payload =
             json.object([
+              #("v", json.int(1)),
               #("sender", json.string(actor_state.config.replica)),
               #("state", state_json.encode(actor_state.crdt)),
             ])
 
-          // Broadcast via PubSub
-          pubsub.broadcast(ps, sync_topic, sync_event, payload)
+          // Broadcast via PubSub, skipping self-delivery
+          pubsub.broadcast_from(
+            ps,
+            process.self(),
+            sync_topic,
+            sync_event,
+            payload,
+          )
 
           // Reschedule next tick
           schedule_broadcast_tick(
@@ -375,38 +360,76 @@ fn handle_message(
   }
 }
 
-/// Parse the sync envelope and merge the remote state
-fn handle_sync_payload(
-  actor_state: ActorState,
-  payload_str: String,
-) -> actor.Next(ActorState, Message) {
-  case parse_sync_envelope(payload_str) {
-    Error(_) -> actor.continue(actor_state)
-    Ok(#(sender, remote_state)) -> {
-      // Skip self-broadcasts
-      case sender == actor_state.config.replica {
-        True -> actor.continue(actor_state)
-        False -> {
-          let #(new_crdt, diff) = state.merge(actor_state.crdt, remote_state)
-          actor.continue(
-            ActorState(..actor_state, crdt: new_crdt, last_diff: Some(diff)),
-          )
-        }
+/// Invoke the on_diff callback if configured and the diff is non-empty
+fn maybe_invoke_on_diff(config: Config, diff: Diff) -> Nil {
+  case config.on_diff {
+    None -> Nil
+    Some(callback) -> {
+      case dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) {
+        True -> Nil
+        False -> callback(diff)
       }
     }
   }
 }
 
-/// Parse the sync envelope JSON: {"sender": "...", "state": {...}}
-/// State is decoded directly as a nested object (not double-encoded string).
-fn parse_sync_envelope(payload_str: String) -> Result(#(String, State), Nil) {
-  let decoder = {
-    use sender <- gdecode.field("sender", gdecode.string)
-    use remote_state <- gdecode.field("state", state_json.state_decoder())
-    gdecode.success(#(sender, remote_state))
+/// Parse the sync envelope and merge the remote state.
+/// Self-delivery is already prevented by broadcast_from at the PubSub layer.
+fn handle_sync_payload(
+  actor_state: ActorState,
+  payload_str: String,
+) -> actor.Next(ActorState, Message) {
+  case parse_sync_envelope(payload_str) {
+    Error(reason) -> {
+      logger.warn(
+        birch.new(log_name),
+        "Failed to decode presence sync message",
+        [
+          #("reason", reason),
+          #("payload_length", int.to_string(string.length(payload_str))),
+        ],
+      )
+      actor.continue(actor_state)
+    }
+    Ok(#(_sender, remote_state)) -> {
+      let #(new_crdt, diff) = state.merge(actor_state.crdt, remote_state)
+      maybe_invoke_on_diff(actor_state.config, diff)
+      actor.continue(ActorState(..actor_state, crdt: new_crdt))
+    }
   }
-  case json.parse(payload_str, decoder) {
-    Ok(result) -> Ok(result)
-    Error(_) -> Error(Nil)
+}
+
+/// Parse the sync envelope JSON: {"v": 1, "sender": "...", "state": {...}}
+/// State is decoded directly as a nested object (not double-encoded string).
+/// Rejects envelopes with unknown version numbers.
+@internal
+pub fn parse_sync_envelope(
+  payload_str: String,
+) -> Result(#(String, State), String) {
+  let version_decoder = {
+    use v <- gdecode.field("v", gdecode.int)
+    gdecode.success(v)
+  }
+  case json.parse(payload_str, version_decoder) {
+    Error(_) -> Error("JSON parse or field extraction failed")
+    Ok(v) ->
+      case v {
+        1 -> {
+          let decoder = {
+            use _v <- gdecode.field("v", gdecode.int)
+            use sender <- gdecode.field("sender", gdecode.string)
+            use remote_state <- gdecode.field(
+              "state",
+              state_json.state_decoder(),
+            )
+            gdecode.success(#(sender, remote_state))
+          }
+          case json.parse(payload_str, decoder) {
+            Ok(result) -> Ok(result)
+            Error(_) -> Error("State decode failed")
+          }
+        }
+        _ -> Error("Unknown envelope version: " <> int.to_string(v))
+      }
   }
 }
