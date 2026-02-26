@@ -1,6 +1,10 @@
+import beryl/channel
 import beryl/coordinator
+import beryl/topic
 import gleam/dynamic
 import gleam/erlang/process
+import gleam/json
+import gleam/option.{None}
 import gleam/string
 import gleeunit/should
 
@@ -202,4 +206,170 @@ pub fn heartbeat_reply_still_sent_test() {
   |> should.be_true
   string.contains(reply, "hb-ref-42")
   |> should.be_true
+}
+
+pub fn zero_timeout_with_checking_enabled_returns_error_test() {
+  let config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: 50,
+      heartbeat_timeout_ms: 0,
+    )
+  coordinator.start_with_config(config)
+  |> should.be_error
+  |> should.equal(coordinator.InvalidHeartbeatTimeout)
+}
+
+pub fn negative_timeout_with_checking_enabled_returns_error_test() {
+  let config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: 50,
+      heartbeat_timeout_ms: -1,
+    )
+  coordinator.start_with_config(config)
+  |> should.be_error
+  |> should.equal(coordinator.InvalidHeartbeatTimeout)
+}
+
+pub fn zero_timeout_with_checking_disabled_is_ok_test() {
+  let config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: 0,
+      heartbeat_timeout_ms: 0,
+    )
+  coordinator.start_with_config(config)
+  |> should.be_ok
+}
+
+pub fn positive_timeout_with_checking_enabled_is_ok_test() {
+  let config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: 50,
+      heartbeat_timeout_ms: 5000,
+    )
+  coordinator.start_with_config(config)
+  |> should.be_ok
+}
+
+/// Helper: register a channel handler that sends terminate reason to a subject
+fn register_handler_with_terminate(
+  coord: process.Subject(coordinator.Message),
+  pattern: String,
+  terminate_subject: process.Subject(channel.StopReason),
+) -> Nil {
+  let handler =
+    coordinator.ChannelHandler(
+      pattern: topic.parse_pattern(pattern),
+      join: fn(_topic, _payload, _ctx) {
+        coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
+      },
+      handle_in: fn(_event, _payload, ctx) {
+        coordinator.NoReplyErased(assigns: ctx.assigns)
+      },
+      terminate: fn(reason, _ctx) { process.send(terminate_subject, reason) },
+    )
+
+  let reply_subject = process.new_subject()
+  process.send(
+    coord,
+    coordinator.RegisterChannel(pattern, handler, reply_subject),
+  )
+  let assert Ok(Ok(Nil)) = process.receive(reply_subject, 500)
+  Nil
+}
+
+/// Helper: join a socket to a topic and wait for the reply
+fn join_topic(
+  coord: process.Subject(coordinator.Message),
+  socket_id: String,
+  topic_name: String,
+  sent_messages: process.Subject(String),
+) -> Nil {
+  process.send(
+    coord,
+    coordinator.Join(socket_id, topic_name, dynamic.nil(), None, "join-ref"),
+  )
+  // Wait for the join reply
+  let assert Ok(reply) = process.receive(sent_messages, 200)
+  string.contains(reply, "phx_reply")
+  |> should.be_true
+}
+
+pub fn terminate_callback_called_on_heartbeat_eviction_test() {
+  let coord = start_coordinator_with_heartbeat(25, 50)
+
+  // Register a handler that captures terminate reason
+  let terminate_reasons = process.new_subject()
+  register_handler_with_terminate(coord, "room:*", terminate_reasons)
+
+  // Connect socket and join a topic
+  let sent = connect_mock_socket(coord, "socket-t1")
+  join_topic(coord, "socket-t1", "room:lobby", sent)
+
+  // Wait for heartbeat timeout to evict the socket
+  process.sleep(120)
+
+  // Verify terminate was called with HeartbeatTimeout
+  let assert Ok(reason) = process.receive(terminate_reasons, 200)
+  reason |> should.equal(channel.HeartbeatTimeout)
+}
+
+pub fn topic_cleanup_after_heartbeat_eviction_test() {
+  // Use longer timeout to give more margin for heartbeat timing
+  let coord = start_coordinator_with_heartbeat(40, 150)
+
+  // Register a handler for the topic
+  let terminate_reasons = process.new_subject()
+  register_handler_with_terminate(coord, "room:*", terminate_reasons)
+
+  // Connect two sockets and join them to the same topic
+  let sent_stale = connect_mock_socket(coord, "socket-stale")
+  join_topic(coord, "socket-stale", "room:lobby", sent_stale)
+
+  let sent_active = connect_mock_socket(coord, "socket-active")
+  join_topic(coord, "socket-active", "room:lobby", sent_active)
+
+  // Keep active socket alive while stale one times out
+  process.sleep(60)
+  process.send(coord, coordinator.Heartbeat("socket-active", "hb-1"))
+  process.sleep(60)
+  process.send(coord, coordinator.Heartbeat("socket-active", "hb-2"))
+  process.sleep(60)
+  process.send(coord, coordinator.Heartbeat("socket-active", "hb-3"))
+
+  // Wait for stale socket eviction (stale hasn't sent heartbeats for 180ms+ > 150ms timeout)
+  process.sleep(60)
+
+  // Stale socket should be evicted
+  socket_is_connected(coord, "socket-stale", sent_stale)
+  |> should.be_false
+
+  // Active socket still connected
+  socket_is_connected(coord, "socket-active", sent_active)
+  |> should.be_true
+
+  // Drain any pending messages from both sockets
+  drain(sent_stale)
+  drain(sent_active)
+
+  // Broadcast to the topic - only active socket should receive it
+  process.send(
+    coord,
+    coordinator.Broadcast(
+      "room:lobby",
+      "test_event",
+      json.object([#("msg", json.string("hello"))]),
+      None,
+    ),
+  )
+
+  // Active socket should receive the broadcast
+  let assert Ok(msg) = process.receive(sent_active, 200)
+  string.contains(msg, "test_event")
+  |> should.be_true
+
+  // Stale socket should NOT receive the broadcast (no phantom delivery)
+  case process.receive(sent_stale, 100) {
+    Ok(_) -> should.fail()
+    Error(_) -> Nil
+  }
 }

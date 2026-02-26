@@ -28,12 +28,15 @@
 import beryl
 import beryl/coordinator
 import beryl/group
+import beryl/internal
 import beryl/presence
+import birch/logger as log
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
+import gleam/result
 
 /// Configuration for starting all beryl subsystems under a supervisor
 pub type SupervisedConfig {
@@ -56,6 +59,8 @@ pub type SupervisedChannels {
     presence: Option(presence.Presence),
     /// Groups handle (if configured)
     groups: Option(group.Groups),
+    /// The supervisor process PID (for lifecycle management)
+    supervisor_pid: process.Pid,
   )
 }
 
@@ -63,6 +68,8 @@ pub type SupervisedChannels {
 pub type StartError {
   /// The supervisor failed to start
   SupervisorStartFailed(actor.StartError)
+  /// heartbeat_timeout_ms must be > 0
+  InvalidHeartbeatTimeout
 }
 
 /// Start all configured beryl subsystems under an OTP supervisor
@@ -74,6 +81,18 @@ pub type StartError {
 ///
 /// The existing `beryl.start()` function is preserved for unsupervised use.
 pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError) {
+  // Validate heartbeat_timeout_ms before deriving check_interval
+  case config.channels.heartbeat_timeout_ms <= 0 {
+    True -> Error(InvalidHeartbeatTimeout)
+    False -> start_supervised(config)
+  }
+}
+
+fn start_supervised(
+  config: SupervisedConfig,
+) -> Result(SupervisedChannels, StartError) {
+  let logger = internal.logger("beryl.supervisor")
+
   // Create names for each subsystem up front. The supervisor starts children
   // via callbacks, so we use named actors to retrieve subjects afterward.
   // Names must be created before supervisor start (not dynamically in loops).
@@ -111,6 +130,12 @@ pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError)
     |> static_supervisor.add(
       supervision.worker(fn() {
         coordinator.start_named(coord_config, coordinator_name)
+        |> result.map_error(fn(err) {
+          case err {
+            coordinator.ActorStartFailed(e) -> e
+            coordinator.InvalidHeartbeatTimeout -> actor.InitTimeout
+          }
+        })
       }),
     )
 
@@ -136,8 +161,26 @@ pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError)
 
   // Start the supervisor — this starts all children
   case static_supervisor.start(builder) {
-    Error(err) -> Error(SupervisorStartFailed(err))
-    Ok(_started) -> {
+    Error(err) -> {
+      logger
+      |> log.error("Supervisor failed to start", [])
+      Error(SupervisorStartFailed(err))
+    }
+    Ok(started) -> {
+      let presence_enabled = case config.presence {
+        Some(_) -> "true"
+        None -> "false"
+      }
+      let groups_enabled = case config.groups {
+        True -> "true"
+        False -> "false"
+      }
+      logger
+      |> log.info("Supervisor started", [
+        #("presence", presence_enabled),
+        #("groups", groups_enabled),
+      ])
+
       // Reconstruct handles from the named subjects.
       // The supervisor has started all children and they registered with
       // their names, so named_subject will route messages correctly.
@@ -160,7 +203,65 @@ pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError)
         None -> None
       }
 
-      Ok(SupervisedChannels(channels: channels, presence: pres, groups: grps))
+      Ok(SupervisedChannels(
+        channels: channels,
+        presence: pres,
+        groups: grps,
+        supervisor_pid: started.pid,
+      ))
     }
   }
 }
+
+/// Stop the supervisor and all its children
+///
+/// Cleanly shuts down the supervisor process, which terminates all child
+/// processes (coordinator, presence, groups) in reverse start order. After
+/// this call the `SupervisedChannels` handle should no longer be used.
+pub fn stop(supervised: SupervisedChannels) -> Nil {
+  internal.logger("beryl.supervisor") |> log.info("Supervisor stopping", [])
+  stop_supervisor(supervised.supervisor_pid)
+}
+
+/// Create a child specification for composing beryl into a larger supervision tree
+///
+/// Returns a supervisor-type child spec that starts the beryl supervision tree.
+/// This enables embedding beryl as a subtree in an application's top-level
+/// supervisor.
+///
+/// ## Example
+///
+/// ```gleam
+/// import beryl/supervisor
+/// import gleam/otp/static_supervisor
+///
+/// let beryl_config = supervisor.SupervisedConfig(
+///   channels: beryl.default_config(),
+///   presence: None,
+///   groups: True,
+/// )
+///
+/// static_supervisor.new(static_supervisor.OneForOne)
+/// |> static_supervisor.add(supervisor.child_spec(beryl_config))
+/// |> static_supervisor.start()
+/// ```
+pub fn child_spec(
+  config: SupervisedConfig,
+) -> supervision.ChildSpecification(SupervisedChannels) {
+  supervision.ChildSpecification(
+    start: fn() {
+      case start(config) {
+        Ok(supervised) ->
+          Ok(actor.Started(pid: supervised.supervisor_pid, data: supervised))
+        Error(SupervisorStartFailed(err)) -> Error(err)
+        Error(InvalidHeartbeatTimeout) -> Error(actor.InitTimeout)
+      }
+    },
+    restart: supervision.Permanent,
+    significant: False,
+    child_type: supervision.Supervisor,
+  )
+}
+
+@external(erlang, "beryl_ffi", "stop_supervisor")
+fn stop_supervisor(pid: process.Pid) -> Nil
