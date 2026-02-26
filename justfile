@@ -6,6 +6,7 @@ alias t := test
 alias f := format
 alias c := check
 alias d := docs
+alias cl := change
 
 default:
     @just --list
@@ -52,6 +53,20 @@ check:
 docs:
     gleam docs build
 
+# === CHANGELOG ===
+
+# Create a new changelog entry
+change:
+    changie new
+
+# Preview unreleased changelog
+changelog-preview:
+    changie batch auto --dry-run
+
+# Generate CHANGELOG.md
+changelog:
+    changie merge
+
 # === MAINTENANCE ===
 
 # Remove build artifacts
@@ -65,6 +80,9 @@ ci: format-check check test build-strict
 
 # Alias for PR checks
 alias pr := ci
+
+# Run extended checks for main branch
+main: ci docs
 
 # =============================================================================
 # MULTI-TARGET SUPPORT (Uncomment if targeting JavaScript)

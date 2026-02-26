@@ -38,6 +38,32 @@ just docs      # Build documentation
 just ci        # Run all CI checks
 ```
 
+### CI/CD
+
+This project uses GitHub Actions for CI and automated releases:
+
+- **CI**: Runs on every push/PR to main
+- **PR Validation**: Checks PR title (commitlint) and changelog entries (changie)
+- **Release**: Uses [changie](https://changie.dev/) for changelog-driven versioning
+- **Publish**: Automatically publishes to [Hex.pm](https://hex.pm) on tag push
+
+### GitHub Secrets Required
+
+| Secret | Description |
+|--------|-------------|
+| `RELEASE_PAT` | GitHub PAT with `contents:write` and `pull-requests:write` permissions |
+| `HEXPM_API_KEY` | API key from [hex.pm](https://hex.pm) for publishing |
+
+### Commit Convention
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/):
+
+- `feat:` - New features (minor version bump)
+- `fix:` - Bug fixes (patch version bump)
+- `docs:` - Documentation changes
+- `chore:` - Maintenance tasks
+- `BREAKING CHANGE:` in commit body - Major version bump
+
 ## License
 
 Apache-2.0 - see [LICENSE](LICENSE) for details.
