@@ -160,6 +160,33 @@ pub fn roundtrip_with_json_meta_test() {
   dict.size(decoded2.values) |> should.equal(1)
 }
 
+pub fn roundtrip_preserves_metadata_values_test() {
+  let meta =
+    json.object([
+      #("name", json.string("Alice")),
+      #("age", json.int(30)),
+      #("pi", json.float(3.14)),
+      #("active", json.bool(True)),
+      #("tags", json.array(["admin", "user"], json.string)),
+      #("nested", json.object([#("inner", json.string("value"))])),
+    ])
+
+  let s = state.new("node1")
+  let s = state.join(s, "pid1", "room:lobby", "user:alice", meta)
+
+  // Roundtrip once
+  let json_str = state_json.encode_to_string(s)
+  let assert Ok(decoded) = state_json.decode_from_string(json_str)
+
+  // Roundtrip twice — the second encode should be stable
+  let re_encoded = state_json.encode_to_string(decoded)
+  let assert Ok(decoded2) = state_json.decode_from_string(re_encoded)
+  let re_encoded2 = state_json.encode_to_string(decoded2)
+
+  // Stability check: second roundtrip produces identical JSON
+  re_encoded2 |> should.equal(re_encoded)
+}
+
 pub fn decode_invalid_json_returns_error_test() {
   let result = state_json.decode_from_string("not json")
   should.be_error(result)

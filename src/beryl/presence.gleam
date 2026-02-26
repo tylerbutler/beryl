@@ -340,14 +340,11 @@ fn handle_message(
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
         Some(ps), Some(subject) -> {
-          // Serialize CRDT state to JSON string
-          let state_json_str = state_json.encode_to_string(actor_state.crdt)
-
-          // Build envelope: {"sender": replica, "state": "<json>"}
+          // Build envelope with state as nested JSON object (not double-encoded string)
           let payload =
             json.object([
               #("sender", json.string(actor_state.config.replica)),
-              #("state", json.string(state_json_str)),
+              #("state", state_json.encode(actor_state.crdt)),
             ])
 
           // Broadcast via PubSub
@@ -370,7 +367,6 @@ fn handle_message(
       case pubsub_msg.topic == sync_topic && pubsub_msg.event == sync_event {
         False -> actor.continue(actor_state)
         True -> {
-          // The payload is a json.Json object. Convert to string then parse.
           let payload_str = json.to_string(pubsub_msg.payload)
           handle_sync_payload(actor_state, payload_str)
         }
@@ -386,34 +382,28 @@ fn handle_sync_payload(
 ) -> actor.Next(ActorState, Message) {
   case parse_sync_envelope(payload_str) {
     Error(_) -> actor.continue(actor_state)
-    Ok(#(sender, state_json_str)) -> {
+    Ok(#(sender, remote_state)) -> {
       // Skip self-broadcasts
       case sender == actor_state.config.replica {
         True -> actor.continue(actor_state)
         False -> {
-          // Deserialize remote CRDT state and merge
-          case state_json.decode_from_string(state_json_str) {
-            Ok(remote_state) -> {
-              let #(new_crdt, diff) =
-                state.merge(actor_state.crdt, remote_state)
-              actor.continue(
-                ActorState(..actor_state, crdt: new_crdt, last_diff: Some(diff)),
-              )
-            }
-            Error(_) -> actor.continue(actor_state)
-          }
+          let #(new_crdt, diff) = state.merge(actor_state.crdt, remote_state)
+          actor.continue(
+            ActorState(..actor_state, crdt: new_crdt, last_diff: Some(diff)),
+          )
         }
       }
     }
   }
 }
 
-/// Parse the sync envelope JSON: {"sender": "...", "state": "..."}
-fn parse_sync_envelope(payload_str: String) -> Result(#(String, String), Nil) {
+/// Parse the sync envelope JSON: {"sender": "...", "state": {...}}
+/// State is decoded directly as a nested object (not double-encoded string).
+fn parse_sync_envelope(payload_str: String) -> Result(#(String, State), Nil) {
   let decoder = {
     use sender <- gdecode.field("sender", gdecode.string)
-    use state_str <- gdecode.field("state", gdecode.string)
-    gdecode.success(#(sender, state_str))
+    use remote_state <- gdecode.field("state", state_json.state_decoder())
+    gdecode.success(#(sender, remote_state))
   }
   case json.parse(payload_str, decoder) {
     Ok(result) -> Ok(result)

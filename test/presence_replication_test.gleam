@@ -181,6 +181,74 @@ pub fn presence_without_pubsub_still_works_test() {
   list.length(entries) |> should.equal(1)
 }
 
+// ── Untrack propagation via PubSub ───────────────────────────────────
+
+pub fn untrack_propagates_via_pubsub_test() {
+  let ps = test_pubsub("untrack_prop")
+
+  let config1 = test_config(ps, "node1", 50)
+  let config2 = test_config(ps, "node2", 50)
+
+  let assert Ok(p1) = presence.start(config1)
+  let assert Ok(p2) = presence.start(config2)
+
+  // Track on node1
+  let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
+
+  // Wait for convergence — both should see the entry
+  process.sleep(300)
+  list.length(presence.list(p2, "room:lobby")) |> should.equal(1)
+
+  // Untrack on node1
+  presence.untrack(p1, "room:lobby", "user:1", "socket-1")
+
+  // Wait for the untrack to propagate via next broadcast tick
+  process.sleep(300)
+
+  // Node2 should see the removal
+  list.length(presence.list(p2, "room:lobby")) |> should.equal(0)
+}
+
+// ── get_diff after PubSub replication ───────────────────────────────
+
+pub fn get_diff_reflects_replication_state_test() {
+  let ps = test_pubsub("diff_repl")
+
+  // Node1 with broadcasting disabled (only receives)
+  let config1 =
+    presence.Config(
+      pubsub: Some(ps),
+      replica: "node1",
+      broadcast_interval_ms: 0,
+    )
+  let assert Ok(p1) = presence.start(config1)
+
+  // Before any replication, get_diff returns all entries as joins (None diff path)
+  let #(joins, leaves) = presence.get_diff(p1, "room:lobby")
+  list.length(joins) |> should.equal(0)
+  list.length(leaves) |> should.equal(0)
+
+  // Track locally on node1
+  let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
+
+  // get_diff with no prior merge returns all entries as joins
+  let #(joins, leaves) = presence.get_diff(p1, "room:lobby")
+  list.length(joins) |> should.equal(1)
+  list.length(leaves) |> should.equal(0)
+
+  // Now start node2 with broadcasting and track there
+  let config2 = test_config(ps, "node2", 50)
+  let assert Ok(p2) = presence.start(config2)
+  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
+
+  // Wait for replication
+  process.sleep(500)
+
+  // Verify replication worked — node1 sees both entries
+  let entries = presence.list(p1, "room:lobby")
+  list.length(entries) |> should.equal(2)
+}
+
 // ── Helper to drain stray messages ──────────────────────────────────
 
 fn drain_mailbox() -> Nil {

@@ -37,7 +37,9 @@ pub fn decode_from_string(
   json.parse(from: json_string, using: state_decoder())
 }
 
-fn state_decoder() -> decode.Decoder(State) {
+/// Decoder for the CRDT State type. Used by `decode_from_string` and
+/// available for embedding in larger decoders (e.g. sync envelope parsing).
+pub fn state_decoder() -> decode.Decoder(State) {
   use replica <- decode.field("replica", decode.string)
   use context <- decode.field("context", context_decoder())
   use clouds <- decode.field("clouds", clouds_decoder())
