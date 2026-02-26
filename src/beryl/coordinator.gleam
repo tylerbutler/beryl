@@ -5,6 +5,7 @@
 //// - Socket tracking (socket_id -> send function)
 //// - Topic subscriptions (topic -> set of socket_ids)
 //// - Message routing and broadcasting
+//// - Heartbeat timeout enforcement
 
 import beryl/channel.{type StopReason}
 import beryl/topic.{type TopicPattern}
@@ -64,6 +65,24 @@ pub type RegisterError {
   InvalidPattern(String)
 }
 
+/// Configuration for heartbeat enforcement
+pub type CoordinatorConfig {
+  CoordinatorConfig(
+    /// How often to check for stale sockets, in milliseconds
+    heartbeat_check_interval_ms: Int,
+    /// Disconnect sockets that haven't sent a heartbeat within this duration
+    heartbeat_timeout_ms: Int,
+  )
+}
+
+/// Default coordinator configuration (no heartbeat enforcement)
+pub fn default_config() -> CoordinatorConfig {
+  CoordinatorConfig(
+    heartbeat_check_interval_ms: 0,
+    heartbeat_timeout_ms: 60_000,
+  )
+}
+
 /// Internal state for coordinator actor
 pub type State {
   State(
@@ -73,6 +92,10 @@ pub type State {
     sockets: Dict(String, SocketInfo),
     /// Topic -> set of socket IDs subscribed
     topics: Dict(String, Set(String)),
+    /// Heartbeat timeout configuration
+    config: CoordinatorConfig,
+    /// The coordinator's own subject, used for scheduling timers
+    self_subject: Option(Subject(Message)),
   )
 }
 
@@ -88,6 +111,8 @@ pub type SocketInfo {
     subscribed_topics: Set(String),
     /// Per-topic assigns (topic -> Dynamic assigns)
     channel_assigns: Dict(String, Dynamic),
+    /// Monotonic timestamp (ms) of the last heartbeat received
+    last_heartbeat: Int,
   )
 }
 
@@ -130,17 +155,80 @@ pub type Message {
     payload: json.Json,
     except: Option(String),
   )
+  // Heartbeat timeout enforcement
+  CheckHeartbeats
 }
 
-/// Start the coordinator actor
-pub fn start() -> Result(Subject(Message), actor.StartError) {
-  let initial_state =
-    State(handlers: [], sockets: dict.new(), topics: dict.new())
+/// Erlang monotonic time in milliseconds
+@external(erlang, "beryl_ffi", "monotonic_time_ms")
+pub fn monotonic_time_ms() -> Int
 
-  actor.new(initial_state)
-  |> actor.on_message(handle_message)
+/// Start the coordinator actor without heartbeat enforcement
+pub fn start() -> Result(Subject(Message), actor.StartError) {
+  start_with_config(default_config())
+}
+
+/// Start the coordinator actor with heartbeat timeout enforcement
+pub fn start_with_config(
+  config: CoordinatorConfig,
+) -> Result(Subject(Message), actor.StartError) {
+  build_coordinator(config)
   |> actor.start
   |> result.map(fn(started) { started.data })
+}
+
+/// Start the coordinator with a registered name (for supervision)
+pub fn start_named(
+  config: CoordinatorConfig,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_coordinator(config)
+  |> actor.named(name)
+  |> actor.start
+}
+
+fn build_coordinator(
+  config: CoordinatorConfig,
+) -> actor.Builder(State, Message, Subject(Message)) {
+  let initial_state =
+    State(
+      handlers: [],
+      sockets: dict.new(),
+      topics: dict.new(),
+      config: config,
+      self_subject: None,
+    )
+
+  actor.new_with_initialiser(5000, fn(subject) {
+    let state = State(..initial_state, self_subject: Some(subject))
+
+    // Schedule the first heartbeat check if configured
+    schedule_heartbeat_check(subject, config)
+
+    actor.initialised(state)
+    |> actor.returning(subject)
+    |> Ok
+  })
+  |> actor.on_message(handle_message)
+}
+
+/// Schedule the next heartbeat check timer
+fn schedule_heartbeat_check(
+  subject: Subject(Message),
+  config: CoordinatorConfig,
+) -> Nil {
+  case config.heartbeat_check_interval_ms > 0 {
+    True -> {
+      let _ =
+        process.send_after(
+          subject,
+          config.heartbeat_check_interval_ms,
+          CheckHeartbeats,
+        )
+      Nil
+    }
+    False -> Nil
+  }
 }
 
 /// Handle incoming messages
@@ -168,6 +256,8 @@ fn handle_message(state: State, message: Message) -> actor.Next(State, Message) 
 
     Broadcast(topic_name, event, payload, except) ->
       handle_broadcast(state, topic_name, event, payload, except)
+
+    CheckHeartbeats -> handle_check_heartbeats(state)
   }
 }
 
@@ -208,6 +298,7 @@ fn handle_socket_connected(
       handler_pid: handler_pid,
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
+      last_heartbeat: monotonic_time_ms(),
     )
 
   let new_sockets = dict.insert(state.sockets, socket_id, socket_info)
@@ -218,27 +309,7 @@ fn handle_socket_disconnected(
   state: State,
   socket_id: String,
 ) -> actor.Next(State, Message) {
-  case dict.get(state.sockets, socket_id) {
-    Error(_) -> actor.continue(state)
-    Ok(socket_info) -> {
-      // Call terminate on all joined channels
-      let state =
-        set.fold(socket_info.subscribed_topics, state, fn(st, topic_name) {
-          terminate_channel(st, socket_id, topic_name, channel.Normal)
-        })
-
-      // Remove socket from all topic subscriptions
-      let new_topics =
-        dict.map_values(state.topics, fn(_topic, subscribers) {
-          set.delete(subscribers, socket_id)
-        })
-
-      // Remove socket
-      let new_sockets = dict.delete(state.sockets, socket_id)
-
-      actor.continue(State(..state, sockets: new_sockets, topics: new_topics))
-    }
-  }
+  actor.continue(disconnect_socket(state, socket_id))
 }
 
 fn handle_join(
@@ -458,9 +529,71 @@ fn handle_heartbeat(
   case dict.get(state.sockets, socket_id) {
     Error(_) -> actor.continue(state)
     Ok(socket_info) -> {
+      // Update last heartbeat timestamp
+      let updated_socket =
+        SocketInfo(..socket_info, last_heartbeat: monotonic_time_ms())
+      let new_sockets = dict.insert(state.sockets, socket_id, updated_socket)
+
+      // Send heartbeat reply
       let reply = wire.heartbeat_reply(ref)
       let _ = socket_info.send(reply)
-      actor.continue(state)
+      actor.continue(State(..state, sockets: new_sockets))
+    }
+  }
+}
+
+/// Check all sockets for heartbeat timeout and evict stale ones
+fn handle_check_heartbeats(state: State) -> actor.Next(State, Message) {
+  let now = monotonic_time_ms()
+  let timeout_ms = state.config.heartbeat_timeout_ms
+
+  // Find sockets that have timed out
+  let stale_socket_ids =
+    dict.fold(state.sockets, [], fn(acc, socket_id, socket_info) {
+      let elapsed = now - socket_info.last_heartbeat
+      case elapsed > timeout_ms {
+        True -> [socket_id, ..acc]
+        False -> acc
+      }
+    })
+
+  // Evict each stale socket using the same cleanup as SocketDisconnected
+  let state =
+    list.fold(stale_socket_ids, state, fn(st, socket_id) {
+      disconnect_socket(st, socket_id)
+    })
+
+  // Schedule the next heartbeat check
+  case state.self_subject {
+    Some(subject) -> schedule_heartbeat_check(subject, state.config)
+    None -> Nil
+  }
+
+  actor.continue(state)
+}
+
+/// Disconnect a socket, running terminate on all its channels
+/// Shared logic used by both SocketDisconnected and CheckHeartbeats
+fn disconnect_socket(state: State, socket_id: String) -> State {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> state
+    Ok(socket_info) -> {
+      // Call terminate on all joined channels
+      let state =
+        set.fold(socket_info.subscribed_topics, state, fn(st, topic_name) {
+          terminate_channel(st, socket_id, topic_name, channel.Normal)
+        })
+
+      // Remove socket from all topic subscriptions
+      let new_topics =
+        dict.map_values(state.topics, fn(_topic, subscribers) {
+          set.delete(subscribers, socket_id)
+        })
+
+      // Remove socket
+      let new_sockets = dict.delete(state.sockets, socket_id)
+
+      State(..state, sockets: new_sockets, topics: new_topics)
     }
   }
 }

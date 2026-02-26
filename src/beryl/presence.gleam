@@ -100,15 +100,30 @@ pub fn default_config(replica: String) -> Config {
 
 /// Start the presence actor
 pub fn start(config: Config) -> Result(Presence, PresenceError) {
-  let crdt = state.new(config.replica)
-  let initial =
-    ActorState(crdt: crdt, config: config, last_diff: None)
-
-  actor.new(initial)
-  |> actor.on_message(handle_message)
+  build_presence(config)
   |> actor.start
   |> result.map(fn(started) { Presence(subject: started.data) })
   |> result.map_error(fn(_) { StartFailed })
+}
+
+/// Start the presence actor with a registered name (for supervision)
+pub fn start_named(
+  config: Config,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_presence(config)
+  |> actor.named(name)
+  |> actor.start
+}
+
+fn build_presence(
+  config: Config,
+) -> actor.Builder(ActorState, Message, Subject(Message)) {
+  let crdt = state.new(config.replica)
+  let initial = ActorState(crdt: crdt, config: config, last_diff: None)
+
+  actor.new(initial)
+  |> actor.on_message(handle_message)
 }
 
 /// Track a presence in a topic
@@ -140,16 +155,12 @@ pub fn untrack(
 
 /// Untrack all presences for a pid (e.g., when a socket disconnects)
 pub fn untrack_all(presence: Presence, pid: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) {
-    UntrackAll(pid, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { UntrackAll(pid, reply) })
 }
 
 /// List all presences for a topic
 pub fn list(presence: Presence, topic: String) -> List(PresenceEntry) {
-  process.call(presence.subject, 5000, fn(reply) {
-    List(topic, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { List(topic, reply) })
 }
 
 /// Get presences for a specific key within a topic
@@ -158,9 +169,7 @@ pub fn get_by_key(
   topic: String,
   key: String,
 ) -> List(#(String, json.Json)) {
-  process.call(presence.subject, 5000, fn(reply) {
-    GetByKey(topic, key, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { GetByKey(topic, key, reply) })
 }
 
 /// Get the current state as joins/leaves diff for a topic
@@ -170,9 +179,7 @@ pub fn get_diff(
   presence: Presence,
   topic: String,
 ) -> #(List(PresenceEntry), List(PresenceEntry)) {
-  process.call(presence.subject, 5000, fn(reply) {
-    GetDiff(topic, reply)
-  })
+  process.call(presence.subject, 5000, fn(reply) { GetDiff(topic, reply) })
 }
 
 /// Send remote state to merge (fire and forget)

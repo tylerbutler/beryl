@@ -121,6 +121,11 @@ pub type StartError {
 /// Call once at application startup. Returns a handle that can be passed
 /// to the WebSocket transport and used for broadcasting.
 ///
+/// Heartbeat timeout enforcement is configured via `heartbeat_interval_ms`
+/// and `heartbeat_timeout_ms` in the Config. The coordinator checks for
+/// stale sockets at `heartbeat_interval_ms` and evicts any socket that
+/// hasn't sent a heartbeat within `heartbeat_timeout_ms`.
+///
 /// ## Example
 ///
 /// ```gleam
@@ -130,7 +135,13 @@ pub type StartError {
 /// }
 /// ```
 pub fn start(config: Config) -> Result(Channels, StartError) {
-  case coordinator.start() {
+  let coord_config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: config.heartbeat_interval_ms,
+      heartbeat_timeout_ms: config.heartbeat_timeout_ms,
+    )
+
+  case coordinator.start_with_config(coord_config) {
     Error(_) -> Error(CoordinatorStartFailed)
     Ok(coord) ->
       Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
