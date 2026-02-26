@@ -21,10 +21,10 @@
 //// let entries = presence.list(p, "room:lobby")
 //// ```
 
+import beryl/internal
 import beryl/presence/state.{type Diff, type State}
 import beryl/presence/state_json
 import beryl/pubsub.{type PubSub}
-import birch
 import birch/logger
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
@@ -38,8 +38,6 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
-
-const log_name = "beryl.presence"
 
 /// Well-known PubSub topic for presence state replication
 const sync_topic = "beryl:presence:sync"
@@ -152,7 +150,9 @@ fn build_presence(
       Some(ps) -> {
         // Subscribe to the well-known sync topic for replication
         pubsub.subscribe(ps, sync_topic)
-        logger.debug(birch.new(log_name), "Subscribed to PubSub sync topic", [
+        let log = internal.logger("beryl.presence")
+        log
+        |> logger.debug("Subscribed to PubSub sync topic", [
           #("topic", sync_topic),
           #("replica", config.replica),
         ])
@@ -266,10 +266,12 @@ fn handle_message(
   actor_state: ActorState,
   message: Message,
 ) -> actor.Next(ActorState, Message) {
+  let log = internal.logger("beryl.presence")
   case message {
     Track(topic, key, pid, meta, reply) -> {
       let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
-      logger.debug(birch.new(log_name), "Presence tracked", [
+      log
+      |> logger.debug("Presence tracked", [
         #("topic", topic),
         #("key", key),
         #("pid", pid),
@@ -280,7 +282,8 @@ fn handle_message(
 
     Untrack(topic, key, pid, reply) -> {
       let new_crdt = state.leave(actor_state.crdt, pid, topic, key)
-      logger.debug(birch.new(log_name), "Presence untracked", [
+      log
+      |> logger.debug("Presence untracked", [
         #("topic", topic),
         #("key", key),
         #("pid", pid),
@@ -381,14 +384,12 @@ fn handle_sync_payload(
 ) -> actor.Next(ActorState, Message) {
   case parse_sync_envelope(payload_str) {
     Error(reason) -> {
-      logger.warn(
-        birch.new(log_name),
-        "Failed to decode presence sync message",
-        [
-          #("reason", reason),
-          #("payload_length", int.to_string(string.length(payload_str))),
-        ],
-      )
+      let log = internal.logger("beryl.presence")
+      log
+      |> logger.warn("Failed to decode presence sync message", [
+        #("reason", reason),
+        #("payload_length", int.to_string(string.length(payload_str))),
+      ])
       actor.continue(actor_state)
     }
     Ok(#(_sender, remote_state)) -> {

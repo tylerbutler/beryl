@@ -28,8 +28,8 @@
 import beryl
 import beryl/coordinator
 import beryl/group
+import beryl/internal
 import beryl/presence
-import birch
 import birch/logger
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
@@ -37,8 +37,6 @@ import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
-
-const log_name = "beryl.supervisor"
 
 /// Configuration for starting all beryl subsystems under a supervisor
 pub type SupervisedConfig {
@@ -93,6 +91,8 @@ pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError)
 fn start_supervised(
   config: SupervisedConfig,
 ) -> Result(SupervisedChannels, StartError) {
+  let log = internal.logger("beryl.supervisor")
+
   // Create names for each subsystem up front. The supervisor starts children
   // via callbacks, so we use named actors to retrieve subjects afterward.
   // Names must be created before supervisor start (not dynamically in loops).
@@ -162,7 +162,8 @@ fn start_supervised(
   // Start the supervisor — this starts all children
   case static_supervisor.start(builder) {
     Error(err) -> {
-      logger.error(birch.new(log_name), "Supervisor failed to start", [])
+      log
+      |> logger.error("Supervisor failed to start", [])
       Error(SupervisorStartFailed(err))
     }
     Ok(started) -> {
@@ -174,7 +175,8 @@ fn start_supervised(
         True -> "true"
         False -> "false"
       }
-      logger.info(birch.new(log_name), "Supervisor started", [
+      log
+      |> logger.info("Supervisor started", [
         #("presence", presence_enabled),
         #("groups", groups_enabled),
       ])
@@ -217,7 +219,8 @@ fn start_supervised(
 /// processes (coordinator, presence, groups) in reverse start order. After
 /// this call the `SupervisedChannels` handle should no longer be used.
 pub fn stop(supervised: SupervisedChannels) -> Nil {
-  logger.info(birch.new(log_name), "Supervisor stopping", [])
+  let log = internal.logger("beryl.supervisor")
+  log |> logger.info("Supervisor stopping", [])
   stop_supervisor(supervised.supervisor_pid)
 }
 

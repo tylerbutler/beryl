@@ -8,9 +8,9 @@
 //// - Heartbeat timeout enforcement
 
 import beryl/channel.{type StopReason}
+import beryl/internal
 import beryl/topic.{type TopicPattern}
 import beryl/wire
-import birch
 import birch/logger
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
@@ -22,8 +22,6 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
-
-const log_name = "beryl.coordinator"
 
 /// Type-erased channel handler for storage
 /// The actual typed Channel is converted to this for the registry
@@ -328,9 +326,8 @@ fn handle_socket_connected(
       last_heartbeat: monotonic_time_ms(),
     )
 
-  logger.info(birch.new(log_name), "Socket connected", [
-    #("socket_id", socket_id),
-  ])
+  let log = internal.logger("beryl.coordinator")
+  log |> logger.info("Socket connected", [#("socket_id", socket_id)])
   let new_sockets = dict.insert(state.sockets, socket_id, socket_info)
   actor.continue(State(..state, sockets: new_sockets))
 }
@@ -339,9 +336,8 @@ fn handle_socket_disconnected(
   state: State,
   socket_id: String,
 ) -> actor.Next(State, Message) {
-  logger.info(birch.new(log_name), "Socket disconnected", [
-    #("socket_id", socket_id),
-  ])
+  let log = internal.logger("beryl.coordinator")
+  log |> logger.info("Socket disconnected", [#("socket_id", socket_id)])
   actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
@@ -573,15 +569,13 @@ fn handle_check_heartbeats(state: State) -> actor.Next(State, Message) {
       }
     })
 
+  let log = internal.logger("beryl.coordinator")
   list.each(stale_socket_ids, fn(socket_id) {
-    logger.warn(
-      birch.new(log_name),
-      "Evicting socket due to heartbeat timeout",
-      [
-        #("socket_id", socket_id),
-        #("timeout_ms", int.to_string(timeout_ms)),
-      ],
-    )
+    log
+    |> logger.warn("Evicting socket due to heartbeat timeout", [
+      #("socket_id", socket_id),
+      #("timeout_ms", int.to_string(timeout_ms)),
+    ])
   })
 
   let state =
@@ -754,13 +748,11 @@ pub fn route_message(
 ) -> Nil {
   case wire.decode_message(raw_text) {
     Error(_) -> {
-      logger.warn(
-        birch.new(log_name),
-        "Failed to decode wire protocol message",
-        [
-          #("socket_id", socket_id),
-        ],
-      )
+      let log = internal.logger("beryl.coordinator")
+      log
+      |> logger.warn("Failed to decode wire protocol message", [
+        #("socket_id", socket_id),
+      ])
       Nil
     }
     Ok(msg) -> {
