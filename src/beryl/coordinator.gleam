@@ -10,15 +10,20 @@
 import beryl/channel.{type StopReason}
 import beryl/topic.{type TopicPattern}
 import beryl/wire
+import birch
+import birch/logger
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
+
+const log_name = "beryl.coordinator"
 
 /// Type-erased channel handler for storage
 /// The actual typed Channel is converted to this for the registry
@@ -63,6 +68,14 @@ pub type HandleResultErased {
 pub type RegisterError {
   PatternAlreadyRegistered(String)
   InvalidPattern(String)
+}
+
+/// Errors when starting the coordinator
+pub type StartError {
+  /// heartbeat_timeout_ms must be > 0 when heartbeat checking is enabled
+  InvalidHeartbeatTimeout
+  /// The underlying OTP actor failed to start
+  ActorStartFailed(actor.StartError)
 }
 
 /// Configuration for heartbeat enforcement
@@ -165,27 +178,41 @@ pub type Message {
 fn monotonic_time_ms() -> Int
 
 /// Start the coordinator actor without heartbeat enforcement
-pub fn start() -> Result(Subject(Message), actor.StartError) {
+pub fn start() -> Result(Subject(Message), StartError) {
   start_with_config(default_config())
 }
 
 /// Start the coordinator actor with heartbeat timeout enforcement
 pub fn start_with_config(
   config: CoordinatorConfig,
-) -> Result(Subject(Message), actor.StartError) {
-  build_coordinator(config)
-  |> actor.start
-  |> result.map(fn(started) { started.data })
+) -> Result(Subject(Message), StartError) {
+  case
+    config.heartbeat_check_interval_ms > 0 && config.heartbeat_timeout_ms <= 0
+  {
+    True -> Error(InvalidHeartbeatTimeout)
+    False ->
+      build_coordinator(config)
+      |> actor.start
+      |> result.map(fn(started) { started.data })
+      |> result.map_error(ActorStartFailed)
+  }
 }
 
 /// Start the coordinator with a registered name (for supervision)
 pub fn start_named(
   config: CoordinatorConfig,
   name: process.Name(Message),
-) -> Result(actor.Started(Subject(Message)), actor.StartError) {
-  build_coordinator(config)
-  |> actor.named(name)
-  |> actor.start
+) -> Result(actor.Started(Subject(Message)), StartError) {
+  case
+    config.heartbeat_check_interval_ms > 0 && config.heartbeat_timeout_ms <= 0
+  {
+    True -> Error(InvalidHeartbeatTimeout)
+    False ->
+      build_coordinator(config)
+      |> actor.named(name)
+      |> actor.start
+      |> result.map_error(ActorStartFailed)
+  }
 }
 
 fn build_coordinator(
@@ -301,6 +328,9 @@ fn handle_socket_connected(
       last_heartbeat: monotonic_time_ms(),
     )
 
+  logger.info(birch.new(log_name), "Socket connected", [
+    #("socket_id", socket_id),
+  ])
   let new_sockets = dict.insert(state.sockets, socket_id, socket_info)
   actor.continue(State(..state, sockets: new_sockets))
 }
@@ -309,6 +339,9 @@ fn handle_socket_disconnected(
   state: State,
   socket_id: String,
 ) -> actor.Next(State, Message) {
+  logger.info(birch.new(log_name), "Socket disconnected", [
+    #("socket_id", socket_id),
+  ])
   actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
@@ -540,6 +573,17 @@ fn handle_check_heartbeats(state: State) -> actor.Next(State, Message) {
       }
     })
 
+  list.each(stale_socket_ids, fn(socket_id) {
+    logger.warn(
+      birch.new(log_name),
+      "Evicting socket due to heartbeat timeout",
+      [
+        #("socket_id", socket_id),
+        #("timeout_ms", int.to_string(timeout_ms)),
+      ],
+    )
+  })
+
   let state =
     list.fold(stale_socket_ids, state, fn(st, socket_id) {
       disconnect_socket(st, socket_id, channel.HeartbeatTimeout)
@@ -709,7 +753,16 @@ pub fn route_message(
   raw_text: String,
 ) -> Nil {
   case wire.decode_message(raw_text) {
-    Error(_) -> Nil
+    Error(_) -> {
+      logger.warn(
+        birch.new(log_name),
+        "Failed to decode wire protocol message",
+        [
+          #("socket_id", socket_id),
+        ],
+      )
+      Nil
+    }
     Ok(msg) -> {
       case msg.event {
         "phx_join" -> {
