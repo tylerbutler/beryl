@@ -25,6 +25,8 @@ just format-check # Check formatting
 just check        # Type check
 just docs         # Build documentation
 just ci           # Run all CI checks (format, check, test, build)
+just pr           # Alias for ci (use before PR)
+just main         # Extended checks for main branch
 just clean        # Remove build artifacts
 ```
 
@@ -98,6 +100,22 @@ Managed via `.tool-versions` (source of truth for CI):
 
 Local development can use `.mise.toml` for flexible versions.
 
+## CI/CD
+
+### Workflows
+- **ci.yml**: Format check, type check, build, test
+- **pr.yml**: PR title validation (commitlint), changelog entry check (changie)
+- **release.yml**: Automated versioning via changie-release
+- **auto-tag.yml**: Auto-tag on release PR merge
+- **publish.yml**: Publish to Hex.pm on tag push
+
+### Release Flow
+1. Push commits with conventional commit messages
+2. Add changelog entries with `changie new`
+3. changie-release creates a PR with version bump
+4. Merge PR → auto-tag creates GitHub release
+5. publish.yml triggers → publishes to Hex.pm
+
 ## Conventions
 
 - Use Result types over exceptions
@@ -105,3 +123,21 @@ Local development can use `.mise.toml` for flexible versions.
 - Follow `gleam format` output
 - Keep public API minimal
 - Document public functions with `///` comments
+
+## Commit Messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat(channel): add support for binary messages
+fix(presence): handle concurrent leave/join correctly
+docs: update installation instructions
+```
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`
+
+See `.commitlintrc.json` for configuration.
+
+## Additional Documentation
+
+- **DEV.md**: Detailed development workflows and guidelines

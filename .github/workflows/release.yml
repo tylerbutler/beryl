@@ -1,21 +1,45 @@
-name: Release
+name: Changie Release
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  release-please:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: tylerbutler/actions/changie-release@c697a813534c6364a835de8e2ed2c4e0c3638bbe # ratchet:tylerbutler/actions/changie-release@main
         id: release
         with:
-          token: ${{ secrets.RELEASE_TOKEN }}
+          token: ${{ secrets.RELEASE_PAT }}
+          version-files: |
+            gleam.toml:version
+
+      - name: Summary
+        if: steps.release.outputs.skipped != 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          PR_URL: ${{ steps.release.outputs.pr-url }}
+          PR_OP: ${{ steps.release.outputs.pr-operation }}
+        run: |
+          echo "### Release PR Created" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **PR:** $PR_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Operation:** $PR_OP" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skipped
+        if: steps.release.outputs.skipped == 'true'
+        run: |
+          echo "### Release Skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "No unreleased change fragments found." >> "$GITHUB_STEP_SUMMARY"
