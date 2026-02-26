@@ -1,0 +1,7 @@
+[tools]
+erlang = "27"
+gleam = "latest"
+just = "latest"
+
+[env]
+LC_ALL = "en_US.UTF-8"

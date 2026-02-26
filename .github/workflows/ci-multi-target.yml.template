@@ -1,0 +1,84 @@
+# Multi-target CI workflow template
+# Rename to ci.yml and remove the single-target ci.yml to use this
+# Also uncomment the multi-target sections in justfile
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [erlang, javascript]
+    name: Test (${{ matrix.target }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup environment
+        uses: ./.github/actions/setup
+        with:
+          node: ${{ matrix.target == 'javascript' }}
+
+      - name: Check formatting
+        run: just format-check
+
+      - name: Type check
+        run: just check
+
+      - name: Build (warnings as errors)
+        run: just ${{ matrix.target == 'javascript' && 'build-strict-js' || 'build-strict' }}
+
+      - name: Run tests
+        run: just ${{ matrix.target == 'javascript' && 'test-js' || 'test-erlang' }}
+
+  # Uncomment for JavaScript runtime integration tests
+  # integration-test:
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       runtime: [node, deno, bun]
+  #   name: Integration (${{ matrix.runtime }})
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Setup environment
+  #       uses: ./.github/actions/setup
+  #       with:
+  #         node: true
+  #
+  #     - name: Setup Deno
+  #       if: matrix.runtime == 'deno'
+  #       uses: denoland/setup-deno@v2
+  #       with:
+  #         deno-version: v2.x
+  #
+  #     - name: Setup Bun
+  #       if: matrix.runtime == 'bun'
+  #       uses: oven-sh/setup-bun@v2
+  #       with:
+  #         bun-version: latest
+  #
+  #     - name: Build for JavaScript
+  #       run: just build-strict-js
+  #
+  #     - name: Run integration tests
+  #       run: just test-integration-${{ matrix.runtime }}
+
+  docs:
+    runs-on: ubuntu-latest
+    name: Docs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup environment
+        uses: ./.github/actions/setup
+
+      - name: Build documentation
+        run: just docs

@@ -1,0 +1,630 @@
+//// Coordinator - Central actor for channel management
+////
+//// This actor manages:
+//// - Channel handler registration (pattern -> handler)
+//// - Socket tracking (socket_id -> send function)
+//// - Topic subscriptions (topic -> set of socket_ids)
+//// - Message routing and broadcasting
+
+import beryl/channel.{type StopReason}
+import beryl/topic.{type TopicPattern}
+import beryl/wire
+import gleam/dict.{type Dict}
+import gleam/dynamic.{type Dynamic}
+import gleam/erlang/process.{type Subject}
+import gleam/json
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/result
+import gleam/set.{type Set}
+
+/// Type-erased channel handler for storage
+/// The actual typed Channel is converted to this for the registry
+pub type ChannelHandler {
+  ChannelHandler(
+    pattern: TopicPattern,
+    join: fn(String, Dynamic, SocketContext) -> JoinResultErased,
+    handle_in: fn(String, Dynamic, SocketContext) -> HandleResultErased,
+    terminate: fn(StopReason, SocketContext) -> Nil,
+  )
+}
+
+/// Context passed to handlers (replaces Socket in erased form)
+pub type SocketContext {
+  SocketContext(
+    socket_id: String,
+    topic: String,
+    /// Current assigns for this socket/topic (type-erased)
+    assigns: Dynamic,
+    /// Function to send messages to this socket
+    send: fn(String) -> Result(Nil, Nil),
+    /// PID of the WebSocket handler process (for direct messaging)
+    handler_pid: Dynamic,
+  )
+}
+
+/// Type-erased join result
+pub type JoinResultErased {
+  JoinOkErased(reply: Option(json.Json), assigns: Dynamic)
+  JoinErrorErased(reason: json.Json)
+}
+
+/// Type-erased handle result
+pub type HandleResultErased {
+  NoReplyErased(assigns: Dynamic)
+  ReplyErased(event: String, payload: json.Json, assigns: Dynamic)
+  PushErased(event: String, payload: json.Json, assigns: Dynamic)
+  StopErased(reason: StopReason)
+}
+
+/// Errors when registering channels
+pub type RegisterError {
+  PatternAlreadyRegistered(String)
+  InvalidPattern(String)
+}
+
+/// Internal state for coordinator actor
+pub type State {
+  State(
+    /// Pattern -> handler (ordered list for matching)
+    handlers: List(ChannelHandler),
+    /// Socket ID -> socket info
+    sockets: Dict(String, SocketInfo),
+    /// Topic -> set of socket IDs subscribed
+    topics: Dict(String, Set(String)),
+  )
+}
+
+/// Info tracked per socket
+pub type SocketInfo {
+  SocketInfo(
+    id: String,
+    /// Function to send text to this socket's WebSocket
+    send: fn(String) -> Result(Nil, Nil),
+    /// PID of the WebSocket handler process (for direct messaging)
+    handler_pid: Dynamic,
+    /// Topics this socket is subscribed to
+    subscribed_topics: Set(String),
+    /// Per-topic assigns (topic -> Dynamic assigns)
+    channel_assigns: Dict(String, Dynamic),
+  )
+}
+
+/// Messages the coordinator handles
+pub type Message {
+  // Channel registration
+  RegisterChannel(
+    pattern: String,
+    handler: ChannelHandler,
+    reply: Subject(Result(Nil, RegisterError)),
+  )
+  // Socket lifecycle
+  SocketConnected(
+    socket_id: String,
+    send: fn(String) -> Result(Nil, Nil),
+    handler_pid: Dynamic,
+  )
+  SocketDisconnected(socket_id: String)
+  // Channel operations
+  Join(
+    socket_id: String,
+    topic: String,
+    payload: Dynamic,
+    join_ref: Option(String),
+    ref: String,
+  )
+  Leave(socket_id: String, topic: String, ref: Option(String))
+  HandleIn(
+    socket_id: String,
+    topic: String,
+    event: String,
+    payload: Dynamic,
+    ref: Option(String),
+  )
+  Heartbeat(socket_id: String, ref: String)
+  // Broadcasting
+  Broadcast(
+    topic: String,
+    event: String,
+    payload: json.Json,
+    except: Option(String),
+  )
+}
+
+/// Start the coordinator actor
+pub fn start() -> Result(Subject(Message), actor.StartError) {
+  let initial_state =
+    State(handlers: [], sockets: dict.new(), topics: dict.new())
+
+  actor.new(initial_state)
+  |> actor.on_message(handle_message)
+  |> actor.start
+  |> result.map(fn(started) { started.data })
+}
+
+/// Handle incoming messages
+fn handle_message(state: State, message: Message) -> actor.Next(State, Message) {
+  case message {
+    RegisterChannel(pattern, handler, reply) ->
+      handle_register_channel(state, pattern, handler, reply)
+
+    SocketConnected(socket_id, send, handler_pid) ->
+      handle_socket_connected(state, socket_id, send, handler_pid)
+
+    SocketDisconnected(socket_id) ->
+      handle_socket_disconnected(state, socket_id)
+
+    Join(socket_id, topic_name, payload, join_ref, ref) ->
+      handle_join(state, socket_id, topic_name, payload, join_ref, ref)
+
+    Leave(socket_id, topic_name, ref) ->
+      handle_leave(state, socket_id, topic_name, ref)
+
+    HandleIn(socket_id, topic_name, event, payload, ref) ->
+      handle_in(state, socket_id, topic_name, event, payload, ref)
+
+    Heartbeat(socket_id, ref) -> handle_heartbeat(state, socket_id, ref)
+
+    Broadcast(topic_name, event, payload, except) ->
+      handle_broadcast(state, topic_name, event, payload, except)
+  }
+}
+
+fn handle_register_channel(
+  state: State,
+  pattern_str: String,
+  handler: ChannelHandler,
+  reply: Subject(Result(Nil, RegisterError)),
+) -> actor.Next(State, Message) {
+  // Check if pattern already registered
+  let pattern = topic.parse_pattern(pattern_str)
+  let already_registered =
+    list.any(state.handlers, fn(h) { h.pattern == pattern })
+
+  case already_registered {
+    True -> {
+      process.send(reply, Error(PatternAlreadyRegistered(pattern_str)))
+      actor.continue(state)
+    }
+    False -> {
+      let new_handlers = list.append(state.handlers, [handler])
+      process.send(reply, Ok(Nil))
+      actor.continue(State(..state, handlers: new_handlers))
+    }
+  }
+}
+
+fn handle_socket_connected(
+  state: State,
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  handler_pid: Dynamic,
+) -> actor.Next(State, Message) {
+  let socket_info =
+    SocketInfo(
+      id: socket_id,
+      send: send,
+      handler_pid: handler_pid,
+      subscribed_topics: set.new(),
+      channel_assigns: dict.new(),
+    )
+
+  let new_sockets = dict.insert(state.sockets, socket_id, socket_info)
+  actor.continue(State(..state, sockets: new_sockets))
+}
+
+fn handle_socket_disconnected(
+  state: State,
+  socket_id: String,
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> actor.continue(state)
+    Ok(socket_info) -> {
+      // Call terminate on all joined channels
+      let state =
+        set.fold(socket_info.subscribed_topics, state, fn(st, topic_name) {
+          terminate_channel(st, socket_id, topic_name, channel.Normal)
+        })
+
+      // Remove socket from all topic subscriptions
+      let new_topics =
+        dict.map_values(state.topics, fn(_topic, subscribers) {
+          set.delete(subscribers, socket_id)
+        })
+
+      // Remove socket
+      let new_sockets = dict.delete(state.sockets, socket_id)
+
+      actor.continue(State(..state, sockets: new_sockets, topics: new_topics))
+    }
+  }
+}
+
+fn handle_join(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  payload: Dynamic,
+  join_ref: Option(String),
+  ref: String,
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> actor.continue(state)
+    Ok(socket_info) -> {
+      // Find matching handler
+      case find_handler(state.handlers, topic_name) {
+        None -> {
+          // No handler - send error reply
+          let reply =
+            wire.reply_json(
+              join_ref,
+              ref,
+              topic_name,
+              wire.StatusError,
+              json.object([#("reason", json.string("no_channel_handler"))]),
+            )
+          let _ = socket_info.send(reply)
+          actor.continue(state)
+        }
+        Some(handler) -> {
+          // Create context for handler
+          let ctx =
+            SocketContext(
+              socket_id: socket_id,
+              topic: topic_name,
+              assigns: dynamic.nil(),
+              send: socket_info.send,
+              handler_pid: socket_info.handler_pid,
+            )
+
+          // Call join handler
+          case handler.join(topic_name, payload, ctx) {
+            JoinErrorErased(reason) -> {
+              let reply =
+                wire.reply_json(
+                  join_ref,
+                  ref,
+                  topic_name,
+                  wire.StatusError,
+                  reason,
+                )
+              let _ = socket_info.send(reply)
+              actor.continue(state)
+            }
+            JoinOkErased(reply_payload, assigns) -> {
+              // Update socket info with subscription and assigns
+              let new_subscribed =
+                set.insert(socket_info.subscribed_topics, topic_name)
+              let new_assigns =
+                dict.insert(socket_info.channel_assigns, topic_name, assigns)
+              let new_socket_info =
+                SocketInfo(
+                  ..socket_info,
+                  subscribed_topics: new_subscribed,
+                  channel_assigns: new_assigns,
+                )
+
+              // Update topics map
+              let topic_subscribers =
+                dict.get(state.topics, topic_name)
+                |> result.unwrap(set.new())
+                |> set.insert(socket_id)
+
+              let new_topics =
+                dict.insert(state.topics, topic_name, topic_subscribers)
+              let new_sockets =
+                dict.insert(state.sockets, socket_id, new_socket_info)
+
+              // Send success reply
+              let response = case reply_payload {
+                None -> json.object([])
+                Some(p) -> p
+              }
+              let reply =
+                wire.reply_json(
+                  join_ref,
+                  ref,
+                  topic_name,
+                  wire.StatusOk,
+                  response,
+                )
+              let _ = socket_info.send(reply)
+
+              actor.continue(
+                State(..state, sockets: new_sockets, topics: new_topics),
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn handle_leave(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  let state = terminate_channel(state, socket_id, topic_name, channel.Normal)
+
+  // Send reply if ref provided
+  case ref, dict.get(state.sockets, socket_id) {
+    Some(r), Ok(socket_info) -> {
+      let reply =
+        wire.reply_json(None, r, topic_name, wire.StatusOk, json.object([]))
+      let _ = socket_info.send(reply)
+      Nil
+    }
+    _, _ -> Nil
+  }
+
+  actor.continue(state)
+}
+
+fn handle_in(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  event: String,
+  payload: Dynamic,
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> actor.continue(state)
+    Ok(socket_info) -> {
+      // Check socket is subscribed to this topic
+      case set.contains(socket_info.subscribed_topics, topic_name) {
+        False -> actor.continue(state)
+        True -> {
+          // Find handler
+          case find_handler(state.handlers, topic_name) {
+            None -> actor.continue(state)
+            Some(handler) -> {
+              // Get current assigns for this topic
+              let assigns =
+                dict.get(socket_info.channel_assigns, topic_name)
+                |> result.unwrap(dynamic.nil())
+
+              let ctx =
+                SocketContext(
+                  socket_id: socket_id,
+                  topic: topic_name,
+                  assigns: assigns,
+                  send: socket_info.send,
+                  handler_pid: socket_info.handler_pid,
+                )
+
+              // Call handler
+              case handler.handle_in(event, payload, ctx) {
+                NoReplyErased(new_assigns) -> {
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                ReplyErased(_reply_event, reply_payload, new_assigns) -> {
+                  // Send reply
+                  case ref {
+                    Some(r) -> {
+                      let reply =
+                        wire.reply_json(
+                          None,
+                          r,
+                          topic_name,
+                          wire.StatusOk,
+                          reply_payload,
+                        )
+                      let _ = socket_info.send(reply)
+                      Nil
+                    }
+                    None -> Nil
+                  }
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                PushErased(push_event, push_payload, new_assigns) -> {
+                  // Send push (server-initiated message)
+                  let msg = wire.push(topic_name, push_event, push_payload)
+                  let _ = socket_info.send(msg)
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                StopErased(reason) -> {
+                  let state =
+                    terminate_channel(state, socket_id, topic_name, reason)
+                  actor.continue(state)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn handle_heartbeat(
+  state: State,
+  socket_id: String,
+  ref: String,
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> actor.continue(state)
+    Ok(socket_info) -> {
+      let reply = wire.heartbeat_reply(ref)
+      let _ = socket_info.send(reply)
+      actor.continue(state)
+    }
+  }
+}
+
+fn handle_broadcast(
+  state: State,
+  topic_name: String,
+  event: String,
+  payload: json.Json,
+  except: Option(String),
+) -> actor.Next(State, Message) {
+  // Get subscribers for topic
+  let subscribers =
+    dict.get(state.topics, topic_name)
+    |> result.unwrap(set.new())
+    |> set.to_list()
+
+  // Filter out excepted socket
+  let recipients = case except {
+    None -> subscribers
+    Some(except_id) -> list.filter(subscribers, fn(id) { id != except_id })
+  }
+
+  // Send to each recipient
+  let msg = wire.push(topic_name, event, payload)
+  list.each(recipients, fn(socket_id) {
+    case dict.get(state.sockets, socket_id) {
+      Ok(socket_info) -> {
+        let _ = socket_info.send(msg)
+        Nil
+      }
+      Error(_) -> Nil
+    }
+  })
+
+  actor.continue(state)
+}
+
+/// Find the first handler that matches the topic
+fn find_handler(
+  handlers: List(ChannelHandler),
+  topic_name: String,
+) -> Option(ChannelHandler) {
+  list.find(handlers, fn(h) { topic.matches(h.pattern, topic_name) })
+  |> option.from_result()
+}
+
+/// Terminate a channel subscription
+fn terminate_channel(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  reason: StopReason,
+) -> State {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> state
+    Ok(socket_info) -> {
+      // Call terminate handler if subscribed
+      case set.contains(socket_info.subscribed_topics, topic_name) {
+        False -> state
+        True -> {
+          // Find handler and call terminate
+          case find_handler(state.handlers, topic_name) {
+            Some(handler) -> {
+              let assigns =
+                dict.get(socket_info.channel_assigns, topic_name)
+                |> result.unwrap(dynamic.nil())
+
+              let ctx =
+                SocketContext(
+                  socket_id: socket_id,
+                  topic: topic_name,
+                  assigns: assigns,
+                  send: socket_info.send,
+                  handler_pid: socket_info.handler_pid,
+                )
+              handler.terminate(reason, ctx)
+            }
+            None -> Nil
+          }
+
+          // Update socket info
+          let new_subscribed =
+            set.delete(socket_info.subscribed_topics, topic_name)
+          let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)
+          let new_socket_info =
+            SocketInfo(
+              ..socket_info,
+              subscribed_topics: new_subscribed,
+              channel_assigns: new_assigns,
+            )
+
+          // Update topics map
+          let topic_subscribers =
+            dict.get(state.topics, topic_name)
+            |> result.unwrap(set.new())
+            |> set.delete(socket_id)
+          let new_topics =
+            dict.insert(state.topics, topic_name, topic_subscribers)
+
+          let new_sockets =
+            dict.insert(state.sockets, socket_id, new_socket_info)
+
+          State(..state, sockets: new_sockets, topics: new_topics)
+        }
+      }
+    }
+  }
+}
+
+/// Update assigns for a socket/topic
+fn update_assigns(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  assigns: Dynamic,
+) -> State {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> state
+    Ok(socket_info) -> {
+      let new_assigns =
+        dict.insert(socket_info.channel_assigns, topic_name, assigns)
+      let new_socket_info =
+        SocketInfo(..socket_info, channel_assigns: new_assigns)
+      let new_sockets = dict.insert(state.sockets, socket_id, new_socket_info)
+      State(..state, sockets: new_sockets)
+    }
+  }
+}
+
+/// Route a raw wire protocol message to the coordinator.
+///
+/// Decodes the JSON text and sends the appropriate coordinator message.
+/// Silently ignores messages that fail to decode.
+pub fn route_message(
+  coord: Subject(Message),
+  socket_id: String,
+  raw_text: String,
+) -> Nil {
+  case wire.decode_message(raw_text) {
+    Error(_) -> Nil
+    Ok(msg) -> {
+      case msg.event {
+        "phx_join" -> {
+          let ref = option.unwrap(msg.ref, "")
+          process.send(
+            coord,
+            Join(socket_id, msg.topic, msg.payload, msg.join_ref, ref),
+          )
+        }
+        "phx_leave" -> {
+          process.send(coord, Leave(socket_id, msg.topic, msg.ref))
+        }
+        "heartbeat" -> {
+          let ref = option.unwrap(msg.ref, "")
+          process.send(coord, Heartbeat(socket_id, ref))
+        }
+        event -> {
+          process.send(
+            coord,
+            HandleIn(socket_id, msg.topic, event, msg.payload, msg.ref),
+          )
+        }
+      }
+    }
+  }
+}

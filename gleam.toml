@@ -1,0 +1,20 @@
+name = "beryl"
+version = "0.1.0"
+description = "Type-safe real-time channels and presence for Gleam"
+licences = ["MIT"]
+repository = { type = "github", user = "tylerbutler", repo = "beryl" }
+gleam = ">= 1.1.0"
+target = "erlang"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+gleam_erlang = ">= 0.29.0 and < 2.0.0"
+gleam_otp = ">= 0.12.0 and < 2.0.0"
+gleam_json = ">= 3.0.0 and < 4.0.0"
+gleam_crypto = ">= 1.5.1 and < 2.0.0"
+
+# Local path to wisp fork with PR #144 websocket support
+wisp = { path = "../wisp" }
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"

@@ -1,0 +1,46 @@
+# CI workflow using shared actions from tylerbutler/actions
+# Rename to ci.yml to use this instead of the local setup action
+# Delete .github/actions/setup/ directory if using this
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup environment
+        uses: tylerbutler/actions/setup-gleam@v1
+
+      - name: Check formatting
+        run: just format-check
+
+      - name: Type check
+        run: just check
+
+      - name: Build (warnings as errors)
+        run: just build-strict
+
+      - name: Run tests
+        run: just test
+
+  docs:
+    runs-on: ubuntu-latest
+    name: Docs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup environment
+        uses: tylerbutler/actions/setup-gleam@v1
+
+      - name: Build documentation
+        run: just docs

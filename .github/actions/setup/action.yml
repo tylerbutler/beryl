@@ -1,0 +1,40 @@
+name: "Setup Gleam Environment"
+description: "Common setup steps for Gleam CI jobs"
+
+inputs:
+  node:
+    description: "Whether to setup Node.js for JavaScript target"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup just
+      uses: extractions/setup-just@v2
+
+    - name: Setup BEAM
+      uses: erlef/setup-beam@v1
+      with:
+        version-file: .tool-versions
+        version-type: strict
+
+    - name: Setup Node.js
+      if: inputs.node == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Cache Gleam dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/packages
+          ~/.cache/gleam
+        key: gleam-${{ runner.os }}-${{ hashFiles('gleam.toml', 'manifest.toml') }}
+        restore-keys: |
+          gleam-${{ runner.os }}-
+
+    - name: Download dependencies
+      shell: bash
+      run: just deps
