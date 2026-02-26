@@ -173,6 +173,24 @@ pub fn start() -> Result(Subject(Message), actor.StartError) {
 pub fn start_with_config(
   config: CoordinatorConfig,
 ) -> Result(Subject(Message), actor.StartError) {
+  build_coordinator(config)
+  |> actor.start
+  |> result.map(fn(started) { started.data })
+}
+
+/// Start the coordinator with a registered name (for supervision)
+pub fn start_named(
+  config: CoordinatorConfig,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_coordinator(config)
+  |> actor.named(name)
+  |> actor.start
+}
+
+fn build_coordinator(
+  config: CoordinatorConfig,
+) -> actor.Builder(State, Message, Subject(Message)) {
   let initial_state =
     State(
       handlers: [],
@@ -193,8 +211,6 @@ pub fn start_with_config(
     |> Ok
   })
   |> actor.on_message(handle_message)
-  |> actor.start
-  |> result.map(fn(started) { started.data })
 }
 
 /// Schedule the next heartbeat check timer

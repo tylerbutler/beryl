@@ -121,6 +121,11 @@ pub type StartError {
 /// Call once at application startup. Returns a handle that can be passed
 /// to the WebSocket transport and used for broadcasting.
 ///
+/// Heartbeat timeout enforcement is configured via `heartbeat_interval_ms`
+/// and `heartbeat_timeout_ms` in the Config. The coordinator checks for
+/// stale sockets at `heartbeat_interval_ms` and evicts any socket that
+/// hasn't sent a heartbeat within `heartbeat_timeout_ms`.
+///
 /// ## Example
 ///
 /// ```gleam

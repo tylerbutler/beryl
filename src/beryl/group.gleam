@@ -69,11 +69,24 @@ type State {
 
 /// Start the groups actor
 pub fn start() -> Result(Groups, GroupError) {
-  actor.new(State(groups: dict.new()))
-  |> actor.on_message(handle_message)
+  build_groups()
   |> actor.start
   |> result.map(fn(started) { Groups(subject: started.data) })
   |> result.map_error(fn(_) { StartFailed })
+}
+
+/// Start the groups actor with a registered name (for supervision)
+pub fn start_named(
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_groups()
+  |> actor.named(name)
+  |> actor.start
+}
+
+fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {
+  actor.new(State(groups: dict.new()))
+  |> actor.on_message(handle_message)
 }
 
 /// Create a new named group
