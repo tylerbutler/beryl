@@ -97,12 +97,7 @@ pub fn join(
 }
 
 /// Remove a specific presence by pid, topic, and key
-pub fn leave(
-  state: State,
-  pid: String,
-  topic: String,
-  key: String,
-) -> State {
+pub fn leave(state: State, pid: String, topic: String, key: String) -> State {
   let new_values =
     dict.filter(state.values, fn(_, entry) {
       case entry.pid == pid && entry.topic == topic && entry.key == key {
@@ -115,8 +110,7 @@ pub fn leave(
 
 /// Remove all presences for a pid
 pub fn leave_by_pid(state: State, pid: String) -> State {
-  let new_values =
-    dict.filter(state.values, fn(_, entry) { entry.pid != pid })
+  let new_values = dict.filter(state.values, fn(_, entry) { entry.pid != pid })
   State(..state, values: new_values)
 }
 
@@ -228,12 +222,7 @@ pub fn merge(local: State, remote: State) -> #(State, Diff) {
   let diff = Diff(joins: join_diff, leaves: leave_diff)
 
   let new_state =
-    State(
-      ..local,
-      context: new_context,
-      clouds: new_clouds,
-      values: new_values,
-    )
+    State(..local, context: new_context, clouds: new_clouds, values: new_values)
 
   #(compact(new_state), diff)
 }

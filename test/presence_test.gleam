@@ -37,21 +37,9 @@ pub fn presence_track_multiple_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ =
-    presence.track(
-      p,
-      "room:lobby",
-      "user:1",
-      "socket-1",
-      json.string("meta1"),
-    )
+    presence.track(p, "room:lobby", "user:1", "socket-1", json.string("meta1"))
   let _ =
-    presence.track(
-      p,
-      "room:lobby",
-      "user:2",
-      "socket-2",
-      json.string("meta2"),
-    )
+    presence.track(p, "room:lobby", "user:2", "socket-2", json.string("meta2"))
 
   let entries = presence.list(p, "room:lobby")
   list.length(entries) |> should.equal(2)
@@ -60,8 +48,7 @@ pub fn presence_track_multiple_test() {
 pub fn presence_untrack_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  let _ =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
   presence.untrack(p, "room:lobby", "user:1", "socket-1")
 
   let entries = presence.list(p, "room:lobby")
@@ -71,10 +58,8 @@ pub fn presence_untrack_test() {
 pub fn presence_untrack_all_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  let _ =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
-  let _ =
-    presence.track(p, "room:general", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:general", "user:1", "socket-1", json.null())
 
   // Both topics have entries from socket-1
   list.length(presence.list(p, "room:lobby")) |> should.equal(1)
@@ -102,10 +87,8 @@ pub fn presence_get_by_key_test() {
 pub fn presence_different_topics_isolated_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  let _ =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
-  let _ =
-    presence.track(p, "room:other", "user:2", "socket-2", json.null())
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:other", "user:2", "socket-2", json.null())
 
   list.length(presence.list(p, "room:lobby")) |> should.equal(1)
   list.length(presence.list(p, "room:other")) |> should.equal(1)
@@ -116,8 +99,7 @@ pub fn presence_merge_remote_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   // Track locally
-  let _ =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
 
   // Create a remote state with a different entry
   let remote =
@@ -142,8 +124,7 @@ pub fn presence_empty_list_test() {
 pub fn presence_get_diff_no_prior_merge_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  let _ =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
 
   // No merge has happened, so diff returns current state as all joins
   let #(joins, leaves) = presence.get_diff(p, "room:lobby")
