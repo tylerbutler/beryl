@@ -52,10 +52,7 @@ pub opaque type Message {
     topic: String,
     reply: Subject(Result(Nil, GroupError)),
   )
-  GetTopics(
-    group_name: String,
-    reply: Subject(Result(Set(String), GroupError)),
-  )
+  GetTopics(group_name: String, reply: Subject(Result(Set(String), GroupError)))
   ListGroups(reply: Subject(List(String)))
   BroadcastToGroup(
     group_name: String,
@@ -95,9 +92,7 @@ pub fn add(
   group_name: String,
   topic: String,
 ) -> Result(Nil, GroupError) {
-  process.call(groups.subject, 5000, fn(reply) {
-    Add(group_name, topic, reply)
-  })
+  process.call(groups.subject, 5000, fn(reply) { Add(group_name, topic, reply) })
 }
 
 /// Remove a topic from a group
@@ -116,9 +111,7 @@ pub fn topics(
   groups: Groups,
   group_name: String,
 ) -> Result(Set(String), GroupError) {
-  process.call(groups.subject, 5000, fn(reply) {
-    GetTopics(group_name, reply)
-  })
+  process.call(groups.subject, 5000, fn(reply) { GetTopics(group_name, reply) })
 }
 
 /// List all group names
@@ -137,12 +130,10 @@ pub fn broadcast(
   event: String,
   payload: json.Json,
 ) -> Nil {
-  process.send(groups.subject, BroadcastToGroup(
-    group_name,
-    channels,
-    event,
-    payload,
-  ))
+  process.send(
+    groups.subject,
+    BroadcastToGroup(group_name, channels, event, payload),
+  )
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────

@@ -81,13 +81,7 @@ pub fn pubsub_broadcast_from_excludes_sender_test() {
   pubsub.subscribe(ps, "room:lobby")
 
   // Broadcast from self - should NOT receive it
-  pubsub.broadcast_from(
-    ps,
-    process.self(),
-    "room:lobby",
-    "typing",
-    json.null(),
-  )
+  pubsub.broadcast_from(ps, process.self(), "room:lobby", "typing", json.null())
 
   // Should time out since we excluded ourselves
   let selector =

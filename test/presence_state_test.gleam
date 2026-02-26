@@ -23,9 +23,15 @@ pub fn new_creates_empty_state_test() {
 pub fn join_makes_user_online_test() {
   let s = state.new("node1")
   let s =
-    state.join(s, "pid1", "room:lobby", "user:alice", json.object([
-      #("status", json.string("online")),
-    ]))
+    state.join(
+      s,
+      "pid1",
+      "room:lobby",
+      "user:alice",
+      json.object([
+        #("status", json.string("online")),
+      ]),
+    )
 
   let entries = state.get_by_topic(s, "room:lobby")
   list.length(entries) |> should.equal(1)
@@ -131,9 +137,15 @@ pub fn merge_add_wins_over_concurrent_remove_test() {
   // A has alice, B learns about alice
   let a = state.new("node_a")
   let a =
-    state.join(a, "pid1", "room:lobby", "alice", json.object([
-      #("v", json.int(1)),
-    ]))
+    state.join(
+      a,
+      "pid1",
+      "room:lobby",
+      "alice",
+      json.object([
+        #("v", json.int(1)),
+      ]),
+    )
 
   let b = state.new("node_b")
   let #(b, _) = state.merge(b, a)
@@ -141,9 +153,15 @@ pub fn merge_add_wins_over_concurrent_remove_test() {
   // Concurrently: A removes alice, B re-adds alice
   let a = state.leave(a, "pid1", "room:lobby", "alice")
   let b =
-    state.join(b, "pid1", "room:lobby", "alice", json.object([
-      #("v", json.int(2)),
-    ]))
+    state.join(
+      b,
+      "pid1",
+      "room:lobby",
+      "alice",
+      json.object([
+        #("v", json.int(2)),
+      ]),
+    )
 
   // When A merges B, alice should be present (add wins)
   let #(merged, _) = state.merge(a, b)
@@ -259,9 +277,9 @@ pub fn phoenix_full_merge_lifecycle_test() {
   }
 
   // After full sync both nodes agree
-  state.online_list(a) |> list.length |> should.equal(
-    state.online_list(b) |> list.length,
-  )
+  state.online_list(a)
+  |> list.length
+  |> should.equal(state.online_list(b) |> list.length)
 }
 
 /// Phoenix test: metadata update via leave+join (leave_join pattern)
@@ -270,9 +288,15 @@ pub fn phoenix_update_via_leave_join_test() {
   let b = state.new("node_b")
 
   let b =
-    state.join(b, "pid_carol", "lobby", "carol", json.object([
-      #("status", json.string("online")),
-    ]))
+    state.join(
+      b,
+      "pid_carol",
+      "lobby",
+      "carol",
+      json.object([
+        #("status", json.string("online")),
+      ]),
+    )
 
   // Sync A with B
   let #(a, _) = state.merge(a, b)
@@ -280,9 +304,15 @@ pub fn phoenix_update_via_leave_join_test() {
   // B updates carol by leaving then rejoining with new meta
   let b = state.leave(b, "pid_carol", "lobby", "carol")
   let b =
-    state.join(b, "pid_carol", "lobby", "carol", json.object([
-      #("status", json.string("away")),
-    ]))
+    state.join(
+      b,
+      "pid_carol",
+      "lobby",
+      "carol",
+      json.object([
+        #("status", json.string("away")),
+      ]),
+    )
 
   // Merge into A — should see a leave and a join for carol
   let #(_a, diff) = state.merge(a, b)
@@ -543,17 +573,35 @@ pub fn phoenix_get_by_key_test() {
   state.get_by_key(s, "topic", "key1") |> should.equal([])
 
   let s =
-    state.join(s, "pid1", "topic", "key1", json.object([
-      #("device", json.string("browser")),
-    ]))
+    state.join(
+      s,
+      "pid1",
+      "topic",
+      "key1",
+      json.object([
+        #("device", json.string("browser")),
+      ]),
+    )
   let s =
-    state.join(s, "pid2", "topic", "key1", json.object([
-      #("device", json.string("ios")),
-    ]))
+    state.join(
+      s,
+      "pid2",
+      "topic",
+      "key1",
+      json.object([
+        #("device", json.string("ios")),
+      ]),
+    )
   let s =
-    state.join(s, "pid2", "topic", "key2", json.object([
-      #("device", json.string("ios")),
-    ]))
+    state.join(
+      s,
+      "pid2",
+      "topic",
+      "key2",
+      json.object([
+        #("device", json.string("ios")),
+      ]),
+    )
 
   // Two entries for key1
   state.get_by_key(s, "topic", "key1") |> list.length |> should.equal(2)
@@ -629,13 +677,25 @@ pub fn merge_with_empty_state_test() {
 pub fn get_by_key_multiple_pids_test() {
   let a = state.new("node_a")
   let a =
-    state.join(a, "pid1", "room:lobby", "user:alice", json.object([
-      #("device", json.string("desktop")),
-    ]))
+    state.join(
+      a,
+      "pid1",
+      "room:lobby",
+      "user:alice",
+      json.object([
+        #("device", json.string("desktop")),
+      ]),
+    )
   let a =
-    state.join(a, "pid2", "room:lobby", "user:alice", json.object([
-      #("device", json.string("mobile")),
-    ]))
+    state.join(
+      a,
+      "pid2",
+      "room:lobby",
+      "user:alice",
+      json.object([
+        #("device", json.string("mobile")),
+      ]),
+    )
 
   let results = state.get_by_key(a, "room:lobby", "user:alice")
   list.length(results) |> should.equal(2)
