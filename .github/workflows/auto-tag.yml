@@ -10,3 +10,4 @@ jobs:
     uses: tylerbutler/actions/.github/workflows/auto-tag.yml@c697a813534c6364a835de8e2ed2c4e0c3638bbe # ratchet:tylerbutler/actions/.github/workflows/auto-tag.yml@main
     with:
       create-release: true
+    secrets: inherit
