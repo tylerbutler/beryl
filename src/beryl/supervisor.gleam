@@ -30,7 +30,7 @@ import beryl/coordinator
 import beryl/group
 import beryl/internal
 import beryl/presence
-import birch/logger
+import birch/logger as log
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -91,7 +91,7 @@ pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError)
 fn start_supervised(
   config: SupervisedConfig,
 ) -> Result(SupervisedChannels, StartError) {
-  let log = internal.logger("beryl.supervisor")
+  let logger = internal.logger("beryl.supervisor")
 
   // Create names for each subsystem up front. The supervisor starts children
   // via callbacks, so we use named actors to retrieve subjects afterward.
@@ -162,8 +162,8 @@ fn start_supervised(
   // Start the supervisor — this starts all children
   case static_supervisor.start(builder) {
     Error(err) -> {
-      log
-      |> logger.error("Supervisor failed to start", [])
+      logger
+      |> log.error("Supervisor failed to start", [])
       Error(SupervisorStartFailed(err))
     }
     Ok(started) -> {
@@ -175,8 +175,8 @@ fn start_supervised(
         True -> "true"
         False -> "false"
       }
-      log
-      |> logger.info("Supervisor started", [
+      logger
+      |> log.info("Supervisor started", [
         #("presence", presence_enabled),
         #("groups", groups_enabled),
       ])
@@ -219,8 +219,7 @@ fn start_supervised(
 /// processes (coordinator, presence, groups) in reverse start order. After
 /// this call the `SupervisedChannels` handle should no longer be used.
 pub fn stop(supervised: SupervisedChannels) -> Nil {
-  let log = internal.logger("beryl.supervisor")
-  log |> logger.info("Supervisor stopping", [])
+  internal.logger("beryl.supervisor") |> log.info("Supervisor stopping", [])
   stop_supervisor(supervised.supervisor_pid)
 }
 

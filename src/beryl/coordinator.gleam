@@ -11,7 +11,7 @@ import beryl/channel.{type StopReason}
 import beryl/internal
 import beryl/topic.{type TopicPattern}
 import beryl/wire
-import birch/logger
+import birch/logger as log
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
@@ -326,8 +326,8 @@ fn handle_socket_connected(
       last_heartbeat: monotonic_time_ms(),
     )
 
-  let log = internal.logger("beryl.coordinator")
-  log |> logger.info("Socket connected", [#("socket_id", socket_id)])
+  let logger = internal.logger("beryl.coordinator")
+  logger |> log.info("Socket connected", [#("socket_id", socket_id)])
   let new_sockets = dict.insert(state.sockets, socket_id, socket_info)
   actor.continue(State(..state, sockets: new_sockets))
 }
@@ -336,8 +336,8 @@ fn handle_socket_disconnected(
   state: State,
   socket_id: String,
 ) -> actor.Next(State, Message) {
-  let log = internal.logger("beryl.coordinator")
-  log |> logger.info("Socket disconnected", [#("socket_id", socket_id)])
+  let logger = internal.logger("beryl.coordinator")
+  logger |> log.info("Socket disconnected", [#("socket_id", socket_id)])
   actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
@@ -569,10 +569,10 @@ fn handle_check_heartbeats(state: State) -> actor.Next(State, Message) {
       }
     })
 
-  let log = internal.logger("beryl.coordinator")
+  let logger = internal.logger("beryl.coordinator")
   list.each(stale_socket_ids, fn(socket_id) {
-    log
-    |> logger.warn("Evicting socket due to heartbeat timeout", [
+    logger
+    |> log.warn("Evicting socket due to heartbeat timeout", [
       #("socket_id", socket_id),
       #("timeout_ms", int.to_string(timeout_ms)),
     ])
@@ -748,9 +748,9 @@ pub fn route_message(
 ) -> Nil {
   case wire.decode_message(raw_text) {
     Error(_) -> {
-      let log = internal.logger("beryl.coordinator")
-      log
-      |> logger.warn("Failed to decode wire protocol message", [
+      let logger = internal.logger("beryl.coordinator")
+      logger
+      |> log.warn("Failed to decode wire protocol message", [
         #("socket_id", socket_id),
       ])
       Nil

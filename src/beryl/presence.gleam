@@ -25,7 +25,7 @@ import beryl/internal
 import beryl/presence/state.{type Diff, type State}
 import beryl/presence/state_json
 import beryl/pubsub.{type PubSub}
-import birch/logger
+import birch/logger as log
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode as gdecode
@@ -150,9 +150,9 @@ fn build_presence(
       Some(ps) -> {
         // Subscribe to the well-known sync topic for replication
         pubsub.subscribe(ps, sync_topic)
-        let log = internal.logger("beryl.presence")
-        log
-        |> logger.debug("Subscribed to PubSub sync topic", [
+        let logger = internal.logger("beryl.presence")
+        logger
+        |> log.debug("Subscribed to PubSub sync topic", [
           #("topic", sync_topic),
           #("replica", config.replica),
         ])
@@ -266,12 +266,12 @@ fn handle_message(
   actor_state: ActorState,
   message: Message,
 ) -> actor.Next(ActorState, Message) {
-  let log = internal.logger("beryl.presence")
+  let logger = internal.logger("beryl.presence")
   case message {
     Track(topic, key, pid, meta, reply) -> {
       let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
-      log
-      |> logger.debug("Presence tracked", [
+      logger
+      |> log.debug("Presence tracked", [
         #("topic", topic),
         #("key", key),
         #("pid", pid),
@@ -282,8 +282,8 @@ fn handle_message(
 
     Untrack(topic, key, pid, reply) -> {
       let new_crdt = state.leave(actor_state.crdt, pid, topic, key)
-      log
-      |> logger.debug("Presence untracked", [
+      logger
+      |> log.debug("Presence untracked", [
         #("topic", topic),
         #("key", key),
         #("pid", pid),
@@ -384,9 +384,9 @@ fn handle_sync_payload(
 ) -> actor.Next(ActorState, Message) {
   case parse_sync_envelope(payload_str) {
     Error(reason) -> {
-      let log = internal.logger("beryl.presence")
-      log
-      |> logger.warn("Failed to decode presence sync message", [
+      let logger = internal.logger("beryl.presence")
+      logger
+      |> log.warn("Failed to decode presence sync message", [
         #("reason", reason),
         #("payload_length", int.to_string(string.length(payload_str))),
       ])
