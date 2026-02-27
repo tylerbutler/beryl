@@ -395,6 +395,40 @@ fn erase_channel_types(
         }
       }
     },
+    handle_binary: fn(data: BitArray, ctx: coordinator.SocketContext) {
+      let typed_socket = create_socket_with_assigns(ctx)
+
+      case
+        typed_channel.handle_binary(data, unsafe_coerce_socket(typed_socket))
+      {
+        channel.NoReply(new_socket) -> {
+          let erased_assigns =
+            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
+          coordinator.NoReplyErased(assigns: erased_assigns)
+        }
+        channel.Reply(reply_event, reply_payload, new_socket) -> {
+          let erased_assigns =
+            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
+          coordinator.ReplyErased(
+            event: reply_event,
+            payload: reply_payload,
+            assigns: erased_assigns,
+          )
+        }
+        channel.Push(push_event, push_payload, new_socket) -> {
+          let erased_assigns =
+            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
+          coordinator.PushErased(
+            event: push_event,
+            payload: push_payload,
+            assigns: erased_assigns,
+          )
+        }
+        channel.Stop(reason) -> {
+          coordinator.StopErased(reason: reason)
+        }
+      }
+    },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
       let typed_socket = create_socket_with_assigns(ctx)
       // Unsafe coerce socket to expected type
@@ -411,7 +445,10 @@ fn create_socket_from_context(ctx: coordinator.SocketContext) -> Socket(Nil) {
         ctx.send(text)
         |> result_to_transport_result()
       },
-      send_binary: fn(_) { Error(socket.SendFailed("Binary not supported")) },
+      send_binary: fn(data) {
+        ctx.send_binary(data)
+        |> result_to_transport_result()
+      },
       close: fn() { Ok(Nil) },
     )
 
@@ -426,7 +463,10 @@ fn create_socket_with_assigns(ctx: coordinator.SocketContext) -> Socket(Dynamic)
         ctx.send(text)
         |> result_to_transport_result()
       },
-      send_binary: fn(_) { Error(socket.SendFailed("Binary not supported")) },
+      send_binary: fn(data) {
+        ctx.send_binary(data)
+        |> result_to_transport_result()
+      },
       close: fn() { Ok(Nil) },
     )
 

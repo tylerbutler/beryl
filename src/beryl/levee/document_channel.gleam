@@ -132,6 +132,9 @@ pub fn new() -> ChannelHandler {
     pattern: topic.parse_pattern("document:*"),
     join: join,
     handle_in: handle_in,
+    handle_binary: fn(_data, ctx) {
+      coordinator.NoReplyErased(assigns: ctx.assigns)
+    },
     terminate: terminate,
   )
 }

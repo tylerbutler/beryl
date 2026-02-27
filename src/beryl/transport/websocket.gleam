@@ -107,11 +107,17 @@ fn on_init(
     |> result.replace_error(Nil)
   }
 
+  let send_binary_fn = fn(data: BitArray) -> Result(Nil, Nil) {
+    websocket.send_binary(connection, data)
+    |> result.replace(Nil)
+    |> result.replace_error(Nil)
+  }
+
   // Register with coordinator (in wisp transport, self() is the handler)
   let handler_pid = get_self()
   process.send(
     coordinator,
-    coordinator.SocketConnected(socket_id, send_fn, handler_pid),
+    coordinator.SocketConnected(socket_id, send_fn, send_binary_fn, handler_pid),
   )
 
   let state = ConnectionState(socket_id: socket_id, coordinator: coordinator)
@@ -131,7 +137,10 @@ fn on_message(
       coordinator.route_message(state.coordinator, state.socket_id, text)
       websocket.Continue(state)
     }
-    websocket.Binary(_) -> websocket.Continue(state)
+    websocket.Binary(data) -> {
+      coordinator.route_binary(state.coordinator, state.socket_id, data)
+      websocket.Continue(state)
+    }
     websocket.Closed | websocket.Shutdown -> websocket.Stop
     websocket.Custom(_) -> websocket.Continue(state)
   }

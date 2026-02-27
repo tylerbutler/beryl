@@ -34,7 +34,12 @@ fn connect_mock_socket(
   }
   process.send(
     coord,
-    coordinator.SocketConnected(socket_id, send_fn, dynamic.nil()),
+    coordinator.SocketConnected(
+      socket_id,
+      send_fn,
+      fn(_) { Ok(Nil) },
+      dynamic.nil(),
+    ),
   )
   // Small sleep to let the coordinator process the message
   process.sleep(10)
@@ -263,6 +268,9 @@ fn register_handler_with_terminate(
         coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
       },
       handle_in: fn(_event, _payload, ctx) {
+        coordinator.NoReplyErased(assigns: ctx.assigns)
+      },
+      handle_binary: fn(_data, ctx) {
         coordinator.NoReplyErased(assigns: ctx.assigns)
       },
       terminate: fn(reason, _ctx) { process.send(terminate_subject, reason) },

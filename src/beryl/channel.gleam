@@ -70,10 +70,14 @@ pub type Channel(assigns, info) {
     /// Return JoinOk to accept the connection (with optional reply payload),
     /// or JoinError to reject it.
     join: fn(String, Json, Socket(assigns)) -> JoinResult(assigns),
-    /// Called when a client sends a message to this channel
+    /// Called when a client sends a text message to this channel
     ///
     /// The event string identifies the message type (e.g., "new_message", "typing").
     handle_in: fn(String, Json, Socket(assigns)) -> HandleResult(assigns),
+    /// Called when a client sends a binary frame to this channel
+    ///
+    /// Binary frames bypass the Phoenix wire protocol and are passed as raw BitArray.
+    handle_binary: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
     /// Called when this socket receives a message from another process
     ///
     /// Use this for server-initiated pushes, background job results, etc.
@@ -94,6 +98,7 @@ pub fn new(
   Channel(
     join: join,
     handle_in: fn(_, _, socket) { NoReply(socket) },
+    handle_binary: fn(_, socket) { NoReply(socket) },
     handle_info: fn(_, socket) { NoReply(socket) },
     terminate: fn(_, _) { Nil },
   )
@@ -105,6 +110,14 @@ pub fn with_handle_in(
   handler: fn(String, Json, Socket(assigns)) -> HandleResult(assigns),
 ) -> Channel(assigns, info) {
   Channel(..channel, handle_in: handler)
+}
+
+/// Add a binary message handler
+pub fn with_handle_binary(
+  channel: Channel(assigns, info),
+  handler: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
+) -> Channel(assigns, info) {
+  Channel(..channel, handle_binary: handler)
 }
 
 /// Add an info message handler (for server-to-socket messages)

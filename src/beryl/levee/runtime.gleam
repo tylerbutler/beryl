@@ -39,7 +39,12 @@ pub fn notify_connected(
 ) -> Nil {
   process.send(
     channels.coordinator,
-    coordinator.SocketConnected(socket_id, send_fn, handler_pid),
+    coordinator.SocketConnected(
+      socket_id,
+      send_fn,
+      fn(_) { Ok(Nil) },
+      handler_pid,
+    ),
   )
 }
 
