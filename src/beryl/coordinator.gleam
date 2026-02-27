@@ -227,7 +227,9 @@ pub fn start_named(
 }
 
 fn validate_config(config: CoordinatorConfig) -> Result(Nil, StartError) {
-  case config.heartbeat_check_interval_ms > 0 && config.heartbeat_timeout_ms <= 0 {
+  case
+    config.heartbeat_check_interval_ms > 0 && config.heartbeat_timeout_ms <= 0
+  {
     True -> Error(InvalidHeartbeatTimeout)
     False -> Ok(Nil)
   }
