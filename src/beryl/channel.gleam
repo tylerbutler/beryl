@@ -10,7 +10,7 @@
 ////   RoomAssigns(user_id: String, room_id: String)
 //// }
 ////
-//// pub fn new() -> Channel(RoomAssigns, Nil) {
+//// pub fn new() -> Channel(RoomAssigns) {
 ////   channel.new(join)
 ////   |> channel.with_handle_in(handle_in)
 ////   |> channel.with_terminate(terminate)
@@ -62,8 +62,7 @@ pub type StopReason {
 ///
 /// Type parameters:
 /// - `assigns`: Socket state type for this channel
-/// - `info`: Type of messages from other processes (via handle_info)
-pub type Channel(assigns, info) {
+pub type Channel(assigns) {
   Channel(
     /// Called when a client attempts to join a topic
     ///
@@ -78,10 +77,6 @@ pub type Channel(assigns, info) {
     ///
     /// Binary frames bypass the Phoenix wire protocol and are passed as raw BitArray.
     handle_binary: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
-    /// Called when this socket receives a message from another process
-    ///
-    /// Use this for server-initiated pushes, background job results, etc.
-    handle_info: fn(info, Socket(assigns)) -> HandleResult(assigns),
     /// Called when the client leaves or disconnects
     ///
     /// Use for cleanup (presence, database updates, etc.)
@@ -94,45 +89,36 @@ pub type Channel(assigns, info) {
 /// Other handlers can be added using the `with_*` functions.
 pub fn new(
   join: fn(String, Json, Socket(assigns)) -> JoinResult(assigns),
-) -> Channel(assigns, info) {
+) -> Channel(assigns) {
   Channel(
     join: join,
     handle_in: fn(_, _, socket) { NoReply(socket) },
     handle_binary: fn(_, socket) { NoReply(socket) },
-    handle_info: fn(_, socket) { NoReply(socket) },
     terminate: fn(_, _) { Nil },
   )
 }
 
 /// Add an incoming message handler
 pub fn with_handle_in(
-  channel: Channel(assigns, info),
+  channel: Channel(assigns),
   handler: fn(String, Json, Socket(assigns)) -> HandleResult(assigns),
-) -> Channel(assigns, info) {
+) -> Channel(assigns) {
   Channel(..channel, handle_in: handler)
 }
 
 /// Add a binary message handler
 pub fn with_handle_binary(
-  channel: Channel(assigns, info),
+  channel: Channel(assigns),
   handler: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
-) -> Channel(assigns, info) {
+) -> Channel(assigns) {
   Channel(..channel, handle_binary: handler)
-}
-
-/// Add an info message handler (for server-to-socket messages)
-pub fn with_handle_info(
-  channel: Channel(assigns, info),
-  handler: fn(info, Socket(assigns)) -> HandleResult(assigns),
-) -> Channel(assigns, info) {
-  Channel(..channel, handle_info: handler)
 }
 
 /// Add a terminate handler for cleanup
 pub fn with_terminate(
-  channel: Channel(assigns, info),
+  channel: Channel(assigns),
   handler: fn(StopReason, Socket(assigns)) -> Nil,
-) -> Channel(assigns, info) {
+) -> Channel(assigns) {
   Channel(..channel, terminate: handler)
 }
 
