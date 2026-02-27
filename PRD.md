@@ -241,15 +241,14 @@ Optional integration module for Fluid Framework document collaboration via Elixi
 | Groups | **Complete** | Named topic collections with broadcast |
 | Wisp transport | **Complete** | WebSocket upgrade + lifecycle management |
 | Levee integration | **Complete** | Document channel + Elixir runtime bridge |
-| Binary transport | **Not started** | Text/JSON only currently |
-| Rate limiting | **Not started** | No implementation |
+| Binary transport | **Complete** | Raw BitArray frames, opt-in via `with_handle_binary` |
+| Rate limiting | **Complete** | Token bucket per socket/channel/join; configurable rate+burst |
 | Presence persistence | **Not started** | In-memory only |
 
 ## Future Considerations
 
 - **Presence replication via PubSub**: The `BroadcastTick` message in the presence actor is a placeholder. Full implementation would periodically extract deltas and broadcast via PubSub for cross-node convergence.
 - **Transport plugins**: Additional adapters beyond Wisp (e.g. Mist, raw TCP).
-- **Binary message support**: Support for binary WebSocket frames alongside JSON text frames.
 - **Channel authentication middleware**: Composable auth hooks that run before `join` callbacks.
 - **Telemetry/metrics integration**: Structured event emission for connection counts, message rates, presence changes.
 - **Long-polling fallback**: For environments where WebSockets are unavailable.
