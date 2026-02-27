@@ -270,6 +270,20 @@ pub fn positive_timeout_with_checking_enabled_is_ok_test() {
   |> should.be_ok
 }
 
+pub fn start_named_validates_heartbeat_timeout_test() {
+  let config =
+    coordinator.CoordinatorConfig(
+      heartbeat_check_interval_ms: 50,
+      heartbeat_timeout_ms: 0,
+      message_limiter: None,
+      join_limiter: None,
+      channel_limiter: None,
+    )
+  coordinator.start_named(config, process.new_name("test-coordinator"))
+  |> should.be_error
+  |> should.equal(coordinator.InvalidHeartbeatTimeout)
+}
+
 /// Helper: register a channel handler that sends terminate reason to a subject
 fn register_handler_with_terminate(
   coord: process.Subject(coordinator.Message),
