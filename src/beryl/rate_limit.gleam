@@ -153,7 +153,7 @@ fn handle_registry_msg(
               actor.continue(RegistryState(..state, buckets: new_buckets))
             }
             Error(_) -> {
-              process.send(reply, Ok(Nil))
+              process.send(reply, Error(Nil))
               actor.continue(state)
             }
           }

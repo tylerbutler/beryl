@@ -796,3 +796,89 @@ pub fn phoenix_clouds_empty_after_merge_test() {
   })
   |> should.be_true
 }
+
+/// After merge produces non-empty clouds for local replica,
+/// next join must get a clock higher than any cloud entry
+pub fn next_clock_accounts_for_cloud_values_test() {
+  // Node A: join at clock 1, then clock 2
+  let a = state.new("node_a")
+  let a = state.join(a, "p1", "lobby", "alice", json.object([]))
+  let a = state.join(a, "p2", "lobby", "bob", json.object([]))
+  // a.context["node_a"] == 2
+
+  // Node B: join at clock 1, then clock 2, then clock 3
+  let b = state.new("node_b")
+  let b = state.join(b, "p3", "lobby", "carol", json.object([]))
+  let b = state.join(b, "p4", "lobby", "dave", json.object([]))
+  let b = state.join(b, "p5", "lobby", "eve", json.object([]))
+  // b.context["node_b"] == 3
+
+  // Merge B into A -- A now knows about node_b clocks 1..3
+  let #(_a, _) = state.merge(a, b)
+
+  // Now construct a scenario with interleaved clocks that leave clouds.
+  // Create a second state for node_a with only clock 1 (simulating partial info)
+  let a2 = state.new("node_a")
+  let _a2 = state.join(a2, "p6", "lobby", "frank", json.object([]))
+  // a2.context["node_a"] == 1
+
+  // Create a third state for node_a with clock 3 only
+  // We do this by building state that has node_a at clock 3 via three joins
+  let a3 = state.new("node_a")
+  let a3 = state.join(a3, "p7", "lobby", "g1", json.object([]))
+  let a3 = state.join(a3, "p8", "lobby", "g2", json.object([]))
+  let a3 = state.join(a3, "p9", "lobby", "g3", json.object([]))
+  // a3.context["node_a"] == 3, remove entries for clocks 1 and 2
+  let a3 = state.leave(a3, "p7", "lobby", "g1")
+  let _a3 = state.leave(a3, "p8", "lobby", "g2")
+  // a3 still has context["node_a"] == 3 but only tag(node_a, 3) in values
+
+  // Merge a3 into a2: a2 has context["node_a"]==1, a3 has context["node_a"]==3
+  // After merge, context["node_a"] == max(1,3) == 3
+  // The cloud for node_a should be empty since context covers 1..3
+  // But let us construct a trickier scenario: partial overlap via clouds.
+
+  // Better approach: directly test that after merging states that produce
+  // non-empty clouds for the local replica, the next join skips past them.
+
+  // Node X joins at clocks 1, 2, 3
+  let x = state.new("node_x")
+  let x = state.join(x, "px1", "lobby", "x1", json.object([]))
+  let x = state.join(x, "px2", "lobby", "x2", json.object([]))
+  let _x = state.join(x, "px3", "lobby", "x3", json.object([]))
+  // x.context["node_x"] == 3
+
+  // Node Y is also "node_x" but only has clock 1 and clock 3 (gap at 2)
+  // We simulate this by constructing a State with a cloud entry
+  let y =
+    state.State(
+      replica: "node_x",
+      context: dict.from_list([#("node_x", 1)]),
+      clouds: dict.from_list([#("node_x", set.from_list([3]))]),
+      values: dict.new(),
+      replicas: dict.from_list([#("node_x", state.Up)]),
+    )
+
+  // Merge y into a fresh node_x state that has context == 0
+  let fresh = state.new("node_x")
+  let #(merged, _) = state.merge(fresh, y)
+
+  // After merge, merged should have context["node_x"] >= 1 and cloud may have {3}
+  // The next join should produce a clock > 3 (i.e., at least 4)
+  let after_join =
+    state.join(merged, "pnew", "lobby", "new_entry", json.object([]))
+
+  // Verify the new entry got a clock > 3
+  let new_clocks = state.clocks(after_join)
+  case dict.get(new_clocks, "node_x") {
+    Ok(clock) -> {
+      // Clock must be at least 4 to avoid collision with cloud value 3
+      let assert True = clock >= 4
+      Nil
+    }
+    Error(_) -> should.fail()
+  }
+
+  // Also verify the entry is actually present
+  state.get_by_topic(after_join, "lobby") |> list.length |> should.equal(1)
+}
