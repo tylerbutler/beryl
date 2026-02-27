@@ -235,13 +235,14 @@ Optional integration module for Fluid Framework document collaboration via Elixi
 | Channel system | **Complete** | Typed handlers, pattern matching, full lifecycle |
 | Wire protocol | **Complete** | Phoenix-compatible JSON format |
 | PubSub | **Complete** | pg-backed, local + distributed broadcast |
-| Presence CRDT | **Complete** | Pure state module, fully tested |
-| Presence actor | **Partial** | Actor wraps CRDT; replication broadcast is stubbed |
+| Presence CRDT | **Complete** | Pure state module, property-based tested |
+| Presence actor | **Complete** | Actor wraps CRDT; periodic delta replication via PubSub |
+| Supervisor | **Complete** | Rest-for-one strategy, child_spec, validation |
 | Groups | **Complete** | Named topic collections with broadcast |
 | Wisp transport | **Complete** | WebSocket upgrade + lifecycle management |
 | Levee integration | **Complete** | Document channel + Elixir runtime bridge |
 | Binary transport | **Not started** | Text/JSON only currently |
-| Rate limiting | **Not started** | Config fields exist but unused |
+| Rate limiting | **Not started** | No implementation |
 | Presence persistence | **Not started** | In-memory only |
 
 ## Future Considerations

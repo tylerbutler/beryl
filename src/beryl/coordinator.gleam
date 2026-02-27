@@ -30,6 +30,7 @@ pub type ChannelHandler {
     pattern: TopicPattern,
     join: fn(String, Dynamic, SocketContext) -> JoinResultErased,
     handle_in: fn(String, Dynamic, SocketContext) -> HandleResultErased,
+    handle_binary: fn(BitArray, SocketContext) -> HandleResultErased,
     terminate: fn(StopReason, SocketContext) -> Nil,
   )
 }
@@ -41,8 +42,10 @@ pub type SocketContext {
     topic: String,
     /// Current assigns for this socket/topic (type-erased)
     assigns: Dynamic,
-    /// Function to send messages to this socket
+    /// Function to send text messages to this socket
     send: fn(String) -> Result(Nil, Nil),
+    /// Function to send binary data to this socket
+    send_binary: fn(BitArray) -> Result(Nil, Nil),
     /// PID of the WebSocket handler process (for direct messaging)
     handler_pid: Dynamic,
   )
@@ -117,6 +120,8 @@ pub type SocketInfo {
     id: String,
     /// Function to send text to this socket's WebSocket
     send: fn(String) -> Result(Nil, Nil),
+    /// Function to send binary to this socket's WebSocket
+    send_binary: fn(BitArray) -> Result(Nil, Nil),
     /// PID of the WebSocket handler process (for direct messaging)
     handler_pid: Dynamic,
     /// Topics this socket is subscribed to
@@ -140,6 +145,7 @@ pub type Message {
   SocketConnected(
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
+    send_binary: fn(BitArray) -> Result(Nil, Nil),
     handler_pid: Dynamic,
   )
   SocketDisconnected(socket_id: String)
@@ -159,6 +165,7 @@ pub type Message {
     payload: Dynamic,
     ref: Option(String),
   )
+  HandleBinary(socket_id: String, data: BitArray)
   Heartbeat(socket_id: String, ref: String)
   // Broadcasting
   Broadcast(
@@ -263,8 +270,8 @@ fn handle_message(state: State, message: Message) -> actor.Next(State, Message) 
     RegisterChannel(pattern, handler, reply) ->
       handle_register_channel(state, pattern, handler, reply)
 
-    SocketConnected(socket_id, send, handler_pid) ->
-      handle_socket_connected(state, socket_id, send, handler_pid)
+    SocketConnected(socket_id, send, send_binary, handler_pid) ->
+      handle_socket_connected(state, socket_id, send, send_binary, handler_pid)
 
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
@@ -277,6 +284,8 @@ fn handle_message(state: State, message: Message) -> actor.Next(State, Message) 
 
     HandleIn(socket_id, topic_name, event, payload, ref) ->
       handle_in(state, socket_id, topic_name, event, payload, ref)
+
+    HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
 
     Heartbeat(socket_id, ref) -> handle_heartbeat(state, socket_id, ref)
 
@@ -314,12 +323,14 @@ fn handle_socket_connected(
   state: State,
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
   handler_pid: Dynamic,
 ) -> actor.Next(State, Message) {
   let socket_info =
     SocketInfo(
       id: socket_id,
       send: send,
+      send_binary: send_binary,
       handler_pid: handler_pid,
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
@@ -372,6 +383,7 @@ fn handle_join(
               topic: topic_name,
               assigns: dynamic.nil(),
               send: socket_info.send,
+              send_binary: socket_info.send_binary,
               handler_pid: socket_info.handler_pid,
             )
 
@@ -483,6 +495,7 @@ fn handle_in(
                   topic: topic_name,
                   assigns: assigns,
                   send: socket_info.send,
+                  send_binary: socket_info.send_binary,
                   handler_pid: socket_info.handler_pid,
                 )
 
@@ -532,6 +545,59 @@ fn handle_in(
           }
         }
       }
+    }
+  }
+}
+
+/// Handle incoming binary frames.
+/// Routes to all subscribed topics for the socket.
+fn handle_binary_in(
+  state: State,
+  socket_id: String,
+  data: BitArray,
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> actor.continue(state)
+    Ok(socket_info) -> {
+      let state =
+        set.fold(socket_info.subscribed_topics, state, fn(st, topic_name) {
+          case find_handler(st.handlers, topic_name) {
+            None -> st
+            Some(handler) -> {
+              let assigns =
+                dict.get(socket_info.channel_assigns, topic_name)
+                |> result.unwrap(dynamic.nil())
+
+              let ctx =
+                SocketContext(
+                  socket_id: socket_id,
+                  topic: topic_name,
+                  assigns: assigns,
+                  send: socket_info.send,
+                  send_binary: socket_info.send_binary,
+                  handler_pid: socket_info.handler_pid,
+                )
+
+              case handler.handle_binary(data, ctx) {
+                NoReplyErased(new_assigns) ->
+                  update_assigns(st, socket_id, topic_name, new_assigns)
+                ReplyErased(_event, reply_payload, new_assigns) -> {
+                  let msg = wire.push(topic_name, "binary_reply", reply_payload)
+                  let _ = socket_info.send(msg)
+                  update_assigns(st, socket_id, topic_name, new_assigns)
+                }
+                PushErased(push_event, push_payload, new_assigns) -> {
+                  let msg = wire.push(topic_name, push_event, push_payload)
+                  let _ = socket_info.send(msg)
+                  update_assigns(st, socket_id, topic_name, new_assigns)
+                }
+                StopErased(reason) ->
+                  terminate_channel(st, socket_id, topic_name, reason)
+              }
+            }
+          }
+        })
+      actor.continue(state)
     }
   }
 }
@@ -683,6 +749,7 @@ fn terminate_channel(
                   topic: topic_name,
                   assigns: assigns,
                   send: socket_info.send,
+                  send_binary: socket_info.send_binary,
                   handler_pid: socket_info.handler_pid,
                 )
               handler.terminate(reason, ctx)
@@ -780,4 +847,16 @@ pub fn route_message(
       }
     }
   }
+}
+
+/// Route a binary WebSocket frame to the coordinator.
+///
+/// Binary frames bypass the Phoenix wire protocol and are dispatched
+/// to all subscribed topics for the socket.
+pub fn route_binary(
+  coord: Subject(Message),
+  socket_id: String,
+  data: BitArray,
+) -> Nil {
+  process.send(coord, HandleBinary(socket_id, data))
 }

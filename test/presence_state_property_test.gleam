@@ -151,12 +151,13 @@ pub fn prop_monotonic_clocks_test() {
   let merged_clocks = state.clocks(merged)
 
   // Every clock in A should be <= the corresponding clock in merged
-  dict.each(a_clocks, fn(replica, clock) {
-    case dict.get(merged_clocks, replica) {
-      Ok(merged_clock) -> should.be_true(merged_clock >= clock)
-      Error(_) -> should.fail()
-    }
-  })
+  let _ =
+    dict.each(a_clocks, fn(replica, clock) {
+      case dict.get(merged_clocks, replica) {
+        Ok(merged_clock) -> should.be_true(merged_clock >= clock)
+        Error(_) -> should.fail()
+      }
+    })
 
   // Every clock in B should be <= the corresponding clock in merged
   dict.each(b_clocks, fn(replica, clock) {
@@ -208,7 +209,8 @@ pub fn prop_merge_diff_accuracy_test() {
 
   // All entries reported as joins must be present in the merged state
   let join_ids = crdt_generators.diff_entry_ids(diff.joins)
-  set.each(join_ids, fn(id) { should.be_true(set.contains(after_ids, id)) })
+  let _ =
+    set.each(join_ids, fn(id) { should.be_true(set.contains(after_ids, id)) })
 
   // Entries reported as leaves (and not also as joins) must be absent
   let leave_ids = crdt_generators.diff_entry_ids(diff.leaves)
