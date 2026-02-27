@@ -1,0 +1,3 @@
+kind: Fixed
+body: CRDT next_clock now accounts for cloud values, preventing tag collision after non-contiguous merges.
+time: 2026-02-27T11:52:33.730523-08:00
