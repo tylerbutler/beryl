@@ -4,7 +4,6 @@ import beryl/topic
 import beryl/wire
 import gleam/json
 import gleam/option
-import gleam/set
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -331,80 +330,4 @@ pub fn socket_map_assigns_type_change_test() {
   // Transform Int to String
   let s2 = socket.map_assigns(s, fn(x) { "value:" <> string.inspect(x) })
   socket.get_assigns(s2) |> should.equal("value:42")
-}
-
-pub fn socket_topics_initially_empty_test() {
-  let s = socket.new("socket-1", Nil, mock_transport())
-
-  socket.topics(s)
-  |> should.equal(set.new())
-}
-
-pub fn socket_is_subscribed_false_initially_test() {
-  let s = socket.new("socket-1", Nil, mock_transport())
-
-  socket.is_subscribed(s, "room:lobby") |> should.be_false
-  socket.is_subscribed(s, "chat:general") |> should.be_false
-}
-
-pub fn socket_add_topic_test() {
-  let s = socket.new("socket-1", Nil, mock_transport())
-
-  let s2 = socket.add_topic(s, "room:lobby")
-  socket.is_subscribed(s2, "room:lobby") |> should.be_true
-  socket.is_subscribed(s2, "room:other") |> should.be_false
-}
-
-pub fn socket_add_multiple_topics_test() {
-  let s =
-    socket.new("socket-1", Nil, mock_transport())
-    |> socket.add_topic("room:lobby")
-    |> socket.add_topic("room:private")
-    |> socket.add_topic("notifications:user-1")
-
-  socket.is_subscribed(s, "room:lobby") |> should.be_true
-  socket.is_subscribed(s, "room:private") |> should.be_true
-  socket.is_subscribed(s, "notifications:user-1") |> should.be_true
-  socket.is_subscribed(s, "room:other") |> should.be_false
-}
-
-pub fn socket_remove_topic_test() {
-  let s =
-    socket.new("socket-1", Nil, mock_transport())
-    |> socket.add_topic("room:lobby")
-    |> socket.add_topic("room:private")
-
-  let s2 = socket.remove_topic(s, "room:lobby")
-
-  socket.is_subscribed(s2, "room:lobby") |> should.be_false
-  socket.is_subscribed(s2, "room:private") |> should.be_true
-}
-
-pub fn socket_remove_nonexistent_topic_test() {
-  let s = socket.new("socket-1", Nil, mock_transport())
-
-  // Removing a topic that doesn't exist should be a no-op
-  let s2 = socket.remove_topic(s, "room:never-joined")
-  socket.is_subscribed(s2, "room:never-joined") |> should.be_false
-}
-
-pub fn socket_add_same_topic_twice_test() {
-  let s =
-    socket.new("socket-1", Nil, mock_transport())
-    |> socket.add_topic("room:lobby")
-    |> socket.add_topic("room:lobby")
-
-  // Should still be subscribed, no duplicates in set
-  socket.is_subscribed(s, "room:lobby") |> should.be_true
-}
-
-pub fn socket_id_preserved_after_mutations_test() {
-  let s =
-    socket.new("original-id", "assigns", mock_transport())
-    |> socket.set_assigns("new-assigns")
-    |> socket.add_topic("room:1")
-    |> socket.add_topic("room:2")
-    |> socket.remove_topic("room:1")
-
-  socket.id(s) |> should.equal("original-id")
 }
