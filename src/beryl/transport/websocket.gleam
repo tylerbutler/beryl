@@ -11,7 +11,7 @@ import gleam/bit_array
 import gleam/crypto
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
-import gleam/option.{type Option, None}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import wisp
@@ -30,12 +30,28 @@ pub type TransportConfig {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
     path: String,
+    /// Optional authentication callback invoked before upgrading.
+    /// Return Ok(Nil) to allow the connection, Error(Nil) to reject with 403.
+    /// When None, all connections are allowed (default).
+    on_connect: Option(fn(wisp.Request) -> Result(Nil, Nil)),
   )
 }
 
 /// Create a default transport config
 pub fn default_config(path: String) -> TransportConfig {
-  TransportConfig(path: path)
+  TransportConfig(path: path, on_connect: None)
+}
+
+/// Set an authentication callback on the transport config
+///
+/// The callback receives the HTTP request before the WebSocket upgrade.
+/// Return `Ok(Nil)` to allow the connection or `Error(Nil)` to reject it
+/// with a 403 Forbidden response.
+pub fn with_on_connect(
+  config: TransportConfig,
+  callback: fn(wisp.Request) -> Result(Nil, Nil),
+) -> TransportConfig {
+  TransportConfig(..config, on_connect: Some(callback))
 }
 
 /// State maintained per WebSocket connection
@@ -68,19 +84,33 @@ pub fn upgrade(
   case path == config.path {
     False -> next()
     True -> {
-      // Upgrade to WebSocket
-      wisp.websocket(
-        request,
-        on_init: fn(connection) { on_init(connection, coordinator) },
-        on_message: on_message,
-        on_close: on_close,
-      )
+      // Run on_connect callback if configured
+      case config.on_connect {
+        Some(callback) ->
+          case callback(request) {
+            Ok(Nil) -> do_upgrade(request, coordinator)
+            Error(Nil) -> wisp.response(403)
+          }
+        None -> do_upgrade(request, coordinator)
+      }
     }
   }
 }
 
 /// Alternative: upgrade any request to WebSocket (caller handles path matching)
+///
+/// Note: This function does not invoke the `on_connect` callback from
+/// `TransportConfig`. If you need authentication, either use `upgrade`
+/// with a full config or call your auth check before this function.
 pub fn upgrade_connection(
+  request: wisp.Request,
+  coordinator: Subject(CoordinatorMessage),
+) -> wisp.Response {
+  do_upgrade(request, coordinator)
+}
+
+/// Perform the actual WebSocket upgrade
+fn do_upgrade(
   request: wisp.Request,
   coordinator: Subject(CoordinatorMessage),
 ) -> wisp.Response {
