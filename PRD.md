@@ -243,7 +243,6 @@ Optional integration module for Fluid Framework document collaboration via Elixi
 | Levee integration | **Complete** | Document channel + Elixir runtime bridge |
 | Binary transport | **Complete** | Raw BitArray frames, opt-in via `with_handle_binary` |
 | Rate limiting | **Complete** | Token bucket per socket/channel/join; configurable rate+burst |
-| Presence persistence | **Not started** | In-memory only |
 
 ## Future Considerations
 
