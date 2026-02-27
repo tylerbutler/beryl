@@ -52,6 +52,7 @@
 import beryl/channel.{type Channel}
 import beryl/coordinator
 import beryl/pubsub.{type PubSub}
+import beryl/rate_limit
 import beryl/socket.{type Socket}
 import beryl/topic
 import beryl/wire
@@ -78,6 +79,18 @@ pub type Config {
     max_connections_per_ip: Int,
     /// Optional PubSub for distributed broadcasts across nodes
     pubsub: Option(PubSub),
+    /// Per-socket message rate limit (messages/sec, 0 = unlimited)
+    message_rate: Int,
+    /// Per-socket message burst capacity (0 = defaults to message_rate)
+    message_burst: Int,
+    /// Per-socket join rate limit (joins/sec, 0 = unlimited)
+    join_rate: Int,
+    /// Per-socket join burst capacity (0 = defaults to join_rate)
+    join_burst: Int,
+    /// Per-channel message rate limit (messages/sec per socket+topic, 0 = unlimited)
+    channel_rate: Int,
+    /// Per-channel message burst capacity (0 = defaults to channel_rate)
+    channel_burst: Int,
   )
 }
 
@@ -88,12 +101,45 @@ pub fn default_config() -> Config {
     heartbeat_timeout_ms: 60_000,
     max_connections_per_ip: 0,
     pubsub: None,
+    message_rate: 0,
+    message_burst: 0,
+    join_rate: 0,
+    join_burst: 0,
+    channel_rate: 0,
+    channel_burst: 0,
   )
 }
 
 /// Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(config: Config, ps: PubSub) -> Config {
   Config(..config, pubsub: Some(ps))
+}
+
+/// Configure per-socket message rate limiting
+pub fn with_message_rate(
+  config: Config,
+  per_second rate: Int,
+  burst burst: Int,
+) -> Config {
+  Config(..config, message_rate: rate, message_burst: burst)
+}
+
+/// Configure per-socket join rate limiting
+pub fn with_join_rate(
+  config: Config,
+  per_second rate: Int,
+  burst burst: Int,
+) -> Config {
+  Config(..config, join_rate: rate, join_burst: burst)
+}
+
+/// Configure per-channel message rate limiting
+pub fn with_channel_rate(
+  config: Config,
+  per_second rate: Int,
+  burst burst: Int,
+) -> Config {
+  Config(..config, channel_rate: rate, channel_burst: burst)
 }
 
 /// Channels system handle
@@ -144,16 +190,39 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
       // promptly. The client heartbeat_interval_ms is informational only
       // (used by clients to know how often to send heartbeats).
       let check_interval = config.heartbeat_timeout_ms / 2
+
+      // Start rate limiters for configured limits
+      let message_limiter =
+        start_limiter(config.message_rate, config.message_burst)
+      let join_limiter = start_limiter(config.join_rate, config.join_burst)
+      let channel_limiter =
+        start_limiter(config.channel_rate, config.channel_burst)
+
       let coord_config =
         coordinator.CoordinatorConfig(
           heartbeat_check_interval_ms: check_interval,
           heartbeat_timeout_ms: config.heartbeat_timeout_ms,
+          message_limiter: message_limiter,
+          join_limiter: join_limiter,
+          channel_limiter: channel_limiter,
         )
 
       case coordinator.start_with_config(coord_config) {
         Error(_) -> Error(CoordinatorStartFailed)
         Ok(coord) ->
           Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
+      }
+    }
+  }
+}
+
+fn start_limiter(rate: Int, burst: Int) -> Option(rate_limit.RateLimiter) {
+  case rate > 0 {
+    False -> None
+    True -> {
+      case rate_limit.start(rate_limit.config(per_second: rate, burst: burst)) {
+        Ok(limiter) -> Some(limiter)
+        Error(_) -> None
       }
     }
   }

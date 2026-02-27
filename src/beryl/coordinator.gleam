@@ -9,6 +9,7 @@
 
 import beryl/channel.{type StopReason}
 import beryl/internal
+import beryl/rate_limit.{type RateLimiter}
 import beryl/topic.{type TopicPattern}
 import beryl/wire
 import birch/logger as log
@@ -87,6 +88,12 @@ pub type CoordinatorConfig {
     heartbeat_check_interval_ms: Int,
     /// Disconnect sockets that haven't sent a heartbeat within this duration
     heartbeat_timeout_ms: Int,
+    /// Per-socket message rate limiter (None = unlimited)
+    message_limiter: Option(RateLimiter),
+    /// Per-socket join rate limiter (None = unlimited)
+    join_limiter: Option(RateLimiter),
+    /// Per-channel message rate limiter (None = unlimited)
+    channel_limiter: Option(RateLimiter),
   )
 }
 
@@ -95,6 +102,9 @@ pub fn default_config() -> CoordinatorConfig {
   CoordinatorConfig(
     heartbeat_check_interval_ms: 0,
     heartbeat_timeout_ms: 60_000,
+    message_limiter: None,
+    join_limiter: None,
+    channel_limiter: None,
   )
 }
 
@@ -349,10 +359,66 @@ fn handle_socket_disconnected(
 ) -> actor.Next(State, Message) {
   let logger = internal.logger("beryl.coordinator")
   logger |> log.info("Socket disconnected", [#("socket_id", socket_id)])
+  // Clean up rate limiters for this socket
+  let prefix = socket_id <> ":"
+  rate_limit.remove_by_prefix_optional(
+    state.config.message_limiter,
+    "msg:" <> socket_id,
+  )
+  rate_limit.remove_by_prefix_optional(
+    state.config.join_limiter,
+    "join:" <> socket_id,
+  )
+  rate_limit.remove_by_prefix_optional(
+    state.config.channel_limiter,
+    "ch:" <> prefix,
+  )
   actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
 fn handle_join(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  payload: Dynamic,
+  join_ref: Option(String),
+  ref: String,
+) -> actor.Next(State, Message) {
+  // Check join rate limit
+  case
+    rate_limit.check_optional(state.config.join_limiter, "join:" <> socket_id)
+  {
+    Error(_) -> {
+      let logger = internal.logger("beryl.coordinator")
+      logger
+      |> log.warn("Join rate limited", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      // Send error reply to client
+      case dict.get(state.sockets, socket_id) {
+        Ok(socket_info) -> {
+          let reply =
+            wire.reply_json(
+              join_ref,
+              ref,
+              topic_name,
+              wire.StatusError,
+              json.object([#("reason", json.string("rate_limited"))]),
+            )
+          let _ = socket_info.send(reply)
+          Nil
+        }
+        Error(_) -> Nil
+      }
+      actor.continue(state)
+    }
+    Ok(_) ->
+      handle_join_inner(state, socket_id, topic_name, payload, join_ref, ref)
+  }
+}
+
+fn handle_join_inner(
   state: State,
   socket_id: String,
   topic_name: String,
@@ -476,6 +542,51 @@ fn handle_in(
   payload: Dynamic,
   ref: Option(String),
 ) -> actor.Next(State, Message) {
+  // Check per-socket message rate limit
+  case
+    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
+  {
+    Error(_) -> {
+      let logger = internal.logger("beryl.coordinator")
+      logger
+      |> log.warn("Message rate limited", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      actor.continue(state)
+    }
+    Ok(_) -> {
+      // Check per-channel message rate limit
+      case
+        rate_limit.check_optional(
+          state.config.channel_limiter,
+          "ch:" <> socket_id <> ":" <> topic_name,
+        )
+      {
+        Error(_) -> {
+          let logger = internal.logger("beryl.coordinator")
+          logger
+          |> log.warn("Channel rate limited", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+          ])
+          actor.continue(state)
+        }
+        Ok(_) ->
+          handle_in_inner(state, socket_id, topic_name, event, payload, ref)
+      }
+    }
+  }
+}
+
+fn handle_in_inner(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  event: String,
+  payload: Dynamic,
+  ref: Option(String),
+) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(_) -> actor.continue(state)
     Ok(socket_info) -> {
@@ -552,6 +663,27 @@ fn handle_in(
 /// Handle incoming binary frames.
 /// Routes to all subscribed topics for the socket.
 fn handle_binary_in(
+  state: State,
+  socket_id: String,
+  data: BitArray,
+) -> actor.Next(State, Message) {
+  // Check per-socket message rate limit (binary shares with text)
+  case
+    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
+  {
+    Error(_) -> {
+      let logger = internal.logger("beryl.coordinator")
+      logger
+      |> log.warn("Binary message rate limited", [
+        #("socket_id", socket_id),
+      ])
+      actor.continue(state)
+    }
+    Ok(_) -> handle_binary_in_inner(state, socket_id, data)
+  }
+}
+
+fn handle_binary_in_inner(
   state: State,
   socket_id: String,
   data: BitArray,
