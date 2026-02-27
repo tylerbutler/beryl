@@ -252,7 +252,7 @@ fn start_limiter(rate: Int, burst: Int) -> Option(rate_limit.RateLimiter) {
 pub fn register(
   channels: Channels,
   pattern: String,
-  handler: Channel(assigns, info),
+  handler: Channel(assigns),
 ) -> Result(Nil, RegisterError) {
   // Convert typed Channel to type-erased ChannelHandler
   let erased_handler = erase_channel_types(pattern, handler)
@@ -381,7 +381,7 @@ pub fn extract_topic_id(
 /// channel types in the same registry.
 fn erase_channel_types(
   pattern_str: String,
-  typed_channel: Channel(assigns, info),
+  typed_channel: Channel(assigns),
 ) -> ChannelHandler {
   let pattern = topic.parse_pattern(pattern_str)
 
