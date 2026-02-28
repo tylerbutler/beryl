@@ -49,10 +49,7 @@ src/
     ├── topic.gleam              # Topic pattern matching
     ├── transport/
     │   └── websocket.gleam      # Wisp WebSocket transport integration
-    ├── wire.gleam               # Wire protocol (JSON encode/decode)
-    └── levee/                   # Levee-specific integration
-        ├── document_channel.gleam  # Fluid Framework document channel
-        └── runtime.gleam           # Elixir runtime bridge
+    └── wire.gleam               # Wire protocol (JSON encode/decode)
 test/
 ├── beryl_test.gleam
 ├── group_test.gleam
