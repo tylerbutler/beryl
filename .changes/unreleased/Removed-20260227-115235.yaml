@@ -1,5 +1,0 @@
-kind: Removed
-body: |-
-    Remove socket.topics() and socket.is_subscribed() from public API.
-    These functions always returned empty/false because the coordinator tracks subscriptions internally.
-time: 2026-02-27T11:52:35.934942-08:00
