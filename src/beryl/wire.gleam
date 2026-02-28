@@ -81,15 +81,8 @@ pub fn decode_message(json_string: String) -> Result(WireMessage, DecodeError) {
 ///
 /// Output format: [join_ref, ref, topic, event, payload]
 pub fn encode(msg: WireMessage) -> String {
-  let join_ref_json = case msg.join_ref {
-    None -> json.null()
-    Some(s) -> json.string(s)
-  }
-
-  let ref_json = case msg.ref {
-    None -> json.null()
-    Some(s) -> json.string(s)
-  }
+  let join_ref_json = option_to_json(msg.join_ref)
+  let ref_json = option_to_json(msg.ref)
 
   // Convert Dynamic payload to Json
   let payload_json = dynamic_to_json(msg.payload)

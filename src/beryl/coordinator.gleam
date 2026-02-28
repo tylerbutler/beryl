@@ -201,11 +201,9 @@ pub fn start() -> Result(Subject(Message), StartError) {
 pub fn start_with_config(
   config: CoordinatorConfig,
 ) -> Result(Subject(Message), StartError) {
-  case
-    config.heartbeat_check_interval_ms > 0 && config.heartbeat_timeout_ms <= 0
-  {
-    True -> Error(InvalidHeartbeatTimeout)
-    False ->
+  case validate_config(config) {
+    Error(e) -> Error(e)
+    Ok(Nil) ->
       build_coordinator(config)
       |> actor.start
       |> result.map(fn(started) { started.data })
@@ -218,15 +216,22 @@ pub fn start_named(
   config: CoordinatorConfig,
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), StartError) {
-  case
-    config.heartbeat_check_interval_ms > 0 && config.heartbeat_timeout_ms <= 0
-  {
-    True -> Error(InvalidHeartbeatTimeout)
-    False ->
+  case validate_config(config) {
+    Error(e) -> Error(e)
+    Ok(Nil) ->
       build_coordinator(config)
       |> actor.named(name)
       |> actor.start
       |> result.map_error(ActorStartFailed)
+  }
+}
+
+fn validate_config(config: CoordinatorConfig) -> Result(Nil, StartError) {
+  case
+    config.heartbeat_check_interval_ms > 0 && config.heartbeat_timeout_ms <= 0
+  {
+    True -> Error(InvalidHeartbeatTimeout)
+    False -> Ok(Nil)
   }
 }
 
