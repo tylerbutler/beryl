@@ -399,10 +399,25 @@ pub fn remove_down_replicas(state: State, replica: Replica) -> State {
 // ── Internal helpers ────────────────────────────────────────────────
 
 fn next_clock(state: State, replica: Replica) -> Clock {
-  case dict.get(state.context, replica) {
-    Ok(c) -> c + 1
-    Error(_) -> 1
+  let ctx_clock = case dict.get(state.context, replica) {
+    Ok(c) -> c
+    Error(_) -> 0
   }
+  let cloud_max = case dict.get(state.clouds, replica) {
+    Ok(cloud) ->
+      set.fold(cloud, 0, fn(acc, c) {
+        case c > acc {
+          True -> c
+          False -> acc
+        }
+      })
+    Error(_) -> 0
+  }
+  let base = case ctx_clock > cloud_max {
+    True -> ctx_clock
+    False -> cloud_max
+  }
+  base + 1
 }
 
 fn is_replica_up(state: State, replica: Replica) -> Bool {

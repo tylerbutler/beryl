@@ -21,7 +21,6 @@
 
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
-import gleam/set.{type Set}
 
 /// Transport abstraction for sending messages
 pub type Transport {
@@ -46,7 +45,6 @@ pub opaque type Socket(assigns) {
   Socket(
     id: String,
     assigns: assigns,
-    topics: Set(String),
     transport: Transport,
     metadata: Dict(String, Dynamic),
   )
@@ -60,13 +58,7 @@ pub fn new(
   assigns: assigns,
   transport: Transport,
 ) -> Socket(assigns) {
-  Socket(
-    id: id,
-    assigns: assigns,
-    topics: set.new(),
-    transport: transport,
-    metadata: dict.new(),
-  )
+  Socket(id: id, assigns: assigns, transport: transport, metadata: dict.new())
 }
 
 /// Get the socket ID
@@ -107,32 +99,9 @@ pub fn map_assigns(socket: Socket(a), f: fn(a) -> b) -> Socket(b) {
   Socket(
     id: socket.id,
     assigns: f(socket.assigns),
-    topics: socket.topics,
     transport: socket.transport,
     metadata: socket.metadata,
   )
-}
-
-/// Get subscribed topics
-pub fn topics(socket: Socket(assigns)) -> Set(String) {
-  socket.topics
-}
-
-/// Check if socket is subscribed to a topic
-pub fn is_subscribed(socket: Socket(assigns), topic: String) -> Bool {
-  set.contains(socket.topics, topic)
-}
-
-/// Add a topic subscription (internal use)
-@internal
-pub fn add_topic(socket: Socket(assigns), topic: String) -> Socket(assigns) {
-  Socket(..socket, topics: set.insert(socket.topics, topic))
-}
-
-/// Remove a topic subscription (internal use)
-@internal
-pub fn remove_topic(socket: Socket(assigns), topic: String) -> Socket(assigns) {
-  Socket(..socket, topics: set.delete(socket.topics, topic))
 }
 
 /// Get the transport for sending messages
