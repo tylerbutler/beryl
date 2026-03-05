@@ -113,11 +113,20 @@ fn start_supervised(
   // Server checks at half the timeout interval (same as beryl.start).
   let check_interval = config.channels.heartbeat_timeout_ms / 2
   let message_limiter =
-    start_limiter(config.channels.message_rate, config.channels.message_burst)
+    rate_limit.start_optional(
+      config.channels.message_rate,
+      config.channels.message_burst,
+    )
   let join_limiter =
-    start_limiter(config.channels.join_rate, config.channels.join_burst)
+    rate_limit.start_optional(
+      config.channels.join_rate,
+      config.channels.join_burst,
+    )
   let channel_limiter =
-    start_limiter(config.channels.channel_rate, config.channels.channel_burst)
+    rate_limit.start_optional(
+      config.channels.channel_rate,
+      config.channels.channel_burst,
+    )
   let coord_config =
     coordinator.CoordinatorConfig(
       heartbeat_check_interval_ms: check_interval,
@@ -275,15 +284,3 @@ pub fn child_spec(
 
 @external(erlang, "beryl_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
-
-fn start_limiter(rate: Int, burst: Int) -> Option(rate_limit.RateLimiter) {
-  case rate > 0 {
-    False -> None
-    True -> {
-      case rate_limit.start(rate_limit.config(per_second: rate, burst: burst)) {
-        Ok(limiter) -> Some(limiter)
-        Error(_) -> None
-      }
-    }
-  }
-}

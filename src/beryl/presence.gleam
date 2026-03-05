@@ -407,30 +407,15 @@ fn handle_sync_payload(
 pub fn parse_sync_envelope(
   payload_str: String,
 ) -> Result(#(String, State), String) {
-  let version_decoder = {
+  let decoder = {
     use v <- gdecode.field("v", gdecode.int)
-    gdecode.success(v)
+    use sender <- gdecode.field("sender", gdecode.string)
+    use remote_state <- gdecode.field("state", state_json.state_decoder())
+    gdecode.success(#(v, sender, remote_state))
   }
-  case json.parse(payload_str, version_decoder) {
-    Error(_) -> Error("JSON parse or field extraction failed")
-    Ok(v) ->
-      case v {
-        1 -> {
-          let decoder = {
-            use _v <- gdecode.field("v", gdecode.int)
-            use sender <- gdecode.field("sender", gdecode.string)
-            use remote_state <- gdecode.field(
-              "state",
-              state_json.state_decoder(),
-            )
-            gdecode.success(#(sender, remote_state))
-          }
-          case json.parse(payload_str, decoder) {
-            Ok(result) -> Ok(result)
-            Error(_) -> Error("State decode failed")
-          }
-        }
-        _ -> Error("Unknown envelope version: " <> int.to_string(v))
-      }
+  case json.parse(payload_str, decoder) {
+    Error(_) -> Error("JSON parse or decode failed")
+    Ok(#(1, sender, remote_state)) -> Ok(#(sender, remote_state))
+    Ok(#(v, _, _)) -> Error("Unknown envelope version: " <> int.to_string(v))
   }
 }

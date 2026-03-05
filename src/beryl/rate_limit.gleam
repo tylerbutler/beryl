@@ -6,6 +6,7 @@
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -191,13 +192,7 @@ fn split_by_prefix(
 }
 
 fn shut_down_buckets(buckets: List(#(String, Subject(BucketMsg)))) -> Nil {
-  case buckets {
-    [] -> Nil
-    [#(_, bucket), ..rest] -> {
-      process.send(bucket, BucketShutdown)
-      shut_down_buckets(rest)
-    }
-  }
+  list.each(buckets, fn(kv) { process.send(kv.1, BucketShutdown) })
 }
 
 @external(erlang, "beryl_ffi", "string_starts_with")
@@ -247,6 +242,19 @@ pub fn remove_by_prefix_optional(
   case limiter {
     None -> Nil
     Some(l) -> remove_by_prefix(l, prefix)
+  }
+}
+
+/// Start an optional rate limiter. Returns None if rate is 0 (unlimited).
+pub fn start_optional(rate: Int, burst: Int) -> Option(RateLimiter) {
+  case rate > 0 {
+    False -> None
+    True -> {
+      case start(config(per_second: rate, burst: burst)) {
+        Ok(limiter) -> Some(limiter)
+        Error(_) -> None
+      }
+    }
   }
 }
 

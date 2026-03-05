@@ -88,13 +88,10 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 /// This starts a pg scope. If the scope is already started (e.g., by another
 /// node or previous call), this is a no-op.
 pub fn start(config: PubSubConfig) -> Result(PubSub, StartError) {
-  let result = ffi_start_pg_scope(config.scope)
   // pg:start returns {ok, Pid} or {error, {already_started, Pid}}
   // Both are success cases for us
-  case dynamic.classify(result) {
-    "Tuple" -> Ok(PubSub(scope: config.scope))
-    _ -> Ok(PubSub(scope: config.scope))
-  }
+  let _ = ffi_start_pg_scope(config.scope)
+  Ok(PubSub(scope: config.scope))
 }
 
 /// Subscribe the current process to a topic
