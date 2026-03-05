@@ -100,10 +100,7 @@ pub fn join(
 pub fn leave(state: State, pid: String, topic: String, key: String) -> State {
   let new_values =
     dict.filter(state.values, fn(_, entry) {
-      case entry.pid == pid && entry.topic == topic && entry.key == key {
-        True -> False
-        False -> True
-      }
+      !{ entry.pid == pid && entry.topic == topic && entry.key == key }
     })
   State(..state, values: new_values)
 }

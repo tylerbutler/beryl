@@ -364,8 +364,6 @@ fn handle_socket_disconnected(
 ) -> actor.Next(State, Message) {
   let logger = internal.logger("beryl.coordinator")
   logger |> log.info("Socket disconnected", [#("socket_id", socket_id)])
-  // Clean up rate limiters for this socket
-  let prefix = socket_id <> ":"
   rate_limit.remove_by_prefix_optional(
     state.config.message_limiter,
     "msg:" <> socket_id,
@@ -376,7 +374,7 @@ fn handle_socket_disconnected(
   )
   rate_limit.remove_by_prefix_optional(
     state.config.channel_limiter,
-    "ch:" <> prefix,
+    "ch:" <> socket_id <> ":",
   )
   actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }

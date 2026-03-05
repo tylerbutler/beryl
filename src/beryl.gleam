@@ -191,12 +191,12 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
       // (used by clients to know how often to send heartbeats).
       let check_interval = config.heartbeat_timeout_ms / 2
 
-      // Start rate limiters for configured limits
       let message_limiter =
-        start_limiter(config.message_rate, config.message_burst)
-      let join_limiter = start_limiter(config.join_rate, config.join_burst)
+        rate_limit.start_optional(config.message_rate, config.message_burst)
+      let join_limiter =
+        rate_limit.start_optional(config.join_rate, config.join_burst)
       let channel_limiter =
-        start_limiter(config.channel_rate, config.channel_burst)
+        rate_limit.start_optional(config.channel_rate, config.channel_burst)
 
       let coord_config =
         coordinator.CoordinatorConfig(
@@ -211,18 +211,6 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
         Error(_) -> Error(CoordinatorStartFailed)
         Ok(coord) ->
           Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
-      }
-    }
-  }
-}
-
-fn start_limiter(rate: Int, burst: Int) -> Option(rate_limit.RateLimiter) {
-  case rate > 0 {
-    False -> None
-    True -> {
-      case rate_limit.start(rate_limit.config(per_second: rate, burst: burst)) {
-        Ok(limiter) -> Some(limiter)
-        Error(_) -> None
       }
     }
   }
@@ -422,81 +410,21 @@ fn erase_channel_types(
       payload: Dynamic,
       ctx: coordinator.SocketContext,
     ) {
-      // Reconstruct typed socket with current assigns
       let typed_socket = create_socket_with_assigns(ctx)
-
-      // Decode Dynamic payload to Json for the handler
       let json_payload = wire.dynamic_to_json(payload)
 
-      // Call the typed handle_in handler (unsafe coerce socket to expected type)
-      case
-        typed_channel.handle_in(
-          event,
-          json_payload,
-          unsafe_coerce_socket(typed_socket),
-        )
-      {
-        channel.NoReply(new_socket) -> {
-          let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
-          coordinator.NoReplyErased(assigns: erased_assigns)
-        }
-        channel.Reply(reply_event, reply_payload, new_socket) -> {
-          let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
-          coordinator.ReplyErased(
-            event: reply_event,
-            payload: reply_payload,
-            assigns: erased_assigns,
-          )
-        }
-        channel.Push(push_event, push_payload, new_socket) -> {
-          let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
-          coordinator.PushErased(
-            event: push_event,
-            payload: push_payload,
-            assigns: erased_assigns,
-          )
-        }
-        channel.Stop(reason) -> {
-          coordinator.StopErased(reason: reason)
-        }
-      }
+      typed_channel.handle_in(
+        event,
+        json_payload,
+        unsafe_coerce_socket(typed_socket),
+      )
+      |> erase_handle_result
     },
     handle_binary: fn(data: BitArray, ctx: coordinator.SocketContext) {
       let typed_socket = create_socket_with_assigns(ctx)
 
-      case
-        typed_channel.handle_binary(data, unsafe_coerce_socket(typed_socket))
-      {
-        channel.NoReply(new_socket) -> {
-          let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
-          coordinator.NoReplyErased(assigns: erased_assigns)
-        }
-        channel.Reply(reply_event, reply_payload, new_socket) -> {
-          let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
-          coordinator.ReplyErased(
-            event: reply_event,
-            payload: reply_payload,
-            assigns: erased_assigns,
-          )
-        }
-        channel.Push(push_event, push_payload, new_socket) -> {
-          let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
-          coordinator.PushErased(
-            event: push_event,
-            payload: push_payload,
-            assigns: erased_assigns,
-          )
-        }
-        channel.Stop(reason) -> {
-          coordinator.StopErased(reason: reason)
-        }
-      }
+      typed_channel.handle_binary(data, unsafe_coerce_socket(typed_socket))
+      |> erase_handle_result
     },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
       let typed_socket = create_socket_with_assigns(ctx)
@@ -506,40 +434,26 @@ fn erase_channel_types(
   )
 }
 
-/// Create a socket from context with Nil assigns (for join)
-fn create_socket_from_context(ctx: coordinator.SocketContext) -> Socket(Nil) {
-  let transport =
-    socket.Transport(
-      send_text: fn(text) {
-        ctx.send(text)
-        |> result_to_transport_result()
-      },
-      send_binary: fn(data) {
-        ctx.send_binary(data)
-        |> result_to_transport_result()
-      },
-      close: fn() { Ok(Nil) },
-    )
-
-  socket.new(ctx.socket_id, Nil, transport)
+fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
+  socket.Transport(
+    send_text: fn(text) {
+      ctx.send(text)
+      |> result_to_transport_result()
+    },
+    send_binary: fn(data) {
+      ctx.send_binary(data)
+      |> result_to_transport_result()
+    },
+    close: fn() { Ok(Nil) },
+  )
 }
 
-/// Create a socket from context with existing assigns (type-erased)
-fn create_socket_with_assigns(ctx: coordinator.SocketContext) -> Socket(Dynamic) {
-  let transport =
-    socket.Transport(
-      send_text: fn(text) {
-        ctx.send(text)
-        |> result_to_transport_result()
-      },
-      send_binary: fn(data) {
-        ctx.send_binary(data)
-        |> result_to_transport_result()
-      },
-      close: fn() { Ok(Nil) },
-    )
+fn create_socket_from_context(ctx: coordinator.SocketContext) -> Socket(Nil) {
+  socket.new(ctx.socket_id, Nil, transport_from_context(ctx))
+}
 
-  socket.new(ctx.socket_id, ctx.assigns, transport)
+fn create_socket_with_assigns(ctx: coordinator.SocketContext) -> Socket(Dynamic) {
+  socket.new(ctx.socket_id, ctx.assigns, transport_from_context(ctx))
 }
 
 fn result_to_transport_result(
@@ -548,6 +462,31 @@ fn result_to_transport_result(
   case result {
     Ok(_) -> Ok(Nil)
     Error(_) -> Error(socket.SendFailed("Send failed"))
+  }
+}
+
+/// Convert a typed HandleResult to the type-erased coordinator variant
+fn erase_handle_result(
+  result: channel.HandleResult(assigns),
+) -> coordinator.HandleResultErased {
+  case result {
+    channel.NoReply(new_socket) ->
+      coordinator.NoReplyErased(
+        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+      )
+    channel.Reply(event, payload, new_socket) ->
+      coordinator.ReplyErased(
+        event: event,
+        payload: payload,
+        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+      )
+    channel.Push(event, payload, new_socket) ->
+      coordinator.PushErased(
+        event: event,
+        payload: payload,
+        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+      )
+    channel.Stop(reason) -> coordinator.StopErased(reason: reason)
   }
 }
 
