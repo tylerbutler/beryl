@@ -33,7 +33,7 @@ Gleam's ecosystem lacks a dedicated real-time communication library. Developers 
 ## Target Users
 
 - **Gleam developers** building real-time web applications on BEAM.
-- **Elixir teams** adopting Gleam incrementally who need real-time features callable from both languages (via the Levee integration layer).
+- **Elixir teams** adopting Gleam incrementally who need real-time features callable from both languages.
 - **Library authors** building higher-level real-time abstractions (e.g. collaborative editing, live dashboards) on BEAM.
 
 ## Architecture
@@ -180,13 +180,6 @@ JSON array format compatible with Phoenix Channels:
 
 The adapter manages the full WebSocket lifecycle: connection, message routing to the coordinator, heartbeat handling, and graceful disconnection.
 
-### FR-7: Levee Integration (Fluid Framework)
-
-Optional integration module for Fluid Framework document collaboration via Elixir:
-
-- **`document_channel`** — Pre-built channel handler for the `document:*` topic pattern implementing the Fluid Framework relay protocol (connect_document, submitOp, submitSignal, requestOps, noop).
-- **`runtime`** — Elixir bridge functions for starting the channel system and forwarding connection lifecycle events from an Elixir host application.
-
 ## Non-Functional Requirements
 
 ### NFR-1: Performance
@@ -240,7 +233,6 @@ Optional integration module for Fluid Framework document collaboration via Elixi
 | Supervisor | **Complete** | Rest-for-one strategy, child_spec, validation |
 | Groups | **Complete** | Named topic collections with broadcast |
 | Wisp transport | **Complete** | WebSocket upgrade + lifecycle management |
-| Levee integration | **Complete** | Document channel + Elixir runtime bridge |
 | Binary transport | **Complete** | Raw BitArray frames, opt-in via `with_handle_binary` |
 | Rate limiting | **Complete** | Token bucket per socket/channel/join; configurable rate+burst |
 
