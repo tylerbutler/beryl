@@ -1,0 +1,37 @@
+{
+	"name": "beryl-docs",
+	"version": "0.0.1",
+	"private": true,
+	"bugs": "https://github.com/tylerbutler/beryl/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/tylerbutler/beryl.git",
+		"directory": "website"
+	},
+	"license": "MIT",
+	"author": "Tyler Butler <tyler@tylerbutler.com>",
+	"type": "module",
+	"scripts": {
+		"astro": "astro",
+		"build:site": "astro build",
+		"check:astro": "astro check",
+		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
+		"dev": "astro dev",
+		"preview": "astro preview",
+		"start": "astro dev"
+	},
+	"dependencies": {
+		"@astrojs/check": "^0.9.6",
+		"@astrojs/starlight": "^0.37.0",
+		"@fontsource/metropolis": "^5.2.5",
+		"astro": "^5.17.1",
+		"sharp": "^0.34.5",
+		"starlight-links-validator": "^0.19.1",
+		"starlight-llms-txt": "^0.7.0",
+		"typescript": "~5.9.3"
+	},
+	"devDependencies": {
+		"@fec/remark-a11y-emoji": "^4.0.2",
+		"rimraf": "^6.0.0"
+	}
+}

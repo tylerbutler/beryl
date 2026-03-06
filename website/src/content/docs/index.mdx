@@ -1,0 +1,51 @@
+---
+title: beryl
+description: Type-safe real-time channels and presence for Gleam.
+template: splash
+hero:
+  tagline: Type-safe real-time channels and presence for Gleam, targeting the Erlang (BEAM) runtime.
+  image:
+    file: /src/assets/beryl.webp
+  actions:
+    - text: Get started
+      link: /quick-start/
+      icon: right-arrow
+      variant: primary
+    - text: What is beryl?
+      link: /introduction/
+      variant: secondary
+---
+
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Pre-1.0 Software">
+beryl is not yet 1.0. The API is unstable, features may be removed in minor releases, and quality should not be considered production-ready. We welcome usage and feedback in the meantime!
+</Aside>
+
+## Features
+
+<style lang="css">{`
+  // Add a gradient to the heading on the splash page.
+  #_top {
+    background: linear-gradient(90deg, var(--sl-color-gray-2), var(--sl-color-accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+`}
+</style>
+
+<CardGrid>
+	<Card title="Real-time channels" icon="rocket">
+		Define channels with typed callbacks and pattern-matched topics. Join, leave, and broadcast with compile-time guarantees on socket state.
+	</Card>
+	<Card title="Presence tracking" icon="approve-check-circle">
+		Track who's online with a CRDT-backed presence system. Add-wins observed-remove set resolves conflicts automatically across distributed nodes.
+	</Card>
+	<Card title="PubSub on OTP" icon="setting">
+		Distributed publish/subscribe powered by Erlang's `pg` process groups. Works across cluster nodes with zero configuration.
+	</Card>
+	<Card title="Phoenix-compatible wire protocol" icon="external">
+		JSON array wire format compatible with Phoenix client libraries. First-class WebSocket support via Wisp integration.
+	</Card>
+</CardGrid>
