@@ -25,7 +25,7 @@ export default defineConfig({
 				src: "./src/assets/beryl-min.webp",
 				alt: "beryl logo",
 			},
-			// favicon: "./assets/beryl-min.webp",
+			favicon: "./src/assets/beryl.png",
 			customCss: [
 				"@fontsource/metropolis/400.css",
 				"@fontsource/metropolis/600.css",
