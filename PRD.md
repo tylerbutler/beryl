@@ -235,6 +235,7 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 | Wisp transport | **Complete** | WebSocket upgrade + lifecycle management |
 | Binary transport | **Complete** | Raw BitArray frames, opt-in via `with_handle_binary` |
 | Rate limiting | **Complete** | Token bucket per socket/channel/join; configurable rate+burst |
+| Mist transport | **Complete** | Direct Mist WebSocket adapter, no Wisp dependency |
 
 ## Future Considerations
 
