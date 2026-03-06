@@ -1,5 +1,0 @@
-kind: Removed
-body: |-
-    Remove unused info type parameter from Channel.
-    Channel type simplified from Channel(assigns, info) to Channel(assigns). The handle_info callback and with_handle_info builder are removed as they were never wired through the coordinator.
-time: 2026-02-27T11:52:38.08152-08:00
