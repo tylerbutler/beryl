@@ -67,6 +67,28 @@ changelog-preview:
 changelog:
     changie merge
 
+# === WEBSITE ===
+
+# Start website dev server
+site-dev:
+    cd website && pnpm dev
+
+# Build website
+site-build:
+    cd website && pnpm build:site
+
+# Install website dependencies
+site-deps:
+    cd website && pnpm install
+
+# Check website (Astro check)
+site-check:
+    cd website && pnpm check:astro
+
+# Clean website build artifacts
+site-clean:
+    cd website && pnpm clean
+
 # === MAINTENANCE ===
 
 # Remove build artifacts

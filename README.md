@@ -2,6 +2,16 @@
 
 Type-safe real-time channels and presence for Gleam on the BEAM.
 
+> [!IMPORTANT]
+> beryl is not yet 1.0. This means:
+>
+> - the API is unstable
+> - features and APIs may be removed in minor releases
+> - quality should not be considered production-ready
+>
+> We welcome usage and feedback in
+> the meantime! We will do our best to minimize breaking changes regardless.
+
 ## Features
 
 - **Channels** - Topic-based pub/sub with pattern matching (e.g., `room:*`)
