@@ -70,6 +70,11 @@ jobs:
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@c697a813534c6364a835de8e2ed2c4e0c3638bbe # ratchet:tylerbutler/actions/setup-gleam@v1
 
+      - name: Install rebar3
+        run: |
+          wget -q https://s3.amazonaws.com/rebar3/rebar3 -O /usr/local/bin/rebar3
+          chmod +x /usr/local/bin/rebar3
+
       - name: Install Playwright browsers
         run: pnpm -C examples exec playwright install --with-deps chromium
 
