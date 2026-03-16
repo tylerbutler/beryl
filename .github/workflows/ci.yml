@@ -64,6 +64,8 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # ratchet:pnpm/action-setup@v4
+        with:
+          package_json_file: examples/package.json
 
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@c697a813534c6364a835de8e2ed2c4e0c3638bbe # ratchet:tylerbutler/actions/setup-gleam@v1
