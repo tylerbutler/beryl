@@ -14,11 +14,11 @@ default:
 # === DEPENDENCIES ===
 
 # Download project dependencies (including examples)
-# To also install example npm deps, run: just examples-deps
 deps:
     gleam deps download
     cd examples/cursors && gleam deps download
     cd examples/chatrooms && gleam deps download
+    pnpm -C examples install
 
 # === BUILD ===
 
