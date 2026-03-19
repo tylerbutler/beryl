@@ -14,7 +14,11 @@ importers:
 
   chatrooms: {}
 
-  cursors: {}
+  cursors:
+    devDependencies:
+      '@playwright/test':
+        specifier: ^1.58.2
+        version: 1.58.2
 
 packages:
 
