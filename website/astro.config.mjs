@@ -22,7 +22,7 @@ export default defineConfig({
 				"Type-safe real-time channels and presence for Gleam.",
 			lastUpdated: true,
 			logo: {
-				src: "./src/assets/beryl-min.webp",
+				src: "./src/assets/beryl.webp",
 				alt: "beryl logo",
 			},
 			favicon: "./src/assets/beryl.png",
