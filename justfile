@@ -13,9 +13,12 @@ default:
 
 # === DEPENDENCIES ===
 
-# Download project dependencies
+# Download project dependencies (including examples)
 deps:
     gleam deps download
+    cd examples/cursors && gleam deps download
+    cd examples/chatrooms && gleam deps download
+    pnpm -C examples install
 
 # === BUILD ===
 
@@ -71,23 +74,43 @@ changelog:
 
 # Start website dev server
 site-dev:
-    cd website && pnpm dev
+    pnpm -C website dev
 
 # Build website
 site-build:
-    cd website && pnpm build:site
+    pnpm -C website build:site
 
 # Install website dependencies
 site-deps:
-    cd website && pnpm install
+    pnpm -C website install
 
 # Check website (Astro check)
 site-check:
-    cd website && pnpm check:astro
+    pnpm -C website check:astro
 
 # Clean website build artifacts
 site-clean:
-    cd website && pnpm clean
+    pnpm -C website clean
+
+# === EXAMPLES ===
+
+# List all examples
+examples-list:
+    @ls examples/
+
+# Build all examples
+examples-build:
+    cd examples/cursors && gleam build
+    cd examples/chatrooms && gleam build
+
+# Install example test dependencies (Playwright)
+examples-deps:
+    pnpm -C examples install
+
+# Run example Playwright tests
+examples-test: examples-build
+    pnpm -C examples/cursors test
+    pnpm -C examples/chatrooms test
 
 # === MAINTENANCE ===
 
@@ -97,8 +120,8 @@ clean:
 
 # === CI ===
 
-# Run all CI checks (format, check, test, build)
-ci: format-check check test build-strict
+# Run all CI checks (format, check, test, build, examples)
+ci: format-check check test build-strict examples-test
 
 # Alias for PR checks
 alias pr := ci

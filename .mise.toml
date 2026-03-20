@@ -3,6 +3,7 @@ changie = "latest"
 erlang = "27"
 gleam = "latest"
 just = "latest"
+rebar = "latest"
 
 [env]
 LC_ALL = "en_US.UTF-8"
