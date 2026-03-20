@@ -1,0 +1,9 @@
+{
+  "name": "chatrooms",
+  "private": true,
+  "description": "Multi-room chat demo built with beryl.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  }
+}

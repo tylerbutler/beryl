@@ -1,0 +1,149 @@
+/* Collaborative Cursors — minimal styling */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f8f9fa;
+  overflow: hidden;
+  height: 100vh;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+/* --- Canvas (cursor area) --- */
+
+#canvas {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  cursor: none;
+  background:
+    linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* --- Welcome message --- */
+
+#welcome {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #666;
+  pointer-events: none;
+  user-select: none;
+}
+
+#welcome h1 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  color: #333;
+}
+
+#welcome p {
+  font-size: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+#welcome .hint {
+  font-size: 0.85rem;
+  color: #999;
+}
+
+#welcome .powered-by {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  color: #aaa;
+  pointer-events: auto;
+}
+
+#welcome .powered-by a {
+  color: #7c5cbf;
+  text-decoration: none;
+}
+
+#welcome .powered-by a:hover {
+  text-decoration: underline;
+}
+
+/* --- Remote cursors --- */
+
+.cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  transition: transform 0.05s linear;
+  z-index: 100;
+}
+
+.cursor-label {
+  display: inline-block;
+  margin-left: 16px;
+  margin-top: -4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  color: #fff;
+  white-space: nowrap;
+  font-weight: 500;
+  text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+}
+
+.cursor-local {
+  transition: none;
+}
+
+/* --- Sidebar --- */
+
+#sidebar {
+  width: 200px;
+  background: #fff;
+  border-left: 1px solid #e0e0e0;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+#sidebar h2 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #999;
+  margin-bottom: 0.75rem;
+}
+
+#user-list {
+  list-style: none;
+}
+
+#user-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.user-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

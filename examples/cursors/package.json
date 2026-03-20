@@ -1,0 +1,17 @@
+{
+  "name": "cursors",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A real-time collaborative cursors demo built with [beryl](https://github.com/tylerbutler/beryl) — move your mouse and see other users' cursors in real-time.",
+  "main": "index.js",
+  "scripts": {
+    "test": "npx playwright test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

@@ -1,0 +1,5 @@
+[build]
+  command = "pnpm build:site"
+  publish = "dist"
+  # Only trigger builds when files in website/ change.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- website/"

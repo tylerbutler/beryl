@@ -1,0 +1,6 @@
+dist/
+.astro/
+.netlify/
+node_modules/
+*.tsbuildinfo
+*.done.build.log
