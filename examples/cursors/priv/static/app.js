@@ -62,6 +62,47 @@
 
   // --- Send own cursor position ---
   const canvas = document.getElementById("canvas");
+  let localCursorEl = null;
+
+  function ensureLocalCursor() {
+    if (localCursorEl) return;
+    const color = myColor || "#999";
+    const name = myUsername || "You";
+    localCursorEl = document.createElement("div");
+    localCursorEl.className = "cursor cursor-local";
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "20");
+    svg.setAttribute("height", "20");
+    svg.setAttribute("viewBox", "0 0 20 20");
+    svg.setAttribute("fill", "none");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M3 3L10 17L12 10L19 8L3 3Z");
+    path.setAttribute("fill", color);
+    path.setAttribute("stroke", "#333");
+    path.setAttribute("stroke-width", "1");
+    svg.appendChild(path);
+
+    const label = document.createElement("span");
+    label.className = "cursor-label";
+    label.style.background = color;
+    label.textContent = name;
+
+    localCursorEl.appendChild(svg);
+    localCursorEl.appendChild(label);
+    localCursorEl.style.transform = "translate(-100px, -100px)";
+    canvas.appendChild(localCursorEl);
+  }
+
+  canvas.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Update local cursor immediately (no throttle for responsiveness)
+    ensureLocalCursor();
+    localCursorEl.style.transform = `translate(${x}px, ${y}px)`;
+  });
 
   canvas.addEventListener("mousemove", throttle((e) => {
     const rect = canvas.getBoundingClientRect();
@@ -69,6 +110,12 @@
     const y = e.clientY - rect.top;
     channel.push("cursor_move", { x: x, y: y });
   }, THROTTLE_MS));
+
+  canvas.addEventListener("mouseleave", () => {
+    if (localCursorEl) {
+      localCursorEl.style.transform = "translate(-100px, -100px)";
+    }
+  });
 
   // Touch support
   canvas.addEventListener("touchmove", throttle((e) => {

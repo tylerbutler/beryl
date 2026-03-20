@@ -1,6 +1,7 @@
-# beryl
-
-Type-safe real-time channels and presence for Gleam on the BEAM.
+<table><tr>
+<td><img src="website/src/assets/beryl.webp" alt="beryl logo" width="128"></td>
+<td><h1>beryl</h1>Type-safe real-time channels and presence for Gleam on the BEAM.</td>
+</tr></table>
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. This means:
