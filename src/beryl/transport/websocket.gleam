@@ -7,8 +7,7 @@
 //// - Routing messages to/from the coordinator
 
 import beryl/coordinator.{type Message as CoordinatorMessage}
-import gleam/bit_array
-import gleam/crypto
+import beryl/readable_id
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/option.{type Option, None, Some}
@@ -184,8 +183,7 @@ fn on_close(state: ConnectionState) -> Nil {
   )
 }
 
-/// Generate a unique socket ID
+/// Generate a unique, human-readable socket ID (e.g., "bold-otter-42")
 fn generate_socket_id() -> String {
-  crypto.strong_random_bytes(16)
-  |> bit_array.base16_encode()
+  readable_id.generate()
 }
