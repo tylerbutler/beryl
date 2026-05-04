@@ -23,6 +23,7 @@
 //// ```
 
 import beryl/socket.{type Socket}
+import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
 import gleam/option.{type Option}
 
@@ -77,6 +78,8 @@ pub type Channel(assigns) {
     ///
     /// Binary frames bypass the Phoenix wire protocol and are passed as raw BitArray.
     handle_binary: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
+    /// Called when an OTP process sends a server-originated message to this channel
+    handle_info: fn(Dynamic, Socket(assigns)) -> HandleResult(assigns),
     /// Called when the client leaves or disconnects
     ///
     /// Use for cleanup (presence, database updates, etc.)
@@ -94,6 +97,7 @@ pub fn new(
     join: join,
     handle_in: fn(_, _, socket) { NoReply(socket) },
     handle_binary: fn(_, socket) { NoReply(socket) },
+    handle_info: fn(_, socket) { NoReply(socket) },
     terminate: fn(_, _) { Nil },
   )
 }
@@ -112,6 +116,17 @@ pub fn with_handle_binary(
   handler: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
 ) -> Channel(assigns) {
   Channel(..channel, handle_binary: handler)
+}
+
+/// Add a server-originated OTP message handler.
+///
+/// `Reply` results are sent as pushes because server-originated messages do not
+/// have a client message ref to reply to.
+pub fn with_handle_info(
+  channel: Channel(assigns),
+  handler: fn(Dynamic, Socket(assigns)) -> HandleResult(assigns),
+) -> Channel(assigns) {
+  Channel(..channel, handle_info: handler)
 }
 
 /// Add a terminate handler for cleanup

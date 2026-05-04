@@ -1,7 +1,12 @@
 import beryl
+import beryl/channel
+import beryl/coordinator
 import beryl/socket
 import beryl/topic
 import beryl/wire
+import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/json
 import gleam/option
 import gleam/string
@@ -106,6 +111,116 @@ pub fn default_config_test() {
 
   config.heartbeat_timeout_ms
   |> should.equal(60_000)
+}
+
+pub fn send_info_routes_message_to_joined_channel_test() {
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let sent_messages = process.new_subject()
+
+  process.send(
+    channels.coordinator,
+    coordinator.SocketConnected(
+      "socket-info",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+    |> channel.with_handle_info(fn(message, socket) {
+      case decode.run(message, decode.string) {
+        Ok("notify") ->
+          channel.Push(
+            "server_notify",
+            json.object([#("ok", json.bool(True))]),
+            socket,
+          )
+        _ -> channel.NoReply(socket)
+      }
+    })
+
+  beryl.register(channels, "room:*", handler)
+  |> should.equal(Ok(Nil))
+
+  process.send(
+    channels.coordinator,
+    coordinator.Join(
+      "socket-info",
+      "room:lobby",
+      dynamic.nil(),
+      option.None,
+      "join-ref",
+    ),
+  )
+
+  let assert Ok(join_reply) = process.receive(sent_messages, 500)
+  join_reply |> string.contains("phx_reply") |> should.be_true
+
+  beryl.send_info(channels, "socket-info", "room:lobby", "notify")
+
+  let assert Ok(push) = process.receive(sent_messages, 500)
+  push |> string.contains("server_notify") |> should.be_true
+  push |> string.contains("\"ok\":true") |> should.be_true
+}
+
+pub fn send_info_reply_result_pushes_message_to_client_test() {
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let sent_messages = process.new_subject()
+
+  process.send(
+    channels.coordinator,
+    coordinator.SocketConnected(
+      "socket-info-reply",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+    |> channel.with_handle_info(fn(_message, socket) {
+      channel.Reply(
+        "server_reply",
+        json.object([#("ok", json.bool(True))]),
+        socket,
+      )
+    })
+
+  beryl.register(channels, "room:*", handler)
+  |> should.equal(Ok(Nil))
+
+  process.send(
+    channels.coordinator,
+    coordinator.Join(
+      "socket-info-reply",
+      "room:lobby",
+      dynamic.nil(),
+      option.None,
+      "join-ref",
+    ),
+  )
+
+  let assert Ok(join_reply) = process.receive(sent_messages, 500)
+  join_reply |> string.contains("phx_reply") |> should.be_true
+
+  beryl.send_info(channels, "socket-info-reply", "room:lobby", "reply")
+
+  let assert Ok(push) = process.receive(sent_messages, 500)
+  push |> string.contains("server_reply") |> should.be_true
+  push |> string.contains("\"ok\":true") |> should.be_true
 }
 
 // Wire protocol tests

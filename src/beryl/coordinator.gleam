@@ -32,6 +32,7 @@ pub type ChannelHandler {
     join: fn(String, Dynamic, SocketContext) -> JoinResultErased,
     handle_in: fn(String, Dynamic, SocketContext) -> HandleResultErased,
     handle_binary: fn(BitArray, SocketContext) -> HandleResultErased,
+    handle_info: fn(Dynamic, SocketContext) -> HandleResultErased,
     terminate: fn(StopReason, SocketContext) -> Nil,
   )
 }
@@ -176,6 +177,7 @@ pub type Message {
     ref: Option(String),
   )
   HandleBinary(socket_id: String, data: BitArray)
+  HandleInfo(socket_id: String, topic: String, message: Dynamic)
   Heartbeat(socket_id: String, ref: String)
   // Broadcasting
   Broadcast(
@@ -304,6 +306,9 @@ fn handle_message(
       handle_in(state, socket_id, topic_name, event, payload, ref)
 
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
+
+    HandleInfo(socket_id, topic_name, message) ->
+      handle_info(state, socket_id, topic_name, message)
 
     Heartbeat(socket_id, ref) -> handle_heartbeat(state, socket_id, ref)
 
@@ -639,6 +644,81 @@ fn handle_in_inner(
                     }
                     None -> Nil
                   }
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                PushErased(push_event, push_payload, new_assigns) -> {
+                  let msg = wire.push(topic_name, push_event, push_payload)
+                  let _ = socket_info.send(msg)
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                StopErased(reason) -> {
+                  let state =
+                    terminate_channel(state, socket_id, topic_name, reason)
+                  actor.continue(state)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn handle_info(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  message: Dynamic,
+) -> actor.Next(State, Message) {
+  handle_info_inner(state, socket_id, topic_name, message)
+}
+
+fn handle_info_inner(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  message: Dynamic,
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> actor.continue(state)
+    Ok(socket_info) -> {
+      case set.contains(socket_info.subscribed_topics, topic_name) {
+        False -> actor.continue(state)
+        True -> {
+          case find_handler(state.handlers, topic_name) {
+            None -> actor.continue(state)
+            Some(handler) -> {
+              let assigns =
+                dict.get(socket_info.channel_assigns, topic_name)
+                |> result.unwrap(dynamic.nil())
+
+              let ctx =
+                SocketContext(
+                  socket_id: socket_id,
+                  topic: topic_name,
+                  assigns: assigns,
+                  send: socket_info.send,
+                  send_binary: socket_info.send_binary,
+                  handler_pid: socket_info.handler_pid,
+                )
+
+              case handler.handle_info(message, ctx) {
+                NoReplyErased(new_assigns) -> {
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                ReplyErased(reply_event, reply_payload, new_assigns) -> {
+                  let msg = wire.push(topic_name, reply_event, reply_payload)
+                  let _ = socket_info.send(msg)
                   let state =
                     update_assigns(state, socket_id, topic_name, new_assigns)
                   actor.continue(state)
