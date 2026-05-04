@@ -7,7 +7,16 @@ import gleeunit
 import gleeunit/should
 
 @external(erlang, "beryl_ffi", "identity")
-fn coerce_to_pubsub_message(value: dynamic.Dynamic) -> pubsub.Message
+fn unsafe_coerce_to_pubsub_message(value: dynamic.Dynamic) -> pubsub.Message
+
+fn pubsub_message_selector() {
+  process.new_selector()
+  |> process.select_record(
+    atom.create("message"),
+    4,
+    unsafe_coerce_to_pubsub_message,
+  )
+}
 
 pub fn main() {
   gleeunit.main()
@@ -66,13 +75,7 @@ pub fn pubsub_broadcast_delivers_message_test() {
 
   pubsub.broadcast(ps, "room:lobby", "new_msg", json.string("hello"))
 
-  let selector =
-    process.new_selector()
-    |> process.select_record(
-      atom.create("message"),
-      4,
-      coerce_to_pubsub_message,
-    )
+  let selector = pubsub_message_selector()
 
   let assert Ok(message) = process.selector_receive(from: selector, within: 100)
   message.topic |> should.equal("room:lobby")
@@ -93,13 +96,7 @@ pub fn pubsub_broadcast_from_excludes_sender_test() {
   // Broadcast from self - should NOT receive it
   pubsub.broadcast_from(ps, process.self(), "room:lobby", "typing", json.null())
 
-  let selector =
-    process.new_selector()
-    |> process.select_record(
-      atom.create("message"),
-      4,
-      coerce_to_pubsub_message,
-    )
+  let selector = pubsub_message_selector()
 
   // Should time out since we excluded ourselves
   let result = process.selector_receive(from: selector, within: 50)
