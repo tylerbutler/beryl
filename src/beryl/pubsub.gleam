@@ -28,6 +28,8 @@ pub type PubSubFrom {
   System
   /// Broadcast originated from a specific process
   FromPid(Pid)
+  /// Broadcast originated from a process and should exclude a socket ID
+  FromSocket(Pid, String)
 }
 
 /// PubSub configuration
@@ -133,6 +135,32 @@ pub fn broadcast_from(
 ) -> Nil {
   let msg =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
+  let members = ffi_get_members(ps.scope, topic)
+  list.each(members, fn(pid) {
+    case pid == from {
+      True -> Nil
+      False -> ffi_send_to_pid(pid, msg)
+    }
+  })
+}
+
+/// Broadcast a message to all subscribers except a process, preserving a socket
+/// ID that receiving channel coordinators should exclude locally.
+pub fn broadcast_from_socket(
+  ps: PubSub,
+  from: Pid,
+  except_socket_id: String,
+  topic: String,
+  event: String,
+  payload: json.Json,
+) -> Nil {
+  let msg =
+    Message(
+      topic: topic,
+      event: event,
+      payload: payload,
+      from: FromSocket(from, except_socket_id),
+    )
   let members = ffi_get_members(ps.scope, topic)
   list.each(members, fn(pid) {
     case pid == from {

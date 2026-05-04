@@ -207,7 +207,12 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
           channel_limiter: channel_limiter,
         )
 
-      case coordinator.start_with_config(coord_config) {
+      let coordinator_result = case config.pubsub {
+        Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
+        None -> coordinator.start_with_config(coord_config)
+      }
+
+      case coordinator_result {
         Error(_) -> Error(CoordinatorStartFailed)
         Ok(coord) ->
           Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
@@ -278,7 +283,11 @@ pub fn broadcast(
   )
   // Distributed broadcast via PubSub (if configured)
   case channels.pubsub {
-    Some(ps) -> pubsub.broadcast(ps, topic_name, event, payload)
+    Some(ps) -> {
+      let assert Ok(coordinator_pid) =
+        process.subject_owner(channels.coordinator)
+      pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
+    }
     None -> Nil
   }
 }
@@ -286,6 +295,9 @@ pub fn broadcast(
 /// Broadcast a message to all subscribers except one socket
 ///
 /// Useful for broadcasting a message to everyone except the sender.
+/// When PubSub is configured, the excluded socket ID is preserved across
+/// coordinators so clustered deployments do not echo the event back to that
+/// socket on another node.
 ///
 /// ## Example
 ///
@@ -312,10 +324,19 @@ pub fn broadcast_from(
     coordinator.Broadcast(topic_name, event, payload, Some(except_socket_id)),
   )
   // Distributed broadcast via PubSub (if configured)
-  // Note: PubSub broadcast_from excludes by pid, not socket_id.
-  // For cross-node, we broadcast to all since the sender is on a different node.
   case channels.pubsub {
-    Some(ps) -> pubsub.broadcast(ps, topic_name, event, payload)
+    Some(ps) -> {
+      let assert Ok(coordinator_pid) =
+        process.subject_owner(channels.coordinator)
+      pubsub.broadcast_from_socket(
+        ps,
+        coordinator_pid,
+        except_socket_id,
+        topic_name,
+        event,
+        payload,
+      )
+    }
     None -> Nil
   }
 }
