@@ -1,11 +1,8 @@
 import beryl
 import beryl/group
 import beryl/presence
-import beryl/transport/websocket
-import gleam/http/request
 import gleam/json
 import gleam/list
-import gleam/result
 import gleam/set
 import gleam/string
 import wisp
@@ -19,19 +16,6 @@ pub type Context {
 }
 
 pub fn handle_request(req: wisp.Request, ctx: Context) -> wisp.Response {
-  // WebSocket upgrade with on_connect authentication
-  let ws_config =
-    websocket.default_config("/socket/websocket")
-    |> websocket.with_on_connect(fn(request) {
-      // Check for valid auth token in query params
-      case get_query_param(request, "token") {
-        Ok("beryl-demo") -> Ok(Nil)
-        _ -> Error(Nil)
-      }
-    })
-
-  use <- websocket.upgrade(req, ctx.channels.coordinator, ws_config)
-
   // Serve static files from priv/static
   use <- wisp.serve_static(req, under: "/static", from: priv_directory())
 
@@ -65,15 +49,6 @@ fn rooms_api(ctx: Context) -> wisp.Response {
 
   let body = json.to_string(json.array(rooms, fn(r) { r }))
   wisp.json_response(body, 200)
-}
-
-fn get_query_param(req: wisp.Request, name: String) -> Result(String, Nil) {
-  case request.get_query(req) {
-    Ok(params) ->
-      list.find(params, fn(pair) { pair.0 == name })
-      |> result.map(fn(pair) { pair.1 })
-    Error(_) -> Error(Nil)
-  }
 }
 
 fn index_page(ctx: Context) -> wisp.Response {

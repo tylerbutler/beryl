@@ -1,21 +1,12 @@
 import beryl
 import beryl/presence
-import beryl/transport/websocket
 import wisp
 
 pub type Context {
   Context(channels: beryl.Channels, presence: presence.Presence)
 }
 
-pub fn handle_request(req: wisp.Request, ctx: Context) -> wisp.Response {
-  // Try WebSocket upgrade first
-  // Phoenix JS client appends /websocket to the socket path
-  use <- websocket.upgrade(
-    req,
-    ctx.channels.coordinator,
-    websocket.default_config("/socket/websocket"),
-  )
-
+pub fn handle_request(req: wisp.Request, _ctx: Context) -> wisp.Response {
   // Serve static files from priv/static
   use <- wisp.serve_static(req, under: "/static", from: priv_directory())
 

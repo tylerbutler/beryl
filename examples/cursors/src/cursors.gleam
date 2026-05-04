@@ -1,5 +1,6 @@
 import beryl
 import beryl/presence
+import beryl/transport/mist as mist_transport
 import cursors/adapter
 import cursors/cursor_channel
 import cursors/router
@@ -33,10 +34,19 @@ pub fn main() {
   // Start the HTTP server
   let secret_key_base = wisp.random_string(64)
   let ctx = router.Context(channels:, presence: presence_actor)
-
-  let assert Ok(_) =
+  let http_handler =
     router.handle_request(_, ctx)
     |> adapter.handler(secret_key_base)
+
+  let assert Ok(_) =
+    fn(req) {
+      mist_transport.upgrade(
+        req,
+        channels.coordinator,
+        mist_transport.default_config("/socket/websocket"),
+        fn() { http_handler(req) },
+      )
+    }
     |> mist.new
     |> mist.port(8000)
     |> mist.start

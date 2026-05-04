@@ -106,7 +106,10 @@ fn handle_in(
   }
 }
 
-fn terminate(_reason: channel.StopReason, socket: Socket(CursorAssigns)) -> Nil {
+fn terminate(
+  _reason: channel.StopReason,
+  socket: Socket(CursorAssigns),
+) -> Nil {
   let assigns = socket.get_assigns(socket)
   let socket_id = socket.id(socket)
 

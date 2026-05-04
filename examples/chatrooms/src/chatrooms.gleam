@@ -1,11 +1,15 @@
 import beryl
 import beryl/group
 import beryl/presence
+import beryl/transport/mist as mist_transport
 import chatrooms/adapter
 import chatrooms/chat_channel
 import chatrooms/router
 import gleam/erlang/process
+import gleam/http/request
 import gleam/io
+import gleam/list
+import gleam/result
 import mist
 import wisp
 
@@ -43,13 +47,36 @@ pub fn main() {
   // Start the HTTP server
   let secret_key_base = wisp.random_string(64)
   let ctx = router.Context(channels:, presence: presence_actor, groups:)
-
-  let assert Ok(_) =
+  let http_handler =
     router.handle_request(_, ctx)
     |> adapter.handler(secret_key_base)
+  let ws_config =
+    mist_transport.default_config("/socket/websocket")
+    |> mist_transport.with_on_connect(fn(req) {
+      case get_query_param(req, "token") {
+        Ok("beryl-demo") -> Ok(Nil)
+        _ -> Error(Nil)
+      }
+    })
+
+  let assert Ok(_) =
+    fn(req) {
+      mist_transport.upgrade(req, channels.coordinator, ws_config, fn() {
+        http_handler(req)
+      })
+    }
     |> mist.new
     |> mist.port(8001)
     |> mist.start
 
   process.sleep_forever()
+}
+
+fn get_query_param(req, name: String) -> Result(String, Nil) {
+  case request.get_query(req) {
+    Ok(params) ->
+      list.find(params, fn(pair) { pair.0 == name })
+      |> result.map(fn(pair) { pair.1 })
+    Error(_) -> Error(Nil)
+  }
 }

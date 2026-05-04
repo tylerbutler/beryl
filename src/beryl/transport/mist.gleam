@@ -60,6 +60,11 @@ type ConnectionState {
   ConnectionState(socket_id: String, coordinator: Subject(CoordinatorMessage))
 }
 
+type SendRequest {
+  SendText(String)
+  SendBinary(BitArray)
+}
+
 /// Upgrade a request to WebSocket if it matches the configured path
 ///
 /// Usage in your Mist handler:
@@ -129,23 +134,25 @@ fn do_upgrade(
 
 /// Initialize WebSocket connection
 fn on_init(
-  connection: WebsocketConnection,
+  _connection: WebsocketConnection,
   coordinator: Subject(CoordinatorMessage),
-) -> #(ConnectionState, Option(process.Selector(a))) {
+) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Generate unique socket ID
   let socket_id = generate_socket_id()
+  let send_subject = process.new_subject()
+  let selector =
+    process.new_selector()
+    |> process.select(send_subject)
 
   // Create send function that the coordinator can use
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
-    mist.send_text_frame(connection, text)
-    |> result.replace(Nil)
-    |> result.replace_error(Nil)
+    process.send(send_subject, SendText(text))
+    Ok(Nil)
   }
 
   let send_binary_fn = fn(data: BitArray) -> Result(Nil, Nil) {
-    mist.send_binary_frame(connection, data)
-    |> result.replace(Nil)
-    |> result.replace_error(Nil)
+    process.send(send_subject, SendBinary(data))
+    Ok(Nil)
   }
 
   // Register with coordinator
@@ -157,16 +164,15 @@ fn on_init(
 
   let state = ConnectionState(socket_id: socket_id, coordinator: coordinator)
 
-  // No custom selector needed
-  #(state, None)
+  #(state, Some(selector))
 }
 
 /// Handle incoming WebSocket messages
 fn on_message(
   state: ConnectionState,
-  message: mist.WebsocketMessage(a),
-  _connection: WebsocketConnection,
-) -> mist.Next(ConnectionState, a) {
+  message: mist.WebsocketMessage(SendRequest),
+  connection: WebsocketConnection,
+) -> mist.Next(ConnectionState, SendRequest) {
   case message {
     mist.Text(text) -> {
       coordinator.route_message(state.coordinator, state.socket_id, text)
@@ -177,7 +183,16 @@ fn on_message(
       mist.continue(state)
     }
     mist.Closed | mist.Shutdown -> mist.stop()
-    mist.Custom(_) -> mist.continue(state)
+    mist.Custom(SendText(text)) -> {
+      mist.send_text_frame(connection, text)
+      |> result.replace(mist.continue(state))
+      |> result.unwrap(mist.continue(state))
+    }
+    mist.Custom(SendBinary(data)) -> {
+      mist.send_binary_frame(connection, data)
+      |> result.replace(mist.continue(state))
+      |> result.unwrap(mist.continue(state))
+    }
   }
 }
 
