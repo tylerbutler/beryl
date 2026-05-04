@@ -27,6 +27,9 @@ fn register_test_channel(channels: beryl.Channels) -> Nil {
       handle_binary: fn(_data, ctx) {
         coordinator.NoReplyErased(assigns: ctx.assigns)
       },
+      handle_info: fn(_message, ctx) {
+        coordinator.NoReplyErased(assigns: ctx.assigns)
+      },
       terminate: fn(_reason, _ctx) { Nil },
     )
 
