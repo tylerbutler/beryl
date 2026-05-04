@@ -92,8 +92,8 @@ gleam test
 
 Managed via `.tool-versions` (source of truth for CI):
 - Erlang 27.2.1
-- Gleam 1.14.0
-- just 1.38.0
+- Gleam 1.16.0
+- just 1.50.0
 
 Local development can use `.mise.toml` for flexible versions.
 

@@ -26,7 +26,7 @@
 ### Prerequisites
 
 - [Erlang](https://www.erlang.org/) 27+
-- [Gleam](https://gleam.run/) 1.1+
+- [Gleam](https://gleam.run/) 1.3+
 - [just](https://github.com/casey/just) (task runner)
 
 Install tools via [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/):
