@@ -1,11 +1,14 @@
 import beryl
 import beryl/coordinator
+import beryl/presence
+import beryl/presence/state
 import beryl/pubsub
 import beryl/topic
+import gleam/dict
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -89,6 +92,21 @@ fn drain(subject: process.Subject(String)) -> Nil {
   }
 }
 
+fn presence_diff() -> state.Diff {
+  state.Diff(
+    joins: dict.from_list([
+      #("room:lobby", [
+        #(
+          "user:1",
+          "socket-1",
+          json.object([#("status", json.string("online"))]),
+        ),
+      ]),
+    ]),
+    leaves: dict.new(),
+  )
+}
+
 pub fn broadcast_from_local_only_excludes_socket_test() {
   let assert Ok(channels) = beryl.start(beryl.default_config())
   register_test_channel(channels)
@@ -148,4 +166,93 @@ pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_coordinator_test() {
 
   process.receive(remote_sender, 100)
   |> should.be_error
+}
+
+pub fn broadcast_presence_diff_local_delivers_phoenix_event_test() {
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  register_test_channel(channels)
+
+  let socket = connect_socket(channels, "socket-1")
+  join_topic(channels, "socket-1", "room:lobby", socket)
+  drain(socket)
+
+  beryl.broadcast_presence_diff(channels, "room:lobby", presence_diff())
+
+  let assert Ok(message) = process.receive(socket, 500)
+  message
+  |> string.contains("presence_diff")
+  |> should.be_true
+  message
+  |> string.contains("user:1")
+  |> should.be_true
+  message
+  |> string.contains("metas")
+  |> should.be_true
+}
+
+pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() {
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  register_test_channel(channels)
+
+  let socket = connect_socket(channels, "socket-1")
+  join_topic(channels, "socket-1", "room:lobby", socket)
+  drain(socket)
+
+  let presence_config =
+    presence.Config(
+      pubsub: None,
+      replica: "node1",
+      broadcast_interval_ms: 0,
+      on_diff: Some(fn(diff) {
+        beryl.broadcast_presence_diff(channels, "room:lobby", diff)
+      }),
+    )
+  let assert Ok(p) = presence.start(presence_config)
+
+  let _ =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("status", json.string("online"))]),
+    )
+
+  let assert Ok(message) = process.receive(socket, 500)
+  message
+  |> string.contains("presence_diff")
+  |> should.be_true
+  message
+  |> string.contains("user:1")
+  |> should.be_true
+  message
+  |> string.contains("metas")
+  |> should.be_true
+}
+
+pub fn broadcast_presence_diff_with_pubsub_delivers_to_remote_coordinator_test() {
+  let assert Ok(ps) =
+    pubsub.start(pubsub.config_with_scope("test_presence_diff_pubsub"))
+  let config = beryl.default_config() |> beryl.with_pubsub(ps)
+  let assert Ok(origin_channels) = beryl.start(config)
+  let assert Ok(remote_channels) = beryl.start(config)
+  register_test_channel(origin_channels)
+  register_test_channel(remote_channels)
+
+  let remote_socket = connect_socket(remote_channels, "socket-1")
+  join_topic(remote_channels, "socket-1", "room:lobby", remote_socket)
+  drain(remote_socket)
+
+  beryl.broadcast_presence_diff(origin_channels, "room:lobby", presence_diff())
+
+  let assert Ok(message) = process.receive(remote_socket, 500)
+  message
+  |> string.contains("presence_diff")
+  |> should.be_true
+  message
+  |> string.contains("user:1")
+  |> should.be_true
+  message
+  |> string.contains("metas")
+  |> should.be_true
 }

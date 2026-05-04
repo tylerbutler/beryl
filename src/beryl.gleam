@@ -51,6 +51,8 @@
 
 import beryl/channel.{type Channel}
 import beryl/coordinator
+import beryl/presence/state.{type Diff}
+import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
 import beryl/socket.{type Socket}
@@ -290,6 +292,32 @@ pub fn broadcast(
     }
     None -> Nil
   }
+}
+
+/// Broadcast a Phoenix-compatible `presence_diff` event for a topic.
+///
+/// This encodes the topic's joins and leaves as:
+///
+/// ```json
+/// {
+///   "joins": { "user:1": { "metas": [{ "status": "online" }] } },
+///   "leaves": { "user:2": { "metas": [{ "status": "offline" }] } }
+/// }
+/// ```
+///
+/// When the channels system was started with PubSub, the broadcast is
+/// distributed using the same semantics as `broadcast`.
+pub fn broadcast_presence_diff(
+  channels: Channels,
+  topic_name: String,
+  diff: Diff,
+) -> Nil {
+  broadcast(
+    channels,
+    topic_name,
+    "presence_diff",
+    presence_wire.encode_diff(diff, topic_name),
+  )
 }
 
 /// Broadcast a message to all subscribers except one socket
