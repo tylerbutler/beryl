@@ -22,7 +22,7 @@
 //// ```
 
 import beryl/internal
-import beryl/presence/state.{type Diff, type State}
+import beryl/presence/state.{type Diff, type State, Diff}
 import beryl/presence/state_json
 import beryl/pubsub.{type PubSub}
 import birch/logger as log
@@ -270,6 +270,10 @@ fn handle_message(
   case message {
     Track(topic, key, pid, meta, reply) -> {
       let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
+      maybe_invoke_on_diff(
+        actor_state.config,
+        single_join_diff(topic, key, pid, meta),
+      )
       logger
       |> log.debug("Presence tracked", [
         #("topic", topic),
@@ -281,7 +285,9 @@ fn handle_message(
     }
 
     Untrack(topic, key, pid, reply) -> {
+      let diff = leave_diff(actor_state.crdt, topic, key, pid)
       let new_crdt = state.leave(actor_state.crdt, pid, topic, key)
+      maybe_invoke_on_diff(actor_state.config, diff)
       logger
       |> log.debug("Presence untracked", [
         #("topic", topic),
@@ -293,7 +299,9 @@ fn handle_message(
     }
 
     UntrackAll(pid, reply) -> {
+      let diff = leave_all_diff(actor_state.crdt, pid)
       let new_crdt = state.leave_by_pid(actor_state.crdt, pid)
+      maybe_invoke_on_diff(actor_state.config, diff)
       process.send(reply, Nil)
       actor.continue(ActorState(..actor_state, crdt: new_crdt))
     }
@@ -360,6 +368,52 @@ fn handle_message(
         }
       }
     }
+  }
+}
+
+fn single_join_diff(
+  topic: String,
+  key: String,
+  pid: String,
+  meta: json.Json,
+) -> Diff {
+  Diff(
+    joins: dict.from_list([#(topic, [#(key, pid, meta)])]),
+    leaves: dict.new(),
+  )
+}
+
+fn leave_diff(crdt: State, topic: String, key: String, pid: String) -> Diff {
+  let leaves =
+    state.get_by_key(crdt, topic, key)
+    |> list.filter(fn(entry) { entry.0 == pid })
+    |> list.map(fn(entry) { #(key, entry.0, entry.1) })
+
+  Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
+}
+
+fn leave_all_diff(crdt: State, pid: String) -> Diff {
+  let leaves =
+    state.online_list(crdt)
+    |> list.filter(fn(entry) { entry.0 == pid })
+    |> list.fold(dict.new(), fn(grouped, entry) {
+      let #(_, topic, key, meta) = entry
+      let existing =
+        dict.get(grouped, topic)
+        |> result.unwrap([])
+      dict.insert(grouped, topic, [#(key, pid, meta), ..existing])
+    })
+
+  Diff(joins: dict.new(), leaves: leaves)
+}
+
+fn topic_entries(
+  topic: String,
+  entries: List(#(String, String, json.Json)),
+) -> dict.Dict(String, List(#(String, String, json.Json))) {
+  case entries {
+    [] -> dict.new()
+    _ -> dict.from_list([#(topic, entries)])
   }
 }
 

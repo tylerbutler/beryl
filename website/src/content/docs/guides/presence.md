@@ -95,7 +95,35 @@ let config = presence.Config(
 )
 ```
 
-The `on_diff` callback fires whenever a merge produces non-empty changes, ensuring no diffs are lost during rapid state changes.
+The `on_diff` callback fires whenever local tracking changes or remote merges produce non-empty changes, ensuring no diffs are lost during rapid state changes.
+
+## Broadcasting Phoenix-compatible diffs
+
+Use `beryl.broadcast_presence_diff` to send a `presence_diff` event to sockets subscribed to the changed topic:
+
+```gleam
+import beryl
+
+let config = presence.Config(
+  pubsub: option.Some(ps),
+  replica: "node1",
+  broadcast_interval_ms: 1500,
+  on_diff: option.Some(fn(diff) {
+    beryl.broadcast_presence_diff(channels, "room:lobby", diff)
+  }),
+)
+```
+
+The payload matches Phoenix Presence's shape, with joins and leaves grouped by presence key:
+
+```json
+{
+  "joins": { "user:alice": { "metas": [{ "status": "online" }] } },
+  "leaves": { "user:bob": { "metas": [{ "status": "offline" }] } }
+}
+```
+
+For lower-level integrations, `beryl/presence/wire.encode_diff(diff, topic)` returns the encoded JSON payload without broadcasting it. If channels are configured with PubSub, `broadcast_presence_diff` uses the same distributed delivery behavior as `beryl.broadcast`.
 
 ## Cross-node replication
 
