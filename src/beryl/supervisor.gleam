@@ -81,7 +81,9 @@ pub type StartError {
 /// Child start order: coordinator -> presence (optional) -> groups (optional).
 ///
 /// The existing `beryl.start()` function is preserved for unsupervised use.
-pub fn start(config: SupervisedConfig) -> Result(SupervisedChannels, StartError) {
+pub fn start(
+  config: SupervisedConfig,
+) -> Result(SupervisedChannels, StartError) {
   // Validate heartbeat_timeout_ms before deriving check_interval
   case config.channels.heartbeat_timeout_ms <= 0 {
     True -> Error(InvalidHeartbeatTimeout)

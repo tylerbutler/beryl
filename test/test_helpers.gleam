@@ -18,7 +18,11 @@ import gleeunit/should
 /// // Wait until presence list has 2 entries (up to 2 seconds)
 /// wait_until(fn() { list.length(presence.list(p1, "room:lobby")) == 2 }, 2000, 20)
 /// ```
-pub fn wait_until(check: fn() -> Bool, timeout_ms: Int, interval_ms: Int) -> Nil {
+pub fn wait_until(
+  check: fn() -> Bool,
+  timeout_ms: Int,
+  interval_ms: Int,
+) -> Nil {
   case check() {
     True -> Nil
     False -> {

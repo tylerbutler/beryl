@@ -9,8 +9,8 @@ Ensure you have the following installed:
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
-| Gleam | 1.14.0+ | Compiler and tooling |
-| just | 1.38.0+ | Task runner |
+| Gleam | 1.16.0+ | Compiler and tooling |
+| just | 1.50.0+ | Task runner |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file.
 
