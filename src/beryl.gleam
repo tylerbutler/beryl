@@ -341,6 +341,27 @@ pub fn broadcast_from(
   }
 }
 
+/// Send a server-originated OTP message to a joined channel context.
+///
+/// The message is delivered to the channel's `handle_info` callback for the
+/// specific socket/topic pair. If the socket is not connected, the topic is not
+/// joined, or no handler matches the topic, the message is ignored.
+pub fn send_info(
+  channels: Channels,
+  socket_id: String,
+  topic_name: String,
+  message: a,
+) -> Nil {
+  process.send(
+    channels.coordinator,
+    coordinator.HandleInfo(
+      socket_id,
+      topic_name,
+      unsafe_coerce_to_dynamic(message),
+    ),
+  )
+}
+
 /// Push a message to a specific socket via its context
 ///
 /// Note: In the lean MVP, this uses the send function from SocketContext.
@@ -445,6 +466,12 @@ fn erase_channel_types(
       let typed_socket = create_socket_with_assigns(ctx)
 
       typed_channel.handle_binary(data, unsafe_coerce_socket(typed_socket))
+      |> erase_handle_result
+    },
+    handle_info: fn(message: Dynamic, ctx: coordinator.SocketContext) {
+      let typed_socket = create_socket_with_assigns(ctx)
+
+      typed_channel.handle_info(message, unsafe_coerce_socket(typed_socket))
       |> erase_handle_result
     },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
