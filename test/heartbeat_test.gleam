@@ -302,6 +302,9 @@ fn register_handler_with_terminate(
       handle_binary: fn(_data, ctx) {
         coordinator.NoReplyErased(assigns: ctx.assigns)
       },
+      handle_info: fn(_message, ctx) {
+        coordinator.NoReplyErased(assigns: ctx.assigns)
+      },
       terminate: fn(reason, _ctx) { process.send(terminate_subject, reason) },
     )
 

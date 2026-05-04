@@ -51,6 +51,8 @@
 
 import beryl/channel.{type Channel}
 import beryl/coordinator
+import beryl/presence/state.{type Diff}
+import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
 import beryl/socket.{type Socket}
@@ -207,7 +209,12 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
           channel_limiter: channel_limiter,
         )
 
-      case coordinator.start_with_config(coord_config) {
+      let coordinator_result = case config.pubsub {
+        Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
+        None -> coordinator.start_with_config(coord_config)
+      }
+
+      case coordinator_result {
         Error(_) -> Error(CoordinatorStartFailed)
         Ok(coord) ->
           Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
@@ -278,14 +285,47 @@ pub fn broadcast(
   )
   // Distributed broadcast via PubSub (if configured)
   case channels.pubsub {
-    Some(ps) -> pubsub.broadcast(ps, topic_name, event, payload)
+    Some(ps) -> {
+      let assert Ok(coordinator_pid) =
+        process.subject_owner(channels.coordinator)
+      pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
+    }
     None -> Nil
   }
+}
+
+/// Broadcast a Phoenix-compatible `presence_diff` event for a topic.
+///
+/// This encodes the topic's joins and leaves as:
+///
+/// ```json
+/// {
+///   "joins": { "user:1": { "metas": [{ "status": "online" }] } },
+///   "leaves": { "user:2": { "metas": [{ "status": "offline" }] } }
+/// }
+/// ```
+///
+/// When the channels system was started with PubSub, the broadcast is
+/// distributed using the same semantics as `broadcast`.
+pub fn broadcast_presence_diff(
+  channels: Channels,
+  topic_name: String,
+  diff: Diff,
+) -> Nil {
+  broadcast(
+    channels,
+    topic_name,
+    "presence_diff",
+    presence_wire.encode_diff(diff, topic_name),
+  )
 }
 
 /// Broadcast a message to all subscribers except one socket
 ///
 /// Useful for broadcasting a message to everyone except the sender.
+/// When PubSub is configured, the excluded socket ID is preserved across
+/// coordinators so clustered deployments do not echo the event back to that
+/// socket on another node.
 ///
 /// ## Example
 ///
@@ -312,12 +352,42 @@ pub fn broadcast_from(
     coordinator.Broadcast(topic_name, event, payload, Some(except_socket_id)),
   )
   // Distributed broadcast via PubSub (if configured)
-  // Note: PubSub broadcast_from excludes by pid, not socket_id.
-  // For cross-node, we broadcast to all since the sender is on a different node.
   case channels.pubsub {
-    Some(ps) -> pubsub.broadcast(ps, topic_name, event, payload)
+    Some(ps) -> {
+      let assert Ok(coordinator_pid) =
+        process.subject_owner(channels.coordinator)
+      pubsub.broadcast_from_socket(
+        ps,
+        coordinator_pid,
+        except_socket_id,
+        topic_name,
+        event,
+        payload,
+      )
+    }
     None -> Nil
   }
+}
+
+/// Send a server-originated OTP message to a joined channel context.
+///
+/// The message is delivered to the channel's `handle_info` callback for the
+/// specific socket/topic pair. If the socket is not connected, the topic is not
+/// joined, or no handler matches the topic, the message is ignored.
+pub fn send_info(
+  channels: Channels,
+  socket_id: String,
+  topic_name: String,
+  message: a,
+) -> Nil {
+  process.send(
+    channels.coordinator,
+    coordinator.HandleInfo(
+      socket_id,
+      topic_name,
+      unsafe_coerce_to_dynamic(message),
+    ),
+  )
 }
 
 /// Push a message to a specific socket via its context
@@ -424,6 +494,12 @@ fn erase_channel_types(
       let typed_socket = create_socket_with_assigns(ctx)
 
       typed_channel.handle_binary(data, unsafe_coerce_socket(typed_socket))
+      |> erase_handle_result
+    },
+    handle_info: fn(message: Dynamic, ctx: coordinator.SocketContext) {
+      let typed_socket = create_socket_with_assigns(ctx)
+
+      typed_channel.handle_info(message, unsafe_coerce_socket(typed_socket))
       |> erase_handle_result
     },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {

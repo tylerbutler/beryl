@@ -150,7 +150,17 @@ fn start_supervised(
     builder
     |> static_supervisor.add(
       supervision.worker(fn() {
-        coordinator.start_named(coord_config, coordinator_name)
+        let started = case config.channels.pubsub {
+          Some(ps) ->
+            coordinator.start_named_with_pubsub(
+              coord_config,
+              ps,
+              coordinator_name,
+            )
+          None -> coordinator.start_named(coord_config, coordinator_name)
+        }
+
+        started
         |> result.map_error(fn(err) {
           case err {
             coordinator.ActorStartFailed(e) -> e

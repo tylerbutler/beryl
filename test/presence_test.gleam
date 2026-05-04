@@ -175,6 +175,70 @@ pub fn on_diff_callback_receives_merge_diff_test() {
   dict.is_empty(diff.leaves) |> should.be_true
 }
 
+pub fn on_diff_callback_receives_local_track_diff_test() {
+  let diff_subject = process.new_subject()
+
+  let config =
+    presence.Config(
+      pubsub: None,
+      replica: "node1",
+      broadcast_interval_ms: 0,
+      on_diff: Some(fn(diff) { process.send(diff_subject, diff) }),
+    )
+
+  let assert Ok(p) = presence.start(config)
+
+  let _ =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("status", json.string("online"))]),
+    )
+
+  let assert Ok(diff) = process.receive(diff_subject, 1000)
+  let assert Ok(joins) = dict.get(diff.joins, "room:lobby")
+  joins
+  |> should.equal([
+    #("user:1", "socket-1", json.object([#("status", json.string("online"))])),
+  ])
+  dict.is_empty(diff.leaves) |> should.be_true
+}
+
+pub fn on_diff_callback_receives_local_untrack_diff_test() {
+  let diff_subject = process.new_subject()
+
+  let config =
+    presence.Config(
+      pubsub: None,
+      replica: "node1",
+      broadcast_interval_ms: 0,
+      on_diff: Some(fn(diff) { process.send(diff_subject, diff) }),
+    )
+
+  let assert Ok(p) = presence.start(config)
+  let _ =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("status", json.string("online"))]),
+    )
+  let assert Ok(_) = process.receive(diff_subject, 1000)
+
+  presence.untrack(p, "room:lobby", "user:1", "socket-1")
+
+  let assert Ok(diff) = process.receive(diff_subject, 1000)
+  dict.is_empty(diff.joins) |> should.be_true
+  let assert Ok(leaves) = dict.get(diff.leaves, "room:lobby")
+  leaves
+  |> should.equal([
+    #("user:1", "socket-1", json.object([#("status", json.string("online"))])),
+  ])
+}
+
 pub fn on_diff_callback_not_called_for_empty_diff_test() {
   let diff_subject = process.new_subject()
 

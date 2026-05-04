@@ -9,12 +9,14 @@
 
 import beryl/channel.{type StopReason}
 import beryl/internal
+import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimiter}
 import beryl/topic.{type TopicPattern}
 import beryl/wire
 import birch/logger as log
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
+import gleam/erlang/atom
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
@@ -32,6 +34,7 @@ pub type ChannelHandler {
     join: fn(String, Dynamic, SocketContext) -> JoinResultErased,
     handle_in: fn(String, Dynamic, SocketContext) -> HandleResultErased,
     handle_binary: fn(BitArray, SocketContext) -> HandleResultErased,
+    handle_info: fn(Dynamic, SocketContext) -> HandleResultErased,
     terminate: fn(StopReason, SocketContext) -> Nil,
   )
 }
@@ -119,6 +122,8 @@ pub type State {
     topics: Dict(String, Set(String)),
     /// Heartbeat timeout configuration
     config: CoordinatorConfig,
+    /// Optional PubSub for distributed broadcasts
+    pubsub: Option(PubSub),
     /// The coordinator's own subject, used for scheduling timers
     self_subject: Option(Subject(Message)),
   )
@@ -176,6 +181,7 @@ pub type Message {
     ref: Option(String),
   )
   HandleBinary(socket_id: String, data: BitArray)
+  HandleInfo(socket_id: String, topic: String, message: Dynamic)
   Heartbeat(socket_id: String, ref: String)
   // Broadcasting
   Broadcast(
@@ -184,6 +190,7 @@ pub type Message {
     payload: json.Json,
     except: Option(String),
   )
+  RemoteBroadcast(pubsub.Message)
   // Heartbeat timeout enforcement
   CheckHeartbeats
 }
@@ -191,6 +198,10 @@ pub type Message {
 /// Erlang monotonic time in milliseconds
 @external(erlang, "beryl_ffi", "monotonic_time_ms")
 fn monotonic_time_ms() -> Int
+
+/// Coerce an external PubSub record message into the typed PubSub message.
+@external(erlang, "beryl_ffi", "identity")
+fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
 /// Start the coordinator actor without heartbeat enforcement
 pub fn start() -> Result(Subject(Message), StartError) {
@@ -204,7 +215,22 @@ pub fn start_with_config(
   case validate_config(config) {
     Error(e) -> Error(e)
     Ok(Nil) ->
-      build_coordinator(config)
+      build_coordinator(config, None)
+      |> actor.start
+      |> result.map(fn(started) { started.data })
+      |> result.map_error(ActorStartFailed)
+  }
+}
+
+/// Start the coordinator actor with heartbeat timeout enforcement and PubSub.
+pub fn start_with_config_and_pubsub(
+  config: CoordinatorConfig,
+  ps: PubSub,
+) -> Result(Subject(Message), StartError) {
+  case validate_config(config) {
+    Error(e) -> Error(e)
+    Ok(Nil) ->
+      build_coordinator(config, Some(ps))
       |> actor.start
       |> result.map(fn(started) { started.data })
       |> result.map_error(ActorStartFailed)
@@ -219,7 +245,23 @@ pub fn start_named(
   case validate_config(config) {
     Error(e) -> Error(e)
     Ok(Nil) ->
-      build_coordinator(config)
+      build_coordinator(config, None)
+      |> actor.named(name)
+      |> actor.start
+      |> result.map_error(ActorStartFailed)
+  }
+}
+
+/// Start a named coordinator actor with PubSub.
+pub fn start_named_with_pubsub(
+  config: CoordinatorConfig,
+  ps: PubSub,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), StartError) {
+  case validate_config(config) {
+    Error(e) -> Error(e)
+    Ok(Nil) ->
+      build_coordinator(config, Some(ps))
       |> actor.named(name)
       |> actor.start
       |> result.map_error(ActorStartFailed)
@@ -237,6 +279,7 @@ fn validate_config(config: CoordinatorConfig) -> Result(Nil, StartError) {
 
 fn build_coordinator(
   config: CoordinatorConfig,
+  ps: Option(PubSub),
 ) -> actor.Builder(State, Message, Subject(Message)) {
   let initial_state =
     State(
@@ -244,6 +287,7 @@ fn build_coordinator(
       sockets: dict.new(),
       topics: dict.new(),
       config: config,
+      pubsub: ps,
       self_subject: None,
     )
 
@@ -253,9 +297,27 @@ fn build_coordinator(
     // Schedule the first heartbeat check if configured
     schedule_heartbeat_check(subject, config)
 
-    actor.initialised(state)
-    |> actor.returning(subject)
-    |> Ok
+    let initialised = actor.initialised(state) |> actor.returning(subject)
+
+    case ps {
+      Some(_) -> {
+        let selector =
+          process.new_selector()
+          |> process.select(subject)
+          |> process.select_record(
+            atom.create("message"),
+            4,
+            fn(raw: Dynamic) -> Message {
+              RemoteBroadcast(coerce_to_pubsub_message(raw))
+            },
+          )
+
+        initialised
+        |> actor.selecting(selector)
+        |> Ok
+      }
+      None -> Ok(initialised)
+    }
   })
   |> actor.on_message(handle_message)
 }
@@ -305,10 +367,15 @@ fn handle_message(
 
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
 
+    HandleInfo(socket_id, topic_name, message) ->
+      handle_info(state, socket_id, topic_name, message)
+
     Heartbeat(socket_id, ref) -> handle_heartbeat(state, socket_id, ref)
 
     Broadcast(topic_name, event, payload, except) ->
       handle_broadcast(state, topic_name, event, payload, except)
+
+    RemoteBroadcast(pubsub_msg) -> handle_remote_broadcast(state, pubsub_msg)
 
     CheckHeartbeats -> handle_check_heartbeats(state)
   }
@@ -484,10 +551,17 @@ fn handle_join_inner(
                   channel_assigns: new_assigns,
                 )
 
-              let topic_subscribers =
+              let existing_topic_subscribers =
                 dict.get(state.topics, topic_name)
                 |> result.unwrap(set.new())
+              let topic_subscribers =
+                existing_topic_subscribers
                 |> set.insert(socket_id)
+
+              case state.pubsub, set.is_empty(existing_topic_subscribers) {
+                Some(ps), True -> pubsub.subscribe(ps, topic_name)
+                _, _ -> Nil
+              }
 
               let new_topics =
                 dict.insert(state.topics, topic_name, topic_subscribers)
@@ -639,6 +713,81 @@ fn handle_in_inner(
                     }
                     None -> Nil
                   }
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                PushErased(push_event, push_payload, new_assigns) -> {
+                  let msg = wire.push(topic_name, push_event, push_payload)
+                  let _ = socket_info.send(msg)
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                StopErased(reason) -> {
+                  let state =
+                    terminate_channel(state, socket_id, topic_name, reason)
+                  actor.continue(state)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn handle_info(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  message: Dynamic,
+) -> actor.Next(State, Message) {
+  handle_info_inner(state, socket_id, topic_name, message)
+}
+
+fn handle_info_inner(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  message: Dynamic,
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(_) -> actor.continue(state)
+    Ok(socket_info) -> {
+      case set.contains(socket_info.subscribed_topics, topic_name) {
+        False -> actor.continue(state)
+        True -> {
+          case find_handler(state.handlers, topic_name) {
+            None -> actor.continue(state)
+            Some(handler) -> {
+              let assigns =
+                dict.get(socket_info.channel_assigns, topic_name)
+                |> result.unwrap(dynamic.nil())
+
+              let ctx =
+                SocketContext(
+                  socket_id: socket_id,
+                  topic: topic_name,
+                  assigns: assigns,
+                  send: socket_info.send,
+                  send_binary: socket_info.send_binary,
+                  handler_pid: socket_info.handler_pid,
+                )
+
+              case handler.handle_info(message, ctx) {
+                NoReplyErased(new_assigns) -> {
+                  let state =
+                    update_assigns(state, socket_id, topic_name, new_assigns)
+                  actor.continue(state)
+                }
+
+                ReplyErased(reply_event, reply_payload, new_assigns) -> {
+                  let msg = wire.push(topic_name, reply_event, reply_payload)
+                  let _ = socket_info.send(msg)
                   let state =
                     update_assigns(state, socket_id, topic_name, new_assigns)
                   actor.continue(state)
@@ -853,6 +1002,24 @@ fn handle_broadcast(
   actor.continue(state)
 }
 
+fn handle_remote_broadcast(
+  state: State,
+  pubsub_msg: pubsub.Message,
+) -> actor.Next(State, Message) {
+  let except = case pubsub_msg.from {
+    pubsub.FromSocket(_, socket_id) -> Some(socket_id)
+    pubsub.System | pubsub.FromPid(_) -> None
+  }
+
+  handle_broadcast(
+    state,
+    pubsub_msg.topic,
+    pubsub_msg.event,
+    pubsub_msg.payload,
+    except,
+  )
+}
+
 /// Find the first handler that matches the topic
 fn find_handler(
   handlers: List(ChannelHandler),
@@ -909,8 +1076,16 @@ fn terminate_channel(
             dict.get(state.topics, topic_name)
             |> result.unwrap(set.new())
             |> set.delete(socket_id)
-          let new_topics =
-            dict.insert(state.topics, topic_name, topic_subscribers)
+          let new_topics = case set.is_empty(topic_subscribers) {
+            True -> {
+              case state.pubsub {
+                Some(ps) -> pubsub.unsubscribe(ps, topic_name)
+                None -> Nil
+              }
+              dict.delete(state.topics, topic_name)
+            }
+            False -> dict.insert(state.topics, topic_name, topic_subscribers)
+          }
 
           let new_sockets =
             dict.insert(state.sockets, socket_id, new_socket_info)
