@@ -1,0 +1,6 @@
+kind: Fixed
+body: |-
+    Preserve broadcast_from socket exclusions across PubSub coordinators.
+
+    PubSub-enabled channel coordinators now subscribe to local topics and carry excluded socket metadata so clustered broadcasts do not echo back to the sender socket.
+time: 2026-05-04T11:31:10.753016394-07:00
