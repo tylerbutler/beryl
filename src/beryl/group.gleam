@@ -151,7 +151,10 @@ pub fn broadcast(
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
 
-fn handle_message(state: State, message: Message) -> actor.Next(State, Message) {
+fn handle_message(
+  state: State,
+  message: Message,
+) -> actor.Next(State, Message) {
   case message {
     Create(name, reply) -> {
       case dict.has_key(state.groups, name) {

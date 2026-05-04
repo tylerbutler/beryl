@@ -380,6 +380,9 @@ pub fn topic_cleanup_after_heartbeat_eviction_test() {
   socket_is_connected(coord, "socket-stale", sent_stale)
   |> should.be_false
 
+  let assert Ok(reason) = process.receive(terminate_reasons, 200)
+  reason |> should.equal(channel.HeartbeatTimeout)
+
   // Active socket still connected
   socket_is_connected(coord, "socket-active", sent_active)
   |> should.be_true

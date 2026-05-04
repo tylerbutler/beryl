@@ -1,9 +1,13 @@
 import beryl/pubsub
 import gleam/dynamic
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/json
 import gleeunit
 import gleeunit/should
+
+@external(erlang, "beryl_ffi", "identity")
+fn coerce_to_pubsub_message(value: dynamic.Dynamic) -> pubsub.Message
 
 pub fn main() {
   gleeunit.main()
@@ -62,13 +66,19 @@ pub fn pubsub_broadcast_delivers_message_test() {
 
   pubsub.broadcast(ps, "room:lobby", "new_msg", json.string("hello"))
 
-  // Receive the message from our own mailbox using select_other for untyped messages
   let selector =
     process.new_selector()
-    |> process.select_other(fn(msg: dynamic.Dynamic) { msg })
+    |> process.select_record(
+      atom.create("message"),
+      4,
+      coerce_to_pubsub_message,
+    )
 
-  let result = process.selector_receive(from: selector, within: 100)
-  should.be_ok(result)
+  let assert Ok(message) = process.selector_receive(from: selector, within: 100)
+  message.topic |> should.equal("room:lobby")
+  message.event |> should.equal("new_msg")
+  message.payload |> should.equal(json.string("hello"))
+  message.from |> should.equal(pubsub.System)
 
   // Cleanup
   pubsub.unsubscribe(ps, "room:lobby")
@@ -83,11 +93,15 @@ pub fn pubsub_broadcast_from_excludes_sender_test() {
   // Broadcast from self - should NOT receive it
   pubsub.broadcast_from(ps, process.self(), "room:lobby", "typing", json.null())
 
-  // Should time out since we excluded ourselves
   let selector =
     process.new_selector()
-    |> process.select_other(fn(msg: dynamic.Dynamic) { msg })
+    |> process.select_record(
+      atom.create("message"),
+      4,
+      coerce_to_pubsub_message,
+    )
 
+  // Should time out since we excluded ourselves
   let result = process.selector_receive(from: selector, within: 50)
   should.be_error(result)
 

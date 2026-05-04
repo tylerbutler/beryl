@@ -1,8 +1,5 @@
 [tools]
 changie = "latest"
-erlang = "27"
-gleam = "latest"
-just = "latest"
 rebar = "latest"
 
 [env]

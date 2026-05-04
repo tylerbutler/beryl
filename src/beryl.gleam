@@ -452,7 +452,9 @@ fn create_socket_from_context(ctx: coordinator.SocketContext) -> Socket(Nil) {
   socket.new(ctx.socket_id, Nil, transport_from_context(ctx))
 }
 
-fn create_socket_with_assigns(ctx: coordinator.SocketContext) -> Socket(Dynamic) {
+fn create_socket_with_assigns(
+  ctx: coordinator.SocketContext,
+) -> Socket(Dynamic) {
   socket.new(ctx.socket_id, ctx.assigns, transport_from_context(ctx))
 }
 
