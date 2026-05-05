@@ -19,6 +19,11 @@ jobs:
         with:
           run-deps: false
 
+      - name: Install rebar3
+        run: |
+          wget -q https://s3.amazonaws.com/rebar3/rebar3 -O /usr/local/bin/rebar3
+          chmod +x /usr/local/bin/rebar3
+
       - name: Install Gleam dependencies
         run: gleam deps download
 
