@@ -114,3 +114,9 @@ let assert Ok(channels) = beryl.start(config)
 // beryl.broadcast() now sends to all nodes automatically
 beryl.broadcast(channels, "room:lobby", "event", payload)
 ```
+
+## Next steps
+
+- [Supervision guide](/guides/supervision/) — supervised startup and multi-node deployment checklist
+- [Architecture overview](/architecture/overview/) — how PubSub fits into the beryl layer diagram
+- [Troubleshooting](/troubleshooting/#pubsub-cluster-issues) — diagnosing cluster broadcast failures and diverging presence state

@@ -171,3 +171,9 @@ let config =
 | `message_rate` | Per socket | Total messages per second across all topics |
 | `join_rate` | Per socket | Join attempts per second |
 | `channel_rate` | Per socket+topic | Messages per second on a single topic |
+
+## Next steps
+
+- [Error Handling guide](/guides/error-handling/) — rejected joins, malformed frames, and client-visible error shapes
+- [Supervision guide](/guides/supervision/) — supervised startup for production so a coordinator crash doesn't take down the whole transport
+- [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for connection, join, and message delivery failures

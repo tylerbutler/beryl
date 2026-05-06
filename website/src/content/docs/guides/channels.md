@@ -345,4 +345,12 @@ let socket = socket.set_assigns(socket, RoomAssigns(..assigns, room_id: "new"))
 let socket = socket.map_assigns(socket, fn(old) {
   NewType(user_id: old.user_id)
 })
+
+## Next steps
+
+- [Reference](/reference/) — module map, wire protocol details, and the broadcast/push cheatsheet
+- [Presence guide](/guides/presence/) — track who is online and broadcast presence diffs to clients
+- [Groups guide](/guides/groups/) — broadcast a single event to multiple topics at once
+- [PubSub guide](/guides/pubsub/) — distributed messaging for multi-node deployments
+- [Error Handling guide](/guides/error-handling/) — rejected joins, rate limits, and client-visible error shapes
 ```

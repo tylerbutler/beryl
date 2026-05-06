@@ -139,3 +139,4 @@ pub type StartError {
 - Set reasonable heartbeat values: default is 30 s interval / 60 s timeout. Lower timeouts mean faster stale socket eviction but more network activity.
 - Configure rate limits via `beryl.with_message_rate`, `with_join_rate`, `with_channel_rate` to protect against runaway clients (see [WebSocket Transport guide](/guides/websocket)).
 - Let the supervisor's restart tolerance guard against transient crashes; do not `assert` on `supervisor.start` in production code — handle the `Error` case and log or halt gracefully.
+- If the coordinator stops processing messages after a crash, see the [Troubleshooting guide](/troubleshooting/) for coordinator crash and callback panic diagnosis.

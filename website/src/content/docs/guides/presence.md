@@ -166,4 +166,10 @@ fn join(topic, payload, socket) -> JoinResult(MyAssigns) {
 fn terminate(reason, socket) -> Nil {
   presence.untrack_all(p, socket.id(socket))
 }
+
+## Next steps
+
+- [PubSub guide](/guides/pubsub/) — required for cross-node presence replication; configure PubSub before passing it to presence config
+- [Reference: Client compatibility](/reference/#client-compatibility) — Phoenix JS and other clients that can handle `presence_diff` events
+- [Troubleshooting](/troubleshooting/#presence-is-stale-or-incorrect) — diagnosing stale entries, missing diffs, and cross-node sync failures
 ```

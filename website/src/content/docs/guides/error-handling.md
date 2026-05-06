@@ -167,7 +167,7 @@ case supervisor.start(config) {
 beryl.send_info(channels, socket_id, "room:lobby", my_message)
 ```
 
-If delivery confirmation is important, implement a reply mechanism in `handle_info` that sends an acknowledgment back via `beryl.broadcast` or `beryl.push_to_socket`.
+If delivery confirmation is important, implement a reply mechanism in `handle_info` that sends an acknowledgment back via `beryl.broadcast`.
 
 ## Client-visible error shapes
 
@@ -189,3 +189,9 @@ beryl uses the Phoenix wire protocol. Error responses take these shapes:
 ```
 
 Phoenix client libraries handle `phx_error` and `phx_close` automatically — the channel is marked as errored or closed, and the client may attempt to rejoin.
+
+## See also
+
+- [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for connection failures, missed messages, and auth issues
+- [WebSocket Transport guide](/guides/websocket/#authentication) — setting up `on_connect` for connection-level auth
+- [Supervision guide](/guides/supervision/) — crash recovery and production startup to prevent coordinator failures silencing all errors
