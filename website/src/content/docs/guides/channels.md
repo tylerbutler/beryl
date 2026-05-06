@@ -354,4 +354,3 @@ let socket = socket.map_assigns(socket, fn(old) {
 - [Groups guide](/guides/groups/) — broadcast a single event to multiple topics at once
 - [PubSub guide](/guides/pubsub/) — distributed messaging for multi-node deployments
 - [Error Handling guide](/guides/error-handling/) — rejected joins, rate limits, and client-visible error shapes
-```
