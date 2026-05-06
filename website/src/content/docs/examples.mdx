@@ -1,0 +1,121 @@
+---
+title: Examples
+description: Two runnable beryl demos — collaborative cursors and multi-room chat.
+---
+
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+
+beryl ships two fully runnable example applications in the
+[`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
+directory. Both use a Gleam/BEAM backend, the Phoenix JS client, and vanilla JS
+with no build step.
+
+<Aside type="caution" title="Pre-1.0 Software">
+beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
+</Aside>
+
+## Collaborative Cursors
+
+**Source**: [`examples/cursors`](https://github.com/tylerbutler/beryl/tree/main/examples/cursors)
+
+Move your mouse and see everyone else's cursor in real time. Open the app in
+multiple browser tabs to try it.
+
+```bash
+cd examples/cursors
+gleam run
+# Open http://localhost:8000 in multiple browser tabs
+```
+
+### What it demonstrates
+
+| beryl feature | How it's used |
+|---|---|
+| **Channels** | `cursor:lobby` channel handles join/leave and cursor events |
+| **Topic wildcards** | Handler registered on `cursor:*` matches any cursor room |
+| **Presence (CRDT)** | Tracks connected users with username + color metadata |
+| **`broadcast_from`** | Fans out cursor moves to all *other* clients, excluding the sender |
+| **Rate limiting** | `beryl.with_message_rate` throttles high-frequency cursor events |
+| **WebSocket transport** | `mist_transport.upgrade` handles Phoenix-compatible WebSocket requests |
+| **Phoenix JS client** | Frontend uses the official `phoenix` package over the standard wire protocol |
+
+### Architecture
+
+```
+Browser (vanilla JS + Phoenix JS client)
+  │  WebSocket (Phoenix wire protocol)
+Server (Gleam)
+  ├── Mist HTTP — serves HTML + static files
+  ├── beryl channels — cursor:* topic handler
+  ├── beryl presence — CRDT-backed user tracking
+  └── beryl pubsub — broadcast_from cursor positions
+```
+
+---
+
+## Chat Rooms
+
+**Source**: [`examples/chatrooms`](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms)
+
+A multi-room chat app with authentication, join rejection, typing indicators,
+and message acknowledgment.
+
+```bash
+cd examples/chatrooms
+gleam run
+# Open http://localhost:8001?token=beryl-demo in multiple browser tabs
+```
+
+### What it demonstrates
+
+This demo is designed to complement the cursors example by covering a different
+slice of the beryl API:
+
+| beryl feature | How it's used |
+|---|---|
+| **`on_connect` auth** | Token query param validated before WebSocket upgrade is accepted |
+| **`JoinError`** | Rooms reject joins when full (20-user cap) or when room doesn't exist |
+| **`channel.Reply`** | Delivery of `new_msg` confirmed with a `msg_ack` `phx_reply` |
+| **`channel.error_with_code`** | Empty messages rejected with HTTP-style code 422 |
+| **Groups** | Three rooms (`general`, `random`, `help`) organised in a named group |
+| **Presence (typing indicators)** | Typing state stored in presence meta; updated on `typing`/`stop_typing` events |
+| **System messages** | "user joined" / "user left" broadcast via `beryl.broadcast` on join/terminate |
+| **Multiple topics** | Each room is a separate `room:*` topic sharing one registered channel handler |
+| **Rate limiting** | `with_join_rate` (5/sec) and `with_channel_rate` (10/sec/channel) |
+
+### Architecture
+
+```
+Browser (vanilla JS + Phoenix JS client, token auth)
+  │  WebSocket (Phoenix wire protocol, ?token=beryl-demo)
+Server (Gleam)
+  ├── Mist HTTP — static files, /api/rooms
+  ├── Mist WebSocket transport — on_connect validates token
+  ├── beryl channels — room:* handler
+  ├── beryl groups — "public" group → general, random, help
+  └── beryl presence — online users + typing indicators
+```
+
+### Channel events
+
+| Direction | Event | Purpose |
+|---|---|---|
+| Client → Server | `new_msg` | Send a chat message `{text}` |
+| Client → Server | `typing` | Start typing indicator |
+| Client → Server | `stop_typing` | Stop typing indicator |
+| Server → Client | `new_msg` | Broadcast message `{text, username, color, type, timestamp}` |
+| Server → Client | `phx_reply` (push ref) | Reply to a client push — used for both delivery acknowledgment (`status: "ok"`) and validation errors (`status: "error", response: {code, error}`). Validation errors are returned via `channel.Reply` from `handle_in`, not pushed as a separate event. |
+| Server → Client | `presence_list` | Updated online user list |
+| Server → Client | `typing` | Typing indicator update |
+
+---
+
+## Choosing a starting point
+
+| Starting point | Go here |
+|---|---|
+| I want a minimal working example right now | [Quick Start](/quick-start/) |
+| I want to see live presence + cursors | [examples/cursors](https://github.com/tylerbutler/beryl/tree/main/examples/cursors) |
+| I want auth, join validation, or groups | [examples/chatrooms](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms) |
+| I want to understand the channel API | [Channels guide](/guides/channels/) |
+| I want to add presence to my app | [Presence guide](/guides/presence/) |

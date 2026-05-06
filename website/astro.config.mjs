@@ -59,6 +59,10 @@ export default defineConfig({
 							label: "Quick Start",
 							slug: "quick-start",
 						},
+						{
+							label: "Examples",
+							slug: "examples",
+						},
 					],
 				},
 				{

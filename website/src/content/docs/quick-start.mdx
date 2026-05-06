@@ -1,0 +1,270 @@
+---
+title: Quick Start
+description: Build your first beryl channel end-to-end — server callbacks, WebSocket transport, and a Phoenix JS client.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Pre-1.0 Software">
+beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
+</Aside>
+
+This guide walks you through building a working real-time channel from scratch:
+a Gleam server that handles join and message events, wired to a Phoenix JS client
+running in the browser.
+
+The snippets here are abbreviated to keep things readable. For a fully
+runnable application with HTML, static assets, and end-to-end tests, see the
+[examples](/examples/).
+
+## Prerequisites
+
+- Gleam project targeting **Erlang** (`gleam new my_app`)
+- `gleam add beryl` adds beryl and all its dependencies
+
+## 1. Define a channel
+
+A channel is a Gleam module that returns a `Channel(assigns)` value. The assigns
+type holds per-socket state — anything you want to remember about this connection.
+
+```gleam
+// src/my_app/room_channel.gleam
+import beryl
+import beryl/channel.{type Channel, type HandleResult, type JoinResult}
+import beryl/socket.{type Socket}
+import gleam/dynamic/decode
+import gleam/json
+import gleam/option.{None, Some}
+
+/// Per-socket state for this channel.
+pub type RoomAssigns {
+  RoomAssigns(username: String, channels: beryl.Channels, topic: String)
+}
+
+/// Build the channel handler.
+pub fn new(channels: beryl.Channels) -> Channel(RoomAssigns) {
+  channel.new(fn(topic, payload, socket) {
+    join(channels, topic, payload, socket)
+  })
+  |> channel.with_handle_in(handle_in)
+}
+
+/// Called when a client sends a join request for a matching topic.
+fn join(
+  channels: beryl.Channels,
+  topic: String,
+  payload: json.Json,
+  socket: Socket(RoomAssigns),
+) -> JoinResult(RoomAssigns) {
+  // Extract username from the join payload, default to "Anonymous".
+  let username = case
+    json.parse(json.to_string(payload), {
+      use u <- decode.field("username", decode.string)
+      decode.success(u)
+    })
+  {
+    Ok(u) -> u
+    Error(_) -> "Anonymous"
+  }
+
+  let assigns = RoomAssigns(username:, channels:, topic:)
+  let socket = socket.set_assigns(socket, assigns)
+
+  // Send back a reply — delivered to the client as phx_reply on the join ref.
+  channel.JoinOk(
+    reply: Some(json.object([#("username", json.string(username))])),
+    socket:,
+  )
+}
+
+/// Called for every push the client sends after joining.
+fn handle_in(
+  event: String,
+  payload: json.Json,
+  socket: Socket(RoomAssigns),
+) -> HandleResult(RoomAssigns) {
+  let assigns = socket.get_assigns(socket)
+
+  case event {
+    "new_msg" -> {
+      // Broadcast to every socket joined to this topic (including the sender).
+      beryl.broadcast(assigns.channels, assigns.topic, "new_msg", payload)
+      // Return NoReply — phx_reply is NOT sent for broadcasts.
+      channel.NoReply(socket)
+    }
+    _ -> channel.NoReply(socket)
+  }
+}
+```
+
+<Aside type="note" title="Reply vs Push vs Broadcast">
+- **`channel.Reply`** — sends a `phx_reply` back to the *calling* client tied to the
+  original message ref. The `event` argument is ignored by the wire protocol;
+  only `payload` reaches the client. Use it to acknowledge a specific push.
+- **`channel.NoReply`** — silently continues, no message sent to the caller.
+- **`beryl.broadcast`** — sends a named event to *all* sockets on the topic,
+  including the sender. Use `beryl.broadcast_from` to exclude the sender.
+</Aside>
+
+## 2. Start beryl and register the channel
+
+Wire everything together in your application entry point:
+
+```gleam
+// src/my_app.gleam
+import beryl
+import beryl/transport/mist as mist_transport
+import gleam/bytes_tree
+import gleam/erlang/process
+import gleam/http/request
+import gleam/http/response
+import mist
+import my_app/room_channel
+
+pub fn main() {
+  // Start the beryl channel system.
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+
+  // Register the room channel for all "room:*" topics.
+  let assert Ok(_) =
+    beryl.register(channels, "room:*", room_channel.new(channels))
+
+  // Start the HTTP + WebSocket server.
+  let assert Ok(_) =
+    fn(req) {
+      // Upgrade WebSocket requests first; fall through to HTTP for everything else.
+      mist_transport.upgrade(
+        req,
+        channels.coordinator,
+        mist_transport.default_config("/socket/websocket"),
+        fn() { handle_http(req) },
+      )
+    }
+    |> mist.new
+    |> mist.port(8000)
+    |> mist.start
+
+  process.sleep_forever()
+}
+
+fn handle_http(
+  req: request.Request(mist.Connection),
+) -> response.Response(mist.ResponseData) {
+  case request.path_segments(req) {
+    [] ->
+      response.new(200)
+      |> response.set_body(mist.Bytes(bytes_tree.from_string("Hello!")))
+    _ ->
+      response.new(404)
+      |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
+}
+```
+
+<Aside type="tip" title="Transport path">
+`mist_transport.default_config("/socket/websocket")` tells beryl to intercept
+requests on `/socket/websocket`. When you create a Phoenix JS socket with
+`new Socket("/socket")`, the client appends `/websocket` automatically — so
+the paths line up.
+</Aside>
+
+## 3. Connect from the browser
+
+beryl uses the same wire format as Phoenix channels, so you can use the official
+`phoenix` npm package (or CDN build) in your frontend.
+
+<Tabs>
+  <TabItem label="Install (npm)">
+```bash
+npm install phoenix
+```
+  </TabItem>
+  <TabItem label="CDN">
+```html
+<script src="https://cdn.jsdelivr.net/npm/phoenix/priv/static/phoenix.min.js"></script>
+```
+  </TabItem>
+</Tabs>
+
+```js
+import { Socket } from "phoenix";
+
+// "/socket" → client appends "/websocket" → hits "/socket/websocket" on the server.
+const socket = new Socket("/socket");
+socket.connect();
+
+// Join the "room:lobby" topic.
+const channel = socket.channel("room:lobby", { username: "alice" });
+
+channel
+  .join()
+  .receive("ok", (resp) => {
+    // resp is the payload from channel.JoinOk reply — { username: "alice" }
+    console.log("Joined as", resp.username);
+  })
+  .receive("error", (resp) => {
+    console.error("Join failed", resp);
+  });
+
+// Listen for broadcast messages.
+channel.on("new_msg", (payload) => {
+  console.log("Message:", payload);
+});
+
+// Send a message.
+channel.push("new_msg", { text: "Hello, world!" });
+```
+
+## 4. Acknowledging a specific push
+
+If you want the server to confirm delivery of an individual push, return
+`channel.Reply` from `handle_in`. The client receives a `phx_reply` event tied
+to the original message ref:
+
+```gleam
+// Server side — acknowledge message delivery
+"new_msg" -> {
+  beryl.broadcast(assigns.channels, assigns.topic, "new_msg", payload)
+  channel.Reply(
+    event: "msg_ack",  // event is ignored in the wire protocol; only payload matters
+    payload: json.object([#("status", json.string("ok"))]),
+    socket:,
+  )
+}
+```
+
+```js
+// Client side — receive the acknowledgment
+channel
+  .push("new_msg", { text: "Hello!" })
+  .receive("ok", (resp) => {
+    // resp is the payload from channel.Reply — { status: "ok" }
+    console.log("Delivered", resp);
+  });
+```
+
+## 5. Rejecting a join
+
+Return `channel.JoinError` from your join callback to refuse a client:
+
+```gleam
+fn join(...) -> JoinResult(RoomAssigns) {
+  case is_room_valid(topic) {
+    False ->
+      channel.JoinError(reason: channel.error("Room not found"))
+    True ->
+      // ... proceed as normal
+  }
+}
+```
+
+The client receives an `"error"` reply on its `.join()` call.
+
+## Next steps
+
+- Explore the full [examples](/examples/) — two runnable demos with HTML frontends
+- Learn about [Channels](/guides/channels/) in depth — topic patterns, handle_out, terminate
+- Add [Presence tracking](/guides/presence/) to see who's online
+- Set up [PubSub](/guides/pubsub/) for distributed messaging
+- Configure [WebSocket transport](/guides/websocket/) options including `on_connect` auth
+
