@@ -1,7 +1,9 @@
 //// Topic - Pattern matching for channel routing
 ////
 //// Topics are string identifiers that clients join (e.g., "room:lobby").
-//// Patterns define how topics are routed to channel handlers.
+//// Patterns define how topics are routed to channel handlers. Patterns can be
+//// exact, legacy trailing prefix wildcards, or segment-aware wildcards where
+//// "*" occupies a complete colon-delimited segment.
 
 import gleam/list
 import gleam/string
@@ -12,6 +14,9 @@ pub type TopicPattern {
   Exact(String)
   /// Wildcard suffix: "room:*" matches "room:lobby", "room:123", etc.
   Wildcard(prefix: String)
+  /// Segment wildcard: "document:*:ops" matches the same number of ":"
+  /// segments where "*" occupies one complete segment.
+  SegmentWildcard(segments: List(String))
 }
 
 /// Parse a pattern string into TopicPattern
@@ -21,15 +26,21 @@ pub type TopicPattern {
 /// ```gleam
 /// parse_pattern("room:*") // -> Wildcard("room:")
 /// parse_pattern("room:lobby") // -> Exact("room:lobby")
-/// parse_pattern("doc:*:ops") // -> Exact("doc:*:ops") - only trailing * supported
+/// parse_pattern("document:*:ops") // -> SegmentWildcard(["document", "*", "ops"])
+/// parse_pattern("document:*:*") // -> SegmentWildcard(["document", "*", "*"])
+/// parse_pattern("document:tenant-a:*") // -> Wildcard("document:tenant-a:")
 /// ```
 pub fn parse_pattern(pattern: String) -> TopicPattern {
-  case string.ends_with(pattern, "*") {
-    True -> {
-      let prefix = string.drop_end(pattern, 1)
-      Wildcard(prefix)
-    }
-    False -> Exact(pattern)
+  case should_parse_segment_wildcard(pattern) {
+    True -> SegmentWildcard(segments(pattern))
+    False ->
+      case string.ends_with(pattern, "*") {
+        True -> {
+          let prefix = string.drop_end(pattern, 1)
+          Wildcard(prefix)
+        }
+        False -> Exact(pattern)
+      }
   }
 }
 
@@ -42,12 +53,49 @@ pub fn parse_pattern(pattern: String) -> TopicPattern {
 /// matches(Wildcard("room:"), "user:123") // -> False
 /// matches(Exact("room:lobby"), "room:lobby") // -> True
 /// matches(Exact("room:lobby"), "room:other") // -> False
+/// matches(parse_pattern("document:*:ops"), "document:tenant-a:ops") // -> True
+/// matches(parse_pattern("document:*:ops"), "document:tenant-a:view") // -> False
 /// ```
 pub fn matches(pattern: TopicPattern, topic: String) -> Bool {
   case pattern {
     Exact(p) -> p == topic
     Wildcard(prefix) -> string.starts_with(topic, prefix)
+    SegmentWildcard(pattern_parts) ->
+      segment_parts_match(pattern_parts, segments(topic))
   }
+}
+
+fn should_parse_segment_wildcard(pattern: String) -> Bool {
+  let parts = segments(pattern)
+
+  case has_full_wildcard_segment(parts) {
+    False -> False
+    True -> !string.ends_with(pattern, "*") || wildcard_segment_count(parts) > 1
+  }
+}
+
+fn has_full_wildcard_segment(parts: List(String)) -> Bool {
+  list.contains(parts, "*")
+}
+
+fn wildcard_segment_count(parts: List(String)) -> Int {
+  parts
+  |> list.filter(fn(part) { part == "*" })
+  |> list.length
+}
+
+fn segment_parts_match(
+  pattern_parts: List(String),
+  topic_parts: List(String),
+) -> Bool {
+  list.length(pattern_parts) == list.length(topic_parts)
+  && list.zip(pattern_parts, topic_parts)
+  |> list.all(fn(pair) {
+    case pair {
+      #("*", _) -> True
+      #(pattern_part, topic_part) -> pattern_part == topic_part
+    }
+  })
 }
 
 /// Extract the wildcard portion from a topic
@@ -57,6 +105,7 @@ pub fn matches(pattern: TopicPattern, topic: String) -> Bool {
 /// ```gleam
 /// extract_id(Wildcard("room:"), "room:lobby") // -> Ok("lobby")
 /// extract_id(Wildcard("doc:"), "doc:abc:123") // -> Ok("abc:123")
+/// extract_id(SegmentWildcard(["doc", "*", "ops"]), "doc:abc:ops") // -> Ok("abc")
 /// extract_id(Exact("room:lobby"), "room:lobby") // -> Error(Nil)
 /// ```
 pub fn extract_id(pattern: TopicPattern, topic: String) -> Result(String, Nil) {
@@ -66,6 +115,58 @@ pub fn extract_id(pattern: TopicPattern, topic: String) -> Result(String, Nil) {
       case string.starts_with(topic, prefix) {
         True -> Ok(string.drop_start(topic, string.length(prefix)))
         False -> Error(Nil)
+      }
+    }
+    SegmentWildcard(_) ->
+      case extract_wildcards(pattern, topic) {
+        Ok([id]) -> Ok(id)
+        _ -> Error(Nil)
+      }
+  }
+}
+
+/// Extract values captured by wildcard segments.
+///
+/// For legacy prefix wildcards, returns the suffix as a single value.
+/// For segment wildcards, returns each topic segment matched by "*".
+///
+/// ## Examples
+///
+/// ```gleam
+/// extract_wildcards(parse_pattern("document:*:*"), "document:tenant-a:doc-42")
+/// // -> Ok(["tenant-a", "doc-42"])
+/// ```
+pub fn extract_wildcards(
+  pattern: TopicPattern,
+  topic: String,
+) -> Result(List(String), Nil) {
+  case pattern {
+    Exact(p) ->
+      case p == topic {
+        True -> Ok([])
+        False -> Error(Nil)
+      }
+
+    Wildcard(prefix) ->
+      case string.starts_with(topic, prefix) {
+        True -> Ok([string.drop_start(topic, string.length(prefix))])
+        False -> Error(Nil)
+      }
+
+    SegmentWildcard(pattern_parts) -> {
+      let topic_parts = segments(topic)
+
+      case segment_parts_match(pattern_parts, topic_parts) {
+        False -> Error(Nil)
+        True ->
+          list.zip(pattern_parts, topic_parts)
+          |> list.filter_map(fn(pair) {
+            case pair {
+              #("*", value) -> Ok(value)
+              _ -> Error(Nil)
+            }
+          })
+          |> Ok
       }
     }
   }

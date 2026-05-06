@@ -6,7 +6,7 @@ Channels are the core abstraction in beryl. A channel maps a topic pattern to a 
 
 ## Topics and patterns
 
-Topics are colon-delimited string identifiers. Patterns can be exact matches or use a trailing wildcard:
+Topics are colon-delimited string identifiers. Patterns can be exact matches, legacy trailing prefix wildcards, or segment-aware wildcards:
 
 ```gleam
 import beryl/topic
@@ -17,12 +17,47 @@ topic.parse_pattern("room:lobby")  // -> Exact("room:lobby")
 // Wildcard: matches "room:lobby", "room:123", etc.
 topic.parse_pattern("room:*")  // -> Wildcard("room:")
 
+// Segment wildcard: matches one complete segment per "*"
+topic.parse_pattern("document:*:ops")
+// -> SegmentWildcard(["document", "*", "ops"])
+
+// Multi-segment wildcard: extract tenant and document IDs
+topic.parse_pattern("document:*:*")
+// -> SegmentWildcard(["document", "*", "*"])
+
+// Single trailing "*" keeps prefix wildcard behavior
+topic.parse_pattern("document:tenant-a:*")
+// -> Wildcard("document:tenant-a:")
+
 // Extract the dynamic part
 topic.extract_id(Wildcard("room:"), "room:lobby")  // -> Ok("lobby")
+
+// Extract multiple dynamic segments
+topic.extract_wildcards(
+  topic.parse_pattern("document:*:*"),
+  "document:tenant-a:doc-42",
+)
+// -> Ok(["tenant-a", "doc-42"])
 
 // Parse topic segments
 topic.segments("room:lobby")  // -> ["room", "lobby"]
 topic.namespace("room:lobby")  // -> Ok("room")
+```
+
+Use `document:tenant-a:*` to route all documents for one tenant while keeping the existing trailing-wildcard prefix semantics. Use `document:*:*` when a handler needs to extract both tenant and document IDs from a topic with the exact shape `document:{tenant_id}:{document_id}`:
+
+```gleam
+let pattern = topic.parse_pattern("document:*:*")
+
+case topic.extract_wildcards(pattern, "document:tenant-a:doc-42") {
+  Ok([tenant_id, document_id]) -> {
+    // tenant_id == "tenant-a"
+    // document_id == "doc-42"
+  }
+  _ -> {
+    // Topic did not match the expected document shape.
+  }
+}
 ```
 
 ## Defining a channel

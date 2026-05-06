@@ -1,0 +1,3 @@
+kind: Added
+body: Add segment-aware topic wildcard matching and wildcard segment extraction helpers.
+time: 2026-05-05T20:20:07.435635806-07:00

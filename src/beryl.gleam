@@ -225,8 +225,9 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 
 /// Register a channel handler for a topic pattern
 ///
-/// Patterns can be exact matches like "room:lobby" or wildcards like "room:*"
-/// which matches any topic starting with "room:".
+/// Patterns can be exact matches like "room:lobby", legacy prefix wildcards
+/// like "room:*" which match any topic starting with "room:", or segment
+/// wildcards like "document:*:ops" where "*" matches one complete segment.
 ///
 /// ## Example
 ///
@@ -241,8 +242,14 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 ///   channel.NoReply(socket)
 /// })
 ///
-/// // Register it
+/// // Register it with a legacy prefix wildcard
 /// beryl.register(channels, "chat:*", chat_channel)
+///
+/// // Exact topic
+/// beryl.register(channels, "room:lobby", lobby_channel)
+///
+/// // Segment-aware wildcard
+/// beryl.register(channels, "document:*:ops", ops_channel)
 /// ```
 pub fn register(
   channels: Channels,
@@ -415,7 +422,9 @@ pub fn push_to_socket(
 
 /// Get the topic ID from a topic using wildcard extraction
 ///
-/// For pattern "room:*" and topic "room:lobby", returns Ok("lobby")
+/// For pattern "room:*" and topic "room:lobby", returns Ok("lobby").
+/// For segment wildcard patterns with one wildcard segment, returns that
+/// segment. Use `topic.extract_wildcards` when extracting multiple segments.
 ///
 /// ## Example
 ///
