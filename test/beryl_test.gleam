@@ -61,6 +61,73 @@ pub fn exact_matches_test() {
   |> should.be_false
 }
 
+pub fn parse_mid_segment_wildcard_pattern_test() {
+  topic.parse_pattern("document:*:ops")
+  |> should.equal(topic.SegmentWildcard(["document", "*", "ops"]))
+}
+
+pub fn parse_multi_segment_wildcard_pattern_test() {
+  topic.parse_pattern("document:*:*")
+  |> should.equal(topic.SegmentWildcard(["document", "*", "*"]))
+}
+
+pub fn single_trailing_wildcard_keeps_prefix_pattern_test() {
+  topic.parse_pattern("document:tenant-a:*")
+  |> should.equal(topic.Wildcard("document:tenant-a:"))
+}
+
+pub fn segment_wildcard_matches_same_shape_topics_test() {
+  let pattern = topic.parse_pattern("document:*:ops")
+
+  topic.matches(pattern, "document:tenant-a:ops")
+  |> should.be_true
+
+  topic.matches(pattern, "document:tenant-b:ops")
+  |> should.be_true
+
+  topic.matches(pattern, "document:tenant-a:view")
+  |> should.be_false
+
+  topic.matches(pattern, "document:tenant-a:doc-1:ops")
+  |> should.be_false
+}
+
+pub fn tenant_trailing_wildcard_matches_documents_test() {
+  let pattern = topic.parse_pattern("document:tenant-a:*")
+
+  topic.matches(pattern, "document:tenant-a:doc-1")
+  |> should.be_true
+
+  topic.matches(pattern, "document:tenant-a:doc-1:ops")
+  |> should.be_true
+
+  topic.matches(pattern, "document:tenant-b:doc-1")
+  |> should.be_false
+}
+
+pub fn extract_wildcards_from_segment_pattern_test() {
+  let pattern = topic.parse_pattern("document:*:*")
+
+  topic.extract_wildcards(pattern, "document:tenant-a:doc-42")
+  |> should.equal(Ok(["tenant-a", "doc-42"]))
+
+  topic.extract_wildcards(pattern, "document:tenant-a")
+  |> should.equal(Error(Nil))
+}
+
+pub fn extract_id_from_single_segment_wildcard_test() {
+  let pattern = topic.parse_pattern("document:*:ops")
+
+  topic.extract_id(pattern, "document:tenant-a:ops")
+  |> should.equal(Ok("tenant-a"))
+
+  topic.extract_id(
+    topic.parse_pattern("document:*:*"),
+    "document:tenant-a:doc-42",
+  )
+  |> should.equal(Error(Nil))
+}
+
 pub fn extract_id_test() {
   let pattern = topic.Wildcard("room:")
 
@@ -99,6 +166,93 @@ pub fn validate_topic_test() {
 
   topic.validate("invalid:")
   |> should.be_error
+}
+
+pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let sent_messages = process.new_subject()
+
+  process.send(
+    channels.coordinator,
+    coordinator.SocketConnected(
+      "segment-socket",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(topic_name, _payload, socket) {
+      let assert Ok([tenant]) =
+        topic.extract_wildcards(
+          topic.parse_pattern("document:*:ops"),
+          topic_name,
+        )
+      let reply = json.object([#("tenant", json.string(tenant))])
+      channel.JoinOk(reply: option.Some(reply), socket: socket)
+    })
+
+  beryl.register(channels, "document:*:ops", handler)
+  |> should.equal(Ok(Nil))
+
+  process.send(
+    channels.coordinator,
+    coordinator.Join(
+      "segment-socket",
+      "document:tenant-a:ops",
+      dynamic.nil(),
+      option.None,
+      "join-ref",
+    ),
+  )
+
+  let assert Ok(join_reply) = process.receive(sent_messages, 500)
+  join_reply |> string.contains("phx_reply") |> should.be_true
+  join_reply |> string.contains("\"tenant\":\"tenant-a\"") |> should.be_true
+}
+
+pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let sent_messages = process.new_subject()
+
+  process.send(
+    channels.coordinator,
+    coordinator.SocketConnected(
+      "segment-reject-socket",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  beryl.register(channels, "document:*:ops", handler)
+  |> should.equal(Ok(Nil))
+
+  process.send(
+    channels.coordinator,
+    coordinator.Join(
+      "segment-reject-socket",
+      "document:tenant-a:view",
+      dynamic.nil(),
+      option.None,
+      "join-ref",
+    ),
+  )
+
+  let assert Ok(join_reply) = process.receive(sent_messages, 500)
+  join_reply |> string.contains("no_channel_handler") |> should.be_true
 }
 
 // Config tests
