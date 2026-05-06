@@ -345,6 +345,7 @@ let socket = socket.set_assigns(socket, RoomAssigns(..assigns, room_id: "new"))
 let socket = socket.map_assigns(socket, fn(old) {
   NewType(user_id: old.user_id)
 })
+```
 
 ## Next steps
 
