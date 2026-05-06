@@ -48,7 +48,7 @@ src/
     ├── socket.gleam             # Socket abstraction
     ├── topic.gleam              # Topic pattern matching
     ├── transport/
-    │   └── websocket.gleam      # Wisp WebSocket transport integration
+    │   └── mist.gleam           # Mist WebSocket transport integration
     └── wire.gleam               # Wire protocol (JSON encode/decode)
 test/
 ├── beryl_test.gleam
@@ -75,7 +75,7 @@ test/
 - `gleam_otp` - OTP actors
 - `gleam_json` - JSON encoding/decoding
 - `gleam_crypto` - Cryptographic functions
-- `wisp` - HTTP/WebSocket framework (local path dep)
+- `mist` - HTTP/WebSocket server and transport integration
 
 #### Development
 - `gleeunit` - Testing framework

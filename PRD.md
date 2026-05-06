@@ -21,7 +21,7 @@ Gleam's ecosystem lacks a dedicated real-time communication library. Developers 
 2. **Phoenix wire protocol compatibility** — Reuse the proven `[join_ref, ref, topic, event, payload]` JSON format so existing client libraries (phoenix.js, etc.) work without modification.
 3. **Distributed by default** — Pub/sub and presence should work across BEAM cluster nodes out of the box via Erlang's `pg` module.
 4. **Minimal, composable API** — Each subsystem (channels, presence, groups, pub/sub) should be independently usable and opt-in.
-5. **Framework agnostic** — Core library has no HTTP framework dependency; transport adapters (starting with Wisp) are separate modules.
+5. **Framework agnostic** — Channel, presence, and PubSub logic stay separate from HTTP routing. The built-in WebSocket transport integrates directly with Mist.
 
 ## Non-Goals
 
@@ -52,7 +52,7 @@ Gleam's ecosystem lacks a dedicated real-time communication library. Developers 
 │  PubSub (pg) · Presence (CRDT actor)                    │
 ├─────────────────────────────────────────────────────────┤
 │  Transport                                              │
-│  Wisp WebSocket adapter · Socket abstraction            │
+│  Mist WebSocket adapter · Socket abstraction            │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -173,7 +173,7 @@ JSON array format compatible with Phoenix Channels:
 [null, null, topic, "custom_event", {...}]
 ```
 
-### FR-6: Transport — Wisp WebSocket Adapter
+### FR-6: Transport — Mist WebSocket Adapter
 
 - **`upgrade(request, coordinator, config, next)`** — Middleware-style: intercepts requests matching the configured path, upgrades to WebSocket, falls through for non-matching requests.
 - **`upgrade_connection(request, coordinator)`** — Direct upgrade for custom routing.
@@ -215,7 +215,7 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 | gleam_otp | >= 0.12.0 | OTP actors (Subject, process) |
 | gleam_json | >= 3.0.0 | Wire protocol encoding/decoding |
 | gleam_crypto | >= 1.5.1 | Socket ID generation |
-| wisp | local path | WebSocket transport (requires PR #144) |
+| mist | >= 6.0.0 and < 7.0.0 | WebSocket transport |
 
 **Dev**: gleeunit >= 1.0.0
 
@@ -232,14 +232,14 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 | Presence actor | **Complete** | Actor wraps CRDT; periodic delta replication via PubSub |
 | Supervisor | **Complete** | Rest-for-one strategy, child_spec, validation |
 | Groups | **Complete** | Named topic collections with broadcast |
-| Wisp transport | **Complete** | WebSocket upgrade + lifecycle management |
+| Mist transport | **Complete** | WebSocket upgrade + lifecycle management, no Wisp dependency |
 | Binary transport | **Complete** | Raw BitArray frames, opt-in via `with_handle_binary` |
 | Rate limiting | **Complete** | Token bucket per socket/channel/join; configurable rate+burst |
 
 ## Future Considerations
 
 - **Presence replication via PubSub**: The `BroadcastTick` message in the presence actor is a placeholder. Full implementation would periodically extract deltas and broadcast via PubSub for cross-node convergence.
-- **Transport plugins**: Additional adapters beyond Wisp (e.g. Mist, raw TCP).
+- **Transport plugins**: Additional adapters beyond Mist, such as raw TCP.
 - **Channel authentication middleware**: Composable auth hooks that run before `join` callbacks.
 - **Telemetry/metrics integration**: Structured event emission for connection counts, message rates, presence changes.
 - **Long-polling fallback**: For environments where WebSockets are unavailable.

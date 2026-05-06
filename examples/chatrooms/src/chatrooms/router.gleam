@@ -1,14 +1,19 @@
 import beryl
 import beryl/group
 import beryl/presence
-import beryl/transport/websocket
-import gleam/http/request
+import gleam/bytes_tree
+import gleam/erlang/application
+import gleam/http
+import gleam/http/request.{type Request}
+import gleam/http/response.{type Response}
 import gleam/json
 import gleam/list
+import gleam/option
 import gleam/result
 import gleam/set
 import gleam/string
-import wisp
+import gleam/uri
+import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
@@ -18,32 +23,20 @@ pub type Context {
   )
 }
 
-pub fn handle_request(req: wisp.Request, ctx: Context) -> wisp.Response {
-  // WebSocket upgrade with on_connect authentication
-  let ws_config =
-    websocket.default_config("/socket/websocket")
-    |> websocket.with_on_connect(fn(request) {
-      // Check for valid auth token in query params
-      case get_query_param(request, "token") {
-        Ok("beryl-demo") -> Ok(Nil)
-        _ -> Error(Nil)
-      }
-    })
+pub fn handle_request(
+  req: Request(Connection),
+  ctx: Context,
+) -> Response(ResponseData) {
+  use <- serve_static(req, under: "/static", from: priv_directory())
 
-  use <- websocket.upgrade(req, ctx.channels.coordinator, ws_config)
-
-  // Serve static files from priv/static
-  use <- wisp.serve_static(req, under: "/static", from: priv_directory())
-
-  // Route HTTP requests
-  case wisp.path_segments(req) {
+  case request.path_segments(req) {
     [] -> index_page(ctx)
     ["api", "rooms"] -> rooms_api(ctx)
-    _ -> wisp.not_found()
+    _ -> not_found()
   }
 }
 
-fn rooms_api(ctx: Context) -> wisp.Response {
+fn rooms_api(ctx: Context) -> Response(ResponseData) {
   let rooms = case group.topics(ctx.groups, "public") {
     Ok(topics) ->
       topics
@@ -64,19 +57,10 @@ fn rooms_api(ctx: Context) -> wisp.Response {
   }
 
   let body = json.to_string(json.array(rooms, fn(r) { r }))
-  wisp.json_response(body, 200)
+  json_response(body)
 }
 
-fn get_query_param(req: wisp.Request, name: String) -> Result(String, Nil) {
-  case request.get_query(req) {
-    Ok(params) ->
-      list.find(params, fn(pair) { pair.0 == name })
-      |> result.map(fn(pair) { pair.1 })
-    Error(_) -> Error(Nil)
-  }
-}
-
-fn index_page(ctx: Context) -> wisp.Response {
+fn index_page(ctx: Context) -> Response(ResponseData) {
   // Build room list for initial render
   let rooms = case group.topics(ctx.groups, "public") {
     Ok(topics) ->
@@ -140,10 +124,87 @@ fn index_page(ctx: Context) -> wisp.Response {
 </body>
 </html>"
 
-  wisp.html_response(html, 200)
+  html_response(html)
+}
+
+fn serve_static(
+  req: Request(Connection),
+  under prefix: String,
+  from directory: String,
+  next handler: fn() -> Response(ResponseData),
+) -> Response(ResponseData) {
+  let path = drop_leading_slashes(req.path)
+  let prefix = drop_leading_slashes(prefix)
+
+  case req.method, string.starts_with(path, prefix) {
+    http.Get, True -> {
+      let relative =
+        path
+        |> string.drop_start(string.length(prefix))
+        |> uri.percent_decode
+        |> result.unwrap(path)
+        |> string.split("/")
+        |> list.filter(fn(segment) {
+          segment != "" && segment != "." && segment != ".."
+        })
+        |> string.join("/")
+
+      case relative {
+        "" -> not_found()
+        _ -> {
+          let file_path = directory <> "/" <> relative
+          case mist.send_file(file_path, offset: 0, limit: option.None) {
+            Ok(body) ->
+              response.new(200)
+              |> response.set_header("content-type", mime_type_for(file_path))
+              |> response.set_body(body)
+            Error(mist.UnknownFileError) ->
+              response.new(500)
+              |> response.set_body(mist.Bytes(bytes_tree.new()))
+            Error(_) -> not_found()
+          }
+        }
+      }
+    }
+    _, _ -> handler()
+  }
+}
+
+fn html_response(html: String) -> Response(ResponseData) {
+  response.new(200)
+  |> response.set_header("content-type", "text/html; charset=utf-8")
+  |> response.set_body(mist.Bytes(bytes_tree.from_string(html)))
+}
+
+fn json_response(json: String) -> Response(ResponseData) {
+  response.new(200)
+  |> response.set_header("content-type", "application/json; charset=utf-8")
+  |> response.set_body(mist.Bytes(bytes_tree.from_string(json)))
+}
+
+fn not_found() -> Response(ResponseData) {
+  response.new(404)
+  |> response.set_body(mist.Bytes(bytes_tree.from_string("Not found")))
+}
+
+fn drop_leading_slashes(path: String) -> String {
+  case path {
+    "/" <> rest -> drop_leading_slashes(rest)
+    _ -> path
+  }
+}
+
+fn mime_type_for(path: String) -> String {
+  case string.split(path, ".") |> list.last {
+    Ok("css") -> "text/css; charset=utf-8"
+    Ok("js") -> "application/javascript; charset=utf-8"
+    Ok("html") -> "text/html; charset=utf-8"
+    Ok("json") -> "application/json; charset=utf-8"
+    _ -> "application/octet-stream"
+  }
 }
 
 fn priv_directory() -> String {
-  let assert Ok(priv) = wisp.priv_directory("chatrooms")
+  let assert Ok(priv) = application.priv_directory("chatrooms")
   priv <> "/static"
 }

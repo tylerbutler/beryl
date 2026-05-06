@@ -1,22 +1,41 @@
 import beryl
 import beryl/channel
 import beryl/socket
-import beryl/transport/websocket
+import beryl/transport/mist as mist_transport
+import gleam/bytes_tree
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
-import gleam/http
+import gleam/http/response
 import gleam/json.{type Json}
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleeunit
 import gleeunit/should
-import wisp
-import wisp/simulate
+import mist
 
 pub fn main() {
   gleeunit.main()
 }
+
+type WebsocketClient
+
+@external(erlang, "beryl_mist_transport_test_ffi", "connect_websocket")
+fn connect_websocket(port: Int, path: String) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "send_text")
+fn send_text(
+  client: WebsocketClient,
+  text: String,
+) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_text")
+fn receive_text(client: WebsocketClient, timeout: Int) -> Result(String, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "close")
+fn close(client: WebsocketClient) -> Nil
+
+@external(erlang, "beryl_ffi", "stop_supervisor")
+fn stop_supervisor(pid: process.Pid) -> Nil
 
 type Frame {
   Frame(
@@ -161,20 +180,21 @@ fn assert_reply(
   frame
 }
 
-fn sent_text_messages(ws) -> List(String) {
-  process.sleep(25)
-  simulate.websocket_sent_text_messages(ws)
-}
-
-fn latest_text_message(ws) -> String {
-  let messages = sent_text_messages(ws)
-  let assert Ok(message) = list.last(messages)
+fn latest_text_message(client: WebsocketClient) -> String {
+  let assert Ok(message) = receive_text(client, 500)
   message
 }
 
-fn drain_text_messages(ws) {
-  let _ = simulate.reset_websocket(ws)
-  Nil
+fn drain_text_messages(client: WebsocketClient) {
+  case receive_text(client, 10) {
+    Ok(_) -> drain_text_messages(client)
+    Error(_) -> Nil
+  }
+}
+
+fn assert_no_text_message(client: WebsocketClient) {
+  receive_text(client, 50)
+  |> should.equal(Error(Nil))
 }
 
 fn contract_channel(
@@ -219,25 +239,40 @@ fn contract_channel(
   })
 }
 
-fn connect_client(channels: beryl.Channels) {
-  let request = simulate.websocket_request(http.Get, "/socket/websocket")
-  let response =
-    websocket.upgrade(
+fn start_mist_server(channels: beryl.Channels) -> #(Int, process.Pid) {
+  let port_subject = process.new_subject()
+  let handler = fn(request) {
+    mist_transport.upgrade(
       request,
       channels.coordinator,
-      websocket.default_config("/socket/websocket"),
-      fn() { wisp.not_found() },
+      mist_transport.default_config("/socket/websocket"),
+      fn() {
+        response.new(404)
+        |> response.set_body(mist.Bytes(bytes_tree.new()))
+      },
     )
+  }
+  let assert Ok(server) =
+    handler
+    |> mist.new
+    |> mist.port(0)
+    |> mist.bind("127.0.0.1")
+    |> mist.after_start(fn(port, _scheme, _ip_address) {
+      process.send(port_subject, port)
+    })
+    |> mist.start
+  let assert Ok(port) = process.receive(port_subject, 1000)
+  #(port, server.pid)
+}
 
-  let assert wisp.WebSocket(upgrade) = response.body
-  let handler = wisp.recover(upgrade)
-  let assert Ok(client) = simulate.create_websocket(handler)
+fn connect_client(port: Int) {
+  let assert Ok(client) = connect_websocket(port, "/socket/websocket")
   client
 }
 
-fn join_client(serializer: Serializer, client) {
+fn join_client(serializer: Serializer, client: WebsocketClient) {
   let assert Ok(client) =
-    simulate.send_websocket_text(
+    send_text(
       client,
       serializer.join(
         "join-ref",
@@ -261,9 +296,10 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let terminated = process.new_subject()
   beryl.register(channels, "room:*", contract_channel(channels, terminated))
   |> should.equal(Ok(Nil))
+  let #(port, server_pid) = start_mist_server(channels)
 
-  let client = connect_client(channels)
-  let other_client = connect_client(channels)
+  let client = connect_client(port)
+  let other_client = connect_client(port)
 
   let client = join_client(serializer, client)
   let other_client = join_client(serializer, other_client)
@@ -271,7 +307,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   drain_text_messages(other_client)
 
   let assert Ok(client) =
-    simulate.send_websocket_text(
+    send_text(
       client,
       serializer.event(
         "join-ref",
@@ -287,7 +323,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   assert_json_bool(response, "pong", True)
 
   let assert Ok(client) =
-    simulate.send_websocket_text(
+    send_text(
       client,
       serializer.event(
         "join-ref",
@@ -322,15 +358,14 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   assert_json_string(broadcast_frame.payload, "body", "hello")
 
   drain_text_messages(client)
-  let assert Ok(client) =
-    simulate.send_websocket_text(client, serializer.heartbeat("heartbeat-1"))
+  let assert Ok(client) = send_text(client, serializer.heartbeat("heartbeat-1"))
   let heartbeat = latest_text_message(client)
   let _ = assert_reply(serializer, heartbeat, None, "heartbeat-1", "phoenix")
 
   drain_text_messages(client)
   drain_text_messages(other_client)
   let assert Ok(client) =
-    simulate.send_websocket_text(
+    send_text(
       client,
       serializer.event(
         "join-ref",
@@ -340,9 +375,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
         json.object([#("body", json.string("from sender"))]),
       ),
     )
-  process.sleep(25)
-  simulate.websocket_sent_text_messages(client)
-  |> should.equal([])
+  assert_no_text_message(client)
   let from_sender = latest_text_message(other_client)
   let assert Ok(from_sender_frame) = serializer.decode(from_sender)
   from_sender_frame.event |> should.equal("broadcasted")
@@ -350,7 +383,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
 
   drain_text_messages(client)
   let assert Ok(client) =
-    simulate.send_websocket_text(
+    send_text(
       client,
       serializer.leave("join-ref", "leave-1", "room:lobby", json.object([])),
     )
@@ -367,6 +400,8 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
     json.object([#("body", json.string("ignored"))]),
   )
   process.sleep(25)
-  simulate.websocket_sent_text_messages(client)
-  |> should.equal([])
+  assert_no_text_message(client)
+  close(client)
+  close(other_client)
+  stop_supervisor(server_pid)
 }

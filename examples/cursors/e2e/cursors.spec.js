@@ -107,6 +107,14 @@ test.describe("Collaborative Cursors Demo", () => {
       expect(response?.status()).toBe(200);
       expect(response?.headers()["content-type"]).toContain("javascript");
     });
+
+    test("rejects path traversal attempts", async ({ page }) => {
+      const response = await page.goto("/static/../gleam.toml");
+      expect(response?.status()).toBe(404);
+
+      const encodedResponse = await page.goto("/static/%2E%2E/gleam.toml");
+      expect(encodedResponse?.status()).toBe(404);
+    });
   });
 
   test.describe("Layout", () => {

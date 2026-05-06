@@ -20,7 +20,7 @@ Then open <http://localhost:8000> in **multiple browser tabs** to see cursors mo
 | **Presence (CRDT)** | Tracks connected users with username + color metadata |
 | **PubSub** | `broadcast_from` fans out cursor moves to all other clients |
 | **Wire protocol** | Phoenix-compatible format — works with the official Phoenix JS client |
-| **WebSocket transport** | `websocket.upgrade()` middleware in the wisp router |
+| **WebSocket transport** | `mist_transport.upgrade()` handles Phoenix-compatible WebSocket requests |
 | **Rate limiting** | Throttles high-frequency cursor movement messages |
 
 ## Architecture
@@ -31,7 +31,7 @@ Browser (vanilla JS + Phoenix client)
   │  WebSocket (Phoenix wire protocol)
   │
 Server (Gleam)
-  ├── Wisp router ── serves HTML + static files
+  ├── Mist HTTP routing ── serves HTML + static files
   ├── beryl channels ── cursor:* topic handler
   ├── beryl presence ── CRDT-backed user tracking
   └── beryl pubsub ── broadcast cursor positions
@@ -39,6 +39,6 @@ Server (Gleam)
 
 ## Stack
 
-- **Backend**: Gleam, beryl, wisp, mist
+- **Backend**: Gleam, beryl, mist
 - **Frontend**: Vanilla JS, [Phoenix JS client](https://www.npmjs.com/package/phoenix) (CDN)
 - **No build step** — just `gleam run`

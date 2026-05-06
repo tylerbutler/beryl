@@ -150,7 +150,7 @@ pub fn with_channel_rate(
 /// Pass this to channel handlers and the WebSocket transport.
 pub type Channels {
   Channels(
-    /// The coordinator actor subject - pass to transport.websocket.upgrade()
+    /// The coordinator actor subject - pass to transport.mist.upgrade()
     coordinator: Subject(coordinator.Message),
     /// Configuration
     config: Config,

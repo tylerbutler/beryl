@@ -32,8 +32,9 @@ beryl brings in these Gleam packages automatically:
 | `gleam_json` | JSON encoding/decoding |
 | `gleam_crypto` | Socket ID generation |
 
-For WebSocket support, you'll also need [Wisp](https://github.com/gleam-wisp/wisp):
+If your application starts its own WebSocket server with beryl's Mist transport,
+add [Mist](https://hexdocs.pm/mist/) to that application:
 
 ```bash
-gleam add wisp
+gleam add mist
 ```

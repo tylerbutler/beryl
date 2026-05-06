@@ -1,16 +1,13 @@
 import beryl
 import beryl/presence
-import cursors/adapter
+import beryl/transport/mist as mist_transport
 import cursors/cursor_channel
 import cursors/router
 import gleam/erlang/process
 import gleam/io
 import mist
-import wisp
 
 pub fn main() {
-  wisp.configure_logger()
-
   // Start beryl channels with rate limiting for cursor events
   let config =
     beryl.default_config()
@@ -31,12 +28,17 @@ pub fn main() {
   io.println("")
 
   // Start the HTTP server
-  let secret_key_base = wisp.random_string(64)
   let ctx = router.Context(channels:, presence: presence_actor)
 
   let assert Ok(_) =
-    router.handle_request(_, ctx)
-    |> adapter.handler(secret_key_base)
+    fn(req) {
+      mist_transport.upgrade(
+        req,
+        channels.coordinator,
+        mist_transport.default_config("/socket/websocket"),
+        fn() { router.handle_request(req, ctx) },
+      )
+    }
     |> mist.new
     |> mist.port(8000)
     |> mist.start

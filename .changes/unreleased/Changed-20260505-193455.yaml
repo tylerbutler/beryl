@@ -1,0 +1,3 @@
+kind: Changed
+body: Route examples with Mist directly.\n\nRemoves the Wisp HTTP adapter layer from the cursors and chatrooms examples so HTTP routes, static assets, and WebSocket upgrades all use Mist-native request and response types.
+time: 2026-05-05T19:34:55.053233434-07:00

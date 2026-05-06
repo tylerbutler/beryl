@@ -9,7 +9,7 @@ beryl is organized into several layers, each building on the one below it.
 ```
 ┌─────────────────────────────────────────┐
 │           WebSocket Transport           │
-│       (beryl/transport/websocket)       │
+│         (beryl/transport/mist)          │
 ├─────────────────────────────────────────┤
 │            Wire Protocol                │
 │            (beryl/wire)                 │
@@ -95,9 +95,9 @@ JSON encoding and decoding for the Phoenix-compatible wire protocol. Handles:
 - Heartbeat replies
 - Dynamic-to-JSON conversion for payloads
 
-### WebSocket Transport (`beryl/transport/websocket`)
+### WebSocket Transport (`beryl/transport/mist`)
 
-Integrates with Wisp to handle WebSocket connections:
+Integrates directly with Mist to handle WebSocket connections:
 
 1. Generates a unique socket ID per connection
 2. Registers the socket's send function with the coordinator

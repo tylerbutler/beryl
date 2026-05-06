@@ -2,32 +2,36 @@
 title: WebSocket Transport
 ---
 
-beryl provides a WebSocket transport layer that integrates with [Wisp](https://github.com/gleam-wisp/wisp) for handling browser client connections.
+beryl provides a WebSocket transport layer that integrates directly with [Mist](https://hexdocs.pm/mist/) for handling browser client connections.
 
 ## Basic setup
 
-The simplest way to add WebSocket support is with `websocket.upgrade`:
+The simplest way to add WebSocket support is with `mist_transport.upgrade`:
 
 ```gleam
 import beryl
-import beryl/transport/websocket
-import wisp
+import beryl/transport/mist as mist_transport
+import gleam/bytes_tree
+import gleam/http/request
+import gleam/http/request.{type Request}
+import gleam/http/response
+import mist
 
 fn handle_request(
-  req: wisp.Request,
+  req: Request(mist.Connection),
   channels: beryl.Channels,
-) -> wisp.Response {
+) -> response.Response(mist.ResponseData) {
   // Upgrade /socket requests to WebSocket
-  use <- websocket.upgrade(
+  use <- mist_transport.upgrade(
     req,
     channels.coordinator,
-    websocket.default_config("/socket"),
+    mist_transport.default_config("/socket"),
   )
 
   // Non-WebSocket requests fall through here
-  case wisp.path_segments(req) {
-    [] -> wisp.ok()
-    _ -> wisp.not_found()
+  case request.path_segments(req) {
+    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
+    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
   }
 }
 ```
@@ -40,8 +44,8 @@ Use `with_on_connect` to authenticate connections before upgrading:
 
 ```gleam
 let config =
-  websocket.default_config("/socket")
-  |> websocket.with_on_connect(fn(req: wisp.Request) {
+  mist_transport.default_config("/socket")
+  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
     // Check auth token, session, etc.
     case validate_token(req) {
       Ok(_user) -> Ok(Nil)    // Allow connection
@@ -49,7 +53,7 @@ let config =
     }
   })
 
-use <- websocket.upgrade(req, channels.coordinator, config)
+use <- mist_transport.upgrade(req, channels.coordinator, config)
 ```
 
 ## Direct upgrade
@@ -57,10 +61,10 @@ use <- websocket.upgrade(req, channels.coordinator, config)
 If you handle path matching yourself, use `upgrade_connection` directly:
 
 ```gleam
-fn handle_request(req, channels) -> wisp.Response {
-  case wisp.path_segments(req) {
-    ["ws"] -> websocket.upgrade_connection(req, channels.coordinator)
-    _ -> wisp.not_found()
+fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
+  case request.path_segments(req) {
+    ["ws"] -> mist_transport.upgrade_connection(req, channels.coordinator)
+    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
   }
 }
 ```

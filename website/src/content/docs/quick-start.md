@@ -84,24 +84,31 @@ pub fn main() {
 
 ## 4. Add WebSocket transport
 
-In your Wisp router, upgrade WebSocket connections:
+Use the Mist transport to upgrade WebSocket connections before falling through
+to any regular HTTP routing:
 
 ```gleam
-import beryl/transport/websocket
-import wisp
+import beryl/transport/mist as mist_transport
+import gleam/bytes_tree
+import gleam/http/request.{type Request}
+import gleam/http/response
+import mist
 
-fn handle_request(req: wisp.Request, channels: beryl.Channels) -> wisp.Response {
+fn handle_request(
+  req: Request(mist.Connection),
+  channels: beryl.Channels,
+) -> response.Response(mist.ResponseData) {
   // Upgrade /socket requests to WebSocket
-  use <- websocket.upgrade(
+  use <- mist_transport.upgrade(
     req,
     channels.coordinator,
-    websocket.default_config("/socket"),
+    mist_transport.default_config("/socket"),
   )
 
   // Fall through to regular HTTP routing
-  case wisp.path_segments(req) {
-    [] -> wisp.ok()
-    _ -> wisp.not_found()
+  case request.path_segments(req) {
+    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
+    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
   }
 }
 ```

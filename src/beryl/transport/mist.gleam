@@ -1,21 +1,20 @@
-//// WebSocket Transport - Wisp integration for beryl
+//// Mist WebSocket Transport - Direct Mist integration for beryl
 ////
-//// This module provides the bridge between Wisp's WebSocket handling
-//// and the beryl coordinator. It handles:
-//// - WebSocket connection lifecycle
-//// - Phoenix wire protocol parsing
-//// - Routing messages to/from the coordinator
+//// This module provides the bridge between Mist's native WebSocket handling
+//// and the beryl coordinator using Mist request and response types directly.
 
 import beryl/coordinator.{type Message as CoordinatorMessage}
 import gleam/bit_array
+import gleam/bytes_tree
 import gleam/crypto
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
+import gleam/http/request.{type Request}
+import gleam/http/response.{type Response}
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
-import wisp
-import wisp/websocket
+import mist.{type Connection, type ResponseData, type WebsocketConnection}
 
 /// Get current process PID as Dynamic (for handler_pid in SocketConnected)
 @external(erlang, "beryl_ffi", "identity")
@@ -25,7 +24,7 @@ fn get_self() -> Dynamic {
   unsafe_coerce(process.self())
 }
 
-/// Configuration for the WebSocket transport
+/// Configuration for the Mist WebSocket transport
 pub type TransportConfig {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
@@ -33,7 +32,7 @@ pub type TransportConfig {
     /// Optional authentication callback invoked before upgrading.
     /// Return Ok(Nil) to allow the connection, Error(Nil) to reject with 403.
     /// When None, all connections are allowed (default).
-    on_connect: Option(fn(wisp.Request) -> Result(Nil, Nil)),
+    on_connect: Option(fn(Request(Connection)) -> Result(Nil, Nil)),
   )
 }
 
@@ -49,7 +48,7 @@ pub fn default_config(path: String) -> TransportConfig {
 /// with a 403 Forbidden response.
 pub fn with_on_connect(
   config: TransportConfig,
-  callback: fn(wisp.Request) -> Result(Nil, Nil),
+  callback: fn(Request(Connection)) -> Result(Nil, Nil),
 ) -> TransportConfig {
   TransportConfig(..config, on_connect: Some(callback))
 }
@@ -59,27 +58,32 @@ type ConnectionState {
   ConnectionState(socket_id: String, coordinator: Subject(CoordinatorMessage))
 }
 
+type SendRequest {
+  SendText(String)
+  SendBinary(BitArray)
+}
+
 /// Upgrade a request to WebSocket if it matches the configured path
 ///
-/// Usage in your Wisp router:
+/// Usage in your Mist handler:
 /// ```gleam
-/// fn handle_request(req: Request, channels: Channels) -> Response {
-///   use <- websocket.upgrade(req, channels.coordinator, websocket.default_config("/socket"))
+/// fn handle_request(req: Request(Connection), channels: Channels) -> Response(ResponseData) {
+///   use <- mist_transport.upgrade(req, channels.coordinator, mist_transport.default_config("/socket"))
 ///   // Fall through to regular HTTP routing
-///   case wisp.path_segments(req) {
+///   case request.path_segments(req) {
 ///     [] -> index_page()
-///     _ -> wisp.not_found()
+///     _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
 ///   }
 /// }
 /// ```
 pub fn upgrade(
-  request: wisp.Request,
+  request: Request(Connection),
   coordinator: Subject(CoordinatorMessage),
   config: TransportConfig,
-  next: fn() -> wisp.Response,
-) -> wisp.Response {
+  next: fn() -> Response(ResponseData),
+) -> Response(ResponseData) {
   // Check if path matches
-  let path = "/" <> string.join(wisp.path_segments(request), "/")
+  let path = "/" <> string.join(request.path_segments(request), "/")
 
   case path == config.path {
     False -> next()
@@ -89,7 +93,9 @@ pub fn upgrade(
         Some(callback) ->
           case callback(request) {
             Ok(Nil) -> do_upgrade(request, coordinator)
-            Error(Nil) -> wisp.response(403)
+            Error(Nil) ->
+              response.new(403)
+              |> response.set_body(mist.Bytes(bytes_tree.new()))
           }
         None -> do_upgrade(request, coordinator)
       }
@@ -103,47 +109,51 @@ pub fn upgrade(
 /// `TransportConfig`. If you need authentication, either use `upgrade`
 /// with a full config or call your auth check before this function.
 pub fn upgrade_connection(
-  request: wisp.Request,
+  request: Request(Connection),
   coordinator: Subject(CoordinatorMessage),
-) -> wisp.Response {
+) -> Response(ResponseData) {
   do_upgrade(request, coordinator)
 }
 
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
-  request: wisp.Request,
+  request: Request(Connection),
   coordinator: Subject(CoordinatorMessage),
-) -> wisp.Response {
-  wisp.websocket(
-    request,
+) -> Response(ResponseData) {
+  mist.websocket(
+    request: request,
+    handler: fn(state, message, connection) {
+      on_message(state, message, connection)
+    },
     on_init: fn(connection) { on_init(connection, coordinator) },
-    on_message: on_message,
     on_close: on_close,
   )
 }
 
 /// Initialize WebSocket connection
 fn on_init(
-  connection: websocket.Connection,
+  _connection: WebsocketConnection,
   coordinator: Subject(CoordinatorMessage),
-) -> #(ConnectionState, Option(process.Selector(a))) {
+) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Generate unique socket ID
   let socket_id = generate_socket_id()
+  let send_subject = process.new_subject()
+  let selector =
+    process.new_selector()
+    |> process.select(send_subject)
 
   // Create send function that the coordinator can use
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
-    websocket.send_text(connection, text)
-    |> result.replace(Nil)
-    |> result.replace_error(Nil)
+    process.send(send_subject, SendText(text))
+    Ok(Nil)
   }
 
   let send_binary_fn = fn(data: BitArray) -> Result(Nil, Nil) {
-    websocket.send_binary(connection, data)
-    |> result.replace(Nil)
-    |> result.replace_error(Nil)
+    process.send(send_subject, SendBinary(data))
+    Ok(Nil)
   }
 
-  // Register with coordinator (in wisp transport, self() is the handler)
+  // Register with coordinator
   let handler_pid = get_self()
   process.send(
     coordinator,
@@ -152,27 +162,35 @@ fn on_init(
 
   let state = ConnectionState(socket_id: socket_id, coordinator: coordinator)
 
-  // No custom selector needed for MVP
-  #(state, None)
+  #(state, Some(selector))
 }
 
 /// Handle incoming WebSocket messages
 fn on_message(
   state: ConnectionState,
-  message: websocket.Message(a),
-  _connection: websocket.Connection,
-) -> websocket.Next(ConnectionState) {
+  message: mist.WebsocketMessage(SendRequest),
+  connection: WebsocketConnection,
+) -> mist.Next(ConnectionState, SendRequest) {
   case message {
-    websocket.Text(text) -> {
+    mist.Text(text) -> {
       coordinator.route_message(state.coordinator, state.socket_id, text)
-      websocket.Continue(state)
+      mist.continue(state)
     }
-    websocket.Binary(data) -> {
+    mist.Binary(data) -> {
       coordinator.route_binary(state.coordinator, state.socket_id, data)
-      websocket.Continue(state)
+      mist.continue(state)
     }
-    websocket.Closed | websocket.Shutdown -> websocket.Stop
-    websocket.Custom(_) -> websocket.Continue(state)
+    mist.Closed | mist.Shutdown -> mist.stop()
+    mist.Custom(SendText(text)) -> {
+      mist.send_text_frame(connection, text)
+      |> result.replace(mist.continue(state))
+      |> result.unwrap(mist.continue(state))
+    }
+    mist.Custom(SendBinary(data)) -> {
+      mist.send_binary_frame(connection, data)
+      |> result.replace(mist.continue(state))
+      |> result.unwrap(mist.continue(state))
+    }
   }
 }
 

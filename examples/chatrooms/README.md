@@ -30,7 +30,7 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 | Feature | Module | Usage |
 |---|---|---|
 | **Groups** | `beryl/group` | Rooms organized in "public" group |
-| **on_connect auth** | `beryl/transport/websocket` | Token query param validated before WS upgrade |
+| **on_connect auth** | `beryl/transport/mist` | Token query param validated before WS upgrade |
 | **JoinError** | `beryl/channel` | Room capacity check rejects when full |
 | **Reply** | `beryl/channel` | Message delivery confirmed with `msg_ack` |
 | **Push** | `beryl/channel` | System join/leave messages broadcast to room |
@@ -47,11 +47,11 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 Browser (vanilla JS + Phoenix client CDN)
   ↕ WebSocket (Phoenix wire protocol, token auth)
 Gleam/BEAM server (port 8001)
-  ├── wisp router (on_connect auth, static files, /api/rooms)
+  ├── Mist HTTP routing (static files, /api/rooms)
+  ├── Mist WebSocket transport (on_connect auth)
   ├── beryl channels (room:* handler)
   ├── beryl groups ("public" → general, random, help)
-  ├── beryl presence (online users + typing indicators)
-  └── inline wisp→mist adapter
+  └── beryl presence (online users + typing indicators)
 ```
 
 ## Running Tests
