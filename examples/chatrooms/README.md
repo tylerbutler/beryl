@@ -47,12 +47,11 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 Browser (vanilla JS + Phoenix client CDN)
   ↕ WebSocket (Phoenix wire protocol, token auth)
 Gleam/BEAM server (port 8001)
+  ├── Mist HTTP routing (static files, /api/rooms)
   ├── Mist WebSocket transport (on_connect auth)
-  ├── Wisp router (static files, /api/rooms)
   ├── beryl channels (room:* handler)
   ├── beryl groups ("public" → general, random, help)
-  ├── beryl presence (online users + typing indicators)
-  └── inline Wisp→Mist HTTP adapter
+  └── beryl presence (online users + typing indicators)
 ```
 
 ## Running Tests

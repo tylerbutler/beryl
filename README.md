@@ -19,7 +19,7 @@
 - **Presence** - Distributed presence tracking using CRDTs (add-wins observed-remove set)
 - **Groups** - Named channel groups for broadcast
 - **PubSub** - pg-based process group messaging
-- **WebSocket Transport** - Wisp integration for WebSocket connections
+- **WebSocket Transport** - Mist integration for WebSocket connections
 
 ## Development
 

@@ -8,7 +8,7 @@ Beryl is a Gleam library for type-safe realtime channels and presence on the Erl
 - `src/beryl/channel.gleam` defines typed channel callbacks; `src/beryl/coordinator.gleam` owns socket/topic lifecycle and callback dispatch.
 - `src/beryl/pubsub.gleam` wraps Erlang `pg` via `src/beryl_pubsub_ffi.erl` for distributed broadcasts.
 - Presence is split between the OTP actor in `src/beryl/presence.gleam` and the pure CRDT state in `src/beryl/presence/state.gleam`.
-- Core WebSocket transport is Mist-based in `src/beryl/transport/mist.gleam`. Wisp may appear in examples for HTTP routing/static assets, but do not reintroduce Wisp as the core transport dependency.
+- Core WebSocket transport is Mist-based in `src/beryl/transport/mist.gleam`; examples also use Mist directly for HTTP routing/static assets.
 
 ## Commands
 

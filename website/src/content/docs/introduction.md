@@ -16,7 +16,7 @@ Building real-time features — like chat rooms, live cursors, collaborative edi
 - **Presence** — Distributed tracking of connected users backed by a conflict-free CRDT
 - **PubSub** — Distributed publish/subscribe built on Erlang's `pg` process groups
 - **Groups** — Named collections of topics for multi-topic broadcasting
-- **WebSocket transport** — Wisp integration with JSON wire protocol (Phoenix-compatible)
+- **WebSocket transport** — Mist integration with JSON wire protocol (Phoenix-compatible)
 
 ## Design principles
 

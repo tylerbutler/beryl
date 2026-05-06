@@ -1,9 +1,7 @@
 //// Mist WebSocket Transport - Direct Mist integration for beryl
 ////
 //// This module provides the bridge between Mist's native WebSocket handling
-//// and the beryl coordinator. It mirrors the Wisp transport API but uses
-//// Mist types directly, giving users a lower-level alternative without
-//// Wisp's abstraction layer.
+//// and the beryl coordinator using Mist request and response types directly.
 
 import beryl/coordinator.{type Message as CoordinatorMessage}
 import gleam/bit_array
