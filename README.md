@@ -77,4 +77,4 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## License
 
-Apache-2.0 - see [LICENSE](LICENSE) for details.
+MIT - see [LICENSE](LICENSE) for details.

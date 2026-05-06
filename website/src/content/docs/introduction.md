@@ -45,9 +45,9 @@ beryl leverages OTP actors and Erlang's `pg` process groups rather than reinvent
 
 Presence state uses an **add-wins observed-remove set** (AWORSet) with causal context — a conflict-free replicated data type that resolves concurrent joins and leaves automatically, even across distributed Erlang nodes.
 
-### Minimal dependencies
+### Focused dependencies
 
-The core library depends only on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`, and `gleam_crypto`. No external message brokers or databases required.
+The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`, `gleam_crypto`, `gleam_http`, `mist`, and `birch` — all standard BEAM ecosystem packages. No external message brokers or databases required.
 
 ### Phoenix wire protocol compatibility
 

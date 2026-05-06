@@ -102,7 +102,7 @@ fn handle_request(
   use <- mist_transport.upgrade(
     req,
     channels.coordinator,
-    mist_transport.default_config("/socket"),
+    mist_transport.default_config("/socket/websocket"),
   )
 
   // Fall through to regular HTTP routing

@@ -76,7 +76,7 @@ npx playwright test   # 35 e2e tests
 | Client → Server | `typing` | Start typing indicator |
 | Client → Server | `stop_typing` | Stop typing indicator |
 | Server → Client | `new_msg` | Broadcast message `{text, username, color, type, timestamp}` |
-| Server → Client | `msg_ack` | Delivery confirmation `{status: "ok"}` |
+| Server → Client | `msg_ack` | Delivery acknowledgment sent as `phx_reply` to the original `new_msg` ref `{status: "ok"}` |
 | Server → Client | `msg_error` | Validation error `{code, error}` |
 | Server → Client | `presence_list` | Updated online user list |
 | Server → Client | `typing` | Typing indicator update |

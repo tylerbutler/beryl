@@ -39,7 +39,12 @@ pub type JoinResult(assigns) {
 pub type HandleResult(assigns) {
   /// Continue without sending a reply
   NoReply(socket: Socket(assigns))
-  /// Send a reply to the client (in response to their message)
+  /// Send a reply to the client in response to their message.
+  ///
+  /// When returned from `handle_in`, this is encoded as a Phoenix `phx_reply`
+  /// tied to the original client ref — the `event` field is ignored by the
+  /// coordinator. When returned from `handle_info` (where no client ref
+  /// exists), it is sent as a push using `event` as the event name.
   Reply(event: String, payload: Json, socket: Socket(assigns))
   /// Push a message to the client (server-initiated)
   Push(event: String, payload: Json, socket: Socket(assigns))

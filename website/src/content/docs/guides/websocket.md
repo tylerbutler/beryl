@@ -21,11 +21,11 @@ fn handle_request(
   req: Request(mist.Connection),
   channels: beryl.Channels,
 ) -> response.Response(mist.ResponseData) {
-  // Upgrade /socket requests to WebSocket
+  // Upgrade /socket/websocket requests to WebSocket
   use <- mist_transport.upgrade(
     req,
     channels.coordinator,
-    mist_transport.default_config("/socket"),
+    mist_transport.default_config("/socket/websocket"),
   )
 
   // Non-WebSocket requests fall through here
@@ -38,13 +38,24 @@ fn handle_request(
 
 The `upgrade` function checks if the request path matches, performs the WebSocket upgrade, and wires the connection to the beryl coordinator.
 
+:::tip[Phoenix JS clients]
+The Phoenix JS client (`new Socket("/socket", ...)`) connects to `/socket/websocket` by default — it appends `/websocket` to the path you pass. Configure the transport path to match:
+
+```gleam
+// Matches Phoenix JS: new Socket("/socket", ...)
+mist_transport.default_config("/socket/websocket")
+```
+
+Raw WebSocket clients connect directly to the configured path with no suffix appended.
+:::
+
 ## Authentication
 
 Use `with_on_connect` to authenticate connections before upgrading:
 
 ```gleam
 let config =
-  mist_transport.default_config("/socket")
+  mist_transport.default_config("/socket/websocket")
   |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
     // Check auth token, session, etc.
     case validate_token(req) {

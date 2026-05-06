@@ -118,8 +118,8 @@ fn handle_in(
 ) -> HandleResult(RoomAssigns) {
   case event {
     "new_message" -> {
-      // Reply to the sender
-      channel.Reply("new_message", payload, socket)
+      // Reply to the sender — event arg is ignored, phx_reply is always sent
+      channel.Reply("ok", payload, socket)
     }
     "typing" -> {
       // No reply needed
@@ -142,9 +142,13 @@ Channel handlers return one of these results:
 | Result | Description |
 |--------|-------------|
 | `NoReply(socket)` | Continue without sending anything |
-| `Reply(event, payload, socket)` | Send a reply to the client's message ref |
-| `Push(event, payload, socket)` | Send a server-initiated message (no ref) |
+| `Reply(event, payload, socket)` | Send a `phx_reply` tied to the client message ref (only meaningful from `handle_in`; see note below) |
+| `Push(event, payload, socket)` | Send a server-initiated message with no ref |
 | `Stop(reason)` | Terminate the channel |
+
+:::note[Reply vs Push from handle_info]
+`Reply` is designed for `handle_in`, where the coordinator has a client message ref to reply to. When returned from `handle_info`, there is no client ref, so the coordinator sends it as a push instead. Prefer `Push` in `handle_info` to make this intent explicit.
+:::
 
 ### Binary handler
 
@@ -177,6 +181,26 @@ fn terminate(
   }
 }
 ```
+
+### Server-originated message handler
+
+Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications):
+
+```gleam
+fn handle_info(
+  message: Dynamic,
+  socket: Socket(RoomAssigns),
+) -> HandleResult(RoomAssigns) {
+  // Decode the server message and push to the client
+  let response = json.object([#("data", json.string("server update"))])
+  channel.Push("server_update", response, socket)
+}
+
+// Register the handler
+channel.with_handle_info(my_channel, handle_info)
+```
+
+Because server messages have no client ref, `Reply` returned from `handle_info` is sent as a push. Use `Push` here to make intent explicit.
 
 ## Registering channels
 

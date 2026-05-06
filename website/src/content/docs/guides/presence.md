@@ -114,6 +114,22 @@ let config = presence.Config(
 )
 ```
 
+`broadcast_presence_diff` broadcasts to a single topic. The `diff` passed to `on_diff` may span multiple topics; if you track presence across several topics, iterate over the affected topics:
+
+```gleam
+on_diff: option.Some(fn(diff) {
+  let topics =
+    dict.keys(diff.joins)
+    |> list.append(dict.keys(diff.leaves))
+    |> list.unique()
+  list.each(topics, fn(topic) {
+    beryl.broadcast_presence_diff(channels, topic, diff)
+  })
+}),
+```
+
+Passing the full diff on each iteration is safe: `broadcast_presence_diff` encodes only the named topic's entries from the diff, so unrelated topics are never included in a broadcast.
+
 The payload matches Phoenix Presence's shape, with joins and leaves grouped by presence key:
 
 ```json
