@@ -99,6 +99,15 @@ export default defineConfig({
 					],
 				},
 				{
+					label: "Reference",
+					items: [
+						{
+							label: "API Overview",
+							slug: "reference",
+						},
+					],
+				},
+				{
 					label: "Architecture",
 					items: [
 						{
@@ -113,6 +122,10 @@ export default defineConfig({
 						{
 							label: "Troubleshooting",
 							slug: "troubleshooting",
+						},
+						{
+							label: "Migration & Releases",
+							slug: "migration",
 						},
 					],
 				},
