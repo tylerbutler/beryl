@@ -52,3 +52,11 @@ The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_
 ### Phoenix wire protocol compatibility
 
 beryl uses the same JSON array wire format as Phoenix channels (`[join_ref, ref, topic, event, payload]`), making it compatible with existing Phoenix client libraries.
+
+## Next steps
+
+- [Quick Start](/quick-start) — get a working server in minutes
+- [Channels guide](/guides/channels) — topics, callbacks, and broadcasting
+- [Supervision guide](/guides/supervision) — production startup with OTP supervision
+- [Error Handling guide](/guides/error-handling) — rejected joins, rate limits, and more
+- [Troubleshooting](/troubleshooting) — symptom-first diagnostics

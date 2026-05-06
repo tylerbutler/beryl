@@ -81,6 +81,18 @@ export default defineConfig({
 							slug: "guides/pubsub",
 						},
 						{
+							label: "Groups",
+							slug: "guides/groups",
+						},
+						{
+							label: "Supervision",
+							slug: "guides/supervision",
+						},
+						{
+							label: "Error Handling",
+							slug: "guides/error-handling",
+						},
+						{
 							label: "WebSocket Transport",
 							slug: "guides/websocket",
 						},
@@ -92,6 +104,15 @@ export default defineConfig({
 						{
 							label: "Overview",
 							slug: "architecture/overview",
+						},
+					],
+				},
+				{
+					label: "Help",
+					items: [
+						{
+							label: "Troubleshooting",
+							slug: "troubleshooting",
 						},
 					],
 				},

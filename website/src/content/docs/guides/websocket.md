@@ -67,6 +67,8 @@ let config =
 use <- mist_transport.upgrade(req, channels.coordinator, config)
 ```
 
+Returning `Error(Nil)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
+
 ## Direct upgrade
 
 If you handle path matching yourself, use `upgrade_connection` directly:
@@ -81,6 +83,10 @@ fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
 ```
 
 Note: `upgrade_connection` does not invoke the `on_connect` callback. Run your own auth check before calling it.
+
+:::tip[Troubleshooting connections]
+If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
+:::
 
 ## Wire protocol
 

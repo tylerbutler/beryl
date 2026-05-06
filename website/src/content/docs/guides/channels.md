@@ -184,7 +184,7 @@ fn terminate(
 
 ### Server-originated message handler
 
-Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications):
+Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications, timer ticks, background job results):
 
 ```gleam
 fn handle_info(
@@ -196,11 +196,99 @@ fn handle_info(
   channel.Push("server_update", response, socket)
 }
 
-// Register the handler
-channel.with_handle_info(my_channel, handle_info)
+// Register the handler when building the channel
+channel.new(join)
+|> channel.with_handle_in(handle_in)
+|> channel.with_handle_info(handle_info)
+```
+
+The `message` argument is `Dynamic`. Use `gleam/dynamic/decode` to extract typed values:
+
+```gleam
+import gleam/dynamic/decode
+
+type ServerMessage {
+  Tick(at: Int)
+  Notify(text: String)
+}
+
+fn decode_server_message(d: Dynamic) -> Result(ServerMessage, _) {
+  let decoder =
+    decode.field("type", decode.string)
+    |> decode.then(fn(tag) {
+      case tag {
+        "tick" -> decode.map(decode.field("at", decode.int), Tick)
+        "notify" -> decode.map(decode.field("text", decode.string), Notify)
+        _ -> decode.failure(Tick(0), "ServerMessage")
+      }
+    })
+  decode.run(d, decoder)
+}
+
+fn handle_info(
+  message: Dynamic,
+  socket: Socket(RoomAssigns),
+) -> HandleResult(RoomAssigns) {
+  case decode_server_message(message) {
+    Ok(Tick(at)) -> {
+      channel.Push(
+        "tick",
+        json.object([#("at", json.int(at))]),
+        socket,
+      )
+    }
+    Ok(Notify(text)) -> {
+      channel.Push(
+        "notification",
+        json.object([#("text", json.string(text))]),
+        socket,
+      )
+    }
+    Error(_) -> channel.NoReply(socket)
+  }
+}
 ```
 
 Because server messages have no client ref, `Reply` returned from `handle_info` is sent as a push. Use `Push` here to make intent explicit.
+
+#### Sending messages with send_info
+
+Use `beryl.send_info` from any process to deliver a message to a specific socket/topic pair:
+
+```gleam
+// In a background process or timer callback:
+beryl.send_info(channels, socket_id, "room:lobby", Notify("hello!"))
+```
+
+If the socket is not connected, the topic is not joined, or no `handle_info` is registered, the message is silently ignored.
+
+#### Timer and background job patterns
+
+A common use case is scheduling periodic pushes to a specific client. Spawn a process when the client joins and cancel it in `terminate`:
+
+```gleam
+import gleam/erlang/process
+
+fn join(topic, _payload, socket) -> JoinResult(RoomAssigns) {
+  let socket_id = socket.id(socket)
+
+  // Spawn a timer process that sends a tick every 5 seconds
+  let _pid = process.spawn(fn() {
+    let rec = process.new_subject()
+    timer_loop(channels, socket_id, topic, rec)
+  })
+
+  channel.JoinOk(reply: None, socket: socket)
+}
+
+fn timer_loop(channels, socket_id, topic, _self) {
+  process.sleep(5000)
+  beryl.send_info(channels, socket_id, topic, Tick(erlang.system_time(erlang.Millisecond)))
+  timer_loop(channels, socket_id, topic, _self)
+}
+```
+
+For production use, prefer OTP-based timers (e.g., Erlang's `:timer.send_interval`) over bare recursion, and track the timer PID in assigns so you can cancel it in `terminate`.
 
 ## Registering channels
 
