@@ -128,7 +128,7 @@ gleam run
 | beryl feature | How it's used |
 |---|---|
 | **Segment wildcard topics** | Handler registered on `document:*:*` isolates each tenant/document pair |
-| **Client-side CRDT merge** | Browser state uses `lattice_crdt` with `ORMap(MVRegister(String))` document blocks |
+| **Client-side CRDT merge** | Browser state uses `lattice_core`, `lattice_maps`, and `lattice_registers` with `ORMap(MVRegister(String))` document blocks |
 | **Unordered realtime transport** | Beryl broadcasts document updates while the CRDT handles merge convergence |
 | **Late joiner cache** | Server returns cached merged state in the join reply for new clients |
 | **Conflict resolution UI** | Concurrent edits to the same block render explicit conflict cards with all versions |
@@ -136,7 +136,7 @@ gleam run
 ### Architecture
 
 ```
-Browser (vanilla JS + Phoenix JS client + lattice_crdt)
+Browser (vanilla JS + Phoenix JS client + lattice CRDT packages)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves HTML + static files
