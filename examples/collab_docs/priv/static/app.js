@@ -180,6 +180,15 @@ function pushBlockState(id, mode) {
   pushState();
 }
 
+function currentBlockValue(id, fallback) {
+  const block = getBlocks().find((block) => block.id === id);
+  if (block?.values.length === 1) {
+    return block.values[0];
+  }
+
+  return fallback;
+}
+
 function saveBlock(block, { rerender = true, push = "immediate" } = {}) {
   doc = crdt.edit_block(doc, block.id, serialize(block));
   if (rerender) {
@@ -209,7 +218,7 @@ function renderBlock(block) {
 
   const value = block.values[0];
   const article = document.createElement("article");
-  article.className = `block-card ${value.done ? "is-done" : ""}`;
+  article.className = `block block-card ${value.done ? "is-done" : ""}`;
 
   const header = document.createElement("div");
   header.className = "block-header";
@@ -221,7 +230,8 @@ function renderBlock(block) {
   checkbox.type = "checkbox";
   checkbox.checked = value.done;
   checkbox.addEventListener("change", () => {
-    saveBlock({ ...value, done: checkbox.checked });
+    const current = currentBlockValue(value.id, value);
+    saveBlock({ ...current, text: textarea.value, done: checkbox.checked });
   });
 
   const type = document.createElement("span");
@@ -242,8 +252,9 @@ function renderBlock(block) {
   textarea.value = value.text;
   textarea.rows = Math.max(2, Math.min(8, value.text.split("\n").length + 1));
   textarea.addEventListener("input", () => {
+    const current = currentBlockValue(value.id, value);
     saveBlock(
-      { ...value, text: textarea.value },
+      { ...current, text: textarea.value, done: checkbox.checked },
       { rerender: false, push: "debounced" },
     );
   });
@@ -254,7 +265,7 @@ function renderBlock(block) {
 
 function renderConflict(block) {
   const article = document.createElement("article");
-  article.className = "block-card conflict-card";
+  article.className = "block block-card conflict conflict-card";
 
   const title = document.createElement("h2");
   title.textContent = "Edit conflict";
@@ -331,13 +342,9 @@ function start() {
   }
 
   const socket = new window.Phoenix.Socket("/socket");
-  socket.onError(() => setStatus("Connection error"));
-  socket.onClose(() => setStatus("Connection closed"));
   socket.connect();
 
   channel = socket.channel(topic, {});
-  channel.onError(() => setStatus("Channel error"));
-  channel.onClose(() => setStatus("Channel closed"));
   channel
     .join()
     .receive("ok", (reply) => {
@@ -359,17 +366,6 @@ function start() {
 
   channel.on("state_error", (payload) => {
     setStatus(`State error: ${payload?.code || "unknown"}`);
-  });
-
-  window.addEventListener("beforeunload", () => {
-    const hadPendingPush = pendingPushes.size > 0;
-    for (const id of pendingPushes.keys()) {
-      clearPendingPush(id);
-    }
-    if (hadPendingPush) {
-      pushState();
-    }
-    channel?.leave();
   });
 
   addTodoButton.addEventListener("click", () => addBlock("todo"));
