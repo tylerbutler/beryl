@@ -27,6 +27,11 @@ pub fn start() -> Result(Store, actor.StartError) {
   |> result.map(fn(started) { Store(subject: started.data) })
 }
 
+/// Gets the encoded document state for a key.
+///
+/// Returns `Error(Nil)` when the store has no state for the key, or when the
+/// store actor does not reply within its fixed receive timeout. Callers cannot
+/// distinguish a missing document from a timed-out actor response.
 pub fn get_state(store: Store, key: String) -> Result(String, Nil) {
   let reply = process.new_subject()
   process.send(store.subject, GetState(key: key, reply: reply))
@@ -37,6 +42,13 @@ pub fn get_state(store: Store, key: String) -> Result(String, Nil) {
   }
 }
 
+/// Sends an encoded document state to the store for merging.
+///
+/// This is fire-and-forget: the function returns after enqueueing the message
+/// and does not wait for the merge to be processed. Store actors handle messages
+/// sequentially, and ORMap merges are commutative and idempotent, so concurrent
+/// merge order should converge to the same state. Callers should not assume this
+/// merge has completed before an immediate `get_state` from another process.
 pub fn merge_state(store: Store, key: String, encoded: String) -> Nil {
   process.send(store.subject, MergeState(key: key, encoded: encoded))
 }
