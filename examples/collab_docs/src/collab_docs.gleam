@@ -1,4 +1,5 @@
 import beryl
+import beryl/wire
 import beryl/transport/mist as mist_transport
 import collab_docs/channel
 import collab_docs/doc_store
@@ -9,7 +10,7 @@ import mist
 
 pub fn main() {
   let assert Ok(store) = doc_store.start()
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let handler = channel.new_handler(channels, store)
   let assert Ok(_) = beryl.register(channels, "document:*:*", handler)
 

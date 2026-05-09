@@ -17,7 +17,7 @@
 //// import gleam/option.{None, Some}
 ////
 //// let config = supervisor.SupervisedConfig(
-////   channels: beryl.default_config(),
+////   channels: beryl.config(wire.phoenix_codec()),
 ////   presence: Some(presence.default_config("node1")),
 ////   groups: True,
 //// )
@@ -31,6 +31,7 @@ import beryl/group
 import beryl/internal
 import beryl/presence
 import beryl/rate_limit
+import beryl/wire
 import birch/logger as log
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
@@ -131,6 +132,7 @@ fn start_supervised(
     )
   let coord_config =
     coordinator.CoordinatorConfig(
+      codec: config.channels.codec,
       heartbeat_check_interval_ms: check_interval,
       heartbeat_timeout_ms: config.channels.heartbeat_timeout_ms,
       message_limiter: message_limiter,
@@ -267,7 +269,7 @@ pub fn stop(supervised: SupervisedChannels) -> Nil {
 /// import gleam/otp/static_supervisor
 ///
 /// let beryl_config = supervisor.SupervisedConfig(
-///   channels: beryl.default_config(),
+///   channels: beryl.config(wire.phoenix_codec()),
 ///   presence: None,
 ///   groups: True,
 /// )

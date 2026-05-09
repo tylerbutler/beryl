@@ -1,6 +1,7 @@
 import beryl/channel
 import beryl/coordinator
 import beryl/topic
+import beryl/wire
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
@@ -15,6 +16,7 @@ fn start_coordinator_with_heartbeat(
 ) -> process.Subject(coordinator.Message) {
   let config =
     coordinator.CoordinatorConfig(
+      codec: wire.phoenix_codec(),
       heartbeat_check_interval_ms: check_interval_ms,
       heartbeat_timeout_ms: timeout_ms,
       message_limiter: None,
@@ -196,7 +198,7 @@ pub fn manual_check_heartbeats_evicts_stale_test() {
 }
 
 pub fn default_coordinator_start_works_test() {
-  let assert Ok(coord) = coordinator.start()
+  let assert Ok(coord) = coordinator.start(wire.phoenix_codec())
 
   let sent = connect_mock_socket(coord, "socket-1")
   socket_is_connected(coord, "socket-1", sent)
@@ -219,6 +221,7 @@ pub fn heartbeat_reply_still_sent_test() {
 pub fn zero_timeout_with_checking_enabled_returns_error_test() {
   let config =
     coordinator.CoordinatorConfig(
+      codec: wire.phoenix_codec(),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: 0,
       message_limiter: None,
@@ -233,6 +236,7 @@ pub fn zero_timeout_with_checking_enabled_returns_error_test() {
 pub fn negative_timeout_with_checking_enabled_returns_error_test() {
   let config =
     coordinator.CoordinatorConfig(
+      codec: wire.phoenix_codec(),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: -1,
       message_limiter: None,
@@ -247,6 +251,7 @@ pub fn negative_timeout_with_checking_enabled_returns_error_test() {
 pub fn zero_timeout_with_checking_disabled_is_ok_test() {
   let config =
     coordinator.CoordinatorConfig(
+      codec: wire.phoenix_codec(),
       heartbeat_check_interval_ms: 0,
       heartbeat_timeout_ms: 0,
       message_limiter: None,
@@ -260,6 +265,7 @@ pub fn zero_timeout_with_checking_disabled_is_ok_test() {
 pub fn positive_timeout_with_checking_enabled_is_ok_test() {
   let config =
     coordinator.CoordinatorConfig(
+      codec: wire.phoenix_codec(),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: 5000,
       message_limiter: None,
@@ -273,6 +279,7 @@ pub fn positive_timeout_with_checking_enabled_is_ok_test() {
 pub fn start_named_validates_heartbeat_timeout_test() {
   let config =
     coordinator.CoordinatorConfig(
+      codec: wire.phoenix_codec(),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: 0,
       message_limiter: None,

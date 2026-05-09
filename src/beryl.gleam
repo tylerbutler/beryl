@@ -30,7 +30,7 @@
 ////   let assert Ok(ps) = pubsub.start(pubsub.default_config())
 ////
 ////   // Start channels system (with or without PubSub)
-////   let config = beryl.default_config() |> beryl.with_pubsub(ps)
+////   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
 ////   let assert Ok(channels) = beryl.start(config)
 ////
 ////   // Register a channel handler
@@ -58,6 +58,7 @@ import beryl/rate_limit
 import beryl/socket.{type Socket}
 import beryl/topic
 import beryl/wire
+import beryl/wire/codec
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/json
@@ -73,6 +74,9 @@ pub type RegisterError =
 /// Configuration for the channels system
 pub type Config {
   Config(
+    /// Wire codec used to decode inbound text and encode replies/pushes.
+    /// Use `wire.phoenix_codec()` for the historical Phoenix array format.
+    codec: codec.Codec,
     /// Heartbeat interval in milliseconds (default: 30000)
     heartbeat_interval_ms: Int,
     /// Heartbeat timeout - disconnect if no response (default: 60000)
@@ -96,9 +100,14 @@ pub type Config {
   )
 }
 
-/// Default configuration
-pub fn default_config() -> Config {
+/// Build a configuration with sensible defaults.
+///
+/// A `codec` is required — beryl no longer ships an implicit Phoenix
+/// default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
+/// or your own `Codec` for a custom framing.
+pub fn config(codec: codec.Codec) -> Config {
   Config(
+    codec: codec,
     heartbeat_interval_ms: 30_000,
     heartbeat_timeout_ms: 60_000,
     max_connections_per_ip: 0,
@@ -180,7 +189,7 @@ pub type StartError {
 ///
 /// ```gleam
 /// pub fn main() {
-///   let assert Ok(channels) = beryl.start(beryl.default_config())
+///   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
 ///   // Use channels...
 /// }
 /// ```
@@ -202,6 +211,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 
       let coord_config =
         coordinator.CoordinatorConfig(
+          codec: config.codec,
           heartbeat_check_interval_ms: check_interval,
           heartbeat_timeout_ms: config.heartbeat_timeout_ms,
           message_limiter: message_limiter,
