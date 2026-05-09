@@ -1,3 +1,3 @@
 kind: Added
-body: Add the collaborative docs example server channel, router, and entry point.
+body: Added a collaborative CRDT documents example using lattice_crdt and Beryl channels.
 time: 2026-05-08T22:28:39.913-07:00

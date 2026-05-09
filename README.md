@@ -78,12 +78,13 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 
 ## Examples
 
-Two runnable demos are included in the `examples/` directory:
+Three runnable demos are included in the `examples/` directory:
 
 | Example | What it demonstrates |
 |---------|----------------------|
 | [`examples/cursors`](examples/cursors/) | Channels, topic wildcards, presence, `broadcast_from`, rate limiting |
 | [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, `Reply`, `Push`, groups, validation, typing indicators |
+| [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 
