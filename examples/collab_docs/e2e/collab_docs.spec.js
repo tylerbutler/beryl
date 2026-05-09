@@ -11,24 +11,65 @@ function docPath(doc) {
   return `/?doc=${encodeURIComponent(doc)}`;
 }
 
+function parseFrame(payload) {
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+}
+
 function countSyncFrames(frames) {
   return frames.filter((payload) => {
-    try {
-      const data = JSON.parse(payload);
-      return Array.isArray(data) && data[3] === "sync_state";
-    } catch {
-      return false;
-    }
+    const data = parseFrame(payload);
+    return Array.isArray(data) && data[3] === "sync_state";
   }).length;
+}
+
+function joinReplyState(reply) {
+  const payload = Array.isArray(reply) ? reply[4] : undefined;
+  return payload?.response?.state ?? payload?.state;
+}
+
+async function expectNoTextareaValue(page, unexpectedValue, duration = 1_000) {
+  let stableSince = Date.now();
+
+  await expect
+    .poll(
+      async () => {
+        const matchingValues = await page
+          .locator(".block textarea")
+          .evaluateAll(
+            (textareas, value) =>
+              textareas.filter((textarea) => textarea.value === value).length,
+            unexpectedValue,
+          );
+
+        if (matchingValues > 0) {
+          stableSince = Date.now();
+        }
+
+        return Date.now() - stableSince;
+      },
+      { timeout: duration + 1_000, intervals: [50, 50, 100] },
+    )
+    .toBeGreaterThanOrEqual(duration);
 }
 
 async function openClient(browser, path) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const sentFrames = [];
+  const joinReplies = [];
 
   page.on("websocket", (ws) => {
     ws.on("framesent", (frame) => sentFrames.push(frame.payload));
+    ws.on("framereceived", (frame) => {
+      const data = parseFrame(frame.payload);
+      if (Array.isArray(data) && data[3] === "phx_reply") {
+        joinReplies.push(data);
+      }
+    });
   });
 
   await page.goto(path);
@@ -39,6 +80,7 @@ async function openClient(browser, path) {
   return {
     context,
     page,
+    joinReplies,
     syncCount: () => countSyncFrames(sentFrames),
   };
 }
@@ -105,6 +147,10 @@ test.describe("Collaborative docs demo", () => {
 
       const lateJoiner = await openClient(browser, docPath(doc));
       try {
+        const cachedState = joinReplyState(lateJoiner.joinReplies[0]);
+        expect(cachedState).toEqual(expect.any(String));
+        expect(cachedState).not.toHaveLength(0);
+
         await expect(lateJoiner.page.locator(".block")).toHaveCount(1, {
           timeout: 10_000,
         });
@@ -176,9 +222,6 @@ test.describe("Collaborative docs demo", () => {
         waitForSync(docTwo, twoSyncs),
       ]);
 
-      await defaultDoc.page.waitForTimeout(250);
-      await docTwo.page.waitForTimeout(250);
-
       await expect(defaultDoc.page.locator(".block textarea").last()).toHaveValue(
         defaultText,
       );
@@ -186,14 +229,10 @@ test.describe("Collaborative docs demo", () => {
         twoText,
       );
 
-      const defaultValues = await defaultDoc.page
-        .locator(".block textarea")
-        .evaluateAll((textareas) => textareas.map((textarea) => textarea.value));
-      const twoValues = await docTwo.page
-        .locator(".block textarea")
-        .evaluateAll((textareas) => textareas.map((textarea) => textarea.value));
-      expect(defaultValues).not.toContain(twoText);
-      expect(twoValues).not.toContain(defaultText);
+      await Promise.all([
+        expectNoTextareaValue(defaultDoc.page, twoText),
+        expectNoTextareaValue(docTwo.page, defaultText),
+      ]);
     } finally {
       await defaultDoc.context.close();
       await docTwo.context.close();
