@@ -229,9 +229,12 @@ function renderBlock(block) {
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = value.done;
-  checkbox.addEventListener("change", () => {
+  checkbox.addEventListener("change", (event) => {
     const current = currentBlockValue(value.id, value);
-    saveBlock({ ...current, text: textarea.value, done: checkbox.checked });
+    saveBlock({
+      ...current,
+      done: event.currentTarget.checked,
+    });
   });
 
   const type = document.createElement("span");
@@ -251,10 +254,10 @@ function renderBlock(block) {
   const textarea = document.createElement("textarea");
   textarea.value = value.text;
   textarea.rows = Math.max(2, Math.min(8, value.text.split("\n").length + 1));
-  textarea.addEventListener("input", () => {
+  textarea.addEventListener("input", (event) => {
     const current = currentBlockValue(value.id, value);
     saveBlock(
-      { ...current, text: textarea.value, done: checkbox.checked },
+      { ...current, text: event.currentTarget.value },
       { rerender: false, push: "debounced" },
     );
   });
@@ -294,7 +297,10 @@ function renderConflict(block) {
     const useButton = document.createElement("button");
     useButton.type = "button";
     useButton.textContent = "Use this version";
-    useButton.addEventListener("click", () => saveBlock(value));
+    useButton.addEventListener("click", () => {
+      clearPendingPush(block.id);
+      saveBlock({ ...value, id: block.id });
+    });
 
     option.append(heading, text, meta, useButton);
     article.append(option);
