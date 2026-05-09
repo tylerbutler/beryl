@@ -1,20 +1,56 @@
 import * as crdt from "./collab_docs_client.mjs";
 
 const replicaId = `client-${crypto.randomUUID()}`;
+const PUSH_DEBOUNCE_MS = 400;
+
 let doc = crdt.new_document(replicaId);
 let channel;
 
-const statusEl = document.querySelector("#status");
+const statusEl = document.querySelector("#status") || createFallbackStatus();
 const blocksEl = document.querySelector("#blocks");
 const addTodoButton = document.querySelector("#add-todo");
 const addNoteButton = document.querySelector("#add-note");
+const pendingPushes = new Map();
 
 const params = new URLSearchParams(window.location.search);
 const docId = params.get("doc") || "welcome";
 const topic = `document:demo:${docId}`;
 
+function createFallbackStatus() {
+  const fallback = document.createElement("div");
+  fallback.id = "status";
+  fallback.setAttribute("role", "status");
+  fallback.textContent = "Starting…";
+  document.body?.prepend(fallback);
+  return fallback;
+}
+
 function setStatus(message) {
-  statusEl.textContent = message;
+  if (statusEl) {
+    statusEl.textContent = message;
+  }
+}
+
+function failStartup(message) {
+  setStatus(message);
+  console.error(message);
+}
+
+function requireElement(element, selector) {
+  if (!element) {
+    failStartup(`Startup error: missing ${selector}`);
+    return false;
+  }
+
+  return true;
+}
+
+function checkRequiredElements() {
+  return [
+    requireElement(blocksEl, "#blocks"),
+    requireElement(addTodoButton, "#add-todo"),
+    requireElement(addNoteButton, "#add-note"),
+  ].every(Boolean);
 }
 
 function blockId() {
@@ -109,15 +145,47 @@ function pushState() {
     .push("sync_state", { state: crdt.to_json(doc) })
     .receive("error", (reply) => {
       setStatus(`State error: ${reply?.code || "sync_failed"}`);
+    })
+    .receive("timeout", () => {
+      setStatus("State error: sync_timeout");
     });
 }
 
-function saveBlock(block, { rerender = true } = {}) {
+function clearPendingPush(id) {
+  const pending = pendingPushes.get(id);
+  if (pending) {
+    clearTimeout(pending);
+    pendingPushes.delete(id);
+  }
+}
+
+function schedulePush(id) {
+  clearPendingPush(id);
+  pendingPushes.set(
+    id,
+    setTimeout(() => {
+      pendingPushes.delete(id);
+      pushState();
+    }, PUSH_DEBOUNCE_MS),
+  );
+}
+
+function pushBlockState(id, mode) {
+  if (mode === "debounced") {
+    schedulePush(id);
+    return;
+  }
+
+  clearPendingPush(id);
+  pushState();
+}
+
+function saveBlock(block, { rerender = true, push = "immediate" } = {}) {
   doc = crdt.edit_block(doc, block.id, serialize(block));
   if (rerender) {
     render();
   }
-  pushState();
+  pushBlockState(block.id, push);
 }
 
 function addBlock(type) {
@@ -128,6 +196,7 @@ function addBlock(type) {
 }
 
 function removeBlock(id) {
+  clearPendingPush(id);
   doc = crdt.remove_block(doc, id);
   render();
   pushState();
@@ -173,7 +242,10 @@ function renderBlock(block) {
   textarea.value = value.text;
   textarea.rows = Math.max(2, Math.min(8, value.text.split("\n").length + 1));
   textarea.addEventListener("input", () => {
-    saveBlock({ ...value, text: textarea.value }, { rerender: false });
+    saveBlock(
+      { ...value, text: textarea.value },
+      { rerender: false, push: "debounced" },
+    );
   });
 
   article.append(header, textarea);
@@ -228,6 +300,10 @@ function renderConflict(block) {
 }
 
 function render() {
+  if (!blocksEl) {
+    return;
+  }
+
   blocksEl.replaceChildren();
   const blocks = getBlocks();
 
@@ -244,34 +320,62 @@ function render() {
   });
 }
 
-const socket = new window.Phoenix.Socket("/socket");
-socket.connect();
+function start() {
+  if (!checkRequiredElements()) {
+    return;
+  }
 
-channel = socket.channel(topic, {});
-channel
-  .join()
-  .receive("ok", (reply) => {
-    setStatus("Connected");
-    mergeState(reply?.state);
+  if (!window.Phoenix?.Socket) {
+    failStartup("Startup error: Phoenix socket client unavailable");
+    return;
+  }
+
+  const socket = new window.Phoenix.Socket("/socket");
+  socket.onError(() => setStatus("Connection error"));
+  socket.onClose(() => setStatus("Connection closed"));
+  socket.connect();
+
+  channel = socket.channel(topic, {});
+  channel.onError(() => setStatus("Channel error"));
+  channel.onClose(() => setStatus("Channel closed"));
+  channel
+    .join()
+    .receive("ok", (reply) => {
+      setStatus("Connected");
+      mergeState(reply?.state);
+      render();
+    })
+    .receive("error", (reply) => {
+      setStatus(`State error: ${reply?.code || "join_failed"}`);
+    })
+    .receive("timeout", () => {
+      setStatus("State error: join_timeout");
+    });
+
+  channel.on("doc_state", (payload) => {
+    mergeState(payload?.state);
     render();
-  })
-  .receive("error", (reply) => {
-    setStatus(`State error: ${reply?.code || "join_failed"}`);
-  })
-  .receive("timeout", () => {
-    setStatus("State error: join_timeout");
   });
 
-channel.on("doc_state", (payload) => {
-  mergeState(payload?.state);
+  channel.on("state_error", (payload) => {
+    setStatus(`State error: ${payload?.code || "unknown"}`);
+  });
+
+  window.addEventListener("beforeunload", () => {
+    const hadPendingPush = pendingPushes.size > 0;
+    for (const id of pendingPushes.keys()) {
+      clearPendingPush(id);
+    }
+    if (hadPendingPush) {
+      pushState();
+    }
+    channel?.leave();
+  });
+
+  addTodoButton.addEventListener("click", () => addBlock("todo"));
+  addNoteButton.addEventListener("click", () => addBlock("note"));
+
   render();
-});
+}
 
-channel.on("state_error", (payload) => {
-  setStatus(`State error: ${payload?.code || "unknown"}`);
-});
-
-addTodoButton.addEventListener("click", () => addBlock("todo"));
-addNoteButton.addEventListener("click", () => addBlock("note"));
-
-render();
+start();
