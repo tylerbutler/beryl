@@ -31,7 +31,6 @@ import beryl/group
 import beryl/internal
 import beryl/presence
 import beryl/rate_limit
-import beryl/wire
 import birch/logger as log
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
