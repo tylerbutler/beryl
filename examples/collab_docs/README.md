@@ -9,7 +9,7 @@ client-side CRDT state.
 |---|---|
 | Segment wildcard topics | The server registers `document:*:*` so each tenant/document pair gets an isolated topic. |
 | Client-side CRDT merge | The browser keeps document blocks with the `lattice_core`, `lattice_maps`, and `lattice_registers` packages as an `ORMap(MVRegister(String))`. |
-| Unordered realtime transport | Beryl carries document deltas between clients without requiring total message ordering. |
+| Unordered realtime transport | Beryl carries serialized document state updates between clients without requiring total message ordering. |
 | Late joiner cache | The server caches merged document state and returns it in the join reply for newly connected clients. |
 | Conflict UI | Concurrent edits to the same block render explicit conflict cards with each version. |
 
