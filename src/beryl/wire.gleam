@@ -13,7 +13,7 @@
 
 import beryl/wire/codec.{
   type Codec, type DecodeError, type Inbound, type ReplyStatus, Codec, Inbound,
-  InvalidFormat, InvalidJson, StatusError, StatusOk,
+  InvalidFormat, InvalidJson, MissingField, StatusError, StatusOk,
 }
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
@@ -226,8 +226,8 @@ pub fn is_system_event(event: String) -> Bool {
 /// Format a `DecodeError` as a human-readable string.
 pub fn format_decode_error(error: DecodeError) -> String {
   case error {
-    codec.InvalidJson(reason) -> "Invalid JSON: " <> reason
-    codec.InvalidFormat(reason) -> "Invalid format: " <> reason
-    codec.MissingField(name) -> "Missing required field: " <> name
+    InvalidJson(reason) -> "Invalid JSON: " <> reason
+    InvalidFormat(reason) -> "Invalid format: " <> reason
+    MissingField(name) -> "Missing required field: " <> name
   }
 }

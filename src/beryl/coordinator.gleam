@@ -12,7 +12,6 @@ import beryl/internal
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimiter}
 import beryl/topic.{type TopicPattern}
-import beryl/wire
 import beryl/wire/codec.{type Codec}
 import birch/logger as log
 import gleam/dict.{type Dict}
@@ -1161,14 +1160,11 @@ fn update_assigns(
   }
 }
 
-/// Route a raw wire protocol message to the coordinator.
-///
-/// Decodes the JSON text and sends the appropriate coordinator message.
-/// Silently ignores messages that fail to decode.
-/// Send raw inbound text from a transport to the coordinator.
+/// Route raw inbound text from a transport to the coordinator.
 ///
 /// The coordinator decodes the text using its configured `Codec` inside
 /// the actor (so the codec lives in one place, not in every transport).
+/// Frames that fail to decode are logged and dropped.
 pub fn route_message(
   coord: Subject(Message),
   socket_id: String,
