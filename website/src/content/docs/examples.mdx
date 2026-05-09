@@ -118,8 +118,8 @@ A collaborative document editor where clients merge block state locally with a
 CRDT and use beryl as an unordered realtime transport.
 
 ```bash
-cd examples/collab_docs
-gleam run
+just deps
+cd examples/collab_docs && gleam run
 # Open http://localhost:8002 in multiple browser tabs
 ```
 
