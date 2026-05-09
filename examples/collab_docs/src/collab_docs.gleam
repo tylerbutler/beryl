@@ -1,22 +1,31 @@
-import gleam/bytes_tree
+import beryl
+import beryl/transport/mist as mist_transport
+import collab_docs/channel
+import collab_docs/doc_store
+import collab_docs/router
 import gleam/erlang/process
-import gleam/http/response
 import gleam/io
 import mist
 
-/// Minimal placeholder entry point for the collaborative docs example scaffold.
-/// Later tasks replace this with the real HTTP/WebSocket server.
 pub fn main() {
-  io.println(
-    "collab_docs example scaffold: server behavior not implemented yet",
-  )
+  let assert Ok(store) = doc_store.start()
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let handler = channel.new_handler(channels, store)
+  let assert Ok(_) = beryl.register(channels, "document:*:*", handler)
+
+  io.println("📝 Collaborative CRDT Docs Demo")
+  io.println("   Open http://localhost:8002")
+  io.println("")
+
+  let ctx = router.Context(channels:, store:)
 
   let assert Ok(_) =
-    fn(_req) {
-      response.new(200)
-      |> response.set_header("content-type", "text/html; charset=utf-8")
-      |> response.set_body(
-        mist.Bytes(bytes_tree.from_string(placeholder_html())),
+    fn(req) {
+      mist_transport.upgrade(
+        req,
+        channels.coordinator,
+        mist_transport.default_config("/socket/websocket"),
+        fn() { router.handle_request(req, ctx) },
       )
     }
     |> mist.new
@@ -24,12 +33,4 @@ pub fn main() {
     |> mist.start
 
   process.sleep_forever()
-}
-
-fn placeholder_html() -> String {
-  "<!DOCTYPE html>
-<html lang=\"en\">
-<head><meta charset=\"utf-8\"><title>Collab Docs scaffold</title></head>
-<body><h1>Collab Docs scaffold</h1><p>Real example behavior is added in later tasks.</p></body>
-</html>"
 }
