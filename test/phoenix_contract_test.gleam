@@ -2,6 +2,7 @@ import beryl
 import beryl/channel
 import beryl/socket
 import beryl/transport/mist as mist_transport
+import beryl/wire
 import gleam/bytes_tree
 import gleam/dynamic
 import gleam/dynamic/decode
@@ -292,7 +293,7 @@ fn join_client(serializer: Serializer, client: WebsocketClient) {
 
 pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let serializer = json_serializer()
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
   beryl.register(channels, "room:*", contract_channel(channels, terminated))
   |> should.equal(Ok(Nil))
