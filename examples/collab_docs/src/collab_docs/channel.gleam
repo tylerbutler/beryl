@@ -25,6 +25,12 @@ pub fn new_handler(channels: beryl.Channels, store: Store) -> Channel(Assigns) {
   |> channel.with_handle_in(handle_in)
 }
 
+/// Build a collision-resistant key for a tenant/document pair.
+pub fn document_key(tenant: String, document: String) -> String {
+  json.array([tenant, document], json.string)
+  |> json.to_string
+}
+
 fn join(
   channels: beryl.Channels,
   store: Store,
@@ -35,7 +41,7 @@ fn join(
 
   case topic.extract_wildcards(pattern, topic_name) {
     Ok([tenant, document]) -> {
-      let document_key = tenant <> "/" <> document
+      let document_key = document_key(tenant, document)
       let assigns = Assigns(channels:, store:, topic_name:, document_key:)
       let socket = socket.set_assigns(socket, assigns)
       let state = case doc_store.get_state(store, document_key) {
