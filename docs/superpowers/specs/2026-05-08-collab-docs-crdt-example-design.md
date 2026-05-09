@@ -78,13 +78,15 @@ The OR-Map handles block existence and delete/re-add semantics. The MV-Register 
 `collab_docs_client.gleam` exposes a small JavaScript-facing API:
 
 - `new_document(replica_id: String) -> Document`
-- `from_json(json: String) -> Result(Document, String)`
+- `from_json(replica_id: String, json: String) -> Result(Document, String)`
 - `to_json(document: Document) -> String`
 - `add_block(document: Document, block_json: String) -> Document`
 - `edit_block(document: Document, block_id: String, block_json: String) -> Document`
 - `remove_block(document: Document, block_id: String) -> Document`
 - `merge_json(document: Document, remote_json: String) -> Result(Document, String)`
 - `blocks(document: Document) -> List(RenderBlock)`
+- `blocks_json(document: Document) -> String`
+- `merge_json_or_keep(document: Document, remote_json: String) -> Document`
 
 `RenderBlock` is shaped for easy JavaScript rendering: block ID, block kind, position, and either one resolved value or multiple conflict values.
 
