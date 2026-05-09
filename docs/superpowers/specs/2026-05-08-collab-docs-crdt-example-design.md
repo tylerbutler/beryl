@@ -2,7 +2,7 @@
 
 ## Problem
 
-Beryl has runnable examples for cursors and chatrooms, but no example that demonstrates Beryl as transport for a real collaborative data model. The proposed example uses `lattice_crdt` to show client-side CRDT convergence over Beryl channels without server-assigned sequence numbers or a globally ordered operation log.
+Beryl has runnable examples for cursors and chatrooms, but no example that demonstrates Beryl as transport for a real collaborative data model. The proposed example uses lattice CRDT packages to show client-side CRDT convergence over Beryl channels without server-assigned sequence numbers or a globally ordered operation log.
 
 ## Goals
 
@@ -49,7 +49,7 @@ examples/collab_docs/
 └── e2e/collab_docs.spec.js
 ```
 
-The server package targets Erlang and depends on Beryl, Mist, and Gleam OTP. The client package targets JavaScript and depends on `lattice_crdt`, using the compiled module from browser glue code.
+The server package targets Erlang and depends on Beryl, Mist, and Gleam OTP. The client package targets JavaScript and depends on `lattice_core`, `lattice_maps`, and `lattice_registers`, using the compiled module from browser glue code.
 
 ## CRDT Data Model
 

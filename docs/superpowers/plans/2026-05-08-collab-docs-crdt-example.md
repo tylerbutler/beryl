@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `examples/collab_docs`, a runnable Beryl example where browser clients use `lattice_crdt` to merge collaborative document blocks without server sequencing.
+**Goal:** Build `examples/collab_docs`, a runnable Beryl example where browser clients use lattice CRDT packages to merge collaborative document blocks without server sequencing.
 
 **Architecture:** The example has an Erlang-target Gleam server package and a JavaScript-target Gleam client package. Browser clients own CRDT state (`ORMap(MvRegisterSpec)`), Beryl relays serialized states on `document:*:*` topics, and a server actor keeps a merged cache only for late joiners.
 
-**Tech Stack:** Gleam, Beryl, Mist, Phoenix JS client, `lattice_crdt`, `lattice_maps`, Playwright, pnpm.
+**Tech Stack:** Gleam, Beryl, Mist, Phoenix JS client, `lattice_core`, `lattice_maps`, `lattice_registers`, Playwright, pnpm.
 
 ---
 
@@ -1216,7 +1216,7 @@ A runnable beryl example showing client-side CRDT document blocks synced over re
 ## What it demonstrates
 
 - `document:*:*` segment wildcard topics
-- Client-side `lattice_crdt` merge with `ORMap(MVRegister(String))`
+- Client-side lattice CRDT package merge with `ORMap(MVRegister(String))`
 - Beryl as unordered realtime transport
 - Server cache for late joiners
 - Explicit conflict UI for concurrent block edits
@@ -1254,7 +1254,7 @@ In `website/src/content/docs/examples.mdx`, add a `## Collaborative CRDT Docs` s
 
 Source: [`examples/collab_docs`](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs)
 
-This example shows browser clients running `lattice_crdt` locally while beryl channels relay serialized CRDT state. It uses `document:*:*` topics to isolate tenants and documents, and it renders conflicts when clients concurrently edit the same block.
+This example shows browser clients running lattice CRDT packages locally while beryl channels relay serialized CRDT state. It uses `document:*:*` topics to isolate tenants and documents, and it renders conflicts when clients concurrently edit the same block.
 
 | Feature | Demonstrated by |
 |---|---|
@@ -1279,7 +1279,7 @@ just change
 Choose kind `Added` and body:
 
 ```text
-Added a collaborative CRDT documents example using lattice_crdt and Beryl channels.
+Added a collaborative CRDT documents example using lattice CRDT packages and Beryl channels.
 ```
 
 - [ ] **Step 6: Run docs/example validation**
