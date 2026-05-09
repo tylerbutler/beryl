@@ -19,16 +19,47 @@ function parseFrame(payload) {
   }
 }
 
-function countSyncFrames(frames) {
-  return frames.filter((payload) => {
-    const data = parseFrame(payload);
-    return Array.isArray(data) && data[3] === "sync_state";
-  }).length;
+const PHOENIX_FRAME = {
+  joinRef: 0,
+  ref: 1,
+  topic: 2,
+  event: 3,
+  payload: 4,
+  length: 5,
+};
+
+function parsePhoenixFrame(payload) {
+  const data = parseFrame(payload);
+  if (!Array.isArray(data) || data.length !== PHOENIX_FRAME.length) {
+    return undefined;
+  }
+
+  const joinRef = data[PHOENIX_FRAME.joinRef];
+  const ref = data[PHOENIX_FRAME.ref];
+  const topic = data[PHOENIX_FRAME.topic];
+  const event = data[PHOENIX_FRAME.event];
+  const framePayload = data[PHOENIX_FRAME.payload];
+  if (typeof topic !== "string" || typeof event !== "string") {
+    return undefined;
+  }
+
+  return { joinRef, ref, topic, event, payload: framePayload, raw: data };
 }
 
-function joinReplyState(reply) {
-  const payload = Array.isArray(reply) ? reply[4] : undefined;
-  return payload?.response?.state ?? payload?.state;
+function syncStatePayloads(frames) {
+  return frames
+    .map(parsePhoenixFrame)
+    .filter((frame) => frame?.event === "sync_state")
+    .map((frame) => frame.payload?.state)
+    .filter((state) => typeof state === "string" && state.length > 0);
+}
+
+function countSyncFrames(frames) {
+  return syncStatePayloads(frames).length;
+}
+
+function joinReplyState(replyFrame) {
+  return replyFrame?.payload?.response?.state ?? replyFrame?.payload?.state;
 }
 
 async function expectNoTextareaValue(page, unexpectedValue, duration = 1_000) {
@@ -65,9 +96,9 @@ async function openClient(browser, path) {
   page.on("websocket", (ws) => {
     ws.on("framesent", (frame) => sentFrames.push(frame.payload));
     ws.on("framereceived", (frame) => {
-      const data = parseFrame(frame.payload);
-      if (Array.isArray(data) && data[3] === "phx_reply") {
-        joinReplies.push(data);
+      const phoenixFrame = parsePhoenixFrame(frame.payload);
+      if (phoenixFrame?.event === "phx_reply") {
+        joinReplies.push(phoenixFrame);
       }
     });
   });
@@ -76,19 +107,34 @@ async function openClient(browser, path) {
   await expect(page.locator("#status")).toHaveText("Connected", {
     timeout: 10_000,
   });
+  await expect
+    .poll(() => joinReplies.length, { timeout: 5_000 })
+    .toBeGreaterThan(0);
 
   return {
     context,
     page,
-    joinReplies,
+    joinReply: joinReplies[0],
     syncCount: () => countSyncFrames(sentFrames),
+    syncStates: () => syncStatePayloads(sentFrames),
   };
 }
 
-async function waitForSync(client, previousCount) {
+async function waitForSync(client, previousCount, expectedContent) {
   await expect
-    .poll(() => client.syncCount(), { timeout: 5_000 })
-    .toBeGreaterThan(previousCount);
+    .poll(
+      () =>
+        client
+          .syncStates()
+          .slice(previousCount)
+          .some((state) =>
+            expectedContent === undefined
+              ? state.length > 0
+              : state.includes(expectedContent),
+          ),
+      { timeout: 5_000 },
+    )
+    .toBe(true);
 }
 
 async function addBlock(client, selector) {
@@ -147,7 +193,7 @@ test.describe("Collaborative docs demo", () => {
 
       const lateJoiner = await openClient(browser, docPath(doc));
       try {
-        const cachedState = joinReplyState(lateJoiner.joinReplies[0]);
+        const cachedState = joinReplyState(lateJoiner.joinReply);
         expect(cachedState).toEqual(expect.any(String));
         expect(cachedState).not.toHaveLength(0);
 
@@ -183,8 +229,8 @@ test.describe("Collaborative docs demo", () => {
         bob.page.locator(".block textarea").fill("Bob version"),
       ]);
       await Promise.all([
-        waitForSync(alice, aliceSyncs),
-        waitForSync(bob, bobSyncs),
+        waitForSync(alice, aliceSyncs, "Alice version"),
+        waitForSync(bob, bobSyncs, "Bob version"),
       ]);
 
       const conflict = alice.page.locator(".conflict");
@@ -218,8 +264,8 @@ test.describe("Collaborative docs demo", () => {
       await defaultDoc.page.locator(".block textarea").last().fill(defaultText);
       await docTwo.page.locator(".block textarea").last().fill(twoText);
       await Promise.all([
-        waitForSync(defaultDoc, defaultSyncs),
-        waitForSync(docTwo, twoSyncs),
+        waitForSync(defaultDoc, defaultSyncs, defaultText),
+        waitForSync(docTwo, twoSyncs, twoText),
       ]);
 
       await expect(defaultDoc.page.locator(".block textarea").last()).toHaveValue(
