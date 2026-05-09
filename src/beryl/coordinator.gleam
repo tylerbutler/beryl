@@ -25,6 +25,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
+import gleam/string
 
 /// Type-erased channel handler for storage
 /// The actual typed Channel is converted to this for the registry
@@ -221,14 +222,11 @@ pub fn start(codec: Codec) -> Result(Subject(Message), StartError) {
 pub fn start_with_config(
   config: CoordinatorConfig,
 ) -> Result(Subject(Message), StartError) {
-  case validate_config(config) {
-    Error(e) -> Error(e)
-    Ok(Nil) ->
-      build_coordinator(config, None)
-      |> actor.start
-      |> result.map(fn(started) { started.data })
-      |> result.map_error(ActorStartFailed)
-  }
+  use _ <- result.try(validate_config(config))
+  build_coordinator(config, None)
+  |> actor.start
+  |> result.map(fn(started) { started.data })
+  |> result.map_error(ActorStartFailed)
 }
 
 /// Start the coordinator actor with heartbeat timeout enforcement and PubSub.
@@ -236,14 +234,11 @@ pub fn start_with_config_and_pubsub(
   config: CoordinatorConfig,
   ps: PubSub,
 ) -> Result(Subject(Message), StartError) {
-  case validate_config(config) {
-    Error(e) -> Error(e)
-    Ok(Nil) ->
-      build_coordinator(config, Some(ps))
-      |> actor.start
-      |> result.map(fn(started) { started.data })
-      |> result.map_error(ActorStartFailed)
-  }
+  use _ <- result.try(validate_config(config))
+  build_coordinator(config, Some(ps))
+  |> actor.start
+  |> result.map(fn(started) { started.data })
+  |> result.map_error(ActorStartFailed)
 }
 
 /// Start the coordinator with a registered name (for supervision)
@@ -251,14 +246,11 @@ pub fn start_named(
   config: CoordinatorConfig,
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), StartError) {
-  case validate_config(config) {
-    Error(e) -> Error(e)
-    Ok(Nil) ->
-      build_coordinator(config, None)
-      |> actor.named(name)
-      |> actor.start
-      |> result.map_error(ActorStartFailed)
-  }
+  use _ <- result.try(validate_config(config))
+  build_coordinator(config, None)
+  |> actor.named(name)
+  |> actor.start
+  |> result.map_error(ActorStartFailed)
 }
 
 /// Start a named coordinator actor with PubSub.
@@ -267,14 +259,11 @@ pub fn start_named_with_pubsub(
   ps: PubSub,
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), StartError) {
-  case validate_config(config) {
-    Error(e) -> Error(e)
-    Ok(Nil) ->
-      build_coordinator(config, Some(ps))
-      |> actor.named(name)
-      |> actor.start
-      |> result.map_error(ActorStartFailed)
-  }
+  use _ <- result.try(validate_config(config))
+  build_coordinator(config, Some(ps))
+  |> actor.named(name)
+  |> actor.start
+  |> result.map_error(ActorStartFailed)
 }
 
 fn validate_config(config: CoordinatorConfig) -> Result(Nil, StartError) {
@@ -769,15 +758,6 @@ fn handle_info(
   topic_name: String,
   message: Dynamic,
 ) -> actor.Next(State, Message) {
-  handle_info_inner(state, socket_id, topic_name, message)
-}
-
-fn handle_info_inner(
-  state: State,
-  socket_id: String,
-  topic_name: String,
-  message: Dynamic,
-) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(_) -> actor.continue(state)
     Ok(socket_info) -> {
@@ -808,25 +788,15 @@ fn handle_info_inner(
                   actor.continue(state)
                 }
 
-                ReplyErased(reply_event, reply_payload, new_assigns) -> {
+                ReplyErased(reply_event, reply_payload, new_assigns)
+                | PushErased(reply_event, reply_payload, new_assigns) -> {
+                  // No ref correlation in handle_info, so reply and push are
+                  // wire-identical: both become a server-initiated push.
                   let msg =
                     state.config.codec.encode_push(
                       topic_name,
                       reply_event,
                       reply_payload,
-                    )
-                  let _ = socket_info.send(msg)
-                  let state =
-                    update_assigns(state, socket_id, topic_name, new_assigns)
-                  actor.continue(state)
-                }
-
-                PushErased(push_event, push_payload, new_assigns) -> {
-                  let msg =
-                    state.config.codec.encode_push(
-                      topic_name,
-                      push_event,
-                      push_payload,
                     )
                   let _ = socket_info.send(msg)
                   let state =
@@ -1178,19 +1148,21 @@ fn handle_route_text(
   socket_id: String,
   raw_text: String,
 ) -> actor.Next(State, Message) {
-  let codec_value = state.config.codec
-  case codec_value.decode(raw_text) {
-    Error(_) -> {
+  let codec = state.config.codec
+  case codec.decode(raw_text) {
+    Error(err) -> {
       let logger = internal.logger("beryl.coordinator")
       logger
       |> log.warn("Failed to decode wire protocol message", [
         #("socket_id", socket_id),
+        #("error", wire_format_decode_error(err)),
+        #("frame_preview", string.slice(raw_text, 0, 200)),
       ])
       actor.continue(state)
     }
     Ok(msg) -> {
       case msg.event {
-        e if e == codec_value.join_event -> {
+        e if e == codec.join_event -> {
           let ref = option.unwrap(msg.ref, "")
           handle_join(
             state,
@@ -1201,9 +1173,9 @@ fn handle_route_text(
             ref,
           )
         }
-        e if e == codec_value.leave_event ->
+        e if e == codec.leave_event ->
           handle_leave(state, socket_id, msg.topic, msg.ref)
-        e if e == codec_value.heartbeat_event -> {
+        e if e == codec.heartbeat_event -> {
           let ref = option.unwrap(msg.ref, "")
           handle_heartbeat(state, socket_id, ref)
         }
@@ -1211,6 +1183,14 @@ fn handle_route_text(
           handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
       }
     }
+  }
+}
+
+fn wire_format_decode_error(error: codec.DecodeError) -> String {
+  case error {
+    codec.InvalidJson(reason) -> "InvalidJson: " <> reason
+    codec.InvalidFormat(reason) -> "InvalidFormat: " <> reason
+    codec.MissingField(name) -> "MissingField: " <> name
   }
 }
 

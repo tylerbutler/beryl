@@ -301,13 +301,14 @@ pub fn broadcast(
     coordinator.Broadcast(topic_name, event, payload, None),
   )
   // Distributed broadcast via PubSub (if configured)
-  case channels.pubsub {
-    Some(ps) -> {
-      let assert Ok(coordinator_pid) =
-        process.subject_owner(channels.coordinator)
+  case channels.pubsub, process.subject_owner(channels.coordinator) {
+    Some(ps), Ok(coordinator_pid) ->
       pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
-    }
-    None -> Nil
+    Some(_), Error(_) ->
+      // Coordinator exited between send and pubsub forward — local message
+      // is already enqueued (dead-letters), skip the cluster fanout.
+      Nil
+    None, _ -> Nil
   }
 }
 
@@ -369,10 +370,8 @@ pub fn broadcast_from(
     coordinator.Broadcast(topic_name, event, payload, Some(except_socket_id)),
   )
   // Distributed broadcast via PubSub (if configured)
-  case channels.pubsub {
-    Some(ps) -> {
-      let assert Ok(coordinator_pid) =
-        process.subject_owner(channels.coordinator)
+  case channels.pubsub, process.subject_owner(channels.coordinator) {
+    Some(ps), Ok(coordinator_pid) ->
       pubsub.broadcast_from_socket(
         ps,
         coordinator_pid,
@@ -381,8 +380,8 @@ pub fn broadcast_from(
         event,
         payload,
       )
-    }
-    None -> Nil
+    Some(_), Error(_) -> Nil
+    None, _ -> Nil
   }
 }
 
@@ -405,29 +404,6 @@ pub fn send_info(
       unsafe_coerce_to_dynamic(message),
     ),
   )
-}
-
-/// Push a message to a specific socket via its context
-///
-/// Note: In the lean MVP, this uses the send function from SocketContext.
-/// The message is sent directly, not through the coordinator.
-pub fn push_to_socket(
-  ctx: coordinator.SocketContext,
-  event: String,
-  payload: json.Json,
-) -> Nil {
-  let msg =
-    json.to_string(
-      json.preprocessed_array([
-        json.null(),
-        json.null(),
-        json.string(ctx.topic),
-        json.string(event),
-        payload,
-      ]),
-    )
-  let _ = ctx.send(msg)
-  Nil
 }
 
 /// Get the topic ID from a topic using wildcard extraction

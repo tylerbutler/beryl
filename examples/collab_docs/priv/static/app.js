@@ -14,7 +14,11 @@ const pendingPushes = new Map();
 
 const params = new URLSearchParams(window.location.search);
 const docId = params.get("doc") || "welcome";
-const topic = `document:demo:${docId}`;
+const tenant =
+  document.querySelector('meta[name="beryl-tenant"]')?.content || "demo";
+const tenantToken =
+  document.querySelector('meta[name="beryl-tenant-token"]')?.content || "";
+const topic = `document:${tenant}:${docId}`;
 
 function createFallbackStatus() {
   const fallback = document.createElement("div");
@@ -350,7 +354,7 @@ function start() {
   const socket = new window.Phoenix.Socket("/socket");
   socket.connect();
 
-  channel = socket.channel(topic, {});
+  channel = socket.channel(topic, { token: tenantToken });
   channel
     .join()
     .receive("ok", (reply) => {

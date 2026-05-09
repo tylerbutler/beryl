@@ -26,7 +26,7 @@ pub fn missing_state_returns_error_test() {
   let assert Ok(store) = doc_store.start()
 
   doc_store.get_state(store, "missing")
-  |> should.equal(Error(Nil))
+  |> should.equal(Error(doc_store.NotFound))
 }
 
 pub fn invalid_json_merge_does_not_create_state_test() {
@@ -35,7 +35,7 @@ pub fn invalid_json_merge_does_not_create_state_test() {
   doc_store.merge_state(store, doc_key, "not json")
 
   doc_store.get_state(store, doc_key)
-  |> should.equal(Error(Nil))
+  |> should.equal(Error(doc_store.NotFound))
 }
 
 pub fn valid_states_for_same_key_merge_blocks_test() {

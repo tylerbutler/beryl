@@ -1,0 +1,3 @@
+kind: Fixed
+body: collab_docs example — `doc_store` now logs `or_map.from_json` and `or_map.merge` failures to stderr instead of silently dropping client state. `get_state` returns `Error(NotFound)` vs `Error(Timeout)` so callers can distinguish a missing document from an actor receive timeout. `sync_state` payloads larger than 64 KiB are rejected with a `state_too_large` reply, protecting the doc_store actor from unbounded merges.
+time: 2026-05-09T08:20:04.000000-07:00

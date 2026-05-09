@@ -29,6 +29,7 @@ packages = [
 
 [requirements]
 beryl = { path = "../.." }
+gleam_crypto = { version = ">= 1.6.0 and < 2.0.0" }
 gleam_erlang = { version = ">= 0.29.0 and < 2.0.0" }
 gleam_http = { version = ">= 4.3.0 and < 5.0.0" }
 gleam_json = { version = ">= 3.0.0 and < 4.0.0" }

@@ -211,7 +211,12 @@ fn option_to_json(opt: Option(String)) -> json.Json {
 }
 
 /// Check if this is a Phoenix system event.
-pub fn is_system_event(event: String) -> Bool {
+///
+/// Note: This is Phoenix-specific. Codecs using their own protocol
+/// constants (e.g. `ws_join`/`ws_leave`) should compare against their
+/// codec's `join_event`/`leave_event`/`heartbeat_event` fields directly
+/// rather than using this helper.
+pub fn is_phoenix_system_event(event: String) -> Bool {
   case event {
     "phx_join"
     | "phx_leave"
@@ -221,6 +226,13 @@ pub fn is_system_event(event: String) -> Bool {
     | "heartbeat" -> True
     _ -> False
   }
+}
+
+/// Deprecated: renamed to `is_phoenix_system_event` to clarify the
+/// Phoenix-specific event name set. Forwards to the new name.
+@deprecated("Use is_phoenix_system_event/1")
+pub fn is_system_event(event: String) -> Bool {
+  is_phoenix_system_event(event)
 }
 
 /// Format a `DecodeError` as a human-readable string.

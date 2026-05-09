@@ -1,0 +1,3 @@
+kind: Fixed
+body: Coordinator wire-decode failure log now includes the `DecodeError` variant and a 200-char preview of the offending frame so operators can diagnose codec mismatches and corrupt frames.
+time: 2026-05-09T08:20:01.000000-07:00

@@ -1,0 +1,3 @@
+kind: Deprecated
+body: Renamed `wire.is_system_event/1` to `wire.is_phoenix_system_event/1` to make the Phoenix-specific event-name set explicit; the old name now forwards to the new one and emits a deprecation warning. Custom-codec users should compare against their codec's `join_event`/`leave_event`/`heartbeat_event` fields directly.
+time: 2026-05-09T08:20:03.000000-07:00

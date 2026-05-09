@@ -505,33 +505,33 @@ pub fn heartbeat_reply_test() {
 }
 
 pub fn is_system_event_phx_join_test() {
-  wire.is_system_event("phx_join") |> should.be_true
+  wire.is_phoenix_system_event("phx_join") |> should.be_true
 }
 
 pub fn is_system_event_phx_leave_test() {
-  wire.is_system_event("phx_leave") |> should.be_true
+  wire.is_phoenix_system_event("phx_leave") |> should.be_true
 }
 
 pub fn is_system_event_phx_reply_test() {
-  wire.is_system_event("phx_reply") |> should.be_true
+  wire.is_phoenix_system_event("phx_reply") |> should.be_true
 }
 
 pub fn is_system_event_phx_error_test() {
-  wire.is_system_event("phx_error") |> should.be_true
+  wire.is_phoenix_system_event("phx_error") |> should.be_true
 }
 
 pub fn is_system_event_phx_close_test() {
-  wire.is_system_event("phx_close") |> should.be_true
+  wire.is_phoenix_system_event("phx_close") |> should.be_true
 }
 
 pub fn is_system_event_heartbeat_test() {
-  wire.is_system_event("heartbeat") |> should.be_true
+  wire.is_phoenix_system_event("heartbeat") |> should.be_true
 }
 
 pub fn is_system_event_custom_test() {
-  wire.is_system_event("new_message") |> should.be_false
-  wire.is_system_event("typing") |> should.be_false
-  wire.is_system_event("presence_diff") |> should.be_false
+  wire.is_phoenix_system_event("new_message") |> should.be_false
+  wire.is_phoenix_system_event("typing") |> should.be_false
+  wire.is_phoenix_system_event("presence_diff") |> should.be_false
 }
 
 pub fn format_decode_error_invalid_json_test() {
