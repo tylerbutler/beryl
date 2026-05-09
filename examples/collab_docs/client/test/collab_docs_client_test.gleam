@@ -86,6 +86,13 @@ pub fn invalid_block_json_in_add_is_ignored_test() {
   |> should.equal([])
 }
 
+pub fn empty_block_id_in_add_is_ignored_test() {
+  client.new_document("a")
+  |> client.add_block("{\"id\":\"\",\"text\":\"ignored\"}")
+  |> client.blocks
+  |> should.equal([])
+}
+
 pub fn edit_block_with_mismatched_id_is_ignored_test() {
   let document =
     client.new_document("a")

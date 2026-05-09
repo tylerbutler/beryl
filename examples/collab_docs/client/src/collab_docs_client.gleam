@@ -15,10 +15,6 @@ pub type RenderBlock {
   RenderBlock(id: String, values: List(String))
 }
 
-pub fn main() {
-  Nil
-}
-
 pub fn new_document(replica: String) -> Document {
   Document(
     replica: replica,
@@ -141,6 +137,7 @@ fn put_block(document: Document, id: String, block_json: String) -> Document {
 
 fn extract_block_id(block_json: String) -> Result(String, Nil) {
   case json.parse(from: block_json, using: decode.at(["id"], decode.string)) {
+    Ok("") -> Error(Nil)
     Ok(id) -> Ok(id)
     Error(_) -> Error(Nil)
   }
