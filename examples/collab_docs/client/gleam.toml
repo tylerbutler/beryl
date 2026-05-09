@@ -4,9 +4,6 @@ description = "Browser CRDT client for the beryl collaborative docs example"
 gleam = ">= 1.7.0"
 target = "javascript"
 
-[javascript]
-runtime = "node"
-
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 gleam_json = ">= 3.0.0 and < 4.0.0"
