@@ -1,0 +1,14 @@
+{
+  "name": "collab_docs",
+  "private": true,
+  "description": "Collaborative CRDT document blocks demo built with beryl.",
+  "type": "module",
+  "scripts": {
+    "build:client": "cd client && gleam build && node ../scripts/bundle-client.mjs",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "esbuild": "^0.27.0"
+  }
+}

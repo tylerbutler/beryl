@@ -1,14 +1,14 @@
 ---
 title: Examples
-description: Two runnable beryl demos — collaborative cursors and multi-room chat.
+description: Three runnable beryl demos — collaborative cursors, multi-room chat, and CRDT documents.
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-beryl ships two fully runnable example applications in the
+beryl ships three fully runnable example applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
-directory. Both use a Gleam/BEAM backend, the Phoenix JS client, and vanilla JS
-with no build step.
+directory. They use a Gleam/BEAM backend with browser frontends that exercise
+different realtime collaboration patterns.
 
 <Aside type="caution" title="Pre-1.0 Software">
 beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
@@ -110,6 +110,43 @@ Server (Gleam)
 
 ---
 
+## Collaborative CRDT Docs
+
+**Source**: [`examples/collab_docs`](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs)
+
+A collaborative document editor where clients merge block state locally with a
+CRDT and use beryl as an unordered realtime transport.
+
+```bash
+just deps
+cd examples/collab_docs && gleam run
+# Open http://localhost:8002 in multiple browser tabs
+```
+
+### What it demonstrates
+
+| beryl feature | How it's used |
+|---|---|
+| **Segment wildcard topics** | Handler registered on `document:*:*` isolates each tenant/document pair |
+| **Client-side CRDT merge** | Browser state uses `lattice_core`, `lattice_maps`, and `lattice_registers` with `ORMap(MVRegister(String))` document blocks |
+| **Unordered realtime transport** | Beryl broadcasts document updates while the CRDT handles merge convergence |
+| **Late joiner cache** | Server returns cached merged state in the join reply for new clients |
+| **Conflict resolution UI** | Concurrent edits to the same block render explicit conflict cards with all versions |
+
+### Architecture
+
+```
+Browser (vanilla JS + Phoenix JS client + lattice CRDT packages)
+  │  WebSocket (Phoenix wire protocol)
+Server (Gleam)
+  ├── Mist HTTP — serves HTML + static files
+  ├── beryl channels — document:*:* handler
+  ├── document cache — merged state for late joiners
+  └── beryl pubsub — fan-out of CRDT updates
+```
+
+---
+
 ## Choosing a starting point
 
 | Starting point | Go here |
@@ -117,5 +154,6 @@ Server (Gleam)
 | I want a minimal working example right now | [Quick Start](/quick-start/) |
 | I want to see live presence + cursors | [examples/cursors](https://github.com/tylerbutler/beryl/tree/main/examples/cursors) |
 | I want auth, join validation, or groups | [examples/chatrooms](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms) |
+| I want collaborative documents or CRDT conflicts | [examples/collab_docs](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs) |
 | I want to understand the channel API | [Channels guide](/guides/channels/) |
 | I want to add presence to my app | [Presence guide](/guides/presence/) |

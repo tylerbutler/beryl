@@ -18,6 +18,8 @@ deps:
     gleam deps download
     cd examples/cursors && gleam deps download
     cd examples/chatrooms && gleam deps download
+    cd examples/collab_docs && gleam deps download
+    cd examples/collab_docs/client && gleam deps download
     pnpm -C examples install
 
 # === BUILD ===
@@ -99,9 +101,14 @@ examples-list:
     @ls examples/
 
 # Build all examples
-examples-build:
+examples-build: examples-client-build
     cd examples/cursors && gleam build
     cd examples/chatrooms && gleam build
+    cd examples/collab_docs && gleam build
+
+# Build JavaScript clients used by examples
+examples-client-build:
+    pnpm -C examples/collab_docs build:client
 
 # Install example test dependencies (Playwright)
 examples-deps:
@@ -111,6 +118,7 @@ examples-deps:
 examples-test: examples-build
     pnpm -C examples/cursors test
     pnpm -C examples/chatrooms test
+    pnpm -C examples/collab_docs test
 
 # === MAINTENANCE ===
 
