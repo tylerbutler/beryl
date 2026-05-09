@@ -1,0 +1,77 @@
+---
+title: Migration & Releases
+description: How beryl is released, how to find changelogs, and notable recent changes.
+---
+
+:::caution[Pre-1.0 Software]
+beryl is not yet 1.0. Minor releases may include breaking changes. Read this page before upgrading.
+:::
+
+## Release process
+
+beryl uses a fully automated release pipeline:
+
+1. **Changelog fragments** are authored with `changie new` (or `just change`) and committed alongside the code change. Fragments live in `.changes/unreleased/` until a release is cut.
+2. **changie-release** collects unreleased fragments, bumps the version in `gleam.toml`, and opens a release PR.
+3. Merging the release PR triggers `auto-tag`, which creates a GitHub release and the version tag.
+4. The `publish` workflow fires on the tag and publishes the new version to [Hex.pm](https://hex.pm/packages/beryl).
+
+**Where to find changelogs:**
+
+- [GitHub Releases](https://github.com/tylerbutler/beryl/releases) — the canonical per-version changelog
+- `.changes/unreleased/` in the repository — what is staged for the _next_ release
+
+---
+
+## Recent notable changes
+
+The following changes have accumulated since the last release. They are described at a high level here; see GitHub for exact signatures.
+
+### `send_info` and `with_handle_info`
+
+Channels can now receive server-originated OTP messages. Add a `handle_info` callback with `channel.with_handle_info/2`, then deliver messages from anywhere using `beryl.send_info/4`. A `Reply` returned from `handle_info` becomes a push (no client ref exists, so no `phx_reply` is sent).
+
+### Phoenix presence diff broadcasting
+
+`beryl.broadcast_presence_diff/3` sends Phoenix-shaped presence diffs — `joins`/`leaves` objects keyed by presence key with `metas` arrays. Local `track` and `untrack` operations also invoke `on_diff` with concrete diff values. Anonymous entries are excluded from encoded diffs.
+
+### Segment-aware topic wildcards
+
+`topic.parse_pattern/1` now recognises multi-segment wildcard patterns like `"document:*:*"`. Use `topic.extract_wildcards/2` to pull out the matched segments. Single trailing `*` patterns retain existing prefix-wildcard behaviour.
+
+### Mist direct transport
+
+The core WebSocket transport now uses Mist directly instead of Wisp. If your application used `beryl/transport/wisp`, migrate to `beryl/transport/mist`. Examples also use Mist for HTTP routing and static assets. See the [WebSocket Transport guide](/guides/websocket) for the updated setup.
+
+### PubSub socket exclusion fix
+
+`broadcast_from` now correctly excludes the originating socket when a channel is PubSub-enabled. Previously, broadcasts through PubSub could echo back to the sender.
+
+### Rate limiter fail-closed
+
+The rate limiter now **denies** requests when the token bucket actor cannot be started, rather than silently allowing them through. If you rely on rate limiting for security, this change removes a potential bypass under resource exhaustion.
+
+### Removed: `socket.topics()` and `socket.is_subscribed()`
+
+These functions always returned empty/false because subscriptions are tracked internally by the coordinator. They have been removed from the public API.
+
+### Removed: `info` type parameter on `Channel`
+
+`Channel` was simplified from `Channel(assigns, info)` to `Channel(assigns)`. `with_handle_info` wires the callback onto the channel definition; `send_info/4` delivers messages to it at runtime. The two are complementary — use `with_handle_info` when building the channel and `send_info` when dispatching a message to it.
+
+### WebSocket authentication hook
+
+The Mist transport config now accepts an `on_connect` callback. Return `Error(Nil)` to reject the upgrade with a 403 before the WebSocket handshake completes.
+
+---
+
+## Upgrading
+
+When upgrading across a minor version boundary:
+
+1. Read the [GitHub Release notes](https://github.com/tylerbutler/beryl/releases) for the target version.
+2. Check removed or changed exports against the [module map](/reference#module-map).
+3. Run `gleam check` — the Gleam compiler will surface type mismatches caused by API changes.
+4. Run `just test` to verify runtime behaviour.
+
+If you hit a regression not covered by the release notes, please [open an issue](https://github.com/tylerbutler/beryl/issues).

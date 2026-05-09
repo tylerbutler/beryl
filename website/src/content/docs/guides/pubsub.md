@@ -45,10 +45,13 @@ pub type Message {
 }
 
 pub type PubSubFrom {
-  System              // Broadcast with no sender
-  FromPid(Pid)        // Broadcast from a specific process
+  System                    // Broadcast with no sender
+  FromPid(Pid)              // Broadcast from a specific process
+  FromSocket(Pid, String)   // Broadcast from a process, excluding a socket ID
 }
 ```
+
+`FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving coordinators use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
 
 ## Broadcasting
 
@@ -58,7 +61,7 @@ import gleam/json
 // Broadcast to all subscribers (all nodes)
 pubsub.broadcast(ps, "room:lobby", "new_message", json.string("hello"))
 
-// Broadcast to all except the sender
+// Broadcast to all except the sender process
 pubsub.broadcast_from(
   ps,
   process.self(),
@@ -67,9 +70,21 @@ pubsub.broadcast_from(
   json.string("hello"),
 )
 
+// Broadcast to all except a specific socket ID (clustered "broadcast except this socket")
+pubsub.broadcast_from_socket(
+  ps,
+  process.self(),   // sending coordinator process
+  socket_id,        // socket ID to exclude on receiving coordinators
+  "room:lobby",
+  "new_message",
+  json.string("hello"),
+)
+
 // Broadcast to local node only
 pubsub.local_broadcast(ps, "room:lobby", "new_message", json.string("hello"))
 ```
+
+Use `broadcast_from_socket` when you need to broadcast to all subscribers across a cluster while excluding one specific socket — even if that socket's coordinator is on a different node. `beryl.broadcast_from` calls this internally.
 
 ## Querying subscribers
 
@@ -99,3 +114,9 @@ let assert Ok(channels) = beryl.start(config)
 // beryl.broadcast() now sends to all nodes automatically
 beryl.broadcast(channels, "room:lobby", "event", payload)
 ```
+
+## Next steps
+
+- [Supervision guide](/guides/supervision/) — supervised startup and multi-node deployment checklist
+- [Architecture overview](/architecture/overview/) — how PubSub fits into the beryl layer diagram
+- [Troubleshooting](/troubleshooting/#pubsub-cluster-issues) — diagnosing cluster broadcast failures and diverging presence state

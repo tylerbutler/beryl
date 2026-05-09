@@ -85,6 +85,25 @@ let assert Ok(Nil) = group.add(groups, "team:eng", "room:backend")
 group.broadcast(groups, channels, "team:eng", "announce", payload)
 ```
 
+### Supervisor (`beryl/supervisor`)
+
+Optional OTP supervision tree for all beryl subsystems:
+
+```gleam
+import beryl/supervisor
+import gleam/option.{None, Some}
+
+let config = supervisor.SupervisedConfig(
+  channels: beryl.default_config(),
+  presence: Some(presence.default_config("node1")),
+  groups: True,
+)
+let assert Ok(supervised) = supervisor.start(config)
+// supervised.channels, supervised.presence, supervised.groups
+```
+
+Uses **rest-for-one** strategy with the child order: coordinator → presence → groups. A coordinator crash restarts all downstream children to maintain consistency. `child_spec/1` allows embedding the beryl subtree inside a larger application supervisor.
+
 ### Wire Protocol (`beryl/wire`)
 
 JSON encoding and decoding for the Phoenix-compatible wire protocol. Handles:

@@ -31,10 +31,6 @@ beryl brings in these Gleam packages automatically:
 | `gleam_otp` | OTP actors |
 | `gleam_json` | JSON encoding/decoding |
 | `gleam_crypto` | Socket ID generation |
-
-If your application starts its own WebSocket server with beryl's Mist transport,
-add [Mist](https://hexdocs.pm/mist/) to that application:
-
-```bash
-gleam add mist
-```
+| `gleam_http` | HTTP request types for transport integration |
+| `mist` | WebSocket and HTTP server |
+| `birch` | Rate limiting |

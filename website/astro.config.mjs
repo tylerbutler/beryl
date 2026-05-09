@@ -59,6 +59,10 @@ export default defineConfig({
 							label: "Quick Start",
 							slug: "quick-start",
 						},
+						{
+							label: "Examples",
+							slug: "examples",
+						},
 					],
 				},
 				{
@@ -77,8 +81,29 @@ export default defineConfig({
 							slug: "guides/pubsub",
 						},
 						{
+							label: "Groups",
+							slug: "guides/groups",
+						},
+						{
+							label: "Supervision",
+							slug: "guides/supervision",
+						},
+						{
+							label: "Error Handling",
+							slug: "guides/error-handling",
+						},
+						{
 							label: "WebSocket Transport",
 							slug: "guides/websocket",
+						},
+					],
+				},
+				{
+					label: "Reference",
+					items: [
+						{
+							label: "API Overview",
+							slug: "reference",
 						},
 					],
 				},
@@ -88,6 +113,19 @@ export default defineConfig({
 						{
 							label: "Overview",
 							slug: "architecture/overview",
+						},
+					],
+				},
+				{
+					label: "Help",
+					items: [
+						{
+							label: "Troubleshooting",
+							slug: "troubleshooting",
+						},
+						{
+							label: "Migration & Releases",
+							slug: "migration",
 						},
 					],
 				},

@@ -4,22 +4,94 @@
 </tr></table>
 
 > [!IMPORTANT]
-> beryl is not yet 1.0. This means:
->
-> - the API is unstable
-> - features and APIs may be removed in minor releases
-> - quality should not be considered production-ready
->
-> We welcome usage and feedback in
-> the meantime! We will do our best to minimize breaking changes regardless.
+> beryl is not yet 1.0. The API is unstable, features may be removed in minor
+> releases, and quality should not be considered production-ready. We welcome
+> usage and feedback in the meantime!
+
+## Install
+
+```sh
+gleam add beryl
+```
+
+beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
+
+## Quick start
+
+```gleam
+import beryl
+import beryl/channel.{type Channel, type HandleResult, type JoinResult}
+import beryl/socket.{type Socket}
+import beryl/transport/mist as mist_transport
+import gleam/erlang/process
+import gleam/json
+import gleam/option.{None}
+import mist
+
+pub type RoomAssigns { RoomAssigns(username: String) }
+
+fn new_channel() -> Channel(RoomAssigns) {
+  channel.new(fn(_topic, payload, socket) {
+    let username = // ... extract from payload
+    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, RoomAssigns(username:)))
+  })
+  |> channel.with_handle_in(fn(_event, _payload, socket) {
+    channel.NoReply(socket)
+  })
+}
+
+pub fn main() {
+  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
+
+  let assert Ok(_) =
+    fn(req) {
+      mist_transport.upgrade(req, channels.coordinator,
+        mist_transport.default_config("/socket/websocket"), fn() {
+          // your regular HTTP handler here
+          panic as "not implemented"
+        })
+    }
+    |> mist.new
+    |> mist.port(8000)
+    |> mist.start
+
+  process.sleep_forever()
+}
+```
+
+For a complete end-to-end walkthrough including Phoenix JS client code, see the
+**[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)** on the docs website.
+
+## Documentation
+
+- **Website & guides**: <https://beryl.tylerbutler.com>
+- **Generated API docs**: <https://hexdocs.pm/beryl/>
 
 ## Features
 
-- **Channels** - Topic-based pub/sub with pattern matching (e.g., `room:*`)
-- **Presence** - Distributed presence tracking using CRDTs (add-wins observed-remove set)
-- **Groups** - Named channel groups for broadcast
-- **PubSub** - pg-based process group messaging
-- **WebSocket Transport** - Mist integration for WebSocket connections
+- **Channels** — Topic-based pub/sub with typed callbacks and pattern matching (e.g. `room:*`, `document:*:*`)
+- **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
+- **Groups** — Named channel groups for multi-topic broadcasting
+- **PubSub** — pg-based distributed publish/subscribe
+- **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
+
+## Examples
+
+Two runnable demos are included in the `examples/` directory:
+
+| Example | What it demonstrates |
+|---------|----------------------|
+| [`examples/cursors`](examples/cursors/) | Channels, topic wildcards, presence, `broadcast_from`, rate limiting |
+| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, `Reply`, `Push`, groups, validation, typing indicators |
+
+See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
+
+## Releases & changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Releases follow
+[Conventional Commits](https://www.conventionalcommits.org/) and are managed
+with [changie](https://changie.dev/).
 
 ## Development
 
@@ -77,4 +149,4 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## License
 
-Apache-2.0 - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE) for details.
