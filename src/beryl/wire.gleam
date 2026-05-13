@@ -40,6 +40,40 @@ pub fn phoenix_codec() -> Codec {
 /// Expected format: `[join_ref, ref, topic, event, payload]` where
 /// `join_ref` and `ref` may be `null`.
 pub fn decode_message(json_string: String) -> Result(Inbound, DecodeError) {
+  case json.parse(from: json_string, using: decode.dynamic) {
+    Ok(value) -> decode_inbound_value(value)
+    Error(json.UnexpectedEndOfInput) ->
+      Error(InvalidJson("Unexpected end of input"))
+    Error(json.UnexpectedByte(byte)) ->
+      Error(InvalidJson("Unexpected byte: " <> byte))
+    Error(json.UnexpectedSequence(seq)) ->
+      Error(InvalidJson("Unexpected sequence: " <> seq))
+    Error(json.UnableToDecode(_)) ->
+      Error(InvalidFormat(
+        "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
+      ))
+  }
+}
+
+fn decode_inbound_value(value: Dynamic) -> Result(Inbound, DecodeError) {
+  case decode.run(value, decode.list(decode.dynamic)) {
+    Ok(items) -> {
+      case list.length(items) {
+        5 -> decode_inbound_fields(value)
+        _ ->
+          Error(InvalidFormat(
+            "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
+          ))
+      }
+    }
+    Error(_) ->
+      Error(InvalidFormat(
+        "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
+      ))
+  }
+}
+
+fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
   let wire_decoder = {
     use join_ref <- decode.subfield([0], decode.optional(decode.string))
     use ref <- decode.subfield([1], decode.optional(decode.string))
@@ -55,15 +89,9 @@ pub fn decode_message(json_string: String) -> Result(Inbound, DecodeError) {
     ))
   }
 
-  case json.parse(from: json_string, using: wire_decoder) {
+  case decode.run(value, wire_decoder) {
     Ok(msg) -> Ok(msg)
-    Error(json.UnexpectedEndOfInput) ->
-      Error(InvalidJson("Unexpected end of input"))
-    Error(json.UnexpectedByte(byte)) ->
-      Error(InvalidJson("Unexpected byte: " <> byte))
-    Error(json.UnexpectedSequence(seq)) ->
-      Error(InvalidJson("Unexpected sequence: " <> seq))
-    Error(json.UnableToDecode(_)) ->
+    Error(_) ->
       Error(InvalidFormat(
         "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
       ))
