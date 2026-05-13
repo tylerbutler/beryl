@@ -3,6 +3,8 @@
 *.ez
 /build
 examples/*/build/
+examples/*/client/build/
+examples/*/test-results/
 erl_crash.dump
 
 # Coverage
