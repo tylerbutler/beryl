@@ -68,6 +68,40 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 - **Website & guides**: <https://beryl.tylerbutler.com>
 - **Generated API docs**: <https://hexdocs.pm/beryl/>
 
+## Ecosystem
+
+Beryl is the server-side channel runtime. It owns socket registration, channel
+handlers, broadcasts, presence, groups, pubsub, and transport integration.
+Beryl has its own pluggable wire codec, and its Phoenix codec is kept compatible
+with Roost and Aquamarine by shared conformance fixtures.
+
+```mermaid
+flowchart TD
+    fixtures["phoenix_channel_fixtures\ncanonical wire test data"]
+    roost["roost\nPhoenix channel wire protocol"]
+    beryl["beryl\nserver runtime"]
+    aquamarine["aquamarine\nclient runtime"]
+    gluegun["gluegun\nclient WebSocket transport"]
+    mist["mist\nserver WebSocket transport"]
+
+    fixtures -. "test fixtures" .-> roost
+    fixtures -. "test fixtures" .-> beryl
+    fixtures -. "test fixtures" .-> aquamarine
+
+    roost --> aquamarine
+    mist --> beryl
+    gluegun --> aquamarine
+
+    aquamarine <-- "Phoenix channel wire" --> beryl
+```
+
+| Package | Responsibility |
+|---------|----------------|
+| `phoenix_channel_fixtures` | Shared test fixtures for Phoenix channel wire compatibility. |
+| `roost` | Pure Phoenix channel frame constants, encode/decode helpers, and reply helpers. |
+| `beryl` | Server-side runtime with its own pluggable codec; its Phoenix codec is fixture-tested. |
+| `aquamarine` | Client-side channel runtime that uses Roost for Phoenix compatibility. |
+
 ## Features
 
 - **Channels** — Topic-based pub/sub with typed callbacks and pattern matching (e.g. `room:*`, `document:*:*`)

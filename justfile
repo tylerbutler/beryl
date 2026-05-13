@@ -101,10 +101,17 @@ examples-list:
     @ls examples/
 
 # Build all examples
-examples-build: examples-client-build
+examples-build: examples-clean examples-client-build
     cd examples/cursors && gleam build
     cd examples/chatrooms && gleam build
     cd examples/collab_docs && gleam build
+
+# Clean example build artifacts
+examples-clean:
+    rm -rf examples/cursors/_build
+    rm -rf examples/chatrooms/_build
+    rm -rf examples/collab_docs/_build
+    rm -rf examples/collab_docs/client/_build
 
 # Build JavaScript clients used by examples
 examples-client-build:
@@ -123,7 +130,8 @@ examples-test: examples-build
 # === MAINTENANCE ===
 
 # Remove build artifacts
-clean:
+clean: examples-clean
+    rm -rf _build
     rm -rf build
 
 # === CI ===
