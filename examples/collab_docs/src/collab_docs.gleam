@@ -1,5 +1,7 @@
 import beryl
+import beryl/wire
 import beryl/transport/mist as mist_transport
+import collab_docs/auth
 import collab_docs/channel
 import collab_docs/doc_store
 import collab_docs/router
@@ -8,16 +10,17 @@ import gleam/io
 import mist
 
 pub fn main() {
+  let secret = auth.new_secret()
   let assert Ok(store) = doc_store.start()
-  let assert Ok(channels) = beryl.start(beryl.default_config())
-  let handler = channel.new_handler(channels, store)
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let handler = channel.new_handler(channels, store, secret)
   let assert Ok(_) = beryl.register(channels, "document:*:*", handler)
 
   io.println("📝 Collaborative CRDT Docs Demo")
   io.println("   Open http://localhost:8002")
   io.println("")
 
-  let ctx = router.Context(channels:, store:)
+  let ctx = router.Context(channels:, store:, secret:)
 
   let assert Ok(_) =
     fn(req) {

@@ -4,6 +4,7 @@ import beryl/coordinator
 import beryl/socket
 import beryl/topic
 import beryl/wire
+import beryl/wire/codec
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -169,7 +170,7 @@ pub fn validate_topic_test() {
 }
 
 pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -216,7 +217,7 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
 }
 
 pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -258,7 +259,7 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
 // Config tests
 
 pub fn default_config_test() {
-  let config = beryl.default_config()
+  let config = beryl.config(wire.phoenix_codec())
 
   config.heartbeat_interval_ms
   |> should.equal(30_000)
@@ -268,7 +269,7 @@ pub fn default_config_test() {
 }
 
 pub fn send_info_routes_message_to_joined_channel_test() {
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -325,7 +326,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
 }
 
 pub fn send_info_reply_result_pushes_message_to_client_test() {
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -462,7 +463,7 @@ pub fn reply_json_ok_test() {
       option.Some("j1"),
       "ref1",
       "room:lobby",
-      wire.StatusOk,
+      codec.StatusOk,
       json.object([]),
     )
 
@@ -477,7 +478,7 @@ pub fn reply_json_error_test() {
       option.None,
       "ref1",
       "room:lobby",
-      wire.StatusError,
+      codec.StatusError,
       json.object([#("reason", json.string("unauthorized"))]),
     )
 
@@ -504,49 +505,49 @@ pub fn heartbeat_reply_test() {
 }
 
 pub fn is_system_event_phx_join_test() {
-  wire.is_system_event("phx_join") |> should.be_true
+  wire.is_phoenix_system_event("phx_join") |> should.be_true
 }
 
 pub fn is_system_event_phx_leave_test() {
-  wire.is_system_event("phx_leave") |> should.be_true
+  wire.is_phoenix_system_event("phx_leave") |> should.be_true
 }
 
 pub fn is_system_event_phx_reply_test() {
-  wire.is_system_event("phx_reply") |> should.be_true
+  wire.is_phoenix_system_event("phx_reply") |> should.be_true
 }
 
 pub fn is_system_event_phx_error_test() {
-  wire.is_system_event("phx_error") |> should.be_true
+  wire.is_phoenix_system_event("phx_error") |> should.be_true
 }
 
 pub fn is_system_event_phx_close_test() {
-  wire.is_system_event("phx_close") |> should.be_true
+  wire.is_phoenix_system_event("phx_close") |> should.be_true
 }
 
 pub fn is_system_event_heartbeat_test() {
-  wire.is_system_event("heartbeat") |> should.be_true
+  wire.is_phoenix_system_event("heartbeat") |> should.be_true
 }
 
 pub fn is_system_event_custom_test() {
-  wire.is_system_event("new_message") |> should.be_false
-  wire.is_system_event("typing") |> should.be_false
-  wire.is_system_event("presence_diff") |> should.be_false
+  wire.is_phoenix_system_event("new_message") |> should.be_false
+  wire.is_phoenix_system_event("typing") |> should.be_false
+  wire.is_phoenix_system_event("presence_diff") |> should.be_false
 }
 
 pub fn format_decode_error_invalid_json_test() {
-  wire.format_decode_error(wire.InvalidJson("bad input"))
+  wire.format_decode_error(codec.InvalidJson("bad input"))
   |> string.contains("Invalid JSON")
   |> should.be_true
 }
 
 pub fn format_decode_error_invalid_format_test() {
-  wire.format_decode_error(wire.InvalidFormat("wrong structure"))
+  wire.format_decode_error(codec.InvalidFormat("wrong structure"))
   |> string.contains("Invalid format")
   |> should.be_true
 }
 
 pub fn format_decode_error_missing_field_test() {
-  wire.format_decode_error(wire.MissingField("topic"))
+  wire.format_decode_error(codec.MissingField("topic"))
   |> string.contains("Missing required field")
   |> should.be_true
 }

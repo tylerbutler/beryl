@@ -1,5 +1,6 @@
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
+import gleam/io
 import gleam/json
 import gleam/otp/actor
 import gleam/result
@@ -20,6 +21,19 @@ type State {
   State(docs: Dict(String, ORMap))
 }
 
+/// Failure modes for `get_state`.
+///
+/// - `NotFound`: the store has no entry for the key (a normal miss).
+/// - `Timeout`: the store actor did not reply within `receive_timeout_ms`
+///   — typically an availability incident worth surfacing.
+pub type GetError {
+  NotFound
+  Timeout
+}
+
+/// Starts the document store actor.
+///
+/// Returns `Error(actor.StartError)` if the OTP actor fails to initialise.
 pub fn start() -> Result(Store, actor.StartError) {
   actor.new(State(docs: dict.new()))
   |> actor.on_message(handle_message)
@@ -29,16 +43,17 @@ pub fn start() -> Result(Store, actor.StartError) {
 
 /// Gets the encoded document state for a key.
 ///
-/// Returns `Error(Nil)` when the store has no state for the key, or when the
-/// store actor does not reply within its fixed receive timeout. Callers cannot
-/// distinguish a missing document from a timed-out actor response.
-pub fn get_state(store: Store, key: String) -> Result(String, Nil) {
+/// Distinguishes a normal miss (`NotFound`) from an actor receive timeout
+/// (`Timeout`) so callers can alert/log the latter without conflating it
+/// with the absence of the document.
+pub fn get_state(store: Store, key: String) -> Result(String, GetError) {
   let reply = process.new_subject()
   process.send(store.subject, GetState(key: key, reply: reply))
 
   case process.receive(from: reply, within: receive_timeout_ms) {
-    Ok(result) -> result
-    Error(_) -> Error(Nil)
+    Ok(Ok(encoded)) -> Ok(encoded)
+    Ok(Error(Nil)) -> Error(NotFound)
+    Error(_) -> Error(Timeout)
   }
 }
 
@@ -59,17 +74,25 @@ fn handle_message(
 ) -> actor.Next(State, Message) {
   case message {
     GetState(key, reply) -> {
-      let response = case dict.get(state.docs, key) {
-        Ok(doc) -> Ok(doc |> or_map.to_json |> json.to_string)
-        Error(_) -> Error(Nil)
-      }
+      let response =
+        dict.get(state.docs, key)
+        |> result.map(fn(doc) { doc |> or_map.to_json |> json.to_string })
       process.send(reply, response)
       actor.continue(state)
     }
 
     MergeState(key, encoded) -> {
       let docs = case or_map.from_json(encoded) {
-        Error(_) -> state.docs
+        Error(_) -> {
+          // Decode failure is silent at the wire level (callers don't await),
+          // so surface it on stderr to aid debugging schema/version skew.
+          io.println_error(
+            "[collab_docs.doc_store] discarded MergeState for key="
+            <> key
+            <> " (or_map.from_json failed)",
+          )
+          state.docs
+        }
         Ok(remote) -> merge_doc(state.docs, key, remote)
       }
       actor.continue(State(docs: docs))
@@ -87,7 +110,16 @@ fn merge_doc(
     Ok(local) ->
       case or_map.merge(local, remote) {
         Ok(merged) -> dict.insert(docs, key, merged)
-        Error(_) -> docs
+        Error(_) -> {
+          // ORMap merges should be commutative — failure indicates a real
+          // bug worth seeing rather than silently dropping remote edits.
+          io.println_error(
+            "[collab_docs.doc_store] or_map.merge failed for key="
+            <> key
+            <> "; remote edits discarded",
+          )
+          docs
+        }
       }
   }
 }

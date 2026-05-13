@@ -1,4 +1,5 @@
 import beryl
+import beryl/wire
 import beryl/presence
 import beryl/transport/mist as mist_transport
 import cursors/cursor_channel
@@ -10,7 +11,7 @@ import mist
 pub fn main() {
   // Start beryl channels with rate limiting for cursor events
   let config =
-    beryl.default_config()
+    beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
   let assert Ok(channels) = beryl.start(config)

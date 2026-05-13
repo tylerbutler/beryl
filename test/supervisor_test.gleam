@@ -3,6 +3,7 @@ import beryl/channel
 import beryl/group
 import beryl/presence
 import beryl/supervisor
+import beryl/wire
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None, Some}
@@ -14,7 +15,7 @@ import test_helpers
 pub fn start_supervised_coordinator_only_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: False,
     )
@@ -30,7 +31,7 @@ pub fn start_supervised_coordinator_only_test() {
 pub fn start_supervised_all_subsystems_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: Some(presence.default_config("test-node")),
       groups: True,
     )
@@ -46,7 +47,7 @@ pub fn start_supervised_all_subsystems_test() {
 pub fn start_supervised_with_presence_only_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: Some(presence.default_config("test-node-2")),
       groups: False,
     )
@@ -59,7 +60,7 @@ pub fn start_supervised_with_presence_only_test() {
 pub fn start_supervised_with_groups_only_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: True,
     )
@@ -74,7 +75,7 @@ pub fn start_supervised_with_groups_only_test() {
 pub fn supervised_coordinator_accepts_register_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: False,
     )
@@ -94,7 +95,7 @@ pub fn supervised_coordinator_accepts_register_test() {
 pub fn supervised_presence_tracks_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: Some(presence.default_config("test-track")),
       groups: False,
     )
@@ -113,7 +114,7 @@ pub fn supervised_presence_tracks_test() {
 pub fn supervised_groups_work_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: True,
     )
@@ -132,7 +133,7 @@ pub fn supervised_groups_work_test() {
 pub fn stop_shuts_down_supervisor_and_children_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: Some(presence.default_config("test-stop")),
       groups: True,
     )
@@ -163,7 +164,7 @@ pub fn stop_shuts_down_supervisor_and_children_test() {
 pub fn stop_coordinator_only_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: False,
     )
@@ -189,7 +190,7 @@ pub fn stop_coordinator_only_test() {
 pub fn supervised_coordinator_restarts_on_crash_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: False,
     )
@@ -241,7 +242,7 @@ pub fn supervised_coordinator_restarts_on_crash_test() {
 pub fn coordinator_crash_resets_presence_state_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: Some(presence.default_config("test-rest-for-one-pres")),
       groups: False,
     )
@@ -297,7 +298,7 @@ pub fn coordinator_crash_resets_presence_state_test() {
 pub fn coordinator_crash_resets_groups_state_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: True,
     )
@@ -351,7 +352,7 @@ pub fn coordinator_crash_resets_groups_state_test() {
 pub fn independent_presence_crash_does_not_affect_coordinator_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: Some(presence.default_config("test-indep-pres")),
       groups: False,
     )
@@ -405,7 +406,7 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
 pub fn independent_groups_crash_does_not_affect_coordinator_test() {
   let config =
     supervisor.SupervisedConfig(
-      channels: beryl.default_config(),
+      channels: beryl.config(wire.phoenix_codec()),
       presence: None,
       groups: True,
     )

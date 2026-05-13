@@ -1,0 +1,3 @@
+kind: Added
+body: collab_docs example — channel-level auth via HMAC-signed bearer tokens. The server signs a per-tenant token (using `gleam/crypto.sign_message`) and embeds it in the page HTML; the client passes it in the Phoenix join payload; the channel handler verifies the signature and tenant claim before allowing the join. Demonstrates the recommended pattern for per-topic auth in beryl channels.
+time: 2026-05-09T08:55:00.000000-07:00

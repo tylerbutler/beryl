@@ -1,4 +1,5 @@
 import beryl
+import collab_docs/auth
 import collab_docs/doc_store.{type Store}
 import gleam/bytes_tree
 import gleam/erlang/application
@@ -12,29 +13,40 @@ import gleam/string
 import gleam/uri
 import mist.{type Connection, type ResponseData}
 
+/// Tenant the demo will issue tokens for. In a real app this comes from
+/// a session, IdP claim, or other auth context.
+const demo_tenant = "demo"
+
 pub type Context {
-  Context(channels: beryl.Channels, store: Store)
+  Context(channels: beryl.Channels, store: Store, secret: BitArray)
 }
 
 pub fn handle_request(
   req: Request(Connection),
-  _ctx: Context,
+  ctx: Context,
 ) -> Response(ResponseData) {
   use <- serve_static(req, under: "/static", from: priv_directory())
 
   case request.path_segments(req) {
-    [] -> index_page()
+    [] -> index_page(ctx)
     _ -> not_found()
   }
 }
 
-fn index_page() -> Response(ResponseData) {
+fn index_page(ctx: Context) -> Response(ResponseData) {
+  let token = auth.sign_tenant(demo_tenant, ctx.secret)
   let html =
     "<!DOCTYPE html>
 <html lang=\"en\">
 <head>
   <meta charset=\"UTF-8\">
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+  <meta name=\"beryl-tenant\" content=\""
+    <> demo_tenant
+    <> "\">
+  <meta name=\"beryl-tenant-token\" content=\""
+    <> token
+    <> "\">
   <title>Collaborative CRDT Docs — beryl demo</title>
   <link rel=\"stylesheet\" href=\"/static/style.css\">
 </head>
@@ -51,7 +63,7 @@ fn index_page() -> Response(ResponseData) {
     </section>
     <section id=\"blocks\" aria-live=\"polite\"></section>
   </main>
-  <script src=\"https://unpkg.com/phoenix@1.7.20/priv/static/phoenix.js\"></script>
+  <script src=\"https://unpkg.com/phoenix@1.7.20/priv/static/phoenix.js\" integrity=\"sha384-9Rsr2KoQMtWNQakugNsDiGsZ/5eQnJHeBhiocJMdHvnyN8ifwcytSTzPpb1xydYk\" crossorigin=\"anonymous\"></script>
   <script type=\"module\" src=\"/static/app.js\"></script>
 </body>
 </html>"

@@ -53,7 +53,7 @@ fn index_page() -> Response(ResponseData) {
       <ul id=\"user-list\"></ul>
     </aside>
   </div>
-  <script src=\"https://unpkg.com/phoenix@1.7.20/priv/static/phoenix.js\"></script>
+  <script src=\"https://unpkg.com/phoenix@1.7.20/priv/static/phoenix.js\" integrity=\"sha384-9Rsr2KoQMtWNQakugNsDiGsZ/5eQnJHeBhiocJMdHvnyN8ifwcytSTzPpb1xydYk\" crossorigin=\"anonymous\"></script>
   <script src=\"/static/app.js\"></script>
 </body>
 </html>"
@@ -72,11 +72,11 @@ fn serve_static(
 
   case req.method, string.starts_with(path, prefix) {
     http.Get, True -> {
+      let static_path = path |> string.drop_start(string.length(prefix))
       let relative =
-        path
-        |> string.drop_start(string.length(prefix))
+        static_path
         |> uri.percent_decode
-        |> result.unwrap(path)
+        |> result.unwrap(static_path)
         |> string.split("/")
         |> list.filter(fn(segment) {
           segment != "" && segment != "." && segment != ".."
@@ -126,6 +126,7 @@ fn mime_type_for(path: String) -> String {
   case string.split(path, ".") |> list.last {
     Ok("css") -> "text/css; charset=utf-8"
     Ok("js") -> "application/javascript; charset=utf-8"
+    Ok("mjs") -> "application/javascript; charset=utf-8"
     Ok("html") -> "text/html; charset=utf-8"
     Ok("json") -> "application/json; charset=utf-8"
     _ -> "application/octet-stream"
