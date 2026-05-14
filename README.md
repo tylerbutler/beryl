@@ -23,6 +23,8 @@ import beryl
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/socket.{type Socket}
 import beryl/transport/mist as mist_transport
+import beryl/wire
+import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None}
@@ -32,7 +34,14 @@ pub type RoomAssigns { RoomAssigns(username: String) }
 
 fn new_channel() -> Channel(RoomAssigns) {
   channel.new(fn(_topic, payload, socket) {
-    let username = // ... extract from payload
+    let username_decoder = {
+      use username <- decode.field("username", decode.string)
+      decode.success(username)
+    }
+    let username = case channel.decode_payload(payload, username_decoder) {
+      Ok(username) -> username
+      Error(_) -> "anonymous"
+    }
     channel.JoinOk(reply: None, socket: socket.set_assigns(socket, RoomAssigns(username:)))
   })
   |> channel.with_handle_in(fn(_event, _payload, socket) {
@@ -41,7 +50,7 @@ fn new_channel() -> Channel(RoomAssigns) {
 }
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
 
   let assert Ok(_) =

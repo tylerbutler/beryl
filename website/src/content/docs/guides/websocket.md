@@ -90,11 +90,13 @@ If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#
 
 ## Wire protocol
 
-beryl uses the Phoenix wire protocol — a JSON array format:
+By default, beryl uses `wire.phoenix_codec()`, which speaks the Phoenix JSON array format:
 
 ```json
 [join_ref, ref, topic, event, payload]
 ```
+
+Applications can pass a custom codec to `beryl.config(codec)` to use another text framing or a binary framing. Codec-produced outbound frames are sent as text or binary WebSocket frames according to the codec result.
 
 | Field | Type | Description |
 |-------|------|-------------|

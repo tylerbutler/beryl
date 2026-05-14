@@ -23,6 +23,11 @@ fn mock_transport() -> socket.Transport {
   )
 }
 
+fn text_frame(frame: codec.Frame) -> String {
+  let assert codec.TextFrame(text) = frame
+  text
+}
+
 pub fn main() {
   gleeunit.main()
 }
@@ -200,15 +205,10 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
   beryl.register(channels, "document:*:ops", handler)
   |> should.equal(Ok(Nil))
 
-  process.send(
+  coordinator.route_message(
     channels.coordinator,
-    coordinator.Join(
-      "segment-socket",
-      "document:tenant-a:ops",
-      dynamic.nil(),
-      option.None,
-      "join-ref",
-    ),
+    "segment-socket",
+    "[null,\"join-ref\",\"document:tenant-a:ops\",\"phx_join\",{}]",
   )
 
   let assert Ok(join_reply) = process.receive(sent_messages, 500)
@@ -241,15 +241,10 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
   beryl.register(channels, "document:*:ops", handler)
   |> should.equal(Ok(Nil))
 
-  process.send(
+  coordinator.route_message(
     channels.coordinator,
-    coordinator.Join(
-      "segment-reject-socket",
-      "document:tenant-a:view",
-      dynamic.nil(),
-      option.None,
-      "join-ref",
-    ),
+    "segment-reject-socket",
+    "[null,\"join-ref\",\"document:tenant-a:view\",\"phx_join\",{}]",
   )
 
   let assert Ok(join_reply) = process.receive(sent_messages, 500)
@@ -304,15 +299,10 @@ pub fn send_info_routes_message_to_joined_channel_test() {
   beryl.register(channels, "room:*", handler)
   |> should.equal(Ok(Nil))
 
-  process.send(
+  coordinator.route_message(
     channels.coordinator,
-    coordinator.Join(
-      "socket-info",
-      "room:lobby",
-      dynamic.nil(),
-      option.None,
-      "join-ref",
-    ),
+    "socket-info",
+    "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
 
   let assert Ok(join_reply) = process.receive(sent_messages, 500)
@@ -357,15 +347,10 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
   beryl.register(channels, "room:*", handler)
   |> should.equal(Ok(Nil))
 
-  process.send(
+  coordinator.route_message(
     channels.coordinator,
-    coordinator.Join(
-      "socket-info-reply",
-      "room:lobby",
-      dynamic.nil(),
-      option.None,
-      "join-ref",
-    ),
+    "socket-info-reply",
+    "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
 
   let assert Ok(join_reply) = process.receive(sent_messages, 500)
@@ -390,7 +375,7 @@ pub fn decode_valid_message_test() {
   msg.join_ref |> should.equal(option.Some("j1"))
   msg.ref |> should.equal(option.Some("r1"))
   msg.topic |> should.equal("room:lobby")
-  msg.event |> should.equal("phx_join")
+  msg.kind |> should.equal(codec.Join)
 }
 
 pub fn decode_message_with_null_refs_test() {
@@ -400,7 +385,7 @@ pub fn decode_message_with_null_refs_test() {
   msg.join_ref |> should.equal(option.None)
   msg.ref |> should.equal(option.Some("ref"))
   msg.topic |> should.equal("topic")
-  msg.event |> should.equal("event")
+  msg.kind |> should.equal(codec.Event("event"))
 }
 
 pub fn decode_message_both_refs_null_test() {
@@ -412,7 +397,7 @@ pub fn decode_message_both_refs_null_test() {
   msg.join_ref |> should.equal(option.None)
   msg.ref |> should.equal(option.None)
   msg.topic |> should.equal("room:lobby")
-  msg.event |> should.equal("new_msg")
+  msg.kind |> should.equal(codec.Event("new_msg"))
 }
 
 pub fn decode_invalid_json_test() {
@@ -461,47 +446,47 @@ pub fn reply_json_ok_test() {
   let reply =
     wire.reply_json(
       option.Some("j1"),
-      "ref1",
+      option.Some("ref1"),
       "room:lobby",
       codec.StatusOk,
       json.object([]),
     )
 
-  reply |> string.contains("phx_reply") |> should.be_true
-  reply |> string.contains("\"status\":\"ok\"") |> should.be_true
-  reply |> string.contains("room:lobby") |> should.be_true
+  text_frame(reply) |> string.contains("phx_reply") |> should.be_true
+  text_frame(reply) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  text_frame(reply) |> string.contains("room:lobby") |> should.be_true
 }
 
 pub fn reply_json_error_test() {
   let reply =
     wire.reply_json(
       option.None,
-      "ref1",
+      option.Some("ref1"),
       "room:lobby",
       codec.StatusError,
       json.object([#("reason", json.string("unauthorized"))]),
     )
 
-  reply |> string.contains("\"status\":\"error\"") |> should.be_true
-  reply |> string.contains("unauthorized") |> should.be_true
+  text_frame(reply) |> string.contains("\"status\":\"error\"") |> should.be_true
+  text_frame(reply) |> string.contains("unauthorized") |> should.be_true
 }
 
 pub fn push_message_test() {
   let msg = wire.push("room:lobby", "new_message", json.string("content"))
 
-  msg |> string.contains("room:lobby") |> should.be_true
-  msg |> string.contains("new_message") |> should.be_true
+  text_frame(msg) |> string.contains("room:lobby") |> should.be_true
+  text_frame(msg) |> string.contains("new_message") |> should.be_true
   // Push messages have null for join_ref and ref
-  msg |> string.starts_with("[null,null,") |> should.be_true
+  text_frame(msg) |> string.starts_with("[null,null,") |> should.be_true
 }
 
 pub fn heartbeat_reply_test() {
-  let reply = wire.heartbeat_reply("hb-123")
+  let reply = wire.heartbeat_reply(option.Some("hb-123"))
 
-  reply |> string.contains("phx_reply") |> should.be_true
-  reply |> string.contains("phoenix") |> should.be_true
-  reply |> string.contains("hb-123") |> should.be_true
-  reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+  text_frame(reply) |> string.contains("phx_reply") |> should.be_true
+  text_frame(reply) |> string.contains("phoenix") |> should.be_true
+  text_frame(reply) |> string.contains("hb-123") |> should.be_true
+  text_frame(reply) |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
 pub fn is_system_event_phx_join_test() {

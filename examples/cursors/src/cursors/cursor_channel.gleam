@@ -2,6 +2,7 @@ import beryl
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/presence.{type Presence}
 import beryl/socket.{type Socket}
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
@@ -35,7 +36,7 @@ fn join(
   channels: beryl.Channels,
   presence: Presence,
   topic: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(CursorAssigns),
 ) -> JoinResult(CursorAssigns) {
   // Extract username from join payload, default to "Anonymous"
@@ -77,7 +78,7 @@ fn join(
 
 fn handle_in(
   event: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(CursorAssigns),
 ) -> HandleResult(CursorAssigns) {
   let assigns = socket.get_assigns(socket)
@@ -145,36 +146,34 @@ fn string_to_codepoints(s: String) -> List(Int)
 
 /// Extract a string field from a JSON value, with a default
 fn extract_string(
-  payload: json.Json,
+  payload: Dynamic,
   field_name: String,
   default: String,
 ) -> String {
-  let json_str = json.to_string(payload)
   let decoder = {
     use value <- decode.field(field_name, decode.string)
     decode.success(value)
   }
-  case json.parse(json_str, decoder) {
+  case channel.decode_payload(payload, decoder) {
     Ok(value) -> value
     Error(_) -> default
   }
 }
 
 /// Extract a number from JSON payload and return it as Json
-fn extract_json_number(payload: json.Json, field_name: String) -> json.Json {
-  let json_str = json.to_string(payload)
+fn extract_json_number(payload: Dynamic, field_name: String) -> json.Json {
   let float_decoder = {
     use value <- decode.field(field_name, decode.float)
     decode.success(value)
   }
-  case json.parse(json_str, float_decoder) {
+  case channel.decode_payload(payload, float_decoder) {
     Ok(value) -> json.float(value)
     Error(_) -> {
       let int_decoder = {
         use value <- decode.field(field_name, decode.int)
         decode.success(value)
       }
-      case json.parse(json_str, int_decoder) {
+      case channel.decode_payload(payload, int_decoder) {
         Ok(value) -> json.int(value)
         Error(_) -> json.float(0.0)
       }

@@ -75,9 +75,10 @@ fn join_topic(
   topic_name: String,
   sent: process.Subject(String),
 ) -> Nil {
-  process.send(
+  coordinator.route_message(
     channels.coordinator,
-    coordinator.Join(socket_id, topic_name, dynamic.nil(), None, "join-ref"),
+    socket_id,
+    "[null,\"join-ref\",\"" <> topic_name <> "\",\"phx_join\",{}]",
   )
 
   let assert Ok(reply) = process.receive(sent, 500)

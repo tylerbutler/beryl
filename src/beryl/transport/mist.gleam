@@ -165,7 +165,11 @@ fn on_init(
   #(state, Some(selector))
 }
 
-/// Handle incoming WebSocket messages
+/// Handle incoming WebSocket messages.
+///
+/// Text frames are decoded by the coordinator's codec. Binary frames are also
+/// offered to the codec when it has a binary decoder; otherwise they are routed
+/// to raw channel binary handlers.
 fn on_message(
   state: ConnectionState,
   message: mist.WebsocketMessage(SendRequest),

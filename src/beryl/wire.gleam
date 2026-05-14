@@ -12,8 +12,9 @@
 //// ```
 
 import beryl/wire/codec.{
-  type Codec, type DecodeError, type Inbound, type ReplyStatus, Codec, Inbound,
-  InvalidFormat, InvalidJson, MissingField, StatusError, StatusOk,
+  type Codec, type DecodeError, type Frame, type Inbound, type InboundKind,
+  type ReplyStatus, Codec, Event, Heartbeat, Inbound, InvalidFormat, InvalidJson,
+  Join, Leave, MissingField, StatusError, StatusOk, TextFrame,
 }
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
@@ -25,13 +26,11 @@ import gleam/option.{type Option, None, Some}
 /// The canonical Phoenix wire codec. Pass to `beryl.config/1`.
 pub fn phoenix_codec() -> Codec {
   Codec(
-    decode: decode_message,
+    decode_text: decode_message,
+    decode_binary: None,
     encode_reply: reply_json,
     encode_push: push,
     encode_heartbeat_reply: heartbeat_reply,
-    join_event: "phx_join",
-    leave_event: "phx_leave",
-    heartbeat_event: "heartbeat",
   )
 }
 
@@ -84,7 +83,7 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
       join_ref: join_ref,
       ref: ref,
       topic: topic,
-      event: event,
+      kind: classify_phoenix_event(event),
       payload: payload,
     ))
   }
@@ -103,16 +102,35 @@ pub fn encode(msg: Inbound) -> String {
   let join_ref_json = option_to_json(msg.join_ref)
   let ref_json = option_to_json(msg.ref)
   let payload_json = dynamic_to_json(msg.payload)
+  let event = phoenix_event_name(msg.kind)
 
   json.to_string(
     json.preprocessed_array([
       join_ref_json,
       ref_json,
       json.string(msg.topic),
-      json.string(msg.event),
+      json.string(event),
       payload_json,
     ]),
   )
+}
+
+fn classify_phoenix_event(event: String) -> InboundKind {
+  case event {
+    "phx_join" -> Join
+    "phx_leave" -> Leave
+    "heartbeat" -> Heartbeat
+    other -> Event(other)
+  }
+}
+
+fn phoenix_event_name(kind: InboundKind) -> String {
+  case kind {
+    Join -> "phx_join"
+    Leave -> "phx_leave"
+    Heartbeat -> "heartbeat"
+    Event(event) -> event
+  }
 }
 
 /// Convert a `Dynamic` (decoded from JSON) back into `json.Json`.
@@ -175,11 +193,11 @@ fn try_decode_complex(value: Dynamic) -> json.Json {
 /// Create a Phoenix `phx_reply` JSON string.
 pub fn reply_json(
   join_ref: Option(String),
-  ref: String,
+  ref: Option(String),
   topic: String,
   status: ReplyStatus,
   response: json.Json,
-) -> String {
+) -> Frame {
   let status_string = case status {
     StatusOk -> "ok"
     StatusError -> "error"
@@ -191,43 +209,49 @@ pub fn reply_json(
       #("response", response),
     ])
 
-  json.to_string(
-    json.preprocessed_array([
-      option_to_json(join_ref),
-      json.string(ref),
-      json.string(topic),
-      json.string("phx_reply"),
-      payload,
-    ]),
+  TextFrame(
+    json.to_string(
+      json.preprocessed_array([
+        option_to_json(join_ref),
+        option_to_json(ref),
+        json.string(topic),
+        json.string("phx_reply"),
+        payload,
+      ]),
+    ),
   )
 }
 
 /// Create a server-initiated push message.
-pub fn push(topic: String, event: String, payload: json.Json) -> String {
-  json.to_string(
-    json.preprocessed_array([
-      json.null(),
-      json.null(),
-      json.string(topic),
-      json.string(event),
-      payload,
-    ]),
+pub fn push(topic: String, event: String, payload: json.Json) -> Frame {
+  TextFrame(
+    json.to_string(
+      json.preprocessed_array([
+        json.null(),
+        json.null(),
+        json.string(topic),
+        json.string(event),
+        payload,
+      ]),
+    ),
   )
 }
 
 /// Create a Phoenix heartbeat reply.
-pub fn heartbeat_reply(ref: String) -> String {
-  json.to_string(
-    json.preprocessed_array([
-      json.null(),
-      json.string(ref),
-      json.string("phoenix"),
-      json.string("phx_reply"),
-      json.object([
-        #("status", json.string("ok")),
-        #("response", json.object([])),
+pub fn heartbeat_reply(ref: Option(String)) -> Frame {
+  TextFrame(
+    json.to_string(
+      json.preprocessed_array([
+        json.null(),
+        option_to_json(ref),
+        json.string("phoenix"),
+        json.string("phx_reply"),
+        json.object([
+          #("status", json.string("ok")),
+          #("response", json.object([])),
+        ]),
       ]),
-    ]),
+    ),
   )
 }
 
@@ -240,10 +264,8 @@ fn option_to_json(opt: Option(String)) -> json.Json {
 
 /// Check if this is a Phoenix system event.
 ///
-/// Note: This is Phoenix-specific. Codecs using their own protocol
-/// constants (e.g. `ws_join`/`ws_leave`) should compare against their
-/// codec's `join_event`/`leave_event`/`heartbeat_event` fields directly
-/// rather than using this helper.
+/// Note: This is Phoenix-specific. The coordinator dispatches decoded messages
+/// structurally using `codec.InboundKind` rather than consulting this helper.
 pub fn is_phoenix_system_event(event: String) -> Bool {
   case event {
     "phx_join"

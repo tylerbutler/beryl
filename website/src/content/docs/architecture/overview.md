@@ -106,13 +106,13 @@ Uses **rest-for-one** strategy with the child order: coordinator â†’ presence â†
 
 ### Wire Protocol (`beryl/wire`)
 
-JSON encoding and decoding for the Phoenix-compatible wire protocol. Handles:
+Pluggable text/binary frame encoding and decoding. The built-in `wire.phoenix_codec()` handles:
 
 - Message parsing: `[join_ref, ref, topic, event, payload]` arrays
 - Reply encoding with status (`ok`/`error`) and response payload
 - Server push messages (no ref)
 - Heartbeat replies
-- Dynamic-to-JSON conversion for payloads
+- Structural dispatch for join, leave, heartbeat, and user events
 
 ### WebSocket Transport (`beryl/transport/mist`)
 
@@ -120,8 +120,8 @@ Integrates directly with Mist to handle WebSocket connections:
 
 1. Generates a unique socket ID per connection
 2. Registers the socket's send function with the coordinator
-3. Routes incoming text frames through the wire protocol decoder
-4. Routes binary frames directly to the coordinator
+3. Routes incoming text frames through the configured codec
+4. Routes binary frames through the codec when configured, or to raw binary channel handlers otherwise
 5. Notifies the coordinator on connection close
 
 ### Topic (`beryl/topic`)

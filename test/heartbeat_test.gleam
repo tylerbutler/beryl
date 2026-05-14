@@ -60,7 +60,7 @@ fn socket_is_connected(
 ) -> Bool {
   // Drain any pending messages first
   drain(sent_messages)
-  process.send(coord, coordinator.Heartbeat(socket_id, "probe"))
+  send_heartbeat(coord, socket_id, "probe")
   case process.receive(sent_messages, 50) {
     Ok(_) -> True
     Error(_) -> False
@@ -73,6 +73,18 @@ fn drain(subject: process.Subject(String)) -> Nil {
     Ok(_) -> drain(subject)
     Error(_) -> Nil
   }
+}
+
+fn send_heartbeat(
+  coord: process.Subject(coordinator.Message),
+  socket_id: String,
+  ref: String,
+) -> Nil {
+  coordinator.route_message(
+    coord,
+    socket_id,
+    "[null,\"" <> ref <> "\",\"phoenix\",\"heartbeat\",{}]",
+  )
 }
 
 pub fn heartbeat_timeout_evicts_stale_socket_test() {
@@ -96,13 +108,13 @@ pub fn heartbeat_resets_timeout_test() {
   let sent = connect_mock_socket(coord, "socket-1")
 
   // Send heartbeats to keep the socket alive
-  process.send(coord, coordinator.Heartbeat("socket-1", "hb-1"))
+  send_heartbeat(coord, "socket-1", "hb-1")
   process.sleep(50)
 
-  process.send(coord, coordinator.Heartbeat("socket-1", "hb-2"))
+  send_heartbeat(coord, "socket-1", "hb-2")
   process.sleep(50)
 
-  process.send(coord, coordinator.Heartbeat("socket-1", "hb-3"))
+  send_heartbeat(coord, "socket-1", "hb-3")
   process.sleep(50)
 
   // After 150ms total, the socket should still be alive because we kept
@@ -118,9 +130,9 @@ pub fn heartbeat_timeout_only_evicts_stale_sockets_test() {
 
   // Keep only "active-socket" alive with heartbeats
   process.sleep(40)
-  process.send(coord, coordinator.Heartbeat("active-socket", "hb-1"))
+  send_heartbeat(coord, "active-socket", "hb-1")
   process.sleep(40)
-  process.send(coord, coordinator.Heartbeat("active-socket", "hb-2"))
+  send_heartbeat(coord, "active-socket", "hb-2")
 
   // Wait for the stale socket to be evicted
   process.sleep(60)
@@ -209,7 +221,7 @@ pub fn heartbeat_reply_still_sent_test() {
   let coord = start_coordinator_with_heartbeat(0, 60_000)
   let sent = connect_mock_socket(coord, "socket-1")
 
-  process.send(coord, coordinator.Heartbeat("socket-1", "hb-ref-42"))
+  send_heartbeat(coord, "socket-1", "hb-ref-42")
 
   let assert Ok(reply) = process.receive(sent, 100)
   string.contains(reply, "phx_reply")
@@ -331,9 +343,10 @@ fn join_topic(
   topic_name: String,
   sent_messages: process.Subject(String),
 ) -> Nil {
-  process.send(
+  coordinator.route_message(
     coord,
-    coordinator.Join(socket_id, topic_name, dynamic.nil(), None, "join-ref"),
+    socket_id,
+    "[null,\"join-ref\",\"" <> topic_name <> "\",\"phx_join\",{}]",
   )
   // Wait for the join reply
   let assert Ok(reply) = process.receive(sent_messages, 200)
@@ -377,11 +390,11 @@ pub fn topic_cleanup_after_heartbeat_eviction_test() {
 
   // Keep active socket alive while stale one times out
   process.sleep(60)
-  process.send(coord, coordinator.Heartbeat("socket-active", "hb-1"))
+  send_heartbeat(coord, "socket-active", "hb-1")
   process.sleep(60)
-  process.send(coord, coordinator.Heartbeat("socket-active", "hb-2"))
+  send_heartbeat(coord, "socket-active", "hb-2")
   process.sleep(60)
-  process.send(coord, coordinator.Heartbeat("socket-active", "hb-3"))
+  send_heartbeat(coord, "socket-active", "hb-3")
 
   // Wait for stale socket eviction (stale hasn't sent heartbeats for 180ms+ > 150ms timeout)
   process.sleep(60)

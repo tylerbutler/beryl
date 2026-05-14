@@ -1,0 +1,6 @@
+kind: Changed
+body: |-
+    Pluggable codecs can route text and binary frames.
+
+    Channel join and message callbacks now receive inbound payloads as `Dynamic` values so handlers can decode them directly, and the codec contract now supports structural join/leave/heartbeat dispatch plus binary outbound frames. Custom transports should route inbound WebSocket frames through `coordinator.route_message` or `coordinator.route_binary` instead of constructing internal channel messages directly.
+time: 2026-05-14T12:35:56.000000000-07:00

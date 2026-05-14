@@ -154,6 +154,19 @@ pub type SocketInfo {
   )
 }
 
+fn send_frame(socket_info: SocketInfo, frame: codec.Frame) -> Nil {
+  case frame {
+    codec.TextFrame(text) -> {
+      let _ = socket_info.send(text)
+      Nil
+    }
+    codec.BinaryFrame(data) -> {
+      let _ = socket_info.send_binary(data)
+      Nil
+    }
+  }
+}
+
 /// Messages the coordinator handles
 pub type Message {
   // Channel registration
@@ -171,24 +184,8 @@ pub type Message {
   )
   SocketDisconnected(socket_id: String)
   // Channel operations
-  Join(
-    socket_id: String,
-    topic: String,
-    payload: Dynamic,
-    join_ref: Option(String),
-    ref: String,
-  )
-  Leave(socket_id: String, topic: String, ref: Option(String))
-  HandleIn(
-    socket_id: String,
-    topic: String,
-    event: String,
-    payload: Dynamic,
-    ref: Option(String),
-  )
   HandleBinary(socket_id: String, data: BitArray)
   HandleInfo(socket_id: String, topic: String, message: Dynamic)
-  Heartbeat(socket_id: String, ref: String)
   /// Raw inbound text from the transport — decoded inside the actor using
   /// the configured codec.
   RouteText(socket_id: String, raw_text: String)
@@ -354,21 +351,10 @@ fn handle_message(
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
 
-    Join(socket_id, topic_name, payload, join_ref, ref) ->
-      handle_join(state, socket_id, topic_name, payload, join_ref, ref)
-
-    Leave(socket_id, topic_name, ref) ->
-      handle_leave(state, socket_id, topic_name, ref)
-
-    HandleIn(socket_id, topic_name, event, payload, ref) ->
-      handle_in(state, socket_id, topic_name, event, payload, ref)
-
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
 
     HandleInfo(socket_id, topic_name, message) ->
       handle_info(state, socket_id, topic_name, message)
-
-    Heartbeat(socket_id, ref) -> handle_heartbeat(state, socket_id, ref)
 
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
@@ -456,7 +442,7 @@ fn handle_join(
   topic_name: String,
   payload: Dynamic,
   join_ref: Option(String),
-  ref: String,
+  ref: Option(String),
 ) -> actor.Next(State, Message) {
   // Check join rate limit
   case
@@ -480,7 +466,7 @@ fn handle_join(
               codec.StatusError,
               json.object([#("reason", json.string("rate_limited"))]),
             )
-          let _ = socket_info.send(reply)
+          send_frame(socket_info, reply)
           Nil
         }
         Error(_) -> Nil
@@ -498,7 +484,7 @@ fn handle_join_inner(
   topic_name: String,
   payload: Dynamic,
   join_ref: Option(String),
-  ref: String,
+  ref: Option(String),
 ) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(_) -> actor.continue(state)
@@ -513,7 +499,7 @@ fn handle_join_inner(
               codec.StatusError,
               json.object([#("reason", json.string("no_channel_handler"))]),
             )
-          let _ = socket_info.send(reply)
+          send_frame(socket_info, reply)
           actor.continue(state)
         }
         Some(handler) -> {
@@ -537,7 +523,7 @@ fn handle_join_inner(
                   codec.StatusError,
                   reason,
                 )
-              let _ = socket_info.send(reply)
+              send_frame(socket_info, reply)
               actor.continue(state)
             }
             JoinOkErased(reply_payload, assigns) -> {
@@ -581,7 +567,7 @@ fn handle_join_inner(
                   codec.StatusOk,
                   response,
                 )
-              let _ = socket_info.send(reply)
+              send_frame(socket_info, reply)
 
               actor.continue(
                 State(..state, sockets: new_sockets, topics: new_topics),
@@ -607,12 +593,12 @@ fn handle_leave(
       let reply =
         state.config.codec.encode_reply(
           None,
-          r,
+          Some(r),
           topic_name,
           codec.StatusOk,
           json.object([]),
         )
-      let _ = socket_info.send(reply)
+      send_frame(socket_info, reply)
       Nil
     }
     _, _ -> Nil
@@ -710,12 +696,12 @@ fn handle_in_inner(
                       let reply =
                         state.config.codec.encode_reply(
                           None,
-                          r,
+                          Some(r),
                           topic_name,
                           codec.StatusOk,
                           reply_payload,
                         )
-                      let _ = socket_info.send(reply)
+                      send_frame(socket_info, reply)
                       Nil
                     }
                     None -> Nil
@@ -732,7 +718,7 @@ fn handle_in_inner(
                       push_event,
                       push_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   let state =
                     update_assigns(state, socket_id, topic_name, new_assigns)
                   actor.continue(state)
@@ -798,7 +784,7 @@ fn handle_info(
                       reply_event,
                       reply_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   let state =
                     update_assigns(state, socket_id, topic_name, new_assigns)
                   actor.continue(state)
@@ -837,11 +823,37 @@ fn handle_binary_in(
       ])
       actor.continue(state)
     }
-    Ok(_) -> handle_binary_in_inner(state, socket_id, data)
+    Ok(_) -> {
+      case state.config.codec.decode_binary {
+        Some(decode_binary) ->
+          handle_route_binary_frame(state, socket_id, data, decode_binary)
+        None -> handle_raw_binary_in_inner(state, socket_id, data)
+      }
+    }
   }
 }
 
-fn handle_binary_in_inner(
+fn handle_route_binary_frame(
+  state: State,
+  socket_id: String,
+  data: BitArray,
+  decode_binary: fn(BitArray) -> Result(codec.Inbound, codec.DecodeError),
+) -> actor.Next(State, Message) {
+  case decode_binary(data) {
+    Error(err) -> {
+      let logger = internal.logger("beryl.coordinator")
+      logger
+      |> log.warn("Failed to decode binary wire protocol message", [
+        #("socket_id", socket_id),
+        #("error", wire_format_decode_error(err)),
+      ])
+      actor.continue(state)
+    }
+    Ok(msg) -> dispatch_inbound(state, socket_id, msg)
+  }
+}
+
+fn handle_raw_binary_in_inner(
   state: State,
   socket_id: String,
   data: BitArray,
@@ -878,7 +890,7 @@ fn handle_binary_in_inner(
                       "binary_reply",
                       reply_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   update_assigns(st, socket_id, topic_name, new_assigns)
                 }
                 PushErased(push_event, push_payload, new_assigns) -> {
@@ -888,7 +900,7 @@ fn handle_binary_in_inner(
                       push_event,
                       push_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   update_assigns(st, socket_id, topic_name, new_assigns)
                 }
                 StopErased(reason) ->
@@ -905,7 +917,7 @@ fn handle_binary_in_inner(
 fn handle_heartbeat(
   state: State,
   socket_id: String,
-  ref: String,
+  ref: Option(String),
 ) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(_) -> actor.continue(state)
@@ -915,7 +927,7 @@ fn handle_heartbeat(
       let new_sockets = dict.insert(state.sockets, socket_id, updated_socket)
 
       let reply = state.config.codec.encode_heartbeat_reply(ref)
-      let _ = socket_info.send(reply)
+      send_frame(socket_info, reply)
       actor.continue(State(..state, sockets: new_sockets))
     }
   }
@@ -1005,7 +1017,7 @@ fn handle_broadcast(
   list.each(recipients, fn(socket_id) {
     case dict.get(state.sockets, socket_id) {
       Ok(socket_info) -> {
-        let _ = socket_info.send(msg)
+        send_frame(socket_info, msg)
         Nil
       }
       Error(_) -> Nil
@@ -1149,7 +1161,7 @@ fn handle_route_text(
   raw_text: String,
 ) -> actor.Next(State, Message) {
   let codec = state.config.codec
-  case codec.decode(raw_text) {
+  case codec.decode_text(raw_text) {
     Error(err) -> {
       let logger = internal.logger("beryl.coordinator")
       logger
@@ -1160,29 +1172,29 @@ fn handle_route_text(
       ])
       actor.continue(state)
     }
-    Ok(msg) -> {
-      case msg.event {
-        e if e == codec.join_event -> {
-          let ref = option.unwrap(msg.ref, "")
-          handle_join(
-            state,
-            socket_id,
-            msg.topic,
-            msg.payload,
-            msg.join_ref,
-            ref,
-          )
-        }
-        e if e == codec.leave_event ->
-          handle_leave(state, socket_id, msg.topic, msg.ref)
-        e if e == codec.heartbeat_event -> {
-          let ref = option.unwrap(msg.ref, "")
-          handle_heartbeat(state, socket_id, ref)
-        }
-        event ->
-          handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
-      }
-    }
+    Ok(msg) -> dispatch_inbound(state, socket_id, msg)
+  }
+}
+
+fn dispatch_inbound(
+  state: State,
+  socket_id: String,
+  msg: codec.Inbound,
+) -> actor.Next(State, Message) {
+  case msg.kind {
+    codec.Join ->
+      handle_join(
+        state,
+        socket_id,
+        msg.topic,
+        msg.payload,
+        msg.join_ref,
+        msg.ref,
+      )
+    codec.Leave -> handle_leave(state, socket_id, msg.topic, msg.ref)
+    codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
+    codec.Event(event) ->
+      handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
   }
 }
 

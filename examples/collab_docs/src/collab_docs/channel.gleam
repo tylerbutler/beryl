@@ -4,6 +4,7 @@ import beryl/socket.{type Socket}
 import beryl/topic
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/io
 import gleam/json
@@ -50,13 +51,13 @@ pub fn build_document_key(tenant: String, document: String) -> String {
   |> json.to_string
 }
 
-fn extract_token(payload: json.Json) -> Result(String, Nil) {
+fn extract_token(payload: Dynamic) -> Result(String, Nil) {
   let decoder = {
     use token <- decode.field("token", decode.string)
     decode.success(token)
   }
 
-  json.parse(json.to_string(payload), decoder)
+  channel.decode_payload(payload, decoder)
   |> result.replace_error(Nil)
 }
 
@@ -65,7 +66,7 @@ fn join(
   store: Store,
   secret: BitArray,
   topic_name: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(Assigns),
 ) -> JoinResult(Assigns) {
   let pattern = topic.parse_pattern(document_topic_pattern_string)
@@ -120,7 +121,7 @@ fn join(
 
 fn handle_in(
   event: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(Assigns),
 ) -> HandleResult(Assigns) {
   case event {
@@ -130,7 +131,7 @@ fn handle_in(
 }
 
 fn sync_state(
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(Assigns),
 ) -> HandleResult(Assigns) {
   case extract_state(payload) {
@@ -159,13 +160,13 @@ fn reply_error(code: String, socket: Socket(Assigns)) -> HandleResult(Assigns) {
   channel.Reply(event: "state_error", payload: error_payload(code), socket:)
 }
 
-fn extract_state(payload: json.Json) -> Result(String, Nil) {
+fn extract_state(payload: Dynamic) -> Result(String, Nil) {
   let decoder = {
     use state <- decode.field("state", decode.string)
     decode.success(state)
   }
 
-  json.parse(json.to_string(payload), decoder)
+  channel.decode_payload(payload, decoder)
   |> result.replace_error(Nil)
 }
 

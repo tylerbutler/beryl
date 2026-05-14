@@ -67,6 +67,8 @@ Channels are built using a builder pattern starting with `channel.new()`:
 ```gleam
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/socket.{type Socket}
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
 import gleam/json.{type Json}
 import gleam/option.{type Option, None, Some}
 
@@ -90,7 +92,7 @@ Called when a client sends a `phx_join` message. Return `JoinOk` to accept or `J
 ```gleam
 fn join(
   topic: String,
-  payload: Json,
+  payload: Dynamic,
   socket: Socket(RoomAssigns),
 ) -> JoinResult(RoomAssigns) {
   // Extract room ID from topic pattern
@@ -113,13 +115,21 @@ Called for each incoming text message. The `event` string identifies the message
 ```gleam
 fn handle_in(
   event: String,
-  payload: Json,
+  payload: Dynamic,
   socket: Socket(RoomAssigns),
 ) -> HandleResult(RoomAssigns) {
   case event {
     "new_message" -> {
+      let text_decoder = {
+        use text <- decode.field("text", decode.string)
+        decode.success(text)
+      }
+      let reply_payload = case channel.decode_payload(payload, text_decoder) {
+        Ok(text) -> json.object([#("text", json.string(text))])
+        Error(_) -> channel.error("invalid payload")
+      }
       // Reply to the sender — event arg is ignored, phx_reply is always sent
-      channel.Reply("ok", payload, socket)
+      channel.Reply("ok", reply_payload, socket)
     }
     "typing" -> {
       // No reply needed
@@ -152,7 +162,7 @@ Channel handlers return one of these results:
 
 ### Binary handler
 
-Handle raw binary WebSocket frames (bypasses the wire protocol):
+Handle raw binary WebSocket frames when the configured codec does not decode binary frames:
 
 ```gleam
 fn handle_binary(

@@ -3,6 +3,7 @@ import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/group
 import beryl/presence.{type Presence}
 import beryl/socket.{type Socket}
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
@@ -45,7 +46,7 @@ fn join(
   presence: Presence,
   groups: group.Groups,
   topic: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(ChatAssigns),
 ) -> JoinResult(ChatAssigns) {
   // Extract room name from topic (e.g., "general" from "room:general")
@@ -131,7 +132,7 @@ fn join(
 
 fn handle_in(
   event: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(ChatAssigns),
 ) -> HandleResult(ChatAssigns) {
   let assigns = socket.get_assigns(socket)
@@ -293,16 +294,15 @@ fn string_to_codepoints(s: String) -> List(Int)
 fn timestamp_ms() -> Int
 
 fn extract_string(
-  payload: json.Json,
+  payload: Dynamic,
   field_name: String,
   default: String,
 ) -> String {
-  let json_str = json.to_string(payload)
   let decoder = {
     use value <- decode.field(field_name, decode.string)
     decode.success(value)
   }
-  case json.parse(json_str, decoder) {
+  case channel.decode_payload(payload, decoder) {
     Ok(value) -> value
     Error(_) -> default
   }

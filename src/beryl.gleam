@@ -57,7 +57,6 @@ import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
 import beryl/socket.{type Socket}
 import beryl/topic
-import beryl/wire
 import beryl/wire/codec
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
@@ -448,14 +447,11 @@ fn erase_channel_types(
       // Create a typed socket with Nil assigns (will be set by join)
       let typed_socket = create_socket_from_context(ctx)
 
-      // Decode Dynamic payload to Json for the handler
-      let json_payload = wire.dynamic_to_json(payload)
-
       // Call the typed join handler (unsafe coerce socket to expected type)
       case
         typed_channel.join(
           topic_name,
-          json_payload,
+          payload,
           unsafe_coerce_socket(typed_socket),
         )
       {
@@ -476,11 +472,10 @@ fn erase_channel_types(
       ctx: coordinator.SocketContext,
     ) {
       let typed_socket = create_socket_with_assigns(ctx)
-      let json_payload = wire.dynamic_to_json(payload)
 
       typed_channel.handle_in(
         event,
-        json_payload,
+        payload,
         unsafe_coerce_socket(typed_socket),
       )
       |> erase_handle_result
