@@ -26,6 +26,8 @@ import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
 import gleam/string
+import gleam/time/duration
+import gleam/time/monotonic
 
 /// Type-erased channel handler for storage
 /// The actual typed Channel is converted to this for the registry
@@ -149,8 +151,8 @@ pub type SocketInfo {
     subscribed_topics: Set(String),
     /// Per-topic assigns (topic -> Dynamic assigns)
     channel_assigns: Dict(String, Dynamic),
-    /// Monotonic timestamp (ms) of the last heartbeat received
-    last_heartbeat: Int,
+    /// Monotonic instant of the last heartbeat received
+    last_heartbeat: monotonic.Instant,
   )
 }
 
@@ -203,10 +205,6 @@ pub type Message {
   // Heartbeat timeout enforcement
   CheckHeartbeats
 }
-
-/// Erlang monotonic time in milliseconds
-@external(erlang, "beryl_ffi", "monotonic_time_ms")
-fn monotonic_time_ms() -> Int
 
 /// Coerce an external PubSub record message into the typed PubSub message.
 @external(erlang, "beryl_ffi", "identity")
@@ -420,7 +418,7 @@ fn handle_socket_connected(
       handler_pid: handler_pid,
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
-      last_heartbeat: monotonic_time_ms(),
+      last_heartbeat: monotonic.now(),
     )
 
   let logger = internal.logger("beryl.coordinator")
@@ -911,7 +909,7 @@ fn handle_heartbeat(
     Error(_) -> actor.continue(state)
     Ok(socket_info) -> {
       let updated_socket =
-        SocketInfo(..socket_info, last_heartbeat: monotonic_time_ms())
+        SocketInfo(..socket_info, last_heartbeat: monotonic.now())
       let new_sockets = dict.insert(state.sockets, socket_id, updated_socket)
 
       let reply = state.config.codec.encode_heartbeat_reply(ref)
@@ -923,12 +921,15 @@ fn handle_heartbeat(
 
 /// Check all sockets for heartbeat timeout and evict stale ones
 fn handle_check_heartbeats(state: State) -> actor.Next(State, Message) {
-  let now = monotonic_time_ms()
+  let now = monotonic.now()
   let timeout_ms = state.config.heartbeat_timeout_ms
 
   let stale_socket_ids =
     dict.fold(state.sockets, [], fn(acc, socket_id, socket_info) {
-      let elapsed = now - socket_info.last_heartbeat
+      let elapsed =
+        monotonic.difference(socket_info.last_heartbeat, now)
+        |> duration.to_milliseconds
+
       case elapsed > timeout_ms {
         True -> [socket_id, ..acc]
         False -> acc

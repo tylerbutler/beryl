@@ -10,10 +10,8 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
-
-/// Erlang monotonic time in nanoseconds
-@external(erlang, "beryl_ffi", "monotonic_time_ns")
-fn monotonic_time_ns() -> Int
+import gleam/time/duration
+import gleam/time/monotonic
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -43,7 +41,7 @@ type BucketState {
     tokens_ns: Int,
     max_tokens_ns: Int,
     ns_per_token: Int,
-    last_refill_ns: Int,
+    last_refill: monotonic.Instant,
   )
 }
 
@@ -54,24 +52,32 @@ type BucketMsg {
 
 const one_second_ns = 1_000_000_000
 
+fn duration_to_nanoseconds(elapsed: duration.Duration) -> Int {
+  let #(seconds, nanoseconds) = duration.to_seconds_and_nanoseconds(elapsed)
+  seconds * one_second_ns + nanoseconds
+}
+
 fn new_bucket_state(cfg: RateLimitConfig) -> BucketState {
   let ns_per_token = one_second_ns / int.max(cfg.per_second, 1)
   BucketState(
     tokens_ns: cfg.burst * ns_per_token,
     max_tokens_ns: cfg.burst * ns_per_token,
     ns_per_token: ns_per_token,
-    last_refill_ns: monotonic_time_ns(),
+    last_refill: monotonic.now(),
   )
 }
 
 fn refill(state: BucketState) -> BucketState {
-  let now = monotonic_time_ns()
-  let elapsed = now - state.last_refill_ns
+  let now = monotonic.now()
+  let elapsed =
+    monotonic.difference(state.last_refill, now)
+    |> duration_to_nanoseconds
+
   case elapsed > 0 {
     False -> state
     True -> {
       let new_tokens = int.min(state.tokens_ns + elapsed, state.max_tokens_ns)
-      BucketState(..state, tokens_ns: new_tokens, last_refill_ns: now)
+      BucketState(..state, tokens_ns: new_tokens, last_refill: now)
     }
   }
 }

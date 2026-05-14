@@ -1,0 +1,3 @@
+kind: Changed
+body: Beryl uses `gleam_time` monotonic clocks for internal heartbeat and rate-limit timing instead of its own monotonic Erlang FFI helpers.
+time: 2026-05-14T09:18:11.016000000-07:00
