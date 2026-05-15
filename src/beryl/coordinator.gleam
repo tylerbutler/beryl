@@ -184,6 +184,7 @@ pub type Message {
   /// Raw inbound text from the transport, decoded inside the actor using
   /// the configured codec.
   RouteText(socket_id: String, raw_text: String)
+  RouteDecoded(socket_id: String, msg: codec.Inbound)
   // Broadcasting
   Broadcast(
     topic: String,
@@ -353,6 +354,8 @@ fn handle_message(
 
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
+
+    RouteDecoded(socket_id, msg) -> dispatch_inbound(state, socket_id, msg)
 
     Broadcast(topic_name, event, payload, except) ->
       handle_broadcast(state, topic_name, event, payload, except)
@@ -801,7 +804,18 @@ fn handle_binary_in(
   socket_id: String,
   data: BitArray,
 ) -> actor.Next(State, Message) {
-  // Check per-socket message rate limit (binary shares with text)
+  case state.config.codec.decode_binary {
+    Some(decode_binary) ->
+      handle_route_binary_frame(state, socket_id, data, decode_binary)
+    None -> handle_raw_binary_with_rate_limit(state, socket_id, data)
+  }
+}
+
+fn handle_raw_binary_with_rate_limit(
+  state: State,
+  socket_id: String,
+  data: BitArray,
+) -> actor.Next(State, Message) {
   case
     rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
   {
@@ -813,13 +827,7 @@ fn handle_binary_in(
       ])
       actor.continue(state)
     }
-    Ok(_) -> {
-      case state.config.codec.decode_binary {
-        Some(decode_binary) ->
-          handle_route_binary_frame(state, socket_id, data, decode_binary)
-        None -> handle_raw_binary_in_inner(state, socket_id, data)
-      }
-    }
+    Ok(_) -> handle_raw_binary_in_inner(state, socket_id, data)
   }
 }
 
@@ -1139,6 +1147,16 @@ pub fn route_message(
   raw_text: String,
 ) -> Nil {
   process.send(coord, RouteText(socket_id, raw_text))
+}
+
+/// Route a transport-decoded inbound message to the coordinator.
+@internal
+pub fn route_decoded(
+  coord: Subject(Message),
+  socket_id: String,
+  msg: codec.Inbound,
+) -> Nil {
+  process.send(coord, RouteDecoded(socket_id, msg))
 }
 
 fn handle_route_text(

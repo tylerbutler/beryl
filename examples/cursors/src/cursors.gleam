@@ -35,7 +35,7 @@ pub fn main() {
     fn(req) {
       mist_transport.upgrade(
         req,
-        channels.coordinator,
+        channels,
         mist_transport.default_config("/socket/websocket"),
         fn() { router.handle_request(req, ctx) },
       )
