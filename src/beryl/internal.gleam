@@ -4,6 +4,7 @@
 import birch
 import birch/level
 import birch/logger.{type Logger}
+import gleam/int
 import gleam/string
 
 /// Logging verbosity for Beryl's internal helpers.
@@ -55,10 +56,7 @@ fn to_birch_level(log_level: LogLevel) -> level.Level {
 
 /// Safely truncate a text value for log metadata.
 pub fn safe_preview(text: String, max_length: Int) -> String {
-  let safe_length = case max_length < 0 {
-    True -> 0
-    False -> max_length
-  }
+  let safe_length = int.max(max_length, 0)
   string.slice(text, 0, safe_length)
 }
 

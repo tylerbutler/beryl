@@ -61,6 +61,7 @@ import beryl/topic
 import beryl/wire/codec
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
 
@@ -176,11 +177,7 @@ pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
   bytes bytes: Int,
 ) -> LoggingConfig {
-  let safe_bytes = case bytes < 0 {
-    True -> 0
-    False -> bytes
-  }
-  LoggingConfig(..logging, payload_preview_bytes: safe_bytes)
+  LoggingConfig(..logging, payload_preview_bytes: int.max(bytes, 0))
 }
 
 fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
@@ -199,13 +196,6 @@ fn coordinator_logging(logging: LoggingConfig) -> coordinator.LoggingConfig {
     include_payloads: logging.include_payloads,
     payload_preview_bytes: logging.payload_preview_bytes,
   )
-}
-
-@internal
-pub fn to_coordinator_logging(
-  logging: LoggingConfig,
-) -> coordinator.LoggingConfig {
-  coordinator_logging(logging)
 }
 
 /// Configure per-socket message rate limiting

@@ -155,17 +155,11 @@ fn internal_logging(config: LoggingConfig) -> internal.LoggingConfig {
 }
 
 fn coordinator_logger(state: State) -> Logger {
-  internal.logger_with_config(
-    "beryl.coordinator",
-    internal_logging(state.config.logging),
-  )
+  state.logger
 }
 
 fn optional_string(value: Option(String)) -> String {
-  case value {
-    Some(text) -> text
-    None -> ""
-  }
+  option.unwrap(value, "")
 }
 
 fn inbound_kind(kind: codec.InboundKind) -> String {
@@ -207,6 +201,8 @@ pub type State {
     config: CoordinatorConfig,
     /// Optional PubSub for distributed broadcasts
     pubsub: Option(PubSub),
+    /// Configured coordinator logger, cached for hot message paths.
+    logger: Logger,
     /// The coordinator's own subject, used for scheduling timers
     self_subject: Option(Subject(Message)),
   )
@@ -386,6 +382,10 @@ fn build_coordinator(
       topics: dict.new(),
       config: config,
       pubsub: ps,
+      logger: internal.logger_with_config(
+        "beryl.coordinator",
+        internal_logging(config.logging),
+      ),
       self_subject: None,
     )
 
@@ -1522,6 +1522,7 @@ fn handle_route_text(
   raw_text: String,
 ) -> actor.Next(State, Message) {
   let codec = state.config.codec
+  let logging = internal_logging(state.config.logging)
   case codec.decode_text(raw_text) {
     Error(err) -> {
       let logger = coordinator_logger(state)
@@ -1533,11 +1534,7 @@ fn handle_route_text(
             #("socket_id", socket_id),
             #("error", codec.format_decode_error(err)),
           ],
-          internal.preview_metadata(
-            "frame_preview",
-            raw_text,
-            internal_logging(state.config.logging),
-          ),
+          internal.preview_metadata("frame_preview", raw_text, logging),
         ),
       )
       actor.continue(state)
@@ -1555,11 +1552,7 @@ fn handle_route_text(
             #("ref", optional_string(msg.ref)),
             #("join_ref", optional_string(msg.join_ref)),
           ],
-          internal.preview_metadata(
-            "frame_preview",
-            raw_text,
-            internal_logging(state.config.logging),
-          ),
+          internal.preview_metadata("frame_preview", raw_text, logging),
         ),
       )
       dispatch_inbound(state, socket_id, msg)
