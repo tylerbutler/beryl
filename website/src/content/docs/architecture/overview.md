@@ -90,11 +90,13 @@ group.broadcast(groups, channels, "team:eng", "announce", payload)
 Optional OTP supervision tree for all beryl subsystems:
 
 ```gleam
+import beryl
 import beryl/supervisor
+import beryl/wire
 import gleam/option.{None, Some}
 
 let config = supervisor.SupervisedConfig(
-  channels: beryl.default_config(),
+  channels: beryl.config(wire.phoenix_codec()),
   presence: Some(presence.default_config("node1")),
   groups: True,
 )

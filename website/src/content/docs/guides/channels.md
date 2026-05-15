@@ -306,8 +306,9 @@ Register channels with the beryl system using topic patterns:
 
 ```gleam
 import beryl
+import beryl/wire
 
-let assert Ok(channels) = beryl.start(beryl.default_config())
+let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
 
 // Register handlers for different topic patterns
 let assert Ok(Nil) = beryl.register(channels, "room:*", room_channel.new())

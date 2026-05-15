@@ -90,7 +90,7 @@ If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#
 
 ## Wire protocol
 
-By default, beryl uses `wire.phoenix_codec()`, which speaks the Phoenix JSON array format:
+Pass `wire.phoenix_codec()` to `beryl.config` to use the Phoenix JSON array format:
 
 ```json
 [join_ref, ref, topic, event, payload]
@@ -150,7 +150,7 @@ Configure heartbeat timing in the beryl config:
 
 ```gleam
 let config = beryl.Config(
-  ..beryl.default_config(),
+  ..beryl.config(wire.phoenix_codec()),
   heartbeat_interval_ms: 30_000,  // Client sends every 30s
   heartbeat_timeout_ms: 60_000,   // Server evicts after 60s silence
 )
@@ -162,7 +162,7 @@ Protect against flood attacks with built-in rate limiting:
 
 ```gleam
 let config =
-  beryl.default_config()
+  beryl.config(wire.phoenix_codec())
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   |> beryl.with_join_rate(per_second: 5, burst: 10)
   |> beryl.with_channel_rate(per_second: 50, burst: 100)

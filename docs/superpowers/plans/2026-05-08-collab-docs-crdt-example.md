@@ -773,6 +773,7 @@ Create `examples/collab_docs/src/collab_docs.gleam`:
 ```gleam
 import beryl
 import beryl/transport/mist as mist_transport
+import beryl/wire
 import collab_docs/channel
 import collab_docs/doc_store
 import collab_docs/router
@@ -782,7 +783,7 @@ import mist
 
 pub fn main() {
   let assert Ok(store) = doc_store.start()
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let handler = channel.new_handler(channels, store)
   let assert Ok(_) = beryl.register(channels, "document:*:*", handler)
 

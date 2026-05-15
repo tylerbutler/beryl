@@ -24,6 +24,7 @@
 //// import beryl/pubsub
 //// import beryl/presence
 //// import beryl/group
+//// import beryl/wire
 ////
 //// pub fn main() {
 ////   // Optional: start PubSub for distributed messaging

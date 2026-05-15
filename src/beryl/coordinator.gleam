@@ -1222,8 +1222,9 @@ fn dispatch_inbound(
 
 /// Route a binary WebSocket frame to the coordinator.
 ///
-/// Binary frames bypass the Phoenix wire protocol and are dispatched
-/// to all subscribed topics for the socket.
+/// Binary frames are decoded by the configured codec when it has a binary
+/// decoder; otherwise they are dispatched raw to all subscribed topics for
+/// the socket.
 pub fn route_binary(
   coord: Subject(Message),
   socket_id: String,

@@ -82,7 +82,8 @@ pub type Channel(assigns) {
     handle_in: fn(String, Dynamic, Socket(assigns)) -> HandleResult(assigns),
     /// Called when a client sends a binary frame to this channel
     ///
-    /// Binary frames bypass the Phoenix wire protocol and are passed as raw BitArray.
+    /// Binary frames are passed as raw BitArray when the configured codec has
+    /// no binary decoder.
     handle_binary: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
     /// Called when an OTP process sends a server-originated message to this channel
     handle_info: fn(Dynamic, Socket(assigns)) -> HandleResult(assigns),
