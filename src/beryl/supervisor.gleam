@@ -138,6 +138,7 @@ fn start_supervised(
       message_limiter: message_limiter,
       join_limiter: join_limiter,
       channel_limiter: channel_limiter,
+      logging: beryl.to_coordinator_logging(config.channels.logging),
     )
 
   // Build the supervisor with rest-for-one strategy.

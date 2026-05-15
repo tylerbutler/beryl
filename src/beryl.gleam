@@ -71,6 +71,27 @@ pub type ChannelHandler =
 pub type RegisterError =
   coordinator.RegisterError
 
+/// Logging verbosity for Beryl's internal Birch loggers.
+pub type LogLevel {
+  Trace
+  Debug
+  Info
+  Warn
+  Err
+}
+
+/// Logging configuration for Beryl diagnostics.
+pub type LoggingConfig {
+  LoggingConfig(
+    /// Minimum level emitted by Beryl's namespaced loggers.
+    level: LogLevel,
+    /// Whether debug diagnostics may include bounded payload/frame previews.
+    include_payloads: Bool,
+    /// Maximum number of bytes/characters included in payload previews.
+    payload_preview_bytes: Int,
+  )
+}
+
 /// Configuration for the channels system
 pub type Config {
   Config(
@@ -97,6 +118,24 @@ pub type Config {
     channel_rate: Int,
     /// Per-channel message burst capacity (0 = defaults to channel_rate)
     channel_burst: Int,
+    /// Logging configuration for Beryl diagnostics
+    logging: LoggingConfig,
+  )
+}
+
+/// Build a logging configuration.
+///
+/// Payloads are excluded by default to avoid accidental sensitive-data
+/// exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
+/// size when payload previews are enabled.
+pub fn logging_config(
+  level level: LogLevel,
+  include_payloads include_payloads: Bool,
+) -> LoggingConfig {
+  LoggingConfig(
+    level: level,
+    include_payloads: include_payloads,
+    payload_preview_bytes: 200,
   )
 }
 
@@ -118,12 +157,55 @@ pub fn config(codec: codec.Codec) -> Config {
     join_burst: 0,
     channel_rate: 0,
     channel_burst: 0,
+    logging: logging_config(level: Info, include_payloads: False),
   )
 }
 
 /// Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(config: Config, ps: PubSub) -> Config {
   Config(..config, pubsub: Some(ps))
+}
+
+/// Configure Beryl's internal logging.
+pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
+  Config(..config, logging: logging)
+}
+
+/// Configure the maximum payload/frame preview length for logs.
+pub fn with_payload_preview_bytes(
+  logging: LoggingConfig,
+  bytes bytes: Int,
+) -> LoggingConfig {
+  let safe_bytes = case bytes < 0 {
+    True -> 0
+    False -> bytes
+  }
+  LoggingConfig(..logging, payload_preview_bytes: safe_bytes)
+}
+
+fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
+  case level {
+    Trace -> coordinator.Trace
+    Debug -> coordinator.Debug
+    Info -> coordinator.Info
+    Warn -> coordinator.Warn
+    Err -> coordinator.Err
+  }
+}
+
+fn coordinator_logging(logging: LoggingConfig) -> coordinator.LoggingConfig {
+  coordinator.LoggingConfig(
+    level: coordinator_log_level(logging.level),
+    include_payloads: logging.include_payloads,
+    payload_preview_bytes: logging.payload_preview_bytes,
+  )
+}
+
+@internal
+pub fn to_coordinator_logging(
+  logging: LoggingConfig,
+) -> coordinator.LoggingConfig {
+  coordinator_logging(logging)
 }
 
 /// Configure per-socket message rate limiting
@@ -217,6 +299,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
           message_limiter: message_limiter,
           join_limiter: join_limiter,
           channel_limiter: channel_limiter,
+          logging: coordinator_logging(config.logging),
         )
 
       let coordinator_result = case config.pubsub {

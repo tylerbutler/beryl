@@ -66,6 +66,29 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 ---
 
+## Enable Beryl debug diagnostics
+
+Beryl uses Birch loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed coordinator lifecycle diagnostics while debugging channel integration issues:
+
+```gleam
+let config =
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_logging(beryl.logging_config(
+    level: beryl.Debug,
+    include_payloads: False,
+  ))
+```
+
+Debug logs cover frame decode, join routing, callback results, reply/push send outcomes, disconnects, heartbeat decisions, broadcasts, and rate limiting. Payload and frame previews are omitted by default to reduce accidental sensitive-data exposure. If you need bounded previews locally, enable them explicitly:
+
+```gleam
+let logging =
+  beryl.logging_config(level: beryl.Debug, include_payloads: True)
+  |> beryl.with_payload_preview_bytes(bytes: 100)
+```
+
+---
+
 ## Broadcasts are not received by clients
 
 **Symptoms:** `beryl.broadcast` is called server-side but connected clients do not receive the event.

@@ -1,0 +1,6 @@
+kind: Added
+body: |-
+    App-configurable Beryl logging diagnostics.
+
+    Applications can now configure Beryl's internal `beryl.*` Birch loggers with `beryl.with_logging`, opt into debug-level channel lifecycle diagnostics, and keep payload/frame previews disabled by default unless bounded previews are explicitly enabled.
+time: 2026-05-15T16:13:31.000000000-07:00

@@ -22,6 +22,11 @@ fn start_coordinator_with_heartbeat(
       message_limiter: None,
       join_limiter: None,
       channel_limiter: None,
+      logging: coordinator.LoggingConfig(
+        level: coordinator.Info,
+        include_payloads: False,
+        payload_preview_bytes: 200,
+      ),
     )
   let assert Ok(coord) = coordinator.start_with_config(config)
   coord
@@ -234,6 +239,11 @@ pub fn zero_timeout_with_checking_enabled_returns_error_test() {
       message_limiter: None,
       join_limiter: None,
       channel_limiter: None,
+      logging: coordinator.LoggingConfig(
+        level: coordinator.Info,
+        include_payloads: False,
+        payload_preview_bytes: 200,
+      ),
     )
   coordinator.start_with_config(config)
   |> should.be_error
@@ -249,6 +259,11 @@ pub fn negative_timeout_with_checking_enabled_returns_error_test() {
       message_limiter: None,
       join_limiter: None,
       channel_limiter: None,
+      logging: coordinator.LoggingConfig(
+        level: coordinator.Info,
+        include_payloads: False,
+        payload_preview_bytes: 200,
+      ),
     )
   coordinator.start_with_config(config)
   |> should.be_error
@@ -264,6 +279,11 @@ pub fn zero_timeout_with_checking_disabled_is_ok_test() {
       message_limiter: None,
       join_limiter: None,
       channel_limiter: None,
+      logging: coordinator.LoggingConfig(
+        level: coordinator.Info,
+        include_payloads: False,
+        payload_preview_bytes: 200,
+      ),
     )
   coordinator.start_with_config(config)
   |> should.be_ok
@@ -278,6 +298,11 @@ pub fn positive_timeout_with_checking_enabled_is_ok_test() {
       message_limiter: None,
       join_limiter: None,
       channel_limiter: None,
+      logging: coordinator.LoggingConfig(
+        level: coordinator.Info,
+        include_payloads: False,
+        payload_preview_bytes: 200,
+      ),
     )
   coordinator.start_with_config(config)
   |> should.be_ok
@@ -292,6 +317,11 @@ pub fn start_named_validates_heartbeat_timeout_test() {
       message_limiter: None,
       join_limiter: None,
       channel_limiter: None,
+      logging: coordinator.LoggingConfig(
+        level: coordinator.Info,
+        include_payloads: False,
+        payload_preview_bytes: 200,
+      ),
     )
   coordinator.start_named(config, process.new_name("test-coordinator"))
   |> should.be_error
