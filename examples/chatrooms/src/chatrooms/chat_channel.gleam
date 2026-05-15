@@ -3,8 +3,9 @@ import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/group
 import beryl/presence.{type Presence}
 import beryl/socket.{type Socket}
+import example_helpers/color
+import example_helpers/payload
 import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/list
@@ -74,8 +75,8 @@ fn join(
             "Room is full (max " <> int.to_string(max_room_users) <> ")",
           ))
         False -> {
-          let username = extract_string(payload, "username", "Anonymous")
-          let color = random_pastel_color(socket.id(socket))
+          let username = payload.string_or(payload, "username", "Anonymous")
+          let color = color.pastel_for(socket.id(socket))
           let assigns =
             ChatAssigns(
               username:,
@@ -139,7 +140,7 @@ fn handle_in(
 
   case event {
     "new_msg" -> {
-      let text = extract_string(payload, "text", "")
+      let text = payload.string_or(payload, "text", "")
       case string.trim(text) {
         "" ->
           // Reject empty messages with error code
@@ -273,37 +274,5 @@ fn terminate(_reason: channel.StopReason, socket: Socket(ChatAssigns)) -> Nil {
 
 // --- Helpers ---
 
-fn random_pastel_color(seed: String) -> String {
-  let hash =
-    seed
-    |> to_charcode_sum
-  let hue = hash % 360
-  "hsl(" <> int.to_string(hue) <> ", 70%, 65%)"
-}
-
-fn to_charcode_sum(s: String) -> Int {
-  s
-  |> string_to_codepoints
-  |> list.fold(0, fn(acc, cp) { acc + cp })
-}
-
-@external(erlang, "chatrooms_ffi", "string_to_codepoints")
-fn string_to_codepoints(s: String) -> List(Int)
-
 @external(erlang, "chatrooms_ffi", "timestamp_ms")
 fn timestamp_ms() -> Int
-
-fn extract_string(
-  payload: Dynamic,
-  field_name: String,
-  default: String,
-) -> String {
-  let decoder = {
-    use value <- decode.field(field_name, decode.string)
-    decode.success(value)
-  }
-  case channel.decode_payload(payload, decoder) {
-    Ok(value) -> value
-    Error(_) -> default
-  }
-}

@@ -16,6 +16,7 @@ default:
 # Download project dependencies (including examples)
 deps:
     gleam deps download
+    cd examples/example_helpers && gleam deps download
     cd examples/cursors && gleam deps download
     cd examples/chatrooms && gleam deps download
     cd examples/collab_docs && gleam deps download

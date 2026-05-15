@@ -80,8 +80,7 @@ fn join(
         Error(_) -> channel.JoinError(reason: error_payload("missing_token"))
         Ok(token) ->
           case auth.verify_tenant(token, tenant, secret) {
-            Error(_) ->
-              channel.JoinError(reason: error_payload("unauthorized"))
+            Error(_) -> channel.JoinError(reason: error_payload("unauthorized"))
             Ok(Nil) -> {
               let document_key = build_document_key(tenant, document)
               let assigns =
