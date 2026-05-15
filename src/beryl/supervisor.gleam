@@ -138,6 +138,7 @@ fn start_supervised(
       message_limiter: message_limiter,
       join_limiter: join_limiter,
       channel_limiter: channel_limiter,
+      logging: coordinator_logging(config.channels.logging),
     )
 
   // Build the supervisor with rest-for-one strategy.
@@ -244,6 +245,26 @@ fn start_supervised(
       ))
     }
   }
+}
+
+fn coordinator_log_level(level: beryl.LogLevel) -> coordinator.LogLevel {
+  case level {
+    beryl.Trace -> coordinator.Trace
+    beryl.Debug -> coordinator.Debug
+    beryl.Info -> coordinator.Info
+    beryl.Warn -> coordinator.Warn
+    beryl.Err -> coordinator.Err
+  }
+}
+
+fn coordinator_logging(
+  logging: beryl.LoggingConfig,
+) -> coordinator.LoggingConfig {
+  coordinator.LoggingConfig(
+    level: coordinator_log_level(logging.level),
+    include_payloads: logging.include_payloads,
+    payload_preview_bytes: logging.payload_preview_bytes,
+  )
 }
 
 /// Stop the supervisor and all its children

@@ -16,12 +16,9 @@ fn start_coordinator_with_heartbeat(
 ) -> process.Subject(coordinator.Message) {
   let config =
     coordinator.CoordinatorConfig(
-      codec: wire.phoenix_codec(),
+      ..coordinator.config(wire.phoenix_codec()),
       heartbeat_check_interval_ms: check_interval_ms,
       heartbeat_timeout_ms: timeout_ms,
-      message_limiter: None,
-      join_limiter: None,
-      channel_limiter: None,
     )
   let assert Ok(coord) = coordinator.start_with_config(config)
   coord
@@ -228,12 +225,9 @@ pub fn heartbeat_reply_still_sent_test() {
 pub fn zero_timeout_with_checking_enabled_returns_error_test() {
   let config =
     coordinator.CoordinatorConfig(
-      codec: wire.phoenix_codec(),
+      ..coordinator.config(wire.phoenix_codec()),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: 0,
-      message_limiter: None,
-      join_limiter: None,
-      channel_limiter: None,
     )
   coordinator.start_with_config(config)
   |> should.be_error
@@ -243,12 +237,9 @@ pub fn zero_timeout_with_checking_enabled_returns_error_test() {
 pub fn negative_timeout_with_checking_enabled_returns_error_test() {
   let config =
     coordinator.CoordinatorConfig(
-      codec: wire.phoenix_codec(),
+      ..coordinator.config(wire.phoenix_codec()),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: -1,
-      message_limiter: None,
-      join_limiter: None,
-      channel_limiter: None,
     )
   coordinator.start_with_config(config)
   |> should.be_error
@@ -258,12 +249,9 @@ pub fn negative_timeout_with_checking_enabled_returns_error_test() {
 pub fn zero_timeout_with_checking_disabled_is_ok_test() {
   let config =
     coordinator.CoordinatorConfig(
-      codec: wire.phoenix_codec(),
+      ..coordinator.config(wire.phoenix_codec()),
       heartbeat_check_interval_ms: 0,
       heartbeat_timeout_ms: 0,
-      message_limiter: None,
-      join_limiter: None,
-      channel_limiter: None,
     )
   coordinator.start_with_config(config)
   |> should.be_ok
@@ -272,12 +260,9 @@ pub fn zero_timeout_with_checking_disabled_is_ok_test() {
 pub fn positive_timeout_with_checking_enabled_is_ok_test() {
   let config =
     coordinator.CoordinatorConfig(
-      codec: wire.phoenix_codec(),
+      ..coordinator.config(wire.phoenix_codec()),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: 5000,
-      message_limiter: None,
-      join_limiter: None,
-      channel_limiter: None,
     )
   coordinator.start_with_config(config)
   |> should.be_ok
@@ -286,12 +271,9 @@ pub fn positive_timeout_with_checking_enabled_is_ok_test() {
 pub fn start_named_validates_heartbeat_timeout_test() {
   let config =
     coordinator.CoordinatorConfig(
-      codec: wire.phoenix_codec(),
+      ..coordinator.config(wire.phoenix_codec()),
       heartbeat_check_interval_ms: 50,
       heartbeat_timeout_ms: 0,
-      message_limiter: None,
-      join_limiter: None,
-      channel_limiter: None,
     )
   coordinator.start_named(config, process.new_name("test-coordinator"))
   |> should.be_error
