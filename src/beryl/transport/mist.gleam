@@ -4,7 +4,6 @@
 //// and the beryl coordinator using Mist request and response types directly.
 
 import beryl/coordinator.{type Message as CoordinatorMessage}
-import beryl/wire/codec.{type Codec}
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/crypto
@@ -47,13 +46,7 @@ pub fn with_on_connect(
 
 /// State maintained per WebSocket connection
 type ConnectionState {
-  ConnectionState(
-    socket_id: String,
-    coordinator: Subject(CoordinatorMessage),
-    /// Codec cached at upgrade time so inbound frames are decoded inline
-    /// on the per-connection process instead of on the coordinator actor.
-    codec: Codec,
-  )
+  ConnectionState(socket_id: String, coordinator: Subject(CoordinatorMessage))
 }
 
 type SendRequest {
@@ -157,24 +150,15 @@ fn on_init(
     coordinator.SocketConnected(socket_id, send_fn, send_binary_fn),
   )
 
-  // Fetch the codec once so inbound frames can be decoded inline
-  let codec = coordinator.get_codec(coordinator)
-
-  let state =
-    ConnectionState(
-      socket_id: socket_id,
-      coordinator: coordinator,
-      codec: codec,
-    )
+  let state = ConnectionState(socket_id: socket_id, coordinator: coordinator)
 
   #(state, Some(selector))
 }
 
 /// Handle incoming WebSocket messages.
 ///
-/// Text frames are decoded by the coordinator's codec. Binary frames are also
-/// offered to the codec when it has a binary decoder; otherwise they are routed
-/// to raw channel binary handlers.
+/// Frames are routed to the coordinator, which decodes them with the configured
+/// codec and handles raw binary fallback when the codec has no binary decoder.
 fn on_message(
   state: ConnectionState,
   message: mist.WebsocketMessage(SendRequest),
@@ -182,34 +166,11 @@ fn on_message(
 ) -> mist.Next(ConnectionState, SendRequest) {
   case message {
     mist.Text(text) -> {
-      // Decode inline so the coordinator actor's mailbox doesn't serialize
-      // JSON parsing across every connection. Fall back to the actor-side
-      // decoder on error so the coordinator's logging path stays the single
-      // source of truth for malformed-frame diagnostics.
-      case state.codec.decode_text(text) {
-        Ok(inbound) ->
-          coordinator.route_inbound(state.coordinator, state.socket_id, inbound)
-        Error(_) ->
-          coordinator.route_message(state.coordinator, state.socket_id, text)
-      }
+      coordinator.route_message(state.coordinator, state.socket_id, text)
       mist.continue(state)
     }
     mist.Binary(data) -> {
-      case state.codec.decode_binary {
-        Some(decode) ->
-          case decode(data) {
-            Ok(inbound) ->
-              coordinator.route_inbound(
-                state.coordinator,
-                state.socket_id,
-                inbound,
-              )
-            Error(_) ->
-              coordinator.route_binary(state.coordinator, state.socket_id, data)
-          }
-        None ->
-          coordinator.route_binary(state.coordinator, state.socket_id, data)
-      }
+      coordinator.route_binary(state.coordinator, state.socket_id, data)
       mist.continue(state)
     }
     mist.Closed | mist.Shutdown -> mist.stop()

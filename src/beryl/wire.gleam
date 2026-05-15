@@ -252,29 +252,6 @@ fn option_to_json(opt: Option(String)) -> json.Json {
   }
 }
 
-/// Check if this is a Phoenix system event.
-///
-/// Note: This is Phoenix-specific. The coordinator dispatches decoded messages
-/// structurally using `codec.InboundKind` rather than consulting this helper.
-pub fn is_phoenix_system_event(event: String) -> Bool {
-  case event {
-    "phx_join"
-    | "phx_leave"
-    | "phx_reply"
-    | "phx_error"
-    | "phx_close"
-    | "heartbeat" -> True
-    _ -> False
-  }
-}
-
-/// Deprecated: renamed to `is_phoenix_system_event` to clarify the
-/// Phoenix-specific event name set. Forwards to the new name.
-@deprecated("Use is_phoenix_system_event/1")
-pub fn is_system_event(event: String) -> Bool {
-  is_phoenix_system_event(event)
-}
-
 /// Format a `DecodeError` as a human-readable string.
 pub fn format_decode_error(error: DecodeError) -> String {
   codec.format_decode_error(error)
