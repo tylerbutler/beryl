@@ -39,12 +39,7 @@ fn connect_mock_socket(
   }
   process.send(
     coord,
-    coordinator.SocketConnected(
-      socket_id,
-      send_fn,
-      fn(_) { Ok(Nil) },
-      dynamic.nil(),
-    ),
+    coordinator.SocketConnected(socket_id, send_fn, fn(_) { Ok(Nil) }),
   )
   // Small sleep to let the coordinator process the message
   process.sleep(10)

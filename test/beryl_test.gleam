@@ -5,7 +5,6 @@ import beryl/socket
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec
-import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
@@ -187,7 +186,6 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
-      dynamic.nil(),
     ),
   )
 
@@ -229,7 +227,6 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
-      dynamic.nil(),
     ),
   )
 
@@ -276,7 +273,6 @@ pub fn send_info_routes_message_to_joined_channel_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
-      dynamic.nil(),
     ),
   )
 
@@ -328,7 +324,6 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
-      dynamic.nil(),
     ),
   )
 

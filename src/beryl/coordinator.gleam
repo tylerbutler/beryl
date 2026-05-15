@@ -51,8 +51,6 @@ pub type SocketContext {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary data to this socket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
-    /// PID of the WebSocket handler process (for direct messaging)
-    handler_pid: Dynamic,
   )
 }
 
@@ -143,8 +141,6 @@ pub type SocketInfo {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary to this socket's WebSocket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
-    /// PID of the WebSocket handler process (for direct messaging)
-    handler_pid: Dynamic,
     /// Topics this socket is subscribed to
     subscribed_topics: Set(String),
     /// Per-topic assigns (topic -> Dynamic assigns)
@@ -180,15 +176,21 @@ pub type Message {
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
-    handler_pid: Dynamic,
   )
   SocketDisconnected(socket_id: String)
   // Channel operations
   HandleBinary(socket_id: String, data: BitArray)
   HandleInfo(socket_id: String, topic: String, message: Dynamic)
   /// Raw inbound text from the transport — decoded inside the actor using
-  /// the configured codec.
+  /// the configured codec. Prefer `RouteInbound` (decoded in the transport)
+  /// when the codec is already available there.
   RouteText(socket_id: String, raw_text: String)
+  /// Pre-decoded inbound message from the transport — bypasses actor-side
+  /// decoding so JSON parsing doesn't serialize on the coordinator's mailbox.
+  RouteInbound(socket_id: String, msg: codec.Inbound)
+  /// Synchronously fetch the configured codec. Transports call this once
+  /// at upgrade time to cache the codec for in-transport decoding.
+  GetCodec(reply: Subject(Codec))
   // Broadcasting
   Broadcast(
     topic: String,
@@ -345,8 +347,8 @@ fn handle_message(
     RegisterChannel(pattern, handler, reply) ->
       handle_register_channel(state, pattern, handler, reply)
 
-    SocketConnected(socket_id, send, send_binary, handler_pid) ->
-      handle_socket_connected(state, socket_id, send, send_binary, handler_pid)
+    SocketConnected(socket_id, send, send_binary) ->
+      handle_socket_connected(state, socket_id, send, send_binary)
 
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
@@ -358,6 +360,13 @@ fn handle_message(
 
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
+
+    RouteInbound(socket_id, msg) -> dispatch_inbound(state, socket_id, msg)
+
+    GetCodec(reply) -> {
+      process.send(reply, state.config.codec)
+      actor.continue(state)
+    }
 
     Broadcast(topic_name, event, payload, except) ->
       handle_broadcast(state, topic_name, event, payload, except)
@@ -396,14 +405,12 @@ fn handle_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  handler_pid: Dynamic,
 ) -> actor.Next(State, Message) {
   let socket_info =
     SocketInfo(
       id: socket_id,
       send: send,
       send_binary: send_binary,
-      handler_pid: handler_pid,
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
       last_heartbeat: monotonic_time_ms(),
@@ -510,7 +517,6 @@ fn handle_join_inner(
               assigns: dynamic.nil(),
               send: socket_info.send,
               send_binary: socket_info.send_binary,
-              handler_pid: socket_info.handler_pid,
             )
 
           case handler.join(topic_name, payload, ctx) {
@@ -680,7 +686,6 @@ fn handle_in_inner(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
 
               case handler.handle_in(event, payload, ctx) {
@@ -764,7 +769,6 @@ fn handle_info(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
 
               case handler.handle_info(message, ctx) {
@@ -877,7 +881,6 @@ fn handle_raw_binary_in_inner(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
 
               case handler.handle_binary(data, ctx) {
@@ -1080,7 +1083,6 @@ fn terminate_channel(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
               handler.terminate(reason, ctx)
             }
@@ -1144,8 +1146,9 @@ fn update_assigns(
 
 /// Route raw inbound text from a transport to the coordinator.
 ///
-/// The coordinator decodes the text using its configured `Codec` inside
-/// the actor (so the codec lives in one place, not in every transport).
+/// Decoding runs inside the coordinator actor. Prefer `route_inbound` when
+/// the transport can decode locally — that keeps JSON parsing off the
+/// coordinator's mailbox so it doesn't serialize across all sockets.
 /// Frames that fail to decode are logged and dropped.
 pub fn route_message(
   coord: Subject(Message),
@@ -1153,6 +1156,25 @@ pub fn route_message(
   raw_text: String,
 ) -> Nil {
   process.send(coord, RouteText(socket_id, raw_text))
+}
+
+/// Route a pre-decoded inbound message from a transport. Use this when
+/// the transport already has the configured codec (via `get_codec`) and
+/// decodes inline, so the JSON parsing cost lands on the per-connection
+/// process instead of the shared coordinator actor.
+pub fn route_inbound(
+  coord: Subject(Message),
+  socket_id: String,
+  msg: codec.Inbound,
+) -> Nil {
+  process.send(coord, RouteInbound(socket_id, msg))
+}
+
+/// Synchronously fetch the configured codec from the coordinator. Intended
+/// to be called once per WebSocket connection at upgrade time so the
+/// transport can cache and use it for inline decoding.
+pub fn get_codec(coord: Subject(Message)) -> Codec {
+  process.call(coord, 5000, GetCodec)
 }
 
 fn handle_route_text(
