@@ -17,7 +17,6 @@ import gleam/string
 const max_state_bytes = 65_536
 
 /// Topic pattern for document channels: `document:<tenant>:<document>`.
-/// Hoisted so we don't reparse on every join.
 const document_topic_pattern_string = "document:*:*"
 
 /// State stored in each socket's assigns.
@@ -39,8 +38,9 @@ pub fn new_handler(
   store: Store,
   secret: BitArray,
 ) -> Channel(Assigns) {
+  let pattern = topic.parse_pattern(document_topic_pattern_string)
   channel.new(fn(topic_name, payload, socket) {
-    join(channels, store, secret, topic_name, payload, socket)
+    join(channels, store, secret, pattern, topic_name, payload, socket)
   })
   |> channel.with_handle_in(handle_in)
 }
@@ -65,12 +65,11 @@ fn join(
   channels: beryl.Channels,
   store: Store,
   secret: BitArray,
+  pattern: topic.TopicPattern,
   topic_name: String,
   payload: Dynamic,
   socket: Socket(Assigns),
 ) -> JoinResult(Assigns) {
-  let pattern = topic.parse_pattern(document_topic_pattern_string)
-
   case topic.extract_wildcards(pattern, topic_name) {
     Ok([tenant, document]) -> {
       // Channel-level auth: the join payload must carry a `token` HMAC-signed

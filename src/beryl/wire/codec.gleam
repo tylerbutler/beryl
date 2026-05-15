@@ -64,6 +64,16 @@ pub type ReplyStatus {
   StatusError
 }
 
+/// Format a `DecodeError` as a human-readable string. Used by the
+/// coordinator's log messages and by `wire.format_decode_error`.
+pub fn format_decode_error(error: DecodeError) -> String {
+  case error {
+    InvalidJson(reason) -> "Invalid JSON: " <> reason
+    InvalidFormat(reason) -> "Invalid format: " <> reason
+    MissingField(name) -> "Missing required field: " <> name
+  }
+}
+
 /// A wire codec.
 pub type Codec {
   Codec(

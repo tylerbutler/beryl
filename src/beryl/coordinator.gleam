@@ -845,7 +845,7 @@ fn handle_route_binary_frame(
       logger
       |> log.warn("Failed to decode binary wire protocol message", [
         #("socket_id", socket_id),
-        #("error", wire_format_decode_error(err)),
+        #("error", codec.format_decode_error(err)),
       ])
       actor.continue(state)
     }
@@ -1167,7 +1167,7 @@ fn handle_route_text(
       logger
       |> log.warn("Failed to decode wire protocol message", [
         #("socket_id", socket_id),
-        #("error", wire_format_decode_error(err)),
+        #("error", codec.format_decode_error(err)),
         #("frame_preview", string.slice(raw_text, 0, 200)),
       ])
       actor.continue(state)
@@ -1195,14 +1195,6 @@ fn dispatch_inbound(
     codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
     codec.Event(event) ->
       handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
-  }
-}
-
-fn wire_format_decode_error(error: codec.DecodeError) -> String {
-  case error {
-    codec.InvalidJson(reason) -> "InvalidJson: " <> reason
-    codec.InvalidFormat(reason) -> "InvalidFormat: " <> reason
-    codec.MissingField(name) -> "MissingField: " <> name
   }
 }
 

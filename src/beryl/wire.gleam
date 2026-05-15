@@ -14,7 +14,7 @@
 import beryl/wire/codec.{
   type Codec, type DecodeError, type Frame, type Inbound, type InboundKind,
   type ReplyStatus, Codec, Event, Heartbeat, Inbound, InvalidFormat, InvalidJson,
-  Join, Leave, MissingField, StatusError, StatusOk, TextFrame,
+  Join, Leave, StatusError, StatusOk, TextFrame,
 }
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
@@ -22,6 +22,8 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+
+const expected_array_message = "Expected array of 5 elements [join_ref, ref, topic, event, payload]"
 
 /// The canonical Phoenix wire codec. Pass to `beryl.config/1`.
 pub fn phoenix_codec() -> Codec {
@@ -48,27 +50,18 @@ pub fn decode_message(json_string: String) -> Result(Inbound, DecodeError) {
     Error(json.UnexpectedSequence(seq)) ->
       Error(InvalidJson("Unexpected sequence: " <> seq))
     Error(json.UnableToDecode(_)) ->
-      Error(InvalidFormat(
-        "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
-      ))
+      Error(InvalidFormat(expected_array_message))
   }
 }
 
 fn decode_inbound_value(value: Dynamic) -> Result(Inbound, DecodeError) {
   case decode.run(value, decode.list(decode.dynamic)) {
-    Ok(items) -> {
+    Ok(items) ->
       case list.length(items) {
         5 -> decode_inbound_fields(value)
-        _ ->
-          Error(InvalidFormat(
-            "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
-          ))
+        _ -> Error(InvalidFormat(expected_array_message))
       }
-    }
-    Error(_) ->
-      Error(InvalidFormat(
-        "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
-      ))
+    Error(_) -> Error(InvalidFormat(expected_array_message))
   }
 }
 
@@ -90,10 +83,7 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
 
   case decode.run(value, wire_decoder) {
     Ok(msg) -> Ok(msg)
-    Error(_) ->
-      Error(InvalidFormat(
-        "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
-      ))
+    Error(_) -> Error(InvalidFormat(expected_array_message))
   }
 }
 
@@ -287,9 +277,5 @@ pub fn is_system_event(event: String) -> Bool {
 
 /// Format a `DecodeError` as a human-readable string.
 pub fn format_decode_error(error: DecodeError) -> String {
-  case error {
-    InvalidJson(reason) -> "Invalid JSON: " <> reason
-    InvalidFormat(reason) -> "Invalid format: " <> reason
-    MissingField(name) -> "Missing required field: " <> name
-  }
+  codec.format_decode_error(error)
 }
