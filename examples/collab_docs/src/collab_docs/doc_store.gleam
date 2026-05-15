@@ -2,6 +2,7 @@ import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/io
 import gleam/json
+import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import lattice_maps/or_map.{type ORMap}
@@ -18,7 +19,15 @@ type Message {
 }
 
 type State {
-  State(docs: Dict(String, ORMap))
+  State(docs: Dict(String, Doc))
+}
+
+/// One stored document. The encoded JSON is cached so concurrent joins for
+/// the same document don't each pay a full `or_map.to_json |> json.to_string`
+/// inside the doc_store actor (which would serialise unrelated docs too).
+/// The cache is invalidated on every merge.
+type Doc {
+  Doc(ormap: ORMap, encoded: Option(String))
 }
 
 /// Failure modes for `get_state`.
@@ -74,11 +83,22 @@ fn handle_message(
 ) -> actor.Next(State, Message) {
   case message {
     GetState(key, reply) -> {
-      let response =
-        dict.get(state.docs, key)
-        |> result.map(fn(doc) { doc |> or_map.to_json |> json.to_string })
-      process.send(reply, response)
-      actor.continue(state)
+      case dict.get(state.docs, key) {
+        Error(_) -> {
+          process.send(reply, Error(Nil))
+          actor.continue(state)
+        }
+        Ok(Doc(_, Some(cached))) -> {
+          process.send(reply, Ok(cached))
+          actor.continue(state)
+        }
+        Ok(Doc(ormap, None)) -> {
+          let encoded = ormap |> or_map.to_json |> json.to_string
+          process.send(reply, Ok(encoded))
+          let new_docs = dict.insert(state.docs, key, Doc(ormap, Some(encoded)))
+          actor.continue(State(docs: new_docs))
+        }
+      }
     }
 
     MergeState(key, encoded) -> {
@@ -101,15 +121,15 @@ fn handle_message(
 }
 
 fn merge_doc(
-  docs: Dict(String, ORMap),
+  docs: Dict(String, Doc),
   key: String,
   remote: ORMap,
-) -> Dict(String, ORMap) {
+) -> Dict(String, Doc) {
   case dict.get(docs, key) {
-    Error(_) -> dict.insert(docs, key, remote)
-    Ok(local) ->
+    Error(_) -> dict.insert(docs, key, Doc(remote, None))
+    Ok(Doc(local, _)) ->
       case or_map.merge(local, remote) {
-        Ok(merged) -> dict.insert(docs, key, merged)
+        Ok(merged) -> dict.insert(docs, key, Doc(merged, None))
         Error(_) -> {
           // ORMap merges should be commutative — failure indicates a real
           // bug worth seeing rather than silently dropping remote edits.
