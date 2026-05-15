@@ -4,6 +4,7 @@ import beryl/socket.{type Socket}
 import beryl/topic
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/io
 import gleam/json
@@ -16,7 +17,6 @@ import gleam/string
 const max_state_bytes = 65_536
 
 /// Topic pattern for document channels: `document:<tenant>:<document>`.
-/// Hoisted so we don't reparse on every join.
 const document_topic_pattern_string = "document:*:*"
 
 /// State stored in each socket's assigns.
@@ -38,8 +38,9 @@ pub fn new_handler(
   store: Store,
   secret: BitArray,
 ) -> Channel(Assigns) {
+  let pattern = topic.parse_pattern(document_topic_pattern_string)
   channel.new(fn(topic_name, payload, socket) {
-    join(channels, store, secret, topic_name, payload, socket)
+    join(channels, store, secret, pattern, topic_name, payload, socket)
   })
   |> channel.with_handle_in(handle_in)
 }
@@ -50,13 +51,13 @@ pub fn build_document_key(tenant: String, document: String) -> String {
   |> json.to_string
 }
 
-fn extract_token(payload: json.Json) -> Result(String, Nil) {
+fn extract_token(payload: Dynamic) -> Result(String, Nil) {
   let decoder = {
     use token <- decode.field("token", decode.string)
     decode.success(token)
   }
 
-  json.parse(json.to_string(payload), decoder)
+  channel.decode_payload(payload, decoder)
   |> result.replace_error(Nil)
 }
 
@@ -64,12 +65,11 @@ fn join(
   channels: beryl.Channels,
   store: Store,
   secret: BitArray,
+  pattern: topic.TopicPattern,
   topic_name: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(Assigns),
 ) -> JoinResult(Assigns) {
-  let pattern = topic.parse_pattern(document_topic_pattern_string)
-
   case topic.extract_wildcards(pattern, topic_name) {
     Ok([tenant, document]) -> {
       // Channel-level auth: the join payload must carry a `token` HMAC-signed
@@ -80,8 +80,7 @@ fn join(
         Error(_) -> channel.JoinError(reason: error_payload("missing_token"))
         Ok(token) ->
           case auth.verify_tenant(token, tenant, secret) {
-            Error(_) ->
-              channel.JoinError(reason: error_payload("unauthorized"))
+            Error(_) -> channel.JoinError(reason: error_payload("unauthorized"))
             Ok(Nil) -> {
               let document_key = build_document_key(tenant, document)
               let assigns =
@@ -120,7 +119,7 @@ fn join(
 
 fn handle_in(
   event: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(Assigns),
 ) -> HandleResult(Assigns) {
   case event {
@@ -130,7 +129,7 @@ fn handle_in(
 }
 
 fn sync_state(
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(Assigns),
 ) -> HandleResult(Assigns) {
   case extract_state(payload) {
@@ -159,13 +158,13 @@ fn reply_error(code: String, socket: Socket(Assigns)) -> HandleResult(Assigns) {
   channel.Reply(event: "state_error", payload: error_payload(code), socket:)
 }
 
-fn extract_state(payload: json.Json) -> Result(String, Nil) {
+fn extract_state(payload: Dynamic) -> Result(String, Nil) {
   let decoder = {
     use state <- decode.field("state", decode.string)
     decode.success(state)
   }
 
-  json.parse(json.to_string(payload), decoder)
+  channel.decode_payload(payload, decoder)
   |> result.replace_error(Nil)
 }
 

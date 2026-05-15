@@ -79,7 +79,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 3. **Single-node vs. multi-node.** Without PubSub, broadcasts are local to the node. If your deployment runs multiple BEAM nodes, configure PubSub:
    ```gleam
    let assert Ok(ps) = pubsub.start(pubsub.default_config())
-   let config = beryl.default_config() |> beryl.with_pubsub(ps)
+   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
    ```
 
 4. **broadcast_from excluding the wrong socket.** `beryl.broadcast_from` excludes the socket whose ID you pass. Verify that the socket ID matches the sender.

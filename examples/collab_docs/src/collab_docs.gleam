@@ -1,6 +1,6 @@
 import beryl
-import beryl/wire
 import beryl/transport/mist as mist_transport
+import beryl/wire
 import collab_docs/auth
 import collab_docs/channel
 import collab_docs/doc_store

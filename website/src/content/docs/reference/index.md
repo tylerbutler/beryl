@@ -28,7 +28,8 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | `beryl/presence` | OTP actor wrapping the presence CRDT | Tracking who is online |
 | `beryl/presence/state` | Pure add-wins observed-remove CRDT | Testing, custom merge logic |
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
-| `beryl/wire` | JSON encode/decode for the Phoenix wire format | Custom transports, protocol debugging |
+| `beryl/wire` | Phoenix-compatible codec and JSON helpers | Phoenix clients, custom transports, protocol debugging |
+| `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
 | `beryl/transport/mist` | Mist WebSocket upgrade and dispatch | Wiring beryl to an HTTP server |
 
 ---
@@ -121,7 +122,7 @@ Follows the Phoenix presence diff format. Both `joins` and `leaves` are objects 
 
 ## Client compatibility
 
-Because beryl uses the standard Phoenix wire format, any Phoenix-compatible WebSocket client works out of the box:
+When started with `wire.phoenix_codec()`, beryl uses the standard Phoenix wire format, so any Phoenix-compatible WebSocket client works out of the box:
 
 | Client | Notes |
 |---|---|

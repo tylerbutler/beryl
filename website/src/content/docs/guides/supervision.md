@@ -22,11 +22,12 @@ Use `beryl.start` for simple scripts, tests, or examples where crash recovery is
 import beryl
 import beryl/supervisor
 import beryl/presence
+import beryl/wire
 import gleam/option.{None, Some}
 
 pub fn main() {
   let config = supervisor.SupervisedConfig(
-    channels: beryl.default_config(),
+    channels: beryl.config(wire.phoenix_codec()),
     presence: Some(presence.default_config("node1")),
     groups: True,
   )
@@ -105,11 +106,13 @@ After `stop` returns, `supervised` should not be used. All child processes have 
 Use `supervisor.child_spec` to embed beryl as a subtree in your application's top-level supervisor:
 
 ```gleam
+import beryl
 import beryl/supervisor
+import beryl/wire
 import gleam/otp/static_supervisor
 
 let beryl_config = supervisor.SupervisedConfig(
-  channels: beryl.default_config(),
+  channels: beryl.config(wire.phoenix_codec()),
   presence: None,
   groups: True,
 )

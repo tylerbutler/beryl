@@ -51,8 +51,6 @@ pub type SocketContext {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary data to this socket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
-    /// PID of the WebSocket handler process (for direct messaging)
-    handler_pid: Dynamic,
   )
 }
 
@@ -143,8 +141,6 @@ pub type SocketInfo {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary to this socket's WebSocket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
-    /// PID of the WebSocket handler process (for direct messaging)
-    handler_pid: Dynamic,
     /// Topics this socket is subscribed to
     subscribed_topics: Set(String),
     /// Per-topic assigns (topic -> Dynamic assigns)
@@ -152,6 +148,19 @@ pub type SocketInfo {
     /// Monotonic timestamp (ms) of the last heartbeat received
     last_heartbeat: Int,
   )
+}
+
+fn send_frame(socket_info: SocketInfo, frame: codec.Frame) -> Nil {
+  case frame {
+    codec.TextFrame(text) -> {
+      let _ = socket_info.send(text)
+      Nil
+    }
+    codec.BinaryFrame(data) -> {
+      let _ = socket_info.send_binary(data)
+      Nil
+    }
+  }
 }
 
 /// Messages the coordinator handles
@@ -167,31 +176,21 @@ pub type Message {
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
-    handler_pid: Dynamic,
   )
   SocketDisconnected(socket_id: String)
   // Channel operations
-  Join(
-    socket_id: String,
-    topic: String,
-    payload: Dynamic,
-    join_ref: Option(String),
-    ref: String,
-  )
-  Leave(socket_id: String, topic: String, ref: Option(String))
-  HandleIn(
-    socket_id: String,
-    topic: String,
-    event: String,
-    payload: Dynamic,
-    ref: Option(String),
-  )
   HandleBinary(socket_id: String, data: BitArray)
   HandleInfo(socket_id: String, topic: String, message: Dynamic)
-  Heartbeat(socket_id: String, ref: String)
   /// Raw inbound text from the transport — decoded inside the actor using
-  /// the configured codec.
+  /// the configured codec. Prefer `RouteInbound` (decoded in the transport)
+  /// when the codec is already available there.
   RouteText(socket_id: String, raw_text: String)
+  /// Pre-decoded inbound message from the transport — bypasses actor-side
+  /// decoding so JSON parsing doesn't serialize on the coordinator's mailbox.
+  RouteInbound(socket_id: String, msg: codec.Inbound)
+  /// Synchronously fetch the configured codec. Transports call this once
+  /// at upgrade time to cache the codec for in-transport decoding.
+  GetCodec(reply: Subject(Codec))
   // Broadcasting
   Broadcast(
     topic: String,
@@ -348,30 +347,26 @@ fn handle_message(
     RegisterChannel(pattern, handler, reply) ->
       handle_register_channel(state, pattern, handler, reply)
 
-    SocketConnected(socket_id, send, send_binary, handler_pid) ->
-      handle_socket_connected(state, socket_id, send, send_binary, handler_pid)
+    SocketConnected(socket_id, send, send_binary) ->
+      handle_socket_connected(state, socket_id, send, send_binary)
 
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
-
-    Join(socket_id, topic_name, payload, join_ref, ref) ->
-      handle_join(state, socket_id, topic_name, payload, join_ref, ref)
-
-    Leave(socket_id, topic_name, ref) ->
-      handle_leave(state, socket_id, topic_name, ref)
-
-    HandleIn(socket_id, topic_name, event, payload, ref) ->
-      handle_in(state, socket_id, topic_name, event, payload, ref)
 
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
 
     HandleInfo(socket_id, topic_name, message) ->
       handle_info(state, socket_id, topic_name, message)
 
-    Heartbeat(socket_id, ref) -> handle_heartbeat(state, socket_id, ref)
-
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
+
+    RouteInbound(socket_id, msg) -> dispatch_inbound(state, socket_id, msg)
+
+    GetCodec(reply) -> {
+      process.send(reply, state.config.codec)
+      actor.continue(state)
+    }
 
     Broadcast(topic_name, event, payload, except) ->
       handle_broadcast(state, topic_name, event, payload, except)
@@ -410,14 +405,12 @@ fn handle_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  handler_pid: Dynamic,
 ) -> actor.Next(State, Message) {
   let socket_info =
     SocketInfo(
       id: socket_id,
       send: send,
       send_binary: send_binary,
-      handler_pid: handler_pid,
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
       last_heartbeat: monotonic_time_ms(),
@@ -456,7 +449,7 @@ fn handle_join(
   topic_name: String,
   payload: Dynamic,
   join_ref: Option(String),
-  ref: String,
+  ref: Option(String),
 ) -> actor.Next(State, Message) {
   // Check join rate limit
   case
@@ -480,7 +473,7 @@ fn handle_join(
               codec.StatusError,
               json.object([#("reason", json.string("rate_limited"))]),
             )
-          let _ = socket_info.send(reply)
+          send_frame(socket_info, reply)
           Nil
         }
         Error(_) -> Nil
@@ -498,7 +491,7 @@ fn handle_join_inner(
   topic_name: String,
   payload: Dynamic,
   join_ref: Option(String),
-  ref: String,
+  ref: Option(String),
 ) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(_) -> actor.continue(state)
@@ -513,7 +506,7 @@ fn handle_join_inner(
               codec.StatusError,
               json.object([#("reason", json.string("no_channel_handler"))]),
             )
-          let _ = socket_info.send(reply)
+          send_frame(socket_info, reply)
           actor.continue(state)
         }
         Some(handler) -> {
@@ -524,7 +517,6 @@ fn handle_join_inner(
               assigns: dynamic.nil(),
               send: socket_info.send,
               send_binary: socket_info.send_binary,
-              handler_pid: socket_info.handler_pid,
             )
 
           case handler.join(topic_name, payload, ctx) {
@@ -537,7 +529,7 @@ fn handle_join_inner(
                   codec.StatusError,
                   reason,
                 )
-              let _ = socket_info.send(reply)
+              send_frame(socket_info, reply)
               actor.continue(state)
             }
             JoinOkErased(reply_payload, assigns) -> {
@@ -581,7 +573,7 @@ fn handle_join_inner(
                   codec.StatusOk,
                   response,
                 )
-              let _ = socket_info.send(reply)
+              send_frame(socket_info, reply)
 
               actor.continue(
                 State(..state, sockets: new_sockets, topics: new_topics),
@@ -607,12 +599,12 @@ fn handle_leave(
       let reply =
         state.config.codec.encode_reply(
           None,
-          r,
+          Some(r),
           topic_name,
           codec.StatusOk,
           json.object([]),
         )
-      let _ = socket_info.send(reply)
+      send_frame(socket_info, reply)
       Nil
     }
     _, _ -> Nil
@@ -694,7 +686,6 @@ fn handle_in_inner(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
 
               case handler.handle_in(event, payload, ctx) {
@@ -710,12 +701,12 @@ fn handle_in_inner(
                       let reply =
                         state.config.codec.encode_reply(
                           None,
-                          r,
+                          Some(r),
                           topic_name,
                           codec.StatusOk,
                           reply_payload,
                         )
-                      let _ = socket_info.send(reply)
+                      send_frame(socket_info, reply)
                       Nil
                     }
                     None -> Nil
@@ -732,7 +723,7 @@ fn handle_in_inner(
                       push_event,
                       push_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   let state =
                     update_assigns(state, socket_id, topic_name, new_assigns)
                   actor.continue(state)
@@ -778,7 +769,6 @@ fn handle_info(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
 
               case handler.handle_info(message, ctx) {
@@ -798,7 +788,7 @@ fn handle_info(
                       reply_event,
                       reply_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   let state =
                     update_assigns(state, socket_id, topic_name, new_assigns)
                   actor.continue(state)
@@ -837,11 +827,37 @@ fn handle_binary_in(
       ])
       actor.continue(state)
     }
-    Ok(_) -> handle_binary_in_inner(state, socket_id, data)
+    Ok(_) -> {
+      case state.config.codec.decode_binary {
+        Some(decode_binary) ->
+          handle_route_binary_frame(state, socket_id, data, decode_binary)
+        None -> handle_raw_binary_in_inner(state, socket_id, data)
+      }
+    }
   }
 }
 
-fn handle_binary_in_inner(
+fn handle_route_binary_frame(
+  state: State,
+  socket_id: String,
+  data: BitArray,
+  decode_binary: fn(BitArray) -> Result(codec.Inbound, codec.DecodeError),
+) -> actor.Next(State, Message) {
+  case decode_binary(data) {
+    Error(err) -> {
+      let logger = internal.logger("beryl.coordinator")
+      logger
+      |> log.warn("Failed to decode binary wire protocol message", [
+        #("socket_id", socket_id),
+        #("error", codec.format_decode_error(err)),
+      ])
+      actor.continue(state)
+    }
+    Ok(msg) -> dispatch_inbound(state, socket_id, msg)
+  }
+}
+
+fn handle_raw_binary_in_inner(
   state: State,
   socket_id: String,
   data: BitArray,
@@ -865,7 +881,6 @@ fn handle_binary_in_inner(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
 
               case handler.handle_binary(data, ctx) {
@@ -878,7 +893,7 @@ fn handle_binary_in_inner(
                       "binary_reply",
                       reply_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   update_assigns(st, socket_id, topic_name, new_assigns)
                 }
                 PushErased(push_event, push_payload, new_assigns) -> {
@@ -888,7 +903,7 @@ fn handle_binary_in_inner(
                       push_event,
                       push_payload,
                     )
-                  let _ = socket_info.send(msg)
+                  send_frame(socket_info, msg)
                   update_assigns(st, socket_id, topic_name, new_assigns)
                 }
                 StopErased(reason) ->
@@ -905,7 +920,7 @@ fn handle_binary_in_inner(
 fn handle_heartbeat(
   state: State,
   socket_id: String,
-  ref: String,
+  ref: Option(String),
 ) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(_) -> actor.continue(state)
@@ -915,7 +930,7 @@ fn handle_heartbeat(
       let new_sockets = dict.insert(state.sockets, socket_id, updated_socket)
 
       let reply = state.config.codec.encode_heartbeat_reply(ref)
-      let _ = socket_info.send(reply)
+      send_frame(socket_info, reply)
       actor.continue(State(..state, sockets: new_sockets))
     }
   }
@@ -1005,7 +1020,7 @@ fn handle_broadcast(
   list.each(recipients, fn(socket_id) {
     case dict.get(state.sockets, socket_id) {
       Ok(socket_info) -> {
-        let _ = socket_info.send(msg)
+        send_frame(socket_info, msg)
         Nil
       }
       Error(_) -> Nil
@@ -1068,7 +1083,6 @@ fn terminate_channel(
                   assigns: assigns,
                   send: socket_info.send,
                   send_binary: socket_info.send_binary,
-                  handler_pid: socket_info.handler_pid,
                 )
               handler.terminate(reason, ctx)
             }
@@ -1132,8 +1146,9 @@ fn update_assigns(
 
 /// Route raw inbound text from a transport to the coordinator.
 ///
-/// The coordinator decodes the text using its configured `Codec` inside
-/// the actor (so the codec lives in one place, not in every transport).
+/// Decoding runs inside the coordinator actor. Prefer `route_inbound` when
+/// the transport can decode locally — that keeps JSON parsing off the
+/// coordinator's mailbox so it doesn't serialize across all sockets.
 /// Frames that fail to decode are logged and dropped.
 pub fn route_message(
   coord: Subject(Message),
@@ -1143,61 +1158,73 @@ pub fn route_message(
   process.send(coord, RouteText(socket_id, raw_text))
 }
 
+/// Route a pre-decoded inbound message from a transport. Use this when
+/// the transport already has the configured codec (via `get_codec`) and
+/// decodes inline, so the JSON parsing cost lands on the per-connection
+/// process instead of the shared coordinator actor.
+pub fn route_inbound(
+  coord: Subject(Message),
+  socket_id: String,
+  msg: codec.Inbound,
+) -> Nil {
+  process.send(coord, RouteInbound(socket_id, msg))
+}
+
+/// Synchronously fetch the configured codec from the coordinator. Intended
+/// to be called once per WebSocket connection at upgrade time so the
+/// transport can cache and use it for inline decoding.
+pub fn get_codec(coord: Subject(Message)) -> Codec {
+  process.call(coord, 5000, GetCodec)
+}
+
 fn handle_route_text(
   state: State,
   socket_id: String,
   raw_text: String,
 ) -> actor.Next(State, Message) {
   let codec = state.config.codec
-  case codec.decode(raw_text) {
+  case codec.decode_text(raw_text) {
     Error(err) -> {
       let logger = internal.logger("beryl.coordinator")
       logger
       |> log.warn("Failed to decode wire protocol message", [
         #("socket_id", socket_id),
-        #("error", wire_format_decode_error(err)),
+        #("error", codec.format_decode_error(err)),
         #("frame_preview", string.slice(raw_text, 0, 200)),
       ])
       actor.continue(state)
     }
-    Ok(msg) -> {
-      case msg.event {
-        e if e == codec.join_event -> {
-          let ref = option.unwrap(msg.ref, "")
-          handle_join(
-            state,
-            socket_id,
-            msg.topic,
-            msg.payload,
-            msg.join_ref,
-            ref,
-          )
-        }
-        e if e == codec.leave_event ->
-          handle_leave(state, socket_id, msg.topic, msg.ref)
-        e if e == codec.heartbeat_event -> {
-          let ref = option.unwrap(msg.ref, "")
-          handle_heartbeat(state, socket_id, ref)
-        }
-        event ->
-          handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
-      }
-    }
+    Ok(msg) -> dispatch_inbound(state, socket_id, msg)
   }
 }
 
-fn wire_format_decode_error(error: codec.DecodeError) -> String {
-  case error {
-    codec.InvalidJson(reason) -> "InvalidJson: " <> reason
-    codec.InvalidFormat(reason) -> "InvalidFormat: " <> reason
-    codec.MissingField(name) -> "MissingField: " <> name
+fn dispatch_inbound(
+  state: State,
+  socket_id: String,
+  msg: codec.Inbound,
+) -> actor.Next(State, Message) {
+  case msg.kind {
+    codec.Join ->
+      handle_join(
+        state,
+        socket_id,
+        msg.topic,
+        msg.payload,
+        msg.join_ref,
+        msg.ref,
+      )
+    codec.Leave -> handle_leave(state, socket_id, msg.topic, msg.ref)
+    codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
+    codec.Event(event) ->
+      handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
   }
 }
 
 /// Route a binary WebSocket frame to the coordinator.
 ///
-/// Binary frames bypass the Phoenix wire protocol and are dispatched
-/// to all subscribed topics for the socket.
+/// Binary frames are decoded by the configured codec when it has a binary
+/// decoder; otherwise they are dispatched raw to all subscribed topics for
+/// the socket.
 pub fn route_binary(
   coord: Subject(Message),
   socket_id: String,

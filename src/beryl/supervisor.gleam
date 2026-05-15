@@ -14,6 +14,7 @@
 //// import beryl
 //// import beryl/supervisor
 //// import beryl/presence
+//// import beryl/wire
 //// import gleam/option.{None, Some}
 ////
 //// let config = supervisor.SupervisedConfig(

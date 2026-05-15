@@ -106,6 +106,9 @@ type ActorState {
     config: Config,
     /// The actor's own subject, needed for scheduling BroadcastTick
     self_subject: Option(Subject(Message)),
+    /// Set whenever the local CRDT mutates; cleared after a broadcast tick.
+    /// Skips the encode+broadcast when there is nothing new to gossip.
+    dirty: Bool,
   )
 }
 
@@ -144,7 +147,12 @@ fn build_presence(
 
   actor.new_with_initialiser(5000, fn(subject) {
     let initial =
-      ActorState(crdt: crdt, config: config, self_subject: Some(subject))
+      ActorState(
+        crdt: crdt,
+        config: config,
+        self_subject: Some(subject),
+        dirty: False,
+      )
 
     case config.pubsub {
       Some(ps) -> {
@@ -180,7 +188,12 @@ fn build_presence(
       }
       None -> {
         let no_pubsub_initial =
-          ActorState(crdt: crdt, config: config, self_subject: None)
+          ActorState(
+            crdt: crdt,
+            config: config,
+            self_subject: None,
+            dirty: False,
+          )
         actor.initialised(no_pubsub_initial)
         |> actor.returning(subject)
         |> Ok
@@ -281,7 +294,7 @@ fn handle_message(
         #("pid", pid),
       ])
       process.send(reply, pid)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt))
+      actor.continue(ActorState(..actor_state, crdt: new_crdt, dirty: True))
     }
 
     Untrack(topic, key, pid, reply) -> {
@@ -295,7 +308,7 @@ fn handle_message(
         #("pid", pid),
       ])
       process.send(reply, Nil)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt))
+      actor.continue(ActorState(..actor_state, crdt: new_crdt, dirty: True))
     }
 
     UntrackAll(pid, reply) -> {
@@ -303,7 +316,7 @@ fn handle_message(
       let new_crdt = state.leave_by_pid(actor_state.crdt, pid)
       maybe_invoke_on_diff(actor_state.config, diff)
       process.send(reply, Nil)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt))
+      actor.continue(ActorState(..actor_state, crdt: new_crdt, dirty: True))
     }
 
     List(topic, reply) -> {
@@ -322,37 +335,48 @@ fn handle_message(
 
     MergeRemote(remote) -> {
       let #(new_crdt, diff) = state.merge(actor_state.crdt, remote)
+      let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
       maybe_invoke_on_diff(actor_state.config, diff)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt))
+      actor.continue(
+        ActorState(
+          ..actor_state,
+          crdt: new_crdt,
+          dirty: actor_state.dirty || changed,
+        ),
+      )
     }
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
         Some(ps), Some(subject) -> {
-          // Build envelope with state as nested JSON object (not double-encoded string)
-          let payload =
-            json.object([
-              #("v", json.int(1)),
-              #("sender", json.string(actor_state.config.replica)),
-              #("state", state_json.encode(actor_state.crdt)),
-            ])
+          let new_state = case actor_state.dirty {
+            False -> actor_state
+            True -> {
+              let payload =
+                json.object([
+                  #("v", json.int(1)),
+                  #("sender", json.string(actor_state.config.replica)),
+                  #("state", state_json.encode(actor_state.crdt)),
+                ])
 
-          // Broadcast via PubSub, skipping self-delivery
-          pubsub.broadcast_from(
-            ps,
-            process.self(),
-            sync_topic,
-            sync_event,
-            payload,
-          )
+              pubsub.broadcast_from(
+                ps,
+                process.self(),
+                sync_topic,
+                sync_event,
+                payload,
+              )
 
-          // Reschedule next tick
+              ActorState(..actor_state, dirty: False)
+            }
+          }
+
           schedule_broadcast_tick(
             subject,
             actor_state.config.broadcast_interval_ms,
           )
 
-          actor.continue(actor_state)
+          actor.continue(new_state)
         }
         _, _ -> actor.continue(actor_state)
       }
@@ -448,8 +472,15 @@ fn handle_sync_payload(
     }
     Ok(#(_sender, remote_state)) -> {
       let #(new_crdt, diff) = state.merge(actor_state.crdt, remote_state)
+      let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
       maybe_invoke_on_diff(actor_state.config, diff)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt))
+      actor.continue(
+        ActorState(
+          ..actor_state,
+          crdt: new_crdt,
+          dirty: actor_state.dirty || changed,
+        ),
+      )
     }
   }
 }

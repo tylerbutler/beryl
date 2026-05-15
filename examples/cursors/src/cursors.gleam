@@ -1,7 +1,7 @@
 import beryl
-import beryl/wire
 import beryl/presence
 import beryl/transport/mist as mist_transport
+import beryl/wire
 import cursors/cursor_channel
 import cursors/router
 import gleam/erlang/process

@@ -24,6 +24,7 @@
 
 import beryl/socket.{type Socket}
 import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
 import gleam/json.{type Json}
 import gleam/option.{type Option}
 
@@ -74,14 +75,15 @@ pub type Channel(assigns) {
     ///
     /// Return JoinOk to accept the connection (with optional reply payload),
     /// or JoinError to reject it.
-    join: fn(String, Json, Socket(assigns)) -> JoinResult(assigns),
+    join: fn(String, Dynamic, Socket(assigns)) -> JoinResult(assigns),
     /// Called when a client sends a text message to this channel
     ///
     /// The event string identifies the message type (e.g., "new_message", "typing").
-    handle_in: fn(String, Json, Socket(assigns)) -> HandleResult(assigns),
+    handle_in: fn(String, Dynamic, Socket(assigns)) -> HandleResult(assigns),
     /// Called when a client sends a binary frame to this channel
     ///
-    /// Binary frames bypass the Phoenix wire protocol and are passed as raw BitArray.
+    /// Binary frames are passed as raw BitArray when the configured codec has
+    /// no binary decoder.
     handle_binary: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
     /// Called when an OTP process sends a server-originated message to this channel
     handle_info: fn(Dynamic, Socket(assigns)) -> HandleResult(assigns),
@@ -96,7 +98,7 @@ pub type Channel(assigns) {
 ///
 /// Other handlers can be added using the `with_*` functions.
 pub fn new(
-  join: fn(String, Json, Socket(assigns)) -> JoinResult(assigns),
+  join: fn(String, Dynamic, Socket(assigns)) -> JoinResult(assigns),
 ) -> Channel(assigns) {
   Channel(
     join: join,
@@ -110,9 +112,17 @@ pub fn new(
 /// Add an incoming message handler
 pub fn with_handle_in(
   channel: Channel(assigns),
-  handler: fn(String, Json, Socket(assigns)) -> HandleResult(assigns),
+  handler: fn(String, Dynamic, Socket(assigns)) -> HandleResult(assigns),
 ) -> Channel(assigns) {
   Channel(..channel, handle_in: handler)
+}
+
+/// Decode an inbound channel payload into an application type.
+pub fn decode_payload(
+  payload: Dynamic,
+  decoder: decode.Decoder(a),
+) -> Result(a, List(decode.DecodeError)) {
+  decode.run(payload, decoder)
 }
 
 /// Add a binary message handler

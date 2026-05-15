@@ -113,7 +113,7 @@ When a client exceeds a configured rate limit, the offending message is **droppe
 
 ```gleam
 let config =
-  beryl.default_config()
+  beryl.config(wire.phoenix_codec())
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   |> beryl.with_join_rate(per_second: 5, burst: 10)
   |> beryl.with_channel_rate(per_second: 50, burst: 100)

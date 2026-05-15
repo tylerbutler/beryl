@@ -4,10 +4,10 @@
 //// and the beryl coordinator using Mist request and response types directly.
 
 import beryl/coordinator.{type Message as CoordinatorMessage}
+import beryl/wire/codec.{type Codec}
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/crypto
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -15,14 +15,6 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import mist.{type Connection, type ResponseData, type WebsocketConnection}
-
-/// Get current process PID as Dynamic (for handler_pid in SocketConnected)
-@external(erlang, "beryl_ffi", "identity")
-fn unsafe_coerce(value: a) -> Dynamic
-
-fn get_self() -> Dynamic {
-  unsafe_coerce(process.self())
-}
 
 /// Configuration for the Mist WebSocket transport
 pub type TransportConfig {
@@ -55,7 +47,13 @@ pub fn with_on_connect(
 
 /// State maintained per WebSocket connection
 type ConnectionState {
-  ConnectionState(socket_id: String, coordinator: Subject(CoordinatorMessage))
+  ConnectionState(
+    socket_id: String,
+    coordinator: Subject(CoordinatorMessage),
+    /// Codec cached at upgrade time so inbound frames are decoded inline
+    /// on the per-connection process instead of on the coordinator actor.
+    codec: Codec,
+  )
 }
 
 type SendRequest {
@@ -154,18 +152,29 @@ fn on_init(
   }
 
   // Register with coordinator
-  let handler_pid = get_self()
   process.send(
     coordinator,
-    coordinator.SocketConnected(socket_id, send_fn, send_binary_fn, handler_pid),
+    coordinator.SocketConnected(socket_id, send_fn, send_binary_fn),
   )
 
-  let state = ConnectionState(socket_id: socket_id, coordinator: coordinator)
+  // Fetch the codec once so inbound frames can be decoded inline
+  let codec = coordinator.get_codec(coordinator)
+
+  let state =
+    ConnectionState(
+      socket_id: socket_id,
+      coordinator: coordinator,
+      codec: codec,
+    )
 
   #(state, Some(selector))
 }
 
-/// Handle incoming WebSocket messages
+/// Handle incoming WebSocket messages.
+///
+/// Text frames are decoded by the coordinator's codec. Binary frames are also
+/// offered to the codec when it has a binary decoder; otherwise they are routed
+/// to raw channel binary handlers.
 fn on_message(
   state: ConnectionState,
   message: mist.WebsocketMessage(SendRequest),
@@ -173,11 +182,34 @@ fn on_message(
 ) -> mist.Next(ConnectionState, SendRequest) {
   case message {
     mist.Text(text) -> {
-      coordinator.route_message(state.coordinator, state.socket_id, text)
+      // Decode inline so the coordinator actor's mailbox doesn't serialize
+      // JSON parsing across every connection. Fall back to the actor-side
+      // decoder on error so the coordinator's logging path stays the single
+      // source of truth for malformed-frame diagnostics.
+      case state.codec.decode_text(text) {
+        Ok(inbound) ->
+          coordinator.route_inbound(state.coordinator, state.socket_id, inbound)
+        Error(_) ->
+          coordinator.route_message(state.coordinator, state.socket_id, text)
+      }
       mist.continue(state)
     }
     mist.Binary(data) -> {
-      coordinator.route_binary(state.coordinator, state.socket_id, data)
+      case state.codec.decode_binary {
+        Some(decode) ->
+          case decode(data) {
+            Ok(inbound) ->
+              coordinator.route_inbound(
+                state.coordinator,
+                state.socket_id,
+                inbound,
+              )
+            Error(_) ->
+              coordinator.route_binary(state.coordinator, state.socket_id, data)
+          }
+        None ->
+          coordinator.route_binary(state.coordinator, state.socket_id, data)
+      }
       mist.continue(state)
     }
     mist.Closed | mist.Shutdown -> mist.stop()

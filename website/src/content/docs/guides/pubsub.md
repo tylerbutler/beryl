@@ -106,9 +106,10 @@ The channel system uses PubSub internally for distributed broadcasts when config
 
 ```gleam
 import beryl
+import beryl/wire
 
 let assert Ok(ps) = pubsub.start(pubsub.default_config())
-let config = beryl.default_config() |> beryl.with_pubsub(ps)
+let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
 let assert Ok(channels) = beryl.start(config)
 
 // beryl.broadcast() now sends to all nodes automatically

@@ -228,7 +228,7 @@ fn contract_channel(
           socket.id(client_socket),
           "room:lobby",
           "broadcasted",
-          payload,
+          wire.dynamic_to_json(payload),
         )
         channel.NoReply(client_socket)
       }
