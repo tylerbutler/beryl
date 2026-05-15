@@ -3,6 +3,7 @@
 //// This module provides the bridge between Mist's native WebSocket handling
 //// and the beryl coordinator using Mist request and response types directly.
 
+import beryl.{type Channels}
 import beryl/coordinator.{type Message as CoordinatorMessage}
 import beryl/wire/codec.{type Codec}
 import gleam/bit_array
@@ -50,8 +51,6 @@ type ConnectionState {
   ConnectionState(
     socket_id: String,
     coordinator: Subject(CoordinatorMessage),
-    /// Codec cached at upgrade time so inbound frames are decoded inline
-    /// on the per-connection process instead of on the coordinator actor.
     codec: Codec,
   )
 }
@@ -66,7 +65,7 @@ type SendRequest {
 /// Usage in your Mist handler:
 /// ```gleam
 /// fn handle_request(req: Request(Connection), channels: Channels) -> Response(ResponseData) {
-///   use <- mist_transport.upgrade(req, channels.coordinator, mist_transport.default_config("/socket"))
+///   use <- mist_transport.upgrade(req, channels, mist_transport.default_config("/socket"))
 ///   // Fall through to regular HTTP routing
 ///   case request.path_segments(req) {
 ///     [] -> index_page()
@@ -76,7 +75,7 @@ type SendRequest {
 /// ```
 pub fn upgrade(
   request: Request(Connection),
-  coordinator: Subject(CoordinatorMessage),
+  channels: Channels,
   config: TransportConfig,
   next: fn() -> Response(ResponseData),
 ) -> Response(ResponseData) {
@@ -90,12 +89,12 @@ pub fn upgrade(
       case config.on_connect {
         Some(callback) ->
           case callback(request) {
-            Ok(Nil) -> do_upgrade(request, coordinator)
+            Ok(Nil) -> do_upgrade(request, channels)
             Error(Nil) ->
               response.new(403)
               |> response.set_body(mist.Bytes(bytes_tree.new()))
           }
-        None -> do_upgrade(request, coordinator)
+        None -> do_upgrade(request, channels)
       }
     }
   }
@@ -108,22 +107,24 @@ pub fn upgrade(
 /// with a full config or call your auth check before this function.
 pub fn upgrade_connection(
   request: Request(Connection),
-  coordinator: Subject(CoordinatorMessage),
+  channels: Channels,
 ) -> Response(ResponseData) {
-  do_upgrade(request, coordinator)
+  do_upgrade(request, channels)
 }
 
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
-  coordinator: Subject(CoordinatorMessage),
+  channels: Channels,
 ) -> Response(ResponseData) {
   mist.websocket(
     request: request,
     handler: fn(state, message, connection) {
       on_message(state, message, connection)
     },
-    on_init: fn(connection) { on_init(connection, coordinator) },
+    on_init: fn(connection) {
+      on_init(connection, channels.coordinator, channels.config.codec)
+    },
     on_close: on_close,
   )
 }
@@ -132,6 +133,7 @@ fn do_upgrade(
 fn on_init(
   _connection: WebsocketConnection,
   coordinator: Subject(CoordinatorMessage),
+  codec: Codec,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Generate unique socket ID
   let socket_id = generate_socket_id()
@@ -157,9 +159,6 @@ fn on_init(
     coordinator.SocketConnected(socket_id, send_fn, send_binary_fn),
   )
 
-  // Fetch the codec once so inbound frames can be decoded inline
-  let codec = coordinator.get_codec(coordinator)
-
   let state =
     ConnectionState(
       socket_id: socket_id,
@@ -172,9 +171,9 @@ fn on_init(
 
 /// Handle incoming WebSocket messages.
 ///
-/// Text frames are decoded by the coordinator's codec. Binary frames are also
-/// offered to the codec when it has a binary decoder; otherwise they are routed
-/// to raw channel binary handlers.
+/// Frames are decoded on the per-connection process, then routed to the
+/// coordinator for dispatch. Malformed frames fall back to the coordinator so
+/// diagnostics stay centralized.
 fn on_message(
   state: ConnectionState,
   message: mist.WebsocketMessage(SendRequest),
@@ -182,13 +181,9 @@ fn on_message(
 ) -> mist.Next(ConnectionState, SendRequest) {
   case message {
     mist.Text(text) -> {
-      // Decode inline so the coordinator actor's mailbox doesn't serialize
-      // JSON parsing across every connection. Fall back to the actor-side
-      // decoder on error so the coordinator's logging path stays the single
-      // source of truth for malformed-frame diagnostics.
       case state.codec.decode_text(text) {
         Ok(inbound) ->
-          coordinator.route_inbound(state.coordinator, state.socket_id, inbound)
+          coordinator.route_decoded(state.coordinator, state.socket_id, inbound)
         Error(_) ->
           coordinator.route_message(state.coordinator, state.socket_id, text)
       }
@@ -199,7 +194,7 @@ fn on_message(
         Some(decode) ->
           case decode(data) {
             Ok(inbound) ->
-              coordinator.route_inbound(
+              coordinator.route_decoded(
                 state.coordinator,
                 state.socket_id,
                 inbound,

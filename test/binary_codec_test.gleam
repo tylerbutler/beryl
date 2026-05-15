@@ -222,6 +222,57 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   process.receive(sent_text, 50) |> should.be_error
 }
 
+pub fn binary_codec_event_consumes_one_message_rate_token_test() {
+  let sent_binary = process.new_subject()
+  let config =
+    beryl.config(binary_test_codec())
+    |> beryl.with_message_rate(per_second: 100, burst: 2)
+  let assert Ok(channels) = beryl.start(config)
+
+  process.send(
+    channels.coordinator,
+    coordinator.SocketConnected("socket-1", fn(_) { Ok(Nil) }, fn(data) {
+      process.send(sent_binary, data)
+      Ok(Nil)
+    }),
+  )
+
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: None, socket: socket)
+    })
+    |> channel.with_handle_in(fn(event, _payload, socket) {
+      channel.Reply(event, json.object([#("ok", json.bool(True))]), socket)
+    })
+
+  beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
+
+  coordinator.route_binary(
+    channels.coordinator,
+    "socket-1",
+    bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
+  )
+  let assert Ok(_join_reply_bits) = process.receive(sent_binary, 500)
+
+  coordinator.route_binary(
+    channels.coordinator,
+    "socket-1",
+    bit_array.from_string("E|event-1|room:lobby|ping|{}"),
+  )
+  let assert Ok(first_reply_bits) = process.receive(sent_binary, 500)
+  bit_array.to_string(first_reply_bits)
+  |> should.equal(Ok("R|event-1|room:lobby|ok|{\"ok\":true}"))
+
+  coordinator.route_binary(
+    channels.coordinator,
+    "socket-1",
+    bit_array.from_string("E|event-2|room:lobby|ping|{}"),
+  )
+  let assert Ok(second_reply_bits) = process.receive(sent_binary, 500)
+  bit_array.to_string(second_reply_bits)
+  |> should.equal(Ok("R|event-2|room:lobby|ok|{\"ok\":true}"))
+}
+
 pub fn binary_codec_broadcast_uses_binary_send_test() {
   let sent_text = process.new_subject()
   let sent_binary = process.new_subject()

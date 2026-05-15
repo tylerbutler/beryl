@@ -1,0 +1,6 @@
+kind: Removed
+body: |-
+    Removed public coordinator APIs that bypassed codec dispatch.
+
+    `RouteInbound`, `route_inbound`, `GetCodec`, and `get_codec` have been removed so custom transports can route raw frames through `coordinator.route_message` or `coordinator.route_binary` without fetching the codec from the coordinator. The Phoenix-specific `wire.is_phoenix_system_event` and deprecated `wire.is_system_event` helpers have also been removed. `beryl/transport/mist.upgrade` and `upgrade_connection` now take the `beryl.Channels` handle so Mist can decode inbound frames on each connection process without exposing codec lookup APIs.
+time: 2026-05-15T15:25:22.961000-07:00

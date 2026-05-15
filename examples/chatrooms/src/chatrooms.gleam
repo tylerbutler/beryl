@@ -54,7 +54,7 @@ pub fn main() {
 
   let assert Ok(_) =
     fn(req) {
-      mist_transport.upgrade(req, channels.coordinator, ws_config, fn() {
+      mist_transport.upgrade(req, channels, ws_config, fn() {
         router.handle_request(req, ctx)
       })
     }

@@ -245,7 +245,7 @@ fn start_mist_server(channels: beryl.Channels) -> #(Int, process.Pid) {
   let handler = fn(request) {
     mist_transport.upgrade(
       request,
-      channels.coordinator,
+      channels,
       mist_transport.default_config("/socket/websocket"),
       fn() {
         response.new(404)

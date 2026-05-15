@@ -181,16 +181,10 @@ pub type Message {
   // Channel operations
   HandleBinary(socket_id: String, data: BitArray)
   HandleInfo(socket_id: String, topic: String, message: Dynamic)
-  /// Raw inbound text from the transport — decoded inside the actor using
-  /// the configured codec. Prefer `RouteInbound` (decoded in the transport)
-  /// when the codec is already available there.
+  /// Raw inbound text from the transport, decoded inside the actor using
+  /// the configured codec.
   RouteText(socket_id: String, raw_text: String)
-  /// Pre-decoded inbound message from the transport — bypasses actor-side
-  /// decoding so JSON parsing doesn't serialize on the coordinator's mailbox.
-  RouteInbound(socket_id: String, msg: codec.Inbound)
-  /// Synchronously fetch the configured codec. Transports call this once
-  /// at upgrade time to cache the codec for in-transport decoding.
-  GetCodec(reply: Subject(Codec))
+  RouteDecoded(socket_id: String, msg: codec.Inbound)
   // Broadcasting
   Broadcast(
     topic: String,
@@ -361,12 +355,7 @@ fn handle_message(
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
 
-    RouteInbound(socket_id, msg) -> dispatch_inbound(state, socket_id, msg)
-
-    GetCodec(reply) -> {
-      process.send(reply, state.config.codec)
-      actor.continue(state)
-    }
+    RouteDecoded(socket_id, msg) -> dispatch_inbound(state, socket_id, msg)
 
     Broadcast(topic_name, event, payload, except) ->
       handle_broadcast(state, topic_name, event, payload, except)
@@ -815,7 +804,18 @@ fn handle_binary_in(
   socket_id: String,
   data: BitArray,
 ) -> actor.Next(State, Message) {
-  // Check per-socket message rate limit (binary shares with text)
+  case state.config.codec.decode_binary {
+    Some(decode_binary) ->
+      handle_route_binary_frame(state, socket_id, data, decode_binary)
+    None -> handle_raw_binary_with_rate_limit(state, socket_id, data)
+  }
+}
+
+fn handle_raw_binary_with_rate_limit(
+  state: State,
+  socket_id: String,
+  data: BitArray,
+) -> actor.Next(State, Message) {
   case
     rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
   {
@@ -827,13 +827,7 @@ fn handle_binary_in(
       ])
       actor.continue(state)
     }
-    Ok(_) -> {
-      case state.config.codec.decode_binary {
-        Some(decode_binary) ->
-          handle_route_binary_frame(state, socket_id, data, decode_binary)
-        None -> handle_raw_binary_in_inner(state, socket_id, data)
-      }
-    }
+    Ok(_) -> handle_raw_binary_in_inner(state, socket_id, data)
   }
 }
 
@@ -1146,9 +1140,6 @@ fn update_assigns(
 
 /// Route raw inbound text from a transport to the coordinator.
 ///
-/// Decoding runs inside the coordinator actor. Prefer `route_inbound` when
-/// the transport can decode locally — that keeps JSON parsing off the
-/// coordinator's mailbox so it doesn't serialize across all sockets.
 /// Frames that fail to decode are logged and dropped.
 pub fn route_message(
   coord: Subject(Message),
@@ -1158,23 +1149,14 @@ pub fn route_message(
   process.send(coord, RouteText(socket_id, raw_text))
 }
 
-/// Route a pre-decoded inbound message from a transport. Use this when
-/// the transport already has the configured codec (via `get_codec`) and
-/// decodes inline, so the JSON parsing cost lands on the per-connection
-/// process instead of the shared coordinator actor.
-pub fn route_inbound(
+/// Route a transport-decoded inbound message to the coordinator.
+@internal
+pub fn route_decoded(
   coord: Subject(Message),
   socket_id: String,
   msg: codec.Inbound,
 ) -> Nil {
-  process.send(coord, RouteInbound(socket_id, msg))
-}
-
-/// Synchronously fetch the configured codec from the coordinator. Intended
-/// to be called once per WebSocket connection at upgrade time so the
-/// transport can cache and use it for inline decoding.
-pub fn get_codec(coord: Subject(Message)) -> Codec {
-  process.call(coord, 5000, GetCodec)
+  process.send(coord, RouteDecoded(socket_id, msg))
 }
 
 fn handle_route_text(
