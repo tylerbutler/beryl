@@ -1,0 +1,6 @@
+kind: Changed
+body: |-
+    Presence state is backed by lattice_presence.
+
+    Beryl now delegates its presence CRDT and state JSON serialization to the `lattice_presence` package while preserving the existing `beryl/presence` actor API and compatibility modules for state-focused callers.
+time: 2026-05-17T14:06:40.000000000-07:00

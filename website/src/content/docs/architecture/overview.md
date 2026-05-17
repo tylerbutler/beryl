@@ -67,7 +67,7 @@ Each channel is parameterized by an `assigns` type that provides compile-time sa
 
 Two-layer design:
 
-- **`beryl/presence/state`** — Pure CRDT: add-wins observed-remove set with causal context (vector clocks + cloud sets). Supports `join`, `leave`, `merge`, `compact`, `replica_up/down`, and query operations. No side effects.
+- **`beryl/presence/state`** — Compatibility facade over `lattice_presence`: add-wins observed-remove set with causal context (vector clocks + cloud sets). Supports `join`, `leave`, `merge`, `compact`, `replica_up/down`, and query operations. No side effects.
 
 - **`beryl/presence`** — OTP actor wrapping the CRDT. Handles track/untrack calls, periodically broadcasts state via PubSub for cross-node replication, and fires `on_diff` callbacks when merges produce changes.
 

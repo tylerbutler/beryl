@@ -10,8 +10,8 @@
 ////   (`beryl`, `beryl/channel`, `beryl/coordinator`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
-//// - **Presence** — Distributed presence tracking backed by a causal-context
-////   CRDT (add-wins observed-remove set) (`beryl/presence`,
+//// - **Presence** — Distributed presence tracking backed by the
+////   `lattice_presence` causal-context CRDT (add-wins observed-remove set) (`beryl/presence`,
 ////   `beryl/presence/state`)
 //// - **Groups** — Named collections of topics for multi-topic broadcasting
 ////   (`beryl/group`)

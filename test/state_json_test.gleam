@@ -18,14 +18,10 @@ pub fn roundtrip_empty_state_test() {
   let json_str = state_json.encode_to_string(s)
   let assert Ok(decoded) = state_json.decode_from_string(json_str)
 
-  decoded.replica |> should.equal("node1")
-  dict.size(decoded.context) |> should.equal(0)
-  dict.size(decoded.clouds) |> should.equal(0)
-  dict.size(decoded.values) |> should.equal(0)
-  case dict.get(decoded.replicas, "node1") {
-    Ok(state.Up) -> Nil
-    _ -> should.fail()
-  }
+  state.replica(decoded) |> should.equal("node1")
+  dict.size(state.clocks(decoded)) |> should.equal(0)
+  state.cloud_count(decoded) |> should.equal(0)
+  state.entry_count(decoded) |> should.equal(0)
 }
 
 pub fn roundtrip_state_with_entries_test() {
@@ -50,10 +46,10 @@ pub fn roundtrip_state_with_entries_test() {
   let json_str = state_json.encode_to_string(s)
   let assert Ok(decoded) = state_json.decode_from_string(json_str)
 
-  decoded.replica |> should.equal("node1")
-  dict.size(decoded.values) |> should.equal(2)
+  state.replica(decoded) |> should.equal("node1")
+  state.entry_count(decoded) |> should.equal(2)
 
-  case dict.get(decoded.context, "node1") {
+  case dict.get(state.clocks(decoded), "node1") {
     Ok(2) -> Nil
     _ -> should.fail()
   }
@@ -71,14 +67,14 @@ pub fn roundtrip_state_with_multiple_replicas_test() {
   let json_str = state_json.encode_to_string(merged)
   let assert Ok(decoded) = state_json.decode_from_string(json_str)
 
-  decoded.replica |> should.equal("node_a")
-  dict.size(decoded.values) |> should.equal(2)
+  state.replica(decoded) |> should.equal("node_a")
+  state.entry_count(decoded) |> should.equal(2)
 
-  case dict.get(decoded.context, "node_a") {
+  case dict.get(state.clocks(decoded), "node_a") {
     Ok(1) -> Nil
     _ -> should.fail()
   }
-  case dict.get(decoded.context, "node_b") {
+  case dict.get(state.clocks(decoded), "node_b") {
     Ok(1) -> Nil
     _ -> should.fail()
   }
@@ -95,10 +91,9 @@ pub fn roundtrip_state_with_replica_down_test() {
   let json_str = state_json.encode_to_string(a)
   let assert Ok(decoded) = state_json.decode_from_string(json_str)
 
-  case dict.get(decoded.replicas, "node_b") {
-    Ok(state.Down) -> Nil
-    _ -> should.fail()
-  }
+  // Replica liveness is local-only transport state in lattice_presence; the
+  // CRDT entries still roundtrip and are visible after decoding.
+  state.get_by_topic(decoded, "lobby") |> list.length |> should.equal(1)
 }
 
 pub fn roundtrip_preserves_merge_semantics_test() {
@@ -132,8 +127,8 @@ pub fn roundtrip_state_with_clouds_test() {
   let assert Ok(decoded) = state_json.decode_from_string(json_str)
 
   // Sequential joins produce fully-compacted context, no clouds
-  dict.to_list(decoded.clouds)
-  |> should.equal(dict.to_list(a.clouds))
+  state.cloud_count(decoded)
+  |> should.equal(state.cloud_count(a))
 }
 
 pub fn roundtrip_with_json_meta_test() {
@@ -152,12 +147,12 @@ pub fn roundtrip_with_json_meta_test() {
   let assert Ok(decoded) = state_json.decode_from_string(json_str)
 
   // Verify the decoded state still has 1 entry
-  dict.size(decoded.values) |> should.equal(1)
+  state.entry_count(decoded) |> should.equal(1)
 
   // Verify the re-encoded state produces valid JSON by doing another roundtrip
   let re_encoded = state_json.encode_to_string(decoded)
   let assert Ok(decoded2) = state_json.decode_from_string(re_encoded)
-  dict.size(decoded2.values) |> should.equal(1)
+  state.entry_count(decoded2) |> should.equal(1)
 }
 
 pub fn roundtrip_preserves_metadata_values_test() {
@@ -185,6 +180,95 @@ pub fn roundtrip_preserves_metadata_values_test() {
 
   // Stability check: second roundtrip produces identical JSON
   re_encoded2 |> should.equal(re_encoded)
+}
+
+pub fn decode_legacy_stringified_meta_as_json_test() {
+  let legacy_json =
+    json.object([
+      #("replica", json.string("node1")),
+      #("context", json.object([#("node1", json.int(1))])),
+      #("clouds", json.object([])),
+      #(
+        "values",
+        json.preprocessed_array([
+          json.object([
+            #(
+              "tag",
+              json.object([
+                #("replica", json.string("node1")),
+                #("clock", json.int(1)),
+              ]),
+            ),
+            #(
+              "entry",
+              json.object([
+                #("topic", json.string("room:lobby")),
+                #("key", json.string("user:alice")),
+                #("pid", json.string("pid1")),
+                #(
+                  "meta",
+                  json.string("{\"status\":\"online\",\"active\":true}"),
+                ),
+              ]),
+            ),
+          ]),
+        ]),
+      ),
+      #("replicas", json.object([#("node1", json.string("up"))])),
+    ])
+
+  let assert Ok(decoded) =
+    state_json.decode_from_string(json.to_string(legacy_json))
+  let assert [#("pid1", "user:alice", meta)] =
+    state.get_by_topic(decoded, "room:lobby")
+
+  meta
+  |> json.to_string
+  |> should.equal("{\"active\":true,\"status\":\"online\"}")
+}
+
+pub fn decode_legacy_down_replica_returns_error_test() {
+  let legacy_json =
+    json.object([
+      #("replica", json.string("node1")),
+      #("context", json.object([#("node2", json.int(1))])),
+      #("clouds", json.object([])),
+      #(
+        "values",
+        json.preprocessed_array([
+          json.object([
+            #(
+              "tag",
+              json.object([
+                #("replica", json.string("node2")),
+                #("clock", json.int(1)),
+              ]),
+            ),
+            #(
+              "entry",
+              json.object([
+                #("topic", json.string("room:lobby")),
+                #("key", json.string("user:bob")),
+                #("pid", json.string("pid2")),
+                #("meta", json.string("null")),
+              ]),
+            ),
+          ]),
+        ]),
+      ),
+      #(
+        "replicas",
+        json.object([
+          #("node1", json.string("up")),
+          #("node2", json.string("down")),
+        ]),
+      ),
+    ])
+
+  legacy_json
+  |> json.to_string
+  |> state_json.decode_from_string
+  |> should.be_error
 }
 
 pub fn decode_invalid_json_returns_error_test() {

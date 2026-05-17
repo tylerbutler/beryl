@@ -26,7 +26,7 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
 | `beryl/pubsub` | Distributed PubSub backed by Erlang `pg` | Multi-node fan-out, cluster broadcasts |
 | `beryl/presence` | OTP actor wrapping the presence CRDT | Tracking who is online |
-| `beryl/presence/state` | Pure add-wins observed-remove CRDT | Testing, custom merge logic |
+| `beryl/presence/state` | Compatibility facade over the pure `lattice_presence` CRDT | Testing, custom merge logic |
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
 | `beryl/wire` | Phoenix-compatible codec and JSON helpers | Phoenix clients, custom transports, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
