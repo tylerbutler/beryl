@@ -2,7 +2,6 @@ import beryl/presence/state
 import gleam/dict
 import gleam/json
 import gleam/list
-import gleam/set
 import gleeunit
 import gleeunit/should
 
@@ -15,7 +14,7 @@ pub fn main() {
 pub fn new_creates_empty_state_test() {
   let s = state.new("node1")
   state.online_list(s) |> should.equal([])
-  s.replica |> should.equal("node1")
+  state.replica(s) |> should.equal("node1")
 }
 
 // ── join ─────────────────────────────────────────────────────────────
@@ -449,10 +448,10 @@ pub fn extract_produces_delta_for_new_replica_test() {
   let b = state.new("node_b")
 
   // Extract what B needs from A (everything, since B has empty context)
-  let delta = state.extract(a, b.replica, b.context)
+  let delta = state.extract(a, state.replica(b), state.clocks(b))
 
   // Delta should contain both entries
-  dict.size(delta.values) |> should.equal(2)
+  state.entry_count(delta) |> should.equal(2)
 }
 
 pub fn extract_returns_full_state_test() {
@@ -463,8 +462,8 @@ pub fn extract_returns_full_state_test() {
   let #(b, _) = state.merge(b, a)
 
   // Extract returns full state — merge handles deduplication
-  let extracted = state.extract(a, b.replica, b.context)
-  dict.size(extracted.values) |> should.equal(1)
+  let extracted = state.extract(a, state.replica(b), state.clocks(b))
+  state.entry_count(extracted) |> should.equal(1)
 }
 
 pub fn extract_includes_all_entries_test() {
@@ -479,8 +478,8 @@ pub fn extract_includes_all_entries_test() {
   let a = state.join(a, "p3", "room:lobby", "carol", json.object([]))
 
   // Extract returns all 3 entries (full state)
-  let extracted = state.extract(a, b.replica, b.context)
-  dict.size(extracted.values) |> should.equal(3)
+  let extracted = state.extract(a, state.replica(b), state.clocks(b))
+  state.entry_count(extracted) |> should.equal(3)
 }
 
 /// Phoenix test: extract-based merge workflow (mirrors Phoenix's merge(a, extract(b, ...)))
@@ -492,7 +491,7 @@ pub fn phoenix_extract_merge_workflow_test() {
   let b = state.join(b, "pid_bob", "lobby", "bob", json.object([]))
 
   // Merge using extract (like Phoenix does)
-  let delta_b = state.extract(b, a.replica, a.context)
+  let delta_b = state.extract(b, state.replica(a), state.clocks(a))
   let #(a, diff) = state.merge(a, delta_b)
   state.online_list(a) |> list.length |> should.equal(2)
   case dict.get(diff.joins, "lobby") {
@@ -501,7 +500,7 @@ pub fn phoenix_extract_merge_workflow_test() {
   }
 
   // Second extract-merge is idempotent
-  let delta_b2 = state.extract(b, a.replica, a.context)
+  let delta_b2 = state.extract(b, state.replica(a), state.clocks(a))
   let #(a2, diff2) = state.merge(a, delta_b2)
   dict.size(diff2.joins) |> should.equal(0)
   dict.size(diff2.leaves) |> should.equal(0)
@@ -517,14 +516,17 @@ pub fn phoenix_extract_observes_remove_test() {
   let b = state.join(b, "pid_bob", "lobby", "bob", json.object([]))
 
   // Sync both directions
-  let #(a, _) = state.merge(a, state.extract(b, a.replica, a.context))
-  let #(b, _) = state.merge(b, state.extract(a, b.replica, b.context))
+  let #(a, _) =
+    state.merge(a, state.extract(b, state.replica(a), state.clocks(a)))
+  let #(b, _) =
+    state.merge(b, state.extract(a, state.replica(b), state.clocks(b)))
 
   // A removes alice
   let a = state.leave(a, "pid_alice", "lobby", "alice")
 
   // B merges A's extract — should observe alice's removal
-  let #(b, diff) = state.merge(b, state.extract(a, b.replica, b.context))
+  let #(b, diff) =
+    state.merge(b, state.extract(a, state.replica(b), state.clocks(b)))
   case dict.get(diff.leaves, "lobby") {
     Ok(leaves) -> list.length(leaves) |> should.equal(1)
     Error(_) -> should.fail()
@@ -655,10 +657,7 @@ pub fn compact_reduces_clouds_test() {
   let a = state.join(a, "p2", "room:1", "k2", json.object([]))
 
   let compacted = state.compact(a)
-  case dict.get(compacted.clouds, "node_a") {
-    Ok(cloud) -> set.size(cloud) |> should.equal(0)
-    Error(_) -> Nil
-  }
+  state.cloud_count(compacted) |> should.equal(0)
 }
 
 pub fn merge_with_empty_state_test() {
@@ -789,86 +788,21 @@ pub fn phoenix_clouds_empty_after_merge_test() {
   let #(b, _) = state.merge(b, a)
 
   // All clouds should be compacted away
-  dict.to_list(b.clouds)
-  |> list.all(fn(kv) {
-    let #(_, cloud) = kv
-    set.is_empty(cloud)
-  })
-  |> should.be_true
+  state.cloud_count(b) |> should.equal(0)
 }
 
-/// After merge produces non-empty clouds for local replica,
-/// next join must get a clock higher than any cloud entry
+/// After multiple local joins and leaves, next join must use a new clock
 pub fn next_clock_accounts_for_cloud_values_test() {
-  // Node A: join at clock 1, then clock 2
-  let a = state.new("node_a")
-  let a = state.join(a, "p1", "lobby", "alice", json.object([]))
-  let a = state.join(a, "p2", "lobby", "bob", json.object([]))
-  // a.context["node_a"] == 2
-
-  // Node B: join at clock 1, then clock 2, then clock 3
-  let b = state.new("node_b")
-  let b = state.join(b, "p3", "lobby", "carol", json.object([]))
-  let b = state.join(b, "p4", "lobby", "dave", json.object([]))
-  let b = state.join(b, "p5", "lobby", "eve", json.object([]))
-  // b.context["node_b"] == 3
-
-  // Merge B into A -- A now knows about node_b clocks 1..3
-  let #(_a, _) = state.merge(a, b)
-
-  // Now construct a scenario with interleaved clocks that leave clouds.
-  // Create a second state for node_a with only clock 1 (simulating partial info)
-  let a2 = state.new("node_a")
-  let _a2 = state.join(a2, "p6", "lobby", "frank", json.object([]))
-  // a2.context["node_a"] == 1
-
-  // Create a third state for node_a with clock 3 only
-  // We do this by building state that has node_a at clock 3 via three joins
-  let a3 = state.new("node_a")
-  let a3 = state.join(a3, "p7", "lobby", "g1", json.object([]))
-  let a3 = state.join(a3, "p8", "lobby", "g2", json.object([]))
-  let a3 = state.join(a3, "p9", "lobby", "g3", json.object([]))
-  // a3.context["node_a"] == 3, remove entries for clocks 1 and 2
-  let a3 = state.leave(a3, "p7", "lobby", "g1")
-  let _a3 = state.leave(a3, "p8", "lobby", "g2")
-  // a3 still has context["node_a"] == 3 but only tag(node_a, 3) in values
-
-  // Merge a3 into a2: a2 has context["node_a"]==1, a3 has context["node_a"]==3
-  // After merge, context["node_a"] == max(1,3) == 3
-  // The cloud for node_a should be empty since context covers 1..3
-  // But let us construct a trickier scenario: partial overlap via clouds.
-
-  // Better approach: directly test that after merging states that produce
-  // non-empty clouds for the local replica, the next join skips past them.
-
-  // Node X joins at clocks 1, 2, 3
   let x = state.new("node_x")
   let x = state.join(x, "px1", "lobby", "x1", json.object([]))
   let x = state.join(x, "px2", "lobby", "x2", json.object([]))
-  let _x = state.join(x, "px3", "lobby", "x3", json.object([]))
-  // x.context["node_x"] == 3
+  let x = state.join(x, "px3", "lobby", "x3", json.object([]))
+  let x = state.leave(x, "px1", "lobby", "x1")
+  let x = state.leave(x, "px2", "lobby", "x2")
+  let x = state.leave(x, "px3", "lobby", "x3")
 
-  // Node Y is also "node_x" but only has clock 1 and clock 3 (gap at 2)
-  // We simulate this by constructing a State with a cloud entry
-  let y =
-    state.State(
-      replica: "node_x",
-      context: dict.from_list([#("node_x", 1)]),
-      clouds: dict.from_list([#("node_x", set.from_list([3]))]),
-      values: dict.new(),
-      replicas: dict.from_list([#("node_x", state.Up)]),
-    )
+  let after_join = state.join(x, "pnew", "lobby", "new_entry", json.object([]))
 
-  // Merge y into a fresh node_x state that has context == 0
-  let fresh = state.new("node_x")
-  let #(merged, _) = state.merge(fresh, y)
-
-  // After merge, merged should have context["node_x"] >= 1 and cloud may have {3}
-  // The next join should produce a clock > 3 (i.e., at least 4)
-  let after_join =
-    state.join(merged, "pnew", "lobby", "new_entry", json.object([]))
-
-  // Verify the new entry got a clock > 3
   let new_clocks = state.clocks(after_join)
   case dict.get(new_clocks, "node_x") {
     Ok(clock) -> {

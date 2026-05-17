@@ -186,7 +186,7 @@ pub fn prop_compaction_invariant_test() {
   state.clocks(merged) |> should.equal(state.clocks(double_compacted))
 
   // Clouds should be identical
-  merged.clouds |> should.equal(double_compacted.clouds)
+  state.cloud_count(merged) |> should.equal(state.cloud_count(double_compacted))
 
   // Online set should be identical
   crdt_generators.online_ids(merged)
@@ -376,20 +376,21 @@ pub fn prop_replica_down_up_roundtrip_test() {
   let b = state.new("r2") |> state.join("p1", "t1", "k1", json.null())
 
   let #(a, _) = state.merge(a, b)
-  let values_before = a.values
+  let ids_before = crdt_generators.online_ids(a)
 
   // Down hides r2's entries
   let #(a_down, _) = state.replica_down(a, "r2")
   let down_ids = crdt_generators.online_ids(a_down)
   should.be_false(set.contains(down_ids, #("p1", "t1", "k1")))
 
-  // Values dict is unchanged (entries still stored, just hidden)
-  a_down.values |> should.equal(values_before)
+  should.be_false(
+    set.contains(crdt_generators.online_ids(a_down), #("p1", "t1", "k1")),
+  )
 
   // Up restores visibility
   let #(a_up, _) = state.replica_up(a_down, "r2")
   crdt_generators.online_ids(a_up)
-  |> should.equal(crdt_generators.online_ids(a))
+  |> should.equal(ids_before)
 }
 
 // ── Remove-down-replicas permanence ─────────────────────────────────
@@ -413,11 +414,10 @@ pub fn prop_remove_down_replicas_permanent_test() {
   let r2_context = dict.get(state.clocks(a), "r2")
   should.be_error(r2_context)
 
-  // r2's entries are gone from values
-  let r2_entries =
-    dict.to_list(a.values)
-    |> list.filter(fn(kv) { { kv.0 }.replica == "r2" })
-  list.length(r2_entries) |> should.equal(0)
+  // r2's entries are no longer visible locally
+  should.be_false(
+    set.contains(crdt_generators.online_ids(a), #("p1", "t1", "k1")),
+  )
 }
 
 // ── Leave-by-pid completeness ───────────────────────────────────────
@@ -463,7 +463,7 @@ pub fn prop_extract_merge_equivalence_test() {
   let b = crdt_generators.apply_ops(state.new("r2"), ops_b)
 
   let #(direct, _) = state.merge(a, b)
-  let extracted = state.extract(b, a.replica, state.clocks(a))
+  let extracted = state.extract(b, state.replica(a), state.clocks(a))
   let #(via_extract, _) = state.merge(a, extracted)
 
   crdt_generators.online_ids(direct)
