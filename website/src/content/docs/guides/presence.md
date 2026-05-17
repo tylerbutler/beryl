@@ -2,7 +2,7 @@
 title: Presence
 ---
 
-beryl includes a presence system for tracking connected users and their metadata. It's built on a CRDT (conflict-free replicated data type) that automatically resolves conflicts across distributed Erlang nodes.
+beryl includes a presence system for tracking connected users and their metadata. It's backed by the `lattice_presence` CRDT (conflict-free replicated data type), which automatically resolves conflicts across distributed Erlang nodes.
 
 ## How it works
 
@@ -10,7 +10,7 @@ Presence tracking uses an **add-wins observed-remove set** (AWORSet) with causal
 
 The presence system has two layers:
 
-1. **`beryl/presence/state`** — Pure CRDT data structure (no side effects)
+1. **`beryl/presence/state`** — Compatibility facade over the pure `lattice_presence` CRDT data structure (no side effects)
 2. **`beryl/presence`** — OTP actor wrapping the CRDT with PubSub replication
 
 ## Starting presence
