@@ -383,10 +383,6 @@ pub fn prop_replica_down_up_roundtrip_test() {
   let down_ids = crdt_generators.online_ids(a_down)
   should.be_false(set.contains(down_ids, #("p1", "t1", "k1")))
 
-  should.be_false(
-    set.contains(crdt_generators.online_ids(a_down), #("p1", "t1", "k1")),
-  )
-
   // Up restores visibility
   let #(a_up, _) = state.replica_up(a_down, "r2")
   crdt_generators.online_ids(a_up)

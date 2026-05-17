@@ -438,9 +438,9 @@ pub fn phoenix_removes_via_intermediate_node_test() {
   }
 }
 
-// ── extract (delta) ──────────────────────────────────────────────────
+// ── extract (full state) ─────────────────────────────────────────────
 
-pub fn extract_produces_delta_for_new_replica_test() {
+pub fn extract_returns_full_state_for_new_replica_test() {
   let a = state.new("node_a")
   let a = state.join(a, "p1", "room:lobby", "alice", json.object([]))
   let a = state.join(a, "p2", "room:lobby", "bob", json.object([]))
@@ -448,10 +448,9 @@ pub fn extract_produces_delta_for_new_replica_test() {
   let b = state.new("node_b")
 
   // Extract what B needs from A (everything, since B has empty context)
-  let delta = state.extract(a, state.replica(b), state.clocks(b))
+  let extracted = state.extract(a, state.replica(b), state.clocks(b))
 
-  // Delta should contain both entries
-  state.entry_count(delta) |> should.equal(2)
+  state.entry_count(extracted) |> should.equal(2)
 }
 
 pub fn extract_returns_full_state_test() {
@@ -491,8 +490,8 @@ pub fn phoenix_extract_merge_workflow_test() {
   let b = state.join(b, "pid_bob", "lobby", "bob", json.object([]))
 
   // Merge using extract (like Phoenix does)
-  let delta_b = state.extract(b, state.replica(a), state.clocks(a))
-  let #(a, diff) = state.merge(a, delta_b)
+  let b_state = state.extract(b, state.replica(a), state.clocks(a))
+  let #(a, diff) = state.merge(a, b_state)
   state.online_list(a) |> list.length |> should.equal(2)
   case dict.get(diff.joins, "lobby") {
     Ok(joins) -> list.length(joins) |> should.equal(1)
@@ -500,8 +499,8 @@ pub fn phoenix_extract_merge_workflow_test() {
   }
 
   // Second extract-merge is idempotent
-  let delta_b2 = state.extract(b, state.replica(a), state.clocks(a))
-  let #(a2, diff2) = state.merge(a, delta_b2)
+  let b_state_again = state.extract(b, state.replica(a), state.clocks(a))
+  let #(a2, diff2) = state.merge(a, b_state_again)
   dict.size(diff2.joins) |> should.equal(0)
   dict.size(diff2.leaves) |> should.equal(0)
   state.online_list(a2) |> list.length |> should.equal(2)

@@ -19,7 +19,7 @@ pub fn roundtrip_empty_state_test() {
   let assert Ok(decoded) = state_json.decode_from_string(json_str)
 
   state.replica(decoded) |> should.equal("node1")
-  dict.size(state.compacted_clocks(decoded)) |> should.equal(0)
+  dict.size(state.clocks(decoded)) |> should.equal(0)
   state.cloud_count(decoded) |> should.equal(0)
   state.entry_count(decoded) |> should.equal(0)
 }
@@ -49,7 +49,7 @@ pub fn roundtrip_state_with_entries_test() {
   state.replica(decoded) |> should.equal("node1")
   state.entry_count(decoded) |> should.equal(2)
 
-  case dict.get(state.compacted_clocks(decoded), "node1") {
+  case dict.get(state.clocks(decoded), "node1") {
     Ok(2) -> Nil
     _ -> should.fail()
   }
@@ -70,11 +70,11 @@ pub fn roundtrip_state_with_multiple_replicas_test() {
   state.replica(decoded) |> should.equal("node_a")
   state.entry_count(decoded) |> should.equal(2)
 
-  case dict.get(state.compacted_clocks(decoded), "node_a") {
+  case dict.get(state.clocks(decoded), "node_a") {
     Ok(1) -> Nil
     _ -> should.fail()
   }
-  case dict.get(state.compacted_clocks(decoded), "node_b") {
+  case dict.get(state.clocks(decoded), "node_b") {
     Ok(1) -> Nil
     _ -> should.fail()
   }
@@ -180,6 +180,95 @@ pub fn roundtrip_preserves_metadata_values_test() {
 
   // Stability check: second roundtrip produces identical JSON
   re_encoded2 |> should.equal(re_encoded)
+}
+
+pub fn decode_legacy_stringified_meta_as_json_test() {
+  let legacy_json =
+    json.object([
+      #("replica", json.string("node1")),
+      #("context", json.object([#("node1", json.int(1))])),
+      #("clouds", json.object([])),
+      #(
+        "values",
+        json.preprocessed_array([
+          json.object([
+            #(
+              "tag",
+              json.object([
+                #("replica", json.string("node1")),
+                #("clock", json.int(1)),
+              ]),
+            ),
+            #(
+              "entry",
+              json.object([
+                #("topic", json.string("room:lobby")),
+                #("key", json.string("user:alice")),
+                #("pid", json.string("pid1")),
+                #(
+                  "meta",
+                  json.string("{\"status\":\"online\",\"active\":true}"),
+                ),
+              ]),
+            ),
+          ]),
+        ]),
+      ),
+      #("replicas", json.object([#("node1", json.string("up"))])),
+    ])
+
+  let assert Ok(decoded) =
+    state_json.decode_from_string(json.to_string(legacy_json))
+  let assert [#("pid1", "user:alice", meta)] =
+    state.get_by_topic(decoded, "room:lobby")
+
+  meta
+  |> json.to_string
+  |> should.equal("{\"active\":true,\"status\":\"online\"}")
+}
+
+pub fn decode_legacy_down_replica_returns_error_test() {
+  let legacy_json =
+    json.object([
+      #("replica", json.string("node1")),
+      #("context", json.object([#("node2", json.int(1))])),
+      #("clouds", json.object([])),
+      #(
+        "values",
+        json.preprocessed_array([
+          json.object([
+            #(
+              "tag",
+              json.object([
+                #("replica", json.string("node2")),
+                #("clock", json.int(1)),
+              ]),
+            ),
+            #(
+              "entry",
+              json.object([
+                #("topic", json.string("room:lobby")),
+                #("key", json.string("user:bob")),
+                #("pid", json.string("pid2")),
+                #("meta", json.string("null")),
+              ]),
+            ),
+          ]),
+        ]),
+      ),
+      #(
+        "replicas",
+        json.object([
+          #("node1", json.string("up")),
+          #("node2", json.string("down")),
+        ]),
+      ),
+    ])
+
+  legacy_json
+  |> json.to_string
+  |> state_json.decode_from_string
+  |> should.be_error
 }
 
 pub fn decode_invalid_json_returns_error_test() {
