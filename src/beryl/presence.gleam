@@ -1,6 +1,6 @@
 //// Presence - Distributed presence tracking backed by a CRDT
 ////
-//// Wraps the pure `beryl/presence/state` CRDT in an OTP actor that:
+//// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
 //// - Handles track/untrack calls
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state and merges it
@@ -22,11 +22,9 @@
 //// ```
 
 import beryl/internal
-import beryl/presence/state.{type Diff, type State, Diff}
-import beryl/presence/state_json
 import beryl/pubsub.{type PubSub}
 import birch/logger as log
-import gleam/dict
+import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode as gdecode
 import gleam/erlang/atom
@@ -38,6 +36,8 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
+import lattice_presence/presence_state as state
+import lattice_presence/state_json
 
 /// Well-known PubSub topic for presence state replication
 const sync_topic = "beryl:presence:sync"
@@ -48,6 +48,53 @@ const sync_event = "presence_sync"
 /// A running Presence instance
 pub type Presence {
   Presence(subject: Subject(Message))
+}
+
+/// The pure CRDT state used by the presence actor.
+///
+/// Applications usually do not need this type unless they manually build
+/// remote state for `merge_remote`.
+pub type State =
+  state.State
+
+/// A diff representing presence joins and leaves grouped by topic.
+///
+/// This is passed to `Config.on_diff` and accepted by
+/// `beryl.broadcast_presence_diff`.
+pub type Diff =
+  state.Diff
+
+/// Build a presence diff from topic-grouped joins and leaves.
+///
+/// Most applications receive diffs from `Config.on_diff`; this helper is for
+/// callers that need to construct a diff to pass to `beryl.broadcast_presence_diff`.
+pub fn diff(
+  joins joins: Dict(String, List(#(String, String, json.Json))),
+  leaves leaves: Dict(String, List(#(String, String, json.Json))),
+) -> Diff {
+  state.Diff(joins: joins, leaves: leaves)
+}
+
+/// Create a pure presence state value for this replica.
+///
+/// Most applications should use `start` and `track`; this helper exists for
+/// callers that manually construct state for `merge_remote`.
+pub fn new_state(replica: String) -> State {
+  state.new(replica)
+}
+
+/// Add a tracked presence to a pure state value.
+///
+/// Most applications should use `track`; this helper exists for callers that
+/// manually construct state for `merge_remote`.
+pub fn join_state(
+  crdt: State,
+  pid: String,
+  topic: String,
+  key: String,
+  meta: json.Json,
+) -> State {
+  state.join(crdt, pid, topic, key, meta)
 }
 
 /// Configuration for starting presence
@@ -269,6 +316,17 @@ pub fn get_by_key(
 ///
 /// Used for cross-node replication. The remote state will be merged
 /// into the local CRDT, producing a diff of changes.
+///
+/// ```gleam
+/// import beryl/presence
+/// import gleam/json
+///
+/// let remote =
+///   presence.new_state("node2")
+///   |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
+///
+/// presence.merge_remote(p, remote)
+/// ```
 pub fn merge_remote(presence: Presence, remote: State) -> Nil {
   process.send(presence.subject, MergeRemote(remote))
 }
@@ -334,7 +392,7 @@ fn handle_message(
     }
 
     MergeRemote(remote) -> {
-      let #(new_crdt, diff) = state.merge(actor_state.crdt, remote)
+      let #(new_crdt, diff) = state.merge_with_diff(actor_state.crdt, remote)
       let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
       maybe_invoke_on_diff(actor_state.config, diff)
       actor.continue(
@@ -356,7 +414,7 @@ fn handle_message(
                 json.object([
                   #("v", json.int(1)),
                   #("sender", json.string(actor_state.config.replica)),
-                  #("state", state_json.encode(actor_state.crdt)),
+                  #("state", state_json.to_json(actor_state.crdt)),
                 ])
 
               pubsub.broadcast_from(
@@ -401,19 +459,24 @@ fn single_join_diff(
   pid: String,
   meta: json.Json,
 ) -> Diff {
-  Diff(
+  state.Diff(
     joins: dict.from_list([#(topic, [#(key, pid, meta)])]),
     leaves: dict.new(),
   )
 }
 
-fn leave_diff(crdt: State, topic: String, key: String, pid: String) -> Diff {
+fn leave_diff(
+  crdt: state.State,
+  topic: String,
+  key: String,
+  pid: String,
+) -> Diff {
   let leaves =
     state.get_by_key(crdt, topic, key)
     |> list.filter(fn(entry) { entry.0 == pid })
     |> list.map(fn(entry) { #(key, entry.0, entry.1) })
 
-  Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
+  state.Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
 }
 
 fn leave_all_diff(crdt: State, pid: String) -> Diff {
@@ -428,7 +491,7 @@ fn leave_all_diff(crdt: State, pid: String) -> Diff {
       dict.insert(grouped, topic, [#(key, pid, meta), ..existing])
     })
 
-  Diff(joins: dict.new(), leaves: leaves)
+  state.Diff(joins: dict.new(), leaves: leaves)
 }
 
 fn topic_entries(
@@ -471,7 +534,8 @@ fn handle_sync_payload(
       actor.continue(actor_state)
     }
     Ok(#(_sender, remote_state)) -> {
-      let #(new_crdt, diff) = state.merge(actor_state.crdt, remote_state)
+      let #(new_crdt, diff) =
+        state.merge_with_diff(actor_state.crdt, remote_state)
       let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
       maybe_invoke_on_diff(actor_state.config, diff)
       actor.continue(
@@ -495,7 +559,7 @@ pub fn parse_sync_envelope(
   let decoder = {
     use v <- gdecode.field("v", gdecode.int)
     use sender <- gdecode.field("sender", gdecode.string)
-    use remote_state <- gdecode.field("state", state_json.state_decoder())
+    use remote_state <- gdecode.field("state", state_json.decoder())
     gdecode.success(#(v, sender, remote_state))
   }
   case json.parse(payload_str, decoder) {

@@ -41,9 +41,7 @@ src/
     ├── channel.gleam            # Channel behaviour/callbacks
     ├── coordinator.gleam        # Channel lifecycle coordinator (OTP actor)
     ├── group.gleam              # Named channel groups
-    ├── presence.gleam           # Presence tracking (OTP actor wrapping CRDT)
-    ├── presence/
-    │   └── state.gleam          # Pure CRDT (add-wins observed-remove set)
+    ├── presence.gleam           # Presence tracking (OTP actor wrapping lattice_presence)
     ├── pubsub.gleam             # PubSub abstraction (pg-based)
     ├── socket.gleam             # Socket abstraction
     ├── topic.gleam              # Topic pattern matching
@@ -64,7 +62,7 @@ test/
 
 1. **Channel System** (`beryl`, `beryl/channel`, `beryl/coordinator`)
 2. **PubSub** (`beryl/pubsub`) - pg-based process groups
-3. **Presence** - CRDT (add-wins observed-remove set) (`beryl/presence`, `beryl/presence/state`)
+3. **Presence** - CRDT-backed actor using `lattice_presence/presence_state` (`beryl/presence`)
 4. **Groups** (`beryl/group`) - Named channel groups for broadcast
 
 ### Dependencies

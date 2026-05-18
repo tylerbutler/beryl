@@ -1,7 +1,6 @@
 import beryl
 import beryl/coordinator
 import beryl/presence
-import beryl/presence/state
 import beryl/pubsub
 import beryl/topic
 import beryl/wire
@@ -89,8 +88,8 @@ fn drain(subject: process.Subject(String)) -> Nil {
   }
 }
 
-fn presence_diff() -> state.Diff {
-  state.Diff(
+fn presence_diff() -> presence.Diff {
+  presence.diff(
     joins: dict.from_list([
       #("room:lobby", [
         #(

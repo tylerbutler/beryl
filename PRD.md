@@ -61,7 +61,7 @@ Gleam's ecosystem lacks a dedicated real-time communication library. Developers 
 | Decision | Rationale |
 |----------|-----------|
 | **Type erasure via FFI for handler storage** | Allows a single coordinator to store handlers with different `assigns` types while preserving compile-time safety at the handler definition site. |
-| **Pure CRDT for presence state** | The `beryl/presence/state` module is a pure data structure (add-wins observed-remove set with causal context). This makes it testable in isolation and separable from the OTP actor that wraps it. |
+| **Pure CRDT for presence state** | The `lattice_presence/presence_state` module is a pure data structure (add-wins observed-remove set with causal context). This makes it testable in isolation and separable from the OTP actor that wraps it. |
 | **Phoenix wire format** | Proven at scale; avoids inventing a new protocol; enables client-library reuse. |
 | **pg-based PubSub** | Erlang's `pg` module provides distributed process groups with no external dependencies, automatic cluster membership, and battle-tested reliability. |
 | **Coordinator as central OTP actor** | Single actor manages the pattern registry, socket tracking, topic subscriptions, and per-socket/per-topic state. Simplifies consistency at the cost of serialized coordination (acceptable for control-plane operations). |

@@ -63,13 +63,11 @@ channel.new(join_handler)
 
 Each channel is parameterized by an `assigns` type that provides compile-time safety for per-socket state.
 
-### Presence (`beryl/presence`, `beryl/presence/state`)
+### Presence (`beryl/presence`)
 
 Two-layer design:
 
-- **`beryl/presence/state`** — Compatibility facade over `lattice_presence`: add-wins observed-remove set with causal context (vector clocks + cloud sets). Supports `join`, `leave`, `merge`, `compact`, `replica_up/down`, and query operations. No side effects.
-
-- **`beryl/presence`** — OTP actor wrapping the CRDT. Handles track/untrack calls, periodically broadcasts state via PubSub for cross-node replication, and fires `on_diff` callbacks when merges produce changes.
+- **`beryl/presence`** — OTP actor wrapping an add-wins observed-remove CRDT. Handles track/untrack calls, periodically broadcasts state via PubSub for cross-node replication, exposes `State`/`Diff` aliases for advanced APIs, and fires `on_diff` callbacks when merges produce changes.
 
 ### Groups (`beryl/group`)
 
