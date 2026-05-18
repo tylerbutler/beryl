@@ -1,4 +1,4 @@
-import beryl/presence/state
+import beryl/presence
 import beryl/presence/wire as presence_wire
 import gleam/dict
 import gleam/dynamic/decode
@@ -12,8 +12,8 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn sample_diff() -> state.Diff {
-  state.Diff(
+fn sample_diff() -> presence.Diff {
+  presence.diff(
     joins: dict.from_list([
       #("room:lobby", [
         #(

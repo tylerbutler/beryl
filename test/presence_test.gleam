@@ -1,5 +1,4 @@
 import beryl/presence
-import beryl/presence/state
 import gleam/dict
 import gleam/erlang/process
 import gleam/json
@@ -110,8 +109,8 @@ pub fn presence_merge_remote_test() {
 
   // Create a remote state with a different entry
   let remote =
-    state.new("node2")
-    |> state.join("socket-2", "room:lobby", "user:2", json.null())
+    presence.new_state("node2")
+    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
 
   // Merge remote state
   presence.merge_remote(p, remote)
@@ -120,6 +119,19 @@ pub fn presence_merge_remote_test() {
   // Use a synchronous call to ensure ordering
   let entries = presence.list(p, "room:lobby")
   list.length(entries) |> should.equal(2)
+}
+
+pub fn public_state_alias_works_for_merge_remote_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let remote: presence.State =
+    presence.new_state("node2")
+    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
+
+  presence.merge_remote(p, remote)
+
+  let entries = presence.list(p, "room:lobby")
+  list.length(entries) |> should.equal(1)
 }
 
 pub fn presence_empty_list_test() {
@@ -157,8 +169,8 @@ pub fn on_diff_callback_receives_merge_diff_test() {
 
   // Create a remote state and merge it
   let remote =
-    state.new("node2")
-    |> state.join("socket-2", "room:lobby", "user:2", json.null())
+    presence.new_state("node2")
+    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
 
   presence.merge_remote(p, remote)
 
@@ -253,7 +265,7 @@ pub fn on_diff_callback_not_called_for_empty_diff_test() {
   let assert Ok(p) = presence.start(config)
 
   // Merge an empty remote state (should produce an empty diff)
-  let remote = state.new("node2")
+  let remote = presence.new_state("node2")
   presence.merge_remote(p, remote)
 
   // Ensure the merge has been processed
@@ -279,12 +291,12 @@ pub fn on_diff_callback_receives_all_rapid_diffs_test() {
 
   // Rapidly merge multiple remote states
   let remote1 =
-    state.new("node2")
-    |> state.join("socket-2", "room:lobby", "user:2", json.null())
+    presence.new_state("node2")
+    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
 
   let remote2 =
-    state.new("node3")
-    |> state.join("socket-3", "room:lobby", "user:3", json.null())
+    presence.new_state("node3")
+    |> presence.join_state("socket-3", "room:lobby", "user:3", json.null())
 
   presence.merge_remote(p, remote1)
   presence.merge_remote(p, remote2)

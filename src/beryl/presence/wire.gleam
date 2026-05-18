@@ -1,6 +1,6 @@
 //// Phoenix-compatible wire encoding for presence diffs.
 
-import beryl/presence/state.{type Diff}
+import beryl/presence.{type Diff}
 import gleam/dict.{type Dict}
 import gleam/json
 import gleam/list

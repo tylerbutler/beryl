@@ -10,8 +10,8 @@ Presence tracking uses an **add-wins observed-remove set** (AWORSet) with causal
 
 The presence system has two layers:
 
-1. **`beryl/presence/state`** — Compatibility facade over the pure `lattice_presence` CRDT data structure (no side effects)
-2. **`beryl/presence`** — OTP actor wrapping the CRDT with PubSub replication
+1. **`beryl/presence`** — OTP actor wrapping the CRDT with PubSub replication
+2. **`beryl/presence.State` and `beryl/presence.Diff`** — Narrow public aliases for advanced APIs such as `merge_remote` and `on_diff`
 
 ## Starting presence
 

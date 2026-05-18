@@ -1,6 +1,4 @@
 import beryl/presence
-import beryl/presence/state
-import beryl/presence/state_json
 import beryl/pubsub
 import gleam/erlang/process
 import gleam/json
@@ -8,6 +6,8 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
+import lattice_presence/presence_state as state
+import lattice_presence/state_json
 import test_helpers
 
 pub fn main() {
@@ -263,7 +263,7 @@ pub fn parse_sync_envelope_rejects_unknown_version_test() {
     json.object([
       #("v", json.int(2)),
       #("sender", json.string("remote")),
-      #("state", state_json.encode(s)),
+      #("state", state_json.to_json(s)),
     ])
     |> json.to_string
 
@@ -276,7 +276,7 @@ pub fn parse_sync_envelope_accepts_version_1_test() {
     json.object([
       #("v", json.int(1)),
       #("sender", json.string("remote")),
-      #("state", state_json.encode(s)),
+      #("state", state_json.to_json(s)),
     ])
     |> json.to_string
 
@@ -288,7 +288,7 @@ pub fn parse_sync_envelope_rejects_missing_version_test() {
   let envelope =
     json.object([
       #("sender", json.string("remote")),
-      #("state", state_json.encode(s)),
+      #("state", state_json.to_json(s)),
     ])
     |> json.to_string
 
