@@ -1,0 +1,6 @@
+kind: Added
+body: |-
+    Opt-in Roost-backed Phoenix wire codec.
+
+    Set `BERYL_PHOENIX_CODEC=roost` before constructing `wire.phoenix_codec()` to use Roost for Phoenix frame encoding and decoding while keeping Beryl's native codec as the default.
+time: 2026-05-20T20:38:36.000000000-07:00
