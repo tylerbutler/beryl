@@ -3,7 +3,7 @@ version = "0.1.0"
 description = "Type-safe real-time channels and presence for Gleam"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl" }
-gleam = ">= 1.3.0"
+gleam = ">= 1.13.0"
 target = "erlang"
 
 [dependencies]
@@ -14,6 +14,8 @@ gleam_json = ">= 3.0.0 and < 4.0.0"
 gleam_crypto = ">= 1.5.1 and < 2.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"
 mist = ">= 6.0.0 and < 7.0.0"
+roost = { git = "https://github.com/tylerbutler/roost.git", ref = "7dd796e83d8b0fcb8732cfac35707f3fbc8eeaed" }
+envoy = ">= 1.0.0 and < 2.0.0"
 
 birch = ">= 0.2.1 and < 1.0.0"
 lattice_presence = ">= 1.0.0 and < 2.0.0"
