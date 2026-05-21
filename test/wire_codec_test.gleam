@@ -2,13 +2,16 @@
 
 import beryl/wire
 import beryl/wire/codec
+import envoy
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleeunit/should
 import phoenix_channel_fixtures/frame as fixtures
+
+const phoenix_codec_env = "BERYL_PHOENIX_CODEC"
 
 // === Phoenix codec ===
 
@@ -52,6 +55,63 @@ pub fn phoenix_codec_reply_accepts_missing_ref_test() {
   |> should.equal(
     "[null,null,\"room:1\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
   )
+}
+
+pub fn phoenix_codec_defaults_to_native_implementation_test() {
+  with_env_value(phoenix_codec_env, None, fn() {
+    let phoenix = wire.phoenix_codec()
+
+    let assert Error(codec.InvalidFormat(reason)) =
+      phoenix.decode_text("[null,\"1\",123,\"event\",{}]")
+
+    reason
+    |> should.equal(
+      "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
+    )
+  })
+}
+
+pub fn phoenix_codec_uses_roost_when_env_is_roost_test() {
+  with_env_value(phoenix_codec_env, Some("roost"), fn() {
+    let phoenix = wire.phoenix_codec()
+
+    let assert Error(codec.InvalidFormat(reason)) =
+      phoenix.decode_text("[null,\"1\",123,\"event\",{}]")
+
+    reason |> should.equal("Expected topic to be a string")
+  })
+}
+
+pub fn phoenix_codec_uses_native_when_env_is_unknown_test() {
+  with_env_value(phoenix_codec_env, Some("native"), fn() {
+    let phoenix = wire.phoenix_codec()
+
+    let assert Error(codec.InvalidFormat(reason)) =
+      phoenix.decode_text("[null,\"1\",123,\"event\",{}]")
+
+    reason
+    |> should.equal(
+      "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
+    )
+  })
+}
+
+pub fn roost_phoenix_codec_preserves_missing_ref_reply_shape_test() {
+  with_env_value(phoenix_codec_env, Some("roost"), fn() {
+    let phoenix = wire.phoenix_codec()
+
+    phoenix.encode_reply(
+      Some("join-ref"),
+      None,
+      "room:1",
+      codec.StatusOk,
+      json.object([]),
+    )
+    |> text_frame()
+    |> should.equal(
+      "[\"join-ref\",null,\"room:1\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
+    )
+  })
 }
 
 // === Inbound shape ===
@@ -175,6 +235,23 @@ pub fn phoenix_codec_rejects_shared_invalid_fixtures_test() {
 fn text_frame(frame: codec.Frame) -> String {
   let assert codec.TextFrame(text) = frame
   text
+}
+
+fn with_env_value(name: String, value: Option(String), run: fn() -> a) -> a {
+  let previous = envoy.get(name)
+  case value {
+    Some(value) -> envoy.set(name, value)
+    None -> envoy.unset(name)
+  }
+
+  let result = run()
+
+  case previous {
+    Ok(value) -> envoy.set(name, value)
+    Error(Nil) -> envoy.unset(name)
+  }
+
+  result
 }
 
 fn phoenix_kind(event: String) -> codec.InboundKind {
