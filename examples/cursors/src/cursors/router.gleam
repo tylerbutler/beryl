@@ -1,6 +1,7 @@
 import beryl
 import beryl/presence
 import example_helpers/static
+import gleam/bytes_tree
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import mist.{type Connection, type ResponseData}
@@ -13,16 +14,27 @@ pub fn handle_request(
   req: Request(Connection),
   _ctx: Context,
 ) -> Response(ResponseData) {
-  use <- static.serve_static(
-    req,
-    under: "/static",
-    from: static.priv_static("cursors"),
-  )
-
   case request.path_segments(req) {
-    [] -> index_page()
-    _ -> static.not_found()
+    ["healthz"] -> healthz()
+    _ -> {
+      use <- static.serve_static(
+        req,
+        under: "/static",
+        from: static.priv_static("cursors"),
+      )
+
+      case request.path_segments(req) {
+        [] -> index_page()
+        _ -> static.not_found()
+      }
+    }
   }
+}
+
+fn healthz() -> Response(ResponseData) {
+  response.new(200)
+  |> response.set_header("content-type", "text/plain; charset=utf-8")
+  |> response.set_body(mist.Bytes(bytes_tree.from_string("ok")))
 }
 
 fn index_page() -> Response(ResponseData) {
