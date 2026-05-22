@@ -18,6 +18,20 @@ Then open <http://localhost:8000> in **multiple browser tabs** to see cursors mo
 | `PORT` | `8000` | TCP port the HTTP/WebSocket server binds to |
 | `BIND_ADDRESS` | `localhost` | Interface to bind. Set to `0.0.0.0` when running in a container or behind a proxy. |
 
+## Building with Docker locally
+
+The Dockerfile depends on the local `beryl` package via `path = "../.."`, so the
+build context **must be the repository root**, not `examples/cursors`:
+
+```bash
+# From the repository root:
+docker build -f examples/cursors/Dockerfile -t beryl-cursors .
+docker run --rm -p 8000:8000 beryl-cursors
+```
+
+Running `docker build .` from inside `examples/cursors/` will fail because the
+parent `beryl` source is outside the build context.
+
 ## Deploying to Railway
 
 The example ships with a [`Dockerfile`](./Dockerfile) and [`railway.toml`](./railway.toml).
