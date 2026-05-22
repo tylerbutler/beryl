@@ -6,8 +6,6 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
-import lattice_presence/presence_state as state
-import lattice_presence/state_json
 import test_helpers
 
 pub fn main() {
@@ -253,46 +251,6 @@ pub fn untrack_propagates_via_pubsub_test() {
 
   // Node2 should see the removal
   list.length(presence.list(p2, "room:lobby")) |> should.equal(0)
-}
-
-// ── Version field validation ─────────────────────────────────────────
-
-pub fn parse_sync_envelope_rejects_unknown_version_test() {
-  let s = state.new("remote")
-  let envelope =
-    json.object([
-      #("v", json.int(2)),
-      #("sender", json.string("remote")),
-      #("state", state_json.to_json(s)),
-    ])
-    |> json.to_string
-
-  presence.parse_sync_envelope(envelope) |> should.be_error
-}
-
-pub fn parse_sync_envelope_accepts_version_1_test() {
-  let s = state.new("remote")
-  let envelope =
-    json.object([
-      #("v", json.int(1)),
-      #("sender", json.string("remote")),
-      #("state", state_json.to_json(s)),
-    ])
-    |> json.to_string
-
-  presence.parse_sync_envelope(envelope) |> should.be_ok
-}
-
-pub fn parse_sync_envelope_rejects_missing_version_test() {
-  let s = state.new("remote")
-  let envelope =
-    json.object([
-      #("sender", json.string("remote")),
-      #("state", state_json.to_json(s)),
-    ])
-    |> json.to_string
-
-  presence.parse_sync_envelope(envelope) |> should.be_error
 }
 
 // ── Resilience: malformed sync messages ──────────────────────────────

@@ -1,0 +1,6 @@
+kind: Changed
+body: |-
+    Narrow the documented public API surface.
+
+    Coordinator, rate-limit, and internal helper modules are now marked internal, and documentation no longer routes Mist transports through `channels.coordinator`.
+time: 2026-05-21T21:39:10.001000000-07:00

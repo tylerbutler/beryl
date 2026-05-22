@@ -1,4 +1,8 @@
 {
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
   "hooks": {
     "PostToolUse": [
       {
@@ -12,8 +16,7 @@
       }
     ]
   },
-  "permissions": {
-    "allow": [],
-    "deny": []
+  "enabledPlugins": {
+    "specialists@agent-marketplace": true
   }
 }

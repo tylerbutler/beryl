@@ -21,11 +21,10 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 |---|---|---|
 | `beryl` | Top-level API: start the registry, register channels, broadcast | Entry point for all applications |
 | `beryl/channel` | Channel builder, callback types, `HandleResult` | Defining channel behaviour |
-| `beryl/coordinator` | OTP actor that owns a single socket/topic pair | Rarely needed directly |
 | `beryl/socket` | Socket abstraction, assigns helpers | Inside channel callbacks |
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
 | `beryl/pubsub` | Distributed PubSub backed by Erlang `pg` | Multi-node fan-out, cluster broadcasts |
-| `beryl/presence` | OTP actor wrapping the presence CRDT, plus `State`/`Diff` aliases for advanced APIs | Tracking who is online |
+| `beryl/presence` | OTP actor wrapping the presence CRDT, plus opaque `Diff` accessors | Tracking who is online |
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
 | `beryl/wire` | Phoenix-compatible codec and JSON helpers | Phoenix clients, custom transports, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
@@ -42,7 +41,7 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | No response | `channel.NoReply(socket)` | Use when the handler has no output |
 | Broadcast to all sockets on a topic | `beryl.broadcast(registry, topic, event, payload)` | All subscribers including the sender |
 | Broadcast, excluding sender | `beryl.broadcast_from(channels, socket.id(socket), topic, event, payload)` | Second arg is `except_socket_id: String`; use `socket.id/1` to extract it when you have a `Socket` value. Skips the originating socket; works across PubSub nodes |
-| Send an OTP message to a channel actor | `beryl.send_info(channels, socket_id, topic_name, message)` | Delivers to `handle_info`; the callback receives a `Dynamic` value — decode and validate it there; no compile-time type checking |
+| Send an OTP message to a joined channel context | `beryl.send_info(channels, socket_id, topic_name, message)` | Delivers to `handle_info`; the callback receives a `Dynamic` value — decode and validate it there; no compile-time type checking |
 | Broadcast presence diff | `beryl.broadcast_presence_diff(registry, topic, diff)` | Encodes Phoenix-shaped `joins`/`leaves`; only named topic entries are included |
 
 ---
@@ -141,6 +140,6 @@ beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**.
 - **Minor version bumps** (`0.x → 0.x+1`) may include breaking changes to the public API.
 - **Patch version bumps** (`0.x.y → 0.x.y+1`) fix bugs without intentional breakage.
 - Public API is defined as the exports of the modules listed in the module map above.
-- Lower-level modules (e.g. `beryl/coordinator`, `beryl/wire`) are public and usable, but are less stable than the top-level API and are primarily intended for advanced integrations or custom transports. Their signatures may change without a deprecation cycle.
+- Coordinator, rate-limit, and internal helper modules are intentionally hidden from downstream packages. Custom transports are not a stable extension point yet; use `beryl/transport/mist` for supported WebSocket integration.
 
 Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) and the [Migration & Releases page](/migration) before upgrading to a new minor version.

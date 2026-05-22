@@ -1,6 +1,7 @@
 //// Phoenix-compatible wire encoding for presence diffs.
 
-import beryl/presence.{type Diff}
+import beryl/presence.{type Diff, type PresenceEntry}
+import beryl/presence
 import gleam/dict.{type Dict}
 import gleam/json
 import gleam/list
@@ -19,43 +20,34 @@ import gleam/result
 /// ```
 pub fn encode_diff(diff: Diff, topic: String) -> json.Json {
   json.object([
-    #("joins", encode_topic_entries(diff.joins, topic)),
-    #("leaves", encode_topic_entries(diff.leaves, topic)),
+    #("joins", encode_entries(presence.diff_joins(diff, topic))),
+    #("leaves", encode_entries(presence.diff_leaves(diff, topic))),
   ])
 }
 
-fn encode_topic_entries(
-  entries_by_topic: Dict(String, List(#(String, String, json.Json))),
-  topic: String,
-) -> json.Json {
-  case dict.get(entries_by_topic, topic) {
-    Error(_) -> json.object([])
-    Ok(entries) -> {
-      entries
-      |> group_metas_by_key
-      |> dict.to_list
-      |> list.map(fn(entry) {
-        let #(key, metas) = entry
-        #(
-          key,
-          json.object([
-            #("metas", json.preprocessed_array(list.reverse(metas))),
-          ]),
-        )
-      })
-      |> json.object
-    }
-  }
+fn encode_entries(entries: List(PresenceEntry)) -> json.Json {
+  entries
+  |> group_metas_by_key
+  |> dict.to_list
+  |> list.map(fn(entry) {
+    let #(key, metas) = entry
+    #(
+      key,
+      json.object([
+        #("metas", json.preprocessed_array(list.reverse(metas))),
+      ]),
+    )
+  })
+  |> json.object
 }
 
 fn group_metas_by_key(
-  entries: List(#(String, String, json.Json)),
+  entries: List(PresenceEntry),
 ) -> Dict(String, List(json.Json)) {
   list.fold(entries, dict.new(), fn(grouped, entry) {
-    let #(key, _pid, meta) = entry
     let existing =
-      dict.get(grouped, key)
+      dict.get(grouped, entry.key)
       |> result.unwrap([])
-    dict.insert(grouped, key, [meta, ..existing])
+    dict.insert(grouped, entry.key, [entry.meta, ..existing])
   })
 }

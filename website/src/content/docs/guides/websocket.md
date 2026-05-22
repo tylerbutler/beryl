@@ -24,7 +24,7 @@ fn handle_request(
   // Upgrade /socket/websocket requests to WebSocket
   use <- mist_transport.upgrade(
     req,
-    channels.coordinator,
+    channels,
     mist_transport.default_config("/socket/websocket"),
   )
 
@@ -64,7 +64,7 @@ let config =
     }
   })
 
-use <- mist_transport.upgrade(req, channels.coordinator, config)
+use <- mist_transport.upgrade(req, channels, config)
 ```
 
 Returning `Error(Nil)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
@@ -76,7 +76,7 @@ If you handle path matching yourself, use `upgrade_connection` directly:
 ```gleam
 fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
   case request.path_segments(req) {
-    ["ws"] -> mist_transport.upgrade_connection(req, channels.coordinator)
+    ["ws"] -> mist_transport.upgrade_connection(req, channels)
     _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
   }
 }

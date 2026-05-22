@@ -3,7 +3,7 @@
 //// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
 //// - Handles track/untrack calls
 //// - Periodically broadcasts state via PubSub for cross-node replication
-//// - Receives remote state and merges it
+//// - Receives remote state from PubSub and merges it internally
 //// - Invokes `on_diff` callback when merges produce non-empty diffs
 ////
 //// ## Example
@@ -11,13 +11,13 @@
 //// ```gleam
 //// let assert Ok(ps) = pubsub.start(pubsub.default_config())
 //// let config = presence.Config(
-////   pubsub: ps,
+////   pubsub: Some(ps),
 ////   replica: "node1",
 ////   broadcast_interval_ms: 1500,
 ////   on_diff: None,
 //// )
 //// let assert Ok(p) = presence.start(config)
-//// let assert Ok(ref) = presence.track(p, "room:lobby", "user:1", meta)
+//// let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
 //// let entries = presence.list(p, "room:lobby")
 //// ```
 
@@ -50,51 +50,88 @@ pub type Presence {
   Presence(subject: Subject(Message))
 }
 
-/// The pure CRDT state used by the presence actor.
-///
-/// Applications usually do not need this type unless they manually build
-/// remote state for `merge_remote`.
-pub type State =
+type State =
   state.State
 
-/// A diff representing presence joins and leaves grouped by topic.
+/// An opaque diff representing presence joins and leaves grouped by topic.
 ///
 /// This is passed to `Config.on_diff` and accepted by
 /// `beryl.broadcast_presence_diff`.
-pub type Diff =
-  state.Diff
+pub opaque type Diff {
+  Diff(
+    joins: Dict(String, List(PresenceEntry)),
+    leaves: Dict(String, List(PresenceEntry)),
+  )
+}
+
+/// A presence entry returned from queries and diff accessors.
+pub type PresenceEntry {
+  PresenceEntry(pid: String, key: String, meta: json.Json)
+}
 
 /// Build a presence diff from topic-grouped joins and leaves.
 ///
 /// Most applications receive diffs from `Config.on_diff`; this helper is for
 /// callers that need to construct a diff to pass to `beryl.broadcast_presence_diff`.
 pub fn diff(
-  joins joins: Dict(String, List(#(String, String, json.Json))),
-  leaves leaves: Dict(String, List(#(String, String, json.Json))),
+  joins joins: List(#(String, List(PresenceEntry))),
+  leaves leaves: List(#(String, List(PresenceEntry))),
 ) -> Diff {
-  state.Diff(joins: joins, leaves: leaves)
+  Diff(joins: dict.from_list(joins), leaves: dict.from_list(leaves))
 }
 
-/// Create a pure presence state value for this replica.
-///
-/// Most applications should use `start` and `track`; this helper exists for
-/// callers that manually construct state for `merge_remote`.
-pub fn new_state(replica: String) -> State {
-  state.new(replica)
+/// List topics touched by this diff.
+pub fn diff_topics(diff: Diff) -> List(String) {
+  list.append(dict.keys(diff.joins), dict.keys(diff.leaves))
+  |> unique_strings([])
 }
 
-/// Add a tracked presence to a pure state value.
-///
-/// Most applications should use `track`; this helper exists for callers that
-/// manually construct state for `merge_remote`.
-pub fn join_state(
-  crdt: State,
-  pid: String,
-  topic: String,
-  key: String,
-  meta: json.Json,
-) -> State {
-  state.join(crdt, pid, topic, key, meta)
+/// Get presence joins for a topic in this diff.
+pub fn diff_joins(diff: Diff, topic: String) -> List(PresenceEntry) {
+  dict.get(diff.joins, topic)
+  |> result.unwrap([])
+}
+
+/// Get presence leaves for a topic in this diff.
+pub fn diff_leaves(diff: Diff, topic: String) -> List(PresenceEntry) {
+  dict.get(diff.leaves, topic)
+  |> result.unwrap([])
+}
+
+fn unique_strings(values: List(String), seen: List(String)) -> List(String) {
+  case values {
+    [] -> list.reverse(seen)
+    [value, ..rest] ->
+      case list.contains(seen, value) {
+        True -> unique_strings(rest, seen)
+        False -> unique_strings(rest, [value, ..seen])
+      }
+  }
+}
+
+fn wrap_state_diff(diff: state.Diff) -> Diff {
+  Diff(
+    joins: state_entries_to_presence_entries(diff.joins),
+    leaves: state_entries_to_presence_entries(diff.leaves),
+  )
+}
+
+fn state_entries_to_presence_entries(
+  entries: Dict(String, List(#(String, String, json.Json))),
+) -> Dict(String, List(PresenceEntry)) {
+  entries
+  |> dict.to_list
+  |> list.map(fn(entry) {
+    let #(topic, topic_entries) = entry
+    #(
+      topic,
+      list.map(topic_entries, fn(topic_entry) {
+        let #(key, pid, meta) = topic_entry
+        PresenceEntry(pid: pid, key: key, meta: meta)
+      }),
+    )
+  })
+  |> dict.from_list
 }
 
 /// Configuration for starting presence
@@ -110,11 +147,6 @@ pub type Config {
     /// This ensures no diffs are lost when multiple merges occur in rapid succession.
     on_diff: Option(fn(Diff) -> Nil),
   )
-}
-
-/// A presence entry returned from queries
-pub type PresenceEntry {
-  PresenceEntry(pid: String, key: String, meta: json.Json)
 }
 
 /// Errors from presence operations
@@ -140,7 +172,6 @@ pub opaque type Message {
     key: String,
     reply: Subject(List(#(String, json.Json))),
   )
-  MergeRemote(remote: State)
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
   RemoteSync(pubsub_msg: pubsub.Message)
@@ -312,25 +343,6 @@ pub fn get_by_key(
   process.call(presence.subject, 5000, fn(reply) { GetByKey(topic, key, reply) })
 }
 
-/// Send remote state to merge (fire and forget)
-///
-/// Used for cross-node replication. The remote state will be merged
-/// into the local CRDT, producing a diff of changes.
-///
-/// ```gleam
-/// import beryl/presence
-/// import gleam/json
-///
-/// let remote =
-///   presence.new_state("node2")
-///   |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
-///
-/// presence.merge_remote(p, remote)
-/// ```
-pub fn merge_remote(presence: Presence, remote: State) -> Nil {
-  process.send(presence.subject, MergeRemote(remote))
-}
-
 // ── Actor loop ──────────────────────────────────────────────────────────────
 
 fn handle_message(
@@ -391,19 +403,6 @@ fn handle_message(
       actor.continue(actor_state)
     }
 
-    MergeRemote(remote) -> {
-      let #(new_crdt, diff) = state.merge_with_diff(actor_state.crdt, remote)
-      let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
-      maybe_invoke_on_diff(actor_state.config, diff)
-      actor.continue(
-        ActorState(
-          ..actor_state,
-          crdt: new_crdt,
-          dirty: actor_state.dirty || changed,
-        ),
-      )
-    }
-
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
         Some(ps), Some(subject) -> {
@@ -459,8 +458,12 @@ fn single_join_diff(
   pid: String,
   meta: json.Json,
 ) -> Diff {
-  state.Diff(
-    joins: dict.from_list([#(topic, [#(key, pid, meta)])]),
+  Diff(
+    joins: dict.from_list([
+      #(topic, [
+        PresenceEntry(pid: pid, key: key, meta: meta),
+      ]),
+    ]),
     leaves: dict.new(),
   )
 }
@@ -474,9 +477,11 @@ fn leave_diff(
   let leaves =
     state.get_by_key(crdt, topic, key)
     |> list.filter(fn(entry) { entry.0 == pid })
-    |> list.map(fn(entry) { #(key, entry.0, entry.1) })
+    |> list.map(fn(entry) {
+      PresenceEntry(pid: entry.0, key: key, meta: entry.1)
+    })
 
-  state.Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
+  Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
 }
 
 fn leave_all_diff(crdt: State, pid: String) -> Diff {
@@ -488,16 +493,19 @@ fn leave_all_diff(crdt: State, pid: String) -> Diff {
       let existing =
         dict.get(grouped, topic)
         |> result.unwrap([])
-      dict.insert(grouped, topic, [#(key, pid, meta), ..existing])
+      dict.insert(grouped, topic, [
+        PresenceEntry(pid: pid, key: key, meta: meta),
+        ..existing
+      ])
     })
 
-  state.Diff(joins: dict.new(), leaves: leaves)
+  Diff(joins: dict.new(), leaves: leaves)
 }
 
 fn topic_entries(
   topic: String,
-  entries: List(#(String, String, json.Json)),
-) -> dict.Dict(String, List(#(String, String, json.Json))) {
+  entries: List(PresenceEntry),
+) -> Dict(String, List(PresenceEntry)) {
   case entries {
     [] -> dict.new()
     _ -> dict.from_list([#(topic, entries)])
@@ -534,8 +542,9 @@ fn handle_sync_payload(
       actor.continue(actor_state)
     }
     Ok(#(_sender, remote_state)) -> {
-      let #(new_crdt, diff) =
+      let #(new_crdt, state_diff) =
         state.merge_with_diff(actor_state.crdt, remote_state)
+      let diff = wrap_state_diff(state_diff)
       let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
       maybe_invoke_on_diff(actor_state.config, diff)
       actor.continue(
@@ -552,8 +561,7 @@ fn handle_sync_payload(
 /// Parse the sync envelope JSON: {"v": 1, "sender": "...", "state": {...}}
 /// State is decoded directly as a nested object (not double-encoded string).
 /// Rejects envelopes with unknown version numbers.
-@internal
-pub fn parse_sync_envelope(
+fn parse_sync_envelope(
   payload_str: String,
 ) -> Result(#(String, State), String) {
   let decoder = {

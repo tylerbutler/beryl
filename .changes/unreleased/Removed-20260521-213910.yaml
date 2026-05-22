@@ -1,0 +1,6 @@
+kind: Removed
+body: |-
+    Hide public presence CRDT state APIs.
+
+    `beryl/presence.State`, `new_state`, `join_state`, and `merge_remote` are no longer public. Presence diffs are now Beryl-owned opaque values with `diff_topics`, `diff_joins`, and `diff_leaves` accessors.
+time: 2026-05-21T21:39:10.001000000-07:00

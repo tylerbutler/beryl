@@ -136,7 +136,7 @@ pub fn main() {
       // Upgrade WebSocket requests first; fall through to HTTP for everything else.
       mist_transport.upgrade(
         req,
-        channels.coordinator,
+        channels,
         mist_transport.default_config("/socket/websocket"),
         fn() { handle_http(req) },
       )

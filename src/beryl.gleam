@@ -7,7 +7,7 @@
 //// ## Features
 ////
 //// - **Channels** — Topic-based WebSocket messaging with pattern matching
-////   (`beryl`, `beryl/channel`, `beryl/coordinator`)
+////   (`beryl`, `beryl/channel`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
 //// - **Presence** — Distributed presence tracking backed by a causal-context
@@ -63,13 +63,18 @@ import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/result
 
-// Re-export types from coordinator for convenience
-pub type ChannelHandler =
+type ChannelHandler =
   coordinator.ChannelHandler
 
-pub type RegisterError =
-  coordinator.RegisterError
+/// Errors when registering a channel handler.
+pub type RegisterError {
+  /// A handler is already registered for this exact topic pattern.
+  PatternAlreadyRegistered(String)
+  /// The topic pattern is invalid.
+  InvalidPattern(String)
+}
 
 /// Logging verbosity for Beryl's internal Birch loggers.
 pub type LogLevel {
@@ -345,6 +350,15 @@ pub fn register(
   process.call(channels.coordinator, 5000, fn(reply) {
     coordinator.RegisterChannel(pattern, erased_handler, reply)
   })
+  |> result.map_error(map_register_error)
+}
+
+fn map_register_error(error: coordinator.RegisterError) -> RegisterError {
+  case error {
+    coordinator.PatternAlreadyRegistered(pattern) ->
+      PatternAlreadyRegistered(pattern)
+    coordinator.InvalidPattern(pattern) -> InvalidPattern(pattern)
+  }
 }
 
 /// Broadcast a message to all subscribers of a topic
