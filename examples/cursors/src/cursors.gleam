@@ -4,8 +4,11 @@ import beryl/transport/mist as mist_transport
 import beryl/wire
 import cursors/cursor_channel
 import cursors/router
+import envoy
 import gleam/erlang/process
+import gleam/int
 import gleam/io
+import gleam/result
 import mist
 
 pub fn main() {
@@ -24,8 +27,17 @@ pub fn main() {
   let handler = cursor_channel.new_handler(channels, presence_actor)
   let assert Ok(_) = beryl.register(channels, "cursor:*", handler)
 
+  // Honor $PORT (Railway/PaaS) and $HOST/$BIND_ADDRESS; fall back to local defaults.
+  let port =
+    envoy.get("PORT")
+    |> result.try(int.parse)
+    |> result.unwrap(8000)
+  let interface =
+    envoy.get("BIND_ADDRESS")
+    |> result.unwrap("localhost")
+
   io.println("🖱️  Collaborative Cursors Demo")
-  io.println("   Open http://localhost:8000 in multiple browser tabs")
+  io.println("   Listening on " <> interface <> ":" <> int.to_string(port))
   io.println("")
 
   // Start the HTTP server
@@ -41,7 +53,8 @@ pub fn main() {
       )
     }
     |> mist.new
-    |> mist.port(8000)
+    |> mist.bind(interface)
+    |> mist.port(port)
     |> mist.start
 
   process.sleep_forever()

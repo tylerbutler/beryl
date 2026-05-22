@@ -11,6 +11,24 @@ gleam run
 
 Then open <http://localhost:8000> in **multiple browser tabs** to see cursors move in real-time.
 
+### Environment variables
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `8000` | TCP port the HTTP/WebSocket server binds to |
+| `BIND_ADDRESS` | `localhost` | Interface to bind. Set to `0.0.0.0` when running in a container or behind a proxy. |
+
+## Deploying to Railway
+
+The example ships with a [`Dockerfile`](./Dockerfile) and [`railway.toml`](./railway.toml).
+
+1. Create a new Railway service from this repository.
+2. In the service settings, set **Root Directory** to the repository root (not `examples/cursors`) so the Docker build context can see the local `beryl` package referenced via `path = "../.."`.
+3. Set **Config Path** to `examples/cursors/railway.toml`.
+4. Deploy. Railway injects `PORT`; the Dockerfile sets `BIND_ADDRESS=0.0.0.0`.
+
+The Phoenix JS client in `priv/static/app.js` uses a relative `/socket` URL, so it automatically negotiates `wss://` over Railway's TLS-terminated proxy.
+
 ## What It Demonstrates
 
 | beryl Feature | How It's Used |
