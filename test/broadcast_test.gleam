@@ -4,7 +4,6 @@ import beryl/presence
 import beryl/pubsub
 import beryl/topic
 import beryl/wire
-import gleam/dict
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
@@ -90,16 +89,16 @@ fn drain(subject: process.Subject(String)) -> Nil {
 
 fn presence_diff() -> presence.Diff {
   presence.diff(
-    joins: dict.from_list([
+    joins: [
       #("room:lobby", [
-        #(
-          "user:1",
-          "socket-1",
-          json.object([#("status", json.string("online"))]),
+        presence.PresenceEntry(
+          pid: "socket-1",
+          key: "user:1",
+          meta: json.object([#("status", json.string("online"))]),
         ),
       ]),
-    ]),
-    leaves: dict.new(),
+    ],
+    leaves: [],
   )
 }
 

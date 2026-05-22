@@ -1,5 +1,4 @@
 import beryl/presence
-import gleam/dict
 import gleam/erlang/process
 import gleam/json
 import gleam/list
@@ -101,39 +100,6 @@ pub fn presence_different_topics_isolated_test() {
   list.length(presence.list(p, "room:empty")) |> should.equal(0)
 }
 
-pub fn presence_merge_remote_test() {
-  let assert Ok(p) = presence.start(test_config("node1"))
-
-  // Track locally
-  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
-
-  // Create a remote state with a different entry
-  let remote =
-    presence.new_state("node2")
-    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
-
-  // Merge remote state
-  presence.merge_remote(p, remote)
-
-  // Give the actor a moment to process the async merge
-  // Use a synchronous call to ensure ordering
-  let entries = presence.list(p, "room:lobby")
-  list.length(entries) |> should.equal(2)
-}
-
-pub fn public_state_alias_works_for_merge_remote_test() {
-  let assert Ok(p) = presence.start(test_config("node1"))
-
-  let remote: presence.State =
-    presence.new_state("node2")
-    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
-
-  presence.merge_remote(p, remote)
-
-  let entries = presence.list(p, "room:lobby")
-  list.length(entries) |> should.equal(1)
-}
-
 pub fn presence_empty_list_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
   let entries = presence.list(p, "room:empty")
@@ -149,43 +115,6 @@ pub fn presence_default_config_test() {
 }
 
 // ── on_diff callback tests ──────────────────────────────────────────────────
-
-pub fn on_diff_callback_receives_merge_diff_test() {
-  // Set up a Subject to collect diffs from the callback
-  let diff_subject = process.new_subject()
-
-  let config =
-    presence.Config(
-      pubsub: None,
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: Some(fn(diff) { process.send(diff_subject, diff) }),
-    )
-
-  let assert Ok(p) = presence.start(config)
-
-  // Track locally
-  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
-
-  // Create a remote state and merge it
-  let remote =
-    presence.new_state("node2")
-    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
-
-  presence.merge_remote(p, remote)
-
-  // The merge is async (fire-and-forget), so use a synchronous list call
-  // to ensure the merge message has been processed
-  let _ = presence.list(p, "room:lobby")
-
-  // Now the on_diff callback should have fired
-  let assert Ok(diff) = process.receive(diff_subject, 1000)
-
-  // The diff should contain user:2 as a join
-  let assert Ok(joins) = dict.get(diff.joins, "room:lobby")
-  list.length(joins) |> should.equal(1)
-  dict.is_empty(diff.leaves) |> should.be_true
-}
 
 pub fn on_diff_callback_receives_local_track_diff_test() {
   let diff_subject = process.new_subject()
@@ -210,12 +139,17 @@ pub fn on_diff_callback_receives_local_track_diff_test() {
     )
 
   let assert Ok(diff) = process.receive(diff_subject, 1000)
-  let assert Ok(joins) = dict.get(diff.joins, "room:lobby")
-  joins
+  presence.diff_topics(diff)
+  |> should.equal(["room:lobby"])
+  presence.diff_joins(diff, "room:lobby")
   |> should.equal([
-    #("user:1", "socket-1", json.object([#("status", json.string("online"))])),
+    presence.PresenceEntry(
+      pid: "socket-1",
+      key: "user:1",
+      meta: json.object([#("status", json.string("online"))]),
+    ),
   ])
-  dict.is_empty(diff.leaves) |> should.be_true
+  presence.diff_leaves(diff, "room:lobby") |> should.equal([])
 }
 
 pub fn on_diff_callback_receives_local_untrack_diff_test() {
@@ -243,37 +177,17 @@ pub fn on_diff_callback_receives_local_untrack_diff_test() {
   presence.untrack(p, "room:lobby", "user:1", "socket-1")
 
   let assert Ok(diff) = process.receive(diff_subject, 1000)
-  dict.is_empty(diff.joins) |> should.be_true
-  let assert Ok(leaves) = dict.get(diff.leaves, "room:lobby")
-  leaves
+  presence.diff_topics(diff)
+  |> should.equal(["room:lobby"])
+  presence.diff_joins(diff, "room:lobby") |> should.equal([])
+  presence.diff_leaves(diff, "room:lobby")
   |> should.equal([
-    #("user:1", "socket-1", json.object([#("status", json.string("online"))])),
+    presence.PresenceEntry(
+      pid: "socket-1",
+      key: "user:1",
+      meta: json.object([#("status", json.string("online"))]),
+    ),
   ])
-}
-
-pub fn on_diff_callback_not_called_for_empty_diff_test() {
-  let diff_subject = process.new_subject()
-
-  let config =
-    presence.Config(
-      pubsub: None,
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: Some(fn(diff) { process.send(diff_subject, diff) }),
-    )
-
-  let assert Ok(p) = presence.start(config)
-
-  // Merge an empty remote state (should produce an empty diff)
-  let remote = presence.new_state("node2")
-  presence.merge_remote(p, remote)
-
-  // Ensure the merge has been processed
-  let _ = presence.list(p, "room:lobby")
-
-  // Callback should NOT have been called for empty diff
-  let result = process.receive(diff_subject, 100)
-  should.be_error(result)
 }
 
 pub fn on_diff_callback_receives_all_rapid_diffs_test() {
@@ -289,30 +203,37 @@ pub fn on_diff_callback_receives_all_rapid_diffs_test() {
 
   let assert Ok(p) = presence.start(config)
 
-  // Rapidly merge multiple remote states
-  let remote1 =
-    presence.new_state("node2")
-    |> presence.join_state("socket-2", "room:lobby", "user:2", json.null())
-
-  let remote2 =
-    presence.new_state("node3")
-    |> presence.join_state("socket-3", "room:lobby", "user:3", json.null())
-
-  presence.merge_remote(p, remote1)
-  presence.merge_remote(p, remote2)
-
-  // Ensure both merges have been processed
-  let _ = presence.list(p, "room:lobby")
+  let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+  let _ = presence.track(p, "room:lobby", "user:3", "socket-3", json.null())
 
   // Both diffs should have been delivered (no overwrite)
   let assert Ok(diff1) = process.receive(diff_subject, 1000)
   let assert Ok(diff2) = process.receive(diff_subject, 1000)
 
   // First diff: user:2 joined
-  let assert Ok(joins1) = dict.get(diff1.joins, "room:lobby")
+  let joins1 = presence.diff_joins(diff1, "room:lobby")
   list.length(joins1) |> should.equal(1)
 
   // Second diff: user:3 joined
-  let assert Ok(joins2) = dict.get(diff2.joins, "room:lobby")
+  let joins2 = presence.diff_joins(diff2, "room:lobby")
   list.length(joins2) |> should.equal(1)
+}
+
+pub fn diff_accessors_return_empty_lists_for_unmentioned_topics_test() {
+  let diff =
+    presence.diff(
+      joins: [
+        #("room:lobby", [
+          presence.PresenceEntry(
+            pid: "socket-1",
+            key: "user:1",
+            meta: json.null(),
+          ),
+        ]),
+      ],
+      leaves: [],
+    )
+
+  presence.diff_joins(diff, "room:missing") |> should.equal([])
+  presence.diff_leaves(diff, "room:missing") |> should.equal([])
 }

@@ -1,6 +1,5 @@
 import beryl/presence
 import beryl/presence/wire as presence_wire
-import gleam/dict
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
@@ -14,37 +13,41 @@ pub fn main() {
 
 fn sample_diff() -> presence.Diff {
   presence.diff(
-    joins: dict.from_list([
+    joins: [
       #("room:lobby", [
-        #(
-          "user:1",
-          "socket-1",
-          json.object([#("status", json.string("online"))]),
+        presence.PresenceEntry(
+          pid: "socket-1",
+          key: "user:1",
+          meta: json.object([#("status", json.string("online"))]),
         ),
-        #("user:1", "socket-2", json.object([#("status", json.string("away"))])),
-        #(
-          "user:2",
-          "socket-3",
-          json.object([#("device", json.string("mobile"))]),
+        presence.PresenceEntry(
+          pid: "socket-2",
+          key: "user:1",
+          meta: json.object([#("status", json.string("away"))]),
+        ),
+        presence.PresenceEntry(
+          pid: "socket-3",
+          key: "user:2",
+          meta: json.object([#("device", json.string("mobile"))]),
         ),
       ]),
-    ]),
-    leaves: dict.from_list([
+    ],
+    leaves: [
       #("room:lobby", [
-        #(
-          "user:3",
-          "socket-4",
-          json.object([#("status", json.string("offline"))]),
+        presence.PresenceEntry(
+          pid: "socket-4",
+          key: "user:3",
+          meta: json.object([#("status", json.string("offline"))]),
         ),
       ]),
       #("room:other", [
-        #(
-          "ignored",
-          "socket-5",
-          json.object([#("status", json.string("away"))]),
+        presence.PresenceEntry(
+          pid: "socket-5",
+          key: "ignored",
+          meta: json.object([#("status", json.string("away"))]),
         ),
       ]),
-    ]),
+    ],
   )
 }
 

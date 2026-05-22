@@ -11,7 +11,7 @@ Presence tracking uses an **add-wins observed-remove set** (AWORSet) with causal
 The presence system has two layers:
 
 1. **`beryl/presence`** — OTP actor wrapping the CRDT with PubSub replication
-2. **`beryl/presence.State` and `beryl/presence.Diff`** — Narrow public aliases for advanced APIs such as `merge_remote` and `on_diff`
+2. **`beryl/presence.Diff`** — An opaque notification value for `on_diff`, with accessor helpers for changed topics, joins, and leaves
 
 ## Starting presence
 
@@ -87,10 +87,13 @@ let config = presence.Config(
   replica: "node1",
   broadcast_interval_ms: 1500,
   on_diff: option.Some(fn(diff) {
-    // diff.joins: Dict(topic, List(#(key, pid, meta)))
-    // diff.leaves: Dict(topic, List(#(key, pid, meta)))
-    io.println("Joins: " <> string.inspect(diff.joins))
-    io.println("Leaves: " <> string.inspect(diff.leaves))
+    diff
+    |> presence.diff_topics
+    |> list.each(fn(topic) {
+      io.println("Topic changed: " <> topic)
+      io.println("Joins: " <> string.inspect(presence.diff_joins(diff, topic)))
+      io.println("Leaves: " <> string.inspect(presence.diff_leaves(diff, topic)))
+    })
   }),
 )
 ```
@@ -118,11 +121,9 @@ let config = presence.Config(
 
 ```gleam
 on_diff: option.Some(fn(diff) {
-  let topics =
-    dict.keys(diff.joins)
-    |> list.append(dict.keys(diff.leaves))
-    |> list.unique()
-  list.each(topics, fn(topic) {
+  diff
+  |> presence.diff_topics
+  |> list.each(fn(topic) {
     beryl.broadcast_presence_diff(channels, topic, diff)
   })
 }),
@@ -151,6 +152,8 @@ When PubSub is configured, the presence actor:
 4. Fires `on_diff` for any changes from the merge
 
 Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process their own sync messages.
+
+The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
 ## Integration with channels
 

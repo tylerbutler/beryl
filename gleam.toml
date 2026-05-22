@@ -5,6 +5,11 @@ licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl" }
 gleam = ">= 1.13.0"
 target = "erlang"
+internal_modules = [
+  "beryl/coordinator",
+  "beryl/internal",
+  "beryl/rate_limit",
+]
 
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"

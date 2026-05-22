@@ -55,7 +55,7 @@ pub fn main() {
 
   let assert Ok(_) =
     fn(req) {
-      mist_transport.upgrade(req, channels.coordinator,
+      mist_transport.upgrade(req, channels,
         mist_transport.default_config("/socket/websocket"), fn() {
           // your regular HTTP handler here
           panic as "not implemented"
