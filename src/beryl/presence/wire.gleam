@@ -1,7 +1,6 @@
 //// Phoenix-compatible wire encoding for presence diffs.
 
-import beryl/presence.{type Diff, type PresenceEntry}
-import beryl/presence
+import beryl/presence.{type Diff, type PresenceEntry, diff_joins, diff_leaves}
 import gleam/dict.{type Dict}
 import gleam/json
 import gleam/list
@@ -20,8 +19,8 @@ import gleam/result
 /// ```
 pub fn encode_diff(diff: Diff, topic: String) -> json.Json {
   json.object([
-    #("joins", encode_entries(presence.diff_joins(diff, topic))),
-    #("leaves", encode_entries(presence.diff_leaves(diff, topic))),
+    #("joins", encode_entries(diff_joins(diff, topic))),
+    #("leaves", encode_entries(diff_leaves(diff, topic))),
   ])
 }
 
