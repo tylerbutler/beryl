@@ -8,10 +8,27 @@
 #
 # Running `docker build .` from inside examples/cursors/ will fail to resolve
 # the local beryl dependency.
-FROM ghcr.io/gleam-lang/gleam:v1.16.0-erlang-alpine AS build
+# Pin the build stage to the same Erlang/OTP version as the runtime stage so
+# the generated .beam files load cleanly. The upstream
+# `ghcr.io/gleam-lang/gleam:v1.16.0-erlang-alpine` image ships OTP 28, whose
+# atom-table encoding cannot be loaded by OTP 27 ("corrupt atom table" →
+# `cursors@@main:run/1` undef at boot). Building Gleam on top of the same
+# erlang:27.2.1-alpine base we use at runtime avoids that mismatch.
+FROM erlang:27.2.1-alpine AS build
 
-# git is required by `gleam deps download` for resolving dependencies.
-RUN apk add --no-cache git
+ARG GLEAM_VERSION=v1.16.0
+
+# git is required by `gleam deps download`; rebar3 is required to compile
+# Erlang/OTP dependencies (e.g. hpack, gramps).
+RUN apk add --no-cache git rebar3 curl ca-certificates \
+ && case "$(uname -m)" in \
+      aarch64) GLEAM_ARCH=aarch64-unknown-linux-musl ;; \
+      x86_64)  GLEAM_ARCH=x86_64-unknown-linux-musl ;; \
+      *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL "https://github.com/gleam-lang/gleam/releases/download/${GLEAM_VERSION}/gleam-${GLEAM_VERSION}-${GLEAM_ARCH}.tar.gz" \
+      | tar -xz -C /usr/local/bin gleam \
+ && gleam --version
 
 WORKDIR /src
 
