@@ -28,7 +28,10 @@ pub fn handle_request(
     ["healthz"] -> healthz()
     ["cursors", ..] -> cursors_router.handle_request(req, ctx.cursors)
     ["chat", ..] -> chatrooms_router.handle_request(req, ctx.chatrooms)
-    ["docs", ..] -> collab_docs_router.handle_request(req, ctx.collab_docs)
+    // TODO: re-enable the collab_docs demo. The handler is still
+    // registered in showcase.main so reinstating the route + landing
+    // card is a one-line change.
+    // ["docs", ..] -> collab_docs_router.handle_request(req, ctx.collab_docs)
     _ -> static.not_found()
   }
 }
@@ -116,11 +119,6 @@ fn landing_page() -> Response(ResponseData) {
       <span class=\"emoji\">💬</span>
       <h2>Chat rooms</h2>
       <p>Multi-room chat with typing indicators, presence sidebar, and named groups.</p>
-    </a>
-    <a class=\"card\" href=\"/docs\">
-      <span class=\"emoji\">📝</span>
-      <h2>Collaborative CRDT docs</h2>
-      <p>Concurrent edits to shared document blocks backed by lattice CRDTs.</p>
     </a>
   </main>
   <footer>
