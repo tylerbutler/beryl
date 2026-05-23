@@ -11,7 +11,12 @@ import mist.{type Connection, type ResponseData}
 const demo_tenant = "demo"
 
 pub type Context {
-  Context(channels: beryl.Channels, store: Store, secret: BitArray)
+  Context(
+    channels: beryl.Channels,
+    store: Store,
+    secret: BitArray,
+    base_path: String,
+  )
 }
 
 pub fn handle_request(
@@ -20,18 +25,19 @@ pub fn handle_request(
 ) -> Response(ResponseData) {
   use <- static.serve_static(
     req,
-    under: "/static",
+    under: ctx.base_path <> "/static",
     from: static.priv_static("collab_docs"),
   )
 
-  case request.path_segments(req) {
-    [] -> index_page(ctx)
+  case static.match_prefix(req, ctx.base_path) {
+    Ok([]) -> index_page(ctx)
     _ -> static.not_found()
   }
 }
 
 fn index_page(ctx: Context) -> Response(ResponseData) {
   let token = auth.sign_tenant(demo_tenant, ctx.secret)
+  let base = ctx.base_path
   let html = "<!DOCTYPE html>
 <html lang=\"en\">
 <head>
@@ -40,7 +46,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
   <meta name=\"beryl-tenant\" content=\"" <> demo_tenant <> "\">
   <meta name=\"beryl-tenant-token\" content=\"" <> token <> "\">
   <title>Collaborative CRDT Docs — beryl demo</title>
-  <link rel=\"stylesheet\" href=\"/static/style.css\">
+  <link rel=\"stylesheet\" href=\"" <> base <> "/static/style.css\">
 </head>
 <body>
   <main id=\"app\">
@@ -56,7 +62,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
     <section id=\"blocks\" aria-live=\"polite\"></section>
   </main>
   <script src=\"https://unpkg.com/phoenix@1.7.20/priv/static/phoenix.js\" integrity=\"sha384-9Rsr2KoQMtWNQakugNsDiGsZ/5eQnJHeBhiocJMdHvnyN8ifwcytSTzPpb1xydYk\" crossorigin=\"anonymous\"></script>
-  <script type=\"module\" src=\"/static/app.js\"></script>
+  <script type=\"module\" src=\"" <> base <> "/static/app.js\"></script>
 </body>
 </html>"
 

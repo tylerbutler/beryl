@@ -15,6 +15,7 @@ pub type Context {
     channels: beryl.Channels,
     presence: presence.Presence,
     groups: group.Groups,
+    base_path: String,
   )
 }
 
@@ -24,13 +25,13 @@ pub fn handle_request(
 ) -> Response(ResponseData) {
   use <- static.serve_static(
     req,
-    under: "/static",
+    under: ctx.base_path <> "/static",
     from: static.priv_static("chatrooms"),
   )
 
-  case request.path_segments(req) {
-    [] -> index_page(ctx)
-    ["api", "rooms"] -> rooms_api(ctx)
+  case static.match_prefix(req, ctx.base_path) {
+    Ok([]) -> index_page(ctx)
+    Ok(["api", "rooms"]) -> rooms_api(ctx)
     _ -> static.not_found()
   }
 }
@@ -91,7 +92,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
   <meta charset=\"UTF-8\">
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
   <title>Chat Rooms — beryl demo</title>
-  <link rel=\"stylesheet\" href=\"/static/style.css\">
+  <link rel=\"stylesheet\" href=\"" <> ctx.base_path <> "/static/style.css\">
 </head>
 <body>
   <div id=\"app\">
@@ -119,7 +120,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
     </aside>
   </div>
   <script src=\"https://unpkg.com/phoenix@1.7.20/priv/static/phoenix.js\" integrity=\"sha384-9Rsr2KoQMtWNQakugNsDiGsZ/5eQnJHeBhiocJMdHvnyN8ifwcytSTzPpb1xydYk\" crossorigin=\"anonymous\"></script>
-  <script src=\"/static/app.js\"></script>
+  <script src=\"" <> ctx.base_path <> "/static/app.js\"></script>
 </body>
 </html>"
 

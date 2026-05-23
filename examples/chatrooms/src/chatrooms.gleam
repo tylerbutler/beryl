@@ -42,7 +42,8 @@ pub fn main() {
   io.println("")
 
   // Start the HTTP server
-  let ctx = router.Context(channels:, presence: presence_actor, groups:)
+  let ctx =
+    router.Context(channels:, presence: presence_actor, groups:, base_path: "")
   let ws_config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {

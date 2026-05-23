@@ -20,7 +20,7 @@ pub fn main() {
   io.println("   Open http://localhost:8002")
   io.println("")
 
-  let ctx = router.Context(channels:, store:, secret:)
+  let ctx = router.Context(channels:, store:, secret:, base_path: "")
 
   let assert Ok(_) =
     fn(req) {
