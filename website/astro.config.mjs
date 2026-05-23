@@ -32,6 +32,9 @@ export default defineConfig({
 				"./src/styles/fonts.css",
 				"./src/styles/custom.css",
 			],
+			components: {
+				Head: "./src/components/Head.astro",
+			},
 			plugins: [
 				starlightLlmsTxt(),
 				starlightLinksValidator(),
