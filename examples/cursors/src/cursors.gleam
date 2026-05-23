@@ -41,7 +41,7 @@ pub fn main() {
   io.println("")
 
   // Start the HTTP server
-  let ctx = router.Context(channels:, presence: presence_actor)
+  let ctx = router.Context(channels:, presence: presence_actor, base_path: "")
 
   let assert Ok(_) =
     fn(req) {

@@ -91,6 +91,33 @@ pub fn drop_leading_slashes(path: String) -> String {
   }
 }
 
+/// If `req`'s path begins with `prefix` (matched on whole path segments),
+/// return the remaining segments after the prefix; otherwise Error(Nil).
+/// An empty `prefix` matches everything and returns all path segments.
+pub fn match_prefix(
+  req: Request(Connection),
+  prefix: String,
+) -> Result(List(String), Nil) {
+  let segs = request.path_segments(req)
+  let prefix_segs =
+    prefix
+    |> drop_leading_slashes
+    |> string.split("/")
+    |> list.filter(fn(s) { s != "" })
+  strip_prefix(segs, prefix_segs)
+}
+
+fn strip_prefix(
+  segs: List(String),
+  prefix: List(String),
+) -> Result(List(String), Nil) {
+  case prefix, segs {
+    [], rest -> Ok(rest)
+    [p, ..ps], [s, ..ss] if p == s -> strip_prefix(ss, ps)
+    _, _ -> Error(Nil)
+  }
+}
+
 /// Guess a content-type for a path by its extension. Defaults to
 /// `application/octet-stream` for unknown extensions.
 pub fn mime_type_for(path: String) -> String {
