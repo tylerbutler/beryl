@@ -21,7 +21,10 @@ jobs:
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@c697a813534c6364a835de8e2ed2c4e0c3638bbe # ratchet:tylerbutler/actions/setup-gleam@v1
         with:
+          # Providing erlang-version makes the action ignore version-file, so
+          # gleam-version must be set explicitly or Gleam won't be installed.
           erlang-version: ${{ matrix.erlang }}
+          gleam-version: "1.16.0"
           run-deps: false
 
       - name: Install rebar3
