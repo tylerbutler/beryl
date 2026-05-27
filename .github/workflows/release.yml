@@ -24,6 +24,7 @@ jobs:
         id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
+          pr-title-template: 'release: {version}'
           version-files: |
             gleam.toml:version
 
