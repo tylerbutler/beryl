@@ -1,5 +1,6 @@
 [tools]
 changie = "latest"
+erlang = "28"
 rebar = "latest"
 
 [env]

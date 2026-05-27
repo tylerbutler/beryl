@@ -1,4 +1,6 @@
 packages:
-  - "cursors"
-  - "chatrooms"
-  - "collab_docs"
+  - cursors
+  - chatrooms
+  - collab_docs
+onlyBuiltDependencies:
+  - esbuild
