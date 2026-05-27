@@ -15,6 +15,7 @@
         "build",
         "ci",
         "chore",
+        "release",
         "revert"
       ]
     ],
