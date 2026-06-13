@@ -53,6 +53,10 @@ format-check:
 check:
     gleam check
 
+# Run the glinter linter
+lint:
+    gleam run -m glinter
+
 # === DOCUMENTATION ===
 
 # Build documentation
