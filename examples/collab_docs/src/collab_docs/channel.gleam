@@ -37,7 +37,7 @@ pub fn new_handler(
   channels: beryl.Channels,
   store: Store,
   secret: BitArray,
-) -> Channel(Assigns) {
+) -> Channel(Assigns, info) {
   let pattern = topic.parse_pattern(document_topic_pattern_string)
   channel.new(fn(topic_name, payload, socket) {
     join(channels, store, secret, pattern, topic_name, payload, socket)

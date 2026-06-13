@@ -32,7 +32,7 @@ import mist
 
 pub type RoomAssigns { RoomAssigns(username: String) }
 
-fn new_channel() -> Channel(RoomAssigns) {
+fn new_channel() -> Channel(RoomAssigns, info) {
   channel.new(fn(_topic, payload, socket) {
     let username_decoder = {
       use username <- decode.field("username", decode.string)

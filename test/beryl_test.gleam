@@ -311,6 +311,66 @@ pub fn send_info_routes_message_to_joined_channel_test() {
   push |> string.contains("\"ok\":true") |> should.be_true
 }
 
+/// Custom info-message type proving `handle_info` is type-safe end to end:
+/// the handler matches on this type directly, with no `Dynamic` decode and no
+/// unsafe FFI cast in application code.
+type Notification {
+  Notify(text: String)
+  Silence
+}
+
+pub fn send_info_typed_message_round_trips_without_cast_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let sent_messages = process.new_subject()
+
+  process.send(
+    channels.coordinator,
+    coordinator.SocketConnected(
+      "socket-typed-info",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+    |> channel.with_handle_info(fn(message: Notification, socket) {
+      // No decode.run, no identity FFI cast — match on the typed value.
+      case message {
+        Notify(text) ->
+          channel.Push(
+            "server_notify",
+            json.object([#("text", json.string(text))]),
+            socket,
+          )
+        Silence -> channel.NoReply(socket)
+      }
+    })
+
+  beryl.register(channels, "room:*", handler)
+  |> should.equal(Ok(Nil))
+
+  coordinator.route_message(
+    channels.coordinator,
+    "socket-typed-info",
+    "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
+  )
+
+  let assert Ok(join_reply) = process.receive(sent_messages, 500)
+  join_reply |> string.contains("phx_reply") |> should.be_true
+
+  beryl.send_info(channels, "socket-typed-info", "room:lobby", Notify("hello"))
+
+  let assert Ok(push) = process.receive(sent_messages, 500)
+  push |> string.contains("server_notify") |> should.be_true
+  push |> string.contains("hello") |> should.be_true
+}
+
 pub fn send_info_reply_result_pushes_message_to_client_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
