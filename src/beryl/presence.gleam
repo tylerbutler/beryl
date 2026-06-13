@@ -286,21 +286,17 @@ fn build_presence(
 /// updated actor state. Extracted from the `BroadcastTick` handler to keep
 /// that branch from nesting too deeply.
 fn maybe_broadcast_state(actor_state: ActorState, ps: PubSub) -> ActorState {
-  case actor_state.dirty {
-    False -> actor_state
-    True -> {
-      let payload =
-        json.object([
-          #("v", json.int(1)),
-          #("sender", json.string(actor_state.config.replica)),
-          #("state", state_json.to_json(actor_state.crdt)),
-        ])
+  use <- bool.guard(when: !actor_state.dirty, return: actor_state)
+  let payload =
+    json.object([
+      #("v", json.int(1)),
+      #("sender", json.string(actor_state.config.replica)),
+      #("state", state_json.to_json(actor_state.crdt)),
+    ])
 
-      pubsub.broadcast_from(ps, process.self(), sync_topic, sync_event, payload)
+  pubsub.broadcast_from(ps, process.self(), sync_topic, sync_event, payload)
 
-      ActorState(..actor_state, dirty: False)
-    }
-  }
+  ActorState(..actor_state, dirty: False)
 }
 
 /// Schedule the next broadcast tick if the interval is positive
