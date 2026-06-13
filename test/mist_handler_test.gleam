@@ -1,0 +1,102 @@
+//// Integration tests for the combined `mist_transport.handler`.
+////
+//// These spin up a real Mist listener so we can verify how the composed
+//// handler routes WebSocket upgrades versus plain HTTP requests.
+
+import beryl
+import beryl/transport/mist as mist_transport
+import beryl/wire
+import gleam/bytes_tree
+import gleam/erlang/process
+import gleam/http/response
+import gleeunit/should
+import mist
+
+type WebsocketClient
+
+@external(erlang, "beryl_mist_transport_test_ffi", "connect_websocket")
+fn connect_websocket(port: Int, path: String) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "close")
+fn close(client: WebsocketClient) -> Nil
+
+@external(erlang, "beryl_mist_transport_test_ffi", "http_get")
+fn http_get(port: Int, path: String) -> Result(Int, Nil)
+
+@external(erlang, "beryl_ffi", "stop_supervisor")
+fn stop_supervisor(pid: process.Pid) -> Nil
+
+// The HTTP fallback replies with a distinctive 418 so routing to the fallback
+// is observable from the test client.
+fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
+  let port_subject = process.new_subject()
+  let http_fallback = fn(_request) {
+    response.new(418)
+    |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
+  let assert Ok(server) =
+    mist_transport.handler(
+      channels,
+      mist_transport.default_config("/socket"),
+      http_fallback,
+    )
+    |> mist.new
+    |> mist.port(0)
+    |> mist.bind("127.0.0.1")
+    |> mist.after_start(fn(port, _scheme, _ip_address) {
+      process.send(port_subject, port)
+    })
+    |> mist.start
+  let assert Ok(port) = process.receive(port_subject, 1000)
+  #(port, server.pid)
+}
+
+fn start_channels() -> beryl.Channels {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  channels
+}
+
+pub fn handler_routes_websocket_upgrade_to_upgrade_test() {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  // A WebSocket upgrade to the configured path completes the handshake (101).
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  close(client)
+
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_routes_http_request_to_fallback_test() {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  // A normal HTTP request to the socket path hits the fallback, not the upgrade.
+  http_get(port, "/socket")
+  |> should.equal(Ok(418))
+
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_routes_non_matching_path_to_fallback_test() {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  // A request to an unrelated path falls through to the fallback handler.
+  http_get(port, "/health")
+  |> should.equal(Ok(418))
+
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_routes_websocket_on_other_path_to_fallback_test() {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  // A WebSocket upgrade to a non-matching path is not upgraded (no 101),
+  // so the client handshake fails and routing falls back to HTTP.
+  connect_websocket(port, "/not-socket")
+  |> should.equal(Error(Nil))
+
+  stop_supervisor(server_pid)
+}
