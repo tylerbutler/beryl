@@ -169,6 +169,7 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
         Ok(Nil)
       },
       None,
+      dynamic.nil(),
     ),
   )
 
@@ -240,6 +241,7 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
         Ok(Nil)
       },
       None,
+      dynamic.nil(),
     ),
   )
 
@@ -297,6 +299,7 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
         Ok(Nil)
       },
       None,
+      dynamic.nil(),
     ),
   )
 
@@ -342,6 +345,7 @@ pub fn phoenix_codec_without_binary_decoder_preserves_raw_binary_handler_test() 
       },
       fn(_) { Ok(Nil) },
       None,
+      dynamic.nil(),
     ),
   )
 

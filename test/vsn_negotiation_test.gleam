@@ -208,7 +208,7 @@ fn echo_channel() -> channel.Channel(Nil, Nil) {
 
 fn start_server(
   channels: beryl.Channels,
-  config: mist_transport.TransportConfig,
+  config: mist_transport.TransportConfig(Nil),
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let handler = fn(request) {
@@ -230,7 +230,7 @@ fn start_server(
   #(port, server.pid)
 }
 
-fn msgpack_config() -> mist_transport.TransportConfig {
+fn msgpack_config() -> mist_transport.TransportConfig(Nil) {
   mist_transport.default_config("/socket")
   |> mist_transport.with_serializer("3.0.0", example_msgpack_serializer())
 }

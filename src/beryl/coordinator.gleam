@@ -225,6 +225,9 @@ type SocketInfo {
     subscribed_topics: Set(String),
     /// Per-topic assigns (topic -> Dynamic assigns)
     channel_assigns: Dict(String, Dynamic),
+    /// Socket-level assigns seeded by the transport connect hook (type-erased).
+    /// Used as the initial assigns visible to a channel at join time.
+    connect_assigns: Dynamic,
     /// Monotonic timestamp (ms) of the last heartbeat received
     last_heartbeat: Int,
   )
@@ -288,6 +291,9 @@ pub type Message {
     /// coordinator's configured codec, preserving the historical behavior for
     /// callers that don't negotiate a per-connection serializer.
     codec: Option(Codec),
+    /// Socket-level assigns seeded by the transport's connect hook
+    /// (type-erased). Use `dynamic.nil()` when there are none.
+    connect_assigns: Dynamic,
   )
   SocketDisconnected(socket_id: String)
   // Channel operations
@@ -453,8 +459,15 @@ fn handle_message(
     RegisterChannel(pattern, handler, reply) ->
       handle_register_channel(state, pattern, handler, reply)
 
-    SocketConnected(socket_id, send, send_binary, codec) ->
-      handle_socket_connected(state, socket_id, send, send_binary, codec)
+    SocketConnected(socket_id, send, send_binary, codec, connect_assigns) ->
+      handle_socket_connected(
+        state,
+        socket_id,
+        send,
+        send_binary,
+        codec,
+        connect_assigns,
+      )
 
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
@@ -507,6 +520,7 @@ fn handle_socket_connected(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec: Option(Codec),
+  connect_assigns: Dynamic,
 ) -> actor.Next(State, Message) {
   let socket_info =
     SocketInfo(
@@ -516,6 +530,7 @@ fn handle_socket_connected(
       codec: option.unwrap(codec, state.config.codec),
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
+      connect_assigns: connect_assigns,
       last_heartbeat: monotonic_time_ms(),
     )
 
@@ -1249,7 +1264,7 @@ fn dispatch_join(
     SocketContext(
       socket_id: socket_id,
       topic: topic_name,
-      assigns: dynamic.nil(),
+      assigns: socket_info.connect_assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
     )

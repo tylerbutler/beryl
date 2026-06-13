@@ -51,7 +51,9 @@ Raw WebSocket clients connect directly to the configured path with no suffix app
 
 ## Authentication
 
-Use `with_on_connect` to authenticate connections before upgrading:
+Use `with_on_connect` to authenticate connections before upgrading. The hook is
+beryl's analogue of Phoenix's `UserSocket.connect/3`: it runs **once per socket**,
+before any channel join, and can reject the whole connection.
 
 ```gleam
 let config =
@@ -68,6 +70,38 @@ use <- mist_transport.upgrade(req, channels, config)
 ```
 
 Returning `Error(Nil)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
+
+### Seeding initial assigns
+
+`on_connect` can also return seeded socket-level **assigns** instead of `Nil`.
+Whatever value you return in `Ok(assigns)` becomes the socket's initial assigns
+and is visible to every channel at join time via `socket.get_assigns`. This lets
+you authenticate once at connect and avoid repeating per-socket auth in each
+channel's `join`:
+
+```gleam
+let config =
+  mist_transport.default_config("/socket/websocket")
+  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+    // Validate once, derive socket state, reject on failure.
+    case validate_token(req) {
+      Ok(user_id) -> Ok(user_id)  // Seed assigns (here: the user id)
+      Error(_) -> Error(Nil)      // Reject with 403
+    }
+  })
+```
+
+```gleam
+// The channel reads the connect-seeded assigns at join — no re-auth needed.
+fn join(_topic, _payload, socket) {
+  let user_id = socket.get_assigns(socket)
+  channel.JoinOk(reply: None, socket: socket)
+}
+```
+
+The assigns type returned by `on_connect` should match the channel's `assigns`
+type (commonly a record shared across all topics that require the same auth).
+When no hook is configured, sockets start with `Nil` assigns.
 
 ## Direct upgrade
 

@@ -108,7 +108,14 @@ fn join(
 }
 ```
 
-### Message handler
+:::tip[Authenticate once at connect time]
+If every topic needs the same per-socket auth (e.g. the same JWT), validate it
+**once** with the transport-level `on_connect` hook instead of repeating the
+check in every `join`. `on_connect` runs once per socket, can reject the whole
+connection before any join, and can seed initial assigns that this `join`
+callback reads via `socket.get_assigns`. See
+[WebSocket Transport → Authentication](/guides/websocket#authentication).
+:::
 
 Called for each incoming text message. The `event` string identifies the message type:
 

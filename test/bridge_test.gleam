@@ -28,6 +28,7 @@ fn start_channels_with_socket(
       },
       fn(_) { Ok(Nil) },
       option.None,
+      dynamic.nil(),
     ),
   )
 
