@@ -98,7 +98,7 @@ Pass `wire.phoenix_codec()` to `beryl.config` to use the Phoenix JSON array form
 
 Applications can pass a custom codec to `beryl.config(codec)` to use another text framing or a binary framing. Codec-produced outbound frames are sent as text or binary WebSocket frames according to the codec result.
 
-By default, `wire.phoenix_codec()` uses Beryl's native Phoenix wire implementation. For compatibility testing, set `BERYL_PHOENIX_CODEC=roost` before constructing the codec to opt into the Roost-backed implementation. The public `beryl/wire/codec.Codec` API and wire format remain unchanged.
+`wire.phoenix_codec()` uses Beryl's native Phoenix wire implementation, which has no extra dependencies. The public `beryl/wire/codec.Codec` API and wire format are stable, so applications can supply their own codec to `beryl.config` for alternative framings.
 
 | Field | Type | Description |
 |-------|------|-------------|
