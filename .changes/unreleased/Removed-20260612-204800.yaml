@@ -1,0 +1,6 @@
+kind: Removed
+body: |-
+    Remove the optional Roost-backed Phoenix codec and its git dependency so Beryl is Hex-publishable.
+
+    `wire.phoenix_codec()` now always uses Beryl's native Phoenix wire implementation and the `BERYL_PHOENIX_CODEC=roost` toggle is gone. Beryl no longer has any git runtime dependencies; `gleam add beryl` works from a clean project. The wire format and `beryl/wire/codec.Codec` API are unchanged.
+time: 2026-06-12T20:48:00.000000000-07:00
