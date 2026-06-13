@@ -9,6 +9,7 @@ import beryl/wire/codec.{type Codec}
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/crypto
+import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -18,32 +19,46 @@ import gleam/string
 import mist.{type Connection, type ResponseData, type WebsocketConnection}
 
 /// Configuration for the Mist WebSocket transport
-pub type TransportConfig {
+///
+/// The `assigns` type parameter is the socket-level state produced by the
+/// `on_connect` hook. It defaults to `Nil` when no hook is configured.
+pub type TransportConfig(assigns) {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
     path: String,
-    /// Optional authentication callback invoked before upgrading.
-    /// Return Ok(Nil) to allow the connection, Error(Nil) to reject with 403.
-    /// When None, all connections are allowed (default).
-    on_connect: Option(fn(Request(Connection)) -> Result(Nil, Nil)),
+    /// Optional socket-level connect/authentication callback invoked once,
+    /// before the WebSocket upgrade.
+    ///
+    /// Runs the Phoenix `UserSocket.connect/3` analogue: it authenticates the
+    /// whole connection a single time and can reject it before any channel
+    /// join. Return `Ok(assigns)` to allow the connection and seed initial
+    /// socket assigns (visible to channels at join), or `Error(Nil)` to reject
+    /// with a 403 Forbidden response. When None, all connections are allowed
+    /// and assigns start empty (`Nil`).
+    on_connect: Option(fn(Request(Connection)) -> Result(assigns, Nil)),
   )
 }
 
-/// Create a default transport config
-pub fn default_config(path: String) -> TransportConfig {
+/// Create a default transport config with no connect hook.
+///
+/// The resulting config seeds `Nil` assigns. Add `with_on_connect` to
+/// authenticate connections and/or seed initial assigns.
+pub fn default_config(path: String) -> TransportConfig(Nil) {
   TransportConfig(path: path, on_connect: None)
 }
 
-/// Set an authentication callback on the transport config
+/// Set a socket-level connect/authentication callback on the transport config.
 ///
-/// The callback receives the HTTP request before the WebSocket upgrade.
-/// Return `Ok(Nil)` to allow the connection or `Error(Nil)` to reject it
-/// with a 403 Forbidden response.
+/// The callback receives the HTTP request before the WebSocket upgrade and
+/// runs once per socket. Return `Ok(assigns)` to allow the connection and seed
+/// initial socket assigns that channels can read at join time, or `Error(Nil)`
+/// to reject the connection with a 403 Forbidden response before any channel
+/// join occurs.
 pub fn with_on_connect(
-  config: TransportConfig,
-  callback: fn(Request(Connection)) -> Result(Nil, Nil),
-) -> TransportConfig {
-  TransportConfig(..config, on_connect: Some(callback))
+  config: TransportConfig(a),
+  callback: fn(Request(Connection)) -> Result(assigns, Nil),
+) -> TransportConfig(assigns) {
+  TransportConfig(path: config.path, on_connect: Some(callback))
 }
 
 /// State maintained per WebSocket connection
@@ -76,7 +91,7 @@ type SendRequest {
 pub fn upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig,
+  config: TransportConfig(assigns),
   next: fn() -> Response(ResponseData),
 ) -> Response(ResponseData) {
   // Check if path matches
@@ -89,12 +104,13 @@ pub fn upgrade(
       case config.on_connect {
         Some(callback) ->
           case callback(request) {
-            Ok(Nil) -> do_upgrade(request, channels)
+            Ok(assigns) ->
+              do_upgrade(request, channels, unsafe_coerce_to_dynamic(assigns))
             Error(Nil) ->
               response.new(403)
               |> response.set_body(mist.Bytes(bytes_tree.new()))
           }
-        None -> do_upgrade(request, channels)
+        None -> do_upgrade(request, channels, dynamic.nil())
       }
     }
   }
@@ -103,19 +119,21 @@ pub fn upgrade(
 /// Alternative: upgrade any request to WebSocket (caller handles path matching)
 ///
 /// Note: This function does not invoke the `on_connect` callback from
-/// `TransportConfig`. If you need authentication, either use `upgrade`
+/// `TransportConfig`. Sockets upgraded this way start with empty (`Nil`)
+/// assigns. If you need authentication or seeded assigns, either use `upgrade`
 /// with a full config or call your auth check before this function.
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
 ) -> Response(ResponseData) {
-  do_upgrade(request, channels)
+  do_upgrade(request, channels, dynamic.nil())
 }
 
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
+  connect_assigns: Dynamic,
 ) -> Response(ResponseData) {
   mist.websocket(
     request: request,
@@ -123,7 +141,12 @@ fn do_upgrade(
       on_message(state, message, connection)
     },
     on_init: fn(connection) {
-      on_init(connection, channels.coordinator, channels.config.codec)
+      on_init(
+        connection,
+        channels.coordinator,
+        channels.config.codec,
+        connect_assigns,
+      )
     },
     on_close: on_close,
   )
@@ -134,6 +157,7 @@ fn on_init(
   _connection: WebsocketConnection,
   coordinator: Subject(CoordinatorMessage),
   codec: Codec,
+  connect_assigns: Dynamic,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Generate unique socket ID
   let socket_id = generate_socket_id()
@@ -153,10 +177,15 @@ fn on_init(
     Ok(Nil)
   }
 
-  // Register with coordinator
+  // Register with coordinator, seeding any connect-time assigns
   process.send(
     coordinator,
-    coordinator.SocketConnected(socket_id, send_fn, send_binary_fn),
+    coordinator.SocketConnected(
+      socket_id,
+      send_fn,
+      send_binary_fn,
+      connect_assigns,
+    ),
   )
 
   let state =
@@ -234,3 +263,8 @@ fn generate_socket_id() -> String {
   crypto.strong_random_bytes(16)
   |> bit_array.base16_encode()
 }
+
+/// Unsafe coercion to Dynamic - only used to type-erase connect-time assigns
+/// before handing them to the coordinator.
+@external(erlang, "beryl_ffi", "identity")
+fn unsafe_coerce_to_dynamic(value: a) -> Dynamic

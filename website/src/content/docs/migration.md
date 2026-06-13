@@ -61,7 +61,7 @@ These functions always returned empty/false because subscriptions are tracked in
 
 ### WebSocket authentication hook
 
-The Mist transport config now accepts an `on_connect` callback. Return `Error(Nil)` to reject the upgrade with a 403 before the WebSocket handshake completes.
+The Mist transport config now accepts an `on_connect` callback. Return `Error(Nil)` to reject the upgrade with a 403 before the WebSocket handshake completes, or `Ok(assigns)` to allow it and seed initial socket-level assigns visible to channels at join time (return `Ok(Nil)` for none). See [WebSocket Transport → Seeding initial assigns](/guides/websocket#seeding-initial-assigns).
 
 ---
 

@@ -118,6 +118,7 @@ flowchart TD
 - **Groups** — Named channel groups for multi-topic broadcasting
 - **PubSub** — pg-based distributed publish/subscribe
 - **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
+- **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds initial assigns
 
 ## Examples
 

@@ -531,8 +531,9 @@ fn erase_channel_types(
       payload: Dynamic,
       ctx: coordinator.SocketContext,
     ) {
-      // Create a typed socket with Nil assigns (will be set by join)
-      let typed_socket = create_socket_from_context(ctx)
+      // Create a typed socket seeded with any connect-time assigns from the
+      // transport's on_connect hook (Nil when none were seeded).
+      let typed_socket = create_socket_with_assigns(ctx)
 
       // Call the typed join handler (unsafe coerce socket to expected type)
       case
@@ -599,10 +600,6 @@ fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
     },
     close: fn() { Ok(Nil) },
   )
-}
-
-fn create_socket_from_context(ctx: coordinator.SocketContext) -> Socket(Nil) {
-  socket.new(ctx.socket_id, Nil, transport_from_context(ctx))
 }
 
 fn create_socket_with_assigns(
