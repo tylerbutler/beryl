@@ -105,7 +105,6 @@ pub fn upgrade(
 /// Note: This function does not invoke the `on_connect` callback from
 /// `TransportConfig`. If you need authentication, either use `upgrade`
 /// with a full config or call your auth check before this function.
-@internal
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
