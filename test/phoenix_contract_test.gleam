@@ -201,7 +201,7 @@ fn assert_no_text_message(client: WebsocketClient) {
 fn contract_channel(
   channels: beryl.Channels,
   terminated: process.Subject(channel.StopReason),
-) -> channel.Channel(Nil) {
+) -> channel.Channel(Nil, info) {
   channel.new(fn(_topic, _payload, client_socket) {
     channel.JoinOk(
       reply: Some(json.object([#("joined", json.bool(True))])),
