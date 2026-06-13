@@ -152,11 +152,13 @@ pub fn with_terminate(
   Channel(..channel, terminate: handler)
 }
 
+// nolint: unused_exports -- public API helper for library consumers (examples/chatrooms)
 /// Create a simple error response
 pub fn error(message: String) -> Json {
   json.object([#("error", json.string(message))])
 }
 
+// nolint: unused_exports -- public API helper for library consumers (examples/chatrooms)
 /// Create an error response with code
 pub fn error_with_code(code: Int, message: String) -> Json {
   json.object([#("code", json.int(code)), #("error", json.string(message))])
