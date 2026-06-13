@@ -3,6 +3,7 @@ import beryl/bridge
 import beryl/channel
 import beryl/coordinator
 import beryl/wire
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
@@ -32,7 +33,7 @@ fn start_channels_with_socket(
   #(channels, sent_messages)
 }
 
-fn notify_channel() -> channel.Channel(Nil) {
+fn notify_channel() -> channel.Channel(Nil, Dynamic) {
   channel.new(fn(_topic, _payload, socket) {
     channel.JoinOk(reply: option.None, socket: socket)
   })
