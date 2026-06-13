@@ -202,6 +202,50 @@ fn request_vsn(request: Request(Connection)) -> Option(String) {
   }
 }
 
+/// Determine whether a request is a WebSocket upgrade request.
+///
+/// Checks for the standard `Upgrade: websocket` header (case-insensitive).
+/// Use this to distinguish WebSocket handshakes from regular HTTP traffic on
+/// the same listener.
+pub fn is_websocket_request(request: Request(Connection)) -> Bool {
+  case request.get_header(request, "upgrade") {
+    Ok(value) -> string.lowercase(value) == "websocket"
+    Error(_) -> False
+  }
+}
+
+/// Build a combined request handler that serves both WebSocket channels and
+/// regular HTTP from a single Mist listener.
+///
+/// The returned function inspects each request and routes it:
+/// - WebSocket upgrade requests matching the configured socket path are handed
+///   to [`upgrade`](#upgrade) (which also runs any `on_connect` callback).
+/// - Everything else — non-upgrade requests, or upgrades to a different path —
+///   falls through to `http_fallback`.
+///
+/// This removes the boilerplate upgrade guard integrators would otherwise write
+/// by hand:
+///
+/// ```gleam
+/// mist_transport.handler(channels, mist_transport.default_config("/socket"), http_handler)
+/// |> mist.new
+/// |> mist.port(8000)
+/// |> mist.start
+/// ```
+pub fn handler(
+  channels: Channels,
+  config: TransportConfig,
+  http_fallback: fn(Request(Connection)) -> Response(ResponseData),
+) -> fn(Request(Connection)) -> Response(ResponseData) {
+  fn(request) {
+    case is_websocket_request(request) {
+      True ->
+        upgrade(request, channels, config, fn() { http_fallback(request) })
+      False -> http_fallback(request)
+    }
+  }
+}
+
 /// Alternative: upgrade any request to WebSocket (caller handles path matching)
 ///
 /// Note: This function does not invoke the `on_connect` callback from
