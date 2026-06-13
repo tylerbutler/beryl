@@ -16,11 +16,6 @@ gleam add beryl
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
-All of beryl's runtime dependencies are published on Hex, so `gleam add beryl` works
-from a clean project with no git dependencies. The built-in WebSocket transport is
-Mist-based (`beryl/transport/mist`) and is the recommended transport; you do not need
-any additional transport package.
-
 ## Quick start
 
 ```gleam
