@@ -186,7 +186,7 @@ fn dynamic_field(payload: dynamic.Dynamic, field: String) -> dynamic.Dynamic {
 
 // --- Server setup ----------------------------------------------------------
 
-fn echo_channel() -> channel.Channel(Nil) {
+fn echo_channel() -> channel.Channel(Nil, Nil) {
   channel.new(fn(_topic, payload, socket) {
     channel.JoinOk(
       reply: Some(json.object([#("echo", wire.dynamic_to_json(payload))])),

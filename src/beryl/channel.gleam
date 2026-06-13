@@ -10,7 +10,7 @@
 ////   RoomAssigns(user_id: String, room_id: String)
 //// }
 ////
-//// pub fn new() -> Channel(RoomAssigns) {
+//// pub fn new() -> Channel(RoomAssigns, info) {
 ////   channel.new(join)
 ////   |> channel.with_handle_in(handle_in)
 ////   |> channel.with_terminate(terminate)
@@ -69,7 +69,10 @@ pub type StopReason {
 ///
 /// Type parameters:
 /// - `assigns`: Socket state type for this channel
-pub type Channel(assigns) {
+/// - `info`: Server-originated/internal message type delivered to `handle_info`
+///   (see `beryl.send_info`). Channels that do not use `handle_info` leave this
+///   parameter generic.
+pub type Channel(assigns, info) {
   Channel(
     /// Called when a client attempts to join a topic
     ///
@@ -85,8 +88,12 @@ pub type Channel(assigns) {
     /// Binary frames are passed as raw BitArray when the configured codec has
     /// no binary decoder.
     handle_binary: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
-    /// Called when an OTP process sends a server-originated message to this channel
-    handle_info: fn(Dynamic, Socket(assigns)) -> HandleResult(assigns),
+    /// Called when an OTP process sends a server-originated message to this
+    /// channel.
+    ///
+    /// The message is the typed `info` value passed to `beryl.send_info` — no
+    /// `Dynamic` and no unsafe cast are required in application code.
+    handle_info: fn(info, Socket(assigns)) -> HandleResult(assigns),
     /// Called when the client leaves or disconnects
     ///
     /// Use for cleanup (presence, database updates, etc.)
@@ -99,7 +106,7 @@ pub type Channel(assigns) {
 /// Other handlers can be added using the `with_*` functions.
 pub fn new(
   join: fn(String, Dynamic, Socket(assigns)) -> JoinResult(assigns),
-) -> Channel(assigns) {
+) -> Channel(assigns, info) {
   Channel(
     join: join,
     handle_in: fn(_, _, socket) { NoReply(socket) },
@@ -111,9 +118,9 @@ pub fn new(
 
 /// Add an incoming message handler
 pub fn with_handle_in(
-  channel: Channel(assigns),
+  channel: Channel(assigns, info),
   handler: fn(String, Dynamic, Socket(assigns)) -> HandleResult(assigns),
-) -> Channel(assigns) {
+) -> Channel(assigns, info) {
   Channel(..channel, handle_in: handler)
 }
 
@@ -127,36 +134,39 @@ pub fn decode_payload(
 
 /// Add a binary message handler
 pub fn with_handle_binary(
-  channel: Channel(assigns),
+  channel: Channel(assigns, info),
   handler: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
-) -> Channel(assigns) {
+) -> Channel(assigns, info) {
   Channel(..channel, handle_binary: handler)
 }
 
 /// Add a server-originated OTP message handler.
 ///
+/// The handler receives the typed `info` value sent via `beryl.send_info`.
 /// `Reply` results are sent as pushes because server-originated messages do not
 /// have a client message ref to reply to.
 pub fn with_handle_info(
-  channel: Channel(assigns),
-  handler: fn(Dynamic, Socket(assigns)) -> HandleResult(assigns),
-) -> Channel(assigns) {
+  channel: Channel(assigns, info),
+  handler: fn(info, Socket(assigns)) -> HandleResult(assigns),
+) -> Channel(assigns, info) {
   Channel(..channel, handle_info: handler)
 }
 
 /// Add a terminate handler for cleanup
 pub fn with_terminate(
-  channel: Channel(assigns),
+  channel: Channel(assigns, info),
   handler: fn(StopReason, Socket(assigns)) -> Nil,
-) -> Channel(assigns) {
+) -> Channel(assigns, info) {
   Channel(..channel, terminate: handler)
 }
 
+// nolint: unused_exports -- public API helper for library consumers (examples/chatrooms)
 /// Create a simple error response
 pub fn error(message: String) -> Json {
   json.object([#("error", json.string(message))])
 }
 
+// nolint: unused_exports -- public API helper for library consumers (examples/chatrooms)
 /// Create an error response with code
 pub fn error_with_code(code: Int, message: String) -> Json {
   json.object([#("code", json.int(code)), #("error", json.string(message))])

@@ -32,7 +32,7 @@ import mist
 
 pub type RoomAssigns { RoomAssigns(username: String) }
 
-fn new_channel() -> Channel(RoomAssigns) {
+fn new_channel() -> Channel(RoomAssigns, info) {
   channel.new(fn(_topic, payload, socket) {
     let username_decoder = {
       use username <- decode.field("username", decode.string)
@@ -156,6 +156,7 @@ flowchart TD
 - **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
 - **Groups** — Named channel groups for multi-topic broadcasting
 - **PubSub** — pg-based distributed publish/subscribe
+- **Actor bridge** — forward an external OTP actor's stream to a socket with `beryl/bridge`
 - **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
 
 ## Examples
@@ -169,6 +170,66 @@ Three runnable demos are included in the `examples/` directory:
 | [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
+
+## Recipe: bridge an external actor to a socket
+
+A long-lived domain actor (for example a per-document session) often emits
+updates that need to be pushed to each joined socket. The `beryl/bridge` module
+removes the per-socket forwarder boilerplate: start a bridge in `join`, subscribe
+your actor to the bridge's `Subject`, and stop it in `terminate`. Each value the
+actor emits is translated and delivered to the channel's `handle_info` callback
+via `beryl.send_info`. The forwarder also monitors the channel process, so it is
+cleaned up automatically if that process dies — no leaked processes.
+
+```gleam
+import beryl
+import beryl/bridge.{type Bridge}
+import beryl/channel.{type Channel}
+import beryl/socket
+import gleam/dynamic/decode
+import gleam/json
+import gleam/option.{None}
+
+// Messages emitted by your domain actor.
+pub type DocEvent {
+  Updated(version: Int)
+}
+
+pub type Assigns {
+  Assigns(bridge: Bridge(DocEvent))
+}
+
+fn new_channel(channels: beryl.Channels, doc_actor) -> Channel(Assigns) {
+  channel.new(fn(topic, _payload, socket) {
+    // Forward every DocEvent emitted by the actor to this socket/topic.
+    let b =
+      bridge.start(
+        channels: channels,
+        socket_id: socket.id(socket),
+        topic: topic,
+        with: fn(event) { event },
+      )
+    // Hand the bridge's subject to the domain actor as its subscriber.
+    doc.subscribe(doc_actor, bridge.subject(b))
+    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
+  })
+  |> channel.with_handle_info(fn(message, socket) {
+    case decode.run(message, doc_event_decoder()) {
+      Ok(Updated(version)) ->
+        channel.Push(
+          "doc_updated",
+          json.object([#("version", json.int(version))]),
+          socket,
+        )
+      _ -> channel.NoReply(socket)
+    }
+  })
+  // Always stop the bridge on terminate for prompt, deterministic cleanup.
+  |> channel.with_terminate(fn(_reason, socket) {
+    bridge.stop(socket.get_assigns(socket).bridge)
+  })
+}
+```
 
 ## Releases & changelog
 

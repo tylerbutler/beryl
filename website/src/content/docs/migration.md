@@ -29,7 +29,7 @@ The following changes have accumulated since the last release. They are describe
 
 ### `send_info` and `with_handle_info`
 
-Channels can now receive server-originated OTP messages. Add a `handle_info` callback with `channel.with_handle_info/2`, then deliver messages from anywhere using `beryl.send_info/4`. A `Reply` returned from `handle_info` becomes a push (no client ref exists, so no `phx_reply` is sent).
+Channels can now receive server-originated OTP messages. Add a `handle_info` callback with `channel.with_handle_info/2`, then deliver messages from anywhere using `beryl.send_info/4`. The callback receives the **typed** message you sent (see the `info` type parameter below) — no `Dynamic` decode and no unsafe cast. A `Reply` returned from `handle_info` becomes a push (no client ref exists, so no `phx_reply` is sent).
 
 ### Phoenix presence diff broadcasting
 
@@ -55,9 +55,17 @@ The rate limiter now **denies** requests when the token bucket actor cannot be s
 
 These functions always returned empty/false because subscriptions are tracked internally by the coordinator. They have been removed from the public API.
 
-### Removed: `info` type parameter on `Channel`
+### Type-safe `handle_info`: `info` type parameter on `Channel`
 
-`Channel` was simplified from `Channel(assigns, info)` to `Channel(assigns)`. `with_handle_info` wires the callback onto the channel definition; `send_info/4` delivers messages to it at runtime. The two are complementary — use `with_handle_info` when building the channel and `send_info` when dispatching a message to it.
+`Channel` is parameterized as `Channel(assigns, info)`. The `info` type is the
+server-originated message delivered to `handle_info`, so `with_handle_info`
+wires up `fn(info, Socket(assigns)) -> HandleResult(assigns)` and `send_info/4`
+delivers a value of that type — end to end with no `Dynamic` and no unsafe
+identity FFI cast in application code. Channels that do not use `handle_info`
+leave `info` generic, so existing channel definitions keep compiling; only
+explicit `Channel(MyAssigns)` type annotations need to become
+`Channel(MyAssigns, info)` (or a concrete info type). This is a **breaking**
+type-signature change.
 
 ### WebSocket authentication hook
 
