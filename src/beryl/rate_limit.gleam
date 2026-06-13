@@ -3,6 +3,7 @@
 //// Provides per-key rate limiting backed by OTP actors. Each key (e.g. socket ID,
 //// topic) gets its own token bucket that refills at a configured rate.
 
+import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
@@ -108,7 +109,7 @@ fn start_bucket(cfg: RateLimitConfig) -> Result(Subject(BucketMsg), Nil) {
   |> actor.on_message(handle_bucket_msg)
   |> actor.start
   |> result.map(fn(started) { started.data })
-  |> result.map_error(fn(_) { Nil })
+  |> result.replace_error(Nil)
 }
 
 // ── Registry (per-key rate limiters) ────────────────────────────────────────
@@ -138,29 +139,7 @@ fn handle_registry_msg(
   case msg {
     RegistryStop -> actor.stop()
 
-    Check(key, reply) -> {
-      case dict.get(state.buckets, key) {
-        Ok(bucket) -> {
-          let result = process.call(bucket, 100, fn(r) { Hit(reply: r) })
-          process.send(reply, result)
-          actor.continue(state)
-        }
-        Error(_) -> {
-          case start_bucket(state.config) {
-            Ok(bucket) -> {
-              let result = process.call(bucket, 100, fn(r) { Hit(reply: r) })
-              process.send(reply, result)
-              let new_buckets = dict.insert(state.buckets, key, bucket)
-              actor.continue(RegistryState(..state, buckets: new_buckets))
-            }
-            Error(_) -> {
-              process.send(reply, Error(Nil))
-              actor.continue(state)
-            }
-          }
-        }
-      }
-    }
+    Check(key, reply) -> actor.continue(check_key(state, key, reply))
 
     RemoveByPrefix(prefix) -> {
       let #(to_remove, to_keep) =
@@ -170,6 +149,41 @@ fn handle_registry_msg(
       actor.continue(RegistryState(..state, buckets: dict.from_list(to_keep)))
     }
   }
+}
+
+fn check_key(
+  state: RegistryState,
+  key: String,
+  reply: Subject(Result(Nil, Nil)),
+) -> RegistryState {
+  case dict.get(state.buckets, key) {
+    Ok(bucket) -> {
+      hit_bucket(bucket, reply)
+      state
+    }
+    Error(Nil) ->
+      case start_bucket(state.config) {
+        Ok(bucket) -> {
+          hit_bucket(bucket, reply)
+          RegistryState(
+            ..state,
+            buckets: dict.insert(state.buckets, key, bucket),
+          )
+        }
+        Error(Nil) -> {
+          process.send(reply, Error(Nil))
+          state
+        }
+      }
+  }
+}
+
+fn hit_bucket(
+  bucket: Subject(BucketMsg),
+  reply: Subject(Result(Nil, Nil)),
+) -> Nil {
+  let result = process.call(bucket, 100, fn(r) { Hit(reply: r) })
+  process.send(reply, result)
 }
 
 fn split_by_prefix(
@@ -208,7 +222,7 @@ pub fn start(cfg: RateLimitConfig) -> Result(RateLimiter, Nil) {
   |> actor.on_message(handle_registry_msg)
   |> actor.start
   |> result.map(fn(started) { RateLimiter(subject: started.data) })
-  |> result.map_error(fn(_) { Nil })
+  |> result.replace_error(Nil)
 }
 
 /// Check if a request for the given key is allowed.
@@ -247,14 +261,10 @@ pub fn remove_by_prefix_optional(
 
 /// Start an optional rate limiter. Returns None if rate is 0 (unlimited).
 pub fn start_optional(rate: Int, burst: Int) -> Option(RateLimiter) {
-  case rate > 0 {
-    False -> None
-    True -> {
-      case start(config(per_second: rate, burst: burst)) {
-        Ok(limiter) -> Some(limiter)
-        Error(_) -> None
-      }
-    }
+  use <- bool.guard(when: rate <= 0, return: None)
+  case start(config(per_second: rate, burst: burst)) {
+    Ok(limiter) -> Some(limiter)
+    Error(Nil) -> None
   }
 }
 

@@ -72,7 +72,7 @@ pub fn start() -> Result(Groups, GroupError) {
   build_groups()
   |> actor.start
   |> result.map(fn(started) { Groups(subject: started.data) })
-  |> result.map_error(fn(_) { StartFailed })
+  |> result.replace_error(StartFailed)
 }
 
 /// Start the groups actor with a registered name (for supervision)
@@ -186,7 +186,7 @@ fn handle_message(
 
     Add(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
-        Error(_) -> {
+        Error(Nil) -> {
           process.send(reply, Error(NotFound))
           actor.continue(state)
         }
@@ -201,7 +201,7 @@ fn handle_message(
 
     Remove(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
-        Error(_) -> {
+        Error(Nil) -> {
           process.send(reply, Error(NotFound))
           actor.continue(state)
         }
@@ -216,7 +216,7 @@ fn handle_message(
 
     GetTopics(group_name, reply) -> {
       case dict.get(state.groups, group_name) {
-        Error(_) -> {
+        Error(Nil) -> {
           process.send(reply, Error(NotFound))
           actor.continue(state)
         }
@@ -235,15 +235,22 @@ fn handle_message(
 
     BroadcastToGroup(group_name, channels, event, payload) -> {
       case dict.get(state.groups, group_name) {
-        Error(_) -> actor.continue(state)
+        Error(Nil) -> actor.continue(state)
         Ok(topics) -> {
-          set.to_list(topics)
-          |> list.each(fn(topic) {
-            beryl.broadcast(channels, topic, event, payload)
-          })
+          broadcast_to_topics(topics, channels, event, payload)
           actor.continue(state)
         }
       }
     }
   }
+}
+
+fn broadcast_to_topics(
+  topics: Set(String),
+  channels: beryl.Channels,
+  event: String,
+  payload: json.Json,
+) -> Nil {
+  set.to_list(topics)
+  |> list.each(fn(topic) { beryl.broadcast(channels, topic, event, payload) })
 }
