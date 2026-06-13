@@ -121,10 +121,11 @@ pub fn upgrade(
 /// Checks for the standard `Upgrade: websocket` header (case-insensitive).
 /// Use this to distinguish WebSocket handshakes from regular HTTP traffic on
 /// the same listener.
+@internal
 pub fn is_websocket_request(request: Request(Connection)) -> Bool {
   case request.get_header(request, "upgrade") {
     Ok(value) -> string.lowercase(value) == "websocket"
-    Error(_) -> False
+    Error(Nil) -> False
   }
 }
 
@@ -148,7 +149,7 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// ```
 pub fn handler(
   channels: Channels,
-  config: TransportConfig,
+  config: TransportConfig(assigns),
   http_fallback: fn(Request(Connection)) -> Response(ResponseData),
 ) -> fn(Request(Connection)) -> Response(ResponseData) {
   fn(request) {
