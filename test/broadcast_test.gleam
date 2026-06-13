@@ -56,7 +56,7 @@ fn connect_socket(
 
   process.send(
     channels.coordinator,
-    coordinator.SocketConnected(socket_id, send, fn(_) { Ok(Nil) }),
+    coordinator.SocketConnected(socket_id, send, fn(_) { Ok(Nil) }, None),
   )
   process.sleep(10)
   sent

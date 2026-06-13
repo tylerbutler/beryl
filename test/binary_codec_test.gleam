@@ -168,6 +168,7 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
         process.send(sent_binary, data)
         Ok(Nil)
       },
+      None,
     ),
   )
 
@@ -231,10 +232,15 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
 
   process.send(
     channels.coordinator,
-    coordinator.SocketConnected("socket-1", fn(_) { Ok(Nil) }, fn(data) {
-      process.send(sent_binary, data)
-      Ok(Nil)
-    }),
+    coordinator.SocketConnected(
+      "socket-1",
+      fn(_) { Ok(Nil) },
+      fn(data) {
+        process.send(sent_binary, data)
+        Ok(Nil)
+      },
+      None,
+    ),
   )
 
   let handler =
@@ -290,6 +296,7 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
         process.send(sent_binary, data)
         Ok(Nil)
       },
+      None,
     ),
   )
 
@@ -334,6 +341,7 @@ pub fn phoenix_codec_without_binary_decoder_preserves_raw_binary_handler_test() 
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      None,
     ),
   )
 

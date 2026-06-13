@@ -130,9 +130,12 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
 
   process.send(
     channels.coordinator,
-    coordinator.SocketConnected("logging-socket", fn(_) { Ok(Nil) }, fn(_) {
-      Ok(Nil)
-    }),
+    coordinator.SocketConnected(
+      "logging-socket",
+      fn(_) { Ok(Nil) },
+      fn(_) { Ok(Nil) },
+      None,
+    ),
   )
   coordinator.route_message(
     channels.coordinator,
@@ -177,6 +180,7 @@ pub fn debug_join_missing_handler_logs_routing_and_send_test() {
       "missing-handler-socket",
       fn(_) { Ok(Nil) },
       fn(_) { Ok(Nil) },
+      None,
     ),
   )
   coordinator.route_message(
@@ -232,9 +236,12 @@ pub fn debug_channel_callback_logs_push_result_test() {
 
   process.send(
     channels.coordinator,
-    coordinator.SocketConnected("callback-log-socket", fn(_) { Ok(Nil) }, fn(_) {
-      Ok(Nil)
-    }),
+    coordinator.SocketConnected(
+      "callback-log-socket",
+      fn(_) { Ok(Nil) },
+      fn(_) { Ok(Nil) },
+      None,
+    ),
   )
   coordinator.route_message(
     channels.coordinator,

@@ -186,6 +186,7 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
     ),
   )
 
@@ -227,6 +228,7 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
     ),
   )
 
@@ -273,6 +275,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
     ),
   )
 
@@ -324,6 +327,7 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
     ),
   )
 

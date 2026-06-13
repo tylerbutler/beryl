@@ -72,6 +72,45 @@ pub fn main() {
 For a complete end-to-end walkthrough including Phoenix JS client code, see the
 **[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)** on the docs website.
 
+## Serializer negotiation (`vsn`)
+
+Beryl negotiates a wire serializer per connection from the Phoenix `vsn` query
+parameter, so it can act as a drop-in replacement for a Phoenix endpoint that
+serves multiple client serializers at once.
+
+- Connections without a `vsn`, or with `vsn=2.0.0`, use the codec passed to
+  `beryl.config/1` (the JSON `wire.phoenix_codec()` by default). This behavior
+  is unchanged from earlier releases.
+- Register additional serializers per `vsn` with
+  `mist_transport.with_serializer`. Each connection then decodes inbound frames
+  and encodes its replies/pushes with the serializer it negotiated, so JSON and
+  binary clients can share one server.
+
+```gleam
+import beryl/transport/mist as mist_transport
+
+// Wire a MessagePack serializer to vsn=3.0.0. `my_msgpack_codec()` is any
+// `beryl/wire/codec.Codec` whose `decode_binary` is `Some(..)` and whose
+// encoders return `codec.BinaryFrame(..)` — e.g. backed by a MessagePack
+// library such as `tylerbutler/msgpack_gleam`.
+let config =
+  mist_transport.default_config("/socket/websocket")
+  |> mist_transport.with_serializer("3.0.0", my_msgpack_codec())
+```
+
+A client selects the serializer via the connection URL, e.g.
+`wss://host/socket/websocket?vsn=3.0.0`.
+
+Unsupported `vsn` values (anything other than `2.0.0`/absent without a
+registered serializer) fall back to the configured codec by default. Call
+`mist_transport.with_reject_unknown_vsn(config, True)` to instead reject such
+upgrades with `400 Bad Request`.
+
+MessagePack is intentionally **not** a runtime dependency of Beryl (keeping it
+Hex-publishable); supply a MessagePack `Codec` from a downstream package and
+register it as shown above. See `test/vsn_negotiation_test.gleam` for a working
+binary serializer example.
+
 ## Documentation
 
 - **Website & guides**: <https://beryl.tylerbutler.com>
