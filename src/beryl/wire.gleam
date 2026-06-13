@@ -23,6 +23,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import roost/frame as roost_frame
 
 const expected_array_message = "Expected array of 5 elements [join_ref, ref, topic, event, payload]"
@@ -252,59 +253,58 @@ fn phoenix_event_name(kind: InboundKind) -> String {
 
 /// Convert a `Dynamic` (decoded from JSON) back into `json.Json`.
 pub fn dynamic_to_json(value: Dynamic) -> json.Json {
-  case decode.run(value, decode.string) {
-    Ok(s) -> json.string(s)
-    Error(_) -> try_decode_int(value)
-  }
+  decode.run(value, decode.string)
+  |> result.map(json.string)
+  |> result.lazy_unwrap(fn() { try_decode_int(value) })
 }
 
 fn try_decode_int(value: Dynamic) -> json.Json {
-  case decode.run(value, decode.int) {
-    Ok(i) -> json.int(i)
-    Error(_) -> try_decode_float(value)
-  }
+  decode.run(value, decode.int)
+  |> result.map(json.int)
+  |> result.lazy_unwrap(fn() { try_decode_float(value) })
 }
 
 fn try_decode_float(value: Dynamic) -> json.Json {
-  case decode.run(value, decode.float) {
-    Ok(f) -> json.float(f)
-    Error(_) -> try_decode_bool(value)
-  }
+  decode.run(value, decode.float)
+  |> result.map(json.float)
+  |> result.lazy_unwrap(fn() { try_decode_bool(value) })
 }
 
 fn try_decode_bool(value: Dynamic) -> json.Json {
-  case decode.run(value, decode.bool) {
-    Ok(b) -> json.bool(b)
-    Error(_) -> try_decode_complex(value)
-  }
+  decode.run(value, decode.bool)
+  |> result.map(json.bool)
+  |> result.lazy_unwrap(fn() { try_decode_complex(value) })
 }
 
 fn try_decode_complex(value: Dynamic) -> json.Json {
   case dynamic.classify(value) {
     "Nil" -> json.null()
-    "List" -> {
-      case decode.run(value, decode.list(decode.dynamic)) {
-        Ok(items) -> json.preprocessed_array(list.map(items, dynamic_to_json))
-        Error(_) -> json.null()
-      }
-    }
-    _ -> {
-      let dict_decoder = decode.dict(decode.string, decode.dynamic)
-      case decode.run(value, dict_decoder) {
-        Ok(d) -> {
-          let pairs =
-            d
-            |> dict.to_list()
-            |> list.map(fn(pair) {
-              let #(k, v) = pair
-              #(k, dynamic_to_json(v))
-            })
-          json.object(pairs)
-        }
-        Error(_) -> json.null()
-      }
-    }
+    "List" -> decode_list_to_json(value)
+    _ -> decode_object_to_json(value)
   }
+}
+
+fn decode_list_to_json(value: Dynamic) -> json.Json {
+  decode.run(value, decode.list(decode.dynamic))
+  |> result.map(fn(items) {
+    json.preprocessed_array(list.map(items, dynamic_to_json))
+  })
+  |> result.unwrap(json.null())
+}
+
+fn decode_object_to_json(value: Dynamic) -> json.Json {
+  let dict_decoder = decode.dict(decode.string, decode.dynamic)
+  decode.run(value, dict_decoder)
+  |> result.map(fn(decoded) {
+    decoded
+    |> dict.to_list()
+    |> list.map(fn(pair) {
+      let #(k, v) = pair
+      #(k, dynamic_to_json(v))
+    })
+    |> json.object()
+  })
+  |> result.unwrap(json.null())
 }
 
 /// Create a Phoenix `phx_reply` JSON string.

@@ -5,6 +5,7 @@
 //// exact, legacy trailing prefix wildcards, or segment-aware wildcards where
 //// "*" occupies a complete colon-delimited segment.
 
+import gleam/bool
 import gleam/list
 import gleam/string
 
@@ -31,17 +32,15 @@ pub type TopicPattern {
 /// parse_pattern("document:tenant-a:*") // -> Wildcard("document:tenant-a:")
 /// ```
 pub fn parse_pattern(pattern: String) -> TopicPattern {
-  case should_parse_segment_wildcard(pattern) {
-    True -> SegmentWildcard(segments(pattern))
-    False ->
-      case string.ends_with(pattern, "*") {
-        True -> {
-          let prefix = string.drop_end(pattern, 1)
-          Wildcard(prefix)
-        }
-        False -> Exact(pattern)
-      }
-  }
+  use <- bool.guard(
+    when: should_parse_segment_wildcard(pattern),
+    return: SegmentWildcard(segments(pattern)),
+  )
+  use <- bool.guard(
+    when: !string.ends_with(pattern, "*"),
+    return: Exact(pattern),
+  )
+  Wildcard(string.drop_end(pattern, 1))
 }
 
 /// Check if a topic matches a pattern
@@ -158,18 +157,23 @@ pub fn extract_wildcards(
 
       case segment_parts_match(pattern_parts, topic_parts) {
         False -> Error(Nil)
-        True ->
-          list.zip(pattern_parts, topic_parts)
-          |> list.filter_map(fn(pair) {
-            case pair {
-              #("*", value) -> Ok(value)
-              _ -> Error(Nil)
-            }
-          })
-          |> Ok
+        True -> Ok(collect_wildcard_values(pattern_parts, topic_parts))
       }
     }
   }
+}
+
+fn collect_wildcard_values(
+  pattern_parts: List(String),
+  topic_parts: List(String),
+) -> List(String) {
+  list.zip(pattern_parts, topic_parts)
+  |> list.filter_map(fn(pair) {
+    case pair {
+      #("*", value) -> Ok(value)
+      _ -> Error(Nil)
+    }
+  })
 }
 
 /// Parse a topic into segments by splitting on ":"
@@ -217,14 +221,12 @@ pub fn from_segments(parts: List(String)) -> String {
 /// - Not contain control characters
 /// - Not start or end with ":"
 pub fn validate(topic: String) -> Result(String, TopicError) {
-  case string.is_empty(topic) {
-    True -> Error(EmptyTopic)
-    False ->
-      case string.starts_with(topic, ":") || string.ends_with(topic, ":") {
-        True -> Error(InvalidFormat("topic cannot start or end with ':'"))
-        False -> Ok(topic)
-      }
-  }
+  use <- bool.guard(when: string.is_empty(topic), return: Error(EmptyTopic))
+  use <- bool.guard(
+    when: string.starts_with(topic, ":") || string.ends_with(topic, ":"),
+    return: Error(InvalidFormat("topic cannot start or end with ':'")),
+  )
+  Ok(topic)
 }
 
 pub type TopicError {

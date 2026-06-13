@@ -58,6 +58,7 @@ import beryl/rate_limit
 import beryl/socket.{type Socket}
 import beryl/topic
 import beryl/wire/codec
+import gleam/bool
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/int
@@ -270,43 +271,42 @@ pub type StartError {
 /// }
 /// ```
 pub fn start(config: Config) -> Result(Channels, StartError) {
-  case config.heartbeat_timeout_ms <= 0 {
-    True -> Error(InvalidHeartbeatTimeout)
-    False -> {
-      // Server checks at half the timeout interval to detect stale sockets
-      // promptly. The client heartbeat_interval_ms is informational only
-      // (used by clients to know how often to send heartbeats).
-      let check_interval = config.heartbeat_timeout_ms / 2
+  use <- bool.guard(
+    when: config.heartbeat_timeout_ms <= 0,
+    return: Error(InvalidHeartbeatTimeout),
+  )
+  // Server checks at half the timeout interval to detect stale sockets
+  // promptly. The client heartbeat_interval_ms is informational only
+  // (used by clients to know how often to send heartbeats).
+  let check_interval = config.heartbeat_timeout_ms / 2
 
-      let message_limiter =
-        rate_limit.start_optional(config.message_rate, config.message_burst)
-      let join_limiter =
-        rate_limit.start_optional(config.join_rate, config.join_burst)
-      let channel_limiter =
-        rate_limit.start_optional(config.channel_rate, config.channel_burst)
+  let message_limiter =
+    rate_limit.start_optional(config.message_rate, config.message_burst)
+  let join_limiter =
+    rate_limit.start_optional(config.join_rate, config.join_burst)
+  let channel_limiter =
+    rate_limit.start_optional(config.channel_rate, config.channel_burst)
 
-      let coord_config =
-        coordinator.CoordinatorConfig(
-          codec: config.codec,
-          heartbeat_check_interval_ms: check_interval,
-          heartbeat_timeout_ms: config.heartbeat_timeout_ms,
-          message_limiter: message_limiter,
-          join_limiter: join_limiter,
-          channel_limiter: channel_limiter,
-          logging: coordinator_logging(config.logging),
-        )
+  let coord_config =
+    coordinator.CoordinatorConfig(
+      codec: config.codec,
+      heartbeat_check_interval_ms: check_interval,
+      heartbeat_timeout_ms: config.heartbeat_timeout_ms,
+      message_limiter: message_limiter,
+      join_limiter: join_limiter,
+      channel_limiter: channel_limiter,
+      logging: coordinator_logging(config.logging),
+    )
 
-      let coordinator_result = case config.pubsub {
-        Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
-        None -> coordinator.start_with_config(coord_config)
-      }
+  let coordinator_result = case config.pubsub {
+    Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
+    None -> coordinator.start_with_config(coord_config)
+  }
 
-      case coordinator_result {
-        Error(_) -> Error(CoordinatorStartFailed)
-        Ok(coord) ->
-          Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
-      }
-    }
+  case coordinator_result {
+    Error(_) -> Error(CoordinatorStartFailed)
+    Ok(coord) ->
+      Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
   }
 }
 
@@ -390,7 +390,7 @@ pub fn broadcast(
   case channels.pubsub, process.subject_owner(channels.coordinator) {
     Some(ps), Ok(coordinator_pid) ->
       pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
-    Some(_), Error(_) ->
+    Some(_), Error(Nil) ->
       // Coordinator exited between send and pubsub forward — local message
       // is already enqueued (dead-letters), skip the cluster fanout.
       Nil
@@ -466,7 +466,7 @@ pub fn broadcast_from(
         event,
         payload,
       )
-    Some(_), Error(_) -> Nil
+    Some(_), Error(Nil) -> Nil
     None, _ -> Nil
   }
 }

@@ -105,6 +105,7 @@ pub fn upgrade(
 /// Note: This function does not invoke the `on_connect` callback from
 /// `TransportConfig`. If you need authentication, either use `upgrade`
 /// with a full config or call your auth check before this function.
+@internal
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
@@ -184,6 +185,7 @@ fn on_message(
       case state.codec.decode_text(text) {
         Ok(inbound) ->
           coordinator.route_decoded(state.coordinator, state.socket_id, inbound)
+        // nolint: thrown_away_error -- decode failure falls back to raw coordinator routing for centralized diagnostics
         Error(_) ->
           coordinator.route_message(state.coordinator, state.socket_id, text)
       }
@@ -199,6 +201,7 @@ fn on_message(
                 state.socket_id,
                 inbound,
               )
+            // nolint: thrown_away_error -- decode failure falls back to raw coordinator routing for centralized diagnostics
             Error(_) ->
               coordinator.route_binary(state.coordinator, state.socket_id, data)
           }
