@@ -39,3 +39,17 @@ pub fn with_on_connect_replaces_callback_test() {
 
   config.on_connect |> should.be_some
 }
+
+pub fn with_on_connect_seeding_assigns_sets_callback_test() {
+  // on_connect may return seeded socket-level assigns, not just Nil.
+  let callback = fn(_req: Request(Connection)) -> Result(String, Nil) {
+    Ok("user-123")
+  }
+
+  let config =
+    mist_transport.default_config("/socket")
+    |> mist_transport.with_on_connect(callback)
+
+  config.path |> should.equal("/socket")
+  config.on_connect |> should.be_some
+}

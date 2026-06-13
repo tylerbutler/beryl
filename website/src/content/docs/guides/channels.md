@@ -77,7 +77,7 @@ pub type RoomAssigns {
   RoomAssigns(user_id: String, room_id: String)
 }
 
-pub fn new() -> Channel(RoomAssigns) {
+pub fn new() -> Channel(RoomAssigns, info) {
   channel.new(join)
   |> channel.with_handle_in(handle_in)
   |> channel.with_handle_binary(handle_binary)
@@ -108,7 +108,14 @@ fn join(
 }
 ```
 
-### Message handler
+:::tip[Authenticate once at connect time]
+If every topic needs the same per-socket auth (e.g. the same JWT), validate it
+**once** with the transport-level `on_connect` hook instead of repeating the
+check in every `join`. `on_connect` runs once per socket, can reject the whole
+connection before any join, and can seed initial assigns that this `join`
+callback reads via `socket.get_assigns`. See
+[WebSocket Transport → Authentication](/guides/websocket#authentication).
+:::
 
 Called for each incoming text message. The `event` string identifies the message type:
 
@@ -194,16 +201,34 @@ fn terminate(
 
 ### Server-originated message handler
 
-Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications, timer ticks, background job results):
+Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications, timer ticks, background job results).
+
+The handler receives the **typed** message you sent — there is no `Dynamic` and no unsafe cast. Channels are parameterized as `Channel(assigns, info)`, where `info` is your server-message type:
 
 ```gleam
+type ServerMessage {
+  Tick(at: Int)
+  Notify(text: String)
+}
+
 fn handle_info(
-  message: Dynamic,
+  message: ServerMessage,
   socket: Socket(RoomAssigns),
 ) -> HandleResult(RoomAssigns) {
-  // Decode the server message and push to the client
-  let response = json.object([#("data", json.string("server update"))])
-  channel.Push("server_update", response, socket)
+  case message {
+    Tick(at) ->
+      channel.Push(
+        "tick",
+        json.object([#("at", json.int(at))]),
+        socket,
+      )
+    Notify(text) ->
+      channel.Push(
+        "notification",
+        json.object([#("text", json.string(text))]),
+        socket,
+      )
+  }
 }
 
 // Register the handler when building the channel
@@ -212,54 +237,7 @@ channel.new(join)
 |> channel.with_handle_info(handle_info)
 ```
 
-The `message` argument is `Dynamic`. Use `gleam/dynamic/decode` to extract typed values:
-
-```gleam
-import gleam/dynamic/decode
-
-type ServerMessage {
-  Tick(at: Int)
-  Notify(text: String)
-}
-
-fn decode_server_message(d: Dynamic) -> Result(ServerMessage, _) {
-  let decoder =
-    decode.field("type", decode.string)
-    |> decode.then(fn(tag) {
-      case tag {
-        "tick" -> decode.map(decode.field("at", decode.int), Tick)
-        "notify" -> decode.map(decode.field("text", decode.string), Notify)
-        _ -> decode.failure(Tick(0), "ServerMessage")
-      }
-    })
-  decode.run(d, decoder)
-}
-
-fn handle_info(
-  message: Dynamic,
-  socket: Socket(RoomAssigns),
-) -> HandleResult(RoomAssigns) {
-  case decode_server_message(message) {
-    Ok(Tick(at)) -> {
-      channel.Push(
-        "tick",
-        json.object([#("at", json.int(at))]),
-        socket,
-      )
-    }
-    Ok(Notify(text)) -> {
-      channel.Push(
-        "notification",
-        json.object([#("text", json.string(text))]),
-        socket,
-      )
-    }
-    Error(_) -> channel.NoReply(socket)
-  }
-}
-```
-
-Because server messages have no client ref, `Reply` returned from `handle_info` is sent as a push. Use `Push` here to make intent explicit.
+Because the `info` type is recovered by the channel, you match on `message` directly with exhaustive pattern matching — no `gleam/dynamic/decode` round-trip and no identity FFI cast in application code.
 
 #### Sending messages with send_info
 

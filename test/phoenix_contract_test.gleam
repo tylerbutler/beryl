@@ -7,9 +7,12 @@ import gleam/bytes_tree
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
+import gleam/http/request
 import gleam/http/response
 import gleam/json.{type Json}
+import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleeunit
 import gleeunit/should
 import mist
@@ -201,7 +204,7 @@ fn assert_no_text_message(client: WebsocketClient) {
 fn contract_channel(
   channels: beryl.Channels,
   terminated: process.Subject(channel.StopReason),
-) -> channel.Channel(Nil) {
+) -> channel.Channel(Nil, info) {
   channel.new(fn(_topic, _payload, client_socket) {
     channel.JoinOk(
       reply: Some(json.object([#("joined", json.bool(True))])),
@@ -404,5 +407,101 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   assert_no_text_message(client)
   close(client)
   close(other_client)
+  stop_supervisor(server_pid)
+}
+
+// Socket-level connect/auth hook (on_connect) — issue #93
+
+fn auth_query(req, name: String) -> Result(String, Nil) {
+  case request.get_query(req) {
+    Ok(params) ->
+      list.find(params, fn(pair) { pair.0 == name })
+      |> result.map(fn(pair) { pair.1 })
+    Error(_) -> Error(Nil)
+  }
+}
+
+fn start_auth_server(
+  channels: beryl.Channels,
+  config: mist_transport.TransportConfig(a),
+) -> #(Int, process.Pid) {
+  let port_subject = process.new_subject()
+  let handler = fn(request) {
+    mist_transport.upgrade(request, channels, config, fn() {
+      response.new(404)
+      |> response.set_body(mist.Bytes(bytes_tree.new()))
+    })
+  }
+  let assert Ok(server) =
+    handler
+    |> mist.new
+    |> mist.port(0)
+    |> mist.bind("127.0.0.1")
+    |> mist.after_start(fn(port, _scheme, _ip_address) {
+      process.send(port_subject, port)
+    })
+    |> mist.start
+  let assert Ok(port) = process.receive(port_subject, 1000)
+  #(port, server.pid)
+}
+
+pub fn on_connect_rejects_connection_without_token_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let config =
+    mist_transport.default_config("/socket/websocket")
+    |> mist_transport.with_on_connect(fn(req) {
+      case auth_query(req, "token") {
+        Ok("secret") -> Ok(Nil)
+        _ -> Error(Nil)
+      }
+    })
+  let #(port, server_pid) = start_auth_server(channels, config)
+
+  // Missing/invalid token -> upgrade rejected (HTTP 403, no 101 switch).
+  connect_websocket(port, "/socket/websocket")
+  |> should.equal(Error(Nil))
+
+  // Valid token -> upgrade succeeds.
+  let assert Ok(client) =
+    connect_websocket(port, "/socket/websocket?token=secret")
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn on_connect_seeds_assigns_visible_at_join_test() {
+  let serializer = json_serializer()
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+
+  // The channel's assigns is the connect-seeded user id; join echoes it back
+  // without re-authenticating.
+  let handler =
+    channel.new(fn(_topic, _payload, client_socket) {
+      let user_id = socket.get_assigns(client_socket)
+      channel.JoinOk(
+        reply: Some(json.object([#("user", json.string(user_id))])),
+        socket: client_socket,
+      )
+    })
+  beryl.register(channels, "room:*", handler)
+  |> should.equal(Ok(Nil))
+
+  let config =
+    mist_transport.default_config("/socket/websocket")
+    |> mist_transport.with_on_connect(fn(req) { auth_query(req, "token") })
+  let #(port, server_pid) = start_auth_server(channels, config)
+
+  let assert Ok(client) =
+    connect_websocket(port, "/socket/websocket?token=alice")
+  let assert Ok(client) =
+    send_text(
+      client,
+      serializer.join("join-ref", "join-1", "room:lobby", json.object([])),
+    )
+  let reply = latest_text_message(client)
+  let frame =
+    assert_reply(serializer, reply, Some("join-ref"), "join-1", "room:lobby")
+  let response = dynamic_field(frame.payload, "response")
+  assert_json_string(response, "user", "alice")
+  close(client)
   stop_supervisor(server_pid)
 }
