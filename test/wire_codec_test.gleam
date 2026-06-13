@@ -71,17 +71,6 @@ pub fn phoenix_codec_defaults_to_native_implementation_test() {
   })
 }
 
-pub fn phoenix_codec_uses_roost_when_env_is_roost_test() {
-  with_env_value(phoenix_codec_env, Some("roost"), fn() {
-    let phoenix = wire.phoenix_codec()
-
-    let assert Error(codec.InvalidFormat(reason)) =
-      phoenix.decode_text("[null,\"1\",123,\"event\",{}]")
-
-    reason |> should.equal("Expected topic to be a string")
-  })
-}
-
 pub fn phoenix_codec_uses_native_when_env_is_unknown_test() {
   with_env_value(phoenix_codec_env, Some("native"), fn() {
     let phoenix = wire.phoenix_codec()
@@ -96,22 +85,20 @@ pub fn phoenix_codec_uses_native_when_env_is_unknown_test() {
   })
 }
 
-pub fn roost_phoenix_codec_preserves_missing_ref_reply_shape_test() {
-  with_env_value(phoenix_codec_env, Some("roost"), fn() {
-    let phoenix = wire.phoenix_codec()
+pub fn phoenix_codec_preserves_missing_ref_reply_shape_test() {
+  let phoenix = wire.phoenix_codec()
 
-    phoenix.encode_reply(
-      Some("join-ref"),
-      None,
-      "room:1",
-      codec.StatusOk,
-      json.object([]),
-    )
-    |> text_frame()
-    |> should.equal(
-      "[\"join-ref\",null,\"room:1\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
-    )
-  })
+  phoenix.encode_reply(
+    Some("join-ref"),
+    None,
+    "room:1",
+    codec.StatusOk,
+    json.object([]),
+  )
+  |> text_frame()
+  |> should.equal(
+    "[\"join-ref\",null,\"room:1\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
+  )
 }
 
 // === Inbound shape ===
