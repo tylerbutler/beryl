@@ -34,7 +34,7 @@ pub fn new_handler(
   channels: beryl.Channels,
   presence: Presence,
   groups: group.Groups,
-) -> Channel(ChatAssigns) {
+) -> Channel(ChatAssigns, info) {
   channel.new(fn(topic, payload, socket) {
     join(channels, presence, groups, topic, payload, socket)
   })

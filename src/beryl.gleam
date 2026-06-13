@@ -341,7 +341,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 pub fn register(
   channels: Channels,
   pattern: String,
-  handler: Channel(assigns),
+  handler: Channel(assigns, info),
 ) -> Result(Nil, RegisterError) {
   // Convert typed Channel to type-erased ChannelHandler
   let erased_handler = erase_channel_types(pattern, handler)
@@ -474,8 +474,15 @@ pub fn broadcast_from(
 /// Send a server-originated OTP message to a joined channel context.
 ///
 /// The message is delivered to the channel's `handle_info` callback for the
-/// specific socket/topic pair. If the socket is not connected, the topic is not
-/// joined, or no handler matches the topic, the message is ignored.
+/// specific socket/topic pair as the typed `info` value — the receiving handler
+/// matches on it directly without any `Dynamic` decode or unsafe cast. If the
+/// socket is not connected, the topic is not joined, or no handler matches the
+/// topic, the message is ignored.
+///
+/// Note: a single `Channels` system may host channels with different `info`
+/// types, so this function accepts a generic message and the matching channel's
+/// `handle_info` recovers the concrete type. Send a value whose type matches the
+/// target channel's `info` parameter.
 pub fn send_info(
   channels: Channels,
   socket_id: String,
@@ -520,7 +527,7 @@ pub fn extract_topic_id(
 /// channel types in the same registry.
 fn erase_channel_types(
   pattern_str: String,
-  typed_channel: Channel(assigns),
+  typed_channel: Channel(assigns, info),
 ) -> ChannelHandler {
   let pattern = topic.parse_pattern(pattern_str)
 
@@ -576,7 +583,10 @@ fn erase_channel_types(
     handle_info: fn(message: Dynamic, ctx: coordinator.SocketContext) {
       let typed_socket = create_socket_with_assigns(ctx)
 
-      typed_channel.handle_info(message, unsafe_coerce_socket(typed_socket))
+      typed_channel.handle_info(
+        unsafe_coerce_from_dynamic(message),
+        unsafe_coerce_socket(typed_socket),
+      )
       |> erase_handle_result
     },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
@@ -648,6 +658,13 @@ fn erase_handle_result(
 /// Unsafe coercion to Dynamic - only use for type erasure
 @external(erlang, "beryl_ffi", "identity")
 fn unsafe_coerce_to_dynamic(value: a) -> Dynamic
+
+/// Unsafe coercion from Dynamic back to a concrete type - only use to recover
+/// the typed `info` message at the `handle_info` erasure boundary. The value
+/// originates from `send_info`, which stored a value of the channel's `info`
+/// type as `Dynamic`; this restores it.
+@external(erlang, "beryl_ffi", "identity")
+fn unsafe_coerce_from_dynamic(value: Dynamic) -> a
 
 /// Unsafe coercion of socket types - only use for type erasure
 @external(erlang, "beryl_ffi", "identity")

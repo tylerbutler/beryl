@@ -16,150 +16,23 @@ import beryl/wire/codec.{
   type ReplyStatus, Codec, Event, Heartbeat, Inbound, InvalidFormat, InvalidJson,
   Join, Leave, StatusError, StatusOk, TextFrame,
 }
-import envoy
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import roost/frame as roost_frame
 
 const expected_array_message = "Expected array of 5 elements [join_ref, ref, topic, event, payload]"
 
-const phoenix_codec_env = "BERYL_PHOENIX_CODEC"
-
-type PhoenixCodecImplementation {
-  NativePhoenixCodec
-  RoostPhoenixCodec
-}
-
-fn phoenix_codec_implementation() -> PhoenixCodecImplementation {
-  case envoy.get(phoenix_codec_env) {
-    Ok("roost") -> RoostPhoenixCodec
-    _ -> NativePhoenixCodec
-  }
-}
-
 /// The canonical Phoenix wire codec. Pass to `beryl.config/1`.
-///
-/// By default this uses Beryl's native Phoenix implementation. Set
-/// `BERYL_PHOENIX_CODEC=roost` before constructing the codec to opt into the
-/// Roost-backed implementation.
 pub fn phoenix_codec() -> Codec {
-  case phoenix_codec_implementation() {
-    NativePhoenixCodec -> native_phoenix_codec()
-    RoostPhoenixCodec -> roost_phoenix_codec()
-  }
-}
-
-fn native_phoenix_codec() -> Codec {
   Codec(
     decode_text: decode_message,
     decode_binary: None,
     encode_reply: reply_json,
     encode_push: push,
     encode_heartbeat_reply: heartbeat_reply,
-  )
-}
-
-fn roost_phoenix_codec() -> Codec {
-  Codec(
-    decode_text: decode_message_with_roost,
-    decode_binary: None,
-    encode_reply: reply_json_with_roost,
-    encode_push: push_with_roost,
-    encode_heartbeat_reply: heartbeat_reply_with_roost,
-  )
-}
-
-fn decode_message_with_roost(
-  json_string: String,
-) -> Result(Inbound, DecodeError) {
-  case roost_frame.decode(json_string) {
-    Ok(frame) ->
-      Ok(Inbound(
-        join_ref: frame.join_ref,
-        ref: frame.ref,
-        topic: frame.topic,
-        kind: classify_phoenix_event_with_roost(frame.event),
-        payload: frame.payload,
-      ))
-    Error(roost_frame.InvalidJson(reason)) -> Error(InvalidJson(reason))
-    Error(roost_frame.InvalidFormat(reason)) -> Error(InvalidFormat(reason))
-  }
-}
-
-fn classify_phoenix_event_with_roost(event: String) -> InboundKind {
-  case event {
-    event if event == roost_frame.join_event -> Join
-    event if event == roost_frame.leave_event -> Leave
-    event if event == roost_frame.heartbeat_event -> Heartbeat
-    other -> Event(other)
-  }
-}
-
-fn reply_status_to_roost(status: ReplyStatus) -> roost_frame.ReplyStatus {
-  case status {
-    StatusOk -> roost_frame.StatusOk
-    StatusError -> roost_frame.StatusError
-  }
-}
-
-fn reply_status_string(status: ReplyStatus) -> String {
-  case status {
-    StatusOk -> "ok"
-    StatusError -> "error"
-  }
-}
-
-fn push_with_roost(topic: String, event: String, payload: json.Json) -> Frame {
-  TextFrame(roost_frame.encode(
-    join_ref: None,
-    ref: None,
-    topic: topic,
-    event: event,
-    payload: payload,
-  ))
-}
-
-fn reply_json_with_roost(
-  join_ref: Option(String),
-  ref: Option(String),
-  topic: String,
-  status: ReplyStatus,
-  response: json.Json,
-) -> Frame {
-  case ref {
-    Some(ref) ->
-      TextFrame(roost_frame.encode_reply(
-        join_ref: join_ref,
-        ref: ref,
-        topic: topic,
-        status: reply_status_to_roost(status),
-        response: response,
-      ))
-    None ->
-      TextFrame(roost_frame.encode(
-        join_ref: join_ref,
-        ref: None,
-        topic: topic,
-        event: roost_frame.reply_event,
-        payload: json.object([
-          #("status", json.string(reply_status_string(status))),
-          #("response", response),
-        ]),
-      ))
-  }
-}
-
-fn heartbeat_reply_with_roost(ref: Option(String)) -> Frame {
-  reply_json_with_roost(
-    None,
-    ref,
-    roost_frame.heartbeat_topic,
-    StatusOk,
-    json.object([]),
   )
 }
 

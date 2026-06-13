@@ -29,11 +29,11 @@ pub type LoggingConfig {
 /// The hot path is a single persistent_term lookup with no allocations.
 pub fn logger(name: String) -> Logger {
   case get_cached_logger(name) {
-    Ok(l) -> l
+    Ok(cached_logger) -> cached_logger
     Error(Nil) -> {
-      let l = birch.new(name)
-      set_cached_logger(name, l)
-      l
+      let cached_logger = birch.new(name)
+      set_cached_logger(name, cached_logger)
+      cached_logger
     }
   }
 }
@@ -55,7 +55,7 @@ fn to_birch_level(log_level: LogLevel) -> level.Level {
 }
 
 /// Safely truncate a text value for log metadata.
-pub fn safe_preview(text: String, max_length: Int) -> String {
+fn safe_preview(text: String, max_length: Int) -> String {
   let safe_length = int.max(max_length, 0)
   string.slice(text, 0, safe_length)
 }
