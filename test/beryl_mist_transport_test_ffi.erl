@@ -1,5 +1,46 @@
 -module(beryl_mist_transport_test_ffi).
--export([connect_websocket/2, send_text/2, receive_text/2, close/1]).
+-export([connect_websocket/2, send_text/2, receive_text/2, close/1, http_get/2]).
+
+http_get(Port, Path) ->
+    case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
+        {ok, Socket} ->
+            Request = [
+                <<"GET ">>, Path, <<" HTTP/1.1\r\n">>,
+                <<"Host: 127.0.0.1:">>, integer_to_binary(Port), <<"\r\n">>,
+                <<"Connection: close\r\n\r\n">>
+            ],
+            case gen_tcp:send(Socket, Request) of
+                ok ->
+                    Result =
+                        case read_headers(Socket, <<>>) of
+                            {ok, Headers} -> parse_status(Headers);
+                            {error, nil} -> {error, nil}
+                        end,
+                    gen_tcp:close(Socket),
+                    Result;
+                _ ->
+                    gen_tcp:close(Socket),
+                    {error, nil}
+            end;
+        _ ->
+            {error, nil}
+    end.
+
+parse_status(Headers) ->
+    case binary:split(Headers, <<"\r\n">>) of
+        [StatusLine | _] ->
+            case binary:split(StatusLine, <<" ">>, [global]) of
+                [_Version, Code | _] ->
+                    case string:to_integer(binary_to_list(Code)) of
+                        {Int, _} when is_integer(Int) -> {ok, Int};
+                        _ -> {error, nil}
+                    end;
+                _ ->
+                    {error, nil}
+            end;
+        _ ->
+            {error, nil}
+    end.
 
 connect_websocket(Port, Path) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of

@@ -54,13 +54,10 @@ pub fn main() {
   let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
 
   let assert Ok(_) =
-    fn(req) {
-      mist_transport.upgrade(req, channels,
-        mist_transport.default_config("/socket/websocket"), fn() {
-          // your regular HTTP handler here
-          panic as "not implemented"
-        })
-    }
+    mist_transport.handler(channels, mist_transport.default_config("/socket/websocket"), fn(_req) {
+      // your regular HTTP handler here
+      panic as "not implemented"
+    })
     |> mist.new
     |> mist.port(8000)
     |> mist.start
@@ -68,6 +65,12 @@ pub fn main() {
   process.sleep_forever()
 }
 ```
+
+`mist_transport.handler` composes the WebSocket upgrade and your HTTP handler
+into a single Mist request handler: WebSocket upgrades on the configured path go
+to beryl, everything else falls through to the HTTP fallback. If you need to drive
+the upgrade decision yourself, `mist_transport.upgrade` (and the
+`mist_transport.is_websocket_request` guard) remain available.
 
 For a complete end-to-end walkthrough including Phoenix JS client code, see the
 **[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)** on the docs website.
