@@ -121,10 +121,11 @@ pub fn upgrade(
 /// Checks for the standard `Upgrade: websocket` header (case-insensitive).
 /// Use this to distinguish WebSocket handshakes from regular HTTP traffic on
 /// the same listener.
+@internal
 pub fn is_websocket_request(request: Request(Connection)) -> Bool {
   case request.get_header(request, "upgrade") {
     Ok(value) -> string.lowercase(value) == "websocket"
-    Error(_) -> False
+    Error(Nil) -> False
   }
 }
 
@@ -166,6 +167,7 @@ pub fn handler(
 /// `TransportConfig`. Sockets upgraded this way start with empty (`Nil`)
 /// assigns. If you need authentication or seeded assigns, either use `upgrade`
 /// with a full config or call your auth check before this function.
+@internal
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,

@@ -24,6 +24,7 @@
 import beryl/internal
 import beryl/pubsub.{type PubSub}
 import birch/logger as log
+import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode as gdecode
@@ -151,8 +152,8 @@ pub type Config {
 
 /// Errors from presence operations
 pub type PresenceError {
-  /// The actor failed to start
-  StartFailed
+  /// The actor failed to start, wrapping the underlying OTP start error
+  StartFailed(actor.StartError)
 }
 
 /// Messages the presence actor handles
@@ -205,7 +206,7 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
   build_presence(config)
   |> actor.start
   |> result.map(fn(started) { Presence(subject: started.data) })
-  |> result.map_error(fn(_) { StartFailed })
+  |> result.map_error(StartFailed)
 }
 
 /// Start the presence actor with a registered name (for supervision)
@@ -281,15 +282,28 @@ fn build_presence(
   |> actor.on_message(handle_message)
 }
 
+/// Broadcast the current CRDT state over PubSub when dirty, returning the
+/// updated actor state. Extracted from the `BroadcastTick` handler to keep
+/// that branch from nesting too deeply.
+fn maybe_broadcast_state(actor_state: ActorState, ps: PubSub) -> ActorState {
+  use <- bool.guard(when: !actor_state.dirty, return: actor_state)
+  let payload =
+    json.object([
+      #("v", json.int(1)),
+      #("sender", json.string(actor_state.config.replica)),
+      #("state", state_json.to_json(actor_state.crdt)),
+    ])
+
+  pubsub.broadcast_from(ps, process.self(), sync_topic, sync_event, payload)
+
+  ActorState(..actor_state, dirty: False)
+}
+
 /// Schedule the next broadcast tick if the interval is positive
 fn schedule_broadcast_tick(subject: Subject(Message), interval_ms: Int) -> Nil {
-  case interval_ms > 0 {
-    True -> {
-      let _ = process.send_after(subject, interval_ms, BroadcastTick)
-      Nil
-    }
-    False -> Nil
-  }
+  use <- bool.guard(when: interval_ms <= 0, return: Nil)
+  let _timer = process.send_after(subject, interval_ms, BroadcastTick)
+  Nil
 }
 
 /// Coerce a Dynamic value to pubsub.Message.
@@ -406,33 +420,11 @@ fn handle_message(
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
         Some(ps), Some(subject) -> {
-          let new_state = case actor_state.dirty {
-            False -> actor_state
-            True -> {
-              let payload =
-                json.object([
-                  #("v", json.int(1)),
-                  #("sender", json.string(actor_state.config.replica)),
-                  #("state", state_json.to_json(actor_state.crdt)),
-                ])
-
-              pubsub.broadcast_from(
-                ps,
-                process.self(),
-                sync_topic,
-                sync_event,
-                payload,
-              )
-
-              ActorState(..actor_state, dirty: False)
-            }
-          }
-
+          let new_state = maybe_broadcast_state(actor_state, ps)
           schedule_broadcast_tick(
             subject,
             actor_state.config.broadcast_interval_ms,
           )
-
           actor.continue(new_state)
         }
         _, _ -> actor.continue(actor_state)
@@ -533,10 +525,15 @@ fn handle_sync_payload(
 ) -> actor.Next(ActorState, Message) {
   case parse_sync_envelope(payload_str) {
     Error(reason) -> {
+      let reason_str = case reason {
+        SyncDecodeFailed -> "JSON parse or decode failed"
+        UnknownEnvelopeVersion(version) ->
+          "Unknown envelope version: " <> int.to_string(version)
+      }
       let logger = internal.logger("beryl.presence")
       logger
       |> log.warn("Failed to decode presence sync message", [
-        #("reason", reason),
+        #("reason", reason_str),
         #("payload_length", int.to_string(string.length(payload_str))),
       ])
       actor.continue(actor_state)
@@ -558,12 +555,20 @@ fn handle_sync_payload(
   }
 }
 
+/// Errors produced when parsing a presence sync envelope.
+type SyncEnvelopeError {
+  /// The payload could not be parsed or decoded as a sync envelope.
+  SyncDecodeFailed
+  /// The envelope declared a version this node does not understand.
+  UnknownEnvelopeVersion(Int)
+}
+
 /// Parse the sync envelope JSON: {"v": 1, "sender": "...", "state": {...}}
 /// State is decoded directly as a nested object (not double-encoded string).
 /// Rejects envelopes with unknown version numbers.
 fn parse_sync_envelope(
   payload_str: String,
-) -> Result(#(String, State), String) {
+) -> Result(#(String, State), SyncEnvelopeError) {
   let decoder = {
     use v <- gdecode.field("v", gdecode.int)
     use sender <- gdecode.field("sender", gdecode.string)
@@ -571,8 +576,8 @@ fn parse_sync_envelope(
     gdecode.success(#(v, sender, remote_state))
   }
   case json.parse(payload_str, decoder) {
-    Error(_) -> Error("JSON parse or decode failed")
+    Error(_) -> Error(SyncDecodeFailed)
     Ok(#(1, sender, remote_state)) -> Ok(#(sender, remote_state))
-    Ok(#(v, _, _)) -> Error("Unknown envelope version: " <> int.to_string(v))
+    Ok(#(v, _, _)) -> Error(UnknownEnvelopeVersion(v))
   }
 }

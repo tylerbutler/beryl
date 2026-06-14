@@ -92,7 +92,7 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 pub fn start(config: PubSubConfig) -> Result(PubSub, StartError) {
   // pg:start returns {ok, Pid} or {error, {already_started, Pid}}
   // Both are success cases for us
-  let _ = ffi_start_pg_scope(config.scope)
+  let _start_result = ffi_start_pg_scope(config.scope)
   Ok(PubSub(scope: config.scope))
 }
 
@@ -102,14 +102,14 @@ pub fn start(config: PubSubConfig) -> Result(PubSub, StartError) {
 /// are sent to this topic.
 pub fn subscribe(ps: PubSub, topic: String) -> Nil {
   let pid = process.self()
-  let _ = ffi_join_group(ps.scope, topic, pid)
+  let _join_result = ffi_join_group(ps.scope, topic, pid)
   Nil
 }
 
 /// Unsubscribe the current process from a topic
 pub fn unsubscribe(ps: PubSub, topic: String) -> Nil {
   let pid = process.self()
-  let _ = ffi_leave_group(ps.scope, topic, pid)
+  let _leave_result = ffi_leave_group(ps.scope, topic, pid)
   Nil
 }
 
@@ -170,6 +170,7 @@ pub fn broadcast_from_socket(
   })
 }
 
+// nolint: unused_exports -- public PubSub API surface alongside broadcast/broadcast_from; intended for downstream consumers
 /// Broadcast a message to local subscribers only (current node)
 pub fn local_broadcast(
   ps: PubSub,
