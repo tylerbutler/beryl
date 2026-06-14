@@ -285,7 +285,6 @@ pub fn handler(
 /// serializers are registered, so the coordinator's configured codec is always
 /// used. Use `upgrade` with a configured `TransportConfig` to enable
 /// per-`vsn` serializers.
-@internal
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
