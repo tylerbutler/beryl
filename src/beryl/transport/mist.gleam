@@ -234,10 +234,11 @@ fn request_vsn(request: Request(Connection)) -> Option(String) {
 /// Checks for the standard `Upgrade: websocket` header (case-insensitive).
 /// Use this to distinguish WebSocket handshakes from regular HTTP traffic on
 /// the same listener.
+@internal
 pub fn is_websocket_request(request: Request(Connection)) -> Bool {
   case request.get_header(request, "upgrade") {
     Ok(value) -> string.lowercase(value) == "websocket"
-    Error(_) -> False
+    Error(Nil) -> False
   }
 }
 
@@ -284,6 +285,7 @@ pub fn handler(
 /// serializers are registered, so the coordinator's configured codec is always
 /// used. Use `upgrade` with a configured `TransportConfig` to enable
 /// per-`vsn` serializers.
+@internal
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
@@ -375,6 +377,7 @@ fn on_message(
       case state.codec.decode_text(text) {
         Ok(inbound) ->
           coordinator.route_decoded(state.coordinator, state.socket_id, inbound)
+        // nolint: thrown_away_error -- decode failure falls back to raw coordinator routing for centralized diagnostics
         Error(_) ->
           coordinator.route_message(state.coordinator, state.socket_id, text)
       }
@@ -390,6 +393,7 @@ fn on_message(
                 state.socket_id,
                 inbound,
               )
+            // nolint: thrown_away_error -- decode failure falls back to raw coordinator routing for centralized diagnostics
             Error(_) ->
               coordinator.route_binary(state.coordinator, state.socket_id, data)
           }

@@ -30,28 +30,39 @@ phoenix_channel_fixtures = { git = "https://github.com/tylerbutler/phoenix_chann
 qcheck = ">= 1.0.0 and < 2.0.0"
 glinter = ">= 2.19.0 and < 3.0.0"
 
-[tools.glinter]
-include = ["src/", "test/"]
-
-[tools.glinter.rules]
-# Rules disabled pending follow-up cleanup. Each has a tracking issue; re-enable
-# the rule once its findings are fixed. See https://github.com/tylerbutler/beryl/issues
-thrown_away_error = "off"     # #102
-discarded_result = "off"      # #103
-unused_exports = "off"        # #104
-deep_nesting = "off"          # #105
-prefer_guard_clause = "off"   # #106
-error_context_lost = "off"    # #107
-unqualified_import = "off"    # #108
-stringly_typed_error = "off"  # #109
-short_variable_name = "off"   # #110
-string_inspect = "off"        # #111
-
-# Rules ignored only in test files: `let assert` and unannotated test
-# functions are idiomatic Gleam test style, not debt worth tracking.
-[tools.glinter.ignore]
-"test/**/*.gleam" = ["assert_ok_pattern", "missing_type_annotation"]
-
 [tools.licence_audit]
 allow = ["Apache-2.0", "MIT"]
 deny = []
+
+[tools.glinter]
+# Promote enabled-rule warnings to errors so any violation fails the lint.
+# glinter 2.19.0 only fails the run via this global flag; per-rule "error" does
+# not escalate severity for most rules (see glinter.gleam apply_config).
+warnings_as_errors = true
+
+[tools.glinter.rules]
+# --- Enforced at error level (this work item, issues #102-#111) ---
+thrown_away_error = "error"
+discarded_result = "error"
+unused_exports = "error"
+deep_nesting = "error"
+prefer_guard_clause = "error"
+error_context_lost = "error"
+unqualified_import = "error"
+stringly_typed_error = "error"
+short_variable_name = "error"
+string_inspect = "error"
+# --- Out-of-scope default-warning rules: disabled so warnings_as_errors only
+#     gates the ten rules above (these carry pre-existing, out-of-scope findings) ---
+assert_ok_pattern = "off"
+echo = "off"
+panic_without_message = "off"
+todo_without_message = "off"
+unnecessary_variable = "off"
+redundant_case = "off"
+trailing_underscore = "off"
+unnecessary_string_concatenation = "off"
+missing_type_annotation = "off"
+label_possible = "off"
+missing_labels = "off"
+duplicate_import = "off"

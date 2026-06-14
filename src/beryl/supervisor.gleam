@@ -33,6 +33,7 @@ import beryl/internal
 import beryl/presence
 import beryl/rate_limit
 import birch/logger as log
+import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -86,10 +87,11 @@ pub fn start(
   config: SupervisedConfig,
 ) -> Result(SupervisedChannels, StartError) {
   // Validate heartbeat_timeout_ms before deriving check_interval
-  case config.channels.heartbeat_timeout_ms <= 0 {
-    True -> Error(InvalidHeartbeatTimeout)
-    False -> start_supervised(config)
-  }
+  use <- bool.guard(
+    when: config.channels.heartbeat_timeout_ms <= 0,
+    return: Error(InvalidHeartbeatTimeout),
+  )
+  start_supervised(config)
 }
 
 fn start_supervised(
@@ -277,6 +279,7 @@ pub fn stop(supervised: SupervisedChannels) -> Nil {
   stop_supervisor(supervised.supervisor_pid)
 }
 
+// nolint: unused_exports -- public embedding API for host static_supervisor trees; intended for downstream consumers
 /// Create a child specification for composing beryl into a larger supervision tree
 ///
 /// Returns a supervisor-type child spec that starts the beryl supervision tree.

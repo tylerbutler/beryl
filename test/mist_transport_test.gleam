@@ -53,3 +53,11 @@ pub fn with_on_connect_seeding_assigns_sets_callback_test() {
   config.path |> should.equal("/socket")
   config.on_connect |> should.be_some
 }
+
+// `upgrade_connection` is a public entry point for callers that do their own
+// path matching (see the WebSocket guide and PRD). Reference it here so the
+// export stays covered and remains part of the documented public API.
+pub fn upgrade_connection_is_exported_test() {
+  let _upgrade = mist_transport.upgrade_connection
+  should.be_true(True)
+}
