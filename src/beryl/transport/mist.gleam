@@ -148,7 +148,7 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// ```
 pub fn handler(
   channels: Channels,
-  config: TransportConfig,
+  config: TransportConfig(assigns),
   http_fallback: fn(Request(Connection)) -> Response(ResponseData),
 ) -> fn(Request(Connection)) -> Response(ResponseData) {
   fn(request) {
@@ -257,6 +257,7 @@ fn on_message(
       case state.codec.decode_text(text) {
         Ok(inbound) ->
           coordinator.route_decoded(state.coordinator, state.socket_id, inbound)
+        // nolint: thrown_away_error -- decode failure falls back to raw coordinator routing for centralized diagnostics
         Error(_) ->
           coordinator.route_message(state.coordinator, state.socket_id, text)
       }
@@ -272,6 +273,7 @@ fn on_message(
                 state.socket_id,
                 inbound,
               )
+            // nolint: thrown_away_error -- decode failure falls back to raw coordinator routing for centralized diagnostics
             Error(_) ->
               coordinator.route_binary(state.coordinator, state.socket_id, data)
           }

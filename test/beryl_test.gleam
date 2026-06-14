@@ -1,6 +1,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/group
 import beryl/socket
 import beryl/topic
 import beryl/wire
@@ -8,6 +9,7 @@ import beryl/wire/codec
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
+import gleam/int
 import gleam/json
 import gleam/option
 import gleam/string
@@ -657,6 +659,54 @@ pub fn socket_map_assigns_type_change_test() {
   let s = socket.new("socket-1", 42, mock_transport())
 
   // Transform Int to String
-  let s2 = socket.map_assigns(s, fn(x) { "value:" <> string.inspect(x) })
+  let s2 = socket.map_assigns(s, fn(x) { "value:" <> int.to_string(x) })
   socket.get_assigns(s2) |> should.equal("value:42")
+}
+
+// Public config builder and topic helper coverage
+
+pub fn with_join_rate_sets_fields_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_join_rate(per_second: 5, burst: 10)
+
+  cfg.join_rate |> should.equal(5)
+  cfg.join_burst |> should.equal(10)
+}
+
+pub fn with_channel_rate_sets_fields_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_channel_rate(per_second: 7, burst: 14)
+
+  cfg.channel_rate |> should.equal(7)
+  cfg.channel_burst |> should.equal(14)
+}
+
+pub fn extract_topic_id_test() {
+  beryl.extract_topic_id(topic.Wildcard("room:"), "room:lobby")
+  |> should.equal(Ok("lobby"))
+
+  beryl.extract_topic_id(topic.Exact("room:lobby"), "room:lobby")
+  |> should.equal(Error(Nil))
+}
+
+pub fn topic_namespace_test() {
+  topic.namespace("room:lobby") |> should.equal(Ok("room"))
+  topic.namespace("doc:tenant:123") |> should.equal(Ok("doc"))
+}
+
+pub fn group_broadcast_is_fire_and_forget_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(groups) = group.start()
+  let assert Ok(Nil) = group.create(groups, "team:eng")
+  let assert Ok(Nil) = group.add(groups, "team:eng", "room:lobby")
+
+  // Broadcasting to a populated group returns Nil (fire and forget)
+  group.broadcast(groups, channels, "team:eng", "announce", json.object([]))
+  |> should.equal(Nil)
+
+  // Broadcasting to a missing group is a silent no-op
+  group.broadcast(groups, channels, "missing", "announce", json.object([]))
+  |> should.equal(Nil)
 }
