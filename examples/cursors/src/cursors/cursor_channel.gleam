@@ -25,7 +25,7 @@ pub type CursorAssigns {
 pub fn new_handler(
   channels: beryl.Channels,
   presence: Presence,
-) -> Channel(CursorAssigns) {
+) -> Channel(CursorAssigns, info) {
   channel.new(fn(topic, payload, socket) {
     join(channels, presence, topic, payload, socket)
   })

@@ -24,7 +24,7 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 
 ## 1. Define a channel
 
-A channel is a Gleam module that returns a `Channel(assigns)` value. The assigns
+A channel is a Gleam module that returns a `Channel(assigns, info)` value. The assigns
 type holds per-socket state — anything you want to remember about this connection.
 
 ```gleam
@@ -42,7 +42,7 @@ pub type RoomAssigns {
 }
 
 /// Build the channel handler.
-pub fn new(channels: beryl.Channels) -> Channel(RoomAssigns) {
+pub fn new(channels: beryl.Channels) -> Channel(RoomAssigns, info) {
   channel.new(fn(topic, payload, socket) {
     join(channels, topic, payload, socket)
   })

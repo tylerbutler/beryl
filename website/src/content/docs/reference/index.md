@@ -41,7 +41,7 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | No response | `channel.NoReply(socket)` | Use when the handler has no output |
 | Broadcast to all sockets on a topic | `beryl.broadcast(registry, topic, event, payload)` | All subscribers including the sender |
 | Broadcast, excluding sender | `beryl.broadcast_from(channels, socket.id(socket), topic, event, payload)` | Second arg is `except_socket_id: String`; use `socket.id/1` to extract it when you have a `Socket` value. Skips the originating socket; works across PubSub nodes |
-| Send an OTP message to a joined channel context | `beryl.send_info(channels, socket_id, topic_name, message)` | Delivers to `handle_info`; the callback receives a `Dynamic` value — decode and validate it there; no compile-time type checking |
+| Send an OTP message to a joined channel context | `beryl.send_info(channels, socket_id, topic_name, message)` | Delivers the typed message to `handle_info`; the callback receives the concrete `info` value — no `Dynamic` decode and no unsafe cast required |
 | Broadcast presence diff | `beryl.broadcast_presence_diff(registry, topic, diff)` | Encodes Phoenix-shaped `joins`/`leaves`; only named topic entries are included |
 
 ---
