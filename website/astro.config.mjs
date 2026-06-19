@@ -27,8 +27,9 @@ export default defineConfig({
 			},
 			favicon: "/favicon.png",
 			customCss: [
-				"@fontsource/metropolis/400.css",
-				"@fontsource/metropolis/600.css",
+				"@fontsource-variable/unbounded",
+				"@fontsource-variable/hanken-grotesk",
+				"@fontsource-variable/jetbrains-mono",
 				"./src/styles/fonts.css",
 				"./src/styles/custom.css",
 			],

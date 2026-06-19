@@ -1,0 +1,10 @@
+# Toolchain for the docs site (Astro + Starlight).
+# Astro 6 requires Node >=22.12. pnpm is pinned via the "packageManager" field
+# in package.json and provided by Node's bundled corepack, so it stays consistent
+# across mise, local dev, and Netlify. Kept separate from the repo-root BEAM
+# toolchain in ../.tool-versions and ../.mise.toml.
+[tools]
+node = "24"
+
+[env]
+COREPACK_ENABLE_DOWNLOAD_PROMPT = "0"

@@ -38,11 +38,21 @@ beryl is not yet 1.0. The API is unstable, features may be removed in minor rele
 ## Features
 
 <style lang="css">{`
-  #_top {
-    background: linear-gradient(90deg, var(--sl-color-gray-2), var(--sl-color-accent));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+  .sl-markdown-content h2 {
+    font-family: var(--beryl-font-display);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-size: clamp(1.9rem, 4vw, 2.6rem);
+    margin-top: 3rem;
+  }
+  .sl-markdown-content h2::after {
+    content: "";
+    display: block;
+    width: 2.5rem;
+    height: 4px;
+    margin-top: 0.6rem;
+    border-radius: 999px;
+    background: var(--beryl-magenta);
   }
 `}
 </style>

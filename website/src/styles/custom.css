@@ -1,29 +1,307 @@
-/* Dark mode colors. */
+/* ==========================================================================
+   beryl — visual system
+   Identity: beryl is a green gemstone with a magenta (morganite) core.
+   Strategy: committed emerald green + a vivid morganite pop. Playful, bold,
+   modern — never cold/corporate. All color in OKLCH. Targets WCAG AA.
+   ========================================================================== */
+
+/* ---------- Dark theme (default) ---------- */
 :root {
-	--sl-color-accent-low: #14351d;
-	--sl-color-accent: #b21f5c;
-	--sl-color-accent-high: #ffd4e5;
-	--sl-color-white: #f2ffe9;
-	--sl-color-gray-1: #d8f7c5;
-	--sl-color-gray-2: #a9df89;
-	--sl-color-gray-3: #75b85b;
-	--sl-color-gray-4: #39733f;
-	--sl-color-gray-5: #27522f;
-	--sl-color-gray-6: #183821;
-	--sl-color-black: #07150c;
+	--sl-color-black: oklch(0.165 0.022 162); /* page background */
+	--sl-color-gray-6: oklch(0.205 0.026 163); /* deepest surface / border */
+	--sl-color-gray-5: oklch(0.255 0.03 163); /* surface: cards, code */
+	--sl-color-gray-4: oklch(0.345 0.032 162); /* dividers */
+	--sl-color-gray-3: oklch(0.6 0.04 159); /* muted text (AA on bg) */
+	--sl-color-gray-2: oklch(0.81 0.032 157); /* secondary text */
+	--sl-color-gray-1: oklch(0.91 0.024 155); /* strong text */
+	--sl-color-white: oklch(0.97 0.018 152); /* headings / brightest */
+
+	--sl-color-accent-low: oklch(0.31 0.07 160);
+	--sl-color-accent: oklch(0.78 0.16 158); /* emerald — links, primary */
+	--sl-color-accent-high: oklch(0.9 0.1 154);
+
+	/* brand extras */
+	--beryl-magenta: oklch(0.72 0.2 350); /* morganite pop */
+	--beryl-magenta-soft: oklch(0.72 0.2 350 / 0.16);
+	--beryl-glow: oklch(0.85 0.19 150 / 0.5); /* lime glow */
+	--beryl-ring: var(--sl-color-accent);
+	--beryl-surface: oklch(0.215 0.028 163 / 0.7);
+	--beryl-hairline: oklch(0.42 0.04 161 / 0.5);
 }
-/* Light mode colors. */
+
+/* ---------- Light theme ---------- */
 :root[data-theme='light'] {
-	--sl-color-accent-low: #d8f0c9;
-	--sl-color-accent: #276f35;
-	--sl-color-accent-high: #123f21;
-	--sl-color-white: #07150c;
-	--sl-color-gray-1: #123f21;
-	--sl-color-gray-2: #27522f;
-	--sl-color-gray-3: #39733f;
-	--sl-color-gray-4: #6aa44d;
-	--sl-color-gray-5: #a9df89;
-	--sl-color-gray-6: #e6f7dc;
-	--sl-color-gray-7: #f7fff2;
-	--sl-color-black: #ffffff;
+	--sl-color-black: oklch(0.985 0.01 150); /* page background (off-white, green-tinted, chroma low) */
+	--sl-color-gray-7: oklch(0.965 0.012 151);
+	--sl-color-gray-6: oklch(0.93 0.016 152); /* surface: cards, code */
+	--sl-color-gray-5: oklch(0.87 0.022 154); /* borders */
+	--sl-color-gray-4: oklch(0.7 0.03 157); /* dividers */
+	--sl-color-gray-3: oklch(0.5 0.04 160); /* muted text (AA on bg) */
+	--sl-color-gray-2: oklch(0.38 0.05 161); /* secondary text */
+	--sl-color-gray-1: oklch(0.28 0.055 162); /* strong text */
+	--sl-color-white: oklch(0.2 0.05 163); /* headings / darkest */
+
+	--sl-color-accent-low: oklch(0.92 0.05 155);
+	--sl-color-accent: oklch(0.5 0.15 156); /* emerald — links, primary */
+	--sl-color-accent-high: oklch(0.36 0.12 158);
+
+	--beryl-magenta: oklch(0.52 0.23 352);
+	--beryl-magenta-soft: oklch(0.52 0.23 352 / 0.12);
+	--beryl-glow: oklch(0.72 0.16 150 / 0.35);
+	--beryl-ring: var(--sl-color-accent);
+	--beryl-surface: oklch(1 0 0 / 0.6);
+	--beryl-hairline: oklch(0.55 0.04 158 / 0.35);
+}
+
+/* ==========================================================================
+   Typography
+   ========================================================================== */
+
+body {
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+/* Display face for the brand wordmark and top-level page titles only;
+   long-form headings stay in the readable text face. */
+.site-title,
+.hero h1,
+.content-panel h1,
+.sl-markdown-content > h1:first-child {
+	font-family: var(--beryl-font-display);
+	font-weight: 700;
+	letter-spacing: -0.03em;
+	text-wrap: balance;
+}
+
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+	font-weight: 700;
+	letter-spacing: -0.015em;
+	text-wrap: balance;
+}
+
+.sl-markdown-content p,
+.sl-markdown-content li {
+	text-wrap: pretty;
+}
+
+/* Keep the brand wordmark in the header crisp and tight */
+.site-title {
+	font-size: var(--sl-text-h4);
+	letter-spacing: -0.02em;
+}
+
+/* ==========================================================================
+   Selection, focus, scrollbar — small on-brand details
+   ========================================================================== */
+
+::selection {
+	background: var(--beryl-magenta);
+	color: oklch(0.99 0.01 150);
+}
+
+:focus-visible {
+	outline: 2px solid var(--beryl-ring);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* ==========================================================================
+   Links — animated underline in content
+   ========================================================================== */
+
+.sl-markdown-content a:not(:where(.card a, .sl-link-card a, [class*='action'])) {
+	text-decoration: none;
+	background-image: linear-gradient(currentColor, currentColor);
+	background-position: 0 100%;
+	background-repeat: no-repeat;
+	background-size: 100% 1px;
+	transition: background-size 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sl-markdown-content a:not(:where(.card a, .sl-link-card a, [class*='action'])):hover {
+	background-size: 100% 2px;
+}
+
+/* ==========================================================================
+   Code blocks (Expressive Code frames)
+   ========================================================================== */
+
+.expressive-code .frame {
+	border-radius: 12px;
+}
+.expressive-code .frame pre {
+	border: 1px solid var(--beryl-hairline);
+	border-radius: 12px;
+}
+
+/* inline code */
+.sl-markdown-content :not(pre) > code {
+	background: var(--beryl-magenta-soft);
+	color: var(--sl-color-white);
+	border-radius: 5px;
+	padding: 0.15em 0.4em;
+	font-size: 0.875em;
+}
+
+/* ==========================================================================
+   Cards & link cards — unified, with a green-glow hover and morganite edge
+   ========================================================================== */
+
+.card,
+.sl-link-card {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 14px;
+	background:
+		linear-gradient(var(--beryl-surface), var(--beryl-surface));
+	transition:
+		transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+		border-color 0.3s ease,
+		box-shadow 0.3s ease;
+	position: relative;
+}
+
+.card:hover,
+.sl-link-card:hover {
+	transform: translateY(-3px);
+	border-color: var(--sl-color-accent);
+	box-shadow:
+		0 0 0 1px var(--sl-color-accent),
+		0 14px 40px -18px var(--beryl-glow);
+}
+
+.sl-link-card:focus-within {
+	border-color: var(--sl-color-accent);
+}
+
+/* Card icon chip — unify to brand */
+.card .icon {
+	color: var(--sl-color-accent);
+	background: var(--sl-color-accent-low);
+	border-radius: 10px;
+	padding: 0.4rem;
+	border: 1px solid var(--beryl-hairline);
+}
+
+/* ==========================================================================
+   Hero (splash) — bold, playful
+   ========================================================================== */
+
+.hero h1 {
+	font-size: clamp(3rem, 8vw, 5.5rem);
+	line-height: 0.95;
+	color: var(--sl-color-white);
+}
+/* morganite full-stop on the wordmark */
+.hero h1::after {
+	content: '.';
+	color: var(--beryl-magenta);
+}
+
+.hero .tagline {
+	color: var(--sl-color-gray-2);
+	max-width: 46ch;
+	text-wrap: pretty;
+}
+
+/* Primary action: emerald with a soft glow on hover */
+.hero a[class*='action'].primary {
+	border-radius: 999px;
+	font-weight: 650;
+	transition:
+		transform 0.2s ease,
+		box-shadow 0.3s ease,
+		filter 0.2s ease;
+}
+.hero a[class*='action'].primary:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 12px 30px -10px var(--beryl-glow);
+	filter: saturate(1.08);
+}
+.hero a[class*='action'].secondary {
+	border-radius: 999px;
+	border-color: var(--sl-color-gray-4);
+	transition:
+		transform 0.2s ease,
+		border-color 0.2s ease,
+		color 0.2s ease;
+}
+.hero a[class*='action'].secondary:hover {
+	transform: translateY(-2px);
+	border-color: var(--beryl-magenta);
+	color: var(--beryl-magenta);
+}
+
+/* the gem image: gentle idle float + a soft brand halo */
+.hero img {
+	filter: drop-shadow(0 30px 60px var(--beryl-glow));
+	animation: beryl-float 7s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   Entrance motion (runs on load; visible by default)
+   ========================================================================== */
+
+@keyframes beryl-float {
+	0%, 100% { transform: translateY(0); }
+	50% { transform: translateY(-14px); }
+}
+
+@keyframes beryl-rise {
+	from { opacity: 0; transform: translateY(16px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+.hero .copy > * {
+	animation: beryl-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.hero .copy > h1 { animation-delay: 0.02s; }
+.hero .copy > .tagline { animation-delay: 0.1s; }
+.hero .copy > .sl-flex { animation-delay: 0.18s; }
+
+/* ==========================================================================
+   Reduced motion
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+	}
+	.hero img {
+		animation: none;
+	}
+}
+
+/* ==========================================================================
+   Asides — replace Starlight's colored left-stripe with a full border + tint
+   ========================================================================== */
+
+.starlight-aside {
+	border-inline-start: none;
+	border: 1px solid var(--sl-color-asides-border);
+	border-radius: 14px;
+	background: color-mix(
+		in oklch,
+		var(--sl-color-asides-border) 12%,
+		var(--sl-color-black)
+	);
+	padding: 1rem 1.25rem;
+}
+.starlight-aside__title {
+	color: var(--sl-color-asides-text-accent);
+}
+
+/* ==========================================================================
+   Content H1 — Unbounded is wide; cap size so long titles never overflow
+   ========================================================================== */
+
+.content-panel h1,
+.sl-markdown-content > h1:first-child {
+	font-size: clamp(2.1rem, 1.4rem + 2.6vw, 3.1rem);
+	line-height: 1.04;
 }
