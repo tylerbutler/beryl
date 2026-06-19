@@ -1,5 +1,7 @@
 [build]
   command = "pnpm build:site"
   publish = "dist"
-  # Only trigger builds when files in website/ change.
-  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- website/"
+  # Only skip builds when nothing under website/ changed. Force a build when
+  # there is no cached deploy to diff against (e.g. first build of a new branch
+  # or deploy preview), otherwise the diff misfires and cancels valid builds.
+  ignore = "if [ -z \"$CACHED_COMMIT_REF\" ]; then exit 1; fi; git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- website/"

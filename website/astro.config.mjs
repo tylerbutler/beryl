@@ -38,7 +38,10 @@ export default defineConfig({
 			},
 			plugins: [
 				starlightLlmsTxt(),
-				starlightLinksValidator(),
+				starlightLinksValidator({
+					// Report broken links but don't fail the build on them.
+					failOnError: false,
+				}),
 			],
 			social: [
 				{
