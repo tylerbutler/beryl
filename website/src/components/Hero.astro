@@ -272,7 +272,7 @@ let _ref =
 
 	.bh-code {
 		position: relative;
-		width: min(100%, 38rem);
+		width: min(100%, 44rem);
 		border-radius: 16px;
 		box-shadow:
 			0 1px 0 0 var(--beryl-hairline) inset,
@@ -337,7 +337,9 @@ let _ref =
 	}
 
 	/* ---- Desktop: asymmetric two-column -------------------------------- */
-	@media (min-width: 50rem) {
+	/* Hold the single-column (full-width code) layout through tablet
+	   portrait (incl. 1024px iPad Pro); only split on true desktop widths. */
+	@media (min-width: 68rem) {
 		.bh {
 			grid-template-columns: 5fr 6fr;
 			gap: clamp(2rem, 4vw, 4rem);
