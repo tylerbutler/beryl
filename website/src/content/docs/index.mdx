@@ -129,6 +129,12 @@ beryl is not yet 1.0. The API is unstable, features may be removed in minor rele
     .beryl-feature:not(.beryl-feature--lead) {
       grid-column: span 2;
     }
+    /* Reserve two lines for the row headings so a heading that wraps
+       (e.g. "Phoenix-compatible wire") doesn't push its paragraph out of
+       step with its single-line neighbours. */
+    .beryl-feature:not(.beryl-feature--lead) h3 {
+      min-height: 2.1em;
+    }
   }
 `}
 </style>
