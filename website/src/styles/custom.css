@@ -185,83 +185,7 @@ body {
 }
 
 /* ==========================================================================
-   Hero (splash) — bold, playful
-   ========================================================================== */
-
-.hero h1 {
-	font-size: clamp(3rem, 8vw, 5.5rem);
-	line-height: 0.95;
-	color: var(--sl-color-white);
-}
-/* morganite full-stop on the wordmark */
-.hero h1::after {
-	content: '.';
-	color: var(--beryl-magenta);
-}
-
-.hero .tagline {
-	color: var(--sl-color-gray-2);
-	max-width: 46ch;
-	text-wrap: pretty;
-}
-
-/* Primary action: emerald with a soft glow on hover */
-.hero a[class*='action'].primary {
-	border-radius: 999px;
-	font-weight: 650;
-	transition:
-		transform 0.2s ease,
-		box-shadow 0.3s ease,
-		filter 0.2s ease;
-}
-.hero a[class*='action'].primary:hover {
-	transform: translateY(-2px);
-	box-shadow: 0 12px 30px -10px var(--beryl-glow);
-	filter: saturate(1.08);
-}
-.hero a[class*='action'].secondary {
-	border-radius: 999px;
-	border-color: var(--sl-color-gray-4);
-	transition:
-		transform 0.2s ease,
-		border-color 0.2s ease,
-		color 0.2s ease;
-}
-.hero a[class*='action'].secondary:hover {
-	transform: translateY(-2px);
-	border-color: var(--beryl-magenta);
-	color: var(--beryl-magenta);
-}
-
-/* the gem image: gentle idle float + a soft brand halo */
-.hero img {
-	filter: drop-shadow(0 30px 60px var(--beryl-glow));
-	animation: beryl-float 7s ease-in-out infinite;
-}
-
-/* ==========================================================================
-   Entrance motion (runs on load; visible by default)
-   ========================================================================== */
-
-@keyframes beryl-float {
-	0%, 100% { transform: translateY(0); }
-	50% { transform: translateY(-14px); }
-}
-
-@keyframes beryl-rise {
-	from { opacity: 0; transform: translateY(16px); }
-	to { opacity: 1; transform: translateY(0); }
-}
-
-.hero .copy > * {
-	animation: beryl-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-.hero .copy > h1 { animation-delay: 0.02s; }
-.hero .copy > .tagline { animation-delay: 0.1s; }
-.hero .copy > .sl-flex { animation-delay: 0.18s; }
-
-/* ==========================================================================
-   Reduced motion
+   Reduced motion — site-wide damping (hero motion is handled in Hero.astro)
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
@@ -271,9 +195,6 @@ body {
 		animation-duration: 0.001ms !important;
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.001ms !important;
-	}
-	.hero img {
-		animation: none;
 	}
 }
 

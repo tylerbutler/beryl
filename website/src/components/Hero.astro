@@ -1,0 +1,366 @@
+---
+import { Image } from "astro:assets";
+import { Code, LinkButton } from "@astrojs/starlight/components";
+
+/**
+ * Custom splash hero for beryl. Overrides Starlight's default Hero so the
+ * first fold can carry one dominant idea — "this is what beryl code feels
+ * like" — with the headline presence feature shown in real Gleam.
+ *
+ * It still reads the frontmatter `hero:` contract (title / tagline / image /
+ * actions), so editing the splash stays a content edit in `index.mdx`.
+ */
+
+const { data } = Astro.locals.starlightRoute.entry;
+const { title = data.title, tagline, image, actions = [] } = data.hero || {};
+
+let gem: ImageMetadata | undefined;
+if (image && "file" in image) gem = image.file;
+else if (image && "dark" in image) gem = image.dark;
+
+// Real beryl: track who's online and fan changes out to the room as
+// Phoenix-compatible presence diffs. Mirrors the Presence guide exactly.
+const snippet = `import beryl
+import beryl/presence
+
+// Track who's online and broadcast every change to the room —
+// Phoenix-compatible presence diffs, backed by a CRDT.
+let config =
+  presence.Config(
+    pubsub: Some(ps),
+    replica: "node-1",
+    broadcast_interval_ms: 1500,
+    on_diff: Some(fn(diff) {
+      beryl.broadcast_presence_diff(channels, "room:lobby", diff)
+    }),
+  )
+
+// …then, inside your channel's join callback:
+let _ref =
+  presence.track(p, "room:lobby", "user:alice", socket.id(socket), meta)
+`;
+---
+
+<section class="bh">
+	<div class="bh-facets" aria-hidden="true">
+		<span class="shard shard-1"></span>
+		<span class="shard shard-2"></span>
+		<span class="shard shard-3"></span>
+		<span class="shard shard-4"></span>
+	</div>
+
+	<div class="bh-copy">
+		<h1 id="_top" data-page-title class="bh-wordmark" set:html={title} />
+		{tagline && <p class="bh-tagline" set:html={tagline} />}
+		{
+			actions.length > 0 && (
+				<div class="bh-actions">
+					{actions.map(
+						({
+							attrs: { class: className, ...attrs } = {},
+							icon,
+							link: href,
+							text,
+							variant,
+						}) => (
+							<LinkButton
+								{href}
+								{variant}
+								icon={icon?.name}
+								class:list={[className]}
+								{...attrs}
+							>
+								{text}
+								{icon?.html && <Fragment set:html={icon.html} />}
+							</LinkButton>
+						),
+					)}
+				</div>
+			)
+		}
+	</div>
+
+	<div class="bh-stage">
+		{
+			gem && (
+				<Image
+					src={gem}
+					alt={image && "alt" in image ? image.alt : ""}
+					width={220}
+					height={220}
+					loading="eager"
+					decoding="async"
+					class="bh-gem"
+				/>
+			)
+		}
+		<div class="bh-code">
+			<Code code={snippet} lang="gleam" title="presence.gleam" />
+		</div>
+	</div>
+</section>
+
+<style>
+	.bh {
+		position: relative;
+		display: grid;
+		grid-template-columns: 100%;
+		gap: clamp(2.5rem, 6vw, 4rem);
+		align-items: center;
+		padding-block: clamp(1.5rem, 4vw, 3.5rem) clamp(2rem, 5vw, 4rem);
+		isolation: isolate;
+		overflow: clip;
+	}
+
+	/* ---- Faceted mineral backdrop -------------------------------------- */
+	.bh-facets {
+		position: absolute;
+		inset: -10% 0 -20%;
+		z-index: -1;
+		pointer-events: none;
+	}
+	.shard {
+		position: absolute;
+		display: block;
+		filter: blur(8px);
+		opacity: 0.5;
+		mix-blend-mode: screen;
+		animation: bh-drift 18s ease-in-out infinite;
+	}
+	.shard-1 {
+		inset: -8% 38% auto auto;
+		width: 30vw;
+		max-width: 26rem;
+		aspect-ratio: 1;
+		background: radial-gradient(
+			circle at 30% 30%,
+			var(--sl-color-accent),
+			transparent 62%
+		);
+		clip-path: polygon(50% 0, 100% 38%, 78% 100%, 12% 80%, 0 30%);
+		animation-delay: -2s;
+	}
+	.shard-2 {
+		inset: auto -4% -18% auto;
+		width: 34vw;
+		max-width: 30rem;
+		aspect-ratio: 1;
+		background: radial-gradient(
+			circle at 60% 40%,
+			var(--beryl-magenta),
+			transparent 60%
+		);
+		opacity: 0.34;
+		clip-path: polygon(20% 0, 100% 18%, 88% 84%, 40% 100%, 0 56%);
+		animation-delay: -7s;
+	}
+	.shard-3 {
+		inset: 30% auto auto -6%;
+		width: 22vw;
+		max-width: 18rem;
+		aspect-ratio: 1;
+		background: radial-gradient(
+			circle at 50% 50%,
+			var(--beryl-glow),
+			transparent 64%
+		);
+		clip-path: polygon(50% 0, 92% 50%, 50% 100%, 8% 50%);
+		animation-delay: -11s;
+	}
+	.shard-4 {
+		inset: -6% auto auto 24%;
+		width: 16vw;
+		max-width: 13rem;
+		aspect-ratio: 1;
+		background: radial-gradient(
+			circle at 40% 60%,
+			var(--sl-color-accent-high),
+			transparent 60%
+		);
+		opacity: 0.28;
+		clip-path: polygon(50% 4%, 100% 60%, 60% 100%, 0 64%);
+		animation-delay: -14s;
+	}
+
+	/* ---- Copy ----------------------------------------------------------- */
+	.bh-copy {
+		display: flex;
+		flex-direction: column;
+		gap: clamp(1.1rem, 2vw, 1.6rem);
+		text-align: center;
+		align-items: center;
+	}
+
+	.bh-wordmark {
+		font-family: var(--beryl-font-display);
+		font-weight: 700;
+		letter-spacing: -0.03em;
+		line-height: 0.92;
+		text-wrap: balance;
+		font-size: clamp(3rem, 8vw, 5.25rem);
+		color: var(--sl-color-white);
+		margin: 0;
+	}
+	.bh-wordmark::after {
+		content: ".";
+		color: var(--beryl-magenta);
+	}
+
+	.bh-tagline {
+		margin: 0;
+		max-width: 42ch;
+		font-size: clamp(1.05rem, 0.9rem + 0.7vw, 1.3rem);
+		line-height: 1.5;
+		color: var(--sl-color-gray-2);
+		text-wrap: pretty;
+	}
+
+	.bh-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem 1rem;
+		justify-content: center;
+	}
+
+	/* Brand button treatment (Starlight renders .sl-link-button) */
+	.bh-actions :global(.sl-link-button.primary),
+	.bh-actions :global(.sl-link-button.secondary) {
+		border-radius: 999px;
+		font-weight: 600;
+		transition:
+			transform 0.2s ease,
+			box-shadow 0.3s ease,
+			border-color 0.2s ease,
+			color 0.2s ease,
+			filter 0.2s ease;
+	}
+	.bh-actions :global(.sl-link-button.primary:hover) {
+		transform: translateY(-2px);
+		box-shadow: 0 12px 30px -10px var(--beryl-glow);
+		filter: saturate(1.08);
+	}
+	.bh-actions :global(.sl-link-button.secondary) {
+		border-color: var(--sl-color-gray-4);
+	}
+	.bh-actions :global(.sl-link-button.secondary:hover) {
+		transform: translateY(-2px);
+		border-color: var(--beryl-magenta);
+		color: var(--beryl-magenta);
+	}
+	.bh-actions :global(.sl-link-button.minimal:hover) {
+		color: var(--beryl-magenta);
+	}
+
+	/* ---- Stage: code card + gem ---------------------------------------- */
+	.bh-stage {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		padding-top: clamp(2.25rem, 5vw, 3.5rem);
+	}
+
+	.bh-gem {
+		position: absolute;
+		top: 0;
+		right: clamp(0.5rem, 3vw, 2rem);
+		width: clamp(5.5rem, 12vw, 8.5rem);
+		height: auto;
+		z-index: 2;
+		filter: drop-shadow(0 18px 40px var(--beryl-glow));
+		animation: bh-float 7s ease-in-out infinite;
+	}
+
+	.bh-code {
+		position: relative;
+		width: min(100%, 38rem);
+		border-radius: 16px;
+		box-shadow:
+			0 1px 0 0 var(--beryl-hairline) inset,
+			0 30px 70px -32px var(--beryl-glow);
+	}
+	/* Tighten the embedded Expressive Code frame to feel like a hero object */
+	.bh-code :global(.expressive-code) {
+		font-size: 0.86rem;
+	}
+	.bh-code :global(.expressive-code .frame) {
+		border-radius: 16px;
+	}
+	.bh-code :global(.expressive-code pre) {
+		border-radius: 0 0 16px 16px;
+	}
+
+	/* ---- Entrance + idle motion ---------------------------------------- */
+	.bh-copy > *,
+	.bh-stage {
+		animation: bh-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+	.bh-wordmark {
+		animation-delay: 0.04s;
+	}
+	.bh-tagline {
+		animation-delay: 0.12s;
+	}
+	.bh-actions {
+		animation-delay: 0.2s;
+	}
+	.bh-stage {
+		animation-delay: 0.28s;
+	}
+
+	@keyframes bh-rise {
+		from {
+			opacity: 0;
+			transform: translateY(18px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+	@keyframes bh-float {
+		0%,
+		100% {
+			transform: translateY(0) rotate(-1deg);
+		}
+		50% {
+			transform: translateY(-12px) rotate(1.5deg);
+		}
+	}
+	@keyframes bh-drift {
+		0%,
+		100% {
+			transform: translate3d(0, 0, 0) scale(1);
+		}
+		50% {
+			transform: translate3d(0, -3%, 0) scale(1.06);
+		}
+	}
+
+	/* ---- Desktop: asymmetric two-column -------------------------------- */
+	@media (min-width: 50rem) {
+		.bh {
+			grid-template-columns: 5fr 6fr;
+			gap: clamp(2rem, 4vw, 4rem);
+			padding-block: clamp(2.5rem, 7vmin, 6rem);
+		}
+		.bh-copy {
+			text-align: start;
+			align-items: flex-start;
+		}
+		.bh-actions {
+			justify-content: flex-start;
+		}
+		.bh-stage {
+			justify-content: flex-end;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.bh-copy > *,
+		.bh-stage,
+		.bh-gem,
+		.shard {
+			animation: none;
+		}
+	}
+</style>
