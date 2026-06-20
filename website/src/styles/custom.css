@@ -226,3 +226,95 @@ body {
 	font-size: clamp(2.1rem, 1.4rem + 2.6vw, 3.1rem);
 	line-height: 1.04;
 }
+
+/* ==========================================================================
+   Section headings — a small morganite marker under every content H2 so long
+   guides stay scannable. Kept as a short rule (not an eyebrow on every block).
+   The homepage splash overrides this with its own bolder display treatment.
+   ========================================================================== */
+
+.sl-markdown-content h2 {
+	margin-top: 2.75rem;
+}
+.sl-markdown-content h2::after {
+	content: "";
+	display: block;
+	width: 2rem;
+	height: 3px;
+	margin-top: 0.55rem;
+	border-radius: 999px;
+	background: var(--beryl-magenta);
+}
+
+/* ==========================================================================
+   Tables — rounded, hairline-bordered container with a tinted header row and
+   a quiet row hover. Lifts every reference/guide table at once.
+   ========================================================================== */
+
+.sl-markdown-content table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	border: 1px solid var(--beryl-hairline);
+	border-radius: 12px;
+	overflow: hidden;
+	font-size: 0.95em;
+}
+.sl-markdown-content table thead th {
+	background: var(--beryl-surface);
+	color: var(--sl-color-white);
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	text-align: start;
+	border-bottom: 1px solid var(--beryl-hairline);
+}
+.sl-markdown-content table th,
+.sl-markdown-content table td {
+	padding: 0.6rem 0.9rem;
+	border-bottom: 1px solid
+		color-mix(in oklch, var(--beryl-hairline) 55%, transparent);
+}
+.sl-markdown-content table tbody tr:last-child td {
+	border-bottom: none;
+}
+.sl-markdown-content table tbody tr {
+	transition: background 0.15s ease-out;
+}
+.sl-markdown-content table tbody tr:hover {
+	background: var(--beryl-magenta-soft);
+}
+
+/* ==========================================================================
+   Prev / next pagination — match the card hover language: hairline border,
+   accent lift on hover, emerald glow. Active state lives on the link title.
+   ========================================================================== */
+
+.pagination-links a {
+	border: 1px solid var(--beryl-hairline);
+	border-radius: 14px;
+	box-shadow: none;
+	transition:
+		transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+		border-color 0.18s ease-out,
+		box-shadow 0.18s ease-out;
+}
+.pagination-links a:hover {
+	transform: translateY(-3px);
+	border-color: var(--sl-color-accent);
+	box-shadow: 0 14px 40px -18px var(--beryl-glow);
+}
+.pagination-links a:hover .link-title {
+	color: var(--sl-color-accent-high);
+}
+.pagination-links .link-title {
+	transition: color 0.18s ease-out;
+}
+
+/* ==========================================================================
+   Tabs — give the selected tab a crisp emerald indicator and label.
+   ========================================================================== */
+
+.sl-markdown-content .sl-tabs [role="tab"][aria-selected="true"] {
+	border-color: var(--sl-color-accent);
+	color: var(--sl-color-accent-high);
+}
