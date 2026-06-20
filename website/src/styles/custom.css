@@ -112,7 +112,8 @@ body {
    Links — animated underline in content
    ========================================================================== */
 
-.sl-markdown-content a:not(:where(.card a, .sl-link-card a, [class*='action'])) {
+.sl-markdown-content
+	a:not(:where(.card a, .sl-link-card a, .sl-anchor-link, [class*='action'])) {
 	text-decoration: none;
 	background-image: linear-gradient(currentColor, currentColor);
 	background-position: 0 100%;
@@ -120,7 +121,8 @@ body {
 	background-size: 100% 1px;
 	transition: background-size 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.sl-markdown-content a:not(:where(.card a, .sl-link-card a, [class*='action'])):hover {
+.sl-markdown-content
+	a:not(:where(.card a, .sl-link-card a, .sl-anchor-link, [class*='action'])):hover {
 	background-size: 100% 2px;
 }
 
@@ -236,7 +238,11 @@ body {
 .sl-markdown-content h2 {
 	margin-top: 2.75rem;
 }
-.sl-markdown-content h2::after {
+/* Morganite marker under each H2. Attached to the heading *wrapper* rather
+   than the <h2> itself: Starlight makes the heading `display: inline` so its
+   anchor link can tuck onto the same line, and a block ::after inside that
+   inline heading would push the anchor onto its own line below. */
+.sl-markdown-content .sl-heading-wrapper.level-h2::after {
 	content: "";
 	display: block;
 	width: 2rem;
