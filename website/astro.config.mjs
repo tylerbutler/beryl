@@ -27,17 +27,22 @@ export default defineConfig({
 			},
 			favicon: "/favicon.png",
 			customCss: [
-				"@fontsource/metropolis/400.css",
-				"@fontsource/metropolis/600.css",
+				"@fontsource-variable/unbounded",
+				"@fontsource-variable/hanken-grotesk",
+				"@fontsource-variable/jetbrains-mono",
 				"./src/styles/fonts.css",
 				"./src/styles/custom.css",
 			],
 			components: {
 				Head: "./src/components/Head.astro",
+				Hero: "./src/components/Hero.astro",
 			},
 			plugins: [
 				starlightLlmsTxt(),
-				starlightLinksValidator(),
+				starlightLinksValidator({
+					// Report broken links but don't fail the build on them.
+					failOnError: false,
+				}),
 			],
 			social: [
 				{

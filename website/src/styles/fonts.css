@@ -1,3 +1,13 @@
+/* Type system
+ *  - Display:  Unbounded — playful, bold, modern. Hero wordmark + page H1s.
+ *  - Text/UI:  Hanken Grotesk — humanist, warm, highly readable for long docs.
+ *  - Code:     JetBrains Mono — developer-grade, legible at small sizes.
+ */
 :root {
-	--sl-font: "Metropolis", sans-serif;
+	--sl-font: "Hanken Grotesk Variable", system-ui, -apple-system, "Segoe UI",
+		sans-serif;
+	--sl-font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo,
+		Consolas, monospace;
+	--beryl-font-display: "Unbounded Variable", "Hanken Grotesk Variable",
+		system-ui, sans-serif;
 }
