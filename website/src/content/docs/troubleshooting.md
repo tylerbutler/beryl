@@ -68,7 +68,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 ## Enable Beryl debug diagnostics
 
-Beryl uses Birch loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed coordinator lifecycle diagnostics while debugging channel integration issues:
+Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed coordinator lifecycle diagnostics while debugging channel integration issues:
 
 ```gleam
 let config =

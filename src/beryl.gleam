@@ -77,9 +77,8 @@ pub type RegisterError {
   InvalidPattern(String)
 }
 
-/// Logging verbosity for Beryl's internal Birch loggers.
+/// Logging verbosity for Beryl's internal loggers.
 pub type LogLevel {
-  Trace
   Debug
   Info
   Warn
@@ -187,7 +186,6 @@ pub fn with_payload_preview_bytes(
 
 fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
   case level {
-    Trace -> coordinator.Trace
     Debug -> coordinator.Debug
     Info -> coordinator.Info
     Warn -> coordinator.Warn

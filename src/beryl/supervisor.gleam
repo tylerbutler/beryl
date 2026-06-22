@@ -30,9 +30,9 @@ import beryl
 import beryl/coordinator
 import beryl/group
 import beryl/internal
+import beryl/log
 import beryl/presence
 import beryl/rate_limit
-import birch/logger as log
 import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
@@ -251,7 +251,6 @@ fn start_supervised(
 
 fn coordinator_log_level(level: beryl.LogLevel) -> coordinator.LogLevel {
   case level {
-    beryl.Trace -> coordinator.Trace
     beryl.Debug -> coordinator.Debug
     beryl.Info -> coordinator.Info
     beryl.Warn -> coordinator.Warn

@@ -8,12 +8,13 @@ target = "erlang"
 internal_modules = [
   "beryl/coordinator",
   "beryl/internal",
+  "beryl/log",
   "beryl/rate_limit",
 ]
 
 [dependencies]
-birch = ">= 0.2.1 and < 1.0.0"
 envoy = ">= 1.0.0 and < 2.0.0"
+palabres = ">= 1.0.4 and < 2.0.0"
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 gleam_erlang = ">= 0.29.0 and < 2.0.0"
 gleam_otp = ">= 0.12.0 and < 2.0.0"
