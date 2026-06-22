@@ -32,7 +32,7 @@
 		"@fontsource-variable/hanken-grotesk": "^5.2.8",
 		"@fontsource-variable/jetbrains-mono": "^5.2.8",
 		"@fontsource-variable/unbounded": "^5.2.8",
-		"astro": "^6.1.10",
+		"astro": "^6.4.6",
 		"astro-tinylytics": "^0.1.0",
 		"sharp": "^0.34.5",
 		"starlight-links-validator": "^0.24.0",
