@@ -9,11 +9,11 @@
 
 import beryl/channel.{type StopReason}
 import beryl/internal
+import beryl/log.{type Logger}
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimiter}
 import beryl/topic.{type TopicPattern}
 import beryl/wire/codec.{type Codec}
-import birch/logger.{type Logger} as log
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
@@ -83,9 +83,8 @@ pub type StartError {
   ActorStartFailed(actor.StartError)
 }
 
-/// Logging verbosity for the coordinator's internal Birch logger.
+/// Logging verbosity for the coordinator's internal logger.
 pub type LogLevel {
-  Trace
   Debug
   Info
   Warn
@@ -144,7 +143,6 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
 fn internal_logging(config: LoggingConfig) -> internal.LoggingConfig {
   internal.LoggingConfig(
     level: case config.level {
-      Trace -> internal.Trace
       Debug -> internal.Debug
       Info -> internal.Info
       Warn -> internal.Warn
@@ -382,6 +380,8 @@ fn build_coordinator(
   config: CoordinatorConfig,
   ps: Option(PubSub),
 ) -> actor.Builder(State, Message, Subject(Message)) {
+  let logging = internal_logging(config.logging)
+  internal.configure(logging)
   let initial_state =
     State(
       handlers: [],
@@ -389,10 +389,7 @@ fn build_coordinator(
       topics: dict.new(),
       config: config,
       pubsub: ps,
-      logger: internal.logger_with_config(
-        "beryl.coordinator",
-        internal_logging(config.logging),
-      ),
+      logger: internal.logger_with_config("beryl.coordinator", logging),
       self_subject: None,
     )
 

@@ -22,8 +22,8 @@
 //// ```
 
 import beryl/internal
+import beryl/log
 import beryl/pubsub.{type PubSub}
-import birch/logger as log
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}

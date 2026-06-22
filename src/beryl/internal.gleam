@@ -1,15 +1,15 @@
 //// Internal utilities shared across beryl modules.
 //// Not part of the public API.
 
-import birch
-import birch/level
-import birch/logger.{type Logger}
+import beryl/log.{type Logger}
 import gleam/int
 import gleam/string
+import palabres
+import palabres/level
+import palabres/options
 
 /// Logging verbosity for Beryl's internal helpers.
 pub type LogLevel {
-  Trace
   Debug
   Info
   Warn
@@ -25,33 +25,36 @@ pub type LoggingConfig {
   )
 }
 
-/// Return a memoized named logger, creating it on first call via persistent_term.
-/// The hot path is a single persistent_term lookup with no allocations.
-pub fn logger(name: String) -> Logger {
-  case get_cached_logger(name) {
-    Ok(cached_logger) -> cached_logger
-    Error(Nil) -> {
-      let cached_logger = birch.new(name)
-      set_cached_logger(name, cached_logger)
-      cached_logger
-    }
+/// Configure the global palabres logger from a Beryl logging configuration.
+///
+/// Palabres is a singleton configured once at startup; the level set here is
+/// global across every Beryl logger. Called when a coordinator starts.
+pub fn configure(config: LoggingConfig) -> Nil {
+  options.defaults()
+  |> options.level(to_palabres_level(config.level))
+  |> palabres.configure
+}
+
+fn to_palabres_level(log_level: LogLevel) -> level.Level {
+  case log_level {
+    Debug -> level.Debug
+    Info -> level.Info
+    Warn -> level.Warning
+    Err -> level.Error
   }
+}
+
+/// Return a named logger.
+pub fn logger(name: String) -> Logger {
+  log.new(name)
 }
 
 /// Build a named logger using the supplied Beryl logging configuration.
-pub fn logger_with_config(name: String, config: LoggingConfig) -> Logger {
-  birch.new(name)
-  |> birch.with_level(to_birch_level(config.level))
-}
-
-fn to_birch_level(log_level: LogLevel) -> level.Level {
-  case log_level {
-    Trace -> level.Trace
-    Debug -> level.Debug
-    Info -> level.Info
-    Warn -> level.Warn
-    Err -> level.Err
-  }
+///
+/// The level is applied globally via `configure`; the returned logger only
+/// carries its name.
+pub fn logger_with_config(name: String, _config: LoggingConfig) -> Logger {
+  log.new(name)
 }
 
 /// Safely truncate a text value for log metadata.
@@ -71,9 +74,3 @@ pub fn preview_metadata(
     False -> []
   }
 }
-
-@external(erlang, "beryl_ffi", "get_cached_logger")
-fn get_cached_logger(name: String) -> Result(Logger, Nil)
-
-@external(erlang, "beryl_ffi", "set_cached_logger")
-fn set_cached_logger(name: String, logger: Logger) -> Nil
