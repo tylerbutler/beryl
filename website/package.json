@@ -21,8 +21,10 @@
 		"check:astro": "astro check",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
 		"dev": "astro dev",
+		"generate:reference": "node scripts/generate-reference.mjs",
 		"preview": "astro preview",
-		"start": "astro dev"
+		"start": "astro dev",
+		"test:reference": "node --test scripts/generate-reference.test.mjs"
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.6",

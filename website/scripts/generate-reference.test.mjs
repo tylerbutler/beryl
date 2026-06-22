@@ -1,0 +1,170 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import { generateReference } from "./generate-reference.mjs";
+
+const fixture = {
+	name: "beryl",
+	version: "9.9.9",
+	modules: {
+		"beryl/channel": {
+			documentation: ["Channel behaviour and callbacks.", "", "Second line."],
+			types: {
+				HandleResult: {
+					documentation: "Result of handling an inbound message.",
+					parameters: 1,
+					constructors: [
+						{
+							name: "Reply",
+							documentation: "Reply to the sender.",
+							parameters: [{ label: "payload", type: { kind: "variable", id: 0 } }],
+						},
+						{ name: "NoReply", parameters: [] },
+					],
+				},
+				LegacyThing: {
+					documentation: "An old type.",
+					parameters: 0,
+					constructors: [],
+					deprecation: { message: "Use HandleResult instead." },
+				},
+			},
+			"type-aliases": {
+				Assigns: {
+					documentation: "Convenience alias for socket assigns.",
+					parameters: 0,
+					alias: {
+						kind: "named",
+						name: "Dict",
+						module: "gleam/dict",
+						parameters: [
+							{ kind: "named", name: "String", module: "gleam" },
+							{ kind: "variable", id: 0 },
+						],
+					},
+				},
+			},
+			constants: {
+				default_timeout: {
+					documentation: "Default reply timeout.",
+					type: { kind: "named", name: "Int", module: "gleam" },
+				},
+			},
+			functions: {
+				handle: {
+					documentation: "Handle an inbound message.",
+					parameters: [
+						{ label: "message", type: { kind: "named", name: "String", module: "gleam" } },
+						{
+							label: "coords",
+							type: {
+								kind: "tuple",
+								elements: [
+									{ kind: "named", name: "Int", module: "gleam" },
+									{ kind: "named", name: "Int", module: "gleam" },
+								],
+							},
+						},
+						{
+							label: "callback",
+							type: {
+								kind: "fn",
+								parameters: [{ kind: "named", name: "String", module: "gleam" }],
+								return: { kind: "named", name: "Nil", module: "gleam" },
+							},
+						},
+					],
+					return: {
+						kind: "named",
+						name: "HandleResult",
+						module: "beryl/channel",
+						parameters: [{ kind: "variable", id: 0 }],
+					},
+				},
+			},
+		},
+		beryl: {
+			documentation: "Top-level API.",
+			types: {},
+			"type-aliases": {},
+			constants: {},
+			functions: {},
+		},
+	},
+};
+
+async function withFixture(run) {
+	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-"));
+	try {
+		const jsonPath = path.join(dir, "package-interface.json");
+		const outputDir = path.join(dir, "out");
+		await writeFile(jsonPath, JSON.stringify(fixture));
+		await run({ jsonPath, outputDir });
+	} finally {
+		await rm(dir, { force: true, recursive: true });
+	}
+}
+
+test("generates an index and one page per module", async () => {
+	await withFixture(async ({ jsonPath, outputDir }) => {
+		const result = await generateReference({ docsJsonPath: jsonPath, outputDir });
+		assert.equal(result.moduleCount, 2);
+		assert.equal(result.pageCount, 3);
+
+		const index = await readFile(path.join(outputDir, "index.md"), "utf8");
+		assert.match(index, /title: API Reference/);
+		assert.match(index, /`beryl` `9\.9\.9`/);
+		// Modules are sorted alphabetically: beryl before beryl/channel.
+		assert.ok(index.indexOf("/reference/api/beryl/") < index.indexOf("/reference/api/beryl-channel/"));
+	});
+});
+
+test("renders types, aliases, constants, and functions", async () => {
+	await withFixture(async ({ jsonPath, outputDir }) => {
+		await generateReference({ docsJsonPath: jsonPath, outputDir });
+		const page = await readFile(path.join(outputDir, "beryl-channel.md"), "utf8");
+
+		// Module doc array is normalized to multi-line text.
+		assert.match(page, /Channel behaviour and callbacks\./);
+
+		// Type with parameters and documented constructors.
+		assert.match(page, /pub type HandleResult\(a\)/);
+		assert.match(page, /Reply\(payload: a\)/);
+		assert.match(page, /NoReply/);
+
+		// Type alias with a foreign type uses last module segment, drops prelude qualifier.
+		assert.match(page, /pub type Assigns = dict\.Dict\(String, a\)/);
+
+		// Constant.
+		assert.match(page, /pub const default_timeout: Int/);
+
+		// Function signature: tuple, fn type, current-module return without qualifier.
+		assert.match(page, /pub fn handle\(/);
+		assert.match(page, /coords: #\(Int, Int\)/);
+		assert.match(page, /callback: fn\(String\) -> Nil/);
+		assert.match(page, /-> HandleResult\(a\)/);
+	});
+});
+
+test("surfaces deprecations as a caution block", async () => {
+	await withFixture(async ({ jsonPath, outputDir }) => {
+		await generateReference({ docsJsonPath: jsonPath, outputDir });
+		const page = await readFile(path.join(outputDir, "beryl-channel.md"), "utf8");
+		assert.match(page, /:::caution\[Deprecated\]\nUse HandleResult instead\.\n:::/);
+	});
+});
+
+test("reports a helpful error when the docs JSON is missing", async () => {
+	await withFixture(async ({ outputDir }) => {
+		await assert.rejects(
+			generateReference({
+				docsJsonPath: path.join(outputDir, "does-not-exist.json"),
+				outputDir,
+			}),
+			/gleam docs build/,
+		);
+	});
+});
