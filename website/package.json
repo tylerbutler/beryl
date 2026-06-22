@@ -21,8 +21,10 @@
 		"check:astro": "astro check",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
 		"dev": "astro dev",
+		"generate:reference": "node scripts/generate-reference.mjs",
 		"preview": "astro preview",
-		"start": "astro dev"
+		"start": "astro dev",
+		"test:reference": "node --test scripts/generate-reference.test.mjs"
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.6",
@@ -30,7 +32,7 @@
 		"@fontsource-variable/hanken-grotesk": "^5.2.8",
 		"@fontsource-variable/jetbrains-mono": "^5.2.8",
 		"@fontsource-variable/unbounded": "^5.2.8",
-		"astro": "^6.1.10",
+		"astro": "^6.4.6",
 		"astro-tinylytics": "^0.1.0",
 		"sharp": "^0.34.5",
 		"starlight-links-validator": "^0.24.0",

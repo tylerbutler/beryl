@@ -113,6 +113,16 @@ export default defineConfig({
 							label: "API Overview",
 							slug: "reference",
 						},
+						{
+							label: "Generated API",
+							items: [
+								{
+									autogenerate: {
+										directory: "reference/api",
+									},
+								},
+							],
+						},
 					],
 				},
 				{

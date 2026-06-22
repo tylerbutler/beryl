@@ -83,16 +83,24 @@ changelog:
 site-dev:
     pnpm -C website dev
 
-# Build website
-site-build:
-    pnpm -C website build:site
-
 # Install website dependencies
 site-deps:
     pnpm -C website install
 
+# Generate website reference docs from Gleam docs metadata
+site-reference: docs
+    pnpm -C website generate:reference
+
+# Test the website reference docs generator
+site-reference-test:
+    pnpm -C website test:reference
+
+# Build website
+site-build: site-reference
+    pnpm -C website build:site
+
 # Check website (Astro check)
-site-check:
+site-check: site-reference
     pnpm -C website check:astro
 
 # Clean website build artifacts
