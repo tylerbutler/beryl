@@ -60,6 +60,7 @@ fn connect_socket(
       socket_id,
       send,
       fn(_) { Ok(Nil) },
+      None,
       dynamic.nil(),
     ),
   )

@@ -189,6 +189,7 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -231,6 +232,7 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -278,6 +280,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -338,6 +341,7 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -391,6 +395,7 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -442,6 +447,7 @@ pub fn connect_assigns_visible_in_channel_join_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.string("alice"),
     ),
   )

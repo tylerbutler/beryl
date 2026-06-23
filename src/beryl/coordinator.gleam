@@ -215,6 +215,10 @@ type SocketInfo {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary to this socket's WebSocket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    /// Wire codec negotiated for this connection. Used to decode inbound
+    /// binary frames and encode replies/pushes destined for this socket, so
+    /// different connections can use different serializers concurrently.
+    codec: Codec,
     /// Topics this socket is subscribed to
     subscribed_topics: Set(String),
     /// Per-topic assigns (topic -> Dynamic assigns)
@@ -281,6 +285,10 @@ pub type Message {
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    /// Wire codec negotiated for this connection. `None` falls back to the
+    /// coordinator's configured codec, preserving the historical behavior for
+    /// callers that don't negotiate a per-connection serializer.
+    codec: Option(Codec),
     /// Socket-level assigns seeded by the transport's connect hook
     /// (type-erased). Use `dynamic.nil()` when there are none.
     connect_assigns: Dynamic,
@@ -448,12 +456,13 @@ fn handle_message(
     RegisterChannel(pattern, handler, reply) ->
       handle_register_channel(state, pattern, handler, reply)
 
-    SocketConnected(socket_id, send, send_binary, connect_assigns) ->
+    SocketConnected(socket_id, send, send_binary, codec, connect_assigns) ->
       handle_socket_connected(
         state,
         socket_id,
         send,
         send_binary,
+        codec,
         connect_assigns,
       )
 
@@ -507,6 +516,7 @@ fn handle_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec: Option(Codec),
   connect_assigns: Dynamic,
 ) -> actor.Next(State, Message) {
   let socket_info =
@@ -514,6 +524,7 @@ fn handle_socket_connected(
       id: socket_id,
       send: send,
       send_binary: send_binary,
+      codec: option.unwrap(codec, state.config.codec),
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
       connect_assigns: connect_assigns,
@@ -578,7 +589,7 @@ fn handle_join(
       case dict.get(state.sockets, socket_id) {
         Ok(socket_info) -> {
           let reply =
-            state.config.codec.encode_reply(
+            socket_info.codec.encode_reply(
               join_ref,
               ref,
               topic_name,
@@ -629,7 +640,7 @@ fn handle_join_inner(
             #("join_ref", optional_string(join_ref)),
           ])
           let reply =
-            state.config.codec.encode_reply(
+            socket_info.codec.encode_reply(
               join_ref,
               ref,
               topic_name,
@@ -667,7 +678,7 @@ fn handle_leave(
   case ref, dict.get(state.sockets, socket_id) {
     Some(r), Ok(socket_info) -> {
       let reply =
-        state.config.codec.encode_reply(
+        socket_info.codec.encode_reply(
           None,
           Some(r),
           topic_name,
@@ -826,7 +837,13 @@ fn handle_binary_in(
   socket_id: String,
   data: BitArray,
 ) -> actor.Next(State, Message) {
-  case state.config.codec.decode_binary {
+  // Decode with the connection's negotiated codec when known, so binary
+  // frames are interpreted in the serializer the client actually used.
+  let active_codec = case dict.get(state.sockets, socket_id) {
+    Ok(socket_info) -> socket_info.codec
+    Error(_) -> state.config.codec
+  }
+  case active_codec.decode_binary {
     Some(decode_binary) ->
       handle_route_binary_frame(state, socket_id, data, decode_binary)
     None -> handle_raw_binary_with_rate_limit(state, socket_id, data)
@@ -917,7 +934,7 @@ fn handle_heartbeat(
         SocketInfo(..socket_info, last_heartbeat: monotonic_time_ms())
       let new_sockets = dict.insert(state.sockets, socket_id, updated_socket)
 
-      let reply = state.config.codec.encode_heartbeat_reply(ref)
+      let reply = socket_info.codec.encode_heartbeat_reply(ref)
       let _send_result =
         send_frame_logged(state, socket_info, "__heartbeat__", reply)
       let logger = coordinator_logger(state)
@@ -1023,7 +1040,6 @@ fn handle_broadcast(
     Some(except_id) -> list.filter(subscribers, fn(id) { id != except_id })
   }
 
-  let msg = state.config.codec.encode_push(topic_name, event, payload)
   let logger = coordinator_logger(state)
   logger
   |> log.debug("Broadcast dispatched", [
@@ -1035,6 +1051,9 @@ fn handle_broadcast(
   list.each(recipients, fn(socket_id) {
     case dict.get(state.sockets, socket_id) {
       Ok(socket_info) -> {
+        // Encode per recipient so connections negotiating different
+        // serializers each receive a frame in their own wire format.
+        let msg = socket_info.codec.encode_push(topic_name, event, payload)
         let _send_result =
           send_frame_logged(state, socket_info, topic_name, msg)
         Nil
@@ -1143,9 +1162,12 @@ fn handle_route_text(
   socket_id: String,
   raw_text: String,
 ) -> actor.Next(State, Message) {
-  let codec = state.config.codec
+  let active_codec = case dict.get(state.sockets, socket_id) {
+    Ok(socket_info) -> socket_info.codec
+    Error(_) -> state.config.codec
+  }
   let logging = internal_logging(state.config.logging)
-  case codec.decode_text(raw_text) {
+  case active_codec.decode_text(raw_text) {
     Error(err) -> {
       let logger = coordinator_logger(state)
       logger
@@ -1254,7 +1276,7 @@ fn dispatch_join(
         #("join_ref", optional_string(join_ref)),
       ])
       let reply =
-        state.config.codec.encode_reply(
+        socket_info.codec.encode_reply(
           join_ref,
           ref,
           topic_name,
@@ -1303,7 +1325,7 @@ fn dispatch_join(
         Some(p) -> p
       }
       let reply =
-        state.config.codec.encode_reply(
+        socket_info.codec.encode_reply(
           join_ref,
           ref,
           topic_name,
@@ -1372,7 +1394,7 @@ fn dispatch_handle_in(
       case ref {
         Some(r) -> {
           let reply =
-            state.config.codec.encode_reply(
+            socket_info.codec.encode_reply(
               None,
               Some(r),
               topic_name,
@@ -1398,7 +1420,7 @@ fn dispatch_handle_in(
         #("push_event", push_event),
       ])
       let msg =
-        state.config.codec.encode_push(topic_name, push_event, push_payload)
+        socket_info.codec.encode_push(topic_name, push_event, push_payload)
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
       let state = update_assigns(state, socket_id, topic_name, new_assigns)
       actor.continue(state)
@@ -1469,7 +1491,7 @@ fn dispatch_handle_info(
       // No ref correlation in handle_info, so reply and push are
       // wire-identical: both become a server-initiated push.
       let msg =
-        state.config.codec.encode_push(topic_name, reply_event, reply_payload)
+        socket_info.codec.encode_push(topic_name, reply_event, reply_payload)
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
       let state = update_assigns(state, socket_id, topic_name, new_assigns)
       actor.continue(state)
@@ -1490,7 +1512,7 @@ fn dispatch_handle_info(
 }
 
 fn dispatch_handle_binary(
-  state: State,
+  _state: State,
   st: State,
   socket_info: SocketInfo,
   handler: ChannelHandler,
@@ -1535,11 +1557,7 @@ fn dispatch_handle_binary(
         #("callback", "handle_binary"),
       ])
       let msg =
-        state.config.codec.encode_push(
-          topic_name,
-          "binary_reply",
-          reply_payload,
-        )
+        socket_info.codec.encode_push(topic_name, "binary_reply", reply_payload)
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
@@ -1552,7 +1570,7 @@ fn dispatch_handle_binary(
         #("push_event", push_event),
       ])
       let msg =
-        state.config.codec.encode_push(topic_name, push_event, push_payload)
+        socket_info.codec.encode_push(topic_name, push_event, push_payload)
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }

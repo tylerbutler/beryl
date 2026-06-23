@@ -176,6 +176,7 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
       "logging-socket",
       fn(_) { Ok(Nil) },
       fn(_) { Ok(Nil) },
+      None,
       dynamic.nil(),
     ),
   )
@@ -215,6 +216,7 @@ pub fn debug_join_missing_handler_logs_routing_and_send_test() {
       "missing-handler-socket",
       fn(_) { Ok(Nil) },
       fn(_) { Ok(Nil) },
+      None,
       dynamic.nil(),
     ),
   )
@@ -268,6 +270,7 @@ pub fn debug_channel_callback_logs_push_result_test() {
       "callback-log-socket",
       fn(_) { Ok(Nil) },
       fn(_) { Ok(Nil) },
+      None,
       dynamic.nil(),
     ),
   )

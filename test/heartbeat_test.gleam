@@ -40,6 +40,7 @@ fn connect_mock_socket(
       socket_id,
       send_fn,
       fn(_) { Ok(Nil) },
+      None,
       dynamic.nil(),
     ),
   )
