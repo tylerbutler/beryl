@@ -1,29 +1,326 @@
-/* Dark mode colors. */
+/* ==========================================================================
+   beryl — visual system
+   Identity: beryl is a green gemstone with a magenta (morganite) core.
+   Strategy: committed emerald green + a vivid morganite pop. Playful, bold,
+   modern — never cold/corporate. All color in OKLCH. Targets WCAG AA.
+   ========================================================================== */
+
+/* ---------- Dark theme (default) ---------- */
 :root {
-	--sl-color-accent-low: #14351d;
-	--sl-color-accent: #b21f5c;
-	--sl-color-accent-high: #ffd4e5;
-	--sl-color-white: #f2ffe9;
-	--sl-color-gray-1: #d8f7c5;
-	--sl-color-gray-2: #a9df89;
-	--sl-color-gray-3: #75b85b;
-	--sl-color-gray-4: #39733f;
-	--sl-color-gray-5: #27522f;
-	--sl-color-gray-6: #183821;
-	--sl-color-black: #07150c;
+	--sl-color-black: oklch(0.165 0.022 162); /* page background */
+	--sl-color-gray-6: oklch(0.205 0.026 163); /* deepest surface / border */
+	--sl-color-gray-5: oklch(0.255 0.03 163); /* surface: cards, code */
+	--sl-color-gray-4: oklch(0.345 0.032 162); /* dividers */
+	--sl-color-gray-3: oklch(0.6 0.04 159); /* muted text (AA on bg) */
+	--sl-color-gray-2: oklch(0.81 0.032 157); /* secondary text */
+	--sl-color-gray-1: oklch(0.91 0.024 155); /* strong text */
+	--sl-color-white: oklch(0.97 0.018 152); /* headings / brightest */
+
+	--sl-color-accent-low: oklch(0.31 0.07 160);
+	--sl-color-accent: oklch(0.78 0.16 158); /* emerald — links, primary */
+	--sl-color-accent-high: oklch(0.9 0.1 154);
+
+	/* brand extras */
+	--beryl-magenta: oklch(0.72 0.2 350); /* morganite pop */
+	--beryl-magenta-soft: oklch(0.72 0.2 350 / 0.16);
+	--beryl-glow: oklch(0.85 0.19 150 / 0.5); /* lime glow */
+	--beryl-ring: var(--sl-color-accent);
+	--beryl-surface: oklch(0.215 0.028 163 / 0.7);
+	--beryl-hairline: oklch(0.42 0.04 161 / 0.5);
 }
-/* Light mode colors. */
+
+/* ---------- Light theme ---------- */
 :root[data-theme='light'] {
-	--sl-color-accent-low: #d8f0c9;
-	--sl-color-accent: #276f35;
-	--sl-color-accent-high: #123f21;
-	--sl-color-white: #07150c;
-	--sl-color-gray-1: #123f21;
-	--sl-color-gray-2: #27522f;
-	--sl-color-gray-3: #39733f;
-	--sl-color-gray-4: #6aa44d;
-	--sl-color-gray-5: #a9df89;
-	--sl-color-gray-6: #e6f7dc;
-	--sl-color-gray-7: #f7fff2;
-	--sl-color-black: #ffffff;
+	--sl-color-black: oklch(0.985 0.01 150); /* page background (off-white, green-tinted, chroma low) */
+	--sl-color-gray-7: oklch(0.965 0.012 151);
+	--sl-color-gray-6: oklch(0.93 0.016 152); /* surface: cards, code */
+	--sl-color-gray-5: oklch(0.87 0.022 154); /* borders */
+	--sl-color-gray-4: oklch(0.7 0.03 157); /* dividers */
+	--sl-color-gray-3: oklch(0.5 0.04 160); /* muted text (AA on bg) */
+	--sl-color-gray-2: oklch(0.38 0.05 161); /* secondary text */
+	--sl-color-gray-1: oklch(0.28 0.055 162); /* strong text */
+	--sl-color-white: oklch(0.2 0.05 163); /* headings / darkest */
+
+	--sl-color-accent-low: oklch(0.92 0.05 155);
+	--sl-color-accent: oklch(0.5 0.15 156); /* emerald — links, primary */
+	--sl-color-accent-high: oklch(0.36 0.12 158);
+
+	--beryl-magenta: oklch(0.52 0.23 352);
+	--beryl-magenta-soft: oklch(0.52 0.23 352 / 0.12);
+	--beryl-glow: oklch(0.72 0.16 150 / 0.35);
+	--beryl-ring: var(--sl-color-accent);
+	--beryl-surface: oklch(1 0 0 / 0.6);
+	--beryl-hairline: oklch(0.55 0.04 158 / 0.35);
+}
+
+/* ==========================================================================
+   Typography
+   ========================================================================== */
+
+body {
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+/* Display face for the brand wordmark and top-level page titles only;
+   long-form headings stay in the readable text face. */
+.site-title,
+.hero h1,
+.content-panel h1,
+.sl-markdown-content > h1:first-child {
+	font-family: var(--beryl-font-display);
+	font-weight: 700;
+	letter-spacing: -0.03em;
+	text-wrap: balance;
+}
+
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+	font-weight: 700;
+	letter-spacing: -0.015em;
+	text-wrap: balance;
+}
+
+.sl-markdown-content p,
+.sl-markdown-content li {
+	text-wrap: pretty;
+}
+
+/* Keep the brand wordmark in the header crisp and tight */
+.site-title {
+	font-size: var(--sl-text-h4);
+	letter-spacing: -0.02em;
+}
+
+/* ==========================================================================
+   Selection, focus, scrollbar — small on-brand details
+   ========================================================================== */
+
+::selection {
+	background: var(--beryl-magenta);
+	color: oklch(0.99 0.01 150);
+}
+
+:focus-visible {
+	outline: 2px solid var(--beryl-ring);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* ==========================================================================
+   Links — animated underline in content
+   ========================================================================== */
+
+.sl-markdown-content
+	a:not(:where(.card a, .sl-link-card a, .sl-anchor-link, [class*='action'])) {
+	text-decoration: none;
+	background-image: linear-gradient(currentColor, currentColor);
+	background-position: 0 100%;
+	background-repeat: no-repeat;
+	background-size: 100% 1px;
+	transition: background-size 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sl-markdown-content
+	a:not(:where(.card a, .sl-link-card a, .sl-anchor-link, [class*='action'])):hover {
+	background-size: 100% 2px;
+}
+
+/* ==========================================================================
+   Code blocks (Expressive Code frames)
+   ========================================================================== */
+
+.expressive-code .frame {
+	border-radius: 12px;
+}
+.expressive-code .frame pre {
+	border: 1px solid var(--beryl-hairline);
+	border-radius: 12px;
+}
+
+/* inline code */
+.sl-markdown-content :not(pre) > code {
+	background: var(--beryl-magenta-soft);
+	color: var(--sl-color-white);
+	border-radius: 5px;
+	padding: 0.15em 0.4em;
+	font-size: 0.875em;
+}
+
+/* ==========================================================================
+   Cards & link cards — unified, with a green-glow hover and morganite edge
+   ========================================================================== */
+
+.card,
+.sl-link-card {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 14px;
+	background:
+		linear-gradient(var(--beryl-surface), var(--beryl-surface));
+	transition:
+		transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+		border-color 0.3s ease,
+		box-shadow 0.3s ease;
+	position: relative;
+}
+
+.card:hover,
+.sl-link-card:hover {
+	transform: translateY(-3px);
+	border-color: var(--sl-color-accent);
+	box-shadow:
+		0 0 0 1px var(--sl-color-accent),
+		0 14px 40px -18px var(--beryl-glow);
+}
+
+.sl-link-card:focus-within {
+	border-color: var(--sl-color-accent);
+}
+
+/* Card icon chip — unify to brand */
+.card .icon {
+	color: var(--sl-color-accent);
+	background: var(--sl-color-accent-low);
+	border-radius: 10px;
+	padding: 0.4rem;
+	border: 1px solid var(--beryl-hairline);
+}
+
+/* ==========================================================================
+   Reduced motion — site-wide damping (hero motion is handled in Hero.astro)
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+	}
+}
+
+/* ==========================================================================
+   Asides — replace Starlight's colored left-stripe with a full border + tint
+   ========================================================================== */
+
+.starlight-aside {
+	border-inline-start: none;
+	border: 1px solid var(--sl-color-asides-border);
+	border-radius: 14px;
+	background: color-mix(
+		in oklch,
+		var(--sl-color-asides-border) 12%,
+		var(--sl-color-black)
+	);
+	padding: 1rem 1.25rem;
+}
+.starlight-aside__title {
+	color: var(--sl-color-asides-text-accent);
+}
+
+/* ==========================================================================
+   Content H1 — Unbounded is wide; cap size so long titles never overflow
+   ========================================================================== */
+
+.content-panel h1,
+.sl-markdown-content > h1:first-child {
+	font-size: clamp(2.1rem, 1.4rem + 2.6vw, 3.1rem);
+	line-height: 1.04;
+}
+
+/* ==========================================================================
+   Section headings — a small morganite marker under every content H2 so long
+   guides stay scannable. Kept as a short rule (not an eyebrow on every block).
+   The homepage splash overrides this with its own bolder display treatment.
+   ========================================================================== */
+
+.sl-markdown-content h2 {
+	margin-top: 2.75rem;
+}
+/* Morganite marker under each H2. Attached to the heading *wrapper* rather
+   than the <h2> itself: Starlight makes the heading `display: inline` so its
+   anchor link can tuck onto the same line, and a block ::after inside that
+   inline heading would push the anchor onto its own line below. */
+.sl-markdown-content .sl-heading-wrapper.level-h2::after {
+	content: "";
+	display: block;
+	width: 2rem;
+	height: 3px;
+	margin-top: 0.55rem;
+	border-radius: 999px;
+	background: var(--beryl-magenta);
+}
+
+/* ==========================================================================
+   Tables — rounded, hairline-bordered container with a tinted header row and
+   a quiet row hover. Lifts every reference/guide table at once.
+   ========================================================================== */
+
+.sl-markdown-content table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	border: 1px solid var(--beryl-hairline);
+	border-radius: 12px;
+	overflow: hidden;
+	font-size: 0.95em;
+}
+.sl-markdown-content table thead th {
+	background: var(--beryl-surface);
+	color: var(--sl-color-white);
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	text-align: start;
+	border-bottom: 1px solid var(--beryl-hairline);
+}
+.sl-markdown-content table th,
+.sl-markdown-content table td {
+	padding: 0.6rem 0.9rem;
+	border-bottom: 1px solid
+		color-mix(in oklch, var(--beryl-hairline) 55%, transparent);
+}
+.sl-markdown-content table tbody tr:last-child td {
+	border-bottom: none;
+}
+.sl-markdown-content table tbody tr {
+	transition: background 0.15s ease-out;
+}
+.sl-markdown-content table tbody tr:hover {
+	background: var(--beryl-magenta-soft);
+}
+
+/* ==========================================================================
+   Prev / next pagination — match the card hover language: hairline border,
+   accent lift on hover, emerald glow. Active state lives on the link title.
+   ========================================================================== */
+
+.pagination-links a {
+	border: 1px solid var(--beryl-hairline);
+	border-radius: 14px;
+	box-shadow: none;
+	transition:
+		transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+		border-color 0.18s ease-out,
+		box-shadow 0.18s ease-out;
+}
+.pagination-links a:hover {
+	transform: translateY(-3px);
+	border-color: var(--sl-color-accent);
+	box-shadow: 0 14px 40px -18px var(--beryl-glow);
+}
+.pagination-links a:hover .link-title {
+	color: var(--sl-color-accent-high);
+}
+.pagination-links .link-title {
+	transition: color 0.18s ease-out;
+}
+
+/* ==========================================================================
+   Tabs — give the selected tab a crisp emerald indicator and label.
+   ========================================================================== */
+
+.sl-markdown-content .sl-tabs [role="tab"][aria-selected="true"] {
+	border-color: var(--sl-color-accent);
+	color: var(--sl-color-accent-high);
 }

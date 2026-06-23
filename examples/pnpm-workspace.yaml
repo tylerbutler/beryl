@@ -4,3 +4,4 @@ packages:
   - collab_docs
 onlyBuiltDependencies:
   - esbuild
+  - esbuild@0.27.7

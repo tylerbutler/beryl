@@ -3,11 +3,10 @@ import beryl/channel
 import beryl/coordinator
 import beryl/internal
 import beryl/wire
-import birch
-import birch/handler
-import birch/level
-import birch/record.{type LogRecord}
+import gleam/dict
 import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None}
@@ -16,6 +15,56 @@ import gleeunit/should
 
 pub fn main() {
   gleeunit.main()
+}
+
+/// A captured palabres log forwarded by `beryl_log_capture`. The field order
+/// matches the `{captured_log, Message, Metadata}` tuple the handler sends.
+type CapturedLog {
+  CapturedLog(message: String, metadata: dict.Dict(String, String))
+}
+
+@external(erlang, "beryl_log_capture", "start")
+fn start_capture(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_log_capture", "stop")
+fn stop_capture() -> Nil
+
+fn captured_decoder() -> decode.Decoder(CapturedLog) {
+  use message <- decode.field(1, decode.string)
+  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
+  decode.success(CapturedLog(message:, metadata:))
+}
+
+fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
+  case decode.run(value, captured_decoder()) {
+    Ok(captured) -> captured
+    Error(_) -> CapturedLog(message: "", metadata: dict.new())
+  }
+}
+
+fn captured_selector() -> process.Selector(CapturedLog) {
+  process.new_selector()
+  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
+}
+
+fn get_metadata(captured: CapturedLog, key: String) -> Result(String, Nil) {
+  dict.get(captured.metadata, key)
+}
+
+/// Begin capturing into the current process and discard any logs left in the
+/// mailbox by a previous test (gleeunit runs tests in a shared process).
+fn begin_capture() -> process.Selector(CapturedLog) {
+  start_capture(process.self())
+  let selector = captured_selector()
+  drain(selector)
+  selector
+}
+
+fn drain(selector: process.Selector(CapturedLog)) -> Nil {
+  case process.selector_receive(selector, 0) {
+    Ok(_) -> drain(selector)
+    Error(Nil) -> Nil
+  }
 }
 
 pub fn default_logging_preserves_info_without_payloads_test() {
@@ -111,15 +160,7 @@ pub fn preview_metadata_bounds_payloads_when_enabled_test() {
 }
 
 pub fn debug_decode_log_omits_frame_preview_by_default_test() {
-  let logs = process.new_subject()
-  birch.configure([
-    birch.config_level(level.Debug),
-    birch.config_handlers([
-      handler.new_with_record_write(name: "test-capture", write: fn(log_record) {
-        process.send(logs, log_record)
-      }),
-    ]),
-  ])
+  let selector = begin_capture()
 
   let config =
     beryl.config(wire.phoenix_codec())
@@ -145,28 +186,21 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
     "[null,\"ref\",\"room:lobby\",\"phx_join\",{\"secret\":\"token\"}]",
   )
 
-  let assert Ok(log_record) =
-    receive_log(logs, "Inbound text frame decoded", 10)
-  log_record.logger_name
-  |> should.equal("beryl.coordinator")
-  record.get_metadata(log_record, "socket_id")
+  let assert Ok(captured) =
+    receive_log(selector, "Inbound text frame decoded", 10)
+  get_metadata(captured, "logger")
+  |> should.equal(Ok("beryl.coordinator"))
+  get_metadata(captured, "socket_id")
   |> should.equal(Ok("logging-socket"))
-  record.get_metadata(log_record, "topic")
+  get_metadata(captured, "topic")
   |> should.equal(Ok("room:lobby"))
-  record.get_metadata(log_record, "frame_preview")
+  get_metadata(captured, "frame_preview")
   |> should.equal(Error(Nil))
+  stop_capture()
 }
 
 pub fn debug_join_missing_handler_logs_routing_and_send_test() {
-  let logs = process.new_subject()
-  birch.configure([
-    birch.config_level(level.Debug),
-    birch.config_handlers([
-      handler.new_with_record_write(name: "test-capture", write: fn(log_record) {
-        process.send(logs, log_record)
-      }),
-    ]),
-  ])
+  let selector = begin_capture()
 
   let config =
     beryl.config(wire.phoenix_codec())
@@ -192,31 +226,24 @@ pub fn debug_join_missing_handler_logs_routing_and_send_test() {
     "[null,\"ref\",\"room:missing\",\"phx_join\",{}]",
   )
 
-  let assert Ok(missing_log) = receive_log(logs, "Join handler missing", 10)
-  record.get_metadata(missing_log, "socket_id")
+  let assert Ok(missing_log) = receive_log(selector, "Join handler missing", 10)
+  get_metadata(missing_log, "socket_id")
   |> should.equal(Ok("missing-handler-socket"))
-  record.get_metadata(missing_log, "topic")
+  get_metadata(missing_log, "topic")
   |> should.equal(Ok("room:missing"))
 
-  let assert Ok(send_log) = receive_log(logs, "Outbound frame sent", 10)
-  record.get_metadata(send_log, "socket_id")
+  let assert Ok(send_log) = receive_log(selector, "Outbound frame sent", 10)
+  get_metadata(send_log, "socket_id")
   |> should.equal(Ok("missing-handler-socket"))
-  record.get_metadata(send_log, "topic")
+  get_metadata(send_log, "topic")
   |> should.equal(Ok("room:missing"))
-  record.get_metadata(send_log, "frame_kind")
+  get_metadata(send_log, "frame_kind")
   |> should.equal(Ok("text"))
+  stop_capture()
 }
 
 pub fn debug_channel_callback_logs_push_result_test() {
-  let logs = process.new_subject()
-  birch.configure([
-    birch.config_level(level.Debug),
-    birch.config_handlers([
-      handler.new_with_record_write(name: "test-capture", write: fn(log_record) {
-        process.send(logs, log_record)
-      }),
-    ]),
-  ])
+  let selector = begin_capture()
 
   let config =
     beryl.config(wire.phoenix_codec())
@@ -259,32 +286,31 @@ pub fn debug_channel_callback_logs_push_result_test() {
   )
 
   let assert Ok(push_log) =
-    receive_log(logs, "Channel callback returned push", 20)
-  record.get_metadata(push_log, "socket_id")
+    receive_log(selector, "Channel callback returned push", 20)
+  get_metadata(push_log, "socket_id")
   |> should.equal(Ok("callback-log-socket"))
-  record.get_metadata(push_log, "topic")
+  get_metadata(push_log, "topic")
   |> should.equal(Ok("room:lobby"))
-  record.get_metadata(push_log, "event")
+  get_metadata(push_log, "event")
   |> should.equal(Ok("client_event"))
+  stop_capture()
 }
 
 fn receive_log(
-  logs: process.Subject(LogRecord),
+  selector: process.Selector(CapturedLog),
   message: String,
   attempts: Int,
-) -> Result(LogRecord, Nil) {
+) -> Result(CapturedLog, Nil) {
   case attempts <= 0 {
     True -> Error(Nil)
-    False -> {
-      case process.receive(logs, 500) {
-        Ok(log_record) -> {
-          case log_record.message == message {
-            True -> Ok(log_record)
-            False -> receive_log(logs, message, attempts - 1)
+    False ->
+      case process.selector_receive(selector, 500) {
+        Ok(captured) ->
+          case captured.message == message {
+            True -> Ok(captured)
+            False -> receive_log(selector, message, attempts - 1)
           }
-        }
-        Error(_) -> Error(Nil)
+        Error(Nil) -> Error(Nil)
       }
-    }
   }
 }

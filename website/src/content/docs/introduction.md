@@ -47,7 +47,7 @@ Presence state uses an **add-wins observed-remove set** (AWORSet) with causal co
 
 ### Focused dependencies
 
-The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`, `gleam_crypto`, `gleam_http`, `mist`, and `birch` — all standard BEAM ecosystem packages. No external message brokers or databases required.
+The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`, `gleam_crypto`, `gleam_http`, `mist`, and `palabres` — all standard BEAM ecosystem packages. No external message brokers or databases required.
 
 ### Phoenix wire protocol compatibility
 
@@ -55,7 +55,7 @@ beryl uses the same JSON array wire format as Phoenix channels (`[join_ref, ref,
 
 ## Next steps
 
-- [Quick Start](/quick-start) — get a working server in minutes
+- [Quick Start](/quick-start/) — get a working server in minutes
 - [Channels guide](/guides/channels) — topics, callbacks, and broadcasting
 - [Supervision guide](/guides/supervision) — production startup with OTP supervision
 - [Error Handling guide](/guides/error-handling) — rejected joins, rate limits, and more
