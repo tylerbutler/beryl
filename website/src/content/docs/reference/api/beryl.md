@@ -112,7 +112,7 @@ pub type LoggingConfig {
 
 ### `LogLevel`
 
-Logging verbosity for Beryl's internal Birch loggers.
+Logging verbosity for Beryl's internal palabres loggers.
 
 ```gleam
 pub type LogLevel {
