@@ -197,7 +197,7 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
       channel.Reply(event, json.object([#("ok", json.bool(True))]), socket)
     })
 
-  beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_binary(
     beryl.coordinator_subject(channels),
@@ -253,7 +253,7 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
       channel.Reply(event, json.object([#("ok", json.bool(True))]), socket)
     })
 
-  beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_binary(
     beryl.coordinator_subject(channels),
@@ -308,7 +308,7 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
       channel.JoinOk(reply: None, socket: socket)
     })
 
-  beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_binary(
     beryl.coordinator_subject(channels),
@@ -358,7 +358,7 @@ pub fn phoenix_codec_without_binary_decoder_preserves_raw_binary_handler_test() 
       channel.NoReply(socket)
     })
 
-  beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_message(
     beryl.coordinator_subject(channels),

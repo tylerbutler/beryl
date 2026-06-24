@@ -239,8 +239,7 @@ fn msgpack_config() -> mist_transport.TransportConfig(Nil) {
 
 pub fn vsn_3_negotiates_binary_serializer_round_trip_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  beryl.register(channels, "room:*", echo_channel())
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", echo_channel())
   let #(port, server_pid) = start_server(channels, msgpack_config())
 
   let assert Ok(client) = connect_websocket(port, "/socket?vsn=3.0.0")
@@ -333,8 +332,7 @@ pub fn vsn_3_negotiates_binary_serializer_round_trip_test() {
 
 pub fn vsn_2_uses_json_text_serializer_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  beryl.register(channels, "room:*", echo_channel())
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", echo_channel())
   let #(port, server_pid) = start_server(channels, msgpack_config())
 
   let assert Ok(client) = connect_websocket(port, "/socket?vsn=2.0.0")
@@ -360,8 +358,7 @@ pub fn vsn_2_uses_json_text_serializer_test() {
 
 pub fn default_connection_without_vsn_uses_json_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  beryl.register(channels, "room:*", echo_channel())
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", echo_channel())
   let #(port, server_pid) = start_server(channels, msgpack_config())
 
   let assert Ok(client) = connect_websocket(port, "/socket")
@@ -387,8 +384,7 @@ pub fn default_connection_without_vsn_uses_json_test() {
 
 pub fn mixed_serializers_share_one_server_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  beryl.register(channels, "room:*", echo_channel())
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", echo_channel())
   let #(port, server_pid) = start_server(channels, msgpack_config())
 
   // JSON client and binary client connect to the same server concurrently.
@@ -427,8 +423,7 @@ pub fn mixed_serializers_share_one_server_test() {
 
 pub fn unknown_vsn_falls_back_to_json_by_default_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  beryl.register(channels, "room:*", echo_channel())
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", echo_channel())
   let #(port, server_pid) = start_server(channels, msgpack_config())
 
   // vsn=9.9.9 has no registered serializer; default config falls back to JSON.
@@ -454,8 +449,7 @@ pub fn unknown_vsn_falls_back_to_json_by_default_test() {
 
 pub fn unknown_vsn_rejected_when_configured_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  beryl.register(channels, "room:*", echo_channel())
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", echo_channel())
   let config =
     msgpack_config()
     |> mist_transport.with_reject_unknown_vsn(True)
