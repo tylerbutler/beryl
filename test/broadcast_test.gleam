@@ -37,7 +37,7 @@ fn register_test_channel(channels: beryl.Channels) -> Nil {
 
   let reply = process.new_subject()
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.RegisterChannel("room:*", handler, reply),
   )
   let assert Ok(Ok(Nil)) = process.receive(reply, 500)
@@ -55,7 +55,7 @@ fn connect_socket(
   }
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       socket_id,
       send,
@@ -75,7 +75,7 @@ fn join_topic(
   sent: process.Subject(String),
 ) -> Nil {
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     socket_id,
     "[null,\"join-ref\",\"" <> topic_name <> "\",\"phx_join\",{}]",
   )

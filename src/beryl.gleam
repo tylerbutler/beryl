@@ -228,19 +228,39 @@ pub fn with_channel_rate(
   Config(..config, channel_rate: rate, channel_burst: burst)
 }
 
-/// Channels system handle
+/// Channels system handle.
 ///
-/// This is the main entry point for interacting with the channels system.
-/// Pass this to channel handlers and the WebSocket transport.
-pub type Channels {
+/// This opaque handle is returned by `start` and passed to registration,
+/// broadcast, bridge, group, supervisor, and transport functions. Its internal
+/// actor protocol is intentionally hidden so Beryl can evolve coordinator
+/// internals without breaking application code.
+pub opaque type Channels {
   Channels(
-    /// The coordinator actor subject - pass to transport.mist.upgrade()
     coordinator: Subject(coordinator.Message),
-    /// Configuration
     config: Config,
-    /// Optional PubSub for distributed messaging
     pubsub: Option(PubSub),
   )
+}
+
+// nolint: unused_exports -- package-internal constructor for supervised coordinators; hidden from public docs with @internal
+@internal
+pub fn channels_from_coordinator(
+  coordinator coordinator: Subject(coordinator.Message),
+  config config: Config,
+) -> Channels {
+  Channels(coordinator: coordinator, config: config, pubsub: config.pubsub)
+}
+
+// nolint: unused_exports -- package-internal accessor for transports/tests; hidden from public docs with @internal
+@internal
+pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
+  channels.coordinator
+}
+
+// nolint: unused_exports -- package-internal accessor for transport codec negotiation; hidden from public docs with @internal
+@internal
+pub fn configured_codec(channels: Channels) -> codec.Codec {
+  channels.config.codec
 }
 
 /// Errors when starting channels
@@ -304,7 +324,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
   case coordinator_result {
     Error(_) -> Error(CoordinatorStartFailed)
     Ok(coord) ->
-      Ok(Channels(coordinator: coord, config: config, pubsub: config.pubsub))
+      Ok(channels_from_coordinator(coordinator: coord, config: config))
   }
 }
 

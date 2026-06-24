@@ -103,12 +103,8 @@ pub fn channels_start_accepts_debug_logging_config_test() {
       include_payloads: False,
     ))
 
-  let assert Ok(channels) = beryl.start(config)
-
-  channels.config.logging.level
-  |> should.equal(beryl.Debug)
-  channels.config.logging.include_payloads
-  |> should.be_false
+  beryl.start(config)
+  |> should.be_ok
 }
 
 pub fn coordinator_config_has_safe_logging_defaults_test() {
@@ -171,7 +167,7 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
   let assert Ok(channels) = beryl.start(config)
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "logging-socket",
       fn(_) { Ok(Nil) },
@@ -181,7 +177,7 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
     ),
   )
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "logging-socket",
     "[null,\"ref\",\"room:lobby\",\"phx_join\",{\"secret\":\"token\"}]",
   )
@@ -211,7 +207,7 @@ pub fn debug_join_missing_handler_logs_routing_and_send_test() {
   let assert Ok(channels) = beryl.start(config)
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "missing-handler-socket",
       fn(_) { Ok(Nil) },
@@ -221,7 +217,7 @@ pub fn debug_join_missing_handler_logs_routing_and_send_test() {
     ),
   )
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "missing-handler-socket",
     "[null,\"ref\",\"room:missing\",\"phx_join\",{}]",
   )
@@ -265,7 +261,7 @@ pub fn debug_channel_callback_logs_push_result_test() {
   |> should.equal(Ok(Nil))
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "callback-log-socket",
       fn(_) { Ok(Nil) },
@@ -275,12 +271,12 @@ pub fn debug_channel_callback_logs_push_result_test() {
     ),
   )
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "callback-log-socket",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "callback-log-socket",
     "[\"join-ref\",\"msg-ref\",\"room:lobby\",\"client_event\",{}]",
   )

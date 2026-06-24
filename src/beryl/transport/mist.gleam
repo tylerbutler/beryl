@@ -204,17 +204,17 @@ fn negotiate_codec(
   request: Request(Connection),
 ) -> Result(Codec, Nil) {
   case request_vsn(request) {
-    None -> Ok(channels.config.codec)
+    None -> Ok(beryl.configured_codec(channels))
     Some(vsn) ->
       case list.key_find(config.serializers, vsn) {
         Ok(codec) -> Ok(codec)
         Error(Nil) ->
           case vsn == default_vsn {
-            True -> Ok(channels.config.codec)
+            True -> Ok(beryl.configured_codec(channels))
             False ->
               case config.reject_unknown_vsn {
                 True -> Error(Nil)
-                False -> Ok(channels.config.codec)
+                False -> Ok(beryl.configured_codec(channels))
               }
           }
       }
@@ -291,7 +291,7 @@ pub fn upgrade_connection(
 ) -> Response(ResponseData) {
   let codec =
     negotiate_codec(default_config(""), channels, request)
-    |> result.unwrap(channels.config.codec)
+    |> result.unwrap(beryl.configured_codec(channels))
   do_upgrade(request, channels, codec, dynamic.nil())
 }
 
@@ -308,7 +308,12 @@ fn do_upgrade(
       on_message(state, message, connection)
     },
     on_init: fn(connection) {
-      on_init(connection, channels.coordinator, codec, connect_assigns)
+      on_init(
+        connection,
+        beryl.coordinator_subject(channels),
+        codec,
+        connect_assigns,
+      )
     },
     on_close: on_close,
   )
