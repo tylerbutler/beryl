@@ -222,10 +222,9 @@ fn start_supervised(
       // their names, so named_subject will route messages correctly.
       let coord_subject = process.named_subject(coordinator_name)
       let channels =
-        beryl.Channels(
+        beryl.channels_from_coordinator(
           coordinator: coord_subject,
           config: config.channels,
-          pubsub: config.channels.pubsub,
         )
 
       let pres = case presence_name {

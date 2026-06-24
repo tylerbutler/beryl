@@ -181,7 +181,7 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "segment-socket",
       fn(text) {
@@ -209,7 +209,7 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
   |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "segment-socket",
     "[null,\"join-ref\",\"document:tenant-a:ops\",\"phx_join\",{}]",
   )
@@ -224,7 +224,7 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "segment-reject-socket",
       fn(text) {
@@ -246,7 +246,7 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
   |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "segment-reject-socket",
     "[null,\"join-ref\",\"document:tenant-a:view\",\"phx_join\",{}]",
   )
@@ -272,7 +272,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-info",
       fn(text) {
@@ -305,7 +305,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
   |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-info",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -333,7 +333,7 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-typed-info",
       fn(text) {
@@ -367,7 +367,7 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
   |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-typed-info",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -387,7 +387,7 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-info-reply",
       fn(text) {
@@ -416,7 +416,7 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
   |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-info-reply",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -439,7 +439,7 @@ pub fn connect_assigns_visible_in_channel_join_test() {
 
   // Seed socket-level assigns as if produced by the transport on_connect hook.
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "auth-socket",
       fn(text) {
@@ -465,7 +465,7 @@ pub fn connect_assigns_visible_in_channel_join_test() {
   |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "auth-socket",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -695,6 +695,18 @@ pub fn extract_topic_id_test() {
 
   beryl.extract_topic_id(topic.Exact("room:lobby"), "room:lobby")
   |> should.equal(Error(Nil))
+}
+
+pub fn channels_handle_remains_usable_after_start_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  beryl.register(channels, "opaque:*", handler)
+  |> should.equal(Ok(Nil))
 }
 
 pub fn topic_namespace_test() {

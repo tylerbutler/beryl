@@ -157,7 +157,7 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   let assert Ok(channels) = beryl.start(beryl.config(binary_test_codec()))
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-1",
       fn(text) {
@@ -200,7 +200,7 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
 
   coordinator.route_binary(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     bit_array.from_string("J|join-ref|join-1|room:lobby|{\"user\":\"alice\"}"),
   )
@@ -211,7 +211,7 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   |> should.equal(Ok("R|join-1|room:lobby|ok|{\"joined\":true}"))
 
   coordinator.route_binary(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     bit_array.from_string("E|event-1|room:lobby|ping|{\"body\":\"hi\"}"),
   )
@@ -232,7 +232,7 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
   let assert Ok(channels) = beryl.start(config)
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-1",
       fn(_) { Ok(Nil) },
@@ -256,14 +256,14 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
   beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
 
   coordinator.route_binary(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
   )
   let assert Ok(_join_reply_bits) = process.receive(sent_binary, 500)
 
   coordinator.route_binary(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     bit_array.from_string("E|event-1|room:lobby|ping|{}"),
   )
@@ -272,7 +272,7 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
   |> should.equal(Ok("R|event-1|room:lobby|ok|{\"ok\":true}"))
 
   coordinator.route_binary(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     bit_array.from_string("E|event-2|room:lobby|ping|{}"),
   )
@@ -287,7 +287,7 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
   let assert Ok(channels) = beryl.start(beryl.config(binary_test_codec()))
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-1",
       fn(text) {
@@ -311,7 +311,7 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
   beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
 
   coordinator.route_binary(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
   )
@@ -336,7 +336,7 @@ pub fn phoenix_codec_without_binary_decoder_preserves_raw_binary_handler_test() 
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-1",
       fn(text) {
@@ -361,14 +361,14 @@ pub fn phoenix_codec_without_binary_decoder_preserves_raw_binary_handler_test() 
   beryl.register(channels, "room:*", handler) |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
   let assert Ok(_join_reply) = process.receive(sent_text, 500)
 
   coordinator.route_binary(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-1",
     bit_array.from_string("raw"),
   )

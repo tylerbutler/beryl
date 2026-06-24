@@ -19,7 +19,7 @@ fn start_channels_with_socket(
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       socket_id,
       fn(text) {
@@ -59,7 +59,7 @@ pub fn bridge_forwards_subject_values_to_handle_info_test() {
   |> should.equal(Ok(Nil))
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "bridge-sock",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )

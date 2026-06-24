@@ -149,7 +149,8 @@ pub fn stop_shuts_down_supervisor_and_children_test() {
 
   // Get PIDs before stopping
   let sup_pid = supervised.supervisor_pid
-  let assert Ok(coord_pid) = get_subject_pid(supervised.channels.coordinator)
+  let assert Ok(coord_pid) =
+    get_subject_pid(beryl.coordinator_subject(supervised.channels))
 
   // Stop the supervisor
   supervisor.stop(supervised)
@@ -206,7 +207,8 @@ pub fn supervised_coordinator_restarts_on_crash_test() {
     beryl.register(supervised.channels, "pre-crash:*", handler)
 
   // Kill the coordinator process
-  let assert Ok(name) = process.subject_name(supervised.channels.coordinator)
+  let assert Ok(name) =
+    process.subject_name(beryl.coordinator_subject(supervised.channels))
   let coord_subject = process.named_subject(name)
 
   // Send an exit signal to crash the coordinator
@@ -256,7 +258,8 @@ pub fn coordinator_crash_resets_presence_state_test() {
   presence.list(pres, "room:cascade") |> should.not_equal([])
 
   // Get coordinator PID and kill it
-  let assert Ok(name) = process.subject_name(supervised.channels.coordinator)
+  let assert Ok(name) =
+    process.subject_name(beryl.coordinator_subject(supervised.channels))
   let coord_subject = process.named_subject(name)
   let assert Ok(old_coord_pid) = get_subject_pid(coord_subject)
 
@@ -311,7 +314,8 @@ pub fn coordinator_crash_resets_groups_state_test() {
   group.list_groups(grps) |> should.equal(["team:cascade"])
 
   // Get coordinator PID and kill it
-  let assert Ok(name) = process.subject_name(supervised.channels.coordinator)
+  let assert Ok(name) =
+    process.subject_name(beryl.coordinator_subject(supervised.channels))
   let coord_subject = process.named_subject(name)
   let assert Ok(old_coord_pid) = get_subject_pid(coord_subject)
 
@@ -370,7 +374,7 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
 
   // Get coordinator PID before
   let assert Ok(coord_pid_before) =
-    get_subject_pid(supervised.channels.coordinator)
+    get_subject_pid(beryl.coordinator_subject(supervised.channels))
 
   // Kill the presence process directly
   let assert Ok(old_pres_pid) = get_subject_pid(pres.subject)
@@ -390,7 +394,7 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
 
   // Coordinator should still be the same process (not restarted)
   let assert Ok(coord_pid_after) =
-    get_subject_pid(supervised.channels.coordinator)
+    get_subject_pid(beryl.coordinator_subject(supervised.channels))
   coord_pid_after |> should.equal(coord_pid_before)
 
   // Coordinator should still be functional with its existing state
@@ -424,7 +428,7 @@ pub fn independent_groups_crash_does_not_affect_coordinator_test() {
 
   // Get coordinator PID before
   let assert Ok(coord_pid_before) =
-    get_subject_pid(supervised.channels.coordinator)
+    get_subject_pid(beryl.coordinator_subject(supervised.channels))
 
   // Kill the groups process directly
   let assert Ok(old_grps_pid) = get_subject_pid(grps.subject)
@@ -444,7 +448,7 @@ pub fn independent_groups_crash_does_not_affect_coordinator_test() {
 
   // Coordinator should still be the same process (not restarted)
   let assert Ok(coord_pid_after) =
-    get_subject_pid(supervised.channels.coordinator)
+    get_subject_pid(beryl.coordinator_subject(supervised.channels))
   coord_pid_after |> should.equal(coord_pid_before)
 
   // Coordinator should still be functional
