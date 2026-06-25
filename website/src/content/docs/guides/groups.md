@@ -24,20 +24,20 @@ let assert Ok(groups) = group.start()
 // Create a group
 let assert Ok(Nil) = group.create(groups, "team:engineering")
 
-// Error: AlreadyExists if the name is taken
+// Error: GroupAlreadyExists if the name is taken
 case group.create(groups, "team:engineering") {
   Ok(Nil) -> Nil
-  Error(group.AlreadyExists) -> Nil  // already there
+  Error(group.GroupAlreadyExists) -> Nil  // already there
   Error(_) -> Nil
 }
 
 // Delete a group (removes it and all its topic memberships)
 let assert Ok(Nil) = group.delete(groups, "team:engineering")
 
-// Error: NotFound if it doesn't exist
+// Error: GroupNotFound if it doesn't exist
 case group.delete(groups, "team:gone") {
   Ok(Nil) -> Nil
-  Error(group.NotFound) -> Nil
+  Error(group.GroupNotFound) -> Nil
   Error(_) -> Nil
 }
 ```
@@ -54,7 +54,7 @@ let assert Ok(Nil) = group.add(groups, "team:engineering", "room:infra")
 // Remove one topic
 let assert Ok(Nil) = group.remove(groups, "team:engineering", "room:infra")
 
-// Both add and remove return Error(NotFound) if the group doesn't exist
+// Both add and remove return Error(GroupNotFound) if the group doesn't exist
 ```
 
 Adding the same topic twice is a no-op (topics are stored in a set).
@@ -65,7 +65,7 @@ Adding the same topic twice is a no-op (topics are stored in a set).
 // List all topics in a group
 case group.topics(groups, "team:engineering") {
   Ok(topic_set) -> set.to_list(topic_set)  // ["room:frontend", "room:backend"]
-  Error(group.NotFound) -> []
+  Error(group.GroupNotFound) -> []
   Error(_) -> []
 }
 
@@ -90,16 +90,16 @@ group.broadcast(
 This is equivalent to calling `beryl.broadcast` on each topic in the group in sequence.
 
 :::note[Missing group is a no-op]
-`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `NotFound`.
+`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `GroupNotFound`.
 :::
 
 ## Error reference
 
 | Error | When |
 |-------|------|
-| `AlreadyExists` | `create` called for a name already in use |
-| `NotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
-| `StartFailed` | `group.start()` — the OTP actor failed to initialize |
+| `GroupAlreadyExists` | `create` called for a name already in use |
+| `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
+| `GroupActorStartFailed` | `group.start()` — the internal group actor failed to initialize |
 
 ## Full example: team rooms
 

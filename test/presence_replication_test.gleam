@@ -16,8 +16,7 @@ pub fn main() {
 /// Create a unique PubSub scope per test to avoid cross-test interference
 fn test_pubsub(name: String) -> pubsub.PubSub {
   let config = pubsub.config_with_scope("test_presence_repl_" <> name)
-  let assert Ok(ps) = pubsub.start(config)
-  ps
+  pubsub.start(config)
 }
 
 fn test_config(

@@ -14,7 +14,7 @@ Presence - Distributed presence tracking backed by a CRDT
  ## Example
 
  ```gleam
- let assert Ok(ps) = pubsub.start(pubsub.default_config())
+ let ps = pubsub.start(pubsub.default_config())
  let config =
    presence.default_config("node1")
    |> presence.with_pubsub(ps)
@@ -30,11 +30,11 @@ Presence - Distributed presence tracking backed by a CRDT
 
 Configuration for starting presence.
 
- Build with `default_config` and the `with_*` functions so Beryl can
+ Build configs with `default_config` and the `with_*` functions so Beryl can
  add future options without exposing record fields as public API.
 
 ```gleam
-pub opaque type Config
+pub type Config
 ```
 
 ### `Diff`
@@ -64,12 +64,15 @@ A running Presence instance.
  or depend on the runtime representation.
 
 ```gleam
-pub opaque type Presence
+pub type Presence
 ```
 
 ### `PresenceEntry`
 
 A presence entry returned from queries and diff accessors.
+
+ This type is intentionally transparent so callers can inspect query results
+ and construct entries for `diff`.
 
 ```gleam
 pub type PresenceEntry {
@@ -87,15 +90,15 @@ Errors from presence operations
 
 ```gleam
 pub type PresenceError {
-  StartFailed(actor.StartError)
+  PresenceStartFailed(error.StartFailure)
 }
 ```
 
 #### Constructors
 
-##### `StartFailed(actor.StartError)`
+##### `PresenceStartFailed(error.StartFailure)`
 
-The actor failed to start, wrapping the underlying OTP start error
+The presence actor failed to start.
 
 ## Functions
 
@@ -105,41 +108,6 @@ Default configuration (no PubSub, no replication)
 
 ```gleam
 pub fn default_config(String) -> Config
-```
-
-### `with_broadcast_interval`
-
-Set how often presence state is broadcast for replication.
-
- Use `0` to disable periodic broadcasts.
-
-```gleam
-pub fn with_broadcast_interval(
-  Config,
-  Int
-) -> Config
-```
-
-### `with_on_diff`
-
-Set the callback invoked when local changes or remote merges produce a diff.
-
-```gleam
-pub fn with_on_diff(
-  Config,
-  fn(Diff) -> Nil
-) -> Config
-```
-
-### `with_pubsub`
-
-Enable PubSub replication for presence.
-
-```gleam
-pub fn with_pubsub(
-  Config,
-  pubsub.PubSub
-) -> Config
 ```
 
 ### `diff`
@@ -217,17 +185,6 @@ Start the presence actor
 pub fn start(Config) -> Result(Presence, PresenceError)
 ```
 
-### `start_named`
-
-Start the presence actor with a registered name (for supervision)
-
-```gleam
-pub fn start_named(
-  Config,
-  process.Name(Message)
-) -> Result(actor.Started(process.Subject(Message)), actor.StartError)
-```
-
 ### `track`
 
 Track a presence in a topic
@@ -266,4 +223,39 @@ pub fn untrack_all(
   Presence,
   String
 ) -> Nil
+```
+
+### `with_broadcast_interval`
+
+Set how often presence state is broadcast for replication.
+
+ Use `0` to disable periodic broadcasts.
+
+```gleam
+pub fn with_broadcast_interval(
+  Config,
+  Int
+) -> Config
+```
+
+### `with_on_diff`
+
+Set the callback invoked when local changes or remote merges produce a diff.
+
+```gleam
+pub fn with_on_diff(
+  Config,
+  fn(Diff) -> Nil
+) -> Config
+```
+
+### `with_pubsub`
+
+Enable PubSub replication for presence.
+
+```gleam
+pub fn with_pubsub(
+  Config,
+  pubsub.PubSub
+) -> Config
 ```

@@ -28,6 +28,7 @@
 
 import beryl
 import beryl/coordinator
+import beryl/error as beryl_error
 import beryl/group
 import beryl/internal
 import beryl/log
@@ -70,7 +71,7 @@ pub type SupervisedChannels {
 /// Errors when starting the supervised system
 pub type StartError {
   /// The supervisor failed to start
-  SupervisorStartFailed(actor.StartError)
+  SupervisorStartFailed(beryl_error.StartFailure)
   /// heartbeat_timeout_ms must be > 0
   InvalidHeartbeatTimeout
 }
@@ -200,7 +201,7 @@ fn start_supervised(
     Error(err) -> {
       logger
       |> log.error("Supervisor failed to start", [])
-      Error(SupervisorStartFailed(err))
+      Error(SupervisorStartFailed(beryl_error.from_actor_start_error(err)))
     }
     Ok(started) -> {
       let presence_enabled = case config.presence {
@@ -307,7 +308,8 @@ pub fn child_spec(
       case start(config) {
         Ok(supervised) ->
           Ok(actor.Started(pid: supervised.supervisor_pid, data: supervised))
-        Error(SupervisorStartFailed(err)) -> Error(err)
+        Error(SupervisorStartFailed(failure)) ->
+          Error(actor.InitFailed(beryl_error.describe_start_failure(failure)))
         Error(InvalidHeartbeatTimeout) -> Error(actor.InitTimeout)
       }
     },

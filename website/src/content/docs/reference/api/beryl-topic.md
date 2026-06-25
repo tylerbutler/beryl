@@ -12,6 +12,37 @@ Topic - Pattern matching for channel routing
 
 ## Types
 
+### `ExtractError`
+
+Errors from extracting wildcard values from a topic pattern.
+
+```gleam
+pub type ExtractError {
+  NoWildcard
+  TopicMismatch
+  ExpectedOneWildcard(Int)
+  EmptyNamespace
+}
+```
+
+#### Constructors
+
+##### `NoWildcard`
+
+The pattern has no wildcard to extract.
+
+##### `TopicMismatch`
+
+The topic does not match the pattern.
+
+##### `ExpectedOneWildcard(Int)`
+
+`extract_id` expected exactly one wildcard value but found this many.
+
+##### `EmptyNamespace`
+
+`namespace` was called with an empty topic.
+
 ### `TopicError`
 
 ```gleam
@@ -60,14 +91,14 @@ Extract the wildcard portion from a topic
  extract_id(Wildcard("room:"), "room:lobby") // -> Ok("lobby")
  extract_id(Wildcard("doc:"), "doc:abc:123") // -> Ok("abc:123")
  extract_id(SegmentWildcard(["doc", "*", "ops"]), "doc:abc:ops") // -> Ok("abc")
- extract_id(Exact("room:lobby"), "room:lobby") // -> Error(Nil)
+ extract_id(Exact("room:lobby"), "room:lobby") // -> Error(NoWildcard)
  ```
 
 ```gleam
 pub fn extract_id(
   TopicPattern,
   String
-) -> Result(String, Nil)
+) -> Result(String, ExtractError)
 ```
 
 ### `extract_wildcards`
@@ -88,7 +119,7 @@ Extract values captured by wildcard segments.
 pub fn extract_wildcards(
   TopicPattern,
   String
-) -> Result(List(String), Nil)
+) -> Result(List(String), ExtractError)
 ```
 
 ### `from_segments`
@@ -136,11 +167,11 @@ Get the first segment (namespace) of a topic
 
  ```gleam
  namespace("room:lobby") // -> Ok("room")
- namespace("") // -> Error(Nil)
+ namespace("") // -> Error(EmptyNamespace)
  ```
 
 ```gleam
-pub fn namespace(String) -> Result(String, Nil)
+pub fn namespace(String) -> Result(String, ExtractError)
 ```
 
 ### `parse_pattern`

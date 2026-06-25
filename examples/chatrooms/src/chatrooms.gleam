@@ -49,7 +49,7 @@ pub fn main() {
     |> mist_transport.with_on_connect(fn(req) {
       case get_query_param(req, "token") {
         Ok("beryl-demo") -> Ok(Nil)
-        _ -> Error(Nil)
+        _ -> Error(mist_transport.ConnectRejected)
       }
     })
 

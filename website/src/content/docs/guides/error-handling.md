@@ -32,7 +32,7 @@ The coordinator discards the socket's join record on rejection — the client re
 
 ## Connection-level authentication rejection
 
-`on_connect` in the transport config rejects the WebSocket upgrade before any topic join occurs. Return `Error(Nil)` to send an HTTP 403 response:
+`on_connect` in the transport config rejects the WebSocket upgrade before any topic join occurs. Return `Error(mist_transport.ConnectRejected)` to send an HTTP 403 response:
 
 ```gleam
 let config =
@@ -40,7 +40,7 @@ let config =
   |> mist_transport.with_on_connect(fn(req) {
     case extract_token(req) {
       Ok(_) -> Ok(Nil)
-      Error(_) -> Error(Nil)  // → HTTP 403, connection refused
+      Error(_) -> Error(mist_transport.ConnectRejected)  // → HTTP 403, connection refused
     }
   })
 ```
@@ -128,9 +128,8 @@ Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(
 ```gleam
 case group.create(groups, name) {
   Ok(Nil) -> Nil
-  Error(group.AlreadyExists) -> Nil  // idempotent: treat as success if desired
-  Error(group.NotFound) -> Nil       // shouldn't happen for create
-  Error(group.StartFailed) -> panic  // only returned by group.start(); unreachable here
+  Error(group.GroupAlreadyExists) -> Nil  // idempotent: treat as success if desired
+  Error(group.GroupNotFound) -> Nil       // shouldn't happen for create
 }
 ```
 
@@ -150,13 +149,13 @@ case supervisor.start(config) {
     panic
   }
   Error(supervisor.SupervisorStartFailed(err)) -> {
-    // OTP actor spawn failure — log and exit gracefully
+    // Internal actor startup failure — log and exit gracefully
     panic
   }
 }
 ```
 
-`InvalidHeartbeatTimeout` is always a configuration mistake. `SupervisorStartFailed` wraps the underlying `actor.StartError`.
+`InvalidHeartbeatTimeout` is always a configuration mistake. `SupervisorStartFailed` wraps a Beryl-owned startup failure; use `beryl/error.describe_start_failure` to format it for logs.
 
 ## send_info silent ignoring
 

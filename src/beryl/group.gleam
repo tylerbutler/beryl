@@ -15,6 +15,7 @@
 //// ```
 
 import beryl
+import beryl/error as beryl_error
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/json
@@ -34,11 +35,15 @@ pub opaque type Groups {
 /// Errors from group operations
 pub type GroupError {
   /// The group already exists
-  AlreadyExists
+  GroupAlreadyExists
   /// The group was not found
-  NotFound
+  GroupNotFound
+}
+
+/// Errors when starting the groups actor.
+pub type GroupStartError {
   /// The actor failed to start
-  StartFailed
+  GroupActorStartFailed(beryl_error.StartFailure)
 }
 
 /// Messages the groups actor handles
@@ -71,14 +76,17 @@ type State {
 }
 
 /// Start the groups actor
-pub fn start() -> Result(Groups, GroupError) {
+pub fn start() -> Result(Groups, GroupStartError) {
   build_groups()
   |> actor.start
   |> result.map(fn(started) { Groups(subject: started.data) })
-  |> result.replace_error(StartFailed)
+  |> result.map_error(fn(error) {
+    GroupActorStartFailed(beryl_error.from_actor_start_error(error))
+  })
 }
 
 /// Start the groups actor with a registered name (for supervision)
+@internal
 pub fn start_named(
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {
@@ -174,7 +182,7 @@ fn handle_message(
     Create(name, reply) -> {
       case dict.has_key(state.groups, name) {
         True -> {
-          process.send(reply, Error(AlreadyExists))
+          process.send(reply, Error(GroupAlreadyExists))
           actor.continue(state)
         }
         False -> {
@@ -188,7 +196,7 @@ fn handle_message(
     Delete(name, reply) -> {
       case dict.has_key(state.groups, name) {
         False -> {
-          process.send(reply, Error(NotFound))
+          process.send(reply, Error(GroupNotFound))
           actor.continue(state)
         }
         True -> {
@@ -202,7 +210,7 @@ fn handle_message(
     Add(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(NotFound))
+          process.send(reply, Error(GroupNotFound))
           actor.continue(state)
         }
         Ok(topics) -> {
@@ -217,7 +225,7 @@ fn handle_message(
     Remove(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(NotFound))
+          process.send(reply, Error(GroupNotFound))
           actor.continue(state)
         }
         Ok(topics) -> {
@@ -232,7 +240,7 @@ fn handle_message(
     GetTopics(group_name, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(NotFound))
+          process.send(reply, Error(GroupNotFound))
           actor.continue(state)
         }
         Ok(topics) -> {

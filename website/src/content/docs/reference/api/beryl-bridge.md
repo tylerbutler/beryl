@@ -35,11 +35,11 @@ Bridge - Forward an external OTP actor's message stream to a socket channel.
    Assigns(bridge: Bridge(DocEvent))
  }
 
- fn join(channels, doc_actor, topic, _payload, socket) {
+ fn join(registered_channel, doc_actor, topic, _payload, socket) {
    // Forward each DocEvent to this socket's `handle_info` callback.
    let b =
      bridge.start(
-       channels: channels,
+       channel: registered_channel,
        socket_id: socket.id(socket),
        topic: topic,
        with: fn(event) { event },
@@ -89,7 +89,7 @@ Start a bridge that forwards values from an external `Subject` to a socket's
  The returned `Bridge` owns a freshly spawned forwarder process. Pass
  `subject(bridge)` to the external/domain actor so it delivers its stream to
  the forwarder; each received value is mapped with `transform` and delivered
- via `beryl.send_info(channels, socket_id, topic, transform(value))`.
+ via `beryl.send_info(channel, socket_id, topic, transform(value))`.
 
  Use `transform` to translate the domain message into whatever your channel's
  `handle_info` expects. If no translation is needed, pass the identity
@@ -101,11 +101,11 @@ Start a bridge that forwards values from an external `Subject` to a socket's
 
 ```gleam
 pub fn start(
-  channels: beryl.Channels,
+  channel: beryl.RegisteredChannel(a, b),
   socket_id: String,
   topic: String,
-  with: fn(a) -> b
-) -> Bridge(a)
+  with: fn(c) -> b
+) -> Bridge(c)
 ```
 
 ### `stop`

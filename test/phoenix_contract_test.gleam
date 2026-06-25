@@ -452,7 +452,7 @@ pub fn on_connect_rejects_connection_without_token_test() {
     |> mist_transport.with_on_connect(fn(req) {
       case auth_query(req, "token") {
         Ok("secret") -> Ok(Nil)
-        _ -> Error(Nil)
+        _ -> Error(mist_transport.ConnectRejected)
       }
     })
   let #(port, server_pid) = start_auth_server(channels, config)
@@ -486,7 +486,10 @@ pub fn on_connect_seeds_assigns_visible_at_join_test() {
 
   let config =
     mist_transport.default_config("/socket/websocket")
-    |> mist_transport.with_on_connect(fn(req) { auth_query(req, "token") })
+    |> mist_transport.with_on_connect(fn(req) {
+      auth_query(req, "token")
+      |> result.map_error(fn(_) { mist_transport.ConnectRejected })
+    })
   let #(port, server_pid) = start_auth_server(channels, config)
 
   let assert Ok(client) =

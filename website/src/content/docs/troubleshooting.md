@@ -22,7 +22,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    ```
    Raw WebSocket clients (non-Phoenix) connect directly to the path with no suffix.
 
-3. **on_connect rejection.** If you configured `with_on_connect`, a returning `Error(Nil)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
+3. **on_connect rejection.** If you configured `with_on_connect`, returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
 
 4. **Reverse proxy not forwarding upgrade headers.** See [Reverse proxy / nginx](#reverse-proxy--nginx) below.
 
@@ -101,7 +101,7 @@ let logging =
 
 3. **Single-node vs. multi-node.** Without PubSub, broadcasts are local to the node. If your deployment runs multiple BEAM nodes, configure PubSub:
    ```gleam
-   let assert Ok(ps) = pubsub.start(pubsub.default_config())
+   let ps = pubsub.start(pubsub.default_config())
    let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
    ```
 

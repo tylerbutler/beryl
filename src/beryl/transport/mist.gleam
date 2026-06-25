@@ -37,10 +37,10 @@ pub opaque type TransportConfig(assigns) {
     /// Runs the Phoenix `UserSocket.connect/3` analogue: it authenticates the
     /// whole connection a single time and can reject it before any channel
     /// join. Return `Ok(assigns)` to allow the connection and seed initial
-    /// socket assigns (visible to channels at join), or `Error(Nil)` to reject
+    /// socket assigns (visible to channels at join), or `Error(ConnectRejected)` to reject
     /// with a 403 Forbidden response. When None, all connections are allowed
     /// and assigns start empty (`Nil`).
-    on_connect: Option(fn(Request(Connection)) -> Result(assigns, Nil)),
+    on_connect: Option(fn(Request(Connection)) -> Result(assigns, ConnectError)),
     /// Per-connection serializers keyed by Phoenix `vsn` query value. The
     /// `vsn` query parameter from the upgrade request selects the codec used
     /// to decode inbound frames and encode replies/pushes for that socket.
@@ -54,6 +54,12 @@ pub opaque type TransportConfig(assigns) {
     /// default), unknown `vsn` values fall back to the configured codec.
     reject_unknown_vsn: Bool,
   )
+}
+
+/// Errors returned from a transport `on_connect` callback.
+pub type ConnectError {
+  /// Reject the WebSocket upgrade with `403 Forbidden`.
+  ConnectRejected
 }
 
 /// Create a default transport config with no connect hook.
@@ -73,12 +79,12 @@ pub fn default_config(path: String) -> TransportConfig(Nil) {
 ///
 /// The callback receives the HTTP request before the WebSocket upgrade and
 /// runs once per socket. Return `Ok(assigns)` to allow the connection and seed
-/// initial socket assigns that channels can read at join time, or `Error(Nil)`
-/// to reject the connection with a 403 Forbidden response before any channel
-/// join occurs.
+/// initial socket assigns that channels can read at join time, or
+/// `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
+/// response before any channel join occurs.
 pub fn with_on_connect(
   config: TransportConfig(a),
-  callback: fn(Request(Connection)) -> Result(assigns, Nil),
+  callback: fn(Request(Connection)) -> Result(assigns, ConnectError),
 ) -> TransportConfig(assigns) {
   TransportConfig(
     path: config.path,
@@ -169,7 +175,7 @@ pub fn upgrade(
                 config,
                 unsafe_coerce_to_dynamic(assigns),
               )
-            Error(Nil) ->
+            Error(ConnectRejected) ->
               response.new(403)
               |> response.set_body(mist.Bytes(bytes_tree.new()))
           }

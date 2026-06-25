@@ -7,7 +7,7 @@
 //// ## Quick Start
 ////
 //// ```gleam
-//// let assert Ok(ps) = pubsub.start(pubsub.default_config())
+//// let ps = pubsub.start(pubsub.default_config())
 //// pubsub.subscribe(ps, "room:lobby")
 //// pubsub.broadcast(ps, "room:lobby", "new_msg", json.string("hello"))
 //// ```
@@ -54,11 +54,6 @@ pub opaque type PubSub {
   PubSub(scope: Dynamic)
 }
 
-/// Errors when starting PubSub
-pub type StartError {
-  PgStartFailed
-}
-
 // ── FFI declarations ────────────────────────────────────────────────────────
 
 @external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
@@ -98,11 +93,11 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 ///
 /// This starts a pg scope. If the scope is already started (e.g., by another
 /// node or previous call), this is a no-op.
-pub fn start(config: PubSubConfig) -> Result(PubSub, StartError) {
+pub fn start(config: PubSubConfig) -> PubSub {
   // pg:start returns {ok, Pid} or {error, {already_started, Pid}}
   // Both are success cases for us
   let _start_result = ffi_start_pg_scope(config.scope)
-  Ok(PubSub(scope: config.scope))
+  PubSub(scope: config.scope)
 }
 
 /// Subscribe the current process to a topic
