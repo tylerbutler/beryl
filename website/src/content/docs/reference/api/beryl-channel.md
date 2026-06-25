@@ -40,15 +40,7 @@ Channel behavior definition
    parameter generic.
 
 ```gleam
-pub type Channel(a, b) {
-  Channel(
-    join: fn(String, dynamic.Dynamic, socket.Socket(a)) -> JoinResult(a),
-    handle_in: fn(String, dynamic.Dynamic, socket.Socket(a)) -> HandleResult(a),
-    handle_binary: fn(BitArray, socket.Socket(a)) -> HandleResult(a),
-    handle_info: fn(b, socket.Socket(a)) -> HandleResult(a),
-    terminate: fn(StopReason, socket.Socket(a)) -> Nil
-  )
-}
+pub opaque type Channel(a, b)
 ```
 
 ### `HandleResult`

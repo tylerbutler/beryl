@@ -2,7 +2,6 @@ import beryl/presence
 import gleam/erlang/process
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
 
@@ -11,12 +10,7 @@ pub fn main() {
 }
 
 fn test_config(replica: String) -> presence.Config {
-  presence.Config(
-    pubsub: None,
-    replica: replica,
-    broadcast_interval_ms: 0,
-    on_diff: None,
-  )
+  presence.default_config(replica)
 }
 
 pub fn presence_start_test() {
@@ -107,11 +101,12 @@ pub fn presence_empty_list_test() {
 }
 
 pub fn presence_default_config_test() {
-  let config = presence.default_config("my-node")
-  config.replica |> should.equal("my-node")
-  config.broadcast_interval_ms |> should.equal(0)
-  config.pubsub |> should.equal(None)
-  config.on_diff |> should.equal(None)
+  let assert Ok(p) = presence.start(presence.default_config("my-node"))
+  let _ = presence.track(p, "room:default", "user:1", "socket-1", json.null())
+
+  presence.list(p, "room:default")
+  |> list.length
+  |> should.equal(1)
 }
 
 // ── on_diff callback tests ──────────────────────────────────────────────────
@@ -120,12 +115,8 @@ pub fn on_diff_callback_receives_local_track_diff_test() {
   let diff_subject = process.new_subject()
 
   let config =
-    presence.Config(
-      pubsub: None,
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: Some(fn(diff) { process.send(diff_subject, diff) }),
-    )
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) { process.send(diff_subject, diff) })
 
   let assert Ok(p) = presence.start(config)
 
@@ -156,12 +147,8 @@ pub fn on_diff_callback_receives_local_untrack_diff_test() {
   let diff_subject = process.new_subject()
 
   let config =
-    presence.Config(
-      pubsub: None,
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: Some(fn(diff) { process.send(diff_subject, diff) }),
-    )
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) { process.send(diff_subject, diff) })
 
   let assert Ok(p) = presence.start(config)
   let _ =
@@ -194,12 +181,8 @@ pub fn on_diff_callback_receives_all_rapid_diffs_test() {
   let diff_subject = process.new_subject()
 
   let config =
-    presence.Config(
-      pubsub: None,
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: Some(fn(diff) { process.send(diff_subject, diff) }),
-    )
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) { process.send(diff_subject, diff) })
 
   let assert Ok(p) = presence.start(config)
 

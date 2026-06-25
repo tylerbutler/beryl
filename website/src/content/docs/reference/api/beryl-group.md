@@ -49,12 +49,13 @@ The actor failed to start
 
 ### `Groups`
 
-A running Groups instance
+A running Groups instance.
+
+ This handle is intentionally opaque so callers cannot forge the backing
+ actor subject or depend on its runtime representation.
 
 ```gleam
-pub type Groups {
-  Groups(subject: process.Subject(Message))
-}
+pub opaque type Groups
 ```
 
 ### `Message`

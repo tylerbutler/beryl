@@ -27,7 +27,7 @@ pub const default_vsn = "2.0.0"
 ///
 /// The `assigns` type parameter is the socket-level state produced by the
 /// `on_connect` hook. It defaults to `Nil` when no hook is configured.
-pub type TransportConfig(assigns) {
+pub opaque type TransportConfig(assigns) {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
     path: String,

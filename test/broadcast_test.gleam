@@ -7,7 +7,7 @@ import beryl/wire
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
-import gleam/option.{None, Some}
+import gleam/option.{None}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -198,14 +198,10 @@ pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() {
   drain(socket)
 
   let presence_config =
-    presence.Config(
-      pubsub: None,
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: Some(fn(diff) {
-        beryl.broadcast_presence_diff(channels, "room:lobby", diff)
-      }),
-    )
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) {
+      beryl.broadcast_presence_diff(channels, "room:lobby", diff)
+    })
   let assert Ok(p) = presence.start(presence_config)
 
   let _ =

@@ -23,8 +23,11 @@ import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
 
-/// A running Groups instance
-pub type Groups {
+/// A running Groups instance.
+///
+/// This handle is intentionally opaque so callers cannot forge the backing
+/// actor subject or depend on its runtime representation.
+pub opaque type Groups {
   Groups(subject: Subject(Message))
 }
 
@@ -82,6 +85,18 @@ pub fn start_named(
   build_groups()
   |> actor.named(name)
   |> actor.start
+}
+
+// nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
+@internal
+pub fn from_subject(subject: Subject(Message)) -> Groups {
+  Groups(subject: subject)
+}
+
+// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
+@internal
+pub fn subject(groups: Groups) -> Subject(Message) {
+  groups.subject
 }
 
 fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {

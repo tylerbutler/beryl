@@ -262,7 +262,7 @@ pub fn coordinator_crash_resets_presence_state_test() {
   let assert Ok(old_coord_pid) = get_subject_pid(coord_subject)
 
   // Also get the presence PID before crash
-  let assert Ok(old_pres_pid) = get_subject_pid(pres.subject)
+  let assert Ok(old_pres_pid) = get_subject_pid(presence.subject(pres))
 
   process.send_abnormal_exit(old_coord_pid, crash_reason())
 
@@ -281,7 +281,7 @@ pub fn coordinator_crash_resets_presence_state_test() {
   // Wait for presence to also restart with a new PID (RestForOne behavior)
   test_helpers.wait_until(
     fn() {
-      case get_subject_pid(pres.subject) {
+      case get_subject_pid(presence.subject(pres)) {
         Ok(new_pid) -> new_pid != old_pres_pid && process.is_alive(new_pid)
         Error(_) -> False
       }
@@ -318,7 +318,7 @@ pub fn coordinator_crash_resets_groups_state_test() {
   let assert Ok(old_coord_pid) = get_subject_pid(coord_subject)
 
   // Also get the groups PID before crash
-  let assert Ok(old_grps_pid) = get_subject_pid(grps.subject)
+  let assert Ok(old_grps_pid) = get_subject_pid(group.subject(grps))
 
   process.send_abnormal_exit(old_coord_pid, crash_reason())
 
@@ -337,7 +337,7 @@ pub fn coordinator_crash_resets_groups_state_test() {
   // Wait for groups to also restart with a new PID (RestForOne behavior)
   test_helpers.wait_until(
     fn() {
-      case get_subject_pid(grps.subject) {
+      case get_subject_pid(group.subject(grps)) {
         Ok(new_pid) -> new_pid != old_grps_pid && process.is_alive(new_pid)
         Error(_) -> False
       }
@@ -375,13 +375,13 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
     get_subject_pid(beryl.coordinator_subject(supervised.channels))
 
   // Kill the presence process directly
-  let assert Ok(old_pres_pid) = get_subject_pid(pres.subject)
+  let assert Ok(old_pres_pid) = get_subject_pid(presence.subject(pres))
   process.send_abnormal_exit(old_pres_pid, crash_reason())
 
   // Wait for presence to restart with a new PID
   test_helpers.wait_until(
     fn() {
-      case get_subject_pid(pres.subject) {
+      case get_subject_pid(presence.subject(pres)) {
         Ok(new_pid) -> new_pid != old_pres_pid && process.is_alive(new_pid)
         Error(_) -> False
       }
@@ -429,13 +429,13 @@ pub fn independent_groups_crash_does_not_affect_coordinator_test() {
     get_subject_pid(beryl.coordinator_subject(supervised.channels))
 
   // Kill the groups process directly
-  let assert Ok(old_grps_pid) = get_subject_pid(grps.subject)
+  let assert Ok(old_grps_pid) = get_subject_pid(group.subject(grps))
   process.send_abnormal_exit(old_grps_pid, crash_reason())
 
   // Wait for groups to restart with a new PID
   test_helpers.wait_until(
     fn() {
-      case get_subject_pid(grps.subject) {
+      case get_subject_pid(group.subject(grps)) {
         Ok(new_pid) -> new_pid != old_grps_pid && process.is_alive(new_pid)
         Error(_) -> False
       }

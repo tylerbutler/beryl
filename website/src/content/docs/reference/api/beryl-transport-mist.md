@@ -18,14 +18,7 @@ Configuration for the Mist WebSocket transport
  `on_connect` hook. It defaults to `Nil` when no hook is configured.
 
 ```gleam
-pub type TransportConfig(a) {
-  TransportConfig(
-    path: String,
-    on_connect: option.Option(fn(request.Request(http.Connection)) -> Result(a, Nil)),
-    serializers: List(#(String, codec.Codec)),
-    reject_unknown_vsn: Bool
-  )
-}
+pub opaque type TransportConfig(a)
 ```
 
 ## Constants

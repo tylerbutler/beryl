@@ -10,12 +10,10 @@
 ////
 //// ```gleam
 //// let assert Ok(ps) = pubsub.start(pubsub.default_config())
-//// let config = presence.Config(
-////   pubsub: Some(ps),
-////   replica: "node1",
-////   broadcast_interval_ms: 1500,
-////   on_diff: None,
-//// )
+//// let config =
+////   presence.default_config("node1")
+////   |> presence.with_pubsub(ps)
+////   |> presence.with_broadcast_interval(1500)
 //// let assert Ok(p) = presence.start(config)
 //// let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
 //// let entries = presence.list(p, "room:lobby")
@@ -46,8 +44,11 @@ const sync_topic = "beryl:presence:sync"
 /// PubSub event name for presence sync messages
 const sync_event = "presence_sync"
 
-/// A running Presence instance
-pub type Presence {
+/// A running Presence instance.
+///
+/// This handle is intentionally opaque so callers cannot forge actor subjects
+/// or depend on the runtime representation.
+pub opaque type Presence {
   Presence(subject: Subject(Message))
 }
 
@@ -66,6 +67,9 @@ pub opaque type Diff {
 }
 
 /// A presence entry returned from queries and diff accessors.
+///
+/// This type is intentionally transparent so callers can inspect query results
+/// and construct entries for `diff`.
 pub type PresenceEntry {
   PresenceEntry(pid: String, key: String, meta: json.Json)
 }
@@ -135,8 +139,11 @@ fn state_entries_to_presence_entries(
   |> dict.from_list
 }
 
-/// Configuration for starting presence
-pub type Config {
+/// Configuration for starting presence.
+///
+/// Build configs with `default_config` and the `with_*` functions so Beryl can
+/// add future options without exposing record fields as public API.
+pub opaque type Config {
   Config(
     /// PubSub instance for cross-node replication
     pubsub: Option(PubSub),
@@ -199,6 +206,35 @@ pub fn default_config(replica: String) -> Config {
     broadcast_interval_ms: 0,
     on_diff: None,
   )
+}
+
+/// Enable PubSub replication for presence.
+pub fn with_pubsub(config: Config, pubsub: PubSub) -> Config {
+  Config(..config, pubsub: Some(pubsub))
+}
+
+/// Set how often presence state is broadcast for replication.
+///
+/// Use `0` to disable periodic broadcasts.
+pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
+  Config(..config, broadcast_interval_ms: interval_ms)
+}
+
+/// Set the callback invoked when local changes or remote merges produce a diff.
+pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
+  Config(..config, on_diff: Some(callback))
+}
+
+// nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
+@internal
+pub fn from_subject(subject: Subject(Message)) -> Presence {
+  Presence(subject: subject)
+}
+
+// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
+@internal
+pub fn subject(presence: Presence) -> Subject(Message) {
+  presence.subject
 }
 
 /// Start the presence actor
