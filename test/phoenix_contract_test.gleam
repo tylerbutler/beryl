@@ -298,8 +298,8 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let serializer = json_serializer()
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
-  beryl.register(channels, "room:*", contract_channel(channels, terminated))
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) =
+    beryl.register(channels, "room:*", contract_channel(channels, terminated))
   let #(port, server_pid) = start_mist_server(channels)
 
   let client = connect_client(port)
@@ -482,8 +482,7 @@ pub fn on_connect_seeds_assigns_visible_at_join_test() {
         socket: client_socket,
       )
     })
-  beryl.register(channels, "room:*", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
 
   let config =
     mist_transport.default_config("/socket/websocket")

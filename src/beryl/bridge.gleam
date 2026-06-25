@@ -30,11 +30,11 @@
 ////   Assigns(bridge: Bridge(DocEvent))
 //// }
 ////
-//// fn join(channels, doc_actor, topic, _payload, socket) {
+//// fn join(registered_channel, doc_actor, topic, _payload, socket) {
 ////   // Forward each DocEvent to this socket's `handle_info` callback.
 ////   let b =
 ////     bridge.start(
-////       channels: channels,
+////       channel: registered_channel,
 ////       socket_id: socket.id(socket),
 ////       topic: topic,
 ////       with: fn(event) { event },
@@ -49,7 +49,7 @@
 //// }
 //// ```
 
-import beryl.{type Channels}
+import beryl.{type RegisteredChannel}
 import gleam/erlang/process.{type Pid, type Subject}
 
 /// How long `start` waits for the forwarder process to report its subjects
@@ -84,7 +84,7 @@ type Event(message) {
 /// The returned `Bridge` owns a freshly spawned forwarder process. Pass
 /// `subject(bridge)` to the external/domain actor so it delivers its stream to
 /// the forwarder; each received value is mapped with `transform` and delivered
-/// via `beryl.send_info(channels, socket_id, topic, transform(value))`.
+/// via `beryl.send_info(channel, socket_id, topic, transform(value))`.
 ///
 /// Use `transform` to translate the domain message into whatever your channel's
 /// `handle_info` expects. If no translation is needed, pass the identity
@@ -94,7 +94,7 @@ type Event(message) {
 /// so a missed `stop` will not leak a process. Always call `stop` from your
 /// channel's `terminate` for prompt, deterministic cleanup.
 pub fn start(
-  channels channels: Channels,
+  channel channel: RegisteredChannel(assigns, info),
   socket_id socket_id: String,
   topic topic: String,
   with transform: fn(message) -> info,
@@ -117,7 +117,7 @@ pub fn start(
         |> process.select_specific_monitor(monitor, fn(_) { OwnerDown })
 
       process.send(ready, #(data, control))
-      forward_loop(selector, channels, socket_id, topic, transform)
+      forward_loop(selector, channel, socket_id, topic, transform)
     })
 
   let assert Ok(#(data, control)) = process.receive(ready, handshake_timeout_ms)
@@ -127,15 +127,15 @@ pub fn start(
 
 fn forward_loop(
   selector: process.Selector(Event(message)),
-  channels: Channels,
+  channel: RegisteredChannel(assigns, info),
   socket_id: String,
   topic: String,
   transform: fn(message) -> info,
 ) -> Nil {
   case process.selector_receive_forever(selector) {
     Forward(value) -> {
-      beryl.send_info(channels, socket_id, topic, transform(value))
-      forward_loop(selector, channels, socket_id, topic, transform)
+      beryl.send_info(channel, socket_id, topic, transform(value))
+      forward_loop(selector, channel, socket_id, topic, transform)
     }
     // `stop` was called, or the owning channel process went down — exit
     // normally so the forwarder is cleaned up.

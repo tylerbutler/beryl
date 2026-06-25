@@ -3,8 +3,7 @@ import beryl/bridge
 import beryl/channel
 import beryl/coordinator
 import beryl/wire
-import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
+import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
 import gleam/option
@@ -35,28 +34,24 @@ fn start_channels_with_socket(
   #(channels, sent_messages)
 }
 
-fn notify_channel() -> channel.Channel(Nil, Dynamic) {
+fn notify_channel() -> channel.Channel(Nil, String) {
   channel.new(fn(_topic, _payload, socket) {
     channel.JoinOk(reply: option.None, socket: socket)
   })
   |> channel.with_handle_info(fn(message, socket) {
-    case decode.run(message, decode.string) {
-      Ok(text) ->
-        channel.Push(
-          "server_notify",
-          json.object([#("text", json.string(text))]),
-          socket,
-        )
-      _ -> channel.NoReply(socket)
-    }
+    channel.Push(
+      "server_notify",
+      json.object([#("text", json.string(message))]),
+      socket,
+    )
   })
 }
 
 pub fn bridge_forwards_subject_values_to_handle_info_test() {
   let #(channels, sent_messages) = start_channels_with_socket("bridge-sock")
 
-  beryl.register(channels, "room:*", notify_channel())
-  |> should.equal(Ok(Nil))
+  let assert Ok(registered) =
+    beryl.register(channels, "room:*", notify_channel())
 
   coordinator.route_message(
     beryl.coordinator_subject(channels),
@@ -71,7 +66,7 @@ pub fn bridge_forwards_subject_values_to_handle_info_test() {
   // actor) to this socket/topic, translating each value before forwarding.
   let b =
     bridge.start(
-      channels: channels,
+      channel: registered,
       socket_id: "bridge-sock",
       topic: "room:lobby",
       with: fn(n: Int) { "tick-" <> string.inspect(n) },
@@ -93,10 +88,12 @@ pub fn bridge_forwards_subject_values_to_handle_info_test() {
 
 pub fn bridge_stop_tears_down_forwarder_test() {
   let #(channels, _sent) = start_channels_with_socket("bridge-stop-sock")
+  let assert Ok(registered) =
+    beryl.register(channels, "room:*", notify_channel())
 
   let b =
     bridge.start(
-      channels: channels,
+      channel: registered,
       socket_id: "bridge-stop-sock",
       topic: "room:lobby",
       with: fn(x: String) { x },
@@ -113,6 +110,8 @@ pub fn bridge_stop_tears_down_forwarder_test() {
 
 pub fn bridge_cleans_up_when_owner_dies_test() {
   let #(channels, _sent) = start_channels_with_socket("bridge-owner-sock")
+  let assert Ok(registered) =
+    beryl.register(channels, "room:*", notify_channel())
 
   let pid_back = process.new_subject()
 
@@ -122,7 +121,7 @@ pub fn bridge_cleans_up_when_owner_dies_test() {
   process.spawn_unlinked(fn() {
     let b =
       bridge.start(
-        channels: channels,
+        channel: registered,
         socket_id: "bridge-owner-sock",
         topic: "room:lobby",
         with: fn(x: String) { x },

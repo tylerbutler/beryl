@@ -19,6 +19,7 @@ pub fn main() {
 fn register_test_channel(channels: beryl.Channels) -> Nil {
   let handler =
     coordinator.ChannelHandler(
+      id: 0,
       pattern: topic.parse_pattern("room:*"),
       join: fn(_topic, _payload, _ctx) {
         coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
@@ -29,9 +30,6 @@ fn register_test_channel(channels: beryl.Channels) -> Nil {
       handle_binary: fn(_data, ctx) {
         coordinator.NoReplyErased(assigns: ctx.assigns)
       },
-      handle_info: fn(_message, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
       terminate: fn(_reason, _ctx) { Nil },
     )
 
@@ -40,7 +38,7 @@ fn register_test_channel(channels: beryl.Channels) -> Nil {
     beryl.coordinator_subject(channels),
     coordinator.RegisterChannel("room:*", handler, reply),
   )
-  let assert Ok(Ok(Nil)) = process.receive(reply, 500)
+  let assert Ok(Ok(_)) = process.receive(reply, 500)
   Nil
 }
 

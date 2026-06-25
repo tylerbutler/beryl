@@ -294,6 +294,7 @@ fn register_handler_with_terminate(
 ) -> Nil {
   let handler =
     coordinator.ChannelHandler(
+      id: 0,
       pattern: topic.parse_pattern(pattern),
       join: fn(_topic, _payload, _ctx) {
         coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
@@ -304,9 +305,6 @@ fn register_handler_with_terminate(
       handle_binary: fn(_data, ctx) {
         coordinator.NoReplyErased(assigns: ctx.assigns)
       },
-      handle_info: fn(_message, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
       terminate: fn(reason, _ctx) { process.send(terminate_subject, reason) },
     )
 
@@ -315,7 +313,7 @@ fn register_handler_with_terminate(
     coord,
     coordinator.RegisterChannel(pattern, handler, reply_subject),
   )
-  let assert Ok(Ok(Nil)) = process.receive(reply_subject, 500)
+  let assert Ok(Ok(_)) = process.receive(reply_subject, 500)
   Nil
 }
 

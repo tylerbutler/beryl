@@ -177,8 +177,7 @@ pub fn stop_coordinator_only_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)
     })
-  let assert Ok(Nil) =
-    beryl.register(supervised.channels, "pre-stop:*", handler)
+  let assert Ok(_) = beryl.register(supervised.channels, "pre-stop:*", handler)
 
   let sup_pid = supervised.supervisor_pid
   supervisor.stop(supervised)
@@ -203,8 +202,7 @@ pub fn supervised_coordinator_restarts_on_crash_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)
     })
-  let assert Ok(Nil) =
-    beryl.register(supervised.channels, "pre-crash:*", handler)
+  let assert Ok(_) = beryl.register(supervised.channels, "pre-crash:*", handler)
 
   // Kill the coordinator process
   let assert Ok(name) =
@@ -369,7 +367,7 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)
     })
-  let assert Ok(Nil) =
+  let assert Ok(_) =
     beryl.register(supervised.channels, "indep-pres:*", handler)
 
   // Get coordinator PID before
@@ -423,7 +421,7 @@ pub fn independent_groups_crash_does_not_affect_coordinator_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)
     })
-  let assert Ok(Nil) =
+  let assert Ok(_) =
     beryl.register(supervised.channels, "indep-grps:*", handler)
 
   // Get coordinator PID before

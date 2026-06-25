@@ -69,6 +69,20 @@ import gleam/result
 type ChannelHandler =
   coordinator.ChannelHandler
 
+/// A typed handle returned when a channel is registered.
+///
+/// Pass this handle to `send_info` so the compiler can prove that the message
+/// matches the receiving channel's `info` type. The handle also identifies the
+/// exact registered channel used for a joined socket/topic pair.
+pub opaque type RegisteredChannel(assigns, info) {
+  RegisteredChannel(
+    coordinator: Subject(coordinator.Message),
+    id: Int,
+    handle_info: fn(info, coordinator.SocketContext) ->
+      coordinator.HandleResultErased,
+  )
+}
+
 /// Errors when registering a channel handler.
 pub type RegisterError {
   /// A handler is already registered for this exact topic pattern.
@@ -348,25 +362,33 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 /// })
 ///
 /// // Register it with a legacy prefix wildcard
-/// beryl.register(channels, "chat:*", chat_channel)
+/// let assert Ok(chat) = beryl.register(channels, "chat:*", chat_channel)
 ///
 /// // Exact topic
-/// beryl.register(channels, "room:lobby", lobby_channel)
+/// let assert Ok(lobby) = beryl.register(channels, "room:lobby", lobby_channel)
 ///
 /// // Segment-aware wildcard
-/// beryl.register(channels, "document:*:ops", ops_channel)
+/// let assert Ok(ops) = beryl.register(channels, "document:*:ops", ops_channel)
 /// ```
 pub fn register(
   channels: Channels,
   pattern: String,
   handler: Channel(assigns, info),
-) -> Result(Nil, RegisterError) {
+) -> Result(RegisteredChannel(assigns, info), RegisterError) {
+  let handle_info = typed_handle_info(handler)
   // Convert typed Channel to type-erased ChannelHandler
   let erased_handler = erase_channel_types(pattern, handler)
 
   // Register with coordinator
   process.call(channels.coordinator, 5000, fn(reply) {
     coordinator.RegisterChannel(pattern, erased_handler, reply)
+  })
+  |> result.map(fn(id) {
+    RegisteredChannel(
+      coordinator: channels.coordinator,
+      id: id,
+      handle_info: handle_info,
+    )
   })
   |> result.map_error(map_register_error)
 }
@@ -489,31 +511,25 @@ pub fn broadcast_from(
   }
 }
 
-/// Send a server-originated OTP message to a joined channel context.
+/// Send a typed server-originated OTP message to a joined channel context.
 ///
-/// The message is delivered to the channel's `handle_info` callback for the
-/// specific socket/topic pair as the typed `info` value — the receiving handler
-/// matches on it directly without any `Dynamic` decode or unsafe cast. If the
-/// socket is not connected, the topic is not joined, or no handler matches the
-/// topic, the message is ignored.
-///
-/// Note: a single `Channels` system may host channels with different `info`
-/// types, so this function accepts a generic message and the matching channel's
-/// `handle_info` recovers the concrete type. Send a value whose type matches the
-/// target channel's `info` parameter.
+/// The `registered` handle carries the receiving channel's `info` type, so the
+/// compiler rejects messages for incompatible channels. The coordinator also
+/// verifies that the socket/topic pair was joined through that same registered
+/// channel before dispatching the callback. If the socket is not connected, the
+/// topic is not joined, or the registered channel does not match the joined
+/// channel, the message is ignored.
 pub fn send_info(
-  channels: Channels,
+  registered: RegisteredChannel(assigns, info),
   socket_id: String,
   topic_name: String,
-  message: a,
+  message: info,
 ) -> Nil {
   process.send(
-    channels.coordinator,
-    coordinator.HandleInfo(
-      socket_id,
-      topic_name,
-      unsafe_coerce_to_dynamic(message),
-    ),
+    registered.coordinator,
+    coordinator.HandleInfo(socket_id, topic_name, registered.id, fn(ctx) {
+      registered.handle_info(message, ctx)
+    }),
   )
 }
 
@@ -550,6 +566,7 @@ fn erase_channel_types(
   let pattern = topic.parse_pattern(pattern_str)
 
   coordinator.ChannelHandler(
+    id: 0,
     pattern: pattern,
     join: fn(
       topic_name: String,
@@ -599,21 +616,23 @@ fn erase_channel_types(
       typed_channel.handle_binary(data, unsafe_coerce_socket(typed_socket))
       |> erase_handle_result
     },
-    handle_info: fn(message: Dynamic, ctx: coordinator.SocketContext) {
-      let typed_socket = create_socket_with_assigns(ctx)
-
-      typed_channel.handle_info(
-        unsafe_coerce_from_dynamic(message),
-        unsafe_coerce_socket(typed_socket),
-      )
-      |> erase_handle_result
-    },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
       let typed_socket = create_socket_with_assigns(ctx)
       // Unsafe coerce socket to expected type
       typed_channel.terminate(reason, unsafe_coerce_socket(typed_socket))
     },
   )
+}
+
+fn typed_handle_info(
+  typed_channel: Channel(assigns, info),
+) -> fn(info, coordinator.SocketContext) -> coordinator.HandleResultErased {
+  fn(message: info, ctx: coordinator.SocketContext) {
+    let typed_socket = create_socket_with_assigns(ctx)
+
+    typed_channel.handle_info(message, unsafe_coerce_socket(typed_socket))
+    |> erase_handle_result
+  }
 }
 
 fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
@@ -673,13 +692,6 @@ fn erase_handle_result(
 /// Unsafe coercion to Dynamic - only use for type erasure
 @external(erlang, "beryl_ffi", "identity")
 fn unsafe_coerce_to_dynamic(value: a) -> Dynamic
-
-/// Unsafe coercion from Dynamic back to a concrete type - only use to recover
-/// the typed `info` message at the `handle_info` erasure boundary. The value
-/// originates from `send_info`, which stored a value of the channel's `info`
-/// type as `Dynamic`; this restores it.
-@external(erlang, "beryl_ffi", "identity")
-fn unsafe_coerce_from_dynamic(value: Dynamic) -> a
 
 /// Unsafe coercion of socket types - only use for type erasure
 @external(erlang, "beryl_ffi", "identity")

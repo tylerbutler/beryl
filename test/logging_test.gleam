@@ -257,8 +257,7 @@ pub fn debug_channel_callback_logs_push_result_test() {
         socket: socket,
       )
     })
-  beryl.register(channels, "room:*", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
 
   process.send(
     beryl.coordinator_subject(channels),
