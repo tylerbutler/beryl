@@ -72,7 +72,7 @@ pub type StopReason {
 /// - `info`: Server-originated/internal message type delivered to `handle_info`
 ///   (see `beryl.send_info`). Channels that do not use `handle_info` leave this
 ///   parameter generic.
-pub type Channel(assigns, info) {
+pub opaque type Channel(assigns, info) {
   Channel(
     /// Called when a client attempts to join a topic
     ///
@@ -99,6 +99,46 @@ pub type Channel(assigns, info) {
     /// Use for cleanup (presence, database updates, etc.)
     terminate: fn(StopReason, Socket(assigns)) -> Nil,
   )
+}
+
+// nolint: unused_exports -- package-internal accessor used by beryl's type-erasure layer; hidden from public docs with @internal
+@internal
+pub fn join_callback(
+  channel: Channel(assigns, info),
+) -> fn(String, Dynamic, Socket(assigns)) -> JoinResult(assigns) {
+  channel.join
+}
+
+// nolint: unused_exports -- package-internal accessor used by beryl's type-erasure layer; hidden from public docs with @internal
+@internal
+pub fn handle_in_callback(
+  channel: Channel(assigns, info),
+) -> fn(String, Dynamic, Socket(assigns)) -> HandleResult(assigns) {
+  channel.handle_in
+}
+
+// nolint: unused_exports -- package-internal accessor used by beryl's type-erasure layer; hidden from public docs with @internal
+@internal
+pub fn handle_binary_callback(
+  channel: Channel(assigns, info),
+) -> fn(BitArray, Socket(assigns)) -> HandleResult(assigns) {
+  channel.handle_binary
+}
+
+// nolint: unused_exports -- package-internal accessor used by beryl's type-erasure layer; hidden from public docs with @internal
+@internal
+pub fn handle_info_callback(
+  channel: Channel(assigns, info),
+) -> fn(info, Socket(assigns)) -> HandleResult(assigns) {
+  channel.handle_info
+}
+
+// nolint: unused_exports -- package-internal accessor used by beryl's type-erasure layer; hidden from public docs with @internal
+@internal
+pub fn terminate_callback(
+  channel: Channel(assigns, info),
+) -> fn(StopReason, Socket(assigns)) -> Nil {
+  channel.terminate
 }
 
 /// Create a new channel with just a join handler.

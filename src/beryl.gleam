@@ -564,6 +564,10 @@ fn erase_channel_types(
   typed_channel: Channel(assigns, info),
 ) -> ChannelHandler {
   let pattern = topic.parse_pattern(pattern_str)
+  let join = channel.join_callback(typed_channel)
+  let handle_in = channel.handle_in_callback(typed_channel)
+  let handle_binary = channel.handle_binary_callback(typed_channel)
+  let terminate = channel.terminate_callback(typed_channel)
 
   coordinator.ChannelHandler(
     id: 0,
@@ -578,13 +582,7 @@ fn erase_channel_types(
       let typed_socket = create_socket_with_assigns(ctx)
 
       // Call the typed join handler (unsafe coerce socket to expected type)
-      case
-        typed_channel.join(
-          topic_name,
-          payload,
-          unsafe_coerce_socket(typed_socket),
-        )
-      {
+      case join(topic_name, payload, unsafe_coerce_socket(typed_socket)) {
         channel.JoinOk(reply, new_socket) -> {
           // Extract assigns and type-erase them
           let erased_assigns =
@@ -603,23 +601,19 @@ fn erase_channel_types(
     ) {
       let typed_socket = create_socket_with_assigns(ctx)
 
-      typed_channel.handle_in(
-        event,
-        payload,
-        unsafe_coerce_socket(typed_socket),
-      )
+      handle_in(event, payload, unsafe_coerce_socket(typed_socket))
       |> erase_handle_result
     },
     handle_binary: fn(data: BitArray, ctx: coordinator.SocketContext) {
       let typed_socket = create_socket_with_assigns(ctx)
 
-      typed_channel.handle_binary(data, unsafe_coerce_socket(typed_socket))
+      handle_binary(data, unsafe_coerce_socket(typed_socket))
       |> erase_handle_result
     },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
       let typed_socket = create_socket_with_assigns(ctx)
       // Unsafe coerce socket to expected type
-      typed_channel.terminate(reason, unsafe_coerce_socket(typed_socket))
+      terminate(reason, unsafe_coerce_socket(typed_socket))
     },
   )
 }
@@ -627,10 +621,12 @@ fn erase_channel_types(
 fn typed_handle_info(
   typed_channel: Channel(assigns, info),
 ) -> fn(info, coordinator.SocketContext) -> coordinator.HandleResultErased {
+  let handle_info = channel.handle_info_callback(typed_channel)
+
   fn(message: info, ctx: coordinator.SocketContext) {
     let typed_socket = create_socket_with_assigns(ctx)
 
-    typed_channel.handle_info(message, unsafe_coerce_socket(typed_socket))
+    handle_info(message, unsafe_coerce_socket(typed_socket))
     |> erase_handle_result
   }
 }

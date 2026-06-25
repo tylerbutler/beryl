@@ -24,12 +24,10 @@ let assert Ok(p) = presence.start(presence.default_config("node1"))
 
 // With PubSub for cross-node replication
 let assert Ok(ps) = pubsub.start(pubsub.default_config())
-let config = presence.Config(
-  pubsub: option.Some(ps),
-  replica: "node1",
-  broadcast_interval_ms: 1500,
-  on_diff: option.None,
-)
+let config =
+  presence.default_config("node1")
+  |> presence.with_pubsub(ps)
+  |> presence.with_broadcast_interval(1500)
 let assert Ok(p) = presence.start(config)
 ```
 
@@ -82,11 +80,11 @@ let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
 Get notified immediately when presence state changes:
 
 ```gleam
-let config = presence.Config(
-  pubsub: option.Some(ps),
-  replica: "node1",
-  broadcast_interval_ms: 1500,
-  on_diff: option.Some(fn(diff) {
+let config =
+  presence.default_config("node1")
+  |> presence.with_pubsub(ps)
+  |> presence.with_broadcast_interval(1500)
+  |> presence.with_on_diff(fn(diff) {
     diff
     |> presence.diff_topics
     |> list.each(fn(topic) {
@@ -94,8 +92,7 @@ let config = presence.Config(
       io.println("Joins: " <> string.inspect(presence.diff_joins(diff, topic)))
       io.println("Leaves: " <> string.inspect(presence.diff_leaves(diff, topic)))
     })
-  }),
-)
+  })
 ```
 
 The `on_diff` callback fires whenever local tracking changes or remote merges produce non-empty changes, ensuring no diffs are lost during rapid state changes.
@@ -107,14 +104,13 @@ Use `beryl.broadcast_presence_diff` to send a `presence_diff` event to sockets s
 ```gleam
 import beryl
 
-let config = presence.Config(
-  pubsub: option.Some(ps),
-  replica: "node1",
-  broadcast_interval_ms: 1500,
-  on_diff: option.Some(fn(diff) {
+let config =
+  presence.default_config("node1")
+  |> presence.with_pubsub(ps)
+  |> presence.with_broadcast_interval(1500)
+  |> presence.with_on_diff(fn(diff) {
     beryl.broadcast_presence_diff(channels, "room:lobby", diff)
-  }),
-)
+  })
 ```
 
 `broadcast_presence_diff` broadcasts to a single topic. The `diff` passed to `on_diff` may span multiple topics; if you track presence across several topics, iterate over the affected topics:

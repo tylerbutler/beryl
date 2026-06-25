@@ -1,0 +1,3 @@
+kind: Changed
+body: Made core channel, presence, group, PubSub, and Mist transport handles and configs opaque before 1.0.
+time: 2026-06-24T17:29:24.194-07:00

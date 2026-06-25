@@ -36,22 +36,24 @@ pub type Message {
 
 ### `PubSub`
 
-A running PubSub instance
+A running PubSub instance.
+
+ This handle is intentionally opaque so callers cannot forge pg scopes or
+ depend on the runtime representation.
 
 ```gleam
-pub type PubSub {
-  PubSub(scope: dynamic.Dynamic)
-}
+pub opaque type PubSub
 ```
 
 ### `PubSubConfig`
 
-PubSub configuration
+PubSub configuration.
+
+ Build with `default_config` or `config_with_scope` so the underlying pg
+ scope representation can evolve without exposing record fields.
 
 ```gleam
-pub type PubSubConfig {
-  PubSubConfig(scope: dynamic.Dynamic)
-}
+pub opaque type PubSubConfig
 ```
 
 ### `PubSubFrom`

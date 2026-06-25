@@ -15,12 +15,10 @@ Presence - Distributed presence tracking backed by a CRDT
 
  ```gleam
  let assert Ok(ps) = pubsub.start(pubsub.default_config())
- let config = presence.Config(
-   pubsub: Some(ps),
-   replica: "node1",
-   broadcast_interval_ms: 1500,
-   on_diff: None,
- )
+ let config =
+   presence.default_config("node1")
+   |> presence.with_pubsub(ps)
+   |> presence.with_broadcast_interval(1500)
  let assert Ok(p) = presence.start(config)
  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
  let entries = presence.list(p, "room:lobby")
@@ -30,17 +28,13 @@ Presence - Distributed presence tracking backed by a CRDT
 
 ### `Config`
 
-Configuration for starting presence
+Configuration for starting presence.
+
+ Build with `default_config` and the `with_*` functions so Beryl can
+ add future options without exposing record fields as public API.
 
 ```gleam
-pub type Config {
-  Config(
-    pubsub: option.Option(pubsub.PubSub),
-    replica: String,
-    broadcast_interval_ms: Int,
-    on_diff: option.Option(fn(Diff) -> Nil)
-  )
-}
+pub opaque type Config
 ```
 
 ### `Diff`
@@ -64,12 +58,13 @@ pub type Message
 
 ### `Presence`
 
-A running Presence instance
+A running Presence instance.
+
+ This handle is intentionally opaque so callers cannot forge actor subjects
+ or depend on the runtime representation.
 
 ```gleam
-pub type Presence {
-  Presence(subject: process.Subject(Message))
-}
+pub opaque type Presence
 ```
 
 ### `PresenceEntry`
@@ -110,6 +105,41 @@ Default configuration (no PubSub, no replication)
 
 ```gleam
 pub fn default_config(String) -> Config
+```
+
+### `with_broadcast_interval`
+
+Set how often presence state is broadcast for replication.
+
+ Use `0` to disable periodic broadcasts.
+
+```gleam
+pub fn with_broadcast_interval(
+  Config,
+  Int
+) -> Config
+```
+
+### `with_on_diff`
+
+Set the callback invoked when local changes or remote merges produce a diff.
+
+```gleam
+pub fn with_on_diff(
+  Config,
+  fn(Diff) -> Nil
+) -> Config
+```
+
+### `with_pubsub`
+
+Enable PubSub replication for presence.
+
+```gleam
+pub fn with_pubsub(
+  Config,
+  pubsub.PubSub
+) -> Config
 ```
 
 ### `diff`

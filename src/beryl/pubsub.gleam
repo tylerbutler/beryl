@@ -17,7 +17,10 @@ import gleam/erlang/process.{type Pid}
 import gleam/json
 import gleam/list
 
-/// A PubSub message delivered to subscribers
+/// A PubSub message delivered to subscribers.
+///
+/// This type is intentionally transparent so subscribers can inspect the topic,
+/// event, payload, and sender metadata delivered to their process mailbox.
 pub type Message {
   Message(topic: String, event: String, payload: json.Json, from: PubSubFrom)
 }
@@ -32,16 +35,22 @@ pub type PubSubFrom {
   FromSocket(Pid, String)
 }
 
-/// PubSub configuration
-pub type PubSubConfig {
+/// PubSub configuration.
+///
+/// Build with `default_config` or `config_with_scope` so the underlying pg
+/// scope representation can evolve without exposing record fields.
+pub opaque type PubSubConfig {
   PubSubConfig(
     /// The pg scope name (atom). Different scopes are isolated.
     scope: Dynamic,
   )
 }
 
-/// A running PubSub instance
-pub type PubSub {
+/// A running PubSub instance.
+///
+/// This handle is intentionally opaque so callers cannot forge pg scopes or
+/// depend on the runtime representation.
+pub opaque type PubSub {
   PubSub(scope: Dynamic)
 }
 

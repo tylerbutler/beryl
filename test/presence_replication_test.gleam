@@ -3,7 +3,6 @@ import beryl/pubsub
 import gleam/erlang/process
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
 import test_helpers
@@ -26,12 +25,9 @@ fn test_config(
   replica: String,
   interval_ms: Int,
 ) -> presence.Config {
-  presence.Config(
-    pubsub: Some(ps),
-    replica: replica,
-    broadcast_interval_ms: interval_ms,
-    on_diff: None,
-  )
+  presence.default_config(replica)
+  |> presence.with_pubsub(ps)
+  |> presence.with_broadcast_interval(interval_ms)
 }
 
 // ── BroadcastTick sends state via PubSub ────────────────────────────
@@ -133,12 +129,8 @@ pub fn remote_state_triggers_merge_via_pubsub_test() {
 
   // Node1 with broadcasting disabled (manual control)
   let config1 =
-    presence.Config(
-      pubsub: Some(ps),
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: None,
-    )
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
   let assert Ok(p1) = presence.start(config1)
 
   // Node2 with broadcasting enabled
@@ -258,12 +250,8 @@ pub fn untrack_propagates_via_pubsub_test() {
 pub fn survives_empty_string_payload_test() {
   let ps = test_pubsub("malform_empty")
   let config =
-    presence.Config(
-      pubsub: Some(ps),
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: None,
-    )
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
   let assert Ok(p) = presence.start(config)
 
   // Track an entry to prove the actor is alive
@@ -284,12 +272,8 @@ pub fn survives_empty_string_payload_test() {
 pub fn survives_malformed_json_payload_test() {
   let ps = test_pubsub("malform_json")
   let config =
-    presence.Config(
-      pubsub: Some(ps),
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: None,
-    )
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
   let assert Ok(p) = presence.start(config)
 
   let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
@@ -312,12 +296,8 @@ pub fn survives_malformed_json_payload_test() {
 pub fn survives_wrong_schema_payload_test() {
   let ps = test_pubsub("malform_schema")
   let config =
-    presence.Config(
-      pubsub: Some(ps),
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: None,
-    )
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
   let assert Ok(p) = presence.start(config)
 
   let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
@@ -340,12 +320,8 @@ pub fn survives_wrong_schema_payload_test() {
 pub fn survives_wrong_types_payload_test() {
   let ps = test_pubsub("malform_types")
   let config =
-    presence.Config(
-      pubsub: Some(ps),
-      replica: "node1",
-      broadcast_interval_ms: 0,
-      on_diff: None,
-    )
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
   let assert Ok(p) = presence.start(config)
 
   let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())

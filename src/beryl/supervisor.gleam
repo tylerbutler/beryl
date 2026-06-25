@@ -228,13 +228,12 @@ fn start_supervised(
         )
 
       let pres = case presence_name {
-        Some(name) ->
-          Some(presence.Presence(subject: process.named_subject(name)))
+        Some(name) -> Some(presence.from_subject(process.named_subject(name)))
         None -> None
       }
 
       let grps = case groups_name {
-        Some(name) -> Some(group.Groups(subject: process.named_subject(name)))
+        Some(name) -> Some(group.from_subject(process.named_subject(name)))
         None -> None
       }
 
