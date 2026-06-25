@@ -10,6 +10,22 @@ Mist WebSocket Transport - Direct Mist integration for beryl
 
 ## Types
 
+### `ConnectError`
+
+Errors returned from a transport `on_connect` callback.
+
+```gleam
+pub type ConnectError {
+  ConnectRejected
+}
+```
+
+#### Constructors
+
+##### `ConnectRejected`
+
+Reject the WebSocket upgrade with `403 Forbidden`.
+
 ### `TransportConfig`
 
 Configuration for the Mist WebSocket transport
@@ -18,7 +34,7 @@ Configuration for the Mist WebSocket transport
  `on_connect` hook. It defaults to `Nil` when no hook is configured.
 
 ```gleam
-pub opaque type TransportConfig(a)
+pub type TransportConfig(a)
 ```
 
 ## Constants
@@ -126,14 +142,14 @@ Set a socket-level connect/authentication callback on the transport config.
 
  The callback receives the HTTP request before the WebSocket upgrade and
  runs once per socket. Return `Ok(assigns)` to allow the connection and seed
- initial socket assigns that channels can read at join time, or `Error(Nil)`
- to reject the connection with a 403 Forbidden response before any channel
- join occurs.
+ initial socket assigns that channels can read at join time, or
+ `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
+ response before any channel join occurs.
 
 ```gleam
 pub fn with_on_connect(
   TransportConfig(a),
-  fn(request.Request(http.Connection)) -> Result(b, Nil)
+  fn(request.Request(http.Connection)) -> Result(b, ConnectError)
 ) -> TransportConfig(b)
 ```
 

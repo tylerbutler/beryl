@@ -27,25 +27,20 @@ Errors from group operations
 
 ```gleam
 pub type GroupError {
-  AlreadyExists
-  NotFound
-  StartFailed
+  GroupAlreadyExists
+  GroupNotFound
 }
 ```
 
 #### Constructors
 
-##### `AlreadyExists`
+##### `GroupAlreadyExists`
 
 The group already exists
 
-##### `NotFound`
+##### `GroupNotFound`
 
 The group was not found
-
-##### `StartFailed`
-
-The actor failed to start
 
 ### `Groups`
 
@@ -55,8 +50,24 @@ A running Groups instance.
  actor subject or depend on its runtime representation.
 
 ```gleam
-pub opaque type Groups
+pub type Groups
 ```
+
+### `GroupStartError`
+
+Errors when starting the groups actor.
+
+```gleam
+pub type GroupStartError {
+  GroupActorStartFailed(error.StartFailure)
+}
+```
+
+#### Constructors
+
+##### `GroupActorStartFailed(error.StartFailure)`
+
+The actor failed to start
 
 ### `Message`
 
@@ -144,15 +155,7 @@ pub fn remove(
 Start the groups actor
 
 ```gleam
-pub fn start() -> Result(Groups, GroupError)
-```
-
-### `start_named`
-
-Start the groups actor with a registered name (for supervision)
-
-```gleam
-pub fn start_named(process.Name(Message)) -> Result(actor.Started(process.Subject(Message)), actor.StartError)
+pub fn start() -> Result(Groups, GroupStartError)
 ```
 
 ### `topics`

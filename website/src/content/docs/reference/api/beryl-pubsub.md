@@ -12,7 +12,7 @@ PubSub - Distributed publish/subscribe using Erlang pg
  ## Quick Start
 
  ```gleam
- let assert Ok(ps) = pubsub.start(pubsub.default_config())
+ let ps = pubsub.start(pubsub.default_config())
  pubsub.subscribe(ps, "room:lobby")
  pubsub.broadcast(ps, "room:lobby", "new_msg", json.string("hello"))
  ```
@@ -21,7 +21,10 @@ PubSub - Distributed publish/subscribe using Erlang pg
 
 ### `Message`
 
-A PubSub message delivered to subscribers
+A PubSub message delivered to subscribers.
+
+ This type is intentionally transparent so subscribers can inspect the topic,
+ event, payload, and sender metadata delivered to their process mailbox.
 
 ```gleam
 pub type Message {
@@ -42,7 +45,7 @@ A running PubSub instance.
  depend on the runtime representation.
 
 ```gleam
-pub opaque type PubSub
+pub type PubSub
 ```
 
 ### `PubSubConfig`
@@ -53,7 +56,7 @@ PubSub configuration.
  scope representation can evolve without exposing record fields.
 
 ```gleam
-pub opaque type PubSubConfig
+pub type PubSubConfig
 ```
 
 ### `PubSubFrom`
@@ -87,16 +90,6 @@ Broadcast originated from a specific process
 )`
 
 Broadcast originated from a process and should exclude a socket ID
-
-### `StartError`
-
-Errors when starting PubSub
-
-```gleam
-pub type StartError {
-  PgStartFailed
-}
-```
 
 ## Functions
 
@@ -180,7 +173,7 @@ Start a PubSub instance
  node or previous call), this is a no-op.
 
 ```gleam
-pub fn start(PubSubConfig) -> Result(PubSub, StartError)
+pub fn start(PubSubConfig) -> PubSub
 ```
 
 ### `subscribe`

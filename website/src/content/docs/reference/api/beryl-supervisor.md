@@ -39,14 +39,14 @@ Errors when starting the supervised system
 
 ```gleam
 pub type StartError {
-  SupervisorStartFailed(actor.StartError)
+  SupervisorStartFailed(error.StartFailure)
   InvalidHeartbeatTimeout
 }
 ```
 
 #### Constructors
 
-##### `SupervisorStartFailed(actor.StartError)`
+##### `SupervisorStartFailed(error.StartFailure)`
 
 The supervisor failed to start
 

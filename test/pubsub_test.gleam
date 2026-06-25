@@ -24,18 +24,18 @@ pub fn main() {
 
 pub fn pubsub_start_test() {
   let config = pubsub.config_with_scope("test_pubsub_start")
-  let result = pubsub.start(config)
-  should.be_ok(result)
+  let _ps: pubsub.PubSub = pubsub.start(config)
+  should.be_true(True)
 }
 
 pub fn pubsub_start_default_config_test() {
-  let result = pubsub.start(pubsub.default_config())
-  should.be_ok(result)
+  let _ps: pubsub.PubSub = pubsub.start(pubsub.default_config())
+  should.be_true(True)
 }
 
 pub fn pubsub_subscribe_and_count_test() {
   let config = pubsub.config_with_scope("test_pubsub_sub")
-  let assert Ok(ps) = pubsub.start(config)
+  let ps = pubsub.start(config)
 
   pubsub.subscribe(ps, "room:lobby")
   pubsub.subscriber_count(ps, "room:lobby") |> should.equal(1)
@@ -46,7 +46,7 @@ pub fn pubsub_subscribe_and_count_test() {
 
 pub fn pubsub_unsubscribe_test() {
   let config = pubsub.config_with_scope("test_pubsub_unsub")
-  let assert Ok(ps) = pubsub.start(config)
+  let ps = pubsub.start(config)
 
   pubsub.subscribe(ps, "room:lobby")
   pubsub.subscriber_count(ps, "room:lobby") |> should.equal(1)
@@ -57,7 +57,7 @@ pub fn pubsub_unsubscribe_test() {
 
 pub fn pubsub_subscribers_returns_pids_test() {
   let config = pubsub.config_with_scope("test_pubsub_pids")
-  let assert Ok(ps) = pubsub.start(config)
+  let ps = pubsub.start(config)
 
   pubsub.subscribe(ps, "room:lobby")
   let subs = pubsub.subscribers(ps, "room:lobby")
@@ -69,7 +69,7 @@ pub fn pubsub_subscribers_returns_pids_test() {
 
 pub fn pubsub_broadcast_delivers_message_test() {
   let config = pubsub.config_with_scope("test_pubsub_bcast")
-  let assert Ok(ps) = pubsub.start(config)
+  let ps = pubsub.start(config)
 
   pubsub.subscribe(ps, "room:lobby")
 
@@ -89,7 +89,7 @@ pub fn pubsub_broadcast_delivers_message_test() {
 
 pub fn pubsub_broadcast_from_excludes_sender_test() {
   let config = pubsub.config_with_scope("test_pubsub_bcast_from")
-  let assert Ok(ps) = pubsub.start(config)
+  let ps = pubsub.start(config)
 
   pubsub.subscribe(ps, "room:lobby")
 
@@ -108,7 +108,7 @@ pub fn pubsub_broadcast_from_excludes_sender_test() {
 
 pub fn pubsub_no_subscribers_is_noop_test() {
   let config = pubsub.config_with_scope("test_pubsub_nosubs")
-  let assert Ok(ps) = pubsub.start(config)
+  let ps = pubsub.start(config)
 
   // Broadcast to topic with no subscribers - should not crash
   pubsub.broadcast(ps, "room:empty", "event", json.null())
@@ -117,7 +117,7 @@ pub fn pubsub_no_subscribers_is_noop_test() {
 
 pub fn pubsub_multiple_topics_test() {
   let config = pubsub.config_with_scope("test_pubsub_multi")
-  let assert Ok(ps) = pubsub.start(config)
+  let ps = pubsub.start(config)
 
   pubsub.subscribe(ps, "room:lobby")
   pubsub.subscribe(ps, "room:private")

@@ -7,6 +7,7 @@
 
 import gleam/bool
 import gleam/list
+import gleam/result
 import gleam/string
 
 /// Topic pattern for routing
@@ -97,6 +98,18 @@ fn segment_parts_match(
   })
 }
 
+/// Errors from extracting wildcard values from a topic pattern.
+pub type ExtractError {
+  /// The pattern has no wildcard to extract.
+  NoWildcard
+  /// The topic does not match the pattern.
+  TopicMismatch
+  /// `extract_id` expected exactly one wildcard value but found this many.
+  ExpectedOneWildcard(Int)
+  /// `namespace` was called with an empty topic.
+  EmptyNamespace
+}
+
 /// Extract the wildcard portion from a topic
 ///
 /// ## Examples
@@ -105,21 +118,25 @@ fn segment_parts_match(
 /// extract_id(Wildcard("room:"), "room:lobby") // -> Ok("lobby")
 /// extract_id(Wildcard("doc:"), "doc:abc:123") // -> Ok("abc:123")
 /// extract_id(SegmentWildcard(["doc", "*", "ops"]), "doc:abc:ops") // -> Ok("abc")
-/// extract_id(Exact("room:lobby"), "room:lobby") // -> Error(Nil)
+/// extract_id(Exact("room:lobby"), "room:lobby") // -> Error(NoWildcard)
 /// ```
-pub fn extract_id(pattern: TopicPattern, topic: String) -> Result(String, Nil) {
+pub fn extract_id(
+  pattern: TopicPattern,
+  topic: String,
+) -> Result(String, ExtractError) {
   case pattern {
-    Exact(_) -> Error(Nil)
+    Exact(_) -> Error(NoWildcard)
     Wildcard(prefix) -> {
       case string.starts_with(topic, prefix) {
         True -> Ok(string.drop_start(topic, string.length(prefix)))
-        False -> Error(Nil)
+        False -> Error(TopicMismatch)
       }
     }
     SegmentWildcard(_) ->
       case extract_wildcards(pattern, topic) {
         Ok([id]) -> Ok(id)
-        _ -> Error(Nil)
+        Ok(values) -> Error(ExpectedOneWildcard(list.length(values)))
+        Error(error) -> Error(error)
       }
   }
 }
@@ -138,25 +155,25 @@ pub fn extract_id(pattern: TopicPattern, topic: String) -> Result(String, Nil) {
 pub fn extract_wildcards(
   pattern: TopicPattern,
   topic: String,
-) -> Result(List(String), Nil) {
+) -> Result(List(String), ExtractError) {
   case pattern {
     Exact(p) ->
       case p == topic {
         True -> Ok([])
-        False -> Error(Nil)
+        False -> Error(TopicMismatch)
       }
 
     Wildcard(prefix) ->
       case string.starts_with(topic, prefix) {
         True -> Ok([string.drop_start(topic, string.length(prefix))])
-        False -> Error(Nil)
+        False -> Error(TopicMismatch)
       }
 
     SegmentWildcard(pattern_parts) -> {
       let topic_parts = segments(topic)
 
       case segment_parts_match(pattern_parts, topic_parts) {
-        False -> Error(Nil)
+        False -> Error(TopicMismatch)
         True -> Ok(collect_wildcard_values(pattern_parts, topic_parts))
       }
     }
@@ -194,12 +211,17 @@ pub fn segments(topic: String) -> List(String) {
 ///
 /// ```gleam
 /// namespace("room:lobby") // -> Ok("room")
-/// namespace("") // -> Error(Nil)
+/// namespace("") // -> Error(EmptyNamespace)
 /// ```
-pub fn namespace(topic: String) -> Result(String, Nil) {
-  topic
-  |> segments
-  |> list.first
+pub fn namespace(topic: String) -> Result(String, ExtractError) {
+  case string.is_empty(topic) {
+    True -> Error(EmptyNamespace)
+    False ->
+      topic
+      |> segments
+      |> list.first
+      |> result.map_error(fn(_) { EmptyNamespace })
+  }
 }
 
 /// Build a topic from segments

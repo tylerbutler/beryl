@@ -1,0 +1,6 @@
+kind: Changed
+body: |-
+    Normalize public error types before 1.0.
+
+    Public fallible APIs now use Beryl-owned error types, named transport connect rejection, infallible PubSub startup, and clearer topic/group errors instead of dependency-shaped errors or meaningful Result(_, Nil).
+time: 2026-06-24T21:08:58.337527258-07:00

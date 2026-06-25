@@ -32,7 +32,7 @@ Beryl - Type-safe real-time communication
 
  pub fn main() {
    // Optional: start PubSub for distributed messaging
-   let assert Ok(ps) = pubsub.start(pubsub.default_config())
+   let ps = pubsub.start(pubsub.default_config())
 
    // Start channels system (with or without PubSub)
    let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
@@ -119,6 +119,18 @@ pub type LogLevel {
 }
 ```
 
+### `RegisteredChannel`
+
+A typed handle returned when a channel is registered.
+
+ Pass this handle to `send_info` so the compiler can prove that the message
+ matches the receiving channel's `info` type. The handle also identifies the
+ exact registered channel used for a joined socket/topic pair.
+
+```gleam
+pub type RegisteredChannel(a, b)
+```
+
 ### `RegisterError`
 
 Errors when registering a channel handler.
@@ -146,12 +158,16 @@ Errors when starting channels
 
 ```gleam
 pub type StartError {
-  CoordinatorStartFailed
+  CoordinatorStartFailed(error.StartFailure)
   InvalidHeartbeatTimeout
 }
 ```
 
 #### Constructors
+
+##### `CoordinatorStartFailed(error.StartFailure)`
+
+The coordinator actor failed to start.
 
 ##### `InvalidHeartbeatTimeout`
 
@@ -271,7 +287,7 @@ Get the topic ID from a topic using wildcard extraction
 pub fn extract_topic_id(
   topic.TopicPattern,
   String
-) -> Result(String, Nil)
+) -> Result(String, topic.ExtractError)
 ```
 
 ### `logging_config`
@@ -311,13 +327,13 @@ Register a channel handler for a topic pattern
  })
 
  // Register it with a legacy prefix wildcard
- beryl.register(channels, "chat:*", chat_channel)
+ let assert Ok(chat) = beryl.register(channels, "chat:*", chat_channel)
 
  // Exact topic
- beryl.register(channels, "room:lobby", lobby_channel)
+ let assert Ok(lobby) = beryl.register(channels, "room:lobby", lobby_channel)
 
  // Segment-aware wildcard
- beryl.register(channels, "document:*:ops", ops_channel)
+ let assert Ok(ops) = beryl.register(channels, "document:*:ops", ops_channel)
  ```
 
 ```gleam
@@ -325,30 +341,26 @@ pub fn register(
   Channels,
   String,
   channel.Channel(a, b)
-) -> Result(Nil, RegisterError)
+) -> Result(RegisteredChannel(a, b), RegisterError)
 ```
 
 ### `send_info`
 
-Send a server-originated OTP message to a joined channel context.
+Send a typed server-originated OTP message to a joined channel context.
 
- The message is delivered to the channel's `handle_info` callback for the
- specific socket/topic pair as the typed `info` value — the receiving handler
- matches on it directly without any `Dynamic` decode or unsafe cast. If the
- socket is not connected, the topic is not joined, or no handler matches the
- topic, the message is ignored.
-
- Note: a single `Channels` system may host channels with different `info`
- types, so this function accepts a generic message and the matching channel's
- `handle_info` recovers the concrete type. Send a value whose type matches the
- target channel's `info` parameter.
+ The `registered` handle carries the receiving channel's `info` type, so the
+ compiler rejects messages for incompatible channels. The coordinator also
+ verifies that the socket/topic pair was joined through that same registered
+ channel before dispatching the callback. If the socket is not connected, the
+ topic is not joined, or the registered channel does not match the joined
+ channel, the message is ignored.
 
 ```gleam
 pub fn send_info(
-  Channels,
+  RegisteredChannel(a, b),
   String,
   String,
-  a
+  b
 ) -> Nil
 ```
 

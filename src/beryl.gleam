@@ -27,7 +27,7 @@
 ////
 //// pub fn main() {
 ////   // Optional: start PubSub for distributed messaging
-////   let assert Ok(ps) = pubsub.start(pubsub.default_config())
+////   let ps = pubsub.start(pubsub.default_config())
 ////
 ////   // Start channels system (with or without PubSub)
 ////   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
@@ -51,6 +51,7 @@
 
 import beryl/channel.{type Channel}
 import beryl/coordinator
+import beryl/error as beryl_error
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
@@ -279,7 +280,8 @@ pub fn configured_codec(channels: Channels) -> codec.Codec {
 
 /// Errors when starting channels
 pub type StartError {
-  CoordinatorStartFailed
+  /// The coordinator actor failed to start.
+  CoordinatorStartFailed(beryl_error.StartFailure)
   /// heartbeat_timeout_ms must be > 0 (it is used to derive the check interval)
   InvalidHeartbeatTimeout
 }
@@ -336,7 +338,9 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
   }
 
   case coordinator_result {
-    Error(_) -> Error(CoordinatorStartFailed)
+    Error(coordinator.ActorStartFailed(error)) ->
+      Error(CoordinatorStartFailed(beryl_error.from_actor_start_error(error)))
+    Error(coordinator.InvalidHeartbeatTimeout) -> Error(InvalidHeartbeatTimeout)
     Ok(coord) ->
       Ok(channels_from_coordinator(coordinator: coord, config: config))
   }
@@ -547,7 +551,7 @@ pub fn send_info(
 pub fn extract_topic_id(
   pattern: topic.TopicPattern,
   topic_name: String,
-) -> Result(String, Nil) {
+) -> Result(String, topic.ExtractError) {
   topic.extract_id(pattern, topic_name)
 }
 

@@ -40,7 +40,7 @@ Channel behavior definition
    parameter generic.
 
 ```gleam
-pub opaque type Channel(a, b)
+pub type Channel(a, b)
 ```
 
 ### `HandleResult`

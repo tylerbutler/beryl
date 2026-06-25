@@ -23,7 +23,7 @@ import beryl/pubsub
 let assert Ok(p) = presence.start(presence.default_config("node1"))
 
 // With PubSub for cross-node replication
-let assert Ok(ps) = pubsub.start(pubsub.default_config())
+let ps = pubsub.start(pubsub.default_config())
 let config =
   presence.default_config("node1")
   |> presence.with_pubsub(ps)

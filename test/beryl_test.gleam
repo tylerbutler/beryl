@@ -1,6 +1,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/error as beryl_error
 import beryl/group
 import beryl/socket
 import beryl/topic
@@ -119,7 +120,7 @@ pub fn extract_wildcards_from_segment_pattern_test() {
   |> should.equal(Ok(["tenant-a", "doc-42"]))
 
   topic.extract_wildcards(pattern, "document:tenant-a")
-  |> should.equal(Error(Nil))
+  |> should.equal(Error(topic.TopicMismatch))
 }
 
 pub fn extract_id_from_single_segment_wildcard_test() {
@@ -132,7 +133,7 @@ pub fn extract_id_from_single_segment_wildcard_test() {
     topic.parse_pattern("document:*:*"),
     "document:tenant-a:doc-42",
   )
-  |> should.equal(Error(Nil))
+  |> should.equal(Error(topic.ExpectedOneWildcard(2)))
 }
 
 pub fn extract_id_test() {
@@ -145,7 +146,7 @@ pub fn extract_id_test() {
   |> should.equal(Ok("abc:123"))
 
   topic.extract_id(topic.Exact("room:lobby"), "room:lobby")
-  |> should.equal(Error(Nil))
+  |> should.equal(Error(topic.NoWildcard))
 }
 
 pub fn segments_test() {
@@ -692,7 +693,13 @@ pub fn extract_topic_id_test() {
   |> should.equal(Ok("lobby"))
 
   beryl.extract_topic_id(topic.Exact("room:lobby"), "room:lobby")
-  |> should.equal(Error(Nil))
+  |> should.equal(Error(topic.NoWildcard))
+}
+
+pub fn start_failure_description_is_public_test() {
+  let describe = beryl_error.describe_start_failure
+  should.be_true(True)
+  let _ = describe
 }
 
 pub fn channels_handle_remains_usable_after_start_test() {

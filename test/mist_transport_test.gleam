@@ -21,7 +21,12 @@ pub fn default_config_slash_ws_test() {
 }
 
 pub fn with_on_connect_sets_callback_test() {
-  let callback = fn(_req: Request(Connection)) -> Result(Nil, Nil) { Ok(Nil) }
+  let callback = fn(_req: Request(Connection)) -> Result(
+    Nil,
+    mist_transport.ConnectError,
+  ) {
+    Ok(Nil)
+  }
 
   let config =
     mist_transport.default_config("/socket")
@@ -32,9 +37,17 @@ pub fn with_on_connect_sets_callback_test() {
 }
 
 pub fn with_on_connect_replaces_callback_test() {
-  let callback1 = fn(_req: Request(Connection)) -> Result(Nil, Nil) { Ok(Nil) }
-  let callback2 = fn(_req: Request(Connection)) -> Result(Nil, Nil) {
-    Error(Nil)
+  let callback1 = fn(_req: Request(Connection)) -> Result(
+    Nil,
+    mist_transport.ConnectError,
+  ) {
+    Ok(Nil)
+  }
+  let callback2 = fn(_req: Request(Connection)) -> Result(
+    Nil,
+    mist_transport.ConnectError,
+  ) {
+    Error(mist_transport.ConnectRejected)
   }
 
   let config =
@@ -48,7 +61,10 @@ pub fn with_on_connect_replaces_callback_test() {
 
 pub fn with_on_connect_seeding_assigns_sets_callback_test() {
   // on_connect may return seeded socket-level assigns, not just Nil.
-  let callback = fn(_req: Request(Connection)) -> Result(String, Nil) {
+  let callback = fn(_req: Request(Connection)) -> Result(
+    String,
+    mist_transport.ConnectError,
+  ) {
     Ok("user-123")
   }
 

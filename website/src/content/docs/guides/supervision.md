@@ -128,7 +128,7 @@ static_supervisor.new(static_supervisor.OneForOne)
 
 ```gleam
 pub type StartError {
-  SupervisorStartFailed(actor.StartError)
+  SupervisorStartFailed(error.StartFailure)
   InvalidHeartbeatTimeout   // heartbeat_timeout_ms must be > 0
 }
 ```

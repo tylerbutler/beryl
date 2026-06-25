@@ -61,15 +61,15 @@ let config =
   |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
     // Check auth token, session, etc.
     case validate_token(req) {
-      Ok(_user) -> Ok(Nil)    // Allow connection
-      Error(_) -> Error(Nil)  // Reject with 403
+      Ok(_user) -> Ok(Nil)                              // Allow connection
+      Error(_) -> Error(mist_transport.ConnectRejected)  // Reject with 403
     }
   })
 
 use <- mist_transport.upgrade(req, channels, config)
 ```
 
-Returning `Error(Nil)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
+Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
 
 ### Seeding initial assigns
 
@@ -85,8 +85,8 @@ let config =
   |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
     // Validate once, derive socket state, reject on failure.
     case validate_token(req) {
-      Ok(user_id) -> Ok(user_id)  // Seed assigns (here: the user id)
-      Error(_) -> Error(Nil)      // Reject with 403
+      Ok(user_id) -> Ok(user_id)                       // Seed assigns
+      Error(_) -> Error(mist_transport.ConnectRejected) // Reject with 403
     }
   })
 ```

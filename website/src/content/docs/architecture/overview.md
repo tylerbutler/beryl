@@ -33,7 +33,7 @@ beryl is organized into several layers, each building on the one below it.
 The foundation layer. Uses Erlang's `pg` module for distributed process groups. Processes subscribe to topics and receive broadcast messages. Works across Erlang cluster nodes automatically.
 
 ```gleam
-let assert Ok(ps) = pubsub.start(pubsub.default_config())
+let ps = pubsub.start(pubsub.default_config())
 pubsub.subscribe(ps, "room:lobby")
 pubsub.broadcast(ps, "room:lobby", "event", payload)
 ```

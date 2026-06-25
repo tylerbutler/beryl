@@ -33,7 +33,7 @@ pub fn group_already_exists_test() {
   should.be_error(result)
 
   case result {
-    Error(group.AlreadyExists) -> Nil
+    Error(group.GroupAlreadyExists) -> Nil
     _ -> should.fail()
   }
 }
@@ -81,7 +81,7 @@ pub fn group_not_found_test() {
   let result = group.add(groups, "nonexistent", "room:test")
   should.be_error(result)
   case result {
-    Error(group.NotFound) -> Nil
+    Error(group.GroupNotFound) -> Nil
     _ -> should.fail()
   }
 
@@ -113,7 +113,7 @@ pub fn group_delete_nonexistent_test() {
   let result = group.delete(groups, "nonexistent")
   should.be_error(result)
   case result {
-    Error(group.NotFound) -> Nil
+    Error(group.GroupNotFound) -> Nil
     _ -> should.fail()
   }
 }

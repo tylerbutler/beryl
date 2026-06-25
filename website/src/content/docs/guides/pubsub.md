@@ -10,10 +10,10 @@ beryl's PubSub layer provides distributed publish/subscribe messaging built on E
 import beryl/pubsub
 
 // Default scope ("beryl_pubsub")
-let assert Ok(ps) = pubsub.start(pubsub.default_config())
+let ps = pubsub.start(pubsub.default_config())
 
 // Custom scope (isolates process groups)
-let assert Ok(ps) = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
+let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 ```
 
 The scope maps to a `pg` scope atom. Different scopes are completely isolated from each other.
@@ -108,7 +108,7 @@ The channel system uses PubSub internally for distributed broadcasts when config
 import beryl
 import beryl/wire
 
-let assert Ok(ps) = pubsub.start(pubsub.default_config())
+let ps = pubsub.start(pubsub.default_config())
 let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
 let assert Ok(channels) = beryl.start(config)
 

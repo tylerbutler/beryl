@@ -9,7 +9,7 @@
 //// ## Example
 ////
 //// ```gleam
-//// let assert Ok(ps) = pubsub.start(pubsub.default_config())
+//// let ps = pubsub.start(pubsub.default_config())
 //// let config =
 ////   presence.default_config("node1")
 ////   |> presence.with_pubsub(ps)
@@ -19,6 +19,7 @@
 //// let entries = presence.list(p, "room:lobby")
 //// ```
 
+import beryl/error as beryl_error
 import beryl/internal
 import beryl/log
 import beryl/pubsub.{type PubSub}
@@ -159,8 +160,8 @@ pub opaque type Config {
 
 /// Errors from presence operations
 pub type PresenceError {
-  /// The actor failed to start, wrapping the underlying OTP start error
-  StartFailed(actor.StartError)
+  /// The presence actor failed to start.
+  PresenceStartFailed(beryl_error.StartFailure)
 }
 
 /// Messages the presence actor handles
@@ -242,10 +243,13 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
   build_presence(config)
   |> actor.start
   |> result.map(fn(started) { Presence(subject: started.data) })
-  |> result.map_error(StartFailed)
+  |> result.map_error(fn(error) {
+    PresenceStartFailed(beryl_error.from_actor_start_error(error))
+  })
 }
 
 /// Start the presence actor with a registered name (for supervision)
+@internal
 pub fn start_named(
   config: Config,
   name: process.Name(Message),
