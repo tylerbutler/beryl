@@ -30,9 +30,9 @@ import beryl
 import beryl/coordinator
 import beryl/group
 import beryl/internal
+import beryl/log
 import beryl/presence
 import beryl/rate_limit
-import birch/logger as log
 import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
@@ -222,10 +222,9 @@ fn start_supervised(
       // their names, so named_subject will route messages correctly.
       let coord_subject = process.named_subject(coordinator_name)
       let channels =
-        beryl.Channels(
+        beryl.channels_from_coordinator(
           coordinator: coord_subject,
           config: config.channels,
-          pubsub: config.channels.pubsub,
         )
 
       let pres = case presence_name {
@@ -251,7 +250,6 @@ fn start_supervised(
 
 fn coordinator_log_level(level: beryl.LogLevel) -> coordinator.LogLevel {
   case level {
-    beryl.Trace -> coordinator.Trace
     beryl.Debug -> coordinator.Debug
     beryl.Info -> coordinator.Info
     beryl.Warn -> coordinator.Warn

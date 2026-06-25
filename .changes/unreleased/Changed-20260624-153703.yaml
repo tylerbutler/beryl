@@ -1,0 +1,6 @@
+kind: Changed
+body: |-
+    Make send_info require a typed registered channel handle.
+
+    Registering a channel now returns RegisteredChannel(assigns, info), and send_info dispatches through that handle so incompatible info messages fail at compile time.
+time: 2026-06-24T15:37:03.051794024-07:00

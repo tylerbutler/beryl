@@ -43,7 +43,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 2. **Is `beryl.Channels` passed to the transport?** The `mist_transport.upgrade` call must receive the same `channels` value that was registered against:
    ```gleam
-   use <- mist_transport.upgrade(req, channels.coordinator, config)
+   use <- mist_transport.upgrade(req, channels, config)
    ```
 
 3. **Join callback panics or crashes.** A panic in `join` terminates the coordinator actor. Under unsupervised `beryl.start`, the coordinator dies and no more joins are processed. Use `beryl/supervisor.start` so the coordinator restarts, then fix the panic.
@@ -68,7 +68,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 ## Enable Beryl debug diagnostics
 
-Beryl uses Birch loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed coordinator lifecycle diagnostics while debugging channel integration issues:
+Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed coordinator lifecycle diagnostics while debugging channel integration issues:
 
 ```gleam
 let config =

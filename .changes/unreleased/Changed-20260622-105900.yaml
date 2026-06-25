@@ -1,0 +1,3 @@
+kind: Changed
+body: 'Logging — use `palabres` for Beryl''s internal `beryl.*` loggers. The public logging API (`LoggingConfig`, `with_logging`, `logging_config`) is unchanged in shape, but the configured level is now applied globally via palabres'' singleton logger at coordinator startup. Breaking: the `Trace` variant is removed from `beryl.LogLevel` (palabres has no trace level); use `Debug` instead.'
+time: 2026-06-22T10:59:00.000000-07:00

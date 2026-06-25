@@ -1,5 +1,6 @@
 -module(beryl_mist_transport_test_ffi).
--export([connect_websocket/2, send_text/2, receive_text/2, close/1, http_get/2]).
+-export([connect_websocket/2, send_text/2, send_binary/2, receive_text/2,
+         receive_binary/2, close/1, http_get/2]).
 
 http_get(Port, Path) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
@@ -86,10 +87,26 @@ send_text(Socket, Text) ->
         _ -> {error, nil}
     end.
 
+send_binary(Socket, Data) ->
+    Mask = crypto:strong_rand_bytes(4),
+    Payload = mask_payload(Data, Mask),
+    Frame = [<<16#82>>, encode_client_length(byte_size(Data)), Mask, Payload],
+    case gen_tcp:send(Socket, Frame) of
+        ok -> {ok, Socket};
+        _ -> {error, nil}
+    end.
+
 receive_text(Socket, Timeout) ->
     case read_frame(Socket, Timeout) of
         {text, Text} -> {ok, Text};
         skip -> receive_text(Socket, Timeout);
+        _ -> {error, nil}
+    end.
+
+receive_binary(Socket, Timeout) ->
+    case read_frame(Socket, Timeout) of
+        {binary, Data} -> {ok, Data};
+        skip -> receive_binary(Socket, Timeout);
         _ -> {error, nil}
     end.
 
@@ -126,6 +143,7 @@ read_frame(Socket, Timeout) ->
                 {ok, Payload} ->
                     case Opcode of
                         1 -> {text, Payload};
+                        2 -> {binary, Payload};
                         8 -> closed;
                         9 -> skip;
                         10 -> skip;

@@ -7,7 +7,6 @@ import beryl/topic
 import beryl/wire
 import beryl/wire/codec
 import gleam/dynamic
-import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
 import gleam/json
@@ -181,7 +180,7 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "segment-socket",
       fn(text) {
@@ -189,6 +188,7 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -204,11 +204,10 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
       channel.JoinOk(reply: option.Some(reply), socket: socket)
     })
 
-  beryl.register(channels, "document:*:ops", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "document:*:ops", handler)
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "segment-socket",
     "[null,\"join-ref\",\"document:tenant-a:ops\",\"phx_join\",{}]",
   )
@@ -223,7 +222,7 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "segment-reject-socket",
       fn(text) {
@@ -231,6 +230,7 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -240,11 +240,10 @@ pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
       channel.JoinOk(reply: option.None, socket: socket)
     })
 
-  beryl.register(channels, "document:*:ops", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "document:*:ops", handler)
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "segment-reject-socket",
     "[null,\"join-ref\",\"document:tenant-a:view\",\"phx_join\",{}]",
   )
@@ -270,7 +269,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-info",
       fn(text) {
@@ -278,6 +277,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -286,9 +286,9 @@ pub fn send_info_routes_message_to_joined_channel_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: option.None, socket: socket)
     })
-    |> channel.with_handle_info(fn(message, socket) {
-      case decode.run(message, decode.string) {
-        Ok("notify") ->
+    |> channel.with_handle_info(fn(message: String, socket) {
+      case message {
+        "notify" ->
           channel.Push(
             "server_notify",
             json.object([#("ok", json.bool(True))]),
@@ -298,11 +298,10 @@ pub fn send_info_routes_message_to_joined_channel_test() {
       }
     })
 
-  beryl.register(channels, "room:*", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(registered) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-info",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -310,7 +309,7 @@ pub fn send_info_routes_message_to_joined_channel_test() {
   let assert Ok(join_reply) = process.receive(sent_messages, 500)
   join_reply |> string.contains("phx_reply") |> should.be_true
 
-  beryl.send_info(channels, "socket-info", "room:lobby", "notify")
+  beryl.send_info(registered, "socket-info", "room:lobby", "notify")
 
   let assert Ok(push) = process.receive(sent_messages, 500)
   push |> string.contains("server_notify") |> should.be_true
@@ -330,7 +329,7 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-typed-info",
       fn(text) {
@@ -338,6 +337,7 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -359,11 +359,10 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
       }
     })
 
-  beryl.register(channels, "room:*", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(registered) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-typed-info",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -371,7 +370,12 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
   let assert Ok(join_reply) = process.receive(sent_messages, 500)
   join_reply |> string.contains("phx_reply") |> should.be_true
 
-  beryl.send_info(channels, "socket-typed-info", "room:lobby", Notify("hello"))
+  beryl.send_info(
+    registered,
+    "socket-typed-info",
+    "room:lobby",
+    Notify("hello"),
+  )
 
   let assert Ok(push) = process.receive(sent_messages, 500)
   push |> string.contains("server_notify") |> should.be_true
@@ -383,7 +387,7 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
   let sent_messages = process.new_subject()
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "socket-info-reply",
       fn(text) {
@@ -391,6 +395,7 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.nil(),
     ),
   )
@@ -407,11 +412,10 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
       )
     })
 
-  beryl.register(channels, "room:*", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(registered) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "socket-info-reply",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -419,7 +423,7 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
   let assert Ok(join_reply) = process.receive(sent_messages, 500)
   join_reply |> string.contains("phx_reply") |> should.be_true
 
-  beryl.send_info(channels, "socket-info-reply", "room:lobby", "reply")
+  beryl.send_info(registered, "socket-info-reply", "room:lobby", "reply")
 
   let assert Ok(push) = process.receive(sent_messages, 500)
   push |> string.contains("server_reply") |> should.be_true
@@ -434,7 +438,7 @@ pub fn connect_assigns_visible_in_channel_join_test() {
 
   // Seed socket-level assigns as if produced by the transport on_connect hook.
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       "auth-socket",
       fn(text) {
@@ -442,6 +446,7 @@ pub fn connect_assigns_visible_in_channel_join_test() {
         Ok(Nil)
       },
       fn(_) { Ok(Nil) },
+      option.None,
       dynamic.string("alice"),
     ),
   )
@@ -455,11 +460,10 @@ pub fn connect_assigns_visible_in_channel_join_test() {
       channel.JoinOk(reply: option.Some(reply), socket: socket)
     })
 
-  beryl.register(channels, "room:*", handler)
-  |> should.equal(Ok(Nil))
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
 
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     "auth-socket",
     "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
   )
@@ -689,6 +693,17 @@ pub fn extract_topic_id_test() {
 
   beryl.extract_topic_id(topic.Exact("room:lobby"), "room:lobby")
   |> should.equal(Error(Nil))
+}
+
+pub fn channels_handle_remains_usable_after_start_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  let assert Ok(_) = beryl.register(channels, "opaque:*", handler)
 }
 
 pub fn topic_namespace_test() {

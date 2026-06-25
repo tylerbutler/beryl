@@ -13,10 +13,15 @@ import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import mist.{type Connection, type ResponseData, type WebsocketConnection}
+
+/// Phoenix `vsn` value used by the historical JSON serializer. Connections
+/// that omit `vsn` or send this value use the coordinator's configured codec.
+pub const default_vsn = "2.0.0"
 
 /// Configuration for the Mist WebSocket transport
 ///
@@ -36,6 +41,18 @@ pub type TransportConfig(assigns) {
     /// with a 403 Forbidden response. When None, all connections are allowed
     /// and assigns start empty (`Nil`).
     on_connect: Option(fn(Request(Connection)) -> Result(assigns, Nil)),
+    /// Per-connection serializers keyed by Phoenix `vsn` query value. The
+    /// `vsn` query parameter from the upgrade request selects the codec used
+    /// to decode inbound frames and encode replies/pushes for that socket.
+    ///
+    /// `default_vsn` ("2.0.0") and connections without a `vsn` always use the
+    /// coordinator's configured codec, so JSON behavior is unchanged unless a
+    /// serializer is explicitly registered for another `vsn`.
+    serializers: List(#(String, Codec)),
+    /// When True, an upgrade request carrying an unregistered `vsn` (other
+    /// than `default_vsn`) is rejected with `400 Bad Request`. When False (the
+    /// default), unknown `vsn` values fall back to the configured codec.
+    reject_unknown_vsn: Bool,
   )
 }
 
@@ -44,7 +61,12 @@ pub type TransportConfig(assigns) {
 /// The resulting config seeds `Nil` assigns. Add `with_on_connect` to
 /// authenticate connections and/or seed initial assigns.
 pub fn default_config(path: String) -> TransportConfig(Nil) {
-  TransportConfig(path: path, on_connect: None)
+  TransportConfig(
+    path: path,
+    on_connect: None,
+    serializers: [],
+    reject_unknown_vsn: False,
+  )
 }
 
 /// Set a socket-level connect/authentication callback on the transport config.
@@ -58,7 +80,43 @@ pub fn with_on_connect(
   config: TransportConfig(a),
   callback: fn(Request(Connection)) -> Result(assigns, Nil),
 ) -> TransportConfig(assigns) {
-  TransportConfig(path: config.path, on_connect: Some(callback))
+  TransportConfig(
+    path: config.path,
+    on_connect: Some(callback),
+    serializers: config.serializers,
+    reject_unknown_vsn: config.reject_unknown_vsn,
+  )
+}
+
+/// Register a serializer for a Phoenix `vsn` value.
+///
+/// Incoming connections that request this `vsn` (via `?vsn=...`) use the
+/// supplied codec for the lifetime of the connection. This is how a
+/// MessagePack codec is wired to `vsn=3.0.0`:
+///
+/// ```gleam
+/// mist_transport.default_config("/socket")
+/// |> mist_transport.with_serializer("3.0.0", my_msgpack_codec())
+/// ```
+///
+/// Registering the same `vsn` twice keeps the most recently added codec.
+pub fn with_serializer(
+  config: TransportConfig(assigns),
+  vsn: String,
+  codec: Codec,
+) -> TransportConfig(assigns) {
+  TransportConfig(..config, serializers: [#(vsn, codec), ..config.serializers])
+}
+
+/// Reject upgrade requests whose `vsn` has no registered serializer.
+///
+/// When set, an unknown `vsn` (other than `default_vsn`) responds with
+/// `400 Bad Request` instead of falling back to the configured codec.
+pub fn with_reject_unknown_vsn(
+  config: TransportConfig(assigns),
+  reject: Bool,
+) -> TransportConfig(assigns) {
+  TransportConfig(..config, reject_unknown_vsn: reject)
 }
 
 /// State maintained per WebSocket connection
@@ -105,14 +163,69 @@ pub fn upgrade(
         Some(callback) ->
           case callback(request) {
             Ok(assigns) ->
-              do_upgrade(request, channels, unsafe_coerce_to_dynamic(assigns))
+              negotiate_and_upgrade(
+                request,
+                channels,
+                config,
+                unsafe_coerce_to_dynamic(assigns),
+              )
             Error(Nil) ->
               response.new(403)
               |> response.set_body(mist.Bytes(bytes_tree.new()))
           }
-        None -> do_upgrade(request, channels, dynamic.nil())
+        None -> negotiate_and_upgrade(request, channels, config, dynamic.nil())
       }
     }
+  }
+}
+
+/// Negotiate the per-connection serializer from `?vsn=...` and upgrade.
+///
+/// Rejects with `400 Bad Request` when the `vsn` is unsupported and
+/// `reject_unknown_vsn` is enabled.
+fn negotiate_and_upgrade(
+  request: Request(Connection),
+  channels: Channels,
+  config: TransportConfig(assigns),
+  connect_assigns: Dynamic,
+) -> Response(ResponseData) {
+  case negotiate_codec(config, channels, request) {
+    Ok(codec) -> do_upgrade(request, channels, codec, connect_assigns)
+    Error(Nil) ->
+      response.new(400)
+      |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
+}
+
+/// Resolve the codec for an upgrade request from its `vsn` query parameter.
+fn negotiate_codec(
+  config: TransportConfig(assigns),
+  channels: Channels,
+  request: Request(Connection),
+) -> Result(Codec, Nil) {
+  case request_vsn(request) {
+    None -> Ok(beryl.configured_codec(channels))
+    Some(vsn) ->
+      case list.key_find(config.serializers, vsn) {
+        Ok(codec) -> Ok(codec)
+        Error(Nil) ->
+          case vsn == default_vsn {
+            True -> Ok(beryl.configured_codec(channels))
+            False ->
+              case config.reject_unknown_vsn {
+                True -> Error(Nil)
+                False -> Ok(beryl.configured_codec(channels))
+              }
+          }
+      }
+  }
+}
+
+/// Read the `vsn` query parameter from the upgrade request, if present.
+fn request_vsn(request: Request(Connection)) -> Option(String) {
+  case request.get_query(request) {
+    Ok(params) -> option.from_result(list.key_find(params, "vsn"))
+    Error(_) -> None
   }
 }
 
@@ -167,18 +280,26 @@ pub fn handler(
 /// `TransportConfig`. Sockets upgraded this way start with empty (`Nil`)
 /// assigns. If you need authentication or seeded assigns, either use `upgrade`
 /// with a full config or call your auth check before this function.
-@internal
+///
+/// The connection's serializer is negotiated from `?vsn=...`, but no custom
+/// serializers are registered, so the coordinator's configured codec is always
+/// used. Use `upgrade` with a configured `TransportConfig` to enable
+/// per-`vsn` serializers.
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
 ) -> Response(ResponseData) {
-  do_upgrade(request, channels, dynamic.nil())
+  let codec =
+    negotiate_codec(default_config(""), channels, request)
+    |> result.unwrap(beryl.configured_codec(channels))
+  do_upgrade(request, channels, codec, dynamic.nil())
 }
 
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
+  codec: Codec,
   connect_assigns: Dynamic,
 ) -> Response(ResponseData) {
   mist.websocket(
@@ -189,8 +310,8 @@ fn do_upgrade(
     on_init: fn(connection) {
       on_init(
         connection,
-        channels.coordinator,
-        channels.config.codec,
+        beryl.coordinator_subject(channels),
+        codec,
         connect_assigns,
       )
     },
@@ -230,6 +351,7 @@ fn on_init(
       socket_id,
       send_fn,
       send_binary_fn,
+      Some(codec),
       connect_assigns,
     ),
   )

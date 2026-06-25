@@ -9,11 +9,11 @@
 
 import beryl/channel.{type StopReason}
 import beryl/internal
+import beryl/log.{type Logger}
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimiter}
 import beryl/topic.{type TopicPattern}
 import beryl/wire/codec.{type Codec}
-import birch/logger.{type Logger} as log
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
@@ -32,11 +32,11 @@ import gleam/string
 /// The actual typed Channel is converted to this for the registry
 pub type ChannelHandler {
   ChannelHandler(
+    id: Int,
     pattern: TopicPattern,
     join: fn(String, Dynamic, SocketContext) -> JoinResultErased,
     handle_in: fn(String, Dynamic, SocketContext) -> HandleResultErased,
     handle_binary: fn(BitArray, SocketContext) -> HandleResultErased,
-    handle_info: fn(Dynamic, SocketContext) -> HandleResultErased,
     terminate: fn(StopReason, SocketContext) -> Nil,
   )
 }
@@ -83,9 +83,8 @@ pub type StartError {
   ActorStartFailed(actor.StartError)
 }
 
-/// Logging verbosity for the coordinator's internal Birch logger.
+/// Logging verbosity for the coordinator's internal logger.
 pub type LogLevel {
-  Trace
   Debug
   Info
   Warn
@@ -144,7 +143,6 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
 fn internal_logging(config: LoggingConfig) -> internal.LoggingConfig {
   internal.LoggingConfig(
     level: case config.level {
-      Trace -> internal.Trace
       Debug -> internal.Debug
       Info -> internal.Info
       Warn -> internal.Warn
@@ -194,6 +192,8 @@ type State {
   State(
     /// Pattern -> handler (ordered list for matching)
     handlers: List(ChannelHandler),
+    /// Next unique id assigned to a registered channel handler.
+    next_handler_id: Int,
     /// Socket ID -> socket info
     sockets: Dict(String, SocketInfo),
     /// Topic -> set of socket IDs subscribed
@@ -217,10 +217,16 @@ type SocketInfo {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary to this socket's WebSocket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    /// Wire codec negotiated for this connection. Used to decode inbound
+    /// binary frames and encode replies/pushes destined for this socket, so
+    /// different connections can use different serializers concurrently.
+    codec: Codec,
     /// Topics this socket is subscribed to
     subscribed_topics: Set(String),
     /// Per-topic assigns (topic -> Dynamic assigns)
     channel_assigns: Dict(String, Dynamic),
+    /// Per-topic registered channel id (topic -> handler id)
+    channel_ids: Dict(String, Int),
     /// Socket-level assigns seeded by the transport connect hook (type-erased).
     /// Used as the initial assigns visible to a channel at join time.
     connect_assigns: Dynamic,
@@ -276,13 +282,17 @@ pub type Message {
   RegisterChannel(
     pattern: String,
     handler: ChannelHandler,
-    reply: Subject(Result(Nil, RegisterError)),
+    reply: Subject(Result(Int, RegisterError)),
   )
   // Socket lifecycle
   SocketConnected(
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    /// Wire codec negotiated for this connection. `None` falls back to the
+    /// coordinator's configured codec, preserving the historical behavior for
+    /// callers that don't negotiate a per-connection serializer.
+    codec: Option(Codec),
     /// Socket-level assigns seeded by the transport's connect hook
     /// (type-erased). Use `dynamic.nil()` when there are none.
     connect_assigns: Dynamic,
@@ -290,7 +300,12 @@ pub type Message {
   SocketDisconnected(socket_id: String)
   // Channel operations
   HandleBinary(socket_id: String, data: BitArray)
-  HandleInfo(socket_id: String, topic: String, message: Dynamic)
+  HandleInfo(
+    socket_id: String,
+    topic: String,
+    channel_id: Int,
+    handle_info: fn(SocketContext) -> HandleResultErased,
+  )
   /// Raw inbound text from the transport, decoded inside the actor using
   /// the configured codec.
   RouteText(socket_id: String, raw_text: String)
@@ -382,17 +397,17 @@ fn build_coordinator(
   config: CoordinatorConfig,
   ps: Option(PubSub),
 ) -> actor.Builder(State, Message, Subject(Message)) {
+  let logging = internal_logging(config.logging)
+  internal.configure(logging)
   let initial_state =
     State(
       handlers: [],
+      next_handler_id: 0,
       sockets: dict.new(),
       topics: dict.new(),
       config: config,
       pubsub: ps,
-      logger: internal.logger_with_config(
-        "beryl.coordinator",
-        internal_logging(config.logging),
-      ),
+      logger: internal.logger_with_config("beryl.coordinator", logging),
       self_subject: None,
     )
 
@@ -451,12 +466,13 @@ fn handle_message(
     RegisterChannel(pattern, handler, reply) ->
       handle_register_channel(state, pattern, handler, reply)
 
-    SocketConnected(socket_id, send, send_binary, connect_assigns) ->
+    SocketConnected(socket_id, send, send_binary, codec, connect_assigns) ->
       handle_socket_connected(
         state,
         socket_id,
         send,
         send_binary,
+        codec,
         connect_assigns,
       )
 
@@ -465,8 +481,8 @@ fn handle_message(
 
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
 
-    HandleInfo(socket_id, topic_name, message) ->
-      handle_info(state, socket_id, topic_name, message)
+    HandleInfo(socket_id, topic_name, channel_id, callback) ->
+      handle_info(state, socket_id, topic_name, channel_id, callback)
 
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
@@ -486,7 +502,7 @@ fn handle_register_channel(
   state: State,
   pattern_str: String,
   handler: ChannelHandler,
-  reply: Subject(Result(Nil, RegisterError)),
+  reply: Subject(Result(Int, RegisterError)),
 ) -> actor.Next(State, Message) {
   let pattern = topic.parse_pattern(pattern_str)
   let already_registered =
@@ -498,9 +514,21 @@ fn handle_register_channel(
       actor.continue(state)
     }
     False -> {
-      let new_handlers = list.append(state.handlers, [handler])
-      process.send(reply, Ok(Nil))
-      actor.continue(State(..state, handlers: new_handlers))
+      let handler_id = state.next_handler_id
+      let registered_handler =
+        ChannelHandler(
+          id: handler_id,
+          pattern: pattern,
+          join: handler.join,
+          handle_in: handler.handle_in,
+          handle_binary: handler.handle_binary,
+          terminate: handler.terminate,
+        )
+      let new_handlers = list.append(state.handlers, [registered_handler])
+      process.send(reply, Ok(handler_id))
+      actor.continue(
+        State(..state, handlers: new_handlers, next_handler_id: handler_id + 1),
+      )
     }
   }
 }
@@ -510,6 +538,7 @@ fn handle_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec: Option(Codec),
   connect_assigns: Dynamic,
 ) -> actor.Next(State, Message) {
   let socket_info =
@@ -517,8 +546,10 @@ fn handle_socket_connected(
       id: socket_id,
       send: send,
       send_binary: send_binary,
+      codec: option.unwrap(codec, state.config.codec),
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
+      channel_ids: dict.new(),
       connect_assigns: connect_assigns,
       last_heartbeat: monotonic_time_ms(),
     )
@@ -581,7 +612,7 @@ fn handle_join(
       case dict.get(state.sockets, socket_id) {
         Ok(socket_info) -> {
           let reply =
-            state.config.codec.encode_reply(
+            socket_info.codec.encode_reply(
               join_ref,
               ref,
               topic_name,
@@ -632,7 +663,7 @@ fn handle_join_inner(
             #("join_ref", optional_string(join_ref)),
           ])
           let reply =
-            state.config.codec.encode_reply(
+            socket_info.codec.encode_reply(
               join_ref,
               ref,
               topic_name,
@@ -670,7 +701,7 @@ fn handle_leave(
   case ref, dict.get(state.sockets, socket_id) {
     Some(r), Ok(socket_info) -> {
       let reply =
-        state.config.codec.encode_reply(
+        socket_info.codec.encode_reply(
           None,
           Some(r),
           topic_name,
@@ -784,7 +815,8 @@ fn handle_info(
   state: State,
   socket_id: String,
   topic_name: String,
-  message: Dynamic,
+  channel_id: Int,
+  callback: fn(SocketContext) -> HandleResultErased,
 ) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
@@ -810,12 +842,13 @@ fn handle_info(
           actor.continue(state)
         }
         True ->
-          route_info_to_handler(
+          route_info_to_registered_handler(
             state,
             socket_info,
             socket_id,
             topic_name,
-            message,
+            channel_id,
+            callback,
           )
       }
     }
@@ -829,7 +862,13 @@ fn handle_binary_in(
   socket_id: String,
   data: BitArray,
 ) -> actor.Next(State, Message) {
-  case state.config.codec.decode_binary {
+  // Decode with the connection's negotiated codec when known, so binary
+  // frames are interpreted in the serializer the client actually used.
+  let active_codec = case dict.get(state.sockets, socket_id) {
+    Ok(socket_info) -> socket_info.codec
+    Error(_) -> state.config.codec
+  }
+  case active_codec.decode_binary {
     Some(decode_binary) ->
       handle_route_binary_frame(state, socket_id, data, decode_binary)
     None -> handle_raw_binary_with_rate_limit(state, socket_id, data)
@@ -920,7 +959,7 @@ fn handle_heartbeat(
         SocketInfo(..socket_info, last_heartbeat: monotonic_time_ms())
       let new_sockets = dict.insert(state.sockets, socket_id, updated_socket)
 
-      let reply = state.config.codec.encode_heartbeat_reply(ref)
+      let reply = socket_info.codec.encode_heartbeat_reply(ref)
       let _send_result =
         send_frame_logged(state, socket_info, "__heartbeat__", reply)
       let logger = coordinator_logger(state)
@@ -1026,7 +1065,6 @@ fn handle_broadcast(
     Some(except_id) -> list.filter(subscribers, fn(id) { id != except_id })
   }
 
-  let msg = state.config.codec.encode_push(topic_name, event, payload)
   let logger = coordinator_logger(state)
   logger
   |> log.debug("Broadcast dispatched", [
@@ -1038,6 +1076,9 @@ fn handle_broadcast(
   list.each(recipients, fn(socket_id) {
     case dict.get(state.sockets, socket_id) {
       Ok(socket_info) -> {
+        // Encode per recipient so connections negotiating different
+        // serializers each receive a frame in their own wire format.
+        let msg = socket_info.codec.encode_push(topic_name, event, payload)
         let _send_result =
           send_frame_logged(state, socket_info, topic_name, msg)
         Nil
@@ -1146,9 +1187,12 @@ fn handle_route_text(
   socket_id: String,
   raw_text: String,
 ) -> actor.Next(State, Message) {
-  let codec = state.config.codec
+  let active_codec = case dict.get(state.sockets, socket_id) {
+    Ok(socket_info) -> socket_info.codec
+    Error(_) -> state.config.codec
+  }
   let logging = internal_logging(state.config.logging)
-  case codec.decode_text(raw_text) {
+  case active_codec.decode_text(raw_text) {
     Error(err) -> {
       let logger = coordinator_logger(state)
       logger
@@ -1257,7 +1301,7 @@ fn dispatch_join(
         #("join_ref", optional_string(join_ref)),
       ])
       let reply =
-        state.config.codec.encode_reply(
+        socket_info.codec.encode_reply(
           join_ref,
           ref,
           topic_name,
@@ -1279,11 +1323,14 @@ fn dispatch_join(
       let new_subscribed = set.insert(socket_info.subscribed_topics, topic_name)
       let new_assigns =
         dict.insert(socket_info.channel_assigns, topic_name, assigns)
+      let new_channel_ids =
+        dict.insert(socket_info.channel_ids, topic_name, handler.id)
       let new_socket_info =
         SocketInfo(
           ..socket_info,
           subscribed_topics: new_subscribed,
           channel_assigns: new_assigns,
+          channel_ids: new_channel_ids,
         )
 
       let existing_topic_subscribers =
@@ -1306,7 +1353,7 @@ fn dispatch_join(
         Some(p) -> p
       }
       let reply =
-        state.config.codec.encode_reply(
+        socket_info.codec.encode_reply(
           join_ref,
           ref,
           topic_name,
@@ -1375,7 +1422,7 @@ fn dispatch_handle_in(
       case ref {
         Some(r) -> {
           let reply =
-            state.config.codec.encode_reply(
+            socket_info.codec.encode_reply(
               None,
               Some(r),
               topic_name,
@@ -1401,7 +1448,7 @@ fn dispatch_handle_in(
         #("push_event", push_event),
       ])
       let msg =
-        state.config.codec.encode_push(topic_name, push_event, push_payload)
+        socket_info.codec.encode_push(topic_name, push_event, push_payload)
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
       let state = update_assigns(state, socket_id, topic_name, new_assigns)
       actor.continue(state)
@@ -1424,10 +1471,9 @@ fn dispatch_handle_in(
 fn dispatch_handle_info(
   state: State,
   socket_info: SocketInfo,
-  handler: ChannelHandler,
   socket_id: String,
   topic_name: String,
-  message: Dynamic,
+  callback: fn(SocketContext) -> HandleResultErased,
 ) -> actor.Next(State, Message) {
   let logger = coordinator_logger(state)
   logger
@@ -1448,7 +1494,7 @@ fn dispatch_handle_info(
       send_binary: socket_info.send_binary,
     )
 
-  case handler.handle_info(message, ctx) {
+  case callback(ctx) {
     NoReplyErased(new_assigns) -> {
       logger
       |> log.debug("Channel callback returned no reply", [
@@ -1472,7 +1518,7 @@ fn dispatch_handle_info(
       // No ref correlation in handle_info, so reply and push are
       // wire-identical: both become a server-initiated push.
       let msg =
-        state.config.codec.encode_push(topic_name, reply_event, reply_payload)
+        socket_info.codec.encode_push(topic_name, reply_event, reply_payload)
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
       let state = update_assigns(state, socket_id, topic_name, new_assigns)
       actor.continue(state)
@@ -1493,7 +1539,7 @@ fn dispatch_handle_info(
 }
 
 fn dispatch_handle_binary(
-  state: State,
+  _state: State,
   st: State,
   socket_info: SocketInfo,
   handler: ChannelHandler,
@@ -1538,11 +1584,7 @@ fn dispatch_handle_binary(
         #("callback", "handle_binary"),
       ])
       let msg =
-        state.config.codec.encode_push(
-          topic_name,
-          "binary_reply",
-          reply_payload,
-        )
+        socket_info.codec.encode_push(topic_name, "binary_reply", reply_payload)
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
@@ -1555,7 +1597,7 @@ fn dispatch_handle_binary(
         #("push_event", push_event),
       ])
       let msg =
-        state.config.codec.encode_push(topic_name, push_event, push_payload)
+        socket_info.codec.encode_push(topic_name, push_event, push_payload)
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
@@ -1579,7 +1621,7 @@ fn do_terminate_channel(
   topic_name: String,
   reason: StopReason,
 ) -> State {
-  case find_handler(state.handlers, topic_name) {
+  case find_joined_handler(state, socket_info, topic_name) {
     Some(handler) -> {
       let logger = coordinator_logger(state)
       logger
@@ -1607,11 +1649,13 @@ fn do_terminate_channel(
 
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
   let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)
+  let new_channel_ids = dict.delete(socket_info.channel_ids, topic_name)
   let new_socket_info =
     SocketInfo(
       ..socket_info,
       subscribed_topics: new_subscribed,
       channel_assigns: new_assigns,
+      channel_ids: new_channel_ids,
     )
 
   let topic_subscribers =
@@ -1643,7 +1687,7 @@ fn route_in_to_handler(
   payload: Dynamic,
   ref: Option(String),
 ) -> actor.Next(State, Message) {
-  case find_handler(state.handlers, topic_name) {
+  case find_joined_handler(state, socket_info, topic_name) {
     None -> {
       let logger = coordinator_logger(state)
       logger
@@ -1669,33 +1713,66 @@ fn route_in_to_handler(
   }
 }
 
-fn route_info_to_handler(
+fn route_info_to_registered_handler(
   state: State,
   socket_info: SocketInfo,
   socket_id: String,
   topic_name: String,
-  message: Dynamic,
+  channel_id: Int,
+  callback: fn(SocketContext) -> HandleResultErased,
 ) -> actor.Next(State, Message) {
-  case find_handler(state.handlers, topic_name) {
-    None -> {
+  case dict.get(socket_info.channel_ids, topic_name) {
+    Error(Nil) -> {
       let logger = coordinator_logger(state)
       logger
       |> log.debug("Handle info ignored", [
         #("socket_id", socket_id),
         #("topic", topic_name),
-        #("reason", "handler_not_found"),
+        #("reason", "channel_id_not_found"),
       ])
       actor.continue(state)
     }
-    Some(handler) ->
-      dispatch_handle_info(
-        state,
-        socket_info,
-        handler,
-        socket_id,
-        topic_name,
-        message,
-      )
+    Ok(joined_channel_id) -> {
+      case joined_channel_id == channel_id {
+        True ->
+          dispatch_handle_info(
+            state,
+            socket_info,
+            socket_id,
+            topic_name,
+            callback,
+          )
+        False -> {
+          let logger = coordinator_logger(state)
+          logger
+          |> log.debug("Handle info ignored", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+            #("reason", "registered_channel_mismatch"),
+          ])
+          actor.continue(state)
+        }
+      }
+    }
+  }
+}
+
+fn find_handler_by_id(
+  handlers: List(ChannelHandler),
+  handler_id: Int,
+) -> Option(ChannelHandler) {
+  list.find(handlers, fn(h) { h.id == handler_id })
+  |> option.from_result()
+}
+
+fn find_joined_handler(
+  state: State,
+  socket_info: SocketInfo,
+  topic_name: String,
+) -> Option(ChannelHandler) {
+  case dict.get(socket_info.channel_ids, topic_name) {
+    Ok(handler_id) -> find_handler_by_id(state.handlers, handler_id)
+    Error(Nil) -> None
   }
 }
 
@@ -1707,7 +1784,7 @@ fn route_binary_to_handler(
   topic_name: String,
   data: BitArray,
 ) -> State {
-  case find_handler(st.handlers, topic_name) {
+  case find_joined_handler(st, socket_info, topic_name) {
     None -> {
       let logger = coordinator_logger(st)
       logger

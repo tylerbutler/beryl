@@ -19,6 +19,7 @@ pub fn main() {
 fn register_test_channel(channels: beryl.Channels) -> Nil {
   let handler =
     coordinator.ChannelHandler(
+      id: 0,
       pattern: topic.parse_pattern("room:*"),
       join: fn(_topic, _payload, _ctx) {
         coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
@@ -29,18 +30,15 @@ fn register_test_channel(channels: beryl.Channels) -> Nil {
       handle_binary: fn(_data, ctx) {
         coordinator.NoReplyErased(assigns: ctx.assigns)
       },
-      handle_info: fn(_message, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
       terminate: fn(_reason, _ctx) { Nil },
     )
 
   let reply = process.new_subject()
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.RegisterChannel("room:*", handler, reply),
   )
-  let assert Ok(Ok(Nil)) = process.receive(reply, 500)
+  let assert Ok(Ok(_)) = process.receive(reply, 500)
   Nil
 }
 
@@ -55,11 +53,12 @@ fn connect_socket(
   }
 
   process.send(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       socket_id,
       send,
       fn(_) { Ok(Nil) },
+      None,
       dynamic.nil(),
     ),
   )
@@ -74,7 +73,7 @@ fn join_topic(
   sent: process.Subject(String),
 ) -> Nil {
   coordinator.route_message(
-    channels.coordinator,
+    beryl.coordinator_subject(channels),
     socket_id,
     "[null,\"join-ref\",\"" <> topic_name <> "\",\"phx_join\",{}]",
   )

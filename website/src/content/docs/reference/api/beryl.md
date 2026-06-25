@@ -58,19 +58,15 @@ Beryl - Type-safe real-time communication
 
 ### `Channels`
 
-Channels system handle
+Channels system handle.
 
- This is the main entry point for interacting with the channels system.
- Pass this to channel handlers and the WebSocket transport.
+ This opaque handle is returned by `start` and passed to registration,
+ broadcast, bridge, group, supervisor, and transport functions. Its internal
+ actor protocol is intentionally hidden so Beryl can evolve coordinator
+ internals without breaking application code.
 
 ```gleam
-pub type Channels {
-  Channels(
-    coordinator: process.Subject(coordinator.Message),
-    config: Config,
-    pubsub: option.Option(pubsub.PubSub)
-  )
-}
+pub type Channels
 ```
 
 ### `Config`
@@ -112,11 +108,10 @@ pub type LoggingConfig {
 
 ### `LogLevel`
 
-Logging verbosity for Beryl's internal Birch loggers.
+Logging verbosity for Beryl's internal loggers.
 
 ```gleam
 pub type LogLevel {
-  Trace
   Debug
   Info
   Warn

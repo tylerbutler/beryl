@@ -33,4 +33,4 @@ beryl brings in these Gleam packages automatically:
 | `gleam_crypto` | Socket ID generation |
 | `gleam_http` | HTTP request types for transport integration |
 | `mist` | WebSocket and HTTP server |
-| `birch` | Rate limiting |
+| `palabres` | Structured logging |
