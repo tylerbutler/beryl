@@ -169,7 +169,9 @@ fn coordinator_logger(state: State) -> Logger {
 }
 
 fn optional_string(value: Option(String)) -> String {
-  option.unwrap(value, "")
+  value
+  |> option.unwrap("")
+  |> topic.sanitize_for_log
 }
 
 fn inbound_kind(kind: codec.InboundKind) -> String {
