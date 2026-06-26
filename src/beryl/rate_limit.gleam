@@ -108,7 +108,7 @@ type RegistryMsg {
   CountByPrefix(prefix: String, reply: Subject(Int))
   RemoveKey(key: String)
   RemoveByPrefix(prefix: String)
-  RegistryStop
+  RegistryStop(reply: Subject(Nil))
 }
 
 fn handle_registry_msg(
@@ -116,7 +116,10 @@ fn handle_registry_msg(
   msg: RegistryMsg,
 ) -> actor.Next(RegistryState, RegistryMsg) {
   case msg {
-    RegistryStop -> actor.stop()
+    RegistryStop(reply) -> {
+      process.send(reply, Nil)
+      actor.stop()
+    }
 
     Check(key, reply) -> actor.continue(check_key(state, key, reply))
 
@@ -368,5 +371,10 @@ pub fn start_optional(rate: Int, burst: Int) -> Option(RateLimiter) {
 
 /// Stop the rate limiter registry.
 pub fn stop(limiter: RateLimiter) -> Nil {
-  process.send(limiter.subject, RegistryStop)
+  request(
+    limiter.subject,
+    registry_call_timeout_ms,
+    fn(reply) { RegistryStop(reply) },
+    Nil,
+  )
 }

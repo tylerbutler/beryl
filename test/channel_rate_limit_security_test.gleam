@@ -148,10 +148,9 @@ pub fn stopped_join_limiter_does_not_crash_coordinator_test() {
     )
   let sent = process.new_subject()
   let assert Ok(_) = register_test_channel(coord, sent)
-
   connect(coord, sent, "socket-dead-limiter")
   rate_limit.stop(limiter)
-  process.sleep(10)
+  rate_limit.stop(limiter)
 
   join(coord, "socket-dead-limiter", "room:alive")
 
