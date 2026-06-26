@@ -75,11 +75,10 @@ fn refill(state: BucketState) -> BucketState {
 fn take_token(state: BucketState) -> #(BucketState, Result(Nil, Nil)) {
   let state = refill(state)
   case state.tokens_ns >= state.ns_per_token {
-    True ->
-      #(
-        BucketState(..state, tokens_ns: state.tokens_ns - state.ns_per_token),
-        Ok(Nil),
-      )
+    True -> #(
+      BucketState(..state, tokens_ns: state.tokens_ns - state.ns_per_token),
+      Ok(Nil),
+    )
     False -> #(state, Error(Nil))
   }
 }
@@ -92,10 +91,7 @@ pub opaque type RateLimiter {
 }
 
 type RegistryState {
-  RegistryState(
-    config: RateLimitConfig,
-    buckets: Dict(String, BucketState),
-  )
+  RegistryState(config: RateLimitConfig, buckets: Dict(String, BucketState))
 }
 
 type RegistryMsg {
@@ -150,10 +146,7 @@ fn handle_registry_msg(
   }
 }
 
-fn count_by_prefix(
-  buckets: Dict(String, BucketState),
-  prefix: String,
-) -> Int {
+fn count_by_prefix(buckets: Dict(String, BucketState), prefix: String) -> Int {
   dict.to_list(buckets)
   |> list.filter(fn(entry) { string_starts_with(entry.0, prefix) })
   |> list.length
@@ -174,9 +167,13 @@ fn check_key(
       )
     }
     Error(Nil) -> {
-      let #(new_bucket, check_result) = take_token(new_bucket_state(state.config))
+      let #(new_bucket, check_result) =
+        take_token(new_bucket_state(state.config))
       process.send(reply, check_result)
-      RegistryState(..state, buckets: dict.insert(state.buckets, key, new_bucket))
+      RegistryState(
+        ..state,
+        buckets: dict.insert(state.buckets, key, new_bucket),
+      )
     }
   }
 }
