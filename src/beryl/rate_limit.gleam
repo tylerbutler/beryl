@@ -128,6 +128,15 @@ type RegistryState {
 
 type RegistryMsg {
   Check(key: String, reply: Subject(Result(Nil, Nil)))
+  CheckCapped(
+    key: String,
+    prefix: String,
+    max_keys: Int,
+    reply: Subject(Result(Nil, Nil)),
+  )
+  Count(reply: Subject(Int))
+  CountByPrefix(prefix: String, reply: Subject(Int))
+  RemoveKey(key: String)
   RemoveByPrefix(prefix: String)
   RegistryStop
 }
@@ -141,6 +150,29 @@ fn handle_registry_msg(
 
     Check(key, reply) -> actor.continue(check_key(state, key, reply))
 
+    CheckCapped(key, prefix, max_keys, reply) ->
+      actor.continue(check_key_capped(state, key, prefix, max_keys, reply))
+
+    Count(reply) -> {
+      process.send(reply, list.length(dict.to_list(state.buckets)))
+      actor.continue(state)
+    }
+
+    CountByPrefix(prefix, reply) -> {
+      process.send(reply, count_by_prefix(state.buckets, prefix))
+      actor.continue(state)
+    }
+
+    RemoveKey(key) -> {
+      case dict.get(state.buckets, key) {
+        Ok(bucket) -> process.send(bucket, BucketShutdown)
+        Error(Nil) -> Nil
+      }
+      actor.continue(
+        RegistryState(..state, buckets: dict.delete(state.buckets, key)),
+      )
+    }
+
     RemoveByPrefix(prefix) -> {
       let #(to_remove, to_keep) =
         dict.to_list(state.buckets)
@@ -149,6 +181,15 @@ fn handle_registry_msg(
       actor.continue(RegistryState(..state, buckets: dict.from_list(to_keep)))
     }
   }
+}
+
+fn count_by_prefix(
+  buckets: Dict(String, Subject(BucketMsg)),
+  prefix: String,
+) -> Int {
+  dict.to_list(buckets)
+  |> list.filter(fn(entry) { string_starts_with(entry.0, prefix) })
+  |> list.length
 }
 
 fn check_key(
@@ -175,6 +216,30 @@ fn check_key(
           state
         }
       }
+  }
+}
+
+fn check_key_capped(
+  state: RegistryState,
+  key: String,
+  prefix: String,
+  max_keys: Int,
+  reply: Subject(Result(Nil, Nil)),
+) -> RegistryState {
+  case dict.get(state.buckets, key) {
+    Ok(bucket) -> {
+      hit_bucket(bucket, reply)
+      state
+    }
+    Error(Nil) -> {
+      case max_keys > 0 && count_by_prefix(state.buckets, prefix) >= max_keys {
+        True -> {
+          process.send(reply, Error(Nil))
+          state
+        }
+        False -> check_key(state, key, reply)
+      }
+    }
   }
 }
 
@@ -231,6 +296,18 @@ pub fn check(limiter: RateLimiter, key: String) -> Result(Nil, Nil) {
   process.call(limiter.subject, 100, fn(reply) { Check(key, reply) })
 }
 
+/// Check if a request is allowed, rejecting new keys after a per-prefix cap.
+pub fn check_capped(
+  limiter: RateLimiter,
+  key: String,
+  prefix: String,
+  max_keys: Int,
+) -> Result(Nil, Nil) {
+  process.call(limiter.subject, 100, fn(reply) {
+    CheckCapped(key: key, prefix: prefix, max_keys: max_keys, reply: reply)
+  })
+}
+
 /// Check an optional rate limiter. If None, always allows.
 pub fn check_optional(
   limiter: Option(RateLimiter),
@@ -239,6 +316,44 @@ pub fn check_optional(
   case limiter {
     None -> Ok(Nil)
     Some(l) -> check(l, key)
+  }
+}
+
+/// Check an optional rate limiter with a per-prefix key cap.
+pub fn check_capped_optional(
+  limiter: Option(RateLimiter),
+  key: String,
+  prefix: String,
+  max_keys: Int,
+) -> Result(Nil, Nil) {
+  case limiter {
+    None -> Ok(Nil)
+    Some(l) -> check_capped(l, key, prefix, max_keys)
+  }
+}
+
+/// Return the number of active token buckets in the registry.
+pub fn bucket_count(limiter: RateLimiter) -> Int {
+  process.call(limiter.subject, 100, fn(reply) { Count(reply: reply) })
+}
+
+/// Return the number of active token buckets matching a key prefix.
+pub fn bucket_count_by_prefix(limiter: RateLimiter, prefix: String) -> Int {
+  process.call(limiter.subject, 100, fn(reply) {
+    CountByPrefix(prefix: prefix, reply: reply)
+  })
+}
+
+/// Remove rate limit state for an exact key.
+pub fn remove(limiter: RateLimiter, key: String) -> Nil {
+  process.send(limiter.subject, RemoveKey(key))
+}
+
+/// Remove rate limit state for an exact key (optional limiter).
+pub fn remove_optional(limiter: Option(RateLimiter), key: String) -> Nil {
+  case limiter {
+    None -> Nil
+    Some(l) -> remove(l, key)
   }
 }
 

@@ -138,6 +138,9 @@ pub type Config {
     channel_rate: Int,
     /// Per-channel message burst capacity (0 = defaults to channel_rate)
     channel_burst: Int,
+    /// Maximum active per-channel rate-limit buckets per socket.
+    /// Values <= 0 disable the cap.
+    channel_rate_max_keys_per_socket: Int,
     /// Logging configuration for Beryl diagnostics
     logging: LoggingConfig,
   )
@@ -177,6 +180,7 @@ pub fn config(codec: codec.Codec) -> Config {
     join_burst: 0,
     channel_rate: 0,
     channel_burst: 0,
+    channel_rate_max_keys_per_socket: 1000,
     logging: logging_config(level: Info, include_payloads: False),
   )
 }
@@ -234,13 +238,27 @@ pub fn with_join_rate(
   Config(..config, join_rate: rate, join_burst: burst)
 }
 
-/// Configure per-channel message rate limiting
+/// Configure per-channel message rate limiting.
+///
+/// The limiter applies only after a socket has joined a topic. Active
+/// per-socket channel buckets are capped by default; use
+/// `with_channel_rate_max_keys_per_socket` to adjust the cap.
 pub fn with_channel_rate(
   config: Config,
   per_second rate: Int,
   burst burst: Int,
 ) -> Config {
   Config(..config, channel_rate: rate, channel_burst: burst)
+}
+
+/// Configure the maximum active per-channel rate-limit buckets per socket.
+///
+/// Values <= 0 disable the cap. The default is 1000.
+pub fn with_channel_rate_max_keys_per_socket(
+  config: Config,
+  max_keys max_keys: Int,
+) -> Config {
+  Config(..config, channel_rate_max_keys_per_socket: max_keys)
 }
 
 /// Channels system handle.
@@ -329,6 +347,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
       message_limiter: message_limiter,
       join_limiter: join_limiter,
       channel_limiter: channel_limiter,
+      channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
       logging: coordinator_logging(config.logging),
     )
 

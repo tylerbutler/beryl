@@ -116,6 +116,8 @@ pub type CoordinatorConfig {
     join_limiter: Option(RateLimiter),
     /// Per-channel message rate limiter (None = unlimited)
     channel_limiter: Option(RateLimiter),
+    /// Maximum active channel-limiter keys per socket. Values <= 0 disable the cap.
+    channel_limiter_max_keys_per_socket: Int,
     /// Logging configuration for coordinator diagnostics.
     logging: LoggingConfig,
   )
@@ -132,6 +134,7 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
     message_limiter: None,
     join_limiter: None,
     channel_limiter: None,
+    channel_limiter_max_keys_per_socket: 1000,
     logging: LoggingConfig(
       level: Info,
       include_payloads: False,
@@ -574,6 +577,10 @@ fn handle_socket_disconnected(
     Error(Nil) -> [#("socket_id", socket_id)]
   }
   logger |> log.info("Socket disconnected", metadata)
+  actor.continue(disconnect_socket(state, socket_id, channel.Normal))
+}
+
+fn remove_socket_rate_limits(state: State, socket_id: String) -> Nil {
   rate_limit.remove_by_prefix_optional(
     state.config.message_limiter,
     "msg:" <> socket_id,
@@ -586,7 +593,6 @@ fn handle_socket_disconnected(
     state.config.channel_limiter,
     "ch:" <> socket_id <> ":",
   )
-  actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
 fn handle_join(
@@ -740,30 +746,12 @@ fn handle_in(
       actor.continue(state)
     }
     Ok(_) -> {
-      // Check per-channel message rate limit
-      case
-        rate_limit.check_optional(
-          state.config.channel_limiter,
-          "ch:" <> socket_id <> ":" <> topic_name,
-        )
-      {
-        Error(Nil) -> {
-          let logger = coordinator_logger(state)
-          logger
-          |> log.warn("Channel rate limited", [
-            #("socket_id", socket_id),
-            #("topic", topic_name),
-          ])
-          actor.continue(state)
-        }
-        Ok(_) ->
-          handle_in_inner(state, socket_id, topic_name, event, payload, ref)
-      }
+      handle_in_subscribed(state, socket_id, topic_name, event, payload, ref)
     }
   }
 }
 
-fn handle_in_inner(
+fn handle_in_subscribed(
   state: State,
   socket_id: String,
   topic_name: String,
@@ -797,7 +785,7 @@ fn handle_in_inner(
           actor.continue(state)
         }
         True ->
-          route_in_to_handler(
+          handle_in_rate_limited(
             state,
             socket_info,
             socket_id,
@@ -808,6 +796,45 @@ fn handle_in_inner(
           )
       }
     }
+  }
+}
+
+fn handle_in_rate_limited(
+  state: State,
+  socket_info: SocketInfo,
+  socket_id: String,
+  topic_name: String,
+  event: String,
+  payload: Dynamic,
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  case
+    rate_limit.check_capped_optional(
+      state.config.channel_limiter,
+      "ch:" <> socket_id <> ":" <> topic_name,
+      "ch:" <> socket_id <> ":",
+      state.config.channel_limiter_max_keys_per_socket,
+    )
+  {
+    Error(Nil) -> {
+      let logger = coordinator_logger(state)
+      logger
+      |> log.warn("Channel rate limited", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      actor.continue(state)
+    }
+    Ok(_) ->
+      route_in_to_handler(
+        state,
+        socket_info,
+        socket_id,
+        topic_name,
+        event,
+        payload,
+        ref,
+      )
   }
 }
 
@@ -1019,6 +1046,7 @@ fn disconnect_socket(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket_info) -> {
+      remove_socket_rate_limits(state, socket_id)
       let logger = coordinator_logger(state)
       logger
       |> log.debug(
@@ -1646,6 +1674,11 @@ fn do_terminate_channel(
     }
     None -> Nil
   }
+
+  rate_limit.remove_optional(
+    state.config.channel_limiter,
+    "ch:" <> socket_id <> ":" <> topic_name,
+  )
 
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
   let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)

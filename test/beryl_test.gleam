@@ -688,6 +688,20 @@ pub fn with_channel_rate_sets_fields_test() {
   cfg.channel_burst |> should.equal(14)
 }
 
+pub fn channel_rate_max_keys_defaults_to_1000_test() {
+  let cfg = beryl.config(wire.phoenix_codec())
+
+  cfg.channel_rate_max_keys_per_socket |> should.equal(1000)
+}
+
+pub fn with_channel_rate_max_keys_per_socket_sets_field_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_channel_rate_max_keys_per_socket(max_keys: 42)
+
+  cfg.channel_rate_max_keys_per_socket |> should.equal(42)
+}
+
 pub fn extract_topic_id_test() {
   beryl.extract_topic_id(topic.Wildcard("room:"), "room:lobby")
   |> should.equal(Ok("lobby"))
