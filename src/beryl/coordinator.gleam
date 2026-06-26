@@ -1675,6 +1675,11 @@ fn do_terminate_channel(
     None -> Nil
   }
 
+  rate_limit.remove_optional(
+    state.config.channel_limiter,
+    "ch:" <> socket_id <> ":" <> topic_name,
+  )
+
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
   let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)
   let new_channel_ids = dict.delete(socket_info.channel_ids, topic_name)

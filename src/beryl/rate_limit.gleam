@@ -136,6 +136,7 @@ type RegistryMsg {
   )
   Count(reply: Subject(Int))
   CountByPrefix(prefix: String, reply: Subject(Int))
+  RemoveKey(key: String)
   RemoveByPrefix(prefix: String)
   RegistryStop
 }
@@ -160,6 +161,16 @@ fn handle_registry_msg(
     CountByPrefix(prefix, reply) -> {
       process.send(reply, count_by_prefix(state.buckets, prefix))
       actor.continue(state)
+    }
+
+    RemoveKey(key) -> {
+      case dict.get(state.buckets, key) {
+        Ok(bucket) -> process.send(bucket, BucketShutdown)
+        Error(Nil) -> Nil
+      }
+      actor.continue(
+        RegistryState(..state, buckets: dict.delete(state.buckets, key)),
+      )
     }
 
     RemoveByPrefix(prefix) -> {
@@ -331,6 +342,19 @@ pub fn bucket_count_by_prefix(limiter: RateLimiter, prefix: String) -> Int {
   process.call(limiter.subject, 100, fn(reply) {
     CountByPrefix(prefix: prefix, reply: reply)
   })
+}
+
+/// Remove rate limit state for an exact key.
+pub fn remove(limiter: RateLimiter, key: String) -> Nil {
+  process.send(limiter.subject, RemoveKey(key))
+}
+
+/// Remove rate limit state for an exact key (optional limiter).
+pub fn remove_optional(limiter: Option(RateLimiter), key: String) -> Nil {
+  case limiter {
+    None -> Nil
+    Some(l) -> remove(l, key)
+  }
 }
 
 /// Remove all rate limit state for keys matching a prefix.

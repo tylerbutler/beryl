@@ -101,6 +101,40 @@ pub fn heartbeat_eviction_removes_channel_buckets_test() {
   rate_limit.stop(limiter)
 }
 
+pub fn leave_removes_channel_bucket_so_cap_recovers_test() {
+  let assert Ok(limiter) =
+    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
+  let assert Ok(coord) =
+    coordinator.start_with_config(
+      coordinator.CoordinatorConfig(
+        ..coordinator.config(wire.phoenix_codec()),
+        channel_limiter: option.Some(limiter),
+        channel_limiter_max_keys_per_socket: 2,
+      ),
+    )
+  let sent = process.new_subject()
+  let assert Ok(_) = register_test_channel(coord, sent)
+
+  connect(coord, sent, "socket-leave")
+  join(coord, "socket-leave", "room:one")
+  join(coord, "socket-leave", "room:two")
+  event(coord, "socket-leave", "room:one", "ref-one")
+  event(coord, "socket-leave", "room:two", "ref-two")
+  process.sleep(20)
+  rate_limit.bucket_count(limiter) |> should.equal(2)
+
+  leave(coord, "socket-leave", "room:one", "leave-one")
+  join(coord, "socket-leave", "room:three")
+  process.sleep(20)
+  drain(sent)
+  event(coord, "socket-leave", "room:three", "ref-three")
+  process.sleep(20)
+
+  let assert Ok("handled") = process.receive(sent, 100)
+  rate_limit.bucket_count(limiter) |> should.equal(2)
+  rate_limit.stop(limiter)
+}
+
 fn send_unjoined_events(
   coord: process.Subject(coordinator.Message),
   remaining: Int,
@@ -172,6 +206,32 @@ fn event(
       <> topic
       <> "\",\"client_event\",{}]",
   )
+}
+
+fn leave(
+  coord: process.Subject(coordinator.Message),
+  socket_id: String,
+  topic: String,
+  ref: String,
+) -> Nil {
+  coordinator.route_message(
+    coord,
+    socket_id,
+    "[\"join-"
+      <> topic
+      <> "\",\""
+      <> ref
+      <> "\",\""
+      <> topic
+      <> "\",\"phx_leave\",{}]",
+  )
+}
+
+fn drain(subject: process.Subject(String)) -> Nil {
+  case process.receive(subject, 0) {
+    Ok(_) -> drain(subject)
+    Error(Nil) -> Nil
+  }
 }
 
 fn register_test_channel(
