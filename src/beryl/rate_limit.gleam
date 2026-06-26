@@ -207,6 +207,9 @@ fn check_key_capped(
 @external(erlang, "beryl_ffi", "string_starts_with")
 fn string_starts_with(string: String, prefix: String) -> Bool
 
+// Send a registry request without letting timeouts or dead subjects exit the
+// caller. If the limiter is unavailable, return the provided fallback so rate
+// limiting fails open instead of taking down the coordinator.
 fn request(
   subject: Subject(message),
   timeout_ms: Int,
