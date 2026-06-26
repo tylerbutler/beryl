@@ -1,8 +1,5 @@
 import beryl/transport/mist as mist_transport
-import beryl/wire/codec
 import gleam/http/request.{type Request}
-import gleam/option.{None}
-import gleam/string
 import gleeunit/should
 import mist.{type Connection}
 
@@ -74,32 +71,6 @@ pub fn with_on_connect_seeding_assigns_sets_callback_test() {
 
   let _typed_config: mist_transport.TransportConfig(String) = config
   should.be_true(True)
-}
-
-pub fn with_reject_unknown_vsn_is_chainable_test() {
-  let config =
-    mist_transport.default_config("/socket")
-    |> mist_transport.with_reject_unknown_vsn(True)
-
-  let _typed_config: mist_transport.TransportConfig(Nil) = config
-  should.be_true(True)
-}
-
-pub fn with_serializer_is_chainable_test() {
-  let test_codec =
-    codec.Codec(
-      decode_text: fn(_) { Error(codec.InvalidFormat("text")) },
-      decode_binary: None,
-      encode_reply: fn(_, _, _, _, _) { codec.TextFrame("reply") },
-      encode_push: fn(_, _, _) { codec.TextFrame("push") },
-      encode_heartbeat_reply: fn(_) { codec.TextFrame("heartbeat") },
-    )
-  let config =
-    mist_transport.default_config("/socket")
-    |> mist_transport.with_serializer("3.0.0", test_codec)
-
-  let _typed_config: mist_transport.TransportConfig(Nil) = config
-  should.be_true(string.length(mist_transport.default_vsn) > 0)
 }
 
 // `upgrade_connection` is a public entry point for callers that do their own

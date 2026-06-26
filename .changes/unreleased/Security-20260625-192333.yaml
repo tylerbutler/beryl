@@ -1,0 +1,6 @@
+kind: Security
+body: |-
+  Prevent channel rate limiting from creating unbounded buckets for client-controlled topics.
+
+  BREAKING: `beryl.Config` includes `channel_rate_max_keys_per_socket` so the cap can be configured.
+time: 2026-06-25T19:23:33.710384495-07:00

@@ -141,6 +141,9 @@ fn start_supervised(
       message_limiter: message_limiter,
       join_limiter: join_limiter,
       channel_limiter: channel_limiter,
+      channel_limiter_max_keys_per_socket: config.channels.channel_rate_max_keys_per_socket,
+      max_topic_length: config.channels.max_topic_length,
+      max_event_length: config.channels.max_event_length,
       logging: coordinator_logging(config.channels.logging),
     )
 

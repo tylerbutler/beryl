@@ -116,6 +116,14 @@ pub type CoordinatorConfig {
     join_limiter: Option(RateLimiter),
     /// Per-channel message rate limiter (None = unlimited)
     channel_limiter: Option(RateLimiter),
+    /// Maximum active channel-limiter keys per socket. Values <= 0 disable the cap.
+    channel_limiter_max_keys_per_socket: Int,
+    /// Maximum byte length for client-supplied topic strings (default: 256).
+    /// Topics exceeding this limit are rejected before reaching a channel handler.
+    max_topic_length: Int,
+    /// Maximum byte length for client-supplied event name strings (default: 64).
+    /// Events exceeding this limit are dropped before reaching a channel handler.
+    max_event_length: Int,
     /// Logging configuration for coordinator diagnostics.
     logging: LoggingConfig,
   )
@@ -132,6 +140,9 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
     message_limiter: None,
     join_limiter: None,
     channel_limiter: None,
+    channel_limiter_max_keys_per_socket: 1000,
+    max_topic_length: 256,
+    max_event_length: 64,
     logging: LoggingConfig(
       level: Info,
       include_payloads: False,
@@ -158,7 +169,9 @@ fn coordinator_logger(state: State) -> Logger {
 }
 
 fn optional_string(value: Option(String)) -> String {
-  option.unwrap(value, "")
+  value
+  |> option.unwrap("")
+  |> topic.sanitize_for_log
 }
 
 fn inbound_kind(kind: codec.InboundKind) -> String {
@@ -574,6 +587,10 @@ fn handle_socket_disconnected(
     Error(Nil) -> [#("socket_id", socket_id)]
   }
   logger |> log.info("Socket disconnected", metadata)
+  actor.continue(disconnect_socket(state, socket_id, channel.Normal))
+}
+
+fn remove_socket_rate_limits(state: State, socket_id: String) -> Nil {
   rate_limit.remove_by_prefix_optional(
     state.config.message_limiter,
     "msg:" <> socket_id,
@@ -586,7 +603,6 @@ fn handle_socket_disconnected(
     state.config.channel_limiter,
     "ch:" <> socket_id <> ":",
   )
-  actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
 fn handle_join(
@@ -740,30 +756,12 @@ fn handle_in(
       actor.continue(state)
     }
     Ok(_) -> {
-      // Check per-channel message rate limit
-      case
-        rate_limit.check_optional(
-          state.config.channel_limiter,
-          "ch:" <> socket_id <> ":" <> topic_name,
-        )
-      {
-        Error(Nil) -> {
-          let logger = coordinator_logger(state)
-          logger
-          |> log.warn("Channel rate limited", [
-            #("socket_id", socket_id),
-            #("topic", topic_name),
-          ])
-          actor.continue(state)
-        }
-        Ok(_) ->
-          handle_in_inner(state, socket_id, topic_name, event, payload, ref)
-      }
+      handle_in_subscribed(state, socket_id, topic_name, event, payload, ref)
     }
   }
 }
 
-fn handle_in_inner(
+fn handle_in_subscribed(
   state: State,
   socket_id: String,
   topic_name: String,
@@ -797,7 +795,7 @@ fn handle_in_inner(
           actor.continue(state)
         }
         True ->
-          route_in_to_handler(
+          handle_in_rate_limited(
             state,
             socket_info,
             socket_id,
@@ -808,6 +806,45 @@ fn handle_in_inner(
           )
       }
     }
+  }
+}
+
+fn handle_in_rate_limited(
+  state: State,
+  socket_info: SocketInfo,
+  socket_id: String,
+  topic_name: String,
+  event: String,
+  payload: Dynamic,
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  case
+    rate_limit.check_capped_optional(
+      state.config.channel_limiter,
+      "ch:" <> socket_id <> ":" <> topic_name,
+      "ch:" <> socket_id <> ":",
+      state.config.channel_limiter_max_keys_per_socket,
+    )
+  {
+    Error(Nil) -> {
+      let logger = coordinator_logger(state)
+      logger
+      |> log.warn("Channel rate limited", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      actor.continue(state)
+    }
+    Ok(_) ->
+      route_in_to_handler(
+        state,
+        socket_info,
+        socket_id,
+        topic_name,
+        event,
+        payload,
+        ref,
+      )
   }
 }
 
@@ -1019,6 +1056,7 @@ fn disconnect_socket(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket_info) -> {
+      remove_socket_rate_limits(state, socket_id)
       let logger = coordinator_logger(state)
       logger
       |> log.debug(
@@ -1216,8 +1254,8 @@ fn handle_route_text(
         list.append(
           [
             #("socket_id", socket_id),
-            #("topic", msg.topic),
-            #("event", inbound_kind(msg.kind)),
+            #("topic", topic.sanitize_for_log(msg.topic)),
+            #("event", topic.sanitize_for_log(inbound_kind(msg.kind))),
             #("ref", optional_string(msg.ref)),
             #("join_ref", optional_string(msg.join_ref)),
           ],
@@ -1236,18 +1274,102 @@ fn dispatch_inbound(
 ) -> actor.Next(State, Message) {
   case msg.kind {
     codec.Join ->
-      handle_join(
-        state,
-        socket_id,
-        msg.topic,
-        msg.payload,
-        msg.join_ref,
-        msg.ref,
-      )
-    codec.Leave -> handle_leave(state, socket_id, msg.topic, msg.ref)
+      case is_valid_topic(msg.topic, state.config) {
+        True ->
+          handle_join(
+            state,
+            socket_id,
+            msg.topic,
+            msg.payload,
+            msg.join_ref,
+            msg.ref,
+          )
+        False -> reject_invalid_join(state, socket_id, msg)
+      }
+    codec.Leave ->
+      case is_valid_topic(msg.topic, state.config) {
+        False -> {
+          let safe_topic = topic.sanitize_for_log(msg.topic)
+          coordinator_logger(state)
+          |> log.warn("Leave dropped: invalid topic", [
+            #("socket_id", socket_id),
+            #("topic", safe_topic),
+          ])
+          actor.continue(state)
+        }
+        True -> handle_leave(state, socket_id, msg.topic, msg.ref)
+      }
     codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
     codec.Event(event) ->
-      handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
+      case
+        is_valid_topic(msg.topic, state.config),
+        is_valid_event(event, state.config)
+      {
+        True, True ->
+          handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
+        False, _ -> {
+          let safe_topic = topic.sanitize_for_log(msg.topic)
+          let safe_event = topic.sanitize_for_log(event)
+          coordinator_logger(state)
+          |> log.warn("Event dropped: invalid topic", [
+            #("socket_id", socket_id),
+            #("topic", safe_topic),
+            #("event", safe_event),
+          ])
+          actor.continue(state)
+        }
+        True, False -> {
+          let safe_event = topic.sanitize_for_log(event)
+          coordinator_logger(state)
+          |> log.warn("Event dropped: invalid event", [
+            #("socket_id", socket_id),
+            #("topic", msg.topic),
+            #("event", safe_event),
+          ])
+          actor.continue(state)
+        }
+      }
+  }
+}
+
+fn is_valid_topic(topic_name: String, config: CoordinatorConfig) -> Bool {
+  string.length(topic_name) <= config.max_topic_length
+  && result.is_ok(topic.validate(topic_name))
+}
+
+fn is_valid_event(event_name: String, config: CoordinatorConfig) -> Bool {
+  string.length(event_name) <= config.max_event_length
+  && result.is_ok(topic.validate_event(event_name))
+}
+
+/// Send a `phx_reply` error for a join with an invalid topic and drop the message.
+fn reject_invalid_join(
+  state: State,
+  socket_id: String,
+  msg: codec.Inbound,
+) -> actor.Next(State, Message) {
+  let logger = coordinator_logger(state)
+  let safe_topic = topic.sanitize_for_log(msg.topic)
+  logger
+  |> log.warn("Join rejected: invalid topic", [
+    #("socket_id", socket_id),
+    #("topic", safe_topic),
+  ])
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> actor.continue(state)
+    Ok(socket_info) -> {
+      let reply =
+        socket_info.codec.encode_reply(
+          msg.join_ref,
+          msg.ref,
+          msg.topic,
+          codec.StatusError,
+          json.object([#("reason", json.string("invalid_topic"))]),
+        )
+      let _send_result =
+        send_frame_logged(state, socket_info, safe_topic, reply)
+      actor.continue(state)
+    }
   }
 }
 
@@ -1646,6 +1768,11 @@ fn do_terminate_channel(
     }
     None -> Nil
   }
+
+  rate_limit.remove_optional(
+    state.config.channel_limiter,
+    "ch:" <> socket_id <> ":" <> topic_name,
+  )
 
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
   let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)

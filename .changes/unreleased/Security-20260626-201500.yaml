@@ -1,0 +1,4 @@
+kind: Security
+body: |-
+  Keep rate limiter checks from blocking on per-key bucket actors and fail open if the limiter registry is unavailable.
+time: 2026-06-26T20:15:00.000000000+00:00

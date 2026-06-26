@@ -147,3 +147,51 @@ pub fn remove_by_prefix_optional_none_is_noop_test() {
   // Should not crash
   rate_limit.remove_by_prefix_optional(option.None, "anything")
 }
+
+pub fn bucket_count_reports_active_keys_test() {
+  let assert Ok(limiter) =
+    rate_limit.start(rate_limit.config(per_second: 100, burst: 2))
+
+  rate_limit.bucket_count(limiter) |> should.equal(0)
+  should.be_ok(rate_limit.check(limiter, "socket:one"))
+  should.be_ok(rate_limit.check(limiter, "socket:two"))
+  rate_limit.bucket_count(limiter) |> should.equal(2)
+
+  rate_limit.remove_by_prefix(limiter, "socket:")
+  process.sleep(10)
+  rate_limit.bucket_count(limiter) |> should.equal(0)
+
+  rate_limit.stop(limiter)
+}
+
+pub fn check_capped_rejects_new_keys_after_cap_test() {
+  let assert Ok(limiter) =
+    rate_limit.start(rate_limit.config(per_second: 100, burst: 2))
+
+  should.be_ok(rate_limit.check_capped(limiter, "socket:one", "socket:", 2))
+  should.be_ok(rate_limit.check_capped(limiter, "socket:two", "socket:", 2))
+  should.be_error(rate_limit.check_capped(limiter, "socket:three", "socket:", 2))
+  rate_limit.bucket_count(limiter) |> should.equal(2)
+
+  should.be_ok(rate_limit.check_capped(limiter, "other:one", "other:", 2))
+  rate_limit.bucket_count(limiter) |> should.equal(3)
+  rate_limit.bucket_count_by_prefix(limiter, "socket:") |> should.equal(2)
+
+  should.be_ok(rate_limit.check_capped(limiter, "socket:one", "socket:", 2))
+
+  rate_limit.stop(limiter)
+}
+
+pub fn stopped_limiter_checks_fail_open_test() {
+  let assert Ok(limiter) =
+    rate_limit.start(rate_limit.config(per_second: 100, burst: 1))
+
+  should.be_ok(rate_limit.check(limiter, "key1"))
+  rate_limit.bucket_count(limiter) |> should.equal(1)
+
+  rate_limit.stop(limiter)
+
+  should.be_ok(rate_limit.check(limiter, "key1"))
+  should.be_ok(rate_limit.check_capped(limiter, "key1", "key:", 1))
+  rate_limit.bucket_count(limiter) |> should.equal(0)
+}
