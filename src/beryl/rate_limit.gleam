@@ -1,7 +1,7 @@
 //// Rate limiting for channels using a token bucket algorithm.
 ////
-//// Provides per-key rate limiting backed by OTP actors. Each key (e.g. socket ID,
-//// topic) gets its own token bucket that refills at a configured rate.
+//// Provides per-key rate limiting backed by a single OTP registry actor. Each
+//// key (e.g. socket ID, topic) stores token bucket state in the registry.
 
 import gleam/bool
 import gleam/dict.{type Dict}
@@ -37,7 +37,7 @@ pub fn config(per_second per_second: Int, burst burst: Int) -> RateLimitConfig {
   RateLimitConfig(per_second: per_second, burst: effective_burst)
 }
 
-// ── Token Bucket Actor ─────────────────────────────────────────────────────
+// ── Token bucket state ─────────────────────────────────────────────────────
 
 type BucketState {
   BucketState(
@@ -46,11 +46,6 @@ type BucketState {
     ns_per_token: Int,
     last_refill_ns: Int,
   )
-}
-
-type BucketMsg {
-  Hit(reply: Subject(Result(Nil, Nil)))
-  BucketShutdown
 }
 
 const one_second_ns = 1_000_000_000
@@ -77,39 +72,16 @@ fn refill(state: BucketState) -> BucketState {
   }
 }
 
-fn handle_bucket_msg(
-  state: BucketState,
-  msg: BucketMsg,
-) -> actor.Next(BucketState, BucketMsg) {
-  case msg {
-    BucketShutdown -> actor.stop()
-    Hit(reply) -> {
-      let state = refill(state)
-      case state.tokens_ns >= state.ns_per_token {
-        True -> {
-          process.send(reply, Ok(Nil))
-          actor.continue(
-            BucketState(
-              ..state,
-              tokens_ns: state.tokens_ns - state.ns_per_token,
-            ),
-          )
-        }
-        False -> {
-          process.send(reply, Error(Nil))
-          actor.continue(state)
-        }
-      }
-    }
+fn take_token(state: BucketState) -> #(BucketState, Result(Nil, Nil)) {
+  let state = refill(state)
+  case state.tokens_ns >= state.ns_per_token {
+    True ->
+      #(
+        BucketState(..state, tokens_ns: state.tokens_ns - state.ns_per_token),
+        Ok(Nil),
+      )
+    False -> #(state, Error(Nil))
   }
-}
-
-fn start_bucket(cfg: RateLimitConfig) -> Result(Subject(BucketMsg), Nil) {
-  actor.new(new_bucket_state(cfg))
-  |> actor.on_message(handle_bucket_msg)
-  |> actor.start
-  |> result.map(fn(started) { started.data })
-  |> result.replace_error(Nil)
 }
 
 // ── Registry (per-key rate limiters) ────────────────────────────────────────
@@ -122,7 +94,7 @@ pub opaque type RateLimiter {
 type RegistryState {
   RegistryState(
     config: RateLimitConfig,
-    buckets: Dict(String, Subject(BucketMsg)),
+    buckets: Dict(String, BucketState),
   )
 }
 
@@ -164,27 +136,22 @@ fn handle_registry_msg(
     }
 
     RemoveKey(key) -> {
-      case dict.get(state.buckets, key) {
-        Ok(bucket) -> process.send(bucket, BucketShutdown)
-        Error(Nil) -> Nil
-      }
       actor.continue(
         RegistryState(..state, buckets: dict.delete(state.buckets, key)),
       )
     }
 
     RemoveByPrefix(prefix) -> {
-      let #(to_remove, to_keep) =
+      let #(_ignored, to_keep) =
         dict.to_list(state.buckets)
         |> split_by_prefix(prefix, [], [])
-      shut_down_buckets(to_remove)
       actor.continue(RegistryState(..state, buckets: dict.from_list(to_keep)))
     }
   }
 }
 
 fn count_by_prefix(
-  buckets: Dict(String, Subject(BucketMsg)),
+  buckets: Dict(String, BucketState),
   prefix: String,
 ) -> Int {
   dict.to_list(buckets)
@@ -199,23 +166,18 @@ fn check_key(
 ) -> RegistryState {
   case dict.get(state.buckets, key) {
     Ok(bucket) -> {
-      hit_bucket(bucket, reply)
-      state
+      let #(updated_bucket, check_result) = take_token(bucket)
+      process.send(reply, check_result)
+      RegistryState(
+        ..state,
+        buckets: dict.insert(state.buckets, key, updated_bucket),
+      )
     }
-    Error(Nil) ->
-      case start_bucket(state.config) {
-        Ok(bucket) -> {
-          hit_bucket(bucket, reply)
-          RegistryState(
-            ..state,
-            buckets: dict.insert(state.buckets, key, bucket),
-          )
-        }
-        Error(Nil) -> {
-          process.send(reply, Error(Nil))
-          state
-        }
-      }
+    Error(Nil) -> {
+      let #(new_bucket, check_result) = take_token(new_bucket_state(state.config))
+      process.send(reply, check_result)
+      RegistryState(..state, buckets: dict.insert(state.buckets, key, new_bucket))
+    }
   }
 }
 
@@ -227,10 +189,7 @@ fn check_key_capped(
   reply: Subject(Result(Nil, Nil)),
 ) -> RegistryState {
   case dict.get(state.buckets, key) {
-    Ok(bucket) -> {
-      hit_bucket(bucket, reply)
-      state
-    }
+    Ok(_) -> check_key(state, key, reply)
     Error(Nil) -> {
       case max_keys > 0 && count_by_prefix(state.buckets, prefix) >= max_keys {
         True -> {
@@ -243,20 +202,12 @@ fn check_key_capped(
   }
 }
 
-fn hit_bucket(
-  bucket: Subject(BucketMsg),
-  reply: Subject(Result(Nil, Nil)),
-) -> Nil {
-  let result = process.call(bucket, 100, fn(r) { Hit(reply: r) })
-  process.send(reply, result)
-}
-
 fn split_by_prefix(
-  entries: List(#(String, Subject(BucketMsg))),
+  entries: List(#(String, BucketState)),
   prefix: String,
-  matching: List(#(String, Subject(BucketMsg))),
-  rest: List(#(String, Subject(BucketMsg))),
-) -> #(List(#(String, Subject(BucketMsg))), List(#(String, Subject(BucketMsg)))) {
+  matching: List(#(String, BucketState)),
+  rest: List(#(String, BucketState)),
+) -> #(List(#(String, BucketState)), List(#(String, BucketState))) {
   case entries {
     [] -> #(matching, rest)
     [#(key, bucket), ..tail] -> {
@@ -270,12 +221,27 @@ fn split_by_prefix(
   }
 }
 
-fn shut_down_buckets(buckets: List(#(String, Subject(BucketMsg)))) -> Nil {
-  list.each(buckets, fn(kv) { process.send(kv.1, BucketShutdown) })
-}
-
 @external(erlang, "beryl_ffi", "string_starts_with")
 fn string_starts_with(string: String, prefix: String) -> Bool
+
+fn request(
+  subject: Subject(message),
+  timeout_ms: Int,
+  build_message: fn(Subject(response)) -> message,
+  fallback: response,
+) -> response {
+  case process.subject_owner(subject) {
+    Error(Nil) -> fallback
+    Ok(_) -> {
+      let reply_subject = process.new_subject()
+      process.send(subject, build_message(reply_subject))
+      case process.receive(reply_subject, timeout_ms) {
+        Ok(value) -> value
+        Error(Nil) -> fallback
+      }
+    }
+  }
+}
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -293,7 +259,7 @@ pub fn start(cfg: RateLimitConfig) -> Result(RateLimiter, Nil) {
 /// Check if a request for the given key is allowed.
 /// Returns Ok(Nil) if allowed, Error(Nil) if rate limited.
 pub fn check(limiter: RateLimiter, key: String) -> Result(Nil, Nil) {
-  process.call(limiter.subject, 100, fn(reply) { Check(key, reply) })
+  request(limiter.subject, 100, fn(reply) { Check(key, reply) }, Ok(Nil))
 }
 
 /// Check if a request is allowed, rejecting new keys after a per-prefix cap.
@@ -303,9 +269,14 @@ pub fn check_capped(
   prefix: String,
   max_keys: Int,
 ) -> Result(Nil, Nil) {
-  process.call(limiter.subject, 100, fn(reply) {
-    CheckCapped(key: key, prefix: prefix, max_keys: max_keys, reply: reply)
-  })
+  request(
+    limiter.subject,
+    100,
+    fn(reply) {
+      CheckCapped(key: key, prefix: prefix, max_keys: max_keys, reply: reply)
+    },
+    Ok(Nil),
+  )
 }
 
 /// Check an optional rate limiter. If None, always allows.
@@ -334,14 +305,17 @@ pub fn check_capped_optional(
 
 /// Return the number of active token buckets in the registry.
 pub fn bucket_count(limiter: RateLimiter) -> Int {
-  process.call(limiter.subject, 100, fn(reply) { Count(reply: reply) })
+  request(limiter.subject, 100, fn(reply) { Count(reply: reply) }, 0)
 }
 
 /// Return the number of active token buckets matching a key prefix.
 pub fn bucket_count_by_prefix(limiter: RateLimiter, prefix: String) -> Int {
-  process.call(limiter.subject, 100, fn(reply) {
-    CountByPrefix(prefix: prefix, reply: reply)
-  })
+  request(
+    limiter.subject,
+    100,
+    fn(reply) { CountByPrefix(prefix: prefix, reply: reply) },
+    0,
+  )
 }
 
 /// Remove rate limit state for an exact key.

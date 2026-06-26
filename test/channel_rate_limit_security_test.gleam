@@ -7,6 +7,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/json
 import gleam/option
+import gleam/string
 import gleeunit
 import gleeunit/should
 
@@ -133,6 +134,29 @@ pub fn leave_removes_channel_bucket_so_cap_recovers_test() {
   let assert Ok("handled") = process.receive(sent, 100)
   rate_limit.bucket_count(limiter) |> should.equal(2)
   rate_limit.stop(limiter)
+}
+
+pub fn stopped_join_limiter_does_not_crash_coordinator_test() {
+  let assert Ok(limiter) =
+    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
+  let assert Ok(coord) =
+    coordinator.start_with_config(
+      coordinator.CoordinatorConfig(
+        ..coordinator.config(wire.phoenix_codec()),
+        join_limiter: option.Some(limiter),
+      ),
+    )
+  let sent = process.new_subject()
+  let assert Ok(_) = register_test_channel(coord, sent)
+
+  connect(coord, sent, "socket-dead-limiter")
+  rate_limit.stop(limiter)
+  process.sleep(10)
+
+  join(coord, "socket-dead-limiter", "room:alive")
+
+  let assert Ok(join_reply) = process.receive(sent, 200)
+  join_reply |> string.contains("phx_reply") |> should.be_true
 }
 
 fn send_unjoined_events(

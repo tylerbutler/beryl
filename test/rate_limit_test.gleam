@@ -181,3 +181,15 @@ pub fn check_capped_rejects_new_keys_after_cap_test() {
 
   rate_limit.stop(limiter)
 }
+
+pub fn stopped_limiter_checks_fail_open_test() {
+  let assert Ok(limiter) =
+    rate_limit.start(rate_limit.config(per_second: 100, burst: 1))
+
+  rate_limit.stop(limiter)
+  process.sleep(10)
+
+  should.be_ok(rate_limit.check(limiter, "key1"))
+  should.be_ok(rate_limit.check_capped(limiter, "key1", "key:", 1))
+  rate_limit.bucket_count(limiter) |> should.equal(0)
+}
