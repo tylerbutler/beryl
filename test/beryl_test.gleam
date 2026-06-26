@@ -206,7 +206,7 @@ pub fn validate_event_test() {
   |> should.equal(Ok("phx_join"))
 
   topic.validate_event("")
-  |> should.equal(Error(topic.EmptyTopic))
+  |> should.be_error
 
   topic.validate_event("event\ninjection")
   |> should.be_error

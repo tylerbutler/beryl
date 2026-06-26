@@ -261,7 +261,10 @@ pub fn validate(topic: String) -> Result(String, TopicError) {
 /// - Not be empty
 /// - Not contain control characters (codepoints 0–31 or 127)
 pub fn validate_event(event: String) -> Result(String, TopicError) {
-  use <- bool.guard(when: string.is_empty(event), return: Error(EmptyTopic))
+  use <- bool.guard(
+    when: string.is_empty(event),
+    return: Error(InvalidFormat("event name is empty")),
+  )
   use <- bool.guard(
     when: has_control_characters(event),
     return: Error(InvalidFormat("event contains control characters")),

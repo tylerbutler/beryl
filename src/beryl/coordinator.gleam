@@ -1272,10 +1272,8 @@ fn dispatch_inbound(
 ) -> actor.Next(State, Message) {
   case msg.kind {
     codec.Join ->
-      case result.is_ok(topic.validate(msg.topic)),
-        string.length(msg.topic) <= state.config.max_topic_length
-      {
-        True, True ->
+      case is_valid_topic(msg.topic, state.config) {
+        True ->
           handle_join(
             state,
             socket_id,
@@ -1284,28 +1282,62 @@ fn dispatch_inbound(
             msg.join_ref,
             msg.ref,
           )
-        _, _ -> reject_invalid_join(state, socket_id, msg)
+        False -> reject_invalid_join(state, socket_id, msg)
       }
-    codec.Leave -> {
-      use <- bool.guard(
-        when: !result.is_ok(topic.validate(msg.topic))
-          || string.length(msg.topic) > state.config.max_topic_length,
-        return: actor.continue(state),
-      )
-      handle_leave(state, socket_id, msg.topic, msg.ref)
-    }
+    codec.Leave ->
+      case is_valid_topic(msg.topic, state.config) {
+        False -> {
+          let safe_topic = topic.sanitize_for_log(msg.topic)
+          coordinator_logger(state)
+          |> log.warn("Leave dropped: invalid topic", [
+            #("socket_id", socket_id),
+            #("topic", safe_topic),
+          ])
+          actor.continue(state)
+        }
+        True -> handle_leave(state, socket_id, msg.topic, msg.ref)
+      }
     codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
-    codec.Event(event) -> {
-      use <- bool.guard(
-        when: !result.is_ok(topic.validate(msg.topic))
-          || string.length(msg.topic) > state.config.max_topic_length
-          || !result.is_ok(topic.validate_event(event))
-          || string.length(event) > state.config.max_event_length,
-        return: actor.continue(state),
-      )
-      handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
-    }
+    codec.Event(event) ->
+      case
+        is_valid_topic(msg.topic, state.config),
+        is_valid_event(event, state.config)
+      {
+        True, True ->
+          handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
+        False, _ -> {
+          let safe_topic = topic.sanitize_for_log(msg.topic)
+          let safe_event = topic.sanitize_for_log(event)
+          coordinator_logger(state)
+          |> log.warn("Event dropped: invalid topic", [
+            #("socket_id", socket_id),
+            #("topic", safe_topic),
+            #("event", safe_event),
+          ])
+          actor.continue(state)
+        }
+        True, False -> {
+          let safe_event = topic.sanitize_for_log(event)
+          coordinator_logger(state)
+          |> log.warn("Event dropped: invalid event", [
+            #("socket_id", socket_id),
+            #("topic", msg.topic),
+            #("event", safe_event),
+          ])
+          actor.continue(state)
+        }
+      }
   }
+}
+
+fn is_valid_topic(topic_name: String, config: CoordinatorConfig) -> Bool {
+  string.length(topic_name) <= config.max_topic_length
+  && result.is_ok(topic.validate(topic_name))
+}
+
+fn is_valid_event(event_name: String, config: CoordinatorConfig) -> Bool {
+  string.length(event_name) <= config.max_event_length
+  && result.is_ok(topic.validate_event(event_name))
 }
 
 /// Send a `phx_reply` error for a join with an invalid topic and drop the message.
