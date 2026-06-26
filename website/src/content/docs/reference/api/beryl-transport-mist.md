@@ -37,17 +37,6 @@ Configuration for the Mist WebSocket transport
 pub type TransportConfig(a)
 ```
 
-## Constants
-
-### `default_vsn`
-
-Phoenix `vsn` value used by the historical JSON serializer. Connections
- that omit `vsn` or send this value use the coordinator's configured codec.
-
-```gleam
-pub const default_vsn: String
-```
-
 ## Functions
 
 ### `default_config`
@@ -124,11 +113,6 @@ Alternative: upgrade any request to WebSocket (caller handles path matching)
  assigns. If you need authentication or seeded assigns, either use `upgrade`
  with a full config or call your auth check before this function.
 
- The connection's serializer is negotiated from `?vsn=...`, but no custom
- serializers are registered, so the coordinator's configured codec is always
- used. Use `upgrade` with a configured `TransportConfig` to enable
- per-`vsn` serializers.
-
 ```gleam
 pub fn upgrade_connection(
   request.Request(http.Connection),
@@ -151,41 +135,4 @@ pub fn with_on_connect(
   TransportConfig(a),
   fn(request.Request(http.Connection)) -> Result(b, ConnectError)
 ) -> TransportConfig(b)
-```
-
-### `with_reject_unknown_vsn`
-
-Reject upgrade requests whose `vsn` has no registered serializer.
-
- When set, an unknown `vsn` (other than `default_vsn`) responds with
- `400 Bad Request` instead of falling back to the configured codec.
-
-```gleam
-pub fn with_reject_unknown_vsn(
-  TransportConfig(a),
-  Bool
-) -> TransportConfig(a)
-```
-
-### `with_serializer`
-
-Register a serializer for a Phoenix `vsn` value.
-
- Incoming connections that request this `vsn` (via `?vsn=...`) use the
- supplied codec for the lifetime of the connection. This is how a
- MessagePack codec is wired to `vsn=3.0.0`:
-
- ```gleam
- mist_transport.default_config("/socket")
- |> mist_transport.with_serializer("3.0.0", my_msgpack_codec())
- ```
-
- Registering the same `vsn` twice keeps the most recently added codec.
-
-```gleam
-pub fn with_serializer(
-  TransportConfig(a),
-  String,
-  codec.Codec
-) -> TransportConfig(a)
 ```
