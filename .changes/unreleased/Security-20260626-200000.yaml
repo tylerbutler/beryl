@@ -1,0 +1,16 @@
+kind: Security
+body: |-
+  Validate client-supplied topic and event strings to prevent log injection and unbounded key DoS.
+
+  `topic.validate` now correctly rejects topics containing control characters (codepoints 0–31 and 127) as
+  documented. Topics and events with control characters or exceeding the configurable length limits are
+  rejected before reaching channel handlers or log metadata.
+
+  New public API:
+  - `topic.validate_event/1` — validates event name strings
+  - `topic.sanitize_for_log/1` — replaces control characters with `?` for safe log output
+  - `beryl.with_max_topic_length/2` — configures the max topic length (default 256)
+  - `beryl.with_max_event_length/2` — configures the max event name length (default 64)
+
+  Joins with invalid topics receive a `phx_reply` error with `reason: "invalid_topic"`.
+time: 2026-06-26T20:00:00.000000000+00:00

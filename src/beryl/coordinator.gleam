@@ -118,6 +118,12 @@ pub type CoordinatorConfig {
     channel_limiter: Option(RateLimiter),
     /// Maximum active channel-limiter keys per socket. Values <= 0 disable the cap.
     channel_limiter_max_keys_per_socket: Int,
+    /// Maximum byte length for client-supplied topic strings (default: 256).
+    /// Topics exceeding this limit are rejected before reaching a channel handler.
+    max_topic_length: Int,
+    /// Maximum byte length for client-supplied event name strings (default: 64).
+    /// Events exceeding this limit are dropped before reaching a channel handler.
+    max_event_length: Int,
     /// Logging configuration for coordinator diagnostics.
     logging: LoggingConfig,
   )
@@ -135,6 +141,8 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
     join_limiter: None,
     channel_limiter: None,
     channel_limiter_max_keys_per_socket: 1000,
+    max_topic_length: 256,
+    max_event_length: 64,
     logging: LoggingConfig(
       level: Info,
       include_payloads: False,
@@ -1244,8 +1252,8 @@ fn handle_route_text(
         list.append(
           [
             #("socket_id", socket_id),
-            #("topic", msg.topic),
-            #("event", inbound_kind(msg.kind)),
+            #("topic", topic.sanitize_for_log(msg.topic)),
+            #("event", topic.sanitize_for_log(inbound_kind(msg.kind))),
             #("ref", optional_string(msg.ref)),
             #("join_ref", optional_string(msg.join_ref)),
           ],
@@ -1264,18 +1272,70 @@ fn dispatch_inbound(
 ) -> actor.Next(State, Message) {
   case msg.kind {
     codec.Join ->
-      handle_join(
-        state,
-        socket_id,
-        msg.topic,
-        msg.payload,
-        msg.join_ref,
-        msg.ref,
+      case result.is_ok(topic.validate(msg.topic)),
+        string.length(msg.topic) <= state.config.max_topic_length
+      {
+        True, True ->
+          handle_join(
+            state,
+            socket_id,
+            msg.topic,
+            msg.payload,
+            msg.join_ref,
+            msg.ref,
+          )
+        _, _ -> reject_invalid_join(state, socket_id, msg)
+      }
+    codec.Leave -> {
+      use <- bool.guard(
+        when: !result.is_ok(topic.validate(msg.topic))
+          || string.length(msg.topic) > state.config.max_topic_length,
+        return: actor.continue(state),
       )
-    codec.Leave -> handle_leave(state, socket_id, msg.topic, msg.ref)
+      handle_leave(state, socket_id, msg.topic, msg.ref)
+    }
     codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
-    codec.Event(event) ->
+    codec.Event(event) -> {
+      use <- bool.guard(
+        when: !result.is_ok(topic.validate(msg.topic))
+          || string.length(msg.topic) > state.config.max_topic_length
+          || !result.is_ok(topic.validate_event(event))
+          || string.length(event) > state.config.max_event_length,
+        return: actor.continue(state),
+      )
       handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
+    }
+  }
+}
+
+/// Send a `phx_reply` error for a join with an invalid topic and drop the message.
+fn reject_invalid_join(
+  state: State,
+  socket_id: String,
+  msg: codec.Inbound,
+) -> actor.Next(State, Message) {
+  let logger = coordinator_logger(state)
+  let safe_topic = topic.sanitize_for_log(msg.topic)
+  logger
+  |> log.warn("Join rejected: invalid topic", [
+    #("socket_id", socket_id),
+    #("topic", safe_topic),
+  ])
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> actor.continue(state)
+    Ok(socket_info) -> {
+      let reply =
+        socket_info.codec.encode_reply(
+          msg.join_ref,
+          msg.ref,
+          msg.topic,
+          codec.StatusError,
+          json.object([#("reason", json.string("invalid_topic"))]),
+        )
+      let _send_result =
+        send_frame_logged(state, socket_info, safe_topic, reply)
+      actor.continue(state)
+    }
   }
 }
 
