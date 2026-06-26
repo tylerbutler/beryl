@@ -1,4 +1,0 @@
-kind: Added
-body: |-
-  Transport — per-connection wire serializer negotiation from the Phoenix `vsn` query parameter. `mist_transport.with_serializer/3` registers a `beryl/wire/codec.Codec` for a given `vsn` (e.g. a MessagePack codec for `vsn=3.0.0`), and the transport selects it per connection: it decodes inbound binary frames and encodes that connection's replies/pushes with the negotiated serializer. Connections without a `vsn` or with `vsn=2.0.0` keep using the configured JSON codec unchanged. Unsupported `vsn` values fall back to the configured codec, or can be rejected with `400` via `mist_transport.with_reject_unknown_vsn/2`. MessagePack remains an optional, downstream-supplied codec (no new runtime dependency).
-time: 2026-06-13T03:51:07.085817+00:00
