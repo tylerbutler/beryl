@@ -16,6 +16,7 @@ import gleam/otp/static_supervisor.{type Supervisor}
 import gleam/result
 import gleeunit
 import gleeunit/should
+import gluegun/websocket
 import mist
 
 const socket_path = "/socket/websocket"
@@ -30,6 +31,7 @@ type TestServer {
 
 type TestEvent {
   Joined(String)
+  Terminated(String, bchannel.StopReason)
 }
 
 @external(erlang, "beryl_ffi", "stop_supervisor")
@@ -60,7 +62,7 @@ pub fn aquamarine_client_joins_real_beryl_server_test() {
       codec: phoenix.codec(),
     )
 
-  let assert Ok(Joined("test:lobby")) = process.receive(events, 1000)
+  let assert Ok(Nil) = receive_joined(events, "test:lobby")
 
   let assert Ok(Nil) = aquamarine.close(channel)
   stop_test_server(server)
@@ -111,6 +113,7 @@ fn register_lobby(
   channels: beryl.Channels,
   events: process.Subject(TestEvent),
 ) -> Nil {
+  let topic = "test:lobby"
   let lobby =
     bchannel.new(fn(topic, _payload, socket) {
       process.send(events, Joined(topic))
@@ -118,6 +121,9 @@ fn register_lobby(
         reply: option.Some(json.object([#("welcome", json.bool(True))])),
         socket: socket,
       )
+    })
+    |> bchannel.with_terminate(fn(reason, _socket) {
+      process.send(events, Terminated(topic, reason))
     })
   let assert Ok(_) = beryl.register(channels, "test:lobby", lobby)
   Nil
@@ -185,7 +191,7 @@ pub fn aquamarine_client_receives_server_broadcast_test() {
       codec: phoenix.codec(),
     )
 
-  let assert Ok(Joined("test:lobby")) = process.receive(events, 1000)
+  let assert Ok(Nil) = receive_joined(events, "test:lobby")
   process.sleep(25)
 
   beryl.broadcast(
@@ -201,6 +207,50 @@ pub fn aquamarine_client_receives_server_broadcast_test() {
   decode_n(incoming.payload) |> should.equal(Ok(42))
 
   let assert Ok(Nil) = aquamarine.close(channel)
+  stop_test_server(server)
+}
+
+pub fn aquamarine_close_terminates_joined_channel_test() {
+  let events = process.new_subject()
+  let assert Ok(server) = start_test_server(register_lobby, events)
+
+  let assert Ok(channel) =
+    aquamarine.connect(
+      host: "127.0.0.1",
+      port: server.port,
+      path: socket_path,
+      topic: "test:lobby",
+      payload: json.object([]),
+      codec: phoenix.codec(),
+    )
+
+  let assert Ok(Nil) = receive_joined(events, "test:lobby")
+  let assert Ok(Nil) = aquamarine.close(channel)
+  let assert Ok(reason) = receive_terminated(events, "test:lobby")
+  reason |> should.equal(bchannel.Normal)
+
+  stop_test_server(server)
+}
+
+pub fn gluegun_raw_malformed_frame_gets_error_reply_test() {
+  let events = process.new_subject()
+  let assert Ok(server) = start_test_server(register_lobby, events)
+
+  let result =
+    websocket.with_socket(
+      host: "127.0.0.1",
+      port: server.port,
+      path: socket_path,
+      options: websocket.options(),
+      callback: fn(socket) {
+        let assert Ok(Nil) = websocket.send_text(socket, "not json")
+        websocket.receive_app_frame(socket)
+      },
+    )
+
+  // Current Beryl contract: malformed text frames time out rather than reply.
+  result |> should.be_error
+
   stop_test_server(server)
 }
 
@@ -261,4 +311,25 @@ fn decode_n(payload) -> Result(Int, Nil) {
 
   decode.run(payload, decoder)
   |> result.map_error(fn(_) { Nil })
+}
+
+fn receive_joined(
+  events: process.Subject(TestEvent),
+  topic: String,
+) -> Result(Nil, Nil) {
+  case process.receive(events, 500) {
+    Ok(Joined(joined_topic)) if joined_topic == topic -> Ok(Nil)
+    _ -> Error(Nil)
+  }
+}
+
+fn receive_terminated(
+  events: process.Subject(TestEvent),
+  topic: String,
+) -> Result(bchannel.StopReason, Nil) {
+  case process.receive(events, 500) {
+    Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic ->
+      Ok(reason)
+    _ -> Error(Nil)
+  }
 }
