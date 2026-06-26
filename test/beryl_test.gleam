@@ -176,6 +176,139 @@ pub fn validate_topic_test() {
   |> should.be_error
 }
 
+pub fn validate_topic_rejects_control_characters_test() {
+  // Newline
+  topic.validate("room:\nlobby")
+  |> should.be_error
+
+  // Tab
+  topic.validate("room:\tlobby")
+  |> should.be_error
+
+  // Null byte
+  topic.validate("room:\u{0000}lobby")
+  |> should.be_error
+
+  // DEL (127)
+  topic.validate("room:\u{007F}lobby")
+  |> should.be_error
+
+  // Control char at start
+  topic.validate("\u{0001}room:lobby")
+  |> should.be_error
+}
+
+pub fn validate_event_test() {
+  topic.validate_event("new_message")
+  |> should.equal(Ok("new_message"))
+
+  topic.validate_event("phx_join")
+  |> should.equal(Ok("phx_join"))
+
+  topic.validate_event("")
+  |> should.be_error
+
+  topic.validate_event("event\ninjection")
+  |> should.be_error
+
+  topic.validate_event("event\u{0000}null")
+  |> should.be_error
+}
+
+pub fn sanitize_for_log_test() {
+  topic.sanitize_for_log("room:lobby")
+  |> should.equal("room:lobby")
+
+  topic.sanitize_for_log("room:\nlobby")
+  |> should.equal("room:?lobby")
+
+  topic.sanitize_for_log("room:\tlobby")
+  |> should.equal("room:?lobby")
+
+  topic.sanitize_for_log("room:\u{007F}lobby")
+  |> should.equal("room:?lobby")
+
+  topic.sanitize_for_log("")
+  |> should.equal("")
+}
+
+pub fn join_with_control_character_topic_gets_error_reply_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let sent_messages = process.new_subject()
+
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-ctrl-join",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+
+  // Topic contains a newline — should be rejected before reaching the handler
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-ctrl-join",
+    "[null,\"ref-1\",\"room:\\nlobby\",\"phx_join\",{}]",
+  )
+
+  let assert Ok(reply) = process.receive(sent_messages, 500)
+  reply |> string.contains("phx_reply") |> should.be_true
+  reply |> string.contains("invalid_topic") |> should.be_true
+}
+
+pub fn join_with_too_long_topic_gets_error_reply_test() {
+  let long_topic = "room:" <> string.repeat("a", 300)
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_topic_length(max_length: 64),
+    )
+  let sent_messages = process.new_subject()
+
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-long-topic",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+
+  // Route a join with a topic longer than max_topic_length
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-long-topic",
+    "[null,\"ref-2\",\"" <> long_topic <> "\",\"phx_join\",{}]",
+  )
+
+  let assert Ok(reply) = process.receive(sent_messages, 500)
+  reply |> string.contains("phx_reply") |> should.be_true
+  reply |> string.contains("invalid_topic") |> should.be_true
+}
+
 pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
@@ -700,6 +833,34 @@ pub fn with_channel_rate_max_keys_per_socket_sets_field_test() {
     |> beryl.with_channel_rate_max_keys_per_socket(max_keys: 42)
 
   cfg.channel_rate_max_keys_per_socket |> should.equal(42)
+}
+
+pub fn default_max_topic_length_is_256_test() {
+  let cfg = beryl.config(wire.phoenix_codec())
+
+  cfg.max_topic_length |> should.equal(256)
+}
+
+pub fn with_max_topic_length_sets_field_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_topic_length(max_length: 128)
+
+  cfg.max_topic_length |> should.equal(128)
+}
+
+pub fn default_max_event_length_is_64_test() {
+  let cfg = beryl.config(wire.phoenix_codec())
+
+  cfg.max_event_length |> should.equal(64)
+}
+
+pub fn with_max_event_length_sets_field_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_event_length(max_length: 32)
+
+  cfg.max_event_length |> should.equal(32)
 }
 
 pub fn extract_topic_id_test() {

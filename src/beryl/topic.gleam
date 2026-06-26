@@ -240,7 +240,7 @@ pub fn from_segments(parts: List(String)) -> String {
 ///
 /// Topics must:
 /// - Not be empty
-/// - Not contain control characters
+/// - Not contain control characters (codepoints 0–31 or 127)
 /// - Not start or end with ":"
 pub fn validate(topic: String) -> Result(String, TopicError) {
   use <- bool.guard(when: string.is_empty(topic), return: Error(EmptyTopic))
@@ -248,7 +248,53 @@ pub fn validate(topic: String) -> Result(String, TopicError) {
     when: string.starts_with(topic, ":") || string.ends_with(topic, ":"),
     return: Error(InvalidFormat("topic cannot start or end with ':'")),
   )
+  use <- bool.guard(
+    when: has_control_characters(topic),
+    return: Error(InvalidFormat("topic contains control characters")),
+  )
   Ok(topic)
+}
+
+/// Validate an event name string
+///
+/// Event names must:
+/// - Not be empty
+/// - Not contain control characters (codepoints 0–31 or 127)
+pub fn validate_event(event: String) -> Result(String, TopicError) {
+  use <- bool.guard(
+    when: string.is_empty(event),
+    return: Error(InvalidFormat("event name is empty")),
+  )
+  use <- bool.guard(
+    when: has_control_characters(event),
+    return: Error(InvalidFormat("event contains control characters")),
+  )
+  Ok(event)
+}
+
+/// Escape control characters in a string for safe use in log metadata.
+///
+/// Replaces codepoints in the range 0–31 and 127 with `?` so that
+/// client-supplied strings cannot inject additional fields into structured
+/// log output.
+pub fn sanitize_for_log(value: String) -> String {
+  string.to_utf_codepoints(value)
+  |> list.map(fn(codepoint) {
+    let code = string.utf_codepoint_to_int(codepoint)
+    case code < 32 || code == 127 {
+      True -> "?"
+      False -> string.from_utf_codepoints([codepoint])
+    }
+  })
+  |> string.join("")
+}
+
+fn has_control_characters(value: String) -> Bool {
+  string.to_utf_codepoints(value)
+  |> list.any(fn(codepoint) {
+    let code = string.utf_codepoint_to_int(codepoint)
+    code < 32 || code == 127
+  })
 }
 
 pub type TopicError {

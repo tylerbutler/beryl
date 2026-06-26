@@ -179,7 +179,7 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
   coordinator.route_message(
     beryl.coordinator_subject(channels),
     "logging-socket",
-    "[null,\"ref\",\"room:lobby\",\"phx_join\",{\"secret\":\"token\"}]",
+    "[\"join\\nref\",\"ref\\rfield\",\"room:lobby\",\"phx_join\",{\"secret\":\"token\"}]",
   )
 
   let assert Ok(captured) =
@@ -190,6 +190,10 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
   |> should.equal(Ok("logging-socket"))
   get_metadata(captured, "topic")
   |> should.equal(Ok("room:lobby"))
+  get_metadata(captured, "ref")
+  |> should.equal(Ok("ref?field"))
+  get_metadata(captured, "join_ref")
+  |> should.equal(Ok("join?ref"))
   get_metadata(captured, "frame_preview")
   |> should.equal(Error(Nil))
   stop_capture()

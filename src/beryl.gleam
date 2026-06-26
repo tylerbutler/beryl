@@ -141,6 +141,13 @@ pub type Config {
     /// Maximum active per-channel rate-limit buckets per socket.
     /// Values <= 0 disable the cap.
     channel_rate_max_keys_per_socket: Int,
+    /// Maximum byte length for client-supplied topic strings (default: 256).
+    /// Topics exceeding this limit are rejected with a `phx_reply` error before
+    /// reaching a channel handler.
+    max_topic_length: Int,
+    /// Maximum byte length for client-supplied event name strings (default: 64).
+    /// Events exceeding this limit are dropped before reaching a channel handler.
+    max_event_length: Int,
     /// Logging configuration for Beryl diagnostics
     logging: LoggingConfig,
   )
@@ -181,6 +188,8 @@ pub fn config(codec: codec.Codec) -> Config {
     channel_rate: 0,
     channel_burst: 0,
     channel_rate_max_keys_per_socket: 1000,
+    max_topic_length: 256,
+    max_event_length: 64,
     logging: logging_config(level: Info, include_payloads: False),
   )
 }
@@ -259,6 +268,29 @@ pub fn with_channel_rate_max_keys_per_socket(
   max_keys max_keys: Int,
 ) -> Config {
   Config(..config, channel_rate_max_keys_per_socket: max_keys)
+}
+
+/// Configure the maximum allowed length for client-supplied topic strings.
+///
+/// Topics longer than `max_length` are rejected with a `phx_reply` error before
+/// reaching a channel handler, bounding the size of keys stored in the
+/// coordinator's topic registry. The default is 256.
+pub fn with_max_topic_length(
+  config: Config,
+  max_length max_length: Int,
+) -> Config {
+  Config(..config, max_topic_length: max_length)
+}
+
+/// Configure the maximum allowed length for client-supplied event name strings.
+///
+/// Event names longer than `max_length` are dropped before reaching a channel
+/// handler. The default is 64.
+pub fn with_max_event_length(
+  config: Config,
+  max_length max_length: Int,
+) -> Config {
+  Config(..config, max_event_length: max_length)
 }
 
 /// Channels system handle.
@@ -348,6 +380,8 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
       join_limiter: join_limiter,
       channel_limiter: channel_limiter,
       channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
+      max_topic_length: config.max_topic_length,
+      max_event_length: config.max_event_length,
       logging: coordinator_logging(config.logging),
     )
 
