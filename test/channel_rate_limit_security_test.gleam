@@ -157,6 +157,7 @@ pub fn stopped_join_limiter_does_not_crash_coordinator_test() {
 
   let assert Ok(join_reply) = process.receive(sent, 200)
   join_reply |> string.contains("phx_reply") |> should.be_true
+  join_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
 fn send_unjoined_events(

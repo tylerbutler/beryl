@@ -50,6 +50,8 @@ type BucketState {
 
 const one_second_ns = 1_000_000_000
 
+const registry_call_timeout_ms = 100
+
 fn new_bucket_state(cfg: RateLimitConfig) -> BucketState {
   let ns_per_token = one_second_ns / int.max(cfg.per_second, 1)
   BucketState(
@@ -138,7 +140,7 @@ fn handle_registry_msg(
     }
 
     RemoveByPrefix(prefix) -> {
-      let #(_ignored, to_keep) =
+      let #(_, to_keep) =
         dict.to_list(state.buckets)
         |> split_by_prefix(prefix, [], [])
       actor.continue(RegistryState(..state, buckets: dict.from_list(to_keep)))
@@ -256,7 +258,12 @@ pub fn start(cfg: RateLimitConfig) -> Result(RateLimiter, Nil) {
 /// Check if a request for the given key is allowed.
 /// Returns Ok(Nil) if allowed, Error(Nil) if rate limited.
 pub fn check(limiter: RateLimiter, key: String) -> Result(Nil, Nil) {
-  request(limiter.subject, 100, fn(reply) { Check(key, reply) }, Ok(Nil))
+  request(
+    limiter.subject,
+    registry_call_timeout_ms,
+    fn(reply) { Check(key, reply) },
+    Ok(Nil),
+  )
 }
 
 /// Check if a request is allowed, rejecting new keys after a per-prefix cap.
@@ -268,7 +275,7 @@ pub fn check_capped(
 ) -> Result(Nil, Nil) {
   request(
     limiter.subject,
-    100,
+    registry_call_timeout_ms,
     fn(reply) {
       CheckCapped(key: key, prefix: prefix, max_keys: max_keys, reply: reply)
     },
@@ -302,14 +309,19 @@ pub fn check_capped_optional(
 
 /// Return the number of active token buckets in the registry.
 pub fn bucket_count(limiter: RateLimiter) -> Int {
-  request(limiter.subject, 100, fn(reply) { Count(reply: reply) }, 0)
+  request(
+    limiter.subject,
+    registry_call_timeout_ms,
+    fn(reply) { Count(reply: reply) },
+    0,
+  )
 }
 
 /// Return the number of active token buckets matching a key prefix.
 pub fn bucket_count_by_prefix(limiter: RateLimiter, prefix: String) -> Int {
   request(
     limiter.subject,
-    100,
+    registry_call_timeout_ms,
     fn(reply) { CountByPrefix(prefix: prefix, reply: reply) },
     0,
   )
