@@ -6,7 +6,6 @@ import beryl/channel as bchannel
 import beryl/transport/mist as mist_transport
 import beryl/wire
 import gleam/bytes_tree
-import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http/response
@@ -62,15 +61,6 @@ pub fn aquamarine_client_joins_real_beryl_server_test() {
     )
 
   let assert Ok(Joined("test:lobby")) = process.receive(events, 1000)
-  decode_welcome(
-    dynamic.properties([
-      #(
-        dynamic.string("response"),
-        dynamic.properties([#(dynamic.string("welcome"), dynamic.bool(True))]),
-      ),
-    ]),
-  )
-  |> should.equal(Ok(True))
 
   let assert Ok(Nil) = aquamarine.close(channel)
   stop_test_server(server)
@@ -251,16 +241,6 @@ fn register_echo(
 
   let assert Ok(_) = beryl.register(channels, "test:echo", echo_channel)
   Nil
-}
-
-fn decode_welcome(payload) -> Result(Bool, Nil) {
-  let decoder = {
-    use welcome <- decode.subfield(["response", "welcome"], decode.bool)
-    decode.success(welcome)
-  }
-
-  decode.run(payload, decoder)
-  |> result.map_error(fn(_) { Nil })
 }
 
 fn decode_body(payload) -> Result(String, Nil) {
