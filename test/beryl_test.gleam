@@ -269,8 +269,7 @@ pub fn join_with_control_character_topic_gets_error_reply_test() {
 }
 
 pub fn join_with_too_long_topic_gets_error_reply_test() {
-  let long_topic =
-    "room:" <> string.repeat("a", 300)
+  let long_topic = "room:" <> string.repeat("a", 300)
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec())
@@ -302,9 +301,7 @@ pub fn join_with_too_long_topic_gets_error_reply_test() {
   coordinator.route_message(
     beryl.coordinator_subject(channels),
     "socket-long-topic",
-    "[null,\"ref-2\",\""
-      <> long_topic
-      <> "\",\"phx_join\",{}]",
+    "[null,\"ref-2\",\"" <> long_topic <> "\",\"phx_join\",{}]",
   )
 
   let assert Ok(reply) = process.receive(sent_messages, 500)
