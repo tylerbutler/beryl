@@ -143,9 +143,9 @@ fn handle_registry_msg(
     }
 
     RemoveByPrefix(prefix) -> {
-      let #(_, to_keep) =
+      let to_keep =
         dict.to_list(state.buckets)
-        |> split_by_prefix(prefix, [], [])
+        |> list.filter(fn(entry) { !string_starts_with(entry.0, prefix) })
       actor.continue(RegistryState(..state, buckets: dict.from_list(to_keep)))
     }
   }
@@ -199,25 +199,6 @@ fn check_key_capped(
           state
         }
         False -> check_key(state, key, reply)
-      }
-    }
-  }
-}
-
-fn split_by_prefix(
-  entries: List(#(String, BucketState)),
-  prefix: String,
-  matching: List(#(String, BucketState)),
-  rest: List(#(String, BucketState)),
-) -> #(List(#(String, BucketState)), List(#(String, BucketState))) {
-  case entries {
-    [] -> #(matching, rest)
-    [#(key, bucket), ..tail] -> {
-      case string_starts_with(key, prefix) {
-        True ->
-          split_by_prefix(tail, prefix, [#(key, bucket), ..matching], rest)
-        False ->
-          split_by_prefix(tail, prefix, matching, [#(key, bucket), ..rest])
       }
     }
   }
