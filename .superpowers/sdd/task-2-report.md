@@ -20,3 +20,8 @@ self-review:
 
 concerns:
 - None.
+## Task 2 fix report
+- Replaced the test-only TCP port probe with Mist's dynamic binding flow (`mist.port(0)` + `mist.after_start`) in `test/client_contract_test.gleam`.
+- Captured the assigned port from `after_start` and stored it in `TestServer.port`.
+- Removed the `available_port` external and deleted `test/beryl_test_port_ffi.erl`.
+- Verified with `gleam test -- --filter "start_test_server_uses_dynamic_port_test"` and `just test`.

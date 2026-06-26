@@ -15,10 +15,6 @@ import mist
 
 const socket_path = "/socket/websocket"
 
-pub type TestEvent {
-  Terminated(topic: String, reason: bchannel.StopReason)
-}
-
 type TestServer {
   TestServer(
     channels: beryl.Channels,
@@ -26,9 +22,6 @@ type TestServer {
     supervisor: actor.Started(Supervisor),
   )
 }
-
-@external(erlang, "beryl_test_port_ffi", "available_port")
-fn available_port() -> Result(Int, Nil)
 
 @external(erlang, "beryl_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
@@ -38,10 +31,9 @@ pub fn main() {
 }
 
 pub fn start_test_server_uses_dynamic_port_test() {
-  let events = process.new_subject()
-  case start_test_server(fn(channels, _events) {
+  case start_test_server(fn(channels) {
     register_lobby(channels)
-  }, events) {
+  }) {
     Ok(server) -> {
       should.be_true(server.port > 0)
       stop_test_server(server)
@@ -51,12 +43,11 @@ pub fn start_test_server_uses_dynamic_port_test() {
 }
 
 fn start_test_server(
-  register: fn(beryl.Channels, process.Subject(TestEvent)) -> Nil,
-  events: process.Subject(TestEvent),
+  register: fn(beryl.Channels) -> Nil,
 ) -> Result(TestServer, Nil) {
-  let assert Ok(port) = available_port()
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  register(channels, events)
+  register(channels)
+  let port_subject = process.new_subject()
 
   let handler = fn(req) {
     mist_transport.upgrade(
@@ -72,11 +63,17 @@ fn start_test_server(
 
   case
     mist.new(handler)
+    |> mist.port(0)
     |> mist.bind("127.0.0.1")
-    |> mist.port(port)
+    |> mist.after_start(fn(port, _scheme, _ip_address) {
+      process.send(port_subject, port)
+    })
     |> mist.start
   {
-    Ok(supervisor) -> Ok(TestServer(channels, port, supervisor))
+    Ok(supervisor) -> {
+      let assert Ok(port) = process.receive(port_subject, 1000)
+      Ok(TestServer(channels, port, supervisor))
+    }
     Error(_) -> Error(Nil)
   }
 }
