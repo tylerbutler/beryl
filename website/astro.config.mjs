@@ -150,6 +150,10 @@ export default defineConfig({
 							label: "Presence",
 							slug: "architecture/presence",
 						},
+						{
+							label: "Wire & Transport",
+							slug: "architecture/wire-and-transport",
+						},
 					],
 				},
 				{
