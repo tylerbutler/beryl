@@ -18,6 +18,12 @@ let gem: ImageMetadata | undefined;
 if (image && "file" in image) gem = image.file;
 else if (image && "dark" in image) gem = image.dark;
 
+// The presence code card, the gem, and the H1 value clause are homepage-only.
+// The splash 404 reuses this Hero (Starlight renders splash pages through the
+// Hero override), so gate those bits on the gem image — only the home hero
+// sets one. Without it we render a clean wordmark + tagline + actions.
+const isHome = Boolean(gem);
+
 // Real beryl: track who's online and fan changes out to the room as
 // Phoenix-compatible presence diffs. Mirrors the Presence guide exactly.
 const snippet = `import beryl
@@ -43,7 +49,7 @@ let _ref =
 `;
 ---
 
-<section class="bh">
+<section class:list={["bh", { "bh--home": isHome }]}>
 	<div class="bh-facets" aria-hidden="true">
 		<span class="shard shard-1"></span>
 		<span class="shard shard-2"></span>
@@ -52,7 +58,12 @@ let _ref =
 	</div>
 
 	<div class="bh-copy">
-		<h1 id="_top" data-page-title class="bh-wordmark" set:html={title} />
+		<h1 id="_top" data-page-title class="bh-wordmark">
+			<span class="bh-mark" set:html={title} />
+			{isHome && (
+				<span class="bh-sr-only">: real-time channels for Gleam</span>
+			)}
+		</h1>
 		{tagline && <p class="bh-tagline" set:html={tagline} />}
 		{
 			actions.length > 0 && (
@@ -82,24 +93,26 @@ let _ref =
 		}
 	</div>
 
-	<div class="bh-stage">
-		{
-			gem && (
-				<Image
-					src={gem}
-					alt={image && "alt" in image ? image.alt : ""}
-					width={220}
-					height={220}
-					loading="eager"
-					decoding="async"
-					class="bh-gem"
-				/>
-			)
-		}
-		<div class="bh-code">
-			<Code code={snippet} lang="gleam" title="presence.gleam" />
-		</div>
-	</div>
+	{
+		isHome && (
+			<div class="bh-stage">
+				{gem && (
+					<Image
+						src={gem}
+						alt={image && "alt" in image ? image.alt : ""}
+						width={220}
+						height={220}
+						loading="eager"
+						decoding="async"
+						class="bh-gem"
+					/>
+				)}
+				<div class="bh-code">
+					<Code code={snippet} lang="gleam" title="presence.gleam" />
+				</div>
+			</div>
+		)
+	}
 </section>
 
 <style>
@@ -125,9 +138,9 @@ let _ref =
 		position: absolute;
 		display: block;
 		filter: blur(8px);
-		opacity: 0.5;
+		opacity: 0.42;
 		mix-blend-mode: screen;
-		animation: bh-drift 24s ease-in-out 2 both;
+		animation: bh-drift 30s ease-in-out infinite both;
 	}
 	.shard-1 {
 		inset: -8% 38% auto auto;
@@ -203,9 +216,23 @@ let _ref =
 		color: var(--sl-color-white);
 		margin: 0;
 	}
-	.bh-wordmark::after {
+	.bh-wordmark .bh-mark::after {
 		content: ".";
 		color: var(--beryl-magenta);
+	}
+
+	/* Visually hidden, still read by screen readers and weighted by search:
+	   keeps the bold wordmark while the H1 conveys what beryl actually does. */
+	.bh-sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.bh-tagline {
@@ -269,7 +296,7 @@ let _ref =
 		height: auto;
 		z-index: 2;
 		filter: drop-shadow(0 18px 40px var(--beryl-glow));
-		animation: bh-float 8s ease-in-out 2 both;
+		animation: bh-float 9s ease-in-out 1s infinite both;
 	}
 
 	.bh-code {
@@ -322,10 +349,10 @@ let _ref =
 	@keyframes bh-float {
 		0%,
 		100% {
-			transform: translateY(0) rotate(-1deg);
+			transform: translateY(0) rotate(-0.6deg);
 		}
 		50% {
-			transform: translateY(-8px) rotate(1deg);
+			transform: translateY(-5px) rotate(0.6deg);
 		}
 	}
 	@keyframes bh-drift {
@@ -334,7 +361,7 @@ let _ref =
 			transform: translate3d(0, 0, 0) scale(1);
 		}
 		50% {
-			transform: translate3d(0, -2%, 0) scale(1.03);
+			transform: translate3d(0, -1.2%, 0) scale(1.015);
 		}
 	}
 
@@ -342,19 +369,19 @@ let _ref =
 	/* Hold the single-column (full-width code) layout through tablet
 	   portrait (incl. 1024px iPad Pro); only split on true desktop widths. */
 	@media (min-width: 68rem) {
-		.bh {
+		.bh--home {
 			grid-template-columns: 5fr 6fr;
 			gap: clamp(2rem, 4vw, 4rem);
 			padding-block: clamp(2.5rem, 7vmin, 6rem);
 		}
-		.bh-copy {
+		.bh--home .bh-copy {
 			text-align: start;
 			align-items: flex-start;
 		}
-		.bh-actions {
+		.bh--home .bh-actions {
 			justify-content: flex-start;
 		}
-		.bh-stage {
+		.bh--home .bh-stage {
 			justify-content: flex-end;
 		}
 	}
