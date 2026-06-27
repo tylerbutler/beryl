@@ -1,4 +1,5 @@
 import starlight from "@astrojs/starlight";
+import mermaid from "astro-mermaid";
 import a11yEmoji from "@fec/remark-a11y-emoji";
 import { defineConfig } from "astro/config";
 import starlightLinksValidator from "starlight-links-validator";
@@ -12,6 +13,7 @@ export default defineConfig({
 		prefetchAll: true,
 	},
 	integrations: [
+		mermaid({ theme: "default" }),
 		starlight({
 			title: "beryl",
 			editLink: {
