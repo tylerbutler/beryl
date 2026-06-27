@@ -21,9 +21,18 @@ import { Aside } from '@astrojs/starlight/components';
 ## Get started
 
 <style lang="css">{`
+  /* Contained surface module so the ordered path reads as a distinct block,
+     not a second open hairline list like the feature ledger below. */
+  .beryl-path {
+    margin-top: 1.75rem;
+    border: 1px solid var(--beryl-hairline);
+    border-radius: 16px;
+    background: var(--beryl-surface);
+    padding: 0.3rem clamp(1.1rem, 3.5vw, 1.9rem);
+  }
   .beryl-path ol {
     list-style: none;
-    margin: 1.75rem 0 0;
+    margin: 0;
     padding: 0;
     counter-reset: step;
   }
@@ -31,7 +40,11 @@ import { Aside } from '@astrojs/starlight/components';
     counter-increment: step;
     position: relative;
     padding: 1.4rem 0 1.5rem 2.9rem;
-    border-top: 1px solid var(--beryl-hairline);
+    border-top: 1px solid
+      color-mix(in oklch, var(--beryl-hairline) 60%, transparent);
+  }
+  .beryl-path li:first-child {
+    border-top: none;
   }
   /* Real ordered sequence, so the leading numeral carries information. */
   .beryl-path li::before {

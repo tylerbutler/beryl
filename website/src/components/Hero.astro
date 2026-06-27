@@ -52,7 +52,12 @@ let _ref =
 	</div>
 
 	<div class="bh-copy">
-		<h1 id="_top" data-page-title class="bh-wordmark" set:html={title} />
+		<h1 id="_top" data-page-title class="bh-wordmark">
+			<span class="bh-mark" set:html={title} />
+			<span class="bh-sr-only">
+				: type-safe real-time channels and presence for Gleam
+			</span>
+		</h1>
 		{tagline && <p class="bh-tagline" set:html={tagline} />}
 		{
 			actions.length > 0 && (
@@ -203,9 +208,23 @@ let _ref =
 		color: var(--sl-color-white);
 		margin: 0;
 	}
-	.bh-wordmark::after {
+	.bh-wordmark .bh-mark::after {
 		content: ".";
 		color: var(--beryl-magenta);
+	}
+
+	/* Visually hidden, still read by screen readers and weighted by search:
+	   keeps the bold wordmark while the H1 conveys what beryl actually does. */
+	.bh-sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.bh-tagline {
