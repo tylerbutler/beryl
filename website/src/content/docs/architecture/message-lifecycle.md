@@ -57,7 +57,7 @@ sequenceDiagram
 
 ## Broadcast fan-out
 
-Broadcasting delivers a message to every socket subscribed to a topic. `broadcast/3` reaches all subscribers; `broadcast_from/3` excludes the originating socket. The pg-based PubSub layer delivers the message as an Erlang message to each subscriber's coordinator process, which then pushes it over the wire.
+Broadcasting delivers a message to every socket subscribed to a topic. `broadcast/4` reaches all subscribers; `broadcast_from/5` excludes the originating socket. The pg-based PubSub layer delivers the message as an Erlang message to each subscriber's coordinator process, which then pushes it over the wire.
 
 ```mermaid
 sequenceDiagram

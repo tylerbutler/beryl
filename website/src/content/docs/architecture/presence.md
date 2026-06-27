@@ -80,7 +80,7 @@ sequenceDiagram
   Pres-->>App: on_diff(diff)
 ```
 
-## Where This Lives
+## Where this lives
 
 | File | Role |
 |---|---|

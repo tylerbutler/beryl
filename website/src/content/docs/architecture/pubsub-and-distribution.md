@@ -66,7 +66,7 @@ flowchart LR
 
 When socket A sends a message on Node 1, its coordinator calls `broadcast_from`, which iterates the `pg` group members. Members on Node 2 receive the message via Erlang distribution — no extra message-bus infrastructure is required.
 
-## Where This Lives
+## Where this lives
 
 | File | Role |
 |---|---|
