@@ -70,7 +70,7 @@ sequenceDiagram
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Pres: track(topic, key, meta)
+  App->>Pres: track(topic, key, pid, meta)
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end

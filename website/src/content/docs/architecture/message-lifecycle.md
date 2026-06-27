@@ -21,7 +21,7 @@ sequenceDiagram
 
 ## Join a topic
 
-A client joins a topic by sending a `phx_join` frame. The wire codec decodes the raw text frame, the coordinator looks up the matching channel handler in its registry, and the handler's `join/2` callback decides whether to accept or reject the connection.
+A client joins a topic by sending a `phx_join` frame. The wire codec decodes the raw text frame, the coordinator looks up the matching channel handler in its registry, and the handler's `join/3` callback decides whether to accept or reject the connection.
 
 ```mermaid
 sequenceDiagram
@@ -34,8 +34,8 @@ sequenceDiagram
   Mist->>Wire: decode_message
   Wire-->>Coord: route_decoded(join)
   Coord->>Coord: match topic -> handler (registry)
-  Coord->>Ch: join(socket, payload)
-  Ch-->>Coord: Ok(assigns) / Error
+  Coord->>Ch: join(topic, payload, socket)
+  Ch-->>Coord: JoinOk(reply, socket) / JoinError(reason)
   Coord->>Coord: subscribe socket to topic (pubsub.subscribe)
   Coord-->>Client: reply_json(ok/error)
 ```

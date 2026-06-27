@@ -37,7 +37,7 @@ Inbound WebSocket frames follow a two-step path:
    - `phx_leave` → calls `terminate`, unsubscribes the socket.
 3. `route_binary` — matches the socket's existing topic subscription and calls `handle_binary`.
 
-The registry lookup for topic matching uses `topic.matches`, which supports exact strings and `"namespace:*"` wildcard patterns.
+The registry lookup for topic matching uses `topic.matches`, which supports exact strings, `"namespace:*"` prefix wildcards, and segment wildcards such as `"document:*:ops"`.
 
 ## Heartbeat enforcement
 
@@ -58,7 +58,7 @@ flowchart TB
 
 Start order is coordinator → presence (optional) → groups (optional). Presence and groups are only started when configured via `SupervisedConfig`.
 
-`supervisor.child_spec/1` returns an OTP `ChildSpecification` of type `Supervisor`, so you can embed the entire beryl subtree inside your application's top-level supervisor:
+`supervisor.child_spec/1` returns an OTP `ChildSpecification(SupervisedChannels)` — a spec for the beryl supervisor process — so you can embed the entire beryl subtree inside your application's top-level supervisor:
 
 ```gleam
 import beryl/supervisor

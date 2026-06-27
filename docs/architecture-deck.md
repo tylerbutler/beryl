@@ -52,7 +52,7 @@ flowchart TB
 | `beryl/wire` | Pluggable codec; ships `phoenix_codec()` |
 | `beryl/transport/mist` | Mist WebSocket adapter; assigns IDs, routes frames |
 | `beryl/group` | Named topic collections; supports grouped broadcast |
-| `beryl/topic` | Topic pattern matching: exact and `"ns:*"` wildcards |
+| `beryl/topic` | Topic pattern matching: exact, `"ns:*"` prefix, and segment wildcards |
 
 ---
 
@@ -208,7 +208,7 @@ sequenceDiagram
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Pres: track(topic, key, meta)
+  App->>Pres: track(topic, key, pid, meta)
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end
