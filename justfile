@@ -63,6 +63,10 @@ lint:
 docs:
     gleam docs build
 
+# Render the architecture deck to HTML
+deck:
+    npx -y -p @marp-team/marp-core -p @marp-team/marp-cli marp docs/architecture-deck.md --engine docs/marp.engine.mjs --html -o docs/architecture-deck.html
+
 # === CHANGELOG ===
 
 # Create a new changelog entry
