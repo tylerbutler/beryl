@@ -146,6 +146,10 @@ export default defineConfig({
 							label: "PubSub & Distribution",
 							slug: "architecture/pubsub-and-distribution",
 						},
+						{
+							label: "Presence",
+							slug: "architecture/presence",
+						},
 					],
 				},
 				{
