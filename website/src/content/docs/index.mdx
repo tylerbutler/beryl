@@ -11,29 +11,109 @@ hero:
       link: /quick-start/
       icon: right-arrow
       variant: primary
-    - text: See examples
-      link: /examples/
-      icon: external
-      variant: secondary
     - text: What is beryl?
       link: /introduction/
-      variant: minimal
+      variant: secondary
 ---
 
-import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-<Aside type="caution" title="Pre-1.0 Software">
-beryl is not yet 1.0. The API is unstable, features may be removed in minor releases, and quality should not be considered production-ready. We welcome usage and feedback in the meantime!
-</Aside>
+## Get started
 
-## Where to start
+<style lang="css">{`
+  /* Contained surface module so the ordered path reads as a distinct block,
+     not a second open hairline list like the feature ledger below. */
+  .beryl-path {
+    margin-top: 1.75rem;
+    border: 1px solid var(--beryl-hairline);
+    border-radius: 16px;
+    background: var(--beryl-surface);
+    padding: 0.3rem clamp(1.1rem, 3.5vw, 1.9rem);
+  }
+  .beryl-path ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: step;
+  }
+  .beryl-path li {
+    counter-increment: step;
+    position: relative;
+    padding: 1.4rem 0 1.5rem 2.9rem;
+    border-top: 1px solid
+      color-mix(in oklch, var(--beryl-hairline) 60%, transparent);
+  }
+  .beryl-path li:first-child {
+    border-top: none;
+  }
+  /* Real ordered sequence, so the leading numeral carries information. */
+  .beryl-path li::before {
+    content: counter(step, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 1.5rem;
+    font-family: var(--beryl-font-display);
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--sl-color-accent);
+  }
+  .beryl-path h3 {
+    font-family: var(--beryl-font-display);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    font-size: clamp(1.15rem, 1.05rem + 0.5vw, 1.4rem);
+    margin: 0 0 0.4rem;
+    color: var(--sl-color-white);
+  }
+  .beryl-path p {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--sl-color-gray-2);
+    text-wrap: pretty;
+  }
+  .beryl-path .beryl-path__cmd {
+    margin: 0.7rem 0 0.2rem;
+  }
+  .beryl-path .beryl-path__cmd code {
+    font-size: 0.95em;
+    background: var(--beryl-surface);
+    border: 1px solid var(--beryl-hairline);
+    color: var(--sl-color-white);
+    padding: 0.4em 0.75em;
+    border-radius: 8px;
+  }
+  .beryl-path__go {
+    display: inline-block;
+    margin-top: 0.75rem;
+    font-weight: 600;
+    color: var(--sl-color-accent);
+  }
+`}
+</style>
 
-<CardGrid>
-	<LinkCard title="Install" href="/installation/" description="Add beryl and its BEAM dependencies to your Gleam project." />
-	<LinkCard title="Quick Start" href="/quick-start/" description="Build your first channel end-to-end: server callbacks, WebSocket transport, and a Phoenix JS client." />
-	<LinkCard title="Guides" href="/guides/channels/" description="Go deeper on channels, presence, PubSub, groups, supervision, and the WebSocket transport." />
-	<LinkCard title="API docs" href="https://hexdocs.pm/beryl/" description="Generated reference for every public beryl module on HexDocs." />
-</CardGrid>
+<div class="beryl-path">
+	<ol>
+		<li>
+			<h3>Install beryl</h3>
+			<p>Add beryl and its BEAM dependencies to your Gleam project.</p>
+			<p class="beryl-path__cmd"><code>gleam add beryl</code></p>
+			<a class="beryl-path__go" href="/installation/">Installation guide →</a>
+		</li>
+		<li>
+			<h3>Build your first channel</h3>
+			<p>Wire up server callbacks, the WebSocket transport, and a Phoenix JS client, end to end, in one sitting.</p>
+			<a class="beryl-path__go" href="/quick-start/">Open the Quick Start →</a>
+		</li>
+		<li>
+			<h3>See it running</h3>
+			<p>Browse complete, runnable examples, then go deeper in the <a href="/guides/channels/">guides</a> or the <a href="https://hexdocs.pm/beryl/">API reference</a>.</p>
+			<a class="beryl-path__go" href="/examples/">View examples →</a>
+		</li>
+	</ol>
+</div>
 
 ## Features
 
@@ -108,6 +188,13 @@ beryl is not yet 1.0. The API is unstable, features may be removed in minor rele
   .beryl-feature code {
     font-size: 0.85em;
   }
+  .beryl-feature__link {
+    display: inline-block;
+    margin-top: 0.8rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--sl-color-accent);
+  }
 
   @media (min-width: 50rem) {
     .beryl-features {
@@ -142,18 +229,26 @@ beryl is not yet 1.0. The API is unstable, features may be removed in minor rele
 <div class="beryl-features">
 	<article class="beryl-feature beryl-feature--lead">
 		<h3>Real-time channels</h3>
-		<p>Define channels with typed callbacks and pattern-matched topics. Join, leave, and broadcast with compile-time guarantees on socket state — the Gleam compiler holds you to your own assigns type.</p>
+		<p>Define channels with typed callbacks and pattern-matched topics. Join, leave, and broadcast with compile-time guarantees on socket state: the Gleam compiler holds you to your own assigns type.</p>
+		<a class="beryl-feature__link" href="/guides/channels/">Channels guide →</a>
 	</article>
 	<article class="beryl-feature">
 		<h3>Presence tracking</h3>
 		<p>Know who's online with a CRDT-backed presence system. An add-wins observed-remove set resolves joins and leaves automatically across distributed nodes.</p>
+		<a class="beryl-feature__link" href="/guides/presence/">Presence guide →</a>
 	</article>
 	<article class="beryl-feature">
 		<h3>PubSub on OTP</h3>
 		<p>Distributed publish/subscribe powered by Erlang's <code>pg</code> process groups. Works across cluster nodes with zero configuration.</p>
+		<a class="beryl-feature__link" href="/guides/pubsub/">PubSub guide →</a>
 	</article>
 	<article class="beryl-feature">
 		<h3>Phoenix-compatible wire</h3>
 		<p>A JSON array wire format compatible with Phoenix client libraries, with first-class WebSocket support via Mist integration.</p>
+		<a class="beryl-feature__link" href="/guides/websocket/">WebSocket guide →</a>
 	</article>
 </div>
+
+<Aside type="note" title="Pre-1.0">
+beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
+</Aside>
