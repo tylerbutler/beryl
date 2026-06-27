@@ -125,9 +125,9 @@ let _ref =
 		position: absolute;
 		display: block;
 		filter: blur(8px);
-		opacity: 0.5;
+		opacity: 0.42;
 		mix-blend-mode: screen;
-		animation: bh-drift 24s ease-in-out 2 both;
+		animation: bh-drift 30s ease-in-out infinite both;
 	}
 	.shard-1 {
 		inset: -8% 38% auto auto;
@@ -269,7 +269,7 @@ let _ref =
 		height: auto;
 		z-index: 2;
 		filter: drop-shadow(0 18px 40px var(--beryl-glow));
-		animation: bh-float 8s ease-in-out 2 both;
+		animation: bh-float 9s ease-in-out 1s infinite both;
 	}
 
 	.bh-code {
@@ -322,10 +322,10 @@ let _ref =
 	@keyframes bh-float {
 		0%,
 		100% {
-			transform: translateY(0) rotate(-1deg);
+			transform: translateY(0) rotate(-0.6deg);
 		}
 		50% {
-			transform: translateY(-8px) rotate(1deg);
+			transform: translateY(-5px) rotate(0.6deg);
 		}
 	}
 	@keyframes bh-drift {
@@ -334,7 +334,7 @@ let _ref =
 			transform: translate3d(0, 0, 0) scale(1);
 		}
 		50% {
-			transform: translate3d(0, -2%, 0) scale(1.03);
+			transform: translate3d(0, -1.2%, 0) scale(1.015);
 		}
 	}
 
