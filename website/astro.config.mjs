@@ -142,6 +142,10 @@ export default defineConfig({
 							label: "Coordinator & Supervision",
 							slug: "architecture/coordinator",
 						},
+						{
+							label: "PubSub & Distribution",
+							slug: "architecture/pubsub-and-distribution",
+						},
 					],
 				},
 				{
