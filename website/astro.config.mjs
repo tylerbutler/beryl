@@ -134,6 +134,10 @@ export default defineConfig({
 							label: "Overview",
 							slug: "architecture/overview",
 						},
+						{
+							label: "Message Lifecycle",
+							slug: "architecture/message-lifecycle",
+						},
 					],
 				},
 				{
