@@ -138,6 +138,10 @@ export default defineConfig({
 							label: "Message Lifecycle",
 							slug: "architecture/message-lifecycle",
 						},
+						{
+							label: "Coordinator & Supervision",
+							slug: "architecture/coordinator",
+						},
 					],
 				},
 				{
