@@ -249,7 +249,6 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
 }
 
 /// Start the presence actor with a registered name (for supervision)
-@internal
 pub fn start_named(
   config: Config,
   name: process.Name(Message),

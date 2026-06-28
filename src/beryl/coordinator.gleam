@@ -903,7 +903,7 @@ fn handle_binary_in(
   // frames are interpreted in the serializer the client actually used.
   let active_codec = case dict.get(state.sockets, socket_id) {
     Ok(socket_info) -> socket_info.codec
-    Error(_) -> state.config.codec
+    Error(Nil) -> state.config.codec
   }
   case active_codec.decode_binary {
     Some(decode_binary) ->
@@ -1211,6 +1211,7 @@ pub fn route_message(
   process.send(coord, RouteText(socket_id, raw_text))
 }
 
+// nolint: unused_exports -- public transport API for callers that decode frames before routing
 /// Route a transport-decoded inbound message to the coordinator.
 pub fn route_decoded(
   coord: Subject(Message),
@@ -1227,7 +1228,7 @@ fn handle_route_text(
 ) -> actor.Next(State, Message) {
   let active_codec = case dict.get(state.sockets, socket_id) {
     Ok(socket_info) -> socket_info.codec
-    Error(_) -> state.config.codec
+    Error(Nil) -> state.config.codec
   }
   let logging = internal_logging(state.config.logging)
   case active_codec.decode_text(raw_text) {

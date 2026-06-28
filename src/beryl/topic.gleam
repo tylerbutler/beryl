@@ -214,14 +214,12 @@ pub fn segments(topic: String) -> List(String) {
 /// namespace("") // -> Error(EmptyNamespace)
 /// ```
 pub fn namespace(topic: String) -> Result(String, ExtractError) {
-  case string.is_empty(topic) {
-    True -> Error(EmptyNamespace)
-    False ->
-      topic
-      |> segments
-      |> list.first
-      |> result.map_error(fn(_) { EmptyNamespace })
-  }
+  use <- bool.guard(when: string.is_empty(topic), return: Error(EmptyNamespace))
+
+  topic
+  |> segments
+  |> list.first
+  |> result.replace_error(EmptyNamespace)
 }
 
 /// Build a topic from segments

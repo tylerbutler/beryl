@@ -71,6 +71,33 @@ use <- mist_transport.upgrade(req, channels, config)
 
 Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
 
+### Origin validation and CSWSH
+
+Browsers include cookies on WebSocket handshakes. If your socket authentication
+uses cookies, a malicious site can open a WebSocket to your application from a
+victim's browser unless you validate the `Origin` header. This is Cross-Site
+WebSocket Hijacking (CSWSH).
+
+Use `with_allowed_origins` to allow only your application origins. Values match
+the full `Origin` header exactly: scheme, host, and port when present.
+
+```gleam
+let config =
+  mist_transport.default_config("/socket/websocket")
+  |> mist_transport.with_allowed_origins(["https://app.example.com"])
+  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+    validate_cookie_session(req)
+  })
+```
+
+Requests with missing or non-matching origins are rejected with HTTP 403 before
+the WebSocket handshake. If you do not configure an allow-list, existing behavior
+is unchanged and all origins are accepted.
+
+If you cannot use an origin allow-list, avoid cookie-based WebSocket
+authentication. Use a token passed explicitly to `on_connect` and reject invalid
+tokens before upgrading.
+
 ### Seeding initial assigns
 
 `on_connect` can also return seeded socket-level **assigns** instead of `Nil`.

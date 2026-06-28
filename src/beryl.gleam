@@ -322,7 +322,6 @@ pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
   channels.coordinator
 }
 
-// nolint: unused_exports -- package-internal accessor for transport codec negotiation; hidden from public docs with @internal
 @internal
 pub fn configured_codec(channels: Channels) -> codec.Codec {
   channels.config.codec
