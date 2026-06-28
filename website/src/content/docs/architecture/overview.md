@@ -1,142 +1,76 @@
 ---
 title: Architecture Overview
+description: How beryl is organized, the major modules, and where to make changes.
 ---
 
-beryl is organized into several layers, each building on the one below it.
+beryl layers a Phoenix-style channel system on top of OTP actors and Erlang `pg`, with a pluggable wire codec and WebSocket transport.
+Channels, presence, and groups are independent domain actors wired together by the coordinator, which dispatches decoded wire messages and enforces heartbeats.
+PubSub is the only cross-node primitive; everything else is local to a node.
 
-## Layer diagram
+## How to read these docs
 
-```
-┌─────────────────────────────────────────┐
-│           WebSocket Transport           │
-│         (beryl/transport/mist)          │
-├─────────────────────────────────────────┤
-│            Wire Protocol                │
-│            (beryl/wire)                 │
-├─────────────┬───────────────────────────┤
-│  Channels   │   Presence    │  Groups   │
-│  (beryl/    │   (beryl/     │  (beryl/  │
-│   channel)  │    presence)  │   group)  │
-├─────────────┴───────────────┴───────────┤
-│        Coordinator (OTP actor)          │
-│        (beryl/coordinator)              │
-├─────────────────────────────────────────┤
-│            PubSub (pg)                  │
-│          (beryl/pubsub)                 │
-└─────────────────────────────────────────┘
-```
+Each subsystem page covers one slice of the stack end-to-end and ends with a **"Where this lives"** pointer back to the relevant source files.
 
-## Core components
+- [Message Lifecycle](/architecture/message-lifecycle) — how a frame travels from WebSocket to channel handler and back
+- [Coordinator & Supervision](/architecture/coordinator) — OTP actor lifecycle, handler registry, and the supervision tree
+- [PubSub & Distribution](/architecture/pubsub-and-distribution) — Erlang `pg` groups, broadcast semantics, and cross-node delivery
+- [Presence](/architecture/presence) — CRDT-backed presence tracking, diffs, and replication
+- [Wire & Transport](/architecture/wire-and-transport) — codec contract, Phoenix framing, and the Mist WebSocket adapter
 
-### PubSub (`beryl/pubsub`)
+## The layer stack
 
-The foundation layer. Uses Erlang's `pg` module for distributed process groups. Processes subscribe to topics and receive broadcast messages. Works across Erlang cluster nodes automatically.
-
-```gleam
-let ps = pubsub.start(pubsub.default_config())
-pubsub.subscribe(ps, "room:lobby")
-pubsub.broadcast(ps, "room:lobby", "event", payload)
+```mermaid
+flowchart TB
+  T["WebSocket Transport<br/>beryl/transport/mist"]
+  W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
+  subgraph Domain["Channel domain"]
+    C["Channels<br/>beryl/channel"]
+    P["Presence<br/>beryl/presence"]
+    G["Groups<br/>beryl/group"]
+  end
+  CO["Coordinator (OTP actor)<br/>beryl/coordinator"]
+  PS["PubSub (Erlang pg)<br/>beryl/pubsub"]
+  T --> W --> Domain --> CO --> PS
 ```
 
-### Coordinator (`beryl/coordinator`)
+## Module map
 
-The central OTP actor managing all channel state:
+| Module | Responsibility | Page |
+|---|---|---|
+| `beryl` | Public entry-point: `config/1`, `start/1`, `register/3`, `broadcast/4`, `send_info/4` | — |
+| `beryl/coordinator` | Central OTP actor: handler registry, socket tracking, message routing, heartbeat enforcement | [Coordinator](/architecture/coordinator) |
+| `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; subscribe, broadcast, and broadcast_from | [PubSub & Distribution](/architecture/pubsub-and-distribution) |
+| `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, cross-node diff broadcast, `on_diff` callbacks | [Presence](/architecture/presence) |
+| `beryl/presence/wire` | Phoenix-compatible JSON encoding for presence diffs (`joins`/`leaves` maps) | [Presence](/architecture/presence) |
+| `beryl/wire` | Pluggable codec surface; ships `phoenix_codec()` for `[join_ref, ref, topic, event, payload]` framing | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl/wire/codec` | `Codec` type contract: `decode_text`, `decode_binary`, `encode_*` — lets you swap framing | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl/transport/mist` | Mist WebSocket adapter: assigns socket IDs, registers send functions, routes frames to coordinator | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl/supervisor` | rest-for-one supervision tree (coordinator → presence → groups); embeddable via `child_spec/1` | [Coordinator](/architecture/coordinator) |
+| `beryl/group` | Named topic collections managed by an OTP actor; supports grouped broadcast | — |
+| `beryl/topic` | Topic pattern matching: exact strings, `"ns:*"` prefix wildcards, and segment wildcards (`"document:*:ops"`) | — |
+| `beryl/socket` | Opaque connected-client type with typed assigns; `id`, `get_assigns`, `set_assigns`, `map_assigns` | — |
+| `beryl/channel` | Builder API for user-defined message handlers parameterized by an `assigns` type | [Message Lifecycle](/architecture/message-lifecycle) |
+| `beryl/error` | Opaque `StartFailure` type that hides OTP's `actor.StartError` from public APIs | — |
+| `beryl/rate_limit` | Token-bucket rate limiter backed by an OTP registry actor; keyed by socket ID or topic | — |
+| `beryl/bridge` | Forwards an external OTP actor's message stream into a socket channel; avoids per-socket forwarder boilerplate | — |
+| `beryl/log` | Internal logging shim over `palabres`; thin named-logger surface, not public API | — |
+| `beryl/internal` | Shared internal utilities (logging config, configure helper); not public API | — |
 
-- **Handler registry** — Maps topic patterns to channel handlers
-- **Socket tracking** — Tracks connected sockets, their send functions, and subscribed topics
-- **Topic subscriptions** — Maps topics to sets of subscriber socket IDs
-- **Message routing** — Decodes wire protocol messages and dispatches to handlers
-- **Heartbeat enforcement** — Periodic timer evicts sockets that miss heartbeats
+## Process & supervision at a glance
 
-The coordinator uses type erasure to store handlers with different assigns types in a single registry.
-
-### Channels (`beryl/channel`)
-
-The user-facing API for defining message handlers. Channels are built with a builder pattern:
-
-```gleam
-channel.new(join_handler)
-|> channel.with_handle_in(message_handler)
-|> channel.with_handle_binary(binary_handler)
-|> channel.with_terminate(cleanup_handler)
+```mermaid
+flowchart TB
+  S["supervisor (rest-for-one)"]
+  S --> CO["coordinator"]
+  S --> PR["presence (optional)"]
+  S --> GR["groups (optional)"]
+  CO -. "crash restarts downstream" .-> PR
+  PR -. .-> GR
 ```
 
-Each channel is parameterized by an `assigns` type that provides compile-time safety for per-socket state.
+## Where things live
 
-### Presence (`beryl/presence`)
-
-Two-layer design:
-
-- **`beryl/presence`** — OTP actor wrapping an add-wins observed-remove CRDT. Handles track/untrack calls, periodically broadcasts state via PubSub for cross-node replication, exposes `State`/`Diff` aliases for advanced APIs, and fires `on_diff` callbacks when merges produce changes.
-
-### Groups (`beryl/group`)
-
-Named collections of topics managed by an OTP actor:
-
-```gleam
-let assert Ok(groups) = group.start()
-let assert Ok(Nil) = group.create(groups, "team:eng")
-let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
-let assert Ok(Nil) = group.add(groups, "team:eng", "room:backend")
-
-// Broadcast to all topics in the group
-group.broadcast(groups, channels, "team:eng", "announce", payload)
-```
-
-### Supervisor (`beryl/supervisor`)
-
-Optional OTP supervision tree for all beryl subsystems:
-
-```gleam
-import beryl
-import beryl/supervisor
-import beryl/wire
-import gleam/option.{None, Some}
-
-let config = supervisor.SupervisedConfig(
-  channels: beryl.config(wire.phoenix_codec()),
-  presence: Some(presence.default_config("node1")),
-  groups: True,
-)
-let assert Ok(supervised) = supervisor.start(config)
-// supervised.channels, supervised.presence, supervised.groups
-```
-
-Uses **rest-for-one** strategy with the child order: coordinator → presence → groups. A coordinator crash restarts all downstream children to maintain consistency. `child_spec/1` allows embedding the beryl subtree inside a larger application supervisor.
-
-### Wire Protocol (`beryl/wire`)
-
-Pluggable text/binary frame encoding and decoding. The built-in `wire.phoenix_codec()` handles:
-
-- Message parsing: `[join_ref, ref, topic, event, payload]` arrays
-- Reply encoding with status (`ok`/`error`) and response payload
-- Server push messages (no ref)
-- Heartbeat replies
-- Structural dispatch for join, leave, heartbeat, and user events
-
-### WebSocket Transport (`beryl/transport/mist`)
-
-Integrates directly with Mist to handle WebSocket connections:
-
-1. Generates a unique socket ID per connection
-2. Registers the socket's send function with the coordinator
-3. Routes incoming text frames through the configured codec
-4. Routes binary frames through the codec when configured, or to raw binary channel handlers otherwise
-5. Notifies the coordinator on connection close
-
-### Topic (`beryl/topic`)
-
-Topic pattern matching for channel routing:
-
-- **Exact** — `"room:lobby"` matches only `"room:lobby"`
-- **Wildcard** — `"room:*"` matches any topic starting with `"room:"`
-- Utilities: `segments`, `namespace`, `from_segments`, `validate`, `extract_id`
-
-### Socket (`beryl/socket`)
-
-Opaque type representing a connected client with typed state:
-
-- `id(socket)` — Get the socket ID
-- `get_assigns(socket)` / `set_assigns(socket, assigns)` — Typed per-socket state
-- `map_assigns(socket, fn)` — Transform assigns to a different type
-- Internal: transport access, metadata storage
+All source files live under `src/beryl/`.
+The coordinator and supervisor are the entry points for understanding runtime behaviour — start with [Coordinator & Supervision](/architecture/coordinator).
+For how a message actually moves through the system, see [Message Lifecycle](/architecture/message-lifecycle).
+For cross-node concerns, see [PubSub & Distribution](/architecture/pubsub-and-distribution).
