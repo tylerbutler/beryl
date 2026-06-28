@@ -1,0 +1,8 @@
+kind: Security
+body: |-
+  Add inbound resource limits for WebSocket frames, JSON payload nesting, and joined topics per socket.
+
+  New public API:
+  - `beryl.with_max_inbound_frame_bytes/2` — configures the inbound frame size cap (default 1 MiB)
+  - `beryl.with_max_joined_topics_per_socket/2` — configures the per-socket joined topic cap (default 1000)
+time: 2026-06-28T14:54:10.453000000-07:00

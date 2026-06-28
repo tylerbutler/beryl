@@ -73,6 +73,7 @@ type ConnectionState {
     socket_id: String,
     coordinator: Subject(CoordinatorMessage),
     connection_permit: Option(connection_limit.Permit),
+    max_inbound_frame_bytes: Int,
   )
 }
 
@@ -217,6 +218,7 @@ fn do_upgrade(
   connect_assigns: Dynamic,
   connection_permit: Option(connection_limit.Permit),
 ) -> Response(ResponseData) {
+  let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
   mist.websocket(
     request: request,
     handler: fn(state, message, connection) {
@@ -228,6 +230,7 @@ fn do_upgrade(
         beryl.coordinator_subject(channels),
         connect_assigns,
         connection_permit,
+        max_inbound_frame_bytes,
       )
     },
     on_close: on_close,
@@ -240,6 +243,7 @@ fn on_init(
   coordinator: Subject(CoordinatorMessage),
   connect_assigns: Dynamic,
   connection_permit: Option(connection_limit.Permit),
+  max_inbound_frame_bytes: Int,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Generate unique socket ID
   let socket_id = generate_socket_id()
@@ -276,6 +280,7 @@ fn on_init(
       socket_id: socket_id,
       coordinator: coordinator,
       connection_permit: connection_permit,
+      max_inbound_frame_bytes: max_inbound_frame_bytes,
     )
 
   #(state, Some(selector))
@@ -291,13 +296,31 @@ fn on_message(
 ) -> mist.Next(ConnectionState, SendRequest) {
   case message {
     mist.Text(text) -> {
-      coordinator.route_message(state.coordinator, state.socket_id, text)
-      mist.continue(state)
+      case
+        frame_too_large(state.max_inbound_frame_bytes, string.byte_size(text))
+      {
+        True -> mist.stop()
+        False -> {
+          coordinator.route_message(state.coordinator, state.socket_id, text)
+          mist.continue(state)
+        }
+      }
     }
     mist.Binary(data) -> {
-      coordinator.route_binary(state.coordinator, state.socket_id, data)
-      mist.continue(state)
+      case
+        frame_too_large(
+          state.max_inbound_frame_bytes,
+          bit_array.byte_size(data),
+        )
+      {
+        True -> mist.stop()
+        False -> {
+          coordinator.route_binary(state.coordinator, state.socket_id, data)
+          mist.continue(state)
+        }
+      }
     }
+
     mist.Closed | mist.Shutdown -> mist.stop()
     mist.Custom(SendText(text)) -> {
       mist.send_text_frame(connection, text)
@@ -310,6 +333,10 @@ fn on_message(
       |> result.unwrap(mist.continue(state))
     }
   }
+}
+
+fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
+  max_bytes > 0 && actual_bytes > max_bytes
 }
 
 /// Cleanup when connection closes

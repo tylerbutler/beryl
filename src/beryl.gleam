@@ -149,6 +149,12 @@ pub type Config {
     /// Maximum byte length for client-supplied event name strings (default: 64).
     /// Events exceeding this limit are dropped before reaching a channel handler.
     max_event_length: Int,
+    /// Maximum inbound WebSocket frame size in bytes (default: 1 MiB).
+    /// Frames exceeding this limit are closed before wire decoding.
+    max_inbound_frame_bytes: Int,
+    /// Maximum joined topics per socket (default: 1000).
+    /// Values <= 0 disable the cap.
+    max_joined_topics_per_socket: Int,
     /// Logging configuration for Beryl diagnostics
     logging: LoggingConfig,
   )
@@ -191,6 +197,8 @@ pub fn config(codec: codec.Codec) -> Config {
     channel_rate_max_keys_per_socket: 1000,
     max_topic_length: 256,
     max_event_length: 64,
+    max_inbound_frame_bytes: 1_048_576,
+    max_joined_topics_per_socket: 1000,
     logging: logging_config(level: Info, include_payloads: False),
   )
 }
@@ -294,6 +302,27 @@ pub fn with_max_event_length(
   Config(..config, max_event_length: max_length)
 }
 
+/// Configure the maximum allowed inbound WebSocket frame size in bytes.
+///
+/// Frames larger than `max_bytes` are closed before decoding. Values <= 0
+/// disable the cap. The default is 1 MiB.
+pub fn with_max_inbound_frame_bytes(
+  config: Config,
+  max_bytes max_bytes: Int,
+) -> Config {
+  Config(..config, max_inbound_frame_bytes: max_bytes)
+}
+
+/// Configure the maximum number of topics a socket may join at once.
+///
+/// Values <= 0 disable the cap. The default is 1000.
+pub fn with_max_joined_topics_per_socket(
+  config: Config,
+  max_topics max_topics: Int,
+) -> Config {
+  Config(..config, max_joined_topics_per_socket: max_topics)
+}
+
 /// Channels system handle.
 ///
 /// This opaque handle is returned by `start` and passed to registration,
@@ -347,6 +376,11 @@ pub fn acquire_connection_slot(
 /// Release a per-IP connection slot acquired by a transport.
 pub fn release_connection_slot(permit: Option(connection_limit.Permit)) -> Nil {
   connection_limit.release_optional(permit)
+}
+
+/// Return the configured inbound frame size cap for transports.
+pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
+  channels.config.max_inbound_frame_bytes
 }
 
 /// Errors when starting channels
@@ -403,6 +437,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
       channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
       max_topic_length: config.max_topic_length,
       max_event_length: config.max_event_length,
+      max_joined_topics_per_socket: config.max_joined_topics_per_socket,
       logging: coordinator_logging(config.logging),
     )
 
