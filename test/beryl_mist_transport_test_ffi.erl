@@ -1,6 +1,6 @@
 -module(beryl_mist_transport_test_ffi).
--export([connect_websocket/2, send_text/2, send_binary/2, receive_text/2,
-         receive_binary/2, close/1, http_get/2]).
+-export([connect_websocket/2, websocket_upgrade_status/2, send_text/2,
+         send_binary/2, receive_text/2, receive_binary/2, close/1, http_get/2]).
 
 http_get(Port, Path) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
@@ -74,6 +74,34 @@ connect_websocket(Port, Path) ->
                     gen_tcp:close(Socket),
                     {error, nil}
             end;
+        _ ->
+            {error, nil}
+    end.
+
+websocket_upgrade_status(Port, Path) ->
+    case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
+        {ok, Socket} ->
+            Key = base64:encode(crypto:strong_rand_bytes(16)),
+            Request = [
+                <<"GET ">>, Path, <<" HTTP/1.1\r\n">>,
+                <<"Host: 127.0.0.1:">>, integer_to_binary(Port), <<"\r\n">>,
+                <<"Upgrade: websocket\r\n">>,
+                <<"Connection: Upgrade\r\n">>,
+                <<"Sec-WebSocket-Key: ">>, Key, <<"\r\n">>,
+                <<"Sec-WebSocket-Version: 13\r\n\r\n">>
+            ],
+            Result =
+                case gen_tcp:send(Socket, Request) of
+                    ok ->
+                        case read_headers(Socket, <<>>) of
+                            {ok, Headers} -> parse_status(Headers);
+                            {error, nil} -> {error, nil}
+                        end;
+                    _ ->
+                        {error, nil}
+                end,
+            gen_tcp:close(Socket),
+            Result;
         _ ->
             {error, nil}
     end.

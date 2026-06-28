@@ -6,6 +6,7 @@ repository = { type = "github", user = "tylerbutler", repo = "beryl" }
 gleam = ">= 1.13.0"
 target = "erlang"
 internal_modules = [
+  "beryl/connection_limit",
   "beryl/coordinator",
   "beryl/internal",
   "beryl/log",

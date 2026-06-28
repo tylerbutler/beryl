@@ -50,6 +50,7 @@
 //// ```
 
 import beryl/channel.{type Channel}
+import beryl/connection_limit
 import beryl/coordinator
 import beryl/error as beryl_error
 import beryl/presence.{type Diff}
@@ -304,6 +305,7 @@ pub opaque type Channels {
     coordinator: Subject(coordinator.Message),
     config: Config,
     pubsub: Option(PubSub),
+    connection_limiter: Option(connection_limit.ConnectionLimiter),
   )
 }
 
@@ -313,7 +315,14 @@ pub fn channels_from_coordinator(
   coordinator coordinator: Subject(coordinator.Message),
   config config: Config,
 ) -> Channels {
-  Channels(coordinator: coordinator, config: config, pubsub: config.pubsub)
+  Channels(
+    coordinator: coordinator,
+    config: config,
+    pubsub: config.pubsub,
+    connection_limiter: connection_limit.start_optional(
+      config.max_connections_per_ip,
+    ),
+  )
 }
 
 // nolint: unused_exports -- package-internal accessor for transports/tests; hidden from public docs with @internal
@@ -322,10 +331,22 @@ pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
   channels.coordinator
 }
 
-// nolint: unused_exports -- package-internal accessor for transport codec negotiation; hidden from public docs with @internal
 @internal
 pub fn configured_codec(channels: Channels) -> codec.Codec {
   channels.config.codec
+}
+
+/// Try to acquire a configured per-IP connection slot for transports.
+pub fn acquire_connection_slot(
+  channels: Channels,
+  ip: String,
+) -> Result(Option(connection_limit.Permit), Nil) {
+  connection_limit.acquire_optional(channels.connection_limiter, ip)
+}
+
+/// Release a per-IP connection slot acquired by a transport.
+pub fn release_connection_slot(permit: Option(connection_limit.Permit)) -> Nil {
+  connection_limit.release_optional(permit)
 }
 
 /// Errors when starting channels
