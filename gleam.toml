@@ -27,7 +27,7 @@ mist = ">= 6.0.0 and < 7.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
-aquamarine = { git = "https://github.com/tylerbutler/aquamarine.git", ref = "04627517b473dad006e3c46c5c9b07b30602f0ad" }
+aquamarine = { git = "https://github.com/tylerbutler/aquamarine.git", ref = "main" }
 gluegun = { git = "https://github.com/tylerbutler/gluegun.git", ref = "532af1ac0308ff93c8a957467dbb638859593c93" }
 phoenix_channel_fixtures = { git = "https://github.com/tylerbutler/phoenix_channel_fixtures.git", ref = "7daccb856d17db6278980277237c201b2acdcdf1" }
 qcheck = ">= 1.0.0 and < 2.0.0"
