@@ -3,7 +3,14 @@ import Default from "@astrojs/starlight/components/Head.astro";
 import { Script } from "astro-tinylytics";
 
 const embedCode = "5BN-d1Nw7dmhoNZr94td";
+const ogImage = new URL("/og.png", Astro.site ?? "https://beryl.tylerbutler.com");
 ---
 
 <Default><slot /></Default>
+<meta property="og:image" content={ogImage.href} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:type" content="image/png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content={ogImage.href} />
 <Script embedCode={embedCode} min hits events beacon />
