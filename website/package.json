@@ -17,10 +17,11 @@
 	},
 	"scripts": {
 		"astro": "astro",
-		"build:site": "astro build",
+		"build:site": "pnpm run generate:og && astro build",
 		"check:astro": "astro check",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
 		"dev": "astro dev",
+		"generate:og": "node scripts/generate-og-image.mjs",
 		"generate:reference": "node scripts/generate-reference.mjs",
 		"preview": "astro preview",
 		"start": "astro dev",
