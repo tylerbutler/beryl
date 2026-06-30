@@ -76,9 +76,9 @@ const code = [
 	],
 	[
 		{ text: "    Ok", className: "type" },
-		{ text: "(assigns) -> ", className: "plain" },
+		{ text: "(_) -> ", className: "plain" },
 		{ text: "accept", className: "fn" },
-		{ text: "(socket, assigns)", className: "plain" },
+		{ text: "(socket)", className: "plain" },
 	],
 	[
 		{ text: "    Error", className: "type" },
@@ -122,7 +122,7 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 			.body { font-family: "Hanken Grotesk Variable", system-ui, sans-serif; font-weight: 540; }
 			.pill { font-family: "Hanken Grotesk Variable", system-ui, sans-serif; font-weight: 760; letter-spacing: 0.2px; }
 			.mono { font-family: "JetBrains Mono Variable", ui-monospace, monospace; font-weight: 540; }
-			.code-line { fill: #d6f7df; font-size: 21px; }
+			.code-line { fill: #d6f7df; font-size: 20px; }
 			.kw { fill: #ff9bc8; }
 			.fn { fill: #90efb8; }
 			.type { fill: #f2fff5; }
