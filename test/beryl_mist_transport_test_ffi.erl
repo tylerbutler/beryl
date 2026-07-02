@@ -1,7 +1,8 @@
 -module(beryl_mist_transport_test_ffi).
 -export([connect_websocket/2, connect_websocket_with_origin/3,
-         websocket_upgrade_status_with_origin/3, send_text/2, send_binary/2,
-         receive_text/2, receive_binary/2, close/1, http_get/2]).
+         websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
+         send_text/2, send_binary/2, receive_text/2, receive_binary/2,
+         close/1, http_get/2]).
 
 http_get(Port, Path) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
@@ -83,6 +84,9 @@ connect_websocket_with_headers(Port, Path, ExtraHeaders) ->
         _ ->
             {error, nil}
     end.
+
+websocket_upgrade_status(Port, Path) ->
+    websocket_upgrade_status_with_headers(Port, Path, []).
 
 websocket_upgrade_status_with_headers(Port, Path, ExtraHeaders) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of

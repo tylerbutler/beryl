@@ -215,7 +215,6 @@ pub fn segments(topic: String) -> List(String) {
 /// ```
 pub fn namespace(topic: String) -> Result(String, ExtractError) {
   use <- bool.guard(when: string.is_empty(topic), return: Error(EmptyNamespace))
-
   topic
   |> segments
   |> list.first

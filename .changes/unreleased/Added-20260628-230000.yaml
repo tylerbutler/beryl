@@ -1,0 +1,3 @@
+kind: Added
+body: Coordinator — topic-less inbound events now route to a socket's single joined topic. Codecs whose wire frames omit a per-topic field (e.g. Socket.IO/Fluid) can send events without repeating the topic; with zero or multiple joined topics behavior is unchanged. Phoenix framing, which always carries a topic, is unaffected.
+time: 2026-06-28T23:00:00.000000-07:00

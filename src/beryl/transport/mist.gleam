@@ -4,6 +4,7 @@
 //// and the beryl coordinator using Mist request and response types directly.
 
 import beryl.{type Channels}
+import beryl/connection_limit
 import beryl/coordinator.{type Message as CoordinatorMessage}
 import gleam/bit_array
 import gleam/bytes_tree
@@ -93,7 +94,12 @@ pub fn with_allowed_origins(
 
 /// State maintained per WebSocket connection
 type ConnectionState {
-  ConnectionState(socket_id: String, coordinator: Subject(CoordinatorMessage))
+  ConnectionState(
+    socket_id: String,
+    coordinator: Subject(CoordinatorMessage),
+    connection_permit: Option(connection_limit.Permit),
+    max_inbound_frame_bytes: Int,
+  )
 }
 
 type SendRequest {
@@ -136,23 +142,16 @@ fn handle_matched_upgrade(
 ) -> Response(ResponseData) {
   case origin_allowed(request, config.allowed_origins) {
     False -> forbidden()
-    True -> connect_or_upgrade(request, channels, config.on_connect)
-  }
-}
-
-fn connect_or_upgrade(
-  request: Request(Connection),
-  channels: Channels,
-  on_connect: Option(fn(Request(Connection)) -> Result(assigns, ConnectError)),
-) -> Response(ResponseData) {
-  case on_connect {
-    None -> do_upgrade(request, channels, dynamic.nil())
-    Some(callback) ->
-      case callback(request) {
-        Ok(assigns) ->
-          do_upgrade(request, channels, unsafe_coerce_to_dynamic(assigns))
-        Error(ConnectRejected) -> forbidden()
+    True -> {
+      let ip = request_ip(request)
+      case beryl.acquire_connection_slot(channels, ip) {
+        Error(Nil) ->
+          response.new(429)
+          |> response.set_body(mist.Bytes(bytes_tree.new()))
+        Ok(connection_permit) ->
+          run_connect_and_upgrade(request, channels, config, connection_permit)
       }
+    }
   }
 }
 
@@ -173,6 +172,40 @@ fn origin_allowed(
 fn forbidden() -> Response(ResponseData) {
   response.new(403)
   |> response.set_body(mist.Bytes(bytes_tree.new()))
+}
+
+fn run_connect_and_upgrade(
+  request: Request(Connection),
+  channels: Channels,
+  config: TransportConfig(assigns),
+  connection_permit: Option(connection_limit.Permit),
+) -> Response(ResponseData) {
+  // Run on_connect callback if configured
+  case config.on_connect {
+    Some(callback) ->
+      case callback(request) {
+        Ok(assigns) ->
+          do_upgrade(
+            request,
+            channels,
+            unsafe_coerce_to_dynamic(assigns),
+            connection_permit,
+          )
+        Error(ConnectRejected) -> {
+          beryl.release_connection_slot(connection_permit)
+          response.new(403)
+          |> response.set_body(mist.Bytes(bytes_tree.new()))
+        }
+      }
+    None -> do_upgrade(request, channels, dynamic.nil(), connection_permit)
+  }
+}
+
+fn request_ip(request: Request(Connection)) -> String {
+  case mist.get_connection_info(request.body) {
+    Ok(info) -> mist.ip_address_to_string(info.ip_address)
+    Error(Nil) -> "unknown"
+  }
 }
 
 /// Determine whether a request is a WebSocket upgrade request.
@@ -230,7 +263,7 @@ pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
 ) -> Response(ResponseData) {
-  do_upgrade(request, channels, dynamic.nil())
+  do_upgrade(request, channels, dynamic.nil(), None)
 }
 
 /// Perform the actual WebSocket upgrade
@@ -238,14 +271,22 @@ fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
   connect_assigns: Dynamic,
+  connection_permit: Option(connection_limit.Permit),
 ) -> Response(ResponseData) {
+  let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
   mist.websocket(
     request: request,
     handler: fn(state, message, connection) {
       on_message(state, message, connection)
     },
     on_init: fn(connection) {
-      on_init(connection, beryl.coordinator_subject(channels), connect_assigns)
+      on_init(
+        connection,
+        beryl.coordinator_subject(channels),
+        connect_assigns,
+        connection_permit,
+        max_inbound_frame_bytes,
+      )
     },
     on_close: on_close,
   )
@@ -256,6 +297,8 @@ fn on_init(
   _connection: WebsocketConnection,
   coordinator: Subject(CoordinatorMessage),
   connect_assigns: Dynamic,
+  connection_permit: Option(connection_limit.Permit),
+  max_inbound_frame_bytes: Int,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Generate unique socket ID
   let socket_id = generate_socket_id()
@@ -287,7 +330,13 @@ fn on_init(
     ),
   )
 
-  let state = ConnectionState(socket_id: socket_id, coordinator: coordinator)
+  let state =
+    ConnectionState(
+      socket_id: socket_id,
+      coordinator: coordinator,
+      connection_permit: connection_permit,
+      max_inbound_frame_bytes: max_inbound_frame_bytes,
+    )
 
   #(state, Some(selector))
 }
@@ -302,13 +351,31 @@ fn on_message(
 ) -> mist.Next(ConnectionState, SendRequest) {
   case message {
     mist.Text(text) -> {
-      coordinator.route_message(state.coordinator, state.socket_id, text)
-      mist.continue(state)
+      case
+        frame_too_large(state.max_inbound_frame_bytes, string.byte_size(text))
+      {
+        True -> mist.stop()
+        False -> {
+          coordinator.route_message(state.coordinator, state.socket_id, text)
+          mist.continue(state)
+        }
+      }
     }
     mist.Binary(data) -> {
-      coordinator.route_binary(state.coordinator, state.socket_id, data)
-      mist.continue(state)
+      case
+        frame_too_large(
+          state.max_inbound_frame_bytes,
+          bit_array.byte_size(data),
+        )
+      {
+        True -> mist.stop()
+        False -> {
+          coordinator.route_binary(state.coordinator, state.socket_id, data)
+          mist.continue(state)
+        }
+      }
     }
+
     mist.Closed | mist.Shutdown -> mist.stop()
     mist.Custom(SendText(text)) -> {
       mist.send_text_frame(connection, text)
@@ -323,8 +390,13 @@ fn on_message(
   }
 }
 
+fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
+  max_bytes > 0 && actual_bytes > max_bytes
+}
+
 /// Cleanup when connection closes
 fn on_close(state: ConnectionState) -> Nil {
+  beryl.release_connection_slot(state.connection_permit)
   process.send(
     state.coordinator,
     coordinator.SocketDisconnected(state.socket_id),

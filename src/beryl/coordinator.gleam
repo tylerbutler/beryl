@@ -124,6 +124,8 @@ pub type CoordinatorConfig {
     /// Maximum byte length for client-supplied event name strings (default: 64).
     /// Events exceeding this limit are dropped before reaching a channel handler.
     max_event_length: Int,
+    /// Maximum joined topics per socket. Values <= 0 disable the cap.
+    max_joined_topics_per_socket: Int,
     /// Logging configuration for coordinator diagnostics.
     logging: LoggingConfig,
   )
@@ -143,6 +145,7 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
     channel_limiter_max_keys_per_socket: 1000,
     max_topic_length: 256,
     max_event_length: 64,
+    max_joined_topics_per_socket: 1000,
     logging: LoggingConfig(
       level: Info,
       include_payloads: False,
@@ -668,33 +671,12 @@ fn handle_join_inner(
       actor.continue(state)
     }
     Ok(socket_info) -> {
-      case find_handler(state.handlers, topic_name) {
-        None -> {
-          let logger = coordinator_logger(state)
-          logger
-          |> log.debug("Join handler missing", [
-            #("socket_id", socket_id),
-            #("topic", topic_name),
-            #("ref", optional_string(ref)),
-            #("join_ref", optional_string(join_ref)),
-          ])
-          let reply =
-            socket_info.codec.encode_reply(
-              join_ref,
-              ref,
-              topic_name,
-              codec.StatusError,
-              json.object([#("reason", json.string("no_channel_handler"))]),
-            )
-          let _send_result =
-            send_frame_logged(state, socket_info, topic_name, reply)
-          actor.continue(state)
-        }
-        Some(handler) ->
-          dispatch_join(
+      case can_join_topic(socket_info, topic_name, state.config) {
+        False -> reject_join_cap(state, socket_info, topic_name, join_ref, ref)
+        True ->
+          handle_join_with_handler(
             state,
             socket_info,
-            handler,
             socket_id,
             topic_name,
             payload,
@@ -703,6 +685,87 @@ fn handle_join_inner(
           )
       }
     }
+  }
+}
+
+fn can_join_topic(
+  socket_info: SocketInfo,
+  topic_name: String,
+  config: CoordinatorConfig,
+) -> Bool {
+  config.max_joined_topics_per_socket <= 0
+  || set.contains(socket_info.subscribed_topics, topic_name)
+  || list.length(set.to_list(socket_info.subscribed_topics))
+  < config.max_joined_topics_per_socket
+}
+
+fn reject_join_cap(
+  state: State,
+  socket_info: SocketInfo,
+  topic_name: String,
+  join_ref: Option(String),
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  let logger = coordinator_logger(state)
+  logger
+  |> log.warn("Join rejected: topic cap exceeded", [
+    #("socket_id", socket_info.id),
+    #("topic", topic_name),
+  ])
+  let reply =
+    socket_info.codec.encode_reply(
+      join_ref,
+      ref,
+      topic_name,
+      codec.StatusError,
+      json.object([#("reason", json.string("too_many_topics"))]),
+    )
+  let _send_result = send_frame_logged(state, socket_info, topic_name, reply)
+  actor.continue(state)
+}
+
+fn handle_join_with_handler(
+  state: State,
+  socket_info: SocketInfo,
+  socket_id: String,
+  topic_name: String,
+  payload: Dynamic,
+  join_ref: Option(String),
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  case find_handler(state.handlers, topic_name) {
+    None -> {
+      let logger = coordinator_logger(state)
+      logger
+      |> log.debug("Join handler missing", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+        #("ref", optional_string(ref)),
+        #("join_ref", optional_string(join_ref)),
+      ])
+      let reply =
+        socket_info.codec.encode_reply(
+          join_ref,
+          ref,
+          topic_name,
+          codec.StatusError,
+          json.object([#("reason", json.string("no_channel_handler"))]),
+        )
+      let _send_result =
+        send_frame_logged(state, socket_info, topic_name, reply)
+      actor.continue(state)
+    }
+    Some(handler) ->
+      dispatch_join(
+        state,
+        socket_info,
+        handler,
+        socket_id,
+        topic_name,
+        payload,
+        join_ref,
+        ref,
+      )
   }
 }
 
@@ -1301,13 +1364,14 @@ fn dispatch_inbound(
         True -> handle_leave(state, socket_id, msg.topic, msg.ref)
       }
     codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
-    codec.Event(event) ->
+    codec.Event(event) -> {
+      let resolved = resolve_event_topic(state, socket_id, msg.topic)
       case
-        is_valid_topic(msg.topic, state.config),
+        is_valid_topic(resolved, state.config),
         is_valid_event(event, state.config)
       {
         True, True ->
-          handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
+          handle_in(state, socket_id, resolved, event, msg.payload, msg.ref)
         False, _ -> {
           let safe_topic = topic.sanitize_for_log(msg.topic)
           let safe_event = topic.sanitize_for_log(event)
@@ -1330,6 +1394,31 @@ fn dispatch_inbound(
           actor.continue(state)
         }
       }
+    }
+  }
+}
+
+/// Resolve the topic for an inbound Event. Some codecs (e.g. Socket.IO/Fluid)
+/// omit a per-frame topic; in that case route to the socket's single joined
+/// topic. With zero or multiple joined topics the original (empty) topic is
+/// returned so existing validation drops it. Topic-carrying codecs (Phoenix)
+/// are unaffected.
+fn resolve_event_topic(
+  state: State,
+  socket_id: String,
+  requested: String,
+) -> String {
+  case requested {
+    "" ->
+      case dict.get(state.sockets, socket_id) {
+        Ok(info) ->
+          case set.to_list(info.subscribed_topics) {
+            [only] -> only
+            _ -> requested
+          }
+        Error(Nil) -> requested
+      }
+    _ -> requested
   }
 }
 
