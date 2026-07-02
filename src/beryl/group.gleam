@@ -86,7 +86,6 @@ pub fn start() -> Result(Groups, GroupStartError) {
 }
 
 /// Start the groups actor with a registered name (for supervision)
-@internal
 pub fn start_named(
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {

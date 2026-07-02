@@ -9,6 +9,7 @@ import beryl/wire
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/response
+import gleam/string
 import gleeunit/should
 import mist
 
@@ -16,6 +17,18 @@ type WebsocketClient
 
 @external(erlang, "beryl_mist_transport_test_ffi", "connect_websocket")
 fn connect_websocket(port: Int, path: String) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "websocket_upgrade_status")
+fn websocket_upgrade_status(port: Int, path: String) -> Result(Int, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "send_text")
+fn send_text(
+  client: WebsocketClient,
+  text: String,
+) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_text")
+fn receive_text(client: WebsocketClient, timeout: Int) -> Result(String, Nil)
 
 @external(erlang, "beryl_mist_transport_test_ffi", "close")
 fn close(client: WebsocketClient) -> Nil
@@ -49,6 +62,26 @@ fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
     |> mist.start
   let assert Ok(port) = process.receive(port_subject, 1000)
   #(port, server.pid)
+}
+
+fn start_limited_server() -> #(Int, process.Pid) {
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.Config(
+        ..beryl.config(wire.phoenix_codec()),
+        max_connections_per_ip: 1,
+      ),
+    )
+  start_server(channels)
+}
+
+fn start_frame_limited_server() -> #(Int, process.Pid) {
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_inbound_frame_bytes(max_bytes: 32),
+    )
+  start_server(channels)
 }
 
 fn start_channels() -> beryl.Channels {
@@ -98,5 +131,35 @@ pub fn handler_routes_websocket_on_other_path_to_fallback_test() {
   connect_websocket(port, "/not-socket")
   |> should.equal(Error(Nil))
 
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_rejects_connections_over_per_ip_limit_test() {
+  let #(port, server_pid) = start_limited_server()
+
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  websocket_upgrade_status(port, "/socket")
+  |> should.equal(Ok(429))
+
+  close(client)
+  process.sleep(50)
+
+  let assert Ok(next_client) = connect_websocket(port, "/socket")
+  close(next_client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_closes_socket_on_oversized_text_frame_test() {
+  let #(port, server_pid) = start_frame_limited_server()
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  let oversized_frame = string.repeat("a", 64)
+  let assert Ok(_) = send_text(client, oversized_frame)
+
+  receive_text(client, 200)
+  |> should.equal(Error(Nil))
+
+  close(client)
   stop_supervisor(server_pid)
 }

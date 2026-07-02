@@ -26,7 +26,6 @@ pub fn describe_start_failure(failure: StartFailure) -> String {
   }
 }
 
-@internal
 pub fn from_actor_start_error(error: actor.StartError) -> StartFailure {
   case error {
     actor.InitTimeout -> StartFailure(StartTimedOut)
