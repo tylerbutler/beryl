@@ -1,0 +1,5 @@
+kind: Security
+body: |-
+  Add optional WebSocket Origin allow-listing to the Mist transport.
+  Disallowed or missing Origin headers are rejected with HTTP 403 before the WebSocket handshake, protecting cookie-authenticated sockets from CSWSH when configured.
+time: 2026-06-28T21:44:10.750000000+00:00

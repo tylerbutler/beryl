@@ -136,3 +136,19 @@ pub fn with_on_connect(
   fn(request.Request(http.Connection)) -> Result(b, ConnectError)
 ) -> TransportConfig(b)
 ```
+
+### `with_allowed_origins`
+
+Restrict WebSocket upgrades to requests with an allowed `Origin` header.
+
+ Values are matched exactly against the full Origin header value, including
+ scheme and host (and port when present), such as
+ `"https://app.example.com"`. When configured, missing or non-matching
+ origins are rejected with `403 Forbidden` before the WebSocket handshake.
+
+```gleam
+pub fn with_allowed_origins(
+  TransportConfig(a),
+  List(String)
+) -> TransportConfig(a)
+```

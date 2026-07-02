@@ -13,6 +13,7 @@ import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
@@ -36,6 +37,9 @@ pub opaque type TransportConfig(assigns) {
     /// with a 403 Forbidden response. When None, all connections are allowed
     /// and assigns start empty (`Nil`).
     on_connect: Option(fn(Request(Connection)) -> Result(assigns, ConnectError)),
+    /// Optional exact Origin header allow-list checked before the WebSocket
+    /// handshake. When None, all origins are allowed.
+    allowed_origins: Option(List(String)),
   )
 }
 
@@ -50,7 +54,7 @@ pub type ConnectError {
 /// The resulting config seeds `Nil` assigns. Add `with_on_connect` to
 /// authenticate connections and/or seed initial assigns.
 pub fn default_config(path: String) -> TransportConfig(Nil) {
-  TransportConfig(path: path, on_connect: None)
+  TransportConfig(path: path, on_connect: None, allowed_origins: None)
 }
 
 /// Set a socket-level connect/authentication callback on the transport config.
@@ -64,7 +68,28 @@ pub fn with_on_connect(
   config: TransportConfig(a),
   callback: fn(Request(Connection)) -> Result(assigns, ConnectError),
 ) -> TransportConfig(assigns) {
-  TransportConfig(path: config.path, on_connect: Some(callback))
+  TransportConfig(
+    path: config.path,
+    on_connect: Some(callback),
+    allowed_origins: config.allowed_origins,
+  )
+}
+
+/// Restrict WebSocket upgrades to requests with an allowed `Origin` header.
+///
+/// Values are matched exactly against the full Origin header value, including
+/// scheme and host (and port when present), such as
+/// `"https://app.example.com"`. When configured, missing or non-matching
+/// origins are rejected with `403 Forbidden` before the WebSocket handshake.
+pub fn with_allowed_origins(
+  config: TransportConfig(assigns),
+  origins: List(String),
+) -> TransportConfig(assigns) {
+  TransportConfig(
+    path: config.path,
+    on_connect: config.on_connect,
+    allowed_origins: Some(origins),
+  )
 }
 
 /// State maintained per WebSocket connection
@@ -106,6 +131,17 @@ pub fn upgrade(
 
   case path == config.path {
     False -> next()
+    True -> handle_matched_upgrade(request, channels, config)
+  }
+}
+
+fn handle_matched_upgrade(
+  request: Request(Connection),
+  channels: Channels,
+  config: TransportConfig(assigns),
+) -> Response(ResponseData) {
+  case origin_allowed(request, config.allowed_origins) {
+    False -> forbidden()
     True -> {
       let ip = request_ip(request)
       case beryl.acquire_connection_slot(channels, ip) {
@@ -117,6 +153,25 @@ pub fn upgrade(
       }
     }
   }
+}
+
+fn origin_allowed(
+  request: Request(Connection),
+  allowed_origins: Option(List(String)),
+) -> Bool {
+  case allowed_origins {
+    None -> True
+    Some(origins) ->
+      case request.get_header(request, "origin") {
+        Ok(origin) -> list.contains(origins, origin)
+        Error(Nil) -> False
+      }
+  }
+}
+
+fn forbidden() -> Response(ResponseData) {
+  response.new(403)
+  |> response.set_body(mist.Bytes(bytes_tree.new()))
 }
 
 fn run_connect_and_upgrade(

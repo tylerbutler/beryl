@@ -1274,7 +1274,8 @@ pub fn route_message(
   process.send(coord, RouteText(socket_id, raw_text))
 }
 
-// nolint: unused_exports -- package-internal transport entry point for decoded frames
+// nolint: unused_exports -- public transport API for callers that decode frames before routing
+/// Route a transport-decoded inbound message to the coordinator.
 pub fn route_decoded(
   coord: Subject(Message),
   socket_id: String,

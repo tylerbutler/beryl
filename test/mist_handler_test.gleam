@@ -18,6 +18,20 @@ type WebsocketClient
 @external(erlang, "beryl_mist_transport_test_ffi", "connect_websocket")
 fn connect_websocket(port: Int, path: String) -> Result(WebsocketClient, Nil)
 
+@external(erlang, "beryl_mist_transport_test_ffi", "connect_websocket_with_origin")
+fn connect_websocket_with_origin(
+  port: Int,
+  path: String,
+  origin: String,
+) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "websocket_upgrade_status_with_origin")
+fn websocket_upgrade_status_with_origin(
+  port: Int,
+  path: String,
+  origin: String,
+) -> Result(Int, Nil)
+
 @external(erlang, "beryl_mist_transport_test_ffi", "websocket_upgrade_status")
 fn websocket_upgrade_status(port: Int, path: String) -> Result(Int, Nil)
 
@@ -42,17 +56,20 @@ fn stop_supervisor(pid: process.Pid) -> Nil
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
 fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
+  start_server_with_config(channels, mist_transport.default_config("/socket"))
+}
+
+fn start_server_with_config(
+  channels: beryl.Channels,
+  config: mist_transport.TransportConfig(assigns),
+) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let http_fallback = fn(_request) {
     response.new(418)
     |> response.set_body(mist.Bytes(bytes_tree.new()))
   }
   let assert Ok(server) =
-    mist_transport.handler(
-      channels,
-      mist_transport.default_config("/socket"),
-      http_fallback,
-    )
+    mist_transport.handler(channels, config, http_fallback)
     |> mist.new
     |> mist.port(0)
     |> mist.bind("127.0.0.1")
@@ -134,6 +151,26 @@ pub fn handler_routes_websocket_on_other_path_to_fallback_test() {
   stop_supervisor(server_pid)
 }
 
+pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
+  let channels = start_channels()
+  let config =
+    mist_transport.default_config("/socket")
+    |> mist_transport.with_allowed_origins(["https://app.example.com"])
+  let #(port, server_pid) = start_server_with_config(channels, config)
+
+  websocket_upgrade_status_with_origin(
+    port,
+    "/socket",
+    "https://evil.example.com",
+  )
+  |> should.equal(Ok(403))
+
+  let assert Ok(client) =
+    connect_websocket_with_origin(port, "/socket", "https://app.example.com")
+  close(client)
+  stop_supervisor(server_pid)
+}
+
 pub fn handler_rejects_connections_over_per_ip_limit_test() {
   let #(port, server_pid) = start_limited_server()
 
@@ -156,7 +193,6 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() {
 
   let oversized_frame = string.repeat("a", 64)
   let assert Ok(_) = send_text(client, oversized_frame)
-
   receive_text(client, 200)
   |> should.equal(Error(Nil))
 
