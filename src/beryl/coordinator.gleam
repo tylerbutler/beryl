@@ -1300,13 +1300,14 @@ fn dispatch_inbound(
         True -> handle_leave(state, socket_id, msg.topic, msg.ref)
       }
     codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
-    codec.Event(event) ->
+    codec.Event(event) -> {
+      let resolved = resolve_event_topic(state, socket_id, msg.topic)
       case
-        is_valid_topic(msg.topic, state.config),
+        is_valid_topic(resolved, state.config),
         is_valid_event(event, state.config)
       {
         True, True ->
-          handle_in(state, socket_id, msg.topic, event, msg.payload, msg.ref)
+          handle_in(state, socket_id, resolved, event, msg.payload, msg.ref)
         False, _ -> {
           let safe_topic = topic.sanitize_for_log(msg.topic)
           let safe_event = topic.sanitize_for_log(event)
@@ -1329,6 +1330,31 @@ fn dispatch_inbound(
           actor.continue(state)
         }
       }
+    }
+  }
+}
+
+/// Resolve the topic for an inbound Event. Some codecs (e.g. Socket.IO/Fluid)
+/// omit a per-frame topic; in that case route to the socket's single joined
+/// topic. With zero or multiple joined topics the original (empty) topic is
+/// returned so existing validation drops it. Topic-carrying codecs (Phoenix)
+/// are unaffected.
+fn resolve_event_topic(
+  state: State,
+  socket_id: String,
+  requested: String,
+) -> String {
+  case requested {
+    "" ->
+      case dict.get(state.sockets, socket_id) {
+        Ok(info) ->
+          case set.to_list(info.subscribed_topics) {
+            [only] -> only
+            _ -> requested
+          }
+        Error(Nil) -> requested
+      }
+    _ -> requested
   }
 }
 
