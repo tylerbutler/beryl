@@ -1,0 +1,5 @@
+kind: Fixed
+body: |-
+    Validate topic patterns at channel registration so RegisterError.InvalidPattern is reachable.
+    Patterns must now be non-empty and contain no control characters; invalid patterns are rejected with InvalidPattern instead of being silently accepted. The bare pattern "*" remains valid as a documented catch-all that matches every topic.
+time: 2026-07-03T08:24:21.658887249-07:00

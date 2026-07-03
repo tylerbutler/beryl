@@ -94,6 +94,43 @@ pub fn single_trailing_wildcard_keeps_prefix_pattern_test() {
   |> should.equal(topic.Wildcard("document:tenant-a:"))
 }
 
+pub fn validate_pattern_rejects_empty_test() {
+  topic.validate_pattern("")
+  |> should.equal(Error(topic.EmptyTopic))
+}
+
+pub fn validate_pattern_rejects_control_characters_test() {
+  topic.validate_pattern("room:\u{0001}*")
+  |> should.equal(
+    Error(topic.InvalidFormat("pattern contains control characters")),
+  )
+
+  topic.validate_pattern("room:\nlobby")
+  |> should.equal(
+    Error(topic.InvalidFormat("pattern contains control characters")),
+  )
+}
+
+pub fn validate_pattern_accepts_valid_patterns_test() {
+  topic.validate_pattern("room:lobby")
+  |> should.equal(Ok("room:lobby"))
+
+  topic.validate_pattern("room:*")
+  |> should.equal(Ok("room:*"))
+
+  topic.validate_pattern("document:*:ops")
+  |> should.equal(Ok("document:*:ops"))
+}
+
+pub fn validate_pattern_accepts_bare_catch_all_test() {
+  // A bare "*" is a documented catch-all matching every topic.
+  topic.validate_pattern("*")
+  |> should.equal(Ok("*"))
+
+  topic.parse_pattern("*")
+  |> should.equal(topic.Wildcard(""))
+}
+
 pub fn segment_wildcard_matches_same_shape_topics_test() {
   let pattern = topic.parse_pattern("document:*:ops")
 
@@ -317,6 +354,38 @@ pub fn join_with_too_long_topic_gets_error_reply_test() {
   let assert Ok(reply) = process.receive(sent_messages, 500)
   reply |> string.contains("phx_reply") |> should.be_true
   reply |> string.contains("invalid_topic") |> should.be_true
+}
+
+pub fn register_rejects_empty_pattern_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  let assert Error(beryl.InvalidPattern("")) =
+    beryl.register(channels, "", handler)
+}
+
+pub fn register_rejects_control_character_pattern_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  let assert Error(beryl.InvalidPattern("room:\nlobby")) =
+    beryl.register(channels, "room:\nlobby", handler)
+}
+
+pub fn register_accepts_bare_catch_all_pattern_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  let assert Ok(_) = beryl.register(channels, "*", handler)
 }
 
 pub fn socket_cannot_join_more_than_configured_topic_cap_test() {

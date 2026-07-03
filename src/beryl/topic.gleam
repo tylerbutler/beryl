@@ -252,6 +252,23 @@ pub fn validate(topic: String) -> Result(String, TopicError) {
   Ok(topic)
 }
 
+/// Validate a topic pattern string
+///
+/// Patterns must:
+/// - Not be empty
+/// - Not contain control characters (codepoints 0–31 or 127)
+///
+/// The bare pattern `"*"` is valid: it parses to a catch-all wildcard that
+/// matches every topic.
+pub fn validate_pattern(pattern: String) -> Result(String, TopicError) {
+  use <- bool.guard(when: string.is_empty(pattern), return: Error(EmptyTopic))
+  use <- bool.guard(
+    when: has_control_characters(pattern),
+    return: Error(InvalidFormat("pattern contains control characters")),
+  )
+  Ok(pattern)
+}
+
 /// Validate an event name string
 ///
 /// Event names must:
