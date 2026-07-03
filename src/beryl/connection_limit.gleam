@@ -30,6 +30,7 @@ type Message {
     reply: Subject(Result(Permit, Nil)),
   )
   Release(ip: String)
+  Stop(reply: Subject(Nil))
 }
 
 fn handle_message(
@@ -56,6 +57,10 @@ fn handle_message(
       }
     }
     Release(ip) -> actor.continue(release_ip(state, ip))
+    Stop(reply) -> {
+      process.send(reply, Nil)
+      actor.stop()
+    }
   }
 }
 
@@ -127,6 +132,26 @@ fn release(permit: Permit) -> Nil {
 pub fn release_optional(permit: Option(Permit)) -> Nil {
   case permit {
     Some(permit) -> release(permit)
+    None -> Nil
+  }
+}
+
+fn stop(limiter: ConnectionLimiter) -> Nil {
+  let should_send = case process.subject_owner(limiter.subject) {
+    Error(Nil) -> False
+    Ok(pid) -> process.is_alive(pid)
+  }
+
+  use <- bool.guard(when: !should_send, return: Nil)
+  let reply = process.new_subject()
+  process.send(limiter.subject, Stop(reply))
+  let _stop_result = process.receive(reply, registry_call_timeout_ms)
+  Nil
+}
+
+pub fn stop_optional(limiter: Option(ConnectionLimiter)) -> Nil {
+  case limiter {
+    Some(limiter) -> stop(limiter)
     None -> Nil
   }
 }
