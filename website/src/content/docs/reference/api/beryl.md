@@ -120,7 +120,7 @@ pub type LogLevel {
   Debug
   Info
   Warn
-  Err
+  Error
 }
 ```
 

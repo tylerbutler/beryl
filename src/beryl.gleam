@@ -53,6 +53,7 @@ import beryl/channel.{type Channel}
 import beryl/connection_limit
 import beryl/coordinator
 import beryl/error as beryl_error
+import beryl/internal
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
@@ -98,7 +99,7 @@ pub type LogLevel {
   Debug
   Info
   Warn
-  Err
+  Error
 }
 
 /// Logging configuration for Beryl diagnostics.
@@ -226,7 +227,7 @@ fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
     Debug -> coordinator.Debug
     Info -> coordinator.Info
     Warn -> coordinator.Warn
-    Err -> coordinator.Err
+    Error -> coordinator.Err
   }
 }
 
@@ -412,7 +413,7 @@ pub type StartError {
 pub fn start(config: Config) -> Result(Channels, StartError) {
   use <- bool.guard(
     when: config.heartbeat_timeout_ms <= 0,
-    return: Error(InvalidHeartbeatTimeout),
+    return: internal.result_error(InvalidHeartbeatTimeout),
   )
   // Server checks at half the timeout interval to detect stale sockets
   // promptly. The client heartbeat_interval_ms is informational only
@@ -447,11 +448,23 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
   }
 
   case coordinator_result {
-    Error(coordinator.ActorStartFailed(error)) ->
-      Error(CoordinatorStartFailed(beryl_error.from_actor_start_error(error)))
-    Error(coordinator.InvalidHeartbeatTimeout) -> Error(InvalidHeartbeatTimeout)
     Ok(coord) ->
       Ok(channels_from_coordinator(coordinator: coord, config: config))
+    error_result -> {
+      case
+        result.unwrap_error(
+          error_result,
+          or: coordinator.InvalidHeartbeatTimeout,
+        )
+      {
+        coordinator.ActorStartFailed(error) ->
+          internal.result_error(
+            CoordinatorStartFailed(beryl_error.from_actor_start_error(error)),
+          )
+        coordinator.InvalidHeartbeatTimeout ->
+          internal.result_error(InvalidHeartbeatTimeout)
+      }
+    }
   }
 }
 
@@ -543,7 +556,7 @@ pub fn broadcast(
   case channels.pubsub, process.subject_owner(channels.coordinator) {
     Some(ps), Ok(coordinator_pid) ->
       pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
-    Some(_), Error(Nil) ->
+    Some(_), _ ->
       // Coordinator exited between send and pubsub forward — local message
       // is already enqueued (dead-letters), skip the cluster fanout.
       Nil
@@ -619,7 +632,7 @@ pub fn broadcast_from(
         event,
         payload,
       )
-    Some(_), Error(Nil) -> Nil
+    Some(_), _ -> Nil
     None, _ -> Nil
   }
 }
@@ -769,7 +782,7 @@ fn result_to_transport_result(
 ) -> Result(Nil, socket.TransportError) {
   case result {
     Ok(_) -> Ok(Nil)
-    Error(_) -> Error(socket.SendFailed("Send failed"))
+    _ -> internal.result_error(socket.SendFailed("Send failed"))
   }
 }
 
