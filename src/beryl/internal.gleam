@@ -44,6 +44,10 @@ fn to_palabres_level(log_level: LogLevel) -> level.Level {
   }
 }
 
+pub fn result_error(error: e) -> Result(a, e) {
+  Error(error)
+}
+
 /// Return a named logger.
 pub fn logger(name: String) -> Logger {
   log.new(name)
