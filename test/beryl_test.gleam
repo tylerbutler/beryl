@@ -30,6 +30,16 @@ fn text_frame(frame: codec.Frame) -> String {
   text
 }
 
+fn wait_until(predicate: fn() -> Bool, timeout_ms: Int, step_ms: Int) -> Nil {
+  case predicate() || timeout_ms <= 0 {
+    True -> Nil
+    False -> {
+      process.sleep(step_ms)
+      wait_until(predicate, timeout_ms - step_ms, step_ms)
+    }
+  }
+}
+
 pub fn main() {
   gleeunit.main()
 }
@@ -959,6 +969,59 @@ pub fn channels_handle_remains_usable_after_start_test() {
     })
 
   let assert Ok(_) = beryl.register(channels, "opaque:*", handler)
+}
+
+pub fn stop_shuts_down_unsupervised_coordinator_test() {
+  let config =
+    beryl.Config(
+      ..beryl.config(wire.phoenix_codec()),
+      max_connections_per_ip: 1,
+    )
+    |> beryl.with_message_rate(per_second: 10, burst: 10)
+    |> beryl.with_join_rate(per_second: 10, burst: 10)
+    |> beryl.with_channel_rate(per_second: 10, burst: 10)
+  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(coordinator_pid) =
+    process.subject_owner(beryl.coordinator_subject(channels))
+  let sent_messages = process.new_subject()
+  let terminated = process.new_subject()
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+    |> channel.with_terminate(fn(reason, _socket) {
+      process.send(terminated, reason)
+    })
+
+  process.is_alive(coordinator_pid) |> should.be_true
+  let assert Ok(_) = beryl.register(channels, "stop:*", handler)
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-stop",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-stop",
+    "[null,\"ref-stop\",\"stop:lobby\",\"phx_join\",{}]",
+  )
+  let assert Ok(_) = process.receive(sent_messages, 500)
+
+  beryl.stop(channels)
+  let assert Ok(reason) = process.receive(terminated, 500)
+  reason |> should.equal(channel.Shutdown)
+  wait_until(fn() { !process.is_alive(coordinator_pid) }, 1000, 10)
+
+  process.is_alive(coordinator_pid) |> should.be_false
+  beryl.stop(channels)
 }
 
 pub fn topic_namespace_test() {
