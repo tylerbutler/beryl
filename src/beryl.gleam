@@ -468,6 +468,31 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
   }
 }
 
+/// Stop an unsupervised channels system.
+///
+/// This shuts down the coordinator actor started by `start` and any auxiliary
+/// limiter actors owned by the `Channels` handle. Joined channel handlers
+/// receive `channel.Shutdown` in their `terminate` callback before the
+/// coordinator exits. After this call the `Channels` handle should no longer be
+/// used.
+pub fn stop(channels: Channels) -> Nil {
+  stop_coordinator(channels.coordinator)
+  connection_limit.stop_optional(channels.connection_limiter)
+}
+
+fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
+  let should_send = case process.subject_owner(coordinator) {
+    Ok(pid) -> process.is_alive(pid)
+    _ -> False
+  }
+
+  use <- bool.guard(when: !should_send, return: Nil)
+  let reply = process.new_subject()
+  process.send(coordinator, coordinator.Stop(reply))
+  let _stop_result = process.receive(reply, 5000)
+  Nil
+}
+
 /// Register a channel handler for a topic pattern
 ///
 /// Patterns can be exact matches like "room:lobby", legacy prefix wildcards

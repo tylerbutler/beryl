@@ -336,6 +336,7 @@ pub type Message {
   RemoteBroadcast(pubsub.Message)
   // Heartbeat timeout enforcement
   CheckHeartbeats
+  Stop(reply: Subject(Nil))
 }
 
 /// Erlang monotonic time in milliseconds
@@ -511,7 +512,31 @@ fn handle_message(
     RemoteBroadcast(pubsub_msg) -> handle_remote_broadcast(state, pubsub_msg)
 
     CheckHeartbeats -> handle_check_heartbeats(state)
+
+    Stop(reply) -> handle_stop(state, reply)
   }
+}
+
+fn handle_stop(
+  state: State,
+  reply: Subject(Nil),
+) -> actor.Next(State, Message) {
+  let logger = coordinator_logger(state)
+  logger
+  |> log.info("Coordinator stopping", [
+    #("socket_count", int.to_string(dict.size(state.sockets))),
+  ])
+
+  dict.keys(state.sockets)
+  |> list.fold(state, fn(st, socket_id) {
+    disconnect_socket(st, socket_id, channel.Shutdown)
+  })
+
+  rate_limit.stop_optional(state.config.message_limiter)
+  rate_limit.stop_optional(state.config.join_limiter)
+  rate_limit.stop_optional(state.config.channel_limiter)
+  process.send(reply, Nil)
+  actor.stop()
 }
 
 fn handle_register_channel(

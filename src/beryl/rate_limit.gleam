@@ -314,7 +314,6 @@ pub fn bucket_count_by_prefix(limiter: RateLimiter, prefix: String) -> Int {
   )
 }
 
-// nolint: unused_exports -- public lower-level API; remove_optional is a convenience wrapper
 /// Remove rate limit state for an exact key.
 fn remove(limiter: RateLimiter, key: String) -> Nil {
   process.send(limiter.subject, RemoveKey(key))
@@ -362,4 +361,11 @@ pub fn stop(limiter: RateLimiter) -> Nil {
     fn(reply) { RegistryStop(reply) },
     Nil,
   )
+}
+
+pub fn stop_optional(limiter: Option(RateLimiter)) -> Nil {
+  case limiter {
+    Some(limiter) -> stop(limiter)
+    None -> Nil
+  }
 }
