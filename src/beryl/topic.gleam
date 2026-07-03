@@ -214,14 +214,11 @@ pub fn segments(topic: String) -> List(String) {
 /// namespace("") // -> Error(EmptyNamespace)
 /// ```
 pub fn namespace(topic: String) -> Result(String, ExtractError) {
-  case string.is_empty(topic) {
-    True -> Error(EmptyNamespace)
-    False ->
-      topic
-      |> segments
-      |> list.first
-      |> result.map_error(fn(_) { EmptyNamespace })
-  }
+  use <- bool.guard(when: string.is_empty(topic), return: Error(EmptyNamespace))
+  topic
+  |> segments
+  |> list.first
+  |> result.replace_error(EmptyNamespace)
 }
 
 /// Build a topic from segments
@@ -253,6 +250,23 @@ pub fn validate(topic: String) -> Result(String, TopicError) {
     return: Error(InvalidFormat("topic contains control characters")),
   )
   Ok(topic)
+}
+
+/// Validate a topic pattern string
+///
+/// Patterns must:
+/// - Not be empty
+/// - Not contain control characters (codepoints 0–31 or 127)
+///
+/// The bare pattern `"*"` is valid: it parses to a catch-all wildcard that
+/// matches every topic.
+pub fn validate_pattern(pattern: String) -> Result(String, TopicError) {
+  use <- bool.guard(when: string.is_empty(pattern), return: Error(EmptyTopic))
+  use <- bool.guard(
+    when: has_control_characters(pattern),
+    return: Error(InvalidFormat("pattern contains control characters")),
+  )
+  Ok(pattern)
 }
 
 /// Validate an event name string

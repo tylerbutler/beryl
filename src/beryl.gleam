@@ -50,8 +50,10 @@
 //// ```
 
 import beryl/channel.{type Channel}
+import beryl/connection_limit
 import beryl/coordinator
 import beryl/error as beryl_error
+import beryl/internal
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
@@ -88,7 +90,8 @@ pub opaque type RegisteredChannel(assigns, info) {
 pub type RegisterError {
   /// A handler is already registered for this exact topic pattern.
   PatternAlreadyRegistered(String)
-  /// The topic pattern is invalid.
+  /// The topic pattern is invalid. Patterns must be non-empty and must not
+  /// contain control characters (codepoints 0–31 or 127).
   InvalidPattern(String)
 }
 
@@ -97,7 +100,7 @@ pub type LogLevel {
   Debug
   Info
   Warn
-  Err
+  Error
 }
 
 /// Logging configuration for Beryl diagnostics.
@@ -148,6 +151,12 @@ pub type Config {
     /// Maximum byte length for client-supplied event name strings (default: 64).
     /// Events exceeding this limit are dropped before reaching a channel handler.
     max_event_length: Int,
+    /// Maximum inbound WebSocket frame size in bytes (default: 1 MiB).
+    /// Frames exceeding this limit are closed before wire decoding.
+    max_inbound_frame_bytes: Int,
+    /// Maximum joined topics per socket (default: 1000).
+    /// Values <= 0 disable the cap.
+    max_joined_topics_per_socket: Int,
     /// Logging configuration for Beryl diagnostics
     logging: LoggingConfig,
   )
@@ -190,6 +199,8 @@ pub fn config(codec: codec.Codec) -> Config {
     channel_rate_max_keys_per_socket: 1000,
     max_topic_length: 256,
     max_event_length: 64,
+    max_inbound_frame_bytes: 1_048_576,
+    max_joined_topics_per_socket: 1000,
     logging: logging_config(level: Info, include_payloads: False),
   )
 }
@@ -217,7 +228,7 @@ fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
     Debug -> coordinator.Debug
     Info -> coordinator.Info
     Warn -> coordinator.Warn
-    Err -> coordinator.Err
+    Error -> coordinator.Err
   }
 }
 
@@ -295,6 +306,27 @@ pub fn with_max_event_length(
   Config(..config, max_event_length: max_length)
 }
 
+/// Configure the maximum allowed inbound WebSocket frame size in bytes.
+///
+/// Frames larger than `max_bytes` are closed before decoding. Values <= 0
+/// disable the cap. The default is 1 MiB.
+pub fn with_max_inbound_frame_bytes(
+  config: Config,
+  max_bytes max_bytes: Int,
+) -> Config {
+  Config(..config, max_inbound_frame_bytes: max_bytes)
+}
+
+/// Configure the maximum number of topics a socket may join at once.
+///
+/// Values <= 0 disable the cap. The default is 1000.
+pub fn with_max_joined_topics_per_socket(
+  config: Config,
+  max_topics max_topics: Int,
+) -> Config {
+  Config(..config, max_joined_topics_per_socket: max_topics)
+}
+
 /// Channels system handle.
 ///
 /// This opaque handle is returned by `start` and passed to registration,
@@ -306,6 +338,7 @@ pub opaque type Channels {
     coordinator: Subject(coordinator.Message),
     config: Config,
     pubsub: Option(PubSub),
+    connection_limiter: Option(connection_limit.ConnectionLimiter),
   )
 }
 
@@ -315,7 +348,14 @@ pub fn channels_from_coordinator(
   coordinator coordinator: Subject(coordinator.Message),
   config config: Config,
 ) -> Channels {
-  Channels(coordinator: coordinator, config: config, pubsub: config.pubsub)
+  Channels(
+    coordinator: coordinator,
+    config: config,
+    pubsub: config.pubsub,
+    connection_limiter: connection_limit.start_optional(
+      config.max_connections_per_ip,
+    ),
+  )
 }
 
 // nolint: unused_exports -- package-internal accessor for transports/tests; hidden from public docs with @internal
@@ -324,10 +364,27 @@ pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
   channels.coordinator
 }
 
-// nolint: unused_exports -- package-internal accessor for transport codec negotiation; hidden from public docs with @internal
 @internal
 pub fn configured_codec(channels: Channels) -> codec.Codec {
   channels.config.codec
+}
+
+/// Try to acquire a configured per-IP connection slot for transports.
+pub fn acquire_connection_slot(
+  channels: Channels,
+  ip: String,
+) -> Result(Option(connection_limit.Permit), Nil) {
+  connection_limit.acquire_optional(channels.connection_limiter, ip)
+}
+
+/// Release a per-IP connection slot acquired by a transport.
+pub fn release_connection_slot(permit: Option(connection_limit.Permit)) -> Nil {
+  connection_limit.release_optional(permit)
+}
+
+/// Return the configured inbound frame size cap for transports.
+pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
+  channels.config.max_inbound_frame_bytes
 }
 
 /// Errors when starting channels
@@ -359,7 +416,7 @@ pub type StartError {
 pub fn start(config: Config) -> Result(Channels, StartError) {
   use <- bool.guard(
     when: config.heartbeat_timeout_ms <= 0,
-    return: Error(InvalidHeartbeatTimeout),
+    return: internal.result_error(InvalidHeartbeatTimeout),
   )
   // Server checks at half the timeout interval to detect stale sockets
   // promptly. The client heartbeat_interval_ms is informational only
@@ -384,6 +441,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
       channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
       max_topic_length: config.max_topic_length,
       max_event_length: config.max_event_length,
+      max_joined_topics_per_socket: config.max_joined_topics_per_socket,
       logging: coordinator_logging(config.logging),
     )
 
@@ -393,12 +451,49 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
   }
 
   case coordinator_result {
-    Error(coordinator.ActorStartFailed(error)) ->
-      Error(CoordinatorStartFailed(beryl_error.from_actor_start_error(error)))
-    Error(coordinator.InvalidHeartbeatTimeout) -> Error(InvalidHeartbeatTimeout)
     Ok(coord) ->
       Ok(channels_from_coordinator(coordinator: coord, config: config))
+    error_result -> {
+      case
+        result.unwrap_error(
+          error_result,
+          or: coordinator.InvalidHeartbeatTimeout,
+        )
+      {
+        coordinator.ActorStartFailed(error) ->
+          internal.result_error(
+            CoordinatorStartFailed(beryl_error.from_actor_start_error(error)),
+          )
+        coordinator.InvalidHeartbeatTimeout ->
+          internal.result_error(InvalidHeartbeatTimeout)
+      }
+    }
   }
+}
+
+/// Stop an unsupervised channels system.
+///
+/// This shuts down the coordinator actor started by `start` and any auxiliary
+/// limiter actors owned by the `Channels` handle. Joined channel handlers
+/// receive `channel.Shutdown` in their `terminate` callback before the
+/// coordinator exits. After this call the `Channels` handle should no longer be
+/// used.
+pub fn stop(channels: Channels) -> Nil {
+  stop_coordinator(channels.coordinator)
+  connection_limit.stop_optional(channels.connection_limiter)
+}
+
+fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
+  let should_send = case process.subject_owner(coordinator) {
+    Ok(pid) -> process.is_alive(pid)
+    _ -> False
+  }
+
+  use <- bool.guard(when: !should_send, return: Nil)
+  let reply = process.new_subject()
+  process.send(coordinator, coordinator.Stop(reply))
+  let _stop_result = process.receive(reply, 5000)
+  Nil
 }
 
 /// Register a channel handler for a topic pattern
@@ -406,6 +501,11 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 /// Patterns can be exact matches like "room:lobby", legacy prefix wildcards
 /// like "room:*" which match any topic starting with "room:", or segment
 /// wildcards like "document:*:ops" where "*" matches one complete segment.
+/// The bare pattern "*" is a catch-all that matches every topic.
+///
+/// Patterns are validated at registration: they must be non-empty and must
+/// not contain control characters (codepoints 0–31 or 127). Invalid patterns
+/// are rejected with `InvalidPattern`.
 ///
 /// ## Example
 ///
@@ -489,7 +589,7 @@ pub fn broadcast(
   case channels.pubsub, process.subject_owner(channels.coordinator) {
     Some(ps), Ok(coordinator_pid) ->
       pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
-    Some(_), Error(Nil) ->
+    Some(_), _ ->
       // Coordinator exited between send and pubsub forward — local message
       // is already enqueued (dead-letters), skip the cluster fanout.
       Nil
@@ -565,7 +665,7 @@ pub fn broadcast_from(
         event,
         payload,
       )
-    Some(_), Error(Nil) -> Nil
+    Some(_), _ -> Nil
     None, _ -> Nil
   }
 }
@@ -715,7 +815,7 @@ fn result_to_transport_result(
 ) -> Result(Nil, socket.TransportError) {
   case result {
     Ok(_) -> Ok(Nil)
-    Error(_) -> Error(socket.SendFailed("Send failed"))
+    _ -> internal.result_error(socket.SendFailed("Send failed"))
   }
 }
 

@@ -61,12 +61,15 @@ The Mist transport (`src/beryl/transport/mist.gleam`) bridges Mist's native WebS
 3. **Routing text frames** — `mist.Text` frames are forwarded to `coordinator.route_message`, which decodes them through the codec.
 4. **Routing binary frames** — `mist.Binary` frames are forwarded to `coordinator.route_binary`; the coordinator passes them through the codec's `decode_binary` when present, otherwise delivers the raw `BitArray` to `channel.handle_binary`.
 5. **Notifying on close** — `mist.Closed` and `mist.Shutdown` send `SocketDisconnected` to the coordinator so it can clean up subscriptions.
+6. **Rejecting disallowed origins** — when configured, `with_allowed_origins` checks the full `Origin` header before the WebSocket handshake and returns HTTP 403 for missing or non-matching origins.
 
 ### Key functions
 
 **`default_config(path)`** — creates a `TransportConfig(Nil)` with no connect hook. Accepts all connections and seeds `Nil` assigns.
 
 **`with_on_connect(config, callback)`** — attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(assigns)` to allow the connection, `Error(ConnectRejected)` to reject with 403.
+
+**`with_allowed_origins(config, origins)`** — attaches an exact-match allow-list for browser `Origin` headers, such as `["https://app.example.com"]`. Use this when cookie-authenticated WebSockets need CSWSH protection.
 
 **`upgrade(request, channels, config, next)`** — checks whether the request path matches the configured socket path, runs the `on_connect` hook, and performs the WebSocket upgrade. Calls `next()` when the path does not match, enabling use as middleware.
 

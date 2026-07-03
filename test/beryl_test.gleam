@@ -30,6 +30,16 @@ fn text_frame(frame: codec.Frame) -> String {
   text
 }
 
+fn wait_until(predicate: fn() -> Bool, timeout_ms: Int, step_ms: Int) -> Nil {
+  case predicate() || timeout_ms <= 0 {
+    True -> Nil
+    False -> {
+      process.sleep(step_ms)
+      wait_until(predicate, timeout_ms - step_ms, step_ms)
+    }
+  }
+}
+
 pub fn main() {
   gleeunit.main()
 }
@@ -82,6 +92,43 @@ pub fn parse_multi_segment_wildcard_pattern_test() {
 pub fn single_trailing_wildcard_keeps_prefix_pattern_test() {
   topic.parse_pattern("document:tenant-a:*")
   |> should.equal(topic.Wildcard("document:tenant-a:"))
+}
+
+pub fn validate_pattern_rejects_empty_test() {
+  topic.validate_pattern("")
+  |> should.equal(Error(topic.EmptyTopic))
+}
+
+pub fn validate_pattern_rejects_control_characters_test() {
+  topic.validate_pattern("room:\u{0001}*")
+  |> should.equal(
+    Error(topic.InvalidFormat("pattern contains control characters")),
+  )
+
+  topic.validate_pattern("room:\nlobby")
+  |> should.equal(
+    Error(topic.InvalidFormat("pattern contains control characters")),
+  )
+}
+
+pub fn validate_pattern_accepts_valid_patterns_test() {
+  topic.validate_pattern("room:lobby")
+  |> should.equal(Ok("room:lobby"))
+
+  topic.validate_pattern("room:*")
+  |> should.equal(Ok("room:*"))
+
+  topic.validate_pattern("document:*:ops")
+  |> should.equal(Ok("document:*:ops"))
+}
+
+pub fn validate_pattern_accepts_bare_catch_all_test() {
+  // A bare "*" is a documented catch-all matching every topic.
+  topic.validate_pattern("*")
+  |> should.equal(Ok("*"))
+
+  topic.parse_pattern("*")
+  |> should.equal(topic.Wildcard(""))
 }
 
 pub fn segment_wildcard_matches_same_shape_topics_test() {
@@ -409,6 +456,83 @@ pub fn event_over_byte_limit_but_under_grapheme_limit_is_dropped_test() {
 
   let assert Ok(first_event) = process.receive(handled_events, 500)
   first_event |> should.equal("ping")
+}
+
+pub fn register_rejects_empty_pattern_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  let assert Error(beryl.InvalidPattern("")) =
+    beryl.register(channels, "", handler)
+}
+
+pub fn register_rejects_control_character_pattern_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  let assert Error(beryl.InvalidPattern("room:\nlobby")) =
+    beryl.register(channels, "room:\nlobby", handler)
+}
+
+pub fn register_accepts_bare_catch_all_pattern_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+
+  let assert Ok(_) = beryl.register(channels, "*", handler)
+}
+
+pub fn socket_cannot_join_more_than_configured_topic_cap_test() {
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_joined_topics_per_socket(max_topics: 1),
+    )
+  let sent_messages = process.new_subject()
+
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-join-cap",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-join-cap",
+    "[null,\"ref-1\",\"room:one\",\"phx_join\",{}]",
+  )
+  let assert Ok(first_reply) = process.receive(sent_messages, 500)
+  first_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-join-cap",
+    "[null,\"ref-2\",\"room:two\",\"phx_join\",{}]",
+  )
+  let assert Ok(second_reply) = process.receive(sent_messages, 500)
+  second_reply |> string.contains("too_many_topics") |> should.be_true
 }
 
 pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
@@ -965,6 +1089,34 @@ pub fn with_max_event_length_sets_field_test() {
   cfg.max_event_length |> should.equal(32)
 }
 
+pub fn default_max_inbound_frame_bytes_is_1mb_test() {
+  let cfg = beryl.config(wire.phoenix_codec())
+
+  cfg.max_inbound_frame_bytes |> should.equal(1_048_576)
+}
+
+pub fn with_max_inbound_frame_bytes_sets_field_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_inbound_frame_bytes(max_bytes: 4096)
+
+  cfg.max_inbound_frame_bytes |> should.equal(4096)
+}
+
+pub fn default_max_joined_topics_per_socket_is_1000_test() {
+  let cfg = beryl.config(wire.phoenix_codec())
+
+  cfg.max_joined_topics_per_socket |> should.equal(1000)
+}
+
+pub fn with_max_joined_topics_per_socket_sets_field_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_joined_topics_per_socket(max_topics: 12)
+
+  cfg.max_joined_topics_per_socket |> should.equal(12)
+}
+
 pub fn extract_topic_id_test() {
   beryl.extract_topic_id(topic.Wildcard("room:"), "room:lobby")
   |> should.equal(Ok("lobby"))
@@ -988,6 +1140,59 @@ pub fn channels_handle_remains_usable_after_start_test() {
     })
 
   let assert Ok(_) = beryl.register(channels, "opaque:*", handler)
+}
+
+pub fn stop_shuts_down_unsupervised_coordinator_test() {
+  let config =
+    beryl.Config(
+      ..beryl.config(wire.phoenix_codec()),
+      max_connections_per_ip: 1,
+    )
+    |> beryl.with_message_rate(per_second: 10, burst: 10)
+    |> beryl.with_join_rate(per_second: 10, burst: 10)
+    |> beryl.with_channel_rate(per_second: 10, burst: 10)
+  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(coordinator_pid) =
+    process.subject_owner(beryl.coordinator_subject(channels))
+  let sent_messages = process.new_subject()
+  let terminated = process.new_subject()
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+    |> channel.with_terminate(fn(reason, _socket) {
+      process.send(terminated, reason)
+    })
+
+  process.is_alive(coordinator_pid) |> should.be_true
+  let assert Ok(_) = beryl.register(channels, "stop:*", handler)
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-stop",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-stop",
+    "[null,\"ref-stop\",\"stop:lobby\",\"phx_join\",{}]",
+  )
+  let assert Ok(_) = process.receive(sent_messages, 500)
+
+  beryl.stop(channels)
+  let assert Ok(reason) = process.receive(terminated, 500)
+  reason |> should.equal(channel.Shutdown)
+  wait_until(fn() { !process.is_alive(coordinator_pid) }, 1000, 10)
+
+  process.is_alive(coordinator_pid) |> should.be_false
+  beryl.stop(channels)
 }
 
 pub fn topic_namespace_test() {

@@ -1,6 +1,8 @@
 -module(beryl_mist_transport_test_ffi).
--export([connect_websocket/2, send_text/2, send_binary/2, receive_text/2,
-         receive_binary/2, close/1, http_get/2]).
+-export([connect_websocket/2, connect_websocket_with_origin/3,
+         websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
+         send_text/2, send_binary/2, receive_text/2, receive_binary/2,
+         close/1, http_get/2]).
 
 http_get(Port, Path) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
@@ -44,17 +46,22 @@ parse_status(Headers) ->
     end.
 
 connect_websocket(Port, Path) ->
+    connect_websocket_with_headers(Port, Path, []).
+
+connect_websocket_with_origin(Port, Path, Origin) ->
+    connect_websocket_with_headers(Port, Path, [
+        <<"Origin: ">>, Origin, <<"\r\n">>
+    ]).
+
+websocket_upgrade_status_with_origin(Port, Path, Origin) ->
+    websocket_upgrade_status_with_headers(Port, Path, [
+        <<"Origin: ">>, Origin, <<"\r\n">>
+    ]).
+
+connect_websocket_with_headers(Port, Path, ExtraHeaders) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
         {ok, Socket} ->
-            Key = base64:encode(crypto:strong_rand_bytes(16)),
-            Request = [
-                <<"GET ">>, Path, <<" HTTP/1.1\r\n">>,
-                <<"Host: 127.0.0.1:">>, integer_to_binary(Port), <<"\r\n">>,
-                <<"Upgrade: websocket\r\n">>,
-                <<"Connection: Upgrade\r\n">>,
-                <<"Sec-WebSocket-Key: ">>, Key, <<"\r\n">>,
-                <<"Sec-WebSocket-Version: 13\r\n\r\n">>
-            ],
+            Request = websocket_request(Port, Path, ExtraHeaders),
             case gen_tcp:send(Socket, Request) of
                 ok ->
                     case read_headers(Socket, <<>>) of
@@ -77,6 +84,42 @@ connect_websocket(Port, Path) ->
         _ ->
             {error, nil}
     end.
+
+websocket_upgrade_status(Port, Path) ->
+    websocket_upgrade_status_with_headers(Port, Path, []).
+
+websocket_upgrade_status_with_headers(Port, Path, ExtraHeaders) ->
+    case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of
+        {ok, Socket} ->
+            Request = websocket_request(Port, Path, ExtraHeaders),
+            Result =
+                case gen_tcp:send(Socket, Request) of
+                    ok ->
+                        case read_headers(Socket, <<>>) of
+                            {ok, Headers} -> parse_status(Headers);
+                            {error, nil} -> {error, nil}
+                        end;
+                    _ ->
+                        {error, nil}
+                end,
+            gen_tcp:close(Socket),
+            Result;
+        _ ->
+            {error, nil}
+    end.
+
+websocket_request(Port, Path, ExtraHeaders) ->
+    Key = base64:encode(crypto:strong_rand_bytes(16)),
+    [
+        <<"GET ">>, Path, <<" HTTP/1.1\r\n">>,
+        <<"Host: 127.0.0.1:">>, integer_to_binary(Port), <<"\r\n">>,
+        <<"Upgrade: websocket\r\n">>,
+        <<"Connection: Upgrade\r\n">>,
+        <<"Sec-WebSocket-Key: ">>, Key, <<"\r\n">>,
+        <<"Sec-WebSocket-Version: 13\r\n">>,
+        ExtraHeaders,
+        <<"\r\n">>
+    ].
 
 send_text(Socket, Text) ->
     Mask = crypto:strong_rand_bytes(4),
