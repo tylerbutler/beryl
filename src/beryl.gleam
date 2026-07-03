@@ -482,8 +482,8 @@ pub fn stop(channels: Channels) -> Nil {
 
 fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
   let should_send = case process.subject_owner(coordinator) {
-    Error(Nil) -> False
     Ok(pid) -> process.is_alive(pid)
+    _ -> False
   }
 
   use <- bool.guard(when: !should_send, return: Nil)
