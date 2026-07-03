@@ -1,0 +1,6 @@
+kind: Security
+body: |-
+  Enforce `max_connections_per_ip` in the Mist transport before WebSocket handshakes.
+
+  Connections over the configured per-IP cap are rejected with HTTP 429, and active counts are released when sockets close.
+time: 2026-06-28T14:44:10.453000000-07:00

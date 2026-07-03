@@ -8,6 +8,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/string
 import gleeunit/should
 import phoenix_channel_fixtures/frame as fixtures
 
@@ -217,6 +218,19 @@ pub fn phoenix_codec_rejects_shared_invalid_fixtures_test() {
       }
     }
   })
+}
+
+pub fn phoenix_codec_rejects_excessively_nested_payload_test() {
+  let phoenix = wire.phoenix_codec()
+  let nested_payload =
+    string.repeat("[", 70) <> "null" <> string.repeat("]", 70)
+
+  let assert Error(codec.InvalidFormat(reason)) =
+    phoenix.decode_text(
+      "[null,\"r\",\"room:1\",\"event\"," <> nested_payload <> "]",
+    )
+
+  reason |> string.contains("JSON nesting depth") |> should.be_true
 }
 
 fn text_frame(frame: codec.Frame) -> String {

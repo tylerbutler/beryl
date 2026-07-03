@@ -144,6 +144,7 @@ fn start_supervised(
       channel_limiter_max_keys_per_socket: config.channels.channel_rate_max_keys_per_socket,
       max_topic_length: config.channels.max_topic_length,
       max_event_length: config.channels.max_event_length,
+      max_joined_topics_per_socket: config.channels.max_joined_topics_per_socket,
       logging: coordinator_logging(config.channels.logging),
     )
 
@@ -256,7 +257,7 @@ fn coordinator_log_level(level: beryl.LogLevel) -> coordinator.LogLevel {
     beryl.Debug -> coordinator.Debug
     beryl.Info -> coordinator.Info
     beryl.Warn -> coordinator.Warn
-    beryl.Err -> coordinator.Err
+    beryl.Error -> coordinator.Err
   }
 }
 

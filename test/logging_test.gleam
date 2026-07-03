@@ -80,7 +80,7 @@ pub fn default_logging_preserves_info_without_payloads_test() {
 
 pub fn with_logging_replaces_logging_config_test() {
   let logging =
-    beryl.logging_config(level: beryl.Debug, include_payloads: True)
+    beryl.logging_config(level: beryl.Error, include_payloads: True)
     |> beryl.with_payload_preview_bytes(bytes: 64)
 
   let config =
@@ -88,7 +88,7 @@ pub fn with_logging_replaces_logging_config_test() {
     |> beryl.with_logging(logging)
 
   config.logging.level
-  |> should.equal(beryl.Debug)
+  |> should.equal(beryl.Error)
   config.logging.include_payloads
   |> should.be_true
   config.logging.payload_preview_bytes

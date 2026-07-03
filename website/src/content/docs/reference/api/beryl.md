@@ -87,6 +87,11 @@ pub type Config {
     join_burst: Int,
     channel_rate: Int,
     channel_burst: Int,
+    channel_rate_max_keys_per_socket: Int,
+    max_topic_length: Int,
+    max_event_length: Int,
+    max_inbound_frame_bytes: Int,
+    max_joined_topics_per_socket: Int,
     logging: LoggingConfig
   )
 }
@@ -115,7 +120,7 @@ pub type LogLevel {
   Debug
   Info
   Warn
-  Err
+  Error
 }
 ```
 
@@ -410,6 +415,28 @@ pub fn with_join_rate(
   Config,
   per_second: Int,
   burst: Int
+) -> Config
+```
+
+### `with_max_inbound_frame_bytes`
+
+Configure the maximum allowed inbound WebSocket frame size in bytes.
+
+```gleam
+pub fn with_max_inbound_frame_bytes(
+  Config,
+  max_bytes: Int
+) -> Config
+```
+
+### `with_max_joined_topics_per_socket`
+
+Configure the maximum number of topics a socket may join at once.
+
+```gleam
+pub fn with_max_joined_topics_per_socket(
+  Config,
+  max_topics: Int
 ) -> Config
 ```
 

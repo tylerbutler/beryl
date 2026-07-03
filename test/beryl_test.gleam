@@ -378,6 +378,51 @@ pub fn register_accepts_bare_catch_all_pattern_test() {
   let assert Ok(_) = beryl.register(channels, "*", handler)
 }
 
+pub fn socket_cannot_join_more_than_configured_topic_cap_test() {
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_joined_topics_per_socket(max_topics: 1),
+    )
+  let sent_messages = process.new_subject()
+
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-join-cap",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-join-cap",
+    "[null,\"ref-1\",\"room:one\",\"phx_join\",{}]",
+  )
+  let assert Ok(first_reply) = process.receive(sent_messages, 500)
+  first_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-join-cap",
+    "[null,\"ref-2\",\"room:two\",\"phx_join\",{}]",
+  )
+  let assert Ok(second_reply) = process.receive(sent_messages, 500)
+  second_reply |> string.contains("too_many_topics") |> should.be_true
+}
+
 pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
@@ -930,6 +975,34 @@ pub fn with_max_event_length_sets_field_test() {
     |> beryl.with_max_event_length(max_length: 32)
 
   cfg.max_event_length |> should.equal(32)
+}
+
+pub fn default_max_inbound_frame_bytes_is_1mb_test() {
+  let cfg = beryl.config(wire.phoenix_codec())
+
+  cfg.max_inbound_frame_bytes |> should.equal(1_048_576)
+}
+
+pub fn with_max_inbound_frame_bytes_sets_field_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_inbound_frame_bytes(max_bytes: 4096)
+
+  cfg.max_inbound_frame_bytes |> should.equal(4096)
+}
+
+pub fn default_max_joined_topics_per_socket_is_1000_test() {
+  let cfg = beryl.config(wire.phoenix_codec())
+
+  cfg.max_joined_topics_per_socket |> should.equal(1000)
+}
+
+pub fn with_max_joined_topics_per_socket_sets_field_test() {
+  let cfg =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_joined_topics_per_socket(max_topics: 12)
+
+  cfg.max_joined_topics_per_socket |> should.equal(12)
 }
 
 pub fn extract_topic_id_test() {

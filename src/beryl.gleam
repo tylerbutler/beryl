@@ -50,8 +50,10 @@
 //// ```
 
 import beryl/channel.{type Channel}
+import beryl/connection_limit
 import beryl/coordinator
 import beryl/error as beryl_error
+import beryl/internal
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
@@ -98,7 +100,7 @@ pub type LogLevel {
   Debug
   Info
   Warn
-  Err
+  Error
 }
 
 /// Logging configuration for Beryl diagnostics.
@@ -149,6 +151,12 @@ pub type Config {
     /// Maximum byte length for client-supplied event name strings (default: 64).
     /// Events exceeding this limit are dropped before reaching a channel handler.
     max_event_length: Int,
+    /// Maximum inbound WebSocket frame size in bytes (default: 1 MiB).
+    /// Frames exceeding this limit are closed before wire decoding.
+    max_inbound_frame_bytes: Int,
+    /// Maximum joined topics per socket (default: 1000).
+    /// Values <= 0 disable the cap.
+    max_joined_topics_per_socket: Int,
     /// Logging configuration for Beryl diagnostics
     logging: LoggingConfig,
   )
@@ -191,6 +199,8 @@ pub fn config(codec: codec.Codec) -> Config {
     channel_rate_max_keys_per_socket: 1000,
     max_topic_length: 256,
     max_event_length: 64,
+    max_inbound_frame_bytes: 1_048_576,
+    max_joined_topics_per_socket: 1000,
     logging: logging_config(level: Info, include_payloads: False),
   )
 }
@@ -218,7 +228,7 @@ fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
     Debug -> coordinator.Debug
     Info -> coordinator.Info
     Warn -> coordinator.Warn
-    Err -> coordinator.Err
+    Error -> coordinator.Err
   }
 }
 
@@ -294,6 +304,27 @@ pub fn with_max_event_length(
   Config(..config, max_event_length: max_length)
 }
 
+/// Configure the maximum allowed inbound WebSocket frame size in bytes.
+///
+/// Frames larger than `max_bytes` are closed before decoding. Values <= 0
+/// disable the cap. The default is 1 MiB.
+pub fn with_max_inbound_frame_bytes(
+  config: Config,
+  max_bytes max_bytes: Int,
+) -> Config {
+  Config(..config, max_inbound_frame_bytes: max_bytes)
+}
+
+/// Configure the maximum number of topics a socket may join at once.
+///
+/// Values <= 0 disable the cap. The default is 1000.
+pub fn with_max_joined_topics_per_socket(
+  config: Config,
+  max_topics max_topics: Int,
+) -> Config {
+  Config(..config, max_joined_topics_per_socket: max_topics)
+}
+
 /// Channels system handle.
 ///
 /// This opaque handle is returned by `start` and passed to registration,
@@ -305,6 +336,7 @@ pub opaque type Channels {
     coordinator: Subject(coordinator.Message),
     config: Config,
     pubsub: Option(PubSub),
+    connection_limiter: Option(connection_limit.ConnectionLimiter),
   )
 }
 
@@ -314,7 +346,14 @@ pub fn channels_from_coordinator(
   coordinator coordinator: Subject(coordinator.Message),
   config config: Config,
 ) -> Channels {
-  Channels(coordinator: coordinator, config: config, pubsub: config.pubsub)
+  Channels(
+    coordinator: coordinator,
+    config: config,
+    pubsub: config.pubsub,
+    connection_limiter: connection_limit.start_optional(
+      config.max_connections_per_ip,
+    ),
+  )
 }
 
 // nolint: unused_exports -- package-internal accessor for transports/tests; hidden from public docs with @internal
@@ -323,10 +362,27 @@ pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
   channels.coordinator
 }
 
-// nolint: unused_exports -- package-internal accessor for transport codec negotiation; hidden from public docs with @internal
 @internal
 pub fn configured_codec(channels: Channels) -> codec.Codec {
   channels.config.codec
+}
+
+/// Try to acquire a configured per-IP connection slot for transports.
+pub fn acquire_connection_slot(
+  channels: Channels,
+  ip: String,
+) -> Result(Option(connection_limit.Permit), Nil) {
+  connection_limit.acquire_optional(channels.connection_limiter, ip)
+}
+
+/// Release a per-IP connection slot acquired by a transport.
+pub fn release_connection_slot(permit: Option(connection_limit.Permit)) -> Nil {
+  connection_limit.release_optional(permit)
+}
+
+/// Return the configured inbound frame size cap for transports.
+pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
+  channels.config.max_inbound_frame_bytes
 }
 
 /// Errors when starting channels
@@ -358,7 +414,7 @@ pub type StartError {
 pub fn start(config: Config) -> Result(Channels, StartError) {
   use <- bool.guard(
     when: config.heartbeat_timeout_ms <= 0,
-    return: Error(InvalidHeartbeatTimeout),
+    return: internal.result_error(InvalidHeartbeatTimeout),
   )
   // Server checks at half the timeout interval to detect stale sockets
   // promptly. The client heartbeat_interval_ms is informational only
@@ -383,6 +439,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
       channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
       max_topic_length: config.max_topic_length,
       max_event_length: config.max_event_length,
+      max_joined_topics_per_socket: config.max_joined_topics_per_socket,
       logging: coordinator_logging(config.logging),
     )
 
@@ -392,11 +449,23 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
   }
 
   case coordinator_result {
-    Error(coordinator.ActorStartFailed(error)) ->
-      Error(CoordinatorStartFailed(beryl_error.from_actor_start_error(error)))
-    Error(coordinator.InvalidHeartbeatTimeout) -> Error(InvalidHeartbeatTimeout)
     Ok(coord) ->
       Ok(channels_from_coordinator(coordinator: coord, config: config))
+    error_result -> {
+      case
+        result.unwrap_error(
+          error_result,
+          or: coordinator.InvalidHeartbeatTimeout,
+        )
+      {
+        coordinator.ActorStartFailed(error) ->
+          internal.result_error(
+            CoordinatorStartFailed(beryl_error.from_actor_start_error(error)),
+          )
+        coordinator.InvalidHeartbeatTimeout ->
+          internal.result_error(InvalidHeartbeatTimeout)
+      }
+    }
   }
 }
 
@@ -493,7 +562,7 @@ pub fn broadcast(
   case channels.pubsub, process.subject_owner(channels.coordinator) {
     Some(ps), Ok(coordinator_pid) ->
       pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
-    Some(_), Error(Nil) ->
+    Some(_), _ ->
       // Coordinator exited between send and pubsub forward — local message
       // is already enqueued (dead-letters), skip the cluster fanout.
       Nil
@@ -569,7 +638,7 @@ pub fn broadcast_from(
         event,
         payload,
       )
-    Some(_), Error(Nil) -> Nil
+    Some(_), _ -> Nil
     None, _ -> Nil
   }
 }
@@ -719,7 +788,7 @@ fn result_to_transport_result(
 ) -> Result(Nil, socket.TransportError) {
   case result {
     Ok(_) -> Ok(Nil)
-    Error(_) -> Error(socket.SendFailed("Send failed"))
+    _ -> internal.result_error(socket.SendFailed("Send failed"))
   }
 }
 
