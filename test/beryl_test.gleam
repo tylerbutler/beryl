@@ -309,6 +309,108 @@ pub fn join_with_too_long_topic_gets_error_reply_test() {
   reply |> string.contains("invalid_topic") |> should.be_true
 }
 
+pub fn join_topic_over_byte_limit_but_under_grapheme_limit_gets_error_reply_test() {
+  // 37 graphemes but 101 bytes: "room:" (5 bytes) + 32 × "€" (3 bytes each).
+  // max_topic_length is a byte limit, so this must be rejected.
+  let multibyte_topic = "room:" <> string.repeat("€", 32)
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_topic_length(max_length: 64),
+    )
+  let sent_messages = process.new_subject()
+
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-multibyte-topic",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-multibyte-topic",
+    "[null,\"ref-3\",\"" <> multibyte_topic <> "\",\"phx_join\",{}]",
+  )
+
+  let assert Ok(reply) = process.receive(sent_messages, 500)
+  reply |> string.contains("phx_reply") |> should.be_true
+  reply |> string.contains("invalid_topic") |> should.be_true
+}
+
+pub fn event_over_byte_limit_but_under_grapheme_limit_is_dropped_test() {
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_event_length(max_length: 16),
+    )
+  let sent_messages = process.new_subject()
+  let handled_events = process.new_subject()
+
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "socket-multibyte-event",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+
+  let handler =
+    channel.new(fn(_topic_name, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket)
+    })
+    |> channel.with_handle_in(fn(event, _payload, socket) {
+      process.send(handled_events, event)
+      channel.NoReply(socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-multibyte-event",
+    "[null,\"ref-1\",\"room:lobby\",\"phx_join\",{}]",
+  )
+  let assert Ok(_join_reply) = process.receive(sent_messages, 500)
+
+  // 10 graphemes but 30 bytes: max_event_length is a byte limit, so this
+  // event must be dropped before reaching handle_in.
+  let oversized_event = string.repeat("€", 10)
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-multibyte-event",
+    "[null,\"ref-2\",\"room:lobby\",\"" <> oversized_event <> "\",{}]",
+  )
+  // Sentinel event: the coordinator processes messages in order, so if the
+  // oversized event were handled, it would arrive before "ping".
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-multibyte-event",
+    "[null,\"ref-3\",\"room:lobby\",\"ping\",{}]",
+  )
+
+  let assert Ok(first_event) = process.receive(handled_events, 500)
+  first_event |> should.equal("ping")
+}
+
 pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()

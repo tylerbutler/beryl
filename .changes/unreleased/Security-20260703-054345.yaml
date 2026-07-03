@@ -1,0 +1,5 @@
+kind: Security
+body: |-
+    Enforce max_topic_length and max_event_length as byte limits, as documented.
+    Validation previously counted grapheme clusters, so a topic or event name within the configured limit could still be arbitrarily large in bytes (e.g. multi-byte or ZWJ emoji sequences), breaking the documented bound on registry key size. Limits are now checked with string.byte_size, which is also O(1) instead of O(n) per inbound message.
+time: 2026-07-03T05:43:45.103113514-07:00
