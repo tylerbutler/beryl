@@ -281,11 +281,12 @@ pub fn with_channel_rate_max_keys_per_socket(
   Config(..config, channel_rate_max_keys_per_socket: max_keys)
 }
 
-/// Configure the maximum allowed length for client-supplied topic strings.
+/// Configure the maximum allowed byte length for client-supplied topic
+/// strings.
 ///
-/// Topics longer than `max_length` are rejected with a `phx_reply` error before
-/// reaching a channel handler, bounding the size of keys stored in the
-/// coordinator's topic registry. The default is 256.
+/// Topics longer than `max_length` bytes are rejected with a `phx_reply`
+/// error before reaching a channel handler, bounding the size of keys stored
+/// in the coordinator's topic registry. The default is 256.
 pub fn with_max_topic_length(
   config: Config,
   max_length max_length: Int,
@@ -293,10 +294,11 @@ pub fn with_max_topic_length(
   Config(..config, max_topic_length: max_length)
 }
 
-/// Configure the maximum allowed length for client-supplied event name strings.
+/// Configure the maximum allowed byte length for client-supplied event name
+/// strings.
 ///
-/// Event names longer than `max_length` are dropped before reaching a channel
-/// handler. The default is 64.
+/// Event names longer than `max_length` bytes are dropped before reaching a
+/// channel handler. The default is 64.
 pub fn with_max_event_length(
   config: Config,
   max_length max_length: Int,

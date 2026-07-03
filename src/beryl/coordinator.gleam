@@ -1457,12 +1457,12 @@ fn resolve_event_topic(
 }
 
 fn is_valid_topic(topic_name: String, config: CoordinatorConfig) -> Bool {
-  string.length(topic_name) <= config.max_topic_length
+  string.byte_size(topic_name) <= config.max_topic_length
   && result.is_ok(topic.validate(topic_name))
 }
 
 fn is_valid_event(event_name: String, config: CoordinatorConfig) -> Bool {
-  string.length(event_name) <= config.max_event_length
+  string.byte_size(event_name) <= config.max_event_length
   && result.is_ok(topic.validate_event(event_name))
 }
 
