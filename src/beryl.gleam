@@ -88,7 +88,8 @@ pub opaque type RegisteredChannel(assigns, info) {
 pub type RegisterError {
   /// A handler is already registered for this exact topic pattern.
   PatternAlreadyRegistered(String)
-  /// The topic pattern is invalid.
+  /// The topic pattern is invalid. Patterns must be non-empty and must not
+  /// contain control characters (codepoints 0–31 or 127).
   InvalidPattern(String)
 }
 
@@ -404,6 +405,11 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 /// Patterns can be exact matches like "room:lobby", legacy prefix wildcards
 /// like "room:*" which match any topic starting with "room:", or segment
 /// wildcards like "document:*:ops" where "*" matches one complete segment.
+/// The bare pattern "*" is a catch-all that matches every topic.
+///
+/// Patterns are validated at registration: they must be non-empty and must
+/// not contain control characters (codepoints 0–31 or 127). Invalid patterns
+/// are rejected with `InvalidPattern`.
 ///
 /// ## Example
 ///

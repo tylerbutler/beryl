@@ -72,6 +72,8 @@ pub type HandleResultErased {
 /// Errors when registering channels
 pub type RegisterError {
   PatternAlreadyRegistered(String)
+  /// The pattern failed `topic.validate_pattern` (empty or contains control
+  /// characters).
   InvalidPattern(String)
 }
 
@@ -517,6 +519,13 @@ fn handle_register_channel(
   handler: ChannelHandler,
   reply: Subject(Result(Int, RegisterError)),
 ) -> actor.Next(State, Message) {
+  use <- bool.lazy_guard(
+    when: result.is_error(topic.validate_pattern(pattern_str)),
+    return: fn() {
+      process.send(reply, Error(InvalidPattern(pattern_str)))
+      actor.continue(state)
+    },
+  )
   let pattern = topic.parse_pattern(pattern_str)
   let already_registered =
     list.any(state.handlers, fn(h) { h.pattern == pattern })
