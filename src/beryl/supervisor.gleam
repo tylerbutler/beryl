@@ -257,7 +257,7 @@ fn coordinator_log_level(level: beryl.LogLevel) -> coordinator.LogLevel {
     beryl.Debug -> coordinator.Debug
     beryl.Info -> coordinator.Info
     beryl.Warn -> coordinator.Warn
-    beryl.Err -> coordinator.Err
+    beryl.Error -> coordinator.Err
   }
 }
 
