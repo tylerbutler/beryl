@@ -14,13 +14,13 @@ internal_modules = [
 ]
 
 [dependencies]
-envoy = ">= 1.0.0 and < 2.0.0"
+envoy = ">= 1.2.0 and < 2.0.0"
 palabres = ">= 1.0.4 and < 2.0.0"
-gleam_stdlib = ">= 0.44.0 and < 2.0.0"
-gleam_erlang = ">= 0.29.0 and < 2.0.0"
-gleam_otp = ">= 0.12.0 and < 2.0.0"
-gleam_json = ">= 3.0.0 and < 4.0.0"
-gleam_crypto = ">= 1.5.1 and < 2.0.0"
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_erlang = ">= 1.3.0 and < 2.0.0"
+gleam_otp = ">= 1.2.0 and < 2.0.0"
+gleam_json = ">= 3.1.0 and < 4.0.0"
+gleam_crypto = ">= 1.6.0 and < 2.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"
 lattice_presence = ">= 1.0.0 and < 2.0.0"
 mist = ">= 6.0.0 and < 7.0.0"
