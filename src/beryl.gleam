@@ -115,8 +115,12 @@ pub type LoggingConfig {
   )
 }
 
-/// Configuration for the channels system
-pub type Config {
+/// Configuration for the channels system.
+///
+/// This type is opaque: construct it with `config` and adjust it with the
+/// `with_*` builder functions. Keeping it opaque lets Beryl add configuration
+/// options in the future without a breaking change.
+pub opaque type Config {
   Config(
     /// Wire codec used to decode inbound text and encode replies/pushes.
     /// Use `wire.phoenix_codec()` for the historical Phoenix array format.
@@ -208,6 +212,35 @@ pub fn config(codec: codec.Codec) -> Config {
 /// Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(config: Config, ps: PubSub) -> Config {
   Config(..config, pubsub: Some(ps))
+}
+
+/// Configure heartbeat timing.
+///
+/// `interval_ms` is the client-facing heartbeat interval (informational: how
+/// often clients should send heartbeats). `timeout_ms` is the server-side
+/// staleness window — a socket that sends no heartbeat within this window is
+/// evicted. The defaults are 30000 ms and 60000 ms respectively.
+pub fn with_heartbeat(
+  config: Config,
+  interval_ms interval_ms: Int,
+  timeout_ms timeout_ms: Int,
+) -> Config {
+  Config(
+    ..config,
+    heartbeat_interval_ms: interval_ms,
+    heartbeat_timeout_ms: timeout_ms,
+  )
+}
+
+/// Configure the maximum number of concurrent connections allowed per client
+/// IP address.
+///
+/// A value of 0 (the default) means unlimited.
+pub fn with_max_connections_per_ip(
+  config: Config,
+  max_connections max_connections: Int,
+) -> Config {
+  Config(..config, max_connections_per_ip: max_connections)
 }
 
 /// Configure Beryl's internal logging.
@@ -327,6 +360,107 @@ pub fn with_max_joined_topics_per_socket(
   Config(..config, max_joined_topics_per_socket: max_topics)
 }
 
+// nolint: unused_exports -- package-internal accessors for supervisor/tests; hidden from public docs with @internal
+@internal
+pub fn config_heartbeat_interval_ms(config: Config) -> Int {
+  config.heartbeat_interval_ms
+}
+
+@internal
+pub fn config_heartbeat_timeout_ms(config: Config) -> Int {
+  config.heartbeat_timeout_ms
+}
+
+@internal
+pub fn config_max_connections_per_ip(config: Config) -> Int {
+  config.max_connections_per_ip
+}
+
+@internal
+pub fn config_pubsub(config: Config) -> Option(PubSub) {
+  config.pubsub
+}
+
+@internal
+pub fn config_logging(config: Config) -> LoggingConfig {
+  config.logging
+}
+
+@internal
+pub fn config_join_rate(config: Config) -> Int {
+  config.join_rate
+}
+
+@internal
+pub fn config_join_burst(config: Config) -> Int {
+  config.join_burst
+}
+
+@internal
+pub fn config_channel_rate(config: Config) -> Int {
+  config.channel_rate
+}
+
+@internal
+pub fn config_channel_burst(config: Config) -> Int {
+  config.channel_burst
+}
+
+@internal
+pub fn config_channel_rate_max_keys_per_socket(config: Config) -> Int {
+  config.channel_rate_max_keys_per_socket
+}
+
+@internal
+pub fn config_max_topic_length(config: Config) -> Int {
+  config.max_topic_length
+}
+
+@internal
+pub fn config_max_event_length(config: Config) -> Int {
+  config.max_event_length
+}
+
+@internal
+pub fn config_max_inbound_frame_bytes(config: Config) -> Int {
+  config.max_inbound_frame_bytes
+}
+
+@internal
+pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
+  config.max_joined_topics_per_socket
+}
+
+/// Build a coordinator config (starting rate-limiter actors) from a `Config`.
+/// Shared by `start` and the supervisor so the mapping lives in one place.
+@internal
+pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
+  // Server checks at half the timeout interval to detect stale sockets
+  // promptly. The client heartbeat_interval_ms is informational only.
+  let check_interval = config.heartbeat_timeout_ms / 2
+
+  let message_limiter =
+    rate_limit.start_optional(config.message_rate, config.message_burst)
+  let join_limiter =
+    rate_limit.start_optional(config.join_rate, config.join_burst)
+  let channel_limiter =
+    rate_limit.start_optional(config.channel_rate, config.channel_burst)
+
+  coordinator.CoordinatorConfig(
+    codec: config.codec,
+    heartbeat_check_interval_ms: check_interval,
+    heartbeat_timeout_ms: config.heartbeat_timeout_ms,
+    message_limiter: message_limiter,
+    join_limiter: join_limiter,
+    channel_limiter: channel_limiter,
+    channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
+    max_topic_length: config.max_topic_length,
+    max_event_length: config.max_event_length,
+    max_joined_topics_per_socket: config.max_joined_topics_per_socket,
+    logging: coordinator_logging(config.logging),
+  )
+}
+
 /// Channels system handle.
 ///
 /// This opaque handle is returned by `start` and passed to registration,
@@ -418,32 +552,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
     when: config.heartbeat_timeout_ms <= 0,
     return: internal.result_error(InvalidHeartbeatTimeout),
   )
-  // Server checks at half the timeout interval to detect stale sockets
-  // promptly. The client heartbeat_interval_ms is informational only
-  // (used by clients to know how often to send heartbeats).
-  let check_interval = config.heartbeat_timeout_ms / 2
-
-  let message_limiter =
-    rate_limit.start_optional(config.message_rate, config.message_burst)
-  let join_limiter =
-    rate_limit.start_optional(config.join_rate, config.join_burst)
-  let channel_limiter =
-    rate_limit.start_optional(config.channel_rate, config.channel_burst)
-
-  let coord_config =
-    coordinator.CoordinatorConfig(
-      codec: config.codec,
-      heartbeat_check_interval_ms: check_interval,
-      heartbeat_timeout_ms: config.heartbeat_timeout_ms,
-      message_limiter: message_limiter,
-      join_limiter: join_limiter,
-      channel_limiter: channel_limiter,
-      channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
-      max_topic_length: config.max_topic_length,
-      max_event_length: config.max_event_length,
-      max_joined_topics_per_socket: config.max_joined_topics_per_socket,
-      logging: coordinator_logging(config.logging),
-    )
+  let coord_config = to_coordinator_config(config)
 
   let coordinator_result = case config.pubsub {
     Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)

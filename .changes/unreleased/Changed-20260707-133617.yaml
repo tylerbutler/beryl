@@ -1,0 +1,10 @@
+kind: Changed
+body: |-
+  Make `beryl.Config` an opaque type and add the missing builders.
+
+  `Config` is now constructed via `beryl.config` and adjusted with `with_*`
+  builders, so new options can be added post-1.0 without a breaking change.
+  Added `with_heartbeat(interval_ms:, timeout_ms:)` and
+  `with_max_connections_per_ip(max_connections:)` so every user-settable field
+  is reachable through a builder. Closes #152.
+time: 2026-07-07T13:36:17-07:00

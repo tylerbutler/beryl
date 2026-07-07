@@ -71,30 +71,14 @@ pub type Channels
 
 ### `Config`
 
-Configuration for the channels system
+Configuration for the channels system.
+
+ This type is opaque: construct it with `config` and adjust it with the
+ `with_*` builder functions. Keeping it opaque lets Beryl add configuration
+ options in the future without a breaking change.
 
 ```gleam
-pub type Config {
-  Config(
-    codec: codec.Codec,
-    heartbeat_interval_ms: Int,
-    heartbeat_timeout_ms: Int,
-    max_connections_per_ip: Int,
-    pubsub: option.Option(pubsub.PubSub),
-    message_rate: Int,
-    message_burst: Int,
-    join_rate: Int,
-    join_burst: Int,
-    channel_rate: Int,
-    channel_burst: Int,
-    channel_rate_max_keys_per_socket: Int,
-    max_topic_length: Int,
-    max_event_length: Int,
-    max_inbound_frame_bytes: Int,
-    max_joined_topics_per_socket: Int,
-    logging: LoggingConfig
-  )
-}
+pub type Config
 ```
 
 ### `LoggingConfig`
@@ -473,6 +457,23 @@ pub fn with_channel_rate_max_keys_per_socket(
 ) -> Config
 ```
 
+### `with_heartbeat`
+
+Configure heartbeat timing.
+
+ `interval_ms` is the client-facing heartbeat interval (informational: how
+ often clients should send heartbeats). `timeout_ms` is the server-side
+ staleness window — a socket that sends no heartbeat within this window is
+ evicted. The defaults are 30000 ms and 60000 ms respectively.
+
+```gleam
+pub fn with_heartbeat(
+  Config,
+  interval_ms: Int,
+  timeout_ms: Int
+) -> Config
+```
+
 ### `with_join_rate`
 
 Configure per-socket join rate limiting
@@ -493,6 +494,20 @@ Configure Beryl's internal logging.
 pub fn with_logging(
   Config,
   LoggingConfig
+) -> Config
+```
+
+### `with_max_connections_per_ip`
+
+Configure the maximum number of concurrent connections allowed per client
+ IP address.
+
+ A value of 0 (the default) means unlimited.
+
+```gleam
+pub fn with_max_connections_per_ip(
+  Config,
+  max_connections: Int
 ) -> Config
 ```
 
