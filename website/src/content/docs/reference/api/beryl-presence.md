@@ -158,6 +158,8 @@ pub fn diff_topics(Diff) -> List(String)
 
 Get presences for a specific key within a topic
 
+ Panics if the presence actor is unavailable or does not reply within 5 seconds.
+
 ```gleam
 pub fn get_by_key(
   Presence,
@@ -169,6 +171,8 @@ pub fn get_by_key(
 ### `list`
 
 List all presences for a topic
+
+ Panics if the presence actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn list(
@@ -185,11 +189,24 @@ Start the presence actor
 pub fn start(Config) -> Result(Presence, PresenceError)
 ```
 
+### `start_named`
+
+Start the presence actor with a registered name (for supervision)
+
+```gleam
+pub fn start_named(
+  Config,
+  process.Name(Message)
+) -> Result(actor.Started(process.Subject(Message)), actor.StartError)
+```
+
 ### `track`
 
 Track a presence in a topic
 
  Returns a reference string (the pid) that can be used to untrack later.
+
+ Panics if the presence actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn track(
@@ -205,6 +222,8 @@ pub fn track(
 
 Untrack a specific presence by topic, key, and pid
 
+ Panics if the presence actor is unavailable or does not reply within 5 seconds.
+
 ```gleam
 pub fn untrack(
   Presence,
@@ -217,6 +236,8 @@ pub fn untrack(
 ### `untrack_all`
 
 Untrack all presences for a pid (e.g., when a socket disconnects)
+
+ Panics if the presence actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn untrack_all(

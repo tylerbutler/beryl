@@ -95,6 +95,14 @@ Upgrade a request to WebSocket if it matches the configured path
  }
  ```
 
+ ## Path matching
+
+ The request path is normalised by re-joining its segments as
+ `"/" <> string.join(segments, "/")` and compared for exact equality with
+ `config.path`. Because the normalised path never has a trailing slash, a
+ config path written with a trailing slash (e.g. `"/socket/"`) will never
+ match. Configure the path without a trailing slash (e.g. `"/socket"`).
+
 ```gleam
 pub fn upgrade(
   request.Request(http.Connection),
@@ -120,6 +128,22 @@ pub fn upgrade_connection(
 ) -> response.Response(mist.ResponseData)
 ```
 
+### `with_allowed_origins`
+
+Restrict WebSocket upgrades to requests with an allowed `Origin` header.
+
+ Values are matched exactly against the full Origin header value, including
+ scheme and host (and port when present), such as
+ `"https://app.example.com"`. When configured, missing or non-matching
+ origins are rejected with `403 Forbidden` before the WebSocket handshake.
+
+```gleam
+pub fn with_allowed_origins(
+  TransportConfig(a),
+  List(String)
+) -> TransportConfig(a)
+```
+
 ### `with_on_connect`
 
 Set a socket-level connect/authentication callback on the transport config.
@@ -135,20 +159,4 @@ pub fn with_on_connect(
   TransportConfig(a),
   fn(request.Request(http.Connection)) -> Result(b, ConnectError)
 ) -> TransportConfig(b)
-```
-
-### `with_allowed_origins`
-
-Restrict WebSocket upgrades to requests with an allowed `Origin` header.
-
- Values are matched exactly against the full Origin header value, including
- scheme and host (and port when present), such as
- `"https://app.example.com"`. When configured, missing or non-matching
- origins are rejected with `403 Forbidden` before the WebSocket handshake.
-
-```gleam
-pub fn with_allowed_origins(
-  TransportConfig(a),
-  List(String)
-) -> TransportConfig(a)
 ```

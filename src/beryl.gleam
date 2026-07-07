@@ -507,6 +507,9 @@ fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
 /// not contain control characters (codepoints 0–31 or 127). Invalid patterns
 /// are rejected with `InvalidPattern`.
 ///
+/// Panics if the coordinator actor is unavailable or does not reply within
+/// 5 seconds (e.g. during a supervisor restart window after a crash).
+///
 /// ## Example
 ///
 /// ```gleam

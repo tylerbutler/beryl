@@ -353,6 +353,8 @@ fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 /// Track a presence in a topic
 ///
 /// Returns a reference string (the pid) that can be used to untrack later.
+///
+/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn track(
   presence: Presence,
   topic: String,
@@ -366,6 +368,8 @@ pub fn track(
 }
 
 /// Untrack a specific presence by topic, key, and pid
+///
+/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn untrack(
   presence: Presence,
   topic: String,
@@ -378,16 +382,22 @@ pub fn untrack(
 }
 
 /// Untrack all presences for a pid (e.g., when a socket disconnects)
+///
+/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn untrack_all(presence: Presence, pid: String) -> Nil {
   process.call(presence.subject, 5000, fn(reply) { UntrackAll(pid, reply) })
 }
 
 /// List all presences for a topic
+///
+/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn list(presence: Presence, topic: String) -> List(PresenceEntry) {
   process.call(presence.subject, 5000, fn(reply) { List(topic, reply) })
 }
 
 /// Get presences for a specific key within a topic
+///
+/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn get_by_key(
   presence: Presence,
   topic: String,

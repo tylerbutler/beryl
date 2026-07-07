@@ -48,6 +48,21 @@ pub type DecodeError {
 }
 ```
 
+#### Constructors
+
+##### `InvalidJson(reason: String)`
+
+The bytes were not valid JSON; `reason` describes the parse error.
+
+##### `InvalidFormat(reason: String)`
+
+The message was valid JSON but did not match the expected framing;
+ `reason` describes the mismatch.
+
+##### `MissingField(name: String)`
+
+A required field was absent; `name` is the missing field.
+
 ### `Frame`
 
 Encoded WebSocket frame returned by a codec.
@@ -58,6 +73,16 @@ pub type Frame {
   BinaryFrame(BitArray)
 }
 ```
+
+#### Constructors
+
+##### `TextFrame(String)`
+
+A UTF-8 text frame.
+
+##### `BinaryFrame(BitArray)`
+
+A binary frame.
 
 ### `Inbound`
 
@@ -97,6 +122,24 @@ pub type InboundKind {
 }
 ```
 
+#### Constructors
+
+##### `Join`
+
+A client joining a topic.
+
+##### `Leave`
+
+A client leaving a topic.
+
+##### `Heartbeat`
+
+A heartbeat/keep-alive message.
+
+##### `Event(String)`
+
+A user-defined event; the wrapped `String` is the event name.
+
 ### `ReplyStatus`
 
 Status of a reply produced by a channel handler.
@@ -107,6 +150,16 @@ pub type ReplyStatus {
   StatusError
 }
 ```
+
+#### Constructors
+
+##### `StatusOk`
+
+The handler succeeded (`"ok"` in Phoenix framing).
+
+##### `StatusError`
+
+The handler failed (`"error"` in Phoenix framing).
 
 ## Functions
 

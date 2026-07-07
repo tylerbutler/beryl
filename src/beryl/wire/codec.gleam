@@ -19,15 +19,21 @@ import gleam/option.{type Option}
 
 /// Encoded WebSocket frame returned by a codec.
 pub type Frame {
+  /// A UTF-8 text frame.
   TextFrame(String)
+  /// A binary frame.
   BinaryFrame(BitArray)
 }
 
 /// Structural inbound message kind used for protocol dispatch.
 pub type InboundKind {
+  /// A client joining a topic.
   Join
+  /// A client leaving a topic.
   Leave
+  /// A heartbeat/keep-alive message.
   Heartbeat
+  /// A user-defined event; the wrapped `String` is the event name.
   Event(String)
 }
 
@@ -53,14 +59,20 @@ pub type Inbound {
 
 /// Errors a codec may emit when decoding inbound bytes.
 pub type DecodeError {
+  /// The bytes were not valid JSON; `reason` describes the parse error.
   InvalidJson(reason: String)
+  /// The message was valid JSON but did not match the expected framing;
+  /// `reason` describes the mismatch.
   InvalidFormat(reason: String)
+  /// A required field was absent; `name` is the missing field.
   MissingField(name: String)
 }
 
 /// Status of a reply produced by a channel handler.
 pub type ReplyStatus {
+  /// The handler succeeded (`"ok"` in Phoenix framing).
   StatusOk
+  /// The handler failed (`"error"` in Phoenix framing).
   StatusError
 }
 

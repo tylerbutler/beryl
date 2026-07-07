@@ -120,6 +120,14 @@ type SendRequest {
 ///   }
 /// }
 /// ```
+///
+/// ## Path matching
+///
+/// The request path is normalised by re-joining its segments as
+/// `"/" <> string.join(segments, "/")` and compared for exact equality with
+/// `config.path`. Because the normalised path never has a trailing slash, a
+/// config path written with a trailing slash (e.g. `"/socket/"`) will never
+/// match. Configure the path without a trailing slash (e.g. `"/socket"`).
 pub fn upgrade(
   request: Request(Connection),
   channels: Channels,

@@ -45,12 +45,25 @@ The topic does not match the pattern.
 
 ### `TopicError`
 
+Errors returned when validating a topic or topic pattern.
+
 ```gleam
 pub type TopicError {
   EmptyTopic
   InvalidFormat(String)
 }
 ```
+
+#### Constructors
+
+##### `EmptyTopic`
+
+The topic or pattern was an empty string.
+
+##### `InvalidFormat(String)`
+
+The topic, pattern, or event was malformed; the wrapped `String`
+ describes the problem (e.g. leading/trailing `:` or control characters).
 
 ### `TopicPattern`
 
@@ -192,6 +205,18 @@ Parse a pattern string into TopicPattern
 pub fn parse_pattern(String) -> TopicPattern
 ```
 
+### `sanitize_for_log`
+
+Escape control characters in a string for safe use in log metadata.
+
+ Replaces codepoints in the range 0–31 and 127 with `?` so that
+ client-supplied strings cannot inject additional fields into structured
+ log output.
+
+```gleam
+pub fn sanitize_for_log(String) -> String
+```
+
 ### `segments`
 
 Parse a topic into segments by splitting on ":"
@@ -213,9 +238,36 @@ Validate a topic string
 
  Topics must:
  - Not be empty
- - Not contain control characters
+ - Not contain control characters (codepoints 0–31 or 127)
  - Not start or end with ":"
 
 ```gleam
 pub fn validate(String) -> Result(String, TopicError)
+```
+
+### `validate_event`
+
+Validate an event name string
+
+ Event names must:
+ - Not be empty
+ - Not contain control characters (codepoints 0–31 or 127)
+
+```gleam
+pub fn validate_event(String) -> Result(String, TopicError)
+```
+
+### `validate_pattern`
+
+Validate a topic pattern string
+
+ Patterns must:
+ - Not be empty
+ - Not contain control characters (codepoints 0–31 or 127)
+
+ The bare pattern `"*"` is valid: it parses to a catch-all wildcard that
+ matches every topic.
+
+```gleam
+pub fn validate_pattern(String) -> Result(String, TopicError)
 ```

@@ -16,7 +16,7 @@ This adds beryl to your `gleam.toml` dependencies. beryl targets the **Erlang (B
 
 ## Requirements
 
-- **Gleam** >= 1.3.0
+- **Gleam** >= 1.13.0
 - **Erlang/OTP** >= 26 (recommended: 27+)
 - **Target**: Erlang only
 

@@ -155,7 +155,8 @@ A handler is already registered for this exact topic pattern.
 
 ##### `InvalidPattern(String)`
 
-The topic pattern is invalid.
+The topic pattern is invalid. Patterns must be non-empty and must not
+ contain control characters (codepoints 0–31 or 127).
 
 ### `StartError`
 
@@ -179,6 +180,17 @@ The coordinator actor failed to start.
 heartbeat_timeout_ms must be > 0 (it is used to derive the check interval)
 
 ## Functions
+
+### `acquire_connection_slot`
+
+Try to acquire a configured per-IP connection slot for transports.
+
+```gleam
+pub fn acquire_connection_slot(
+  Channels,
+  String
+) -> Result(option.Option(connection_limit.Permit), Nil)
+```
 
 ### `broadcast`
 
@@ -310,6 +322,14 @@ pub fn logging_config(
 ) -> LoggingConfig
 ```
 
+### `max_inbound_frame_bytes`
+
+Return the configured inbound frame size cap for transports.
+
+```gleam
+pub fn max_inbound_frame_bytes(Channels) -> Int
+```
+
 ### `register`
 
 Register a channel handler for a topic pattern
@@ -317,6 +337,14 @@ Register a channel handler for a topic pattern
  Patterns can be exact matches like "room:lobby", legacy prefix wildcards
  like "room:*" which match any topic starting with "room:", or segment
  wildcards like "document:*:ops" where "*" matches one complete segment.
+ The bare pattern "*" is a catch-all that matches every topic.
+
+ Patterns are validated at registration: they must be non-empty and must
+ not contain control characters (codepoints 0–31 or 127). Invalid patterns
+ are rejected with `InvalidPattern`.
+
+ Panics if the coordinator actor is unavailable or does not reply within
+ 5 seconds (e.g. during a supervisor restart window after a crash).
 
  ## Example
 
@@ -347,6 +375,14 @@ pub fn register(
   String,
   channel.Channel(a, b)
 ) -> Result(RegisteredChannel(a, b), RegisterError)
+```
+
+### `release_connection_slot`
+
+Release a per-IP connection slot acquired by a transport.
+
+```gleam
+pub fn release_connection_slot(option.Option(connection_limit.Permit)) -> Nil
 ```
 
 ### `send_info`
@@ -394,15 +430,46 @@ Start the channels system
 pub fn start(Config) -> Result(Channels, StartError)
 ```
 
+### `stop`
+
+Stop an unsupervised channels system.
+
+ This shuts down the coordinator actor started by `start` and any auxiliary
+ limiter actors owned by the `Channels` handle. Joined channel handlers
+ receive `channel.Shutdown` in their `terminate` callback before the
+ coordinator exits. After this call the `Channels` handle should no longer be
+ used.
+
+```gleam
+pub fn stop(Channels) -> Nil
+```
+
 ### `with_channel_rate`
 
-Configure per-channel message rate limiting
+Configure per-channel message rate limiting.
+
+ The limiter applies only after a socket has joined a topic. Active
+ per-socket channel buckets are capped by default; use
+ `with_channel_rate_max_keys_per_socket` to adjust the cap.
 
 ```gleam
 pub fn with_channel_rate(
   Config,
   per_second: Int,
   burst: Int
+) -> Config
+```
+
+### `with_channel_rate_max_keys_per_socket`
+
+Configure the maximum active per-channel rate-limit buckets per socket.
+
+ Values <= 0 disable the cap. The default is 1000.
+
+```gleam
+pub fn with_channel_rate_max_keys_per_socket(
+  Config,
+  max_keys: Int
 ) -> Config
 ```
 
@@ -418,9 +485,38 @@ pub fn with_join_rate(
 ) -> Config
 ```
 
+### `with_logging`
+
+Configure Beryl's internal logging.
+
+```gleam
+pub fn with_logging(
+  Config,
+  LoggingConfig
+) -> Config
+```
+
+### `with_max_event_length`
+
+Configure the maximum allowed byte length for client-supplied event name
+ strings.
+
+ Event names longer than `max_length` bytes are dropped before reaching a
+ channel handler. The default is 64.
+
+```gleam
+pub fn with_max_event_length(
+  Config,
+  max_length: Int
+) -> Config
+```
+
 ### `with_max_inbound_frame_bytes`
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
+
+ Frames larger than `max_bytes` are closed before decoding. Values <= 0
+ disable the cap. The default is 1 MiB.
 
 ```gleam
 pub fn with_max_inbound_frame_bytes(
@@ -433,6 +529,8 @@ pub fn with_max_inbound_frame_bytes(
 
 Configure the maximum number of topics a socket may join at once.
 
+ Values <= 0 disable the cap. The default is 1000.
+
 ```gleam
 pub fn with_max_joined_topics_per_socket(
   Config,
@@ -440,14 +538,19 @@ pub fn with_max_joined_topics_per_socket(
 ) -> Config
 ```
 
-### `with_logging`
+### `with_max_topic_length`
 
-Configure Beryl's internal logging.
+Configure the maximum allowed byte length for client-supplied topic
+ strings.
+
+ Topics longer than `max_length` bytes are rejected with a `phx_reply`
+ error before reaching a channel handler, bounding the size of keys stored
+ in the coordinator's topic registry. The default is 256.
 
 ```gleam
-pub fn with_logging(
+pub fn with_max_topic_length(
   Config,
-  LoggingConfig
+  max_length: Int
 ) -> Config
 ```
 

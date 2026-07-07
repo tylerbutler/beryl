@@ -311,7 +311,11 @@ fn has_control_characters(value: String) -> Bool {
   })
 }
 
+/// Errors returned when validating a topic or topic pattern.
 pub type TopicError {
+  /// The topic or pattern was an empty string.
   EmptyTopic
+  /// The topic, pattern, or event was malformed; the wrapped `String`
+  /// describes the problem (e.g. leading/trailing `:` or control characters).
   InvalidFormat(String)
 }

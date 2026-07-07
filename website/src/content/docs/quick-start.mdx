@@ -32,6 +32,7 @@ type holds per-socket state — anything you want to remember about this connect
 import beryl
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/socket.{type Socket}
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{None, Some}
@@ -53,12 +54,13 @@ pub fn new(channels: beryl.Channels) -> Channel(RoomAssigns, info) {
 fn join(
   channels: beryl.Channels,
   topic: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(RoomAssigns),
 ) -> JoinResult(RoomAssigns) {
+  // Payloads arrive as `Dynamic`; decode the fields you need.
   // Extract username from the join payload, default to "Anonymous".
   let username = case
-    json.parse(json.to_string(payload), {
+    channel.decode_payload(payload, {
       use u <- decode.field("username", decode.string)
       decode.success(u)
     })
@@ -80,15 +82,33 @@ fn join(
 /// Called for every push the client sends after joining.
 fn handle_in(
   event: String,
-  payload: json.Json,
+  payload: Dynamic,
   socket: Socket(RoomAssigns),
 ) -> HandleResult(RoomAssigns) {
   let assigns = socket.get_assigns(socket)
 
   case event {
     "new_msg" -> {
-      // Broadcast to every socket joined to this topic (including the sender).
-      beryl.broadcast(assigns.channels, assigns.topic, "new_msg", payload)
+      // Decode the incoming text, then broadcast it as JSON to every socket
+      // joined to this topic (including the sender).
+      let text = case
+        channel.decode_payload(payload, {
+          use t <- decode.field("text", decode.string)
+          decode.success(t)
+        })
+      {
+        Ok(t) -> t
+        Error(_) -> ""
+      }
+      beryl.broadcast(
+        assigns.channels,
+        assigns.topic,
+        "new_msg",
+        json.object([
+          #("username", json.string(assigns.username)),
+          #("text", json.string(text)),
+        ]),
+      )
       // Return NoReply — phx_reply is NOT sent for broadcasts.
       channel.NoReply(socket)
     }
@@ -225,7 +245,12 @@ to the original message ref:
 ```gleam
 // Server side — acknowledge message delivery
 "new_msg" -> {
-  beryl.broadcast(assigns.channels, assigns.topic, "new_msg", payload)
+  beryl.broadcast(
+    assigns.channels,
+    assigns.topic,
+    "new_msg",
+    json.object([#("username", json.string(assigns.username))]),
+  )
   channel.Reply(
     event: "msg_ack",  // event is ignored in the wire protocol; only payload matters
     payload: json.object([#("status", json.string("ok"))]),

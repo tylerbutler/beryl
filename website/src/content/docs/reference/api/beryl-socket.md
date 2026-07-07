@@ -42,6 +42,13 @@ pub type Socket(a)
 
 Transport abstraction for sending messages
 
+ Wraps the underlying connection (e.g. a Mist WebSocket) with functions to
+ send text/binary frames and close the connection.
+
+ Note: as constructed by the built-in Mist transport, `close` is a no-op
+ that returns `Ok(Nil)`. Closing is driven by the transport's own
+ connection lifecycle rather than by calling this function.
+
 ```gleam
 pub type Transport {
   Transport(
@@ -54,12 +61,24 @@ pub type Transport {
 
 ### `TransportError`
 
+Errors returned by transport send/close operations.
+
 ```gleam
 pub type TransportError {
   ConnectionClosed
   SendFailed(String)
 }
 ```
+
+#### Constructors
+
+##### `ConnectionClosed`
+
+The underlying connection is already closed and cannot be used.
+
+##### `SendFailed(String)`
+
+Sending failed; the wrapped `String` describes the reason.
 
 ## Functions
 

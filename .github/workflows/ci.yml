@@ -64,6 +64,28 @@ jobs:
       - name: Build documentation
         run: just docs
 
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # ratchet:pnpm/action-setup@v6
+        with:
+          package_json_file: website/package.json
+
+      - name: Install website dependencies
+        run: pnpm -C website install --frozen-lockfile
+
+      - name: Test reference docs generator
+        run: just site-reference-test
+
+      - name: Validate reference docs are up to date
+        run: |
+          just site-reference
+          git diff --exit-code -- website/src/content/docs/reference/api \
+            || { echo "::error::Generated reference docs are out of date. Run 'just site-reference' and commit the result."; exit 1; }
+
   examples:
     runs-on: ubuntu-latest
     name: Examples

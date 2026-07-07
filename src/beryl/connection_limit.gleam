@@ -149,6 +149,7 @@ fn stop(limiter: ConnectionLimiter) -> Nil {
   Nil
 }
 
+/// Stop the connection limiter if one is present; a no-op when `None`.
 pub fn stop_optional(limiter: Option(ConnectionLimiter)) -> Nil {
   case limiter {
     Some(limiter) -> stop(limiter)
