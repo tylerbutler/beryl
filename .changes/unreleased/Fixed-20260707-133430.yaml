@@ -1,0 +1,5 @@
+kind: Fixed
+body: |-
+    Raise dependency lower bounds in gleam.toml to match the APIs actually used, so a resolver cannot legally pick versions that fail to compile.
+    gleam_stdlib >= 1.0, gleam_erlang >= 1.3, gleam_otp >= 1.2, gleam_json >= 3.1, gleam_crypto >= 1.6, and envoy >= 1.2 now reflect the minimum versions the code is compiled and tested against. Upper bounds are unchanged. (#156)
+time: 2026-07-07T13:34:30.370659484-07:00
