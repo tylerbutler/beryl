@@ -23,7 +23,9 @@ import beryl/error as beryl_error
 import beryl/internal
 import beryl/log
 import beryl/pubsub.{type PubSub}
+import gleam/bit_array
 import gleam/bool
+import gleam/crypto
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode as gdecode
@@ -173,7 +175,7 @@ pub opaque type Message {
     meta: json.Json,
     reply: Subject(String),
   )
-  Untrack(topic: String, key: String, pid: String, reply: Subject(Nil))
+  Untrack(ref: String, reply: Subject(Nil))
   UntrackAll(pid: String, reply: Subject(Nil))
   List(topic: String, reply: Subject(List(PresenceEntry)))
   GetByKey(
@@ -186,6 +188,11 @@ pub opaque type Message {
   RemoteSync(pubsub_msg: pubsub.Message)
 }
 
+/// A tracked presence's location within the CRDT, keyed by tracking ref.
+type TrackedPresence {
+  TrackedPresence(topic: String, key: String, session_id: String)
+}
+
 /// Internal actor state
 type ActorState {
   ActorState(
@@ -196,6 +203,10 @@ type ActorState {
     /// Set whenever the local CRDT mutates; cleared after a broadcast tick.
     /// Skips the encode+broadcast when there is nothing new to gossip.
     dirty: Bool,
+    /// Maps each server-generated tracking ref to the presence it created, so
+    /// `untrack` can locate the correct CRDT entry to leave. Populated on
+    /// `Track` and pruned on `Untrack`/`UntrackAll`.
+    refs: Dict(String, TrackedPresence),
   )
 }
 
@@ -270,6 +281,7 @@ fn build_presence(
         config: config,
         self_subject: Some(subject),
         dirty: False,
+        refs: dict.new(),
       )
 
     case config.pubsub {
@@ -311,6 +323,7 @@ fn build_presence(
             config: config,
             self_subject: None,
             dirty: False,
+            refs: dict.new(),
           )
         actor.initialised(no_pubsub_initial)
         |> actor.returning(subject)
@@ -350,9 +363,21 @@ fn schedule_broadcast_tick(subject: Subject(Message), interval_ms: Int) -> Nil {
 @external(erlang, "beryl_ffi", "identity")
 fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
-/// Track a presence in a topic
+/// Generate a unique, opaque tracking ref for a presence.
 ///
-/// Returns a reference string (the pid) that can be used to untrack later.
+/// Uses 16 bytes of cryptographically strong randomness (base16-encoded), which
+/// makes collisions between refs negligibly unlikely and keeps them unguessable.
+fn generate_ref() -> String {
+  crypto.strong_random_bytes(16)
+  |> bit_array.base16_encode()
+}
+
+/// Track a presence in a topic.
+///
+/// Returns a server-generated tracking ref: an opaque, unique handle for this
+/// specific presence. Pass it to `untrack` to remove exactly this entry later.
+/// The ref is not the `pid`/session id — it is minted by the presence actor and
+/// is only meaningful to that actor.
 ///
 /// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn track(
@@ -367,18 +392,13 @@ pub fn track(
   })
 }
 
-/// Untrack a specific presence by topic, key, and pid
+/// Untrack a specific presence using the ref returned by `track`.
+///
+/// Removing an unknown or already-removed ref is a harmless no-op.
 ///
 /// Panics if the presence actor is unavailable or does not reply within 5 seconds.
-pub fn untrack(
-  presence: Presence,
-  topic: String,
-  key: String,
-  pid: String,
-) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) {
-    Untrack(topic, key, pid, reply)
-  })
+pub fn untrack(presence: Presence, ref: String) -> Nil {
+  process.call(presence.subject, 5000, fn(reply) { Untrack(ref, reply) })
 }
 
 /// Untrack all presences for a pid (e.g., when a socket disconnects)
@@ -415,6 +435,7 @@ fn handle_message(
   let logger = internal.logger("beryl.presence")
   case message {
     Track(topic, key, pid, meta, reply) -> {
+      let ref = generate_ref()
       let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
       maybe_invoke_on_diff(
         actor_state.config,
@@ -425,31 +446,65 @@ fn handle_message(
         #("topic", topic),
         #("key", key),
         #("pid", pid),
+        #("ref", ref),
       ])
-      process.send(reply, pid)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt, dirty: True))
+      let new_refs =
+        dict.insert(
+          actor_state.refs,
+          ref,
+          TrackedPresence(topic: topic, key: key, session_id: pid),
+        )
+      process.send(reply, ref)
+      actor.continue(
+        ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs),
+      )
     }
 
-    Untrack(topic, key, pid, reply) -> {
-      let diff = leave_diff(actor_state.crdt, topic, key, pid)
-      let new_crdt = state.leave(actor_state.crdt, pid, topic, key)
-      maybe_invoke_on_diff(actor_state.config, diff)
-      logger
-      |> log.debug("Presence untracked", [
-        #("topic", topic),
-        #("key", key),
-        #("pid", pid),
-      ])
-      process.send(reply, Nil)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt, dirty: True))
+    Untrack(ref, reply) -> {
+      case dict.get(actor_state.refs, ref) {
+        Error(_) -> {
+          // Unknown or already-removed ref: nothing to do.
+          process.send(reply, Nil)
+          actor.continue(actor_state)
+        }
+        Ok(TrackedPresence(topic, key, session_id)) -> {
+          let diff = leave_diff(actor_state.crdt, topic, key, session_id)
+          let new_crdt = state.leave(actor_state.crdt, session_id, topic, key)
+          maybe_invoke_on_diff(actor_state.config, diff)
+          logger
+          |> log.debug("Presence untracked", [
+            #("topic", topic),
+            #("key", key),
+            #("pid", session_id),
+            #("ref", ref),
+          ])
+          process.send(reply, Nil)
+          actor.continue(
+            ActorState(
+              ..actor_state,
+              crdt: new_crdt,
+              dirty: True,
+              refs: dict.delete(actor_state.refs, ref),
+            ),
+          )
+        }
+      }
     }
 
     UntrackAll(pid, reply) -> {
       let diff = leave_all_diff(actor_state.crdt, pid)
       let new_crdt = state.leave_by_pid(actor_state.crdt, pid)
       maybe_invoke_on_diff(actor_state.config, diff)
+      // Drop any refs that pointed at the removed session so they cannot leak
+      // or later leave presences they no longer own.
+      let new_refs =
+        dict.filter(actor_state.refs, fn(_ref, tracked) {
+          tracked.session_id != pid
+        })
       process.send(reply, Nil)
-      actor.continue(ActorState(..actor_state, crdt: new_crdt, dirty: True))
+      actor.continue(
+        ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs),
+      )
     }
 
     List(topic, reply) -> {

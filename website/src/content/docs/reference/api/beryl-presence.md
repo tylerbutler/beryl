@@ -202,9 +202,12 @@ pub fn start_named(
 
 ### `track`
 
-Track a presence in a topic
+Track a presence in a topic.
 
- Returns a reference string (the pid) that can be used to untrack later.
+ Returns a server-generated tracking ref: an opaque, unique handle for this
+ specific presence. Pass it to `untrack` to remove exactly this entry later.
+ The ref is not the `pid`/session id — it is minted by the presence actor and
+ is only meaningful to that actor.
 
  Panics if the presence actor is unavailable or does not reply within 5 seconds.
 
@@ -220,15 +223,15 @@ pub fn track(
 
 ### `untrack`
 
-Untrack a specific presence by topic, key, and pid
+Untrack a specific presence using the ref returned by `track`.
+
+ Removing an unknown or already-removed ref is a harmless no-op.
 
  Panics if the presence actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn untrack(
   Presence,
-  String,
-  String,
   String
 ) -> Nil
 ```
