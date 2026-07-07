@@ -15,15 +15,14 @@
 //// import beryl/supervisor
 //// import beryl/presence
 //// import beryl/wire
-//// import gleam/option.{None, Some}
 ////
-//// let config = supervisor.SupervisedConfig(
-////   channels: beryl.config(wire.phoenix_codec()),
-////   presence: Some(presence.default_config("node1")),
-////   groups: True,
-//// )
+//// let config =
+////   supervisor.config(beryl.config(wire.phoenix_codec()))
+////   |> supervisor.with_presence(presence.default_config("node1"))
+////   |> supervisor.with_groups()
 //// let assert Ok(supervised) = supervisor.start(config)
-//// // supervised.channels, supervised.presence, supervised.groups
+//// // supervisor.channels(supervised), supervisor.presence(supervised),
+//// // supervisor.groups(supervised)
 //// ```
 
 import beryl
@@ -41,30 +40,74 @@ import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
 
-/// Configuration for starting all beryl subsystems under a supervisor
-pub type SupervisedConfig {
+/// Configuration for starting all beryl subsystems under a supervisor.
+///
+/// Opaque: build it with [`config`](#config) and refine it with the
+/// `with_*` functions. This keeps the configuration extensible — new
+/// subsystem options can be added post-1.0 without breaking callers.
+pub opaque type SupervisedConfig {
   SupervisedConfig(
-    /// Configuration for the channels system (coordinator is always started)
     channels: beryl.Config,
-    /// Optional presence configuration. When Some, presence is started.
     presence: Option(presence.Config),
-    /// Whether to start the groups subsystem
     groups: Bool,
   )
 }
 
-/// Handle to all supervised beryl subsystems
-pub type SupervisedChannels {
+/// Handle to all supervised beryl subsystems.
+///
+/// Opaque: read its fields with the accessor functions
+/// ([`channels`](#channels), [`presence`](#presence), [`groups`](#groups),
+/// [`supervisor_pid`](#supervisor_pid)). This lets the handle grow new
+/// fields post-1.0 without breaking readers.
+pub opaque type SupervisedChannels {
   SupervisedChannels(
-    /// The channels system handle (always present)
     channels: beryl.Channels,
-    /// Presence handle (if configured)
     presence: Option(presence.Presence),
-    /// Groups handle (if configured)
     groups: Option(group.Groups),
-    /// The supervisor process PID (for lifecycle management)
     supervisor_pid: process.Pid,
   )
+}
+
+/// Start building a supervised configuration.
+///
+/// Requires the channels configuration (the coordinator is always started).
+/// Presence and groups are opt-in via [`with_presence`](#with_presence) and
+/// [`with_groups`](#with_groups); by default neither is started.
+pub fn config(channels: beryl.Config) -> SupervisedConfig {
+  SupervisedConfig(channels: channels, presence: None, groups: False)
+}
+
+/// Enable presence tracking with the given configuration.
+pub fn with_presence(
+  config: SupervisedConfig,
+  presence: presence.Config,
+) -> SupervisedConfig {
+  SupervisedConfig(..config, presence: Some(presence))
+}
+
+/// Enable the named channel groups subsystem.
+pub fn with_groups(config: SupervisedConfig) -> SupervisedConfig {
+  SupervisedConfig(..config, groups: True)
+}
+
+/// The channels system handle (always present).
+pub fn channels(supervised: SupervisedChannels) -> beryl.Channels {
+  supervised.channels
+}
+
+/// The presence handle, if presence was configured.
+pub fn presence(supervised: SupervisedChannels) -> Option(presence.Presence) {
+  supervised.presence
+}
+
+/// The groups handle, if groups were configured.
+pub fn groups(supervised: SupervisedChannels) -> Option(group.Groups) {
+  supervised.groups
+}
+
+/// The supervisor process PID (for lifecycle management).
+pub fn supervisor_pid(supervised: SupervisedChannels) -> process.Pid {
+  supervised.supervisor_pid
 }
 
 /// Errors when starting the supervised system
@@ -245,11 +288,9 @@ pub fn stop(supervised: SupervisedChannels) -> Nil {
 /// import beryl/supervisor
 /// import gleam/otp/static_supervisor
 ///
-/// let beryl_config = supervisor.SupervisedConfig(
-///   channels: beryl.config(wire.phoenix_codec()),
-///   presence: None,
-///   groups: True,
-/// )
+/// let beryl_config =
+///   supervisor.config(beryl.config(wire.phoenix_codec()))
+///   |> supervisor.with_groups()
 ///
 /// static_supervisor.new(static_supervisor.OneForOne)
 /// |> static_supervisor.add(supervisor.child_spec(beryl_config))
