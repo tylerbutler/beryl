@@ -34,26 +34,35 @@ just clean        # Remove build artifacts
 
 ```
 src/
-├── beryl.gleam                  # Main public API (channels, config, start/register)
-├── beryl_ffi.erl                # Erlang FFI (identity coercion)
-├── beryl_pubsub_ffi.erl         # Erlang FFI for pg-based PubSub
+├── beryl.gleam                    # Main public API (channels, config, start/register)
+├── beryl_ffi.erl                  # Erlang FFI (identity coercion)
+├── beryl_pubsub_ffi.erl           # Erlang FFI for pg-based PubSub
 └── beryl/
-    ├── channel.gleam            # Channel behaviour/callbacks
-    ├── coordinator.gleam        # Channel lifecycle coordinator (OTP actor)
-    ├── group.gleam              # Named channel groups
-    ├── presence.gleam           # Presence tracking (OTP actor wrapping lattice_presence)
-    ├── pubsub.gleam             # PubSub abstraction (pg-based)
-    ├── socket.gleam             # Socket abstraction
-    ├── topic.gleam              # Topic pattern matching
+    ├── bridge.gleam               # Bridge between transports and channels
+    ├── channel.gleam              # Channel behaviour/callbacks
+    ├── connection_limit.gleam     # Connection limit enforcement
+    ├── coordinator.gleam          # Channel lifecycle coordinator (OTP actor)
+    ├── error.gleam                # Shared error types/helpers
+    ├── group.gleam                # Named channel groups
+    ├── internal.gleam             # Internal helpers
+    ├── log.gleam                  # Logging helpers
+    ├── presence.gleam             # Presence tracking (OTP actor wrapping lattice_presence)
+    ├── pubsub.gleam               # PubSub abstraction (pg-based)
+    ├── rate_limit.gleam           # Rate limiting helpers
+    ├── socket.gleam               # Socket abstraction
+    ├── supervisor.gleam           # OTP supervision helpers
+    ├── topic.gleam                # Topic pattern matching
     ├── transport/
-    │   └── mist.gleam           # Mist WebSocket transport integration
-    └── wire.gleam               # Wire protocol (JSON encode/decode)
+    │   └── mist.gleam             # Mist WebSocket transport integration
+    ├── wire.gleam                 # Wire protocol (JSON encode/decode)
+    ├── presence/
+    │   └── wire.gleam             # Presence wire format helpers
+    └── wire/
+        └── codec.gleam            # Wire codec helpers
 test/
-├── beryl_test.gleam
-├── group_test.gleam
-├── presence_test.gleam
-├── presence_state_test.gleam
-└── pubsub_test.gleam
+├── *_test.gleam                  # Gleam test modules for public API, transport, presence, etc.
+├── *_test_ffi.erl                # Erlang helpers for tests that need BEAM interop
+└── test_helpers.gleam            # Shared test helpers
 ```
 
 ## Architecture
