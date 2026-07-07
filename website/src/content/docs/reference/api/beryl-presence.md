@@ -77,7 +77,7 @@ A presence entry returned from queries and diff accessors.
 ```gleam
 pub type PresenceEntry {
   PresenceEntry(
-    pid: String,
+    session_id: String,
     key: String,
     meta: json.Json
   )

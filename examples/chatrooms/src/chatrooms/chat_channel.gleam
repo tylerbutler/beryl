@@ -111,7 +111,9 @@ fn join(
           // Broadcast updated presence list
           let users = presence.list(presence, topic)
           let users_json =
-            json.object(list.map(users, fn(entry) { #(entry.pid, entry.meta) }))
+            json.object(
+              list.map(users, fn(entry) { #(entry.session_id, entry.meta) }),
+            )
           beryl.broadcast(channels, topic, "presence_list", users_json)
 
           channel.JoinOk(
@@ -268,7 +270,7 @@ fn terminate(_reason: channel.StopReason, socket: Socket(ChatAssigns)) -> Nil {
   // Broadcast updated presence list
   let users = presence.list(assigns.presence, assigns.topic)
   let users_json =
-    json.object(list.map(users, fn(entry) { #(entry.pid, entry.meta) }))
+    json.object(list.map(users, fn(entry) { #(entry.session_id, entry.meta) }))
   beryl.broadcast(assigns.channels, assigns.topic, "presence_list", users_json)
 }
 

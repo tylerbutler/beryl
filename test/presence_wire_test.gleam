@@ -16,17 +16,17 @@ fn sample_diff() -> presence.Diff {
     joins: [
       #("room:lobby", [
         presence.PresenceEntry(
-          pid: "socket-1",
+          session_id: "socket-1",
           key: "user:1",
           meta: json.object([#("status", json.string("online"))]),
         ),
         presence.PresenceEntry(
-          pid: "socket-2",
+          session_id: "socket-2",
           key: "user:1",
           meta: json.object([#("status", json.string("away"))]),
         ),
         presence.PresenceEntry(
-          pid: "socket-3",
+          session_id: "socket-3",
           key: "user:2",
           meta: json.object([#("device", json.string("mobile"))]),
         ),
@@ -35,14 +35,14 @@ fn sample_diff() -> presence.Diff {
     leaves: [
       #("room:lobby", [
         presence.PresenceEntry(
-          pid: "socket-4",
+          session_id: "socket-4",
           key: "user:3",
           meta: json.object([#("status", json.string("offline"))]),
         ),
       ]),
       #("room:other", [
         presence.PresenceEntry(
-          pid: "socket-5",
+          session_id: "socket-5",
           key: "ignored",
           meta: json.object([#("status", json.string("away"))]),
         ),

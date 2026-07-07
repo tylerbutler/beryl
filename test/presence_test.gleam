@@ -28,7 +28,7 @@ pub fn presence_track_and_list_test() {
   list.length(entries) |> should.equal(1)
 
   let assert [entry] = entries
-  entry.pid |> should.equal("socket-1")
+  entry.session_id |> should.equal("socket-1")
   entry.key |> should.equal("user:1")
 }
 
@@ -135,7 +135,7 @@ pub fn on_diff_callback_receives_local_track_diff_test() {
   presence.diff_joins(diff, "room:lobby")
   |> should.equal([
     presence.PresenceEntry(
-      pid: "socket-1",
+      session_id: "socket-1",
       key: "user:1",
       meta: json.object([#("status", json.string("online"))]),
     ),
@@ -170,7 +170,7 @@ pub fn on_diff_callback_receives_local_untrack_diff_test() {
   presence.diff_leaves(diff, "room:lobby")
   |> should.equal([
     presence.PresenceEntry(
-      pid: "socket-1",
+      session_id: "socket-1",
       key: "user:1",
       meta: json.object([#("status", json.string("online"))]),
     ),
@@ -208,7 +208,7 @@ pub fn diff_accessors_return_empty_lists_for_unmentioned_topics_test() {
       joins: [
         #("room:lobby", [
           presence.PresenceEntry(
-            pid: "socket-1",
+            session_id: "socket-1",
             key: "user:1",
             meta: json.null(),
           ),

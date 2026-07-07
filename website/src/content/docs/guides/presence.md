@@ -68,7 +68,7 @@ presence.untrack_all(p, socket_id)
 ```gleam
 // Get all presences in a topic
 let entries = presence.list(p, "room:lobby")
-// Returns: [PresenceEntry(pid: "socket_1", key: "user:alice", meta: ...)]
+// Returns: [PresenceEntry(session_id: "socket_1", key: "user:alice", meta: ...)]
 
 // Get presences for a specific key
 let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
