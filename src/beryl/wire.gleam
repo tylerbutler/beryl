@@ -13,8 +13,8 @@
 
 import beryl/wire/codec.{
   type Codec, type DecodeError, type Frame, type Inbound, type InboundKind,
-  type ReplyStatus, Codec, Event, Heartbeat, Inbound, InvalidFormat, InvalidJson,
-  Join, Leave, StatusError, StatusOk, TextFrame,
+  type ReplyStatus, Event, Heartbeat, Inbound, InvalidFormat, InvalidJson, Join,
+  Leave, StatusError, StatusOk, TextFrame,
 }
 import gleam/bool
 import gleam/dict
@@ -31,9 +31,8 @@ const max_json_nesting_depth = 64
 
 /// The canonical Phoenix wire codec. Pass to `beryl.config/1`.
 pub fn phoenix_codec() -> Codec {
-  Codec(
+  codec.new(
     decode_text: decode_message,
-    decode_binary: None,
     encode_reply: reply_json,
     encode_push: push,
     encode_heartbeat_reply: heartbeat_reply,

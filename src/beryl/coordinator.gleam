@@ -665,7 +665,7 @@ fn handle_join(
       case dict.get(state.sockets, socket_id) {
         Ok(socket_info) -> {
           let reply =
-            socket_info.codec.encode_reply(
+            codec.encode_reply(socket_info.codec)(
               join_ref,
               ref,
               topic_name,
@@ -747,7 +747,7 @@ fn reject_join_cap(
     #("topic", topic_name),
   ])
   let reply =
-    socket_info.codec.encode_reply(
+    codec.encode_reply(socket_info.codec)(
       join_ref,
       ref,
       topic_name,
@@ -778,7 +778,7 @@ fn handle_join_with_handler(
         #("join_ref", optional_string(join_ref)),
       ])
       let reply =
-        socket_info.codec.encode_reply(
+        codec.encode_reply(socket_info.codec)(
           join_ref,
           ref,
           topic_name,
@@ -814,7 +814,7 @@ fn handle_leave(
   case ref, dict.get(state.sockets, socket_id) {
     Some(r), Ok(socket_info) -> {
       let reply =
-        socket_info.codec.encode_reply(
+        codec.encode_reply(socket_info.codec)(
           None,
           Some(r),
           topic_name,
@@ -1002,7 +1002,7 @@ fn handle_binary_in(
     Ok(socket_info) -> socket_info.codec
     Error(Nil) -> state.config.codec
   }
-  case active_codec.decode_binary {
+  case codec.decode_binary(active_codec) {
     Some(decode_binary) ->
       handle_route_binary_frame(state, socket_id, data, decode_binary)
     None -> handle_raw_binary_with_rate_limit(state, socket_id, data)
@@ -1093,7 +1093,7 @@ fn handle_heartbeat(
         SocketInfo(..socket_info, last_heartbeat: monotonic_time_ms())
       let new_sockets = dict.insert(state.sockets, socket_id, updated_socket)
 
-      let reply = socket_info.codec.encode_heartbeat_reply(ref)
+      let reply = codec.encode_heartbeat_reply(socket_info.codec)(ref)
       let _send_result =
         send_frame_logged(state, socket_info, "__heartbeat__", reply)
       let logger = coordinator_logger(state)
@@ -1213,7 +1213,8 @@ fn handle_broadcast(
       Ok(socket_info) -> {
         // Encode per recipient so connections negotiating different
         // serializers each receive a frame in their own wire format.
-        let msg = socket_info.codec.encode_push(topic_name, event, payload)
+        let msg =
+          codec.encode_push(socket_info.codec)(topic_name, event, payload)
         let _send_result =
           send_frame_logged(state, socket_info, topic_name, msg)
         Nil
@@ -1328,7 +1329,7 @@ fn handle_route_text(
     Error(Nil) -> state.config.codec
   }
   let logging = internal_logging(state.config.logging)
-  case active_codec.decode_text(raw_text) {
+  case codec.decode_text(active_codec)(raw_text) {
     Error(err) -> {
       let logger = coordinator_logger(state)
       logger
@@ -1483,7 +1484,7 @@ fn reject_invalid_join(
     Error(Nil) -> actor.continue(state)
     Ok(socket_info) -> {
       let reply =
-        socket_info.codec.encode_reply(
+        codec.encode_reply(socket_info.codec)(
           msg.join_ref,
           msg.ref,
           msg.topic,
@@ -1547,7 +1548,7 @@ fn dispatch_join(
         #("join_ref", optional_string(join_ref)),
       ])
       let reply =
-        socket_info.codec.encode_reply(
+        codec.encode_reply(socket_info.codec)(
           join_ref,
           ref,
           topic_name,
@@ -1599,7 +1600,7 @@ fn dispatch_join(
         Some(p) -> p
       }
       let reply =
-        socket_info.codec.encode_reply(
+        codec.encode_reply(socket_info.codec)(
           join_ref,
           ref,
           topic_name,
@@ -1668,7 +1669,7 @@ fn dispatch_handle_in(
       case ref {
         Some(r) -> {
           let reply =
-            socket_info.codec.encode_reply(
+            codec.encode_reply(socket_info.codec)(
               None,
               Some(r),
               topic_name,
@@ -1694,7 +1695,11 @@ fn dispatch_handle_in(
         #("push_event", push_event),
       ])
       let msg =
-        socket_info.codec.encode_push(topic_name, push_event, push_payload)
+        codec.encode_push(socket_info.codec)(
+          topic_name,
+          push_event,
+          push_payload,
+        )
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
       let state = update_assigns(state, socket_id, topic_name, new_assigns)
       actor.continue(state)
@@ -1764,7 +1769,11 @@ fn dispatch_handle_info(
       // No ref correlation in handle_info, so reply and push are
       // wire-identical: both become a server-initiated push.
       let msg =
-        socket_info.codec.encode_push(topic_name, reply_event, reply_payload)
+        codec.encode_push(socket_info.codec)(
+          topic_name,
+          reply_event,
+          reply_payload,
+        )
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
       let state = update_assigns(state, socket_id, topic_name, new_assigns)
       actor.continue(state)
@@ -1830,7 +1839,11 @@ fn dispatch_handle_binary(
         #("callback", "handle_binary"),
       ])
       let msg =
-        socket_info.codec.encode_push(topic_name, "binary_reply", reply_payload)
+        codec.encode_push(socket_info.codec)(
+          topic_name,
+          "binary_reply",
+          reply_payload,
+        )
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
@@ -1843,7 +1856,11 @@ fn dispatch_handle_binary(
         #("push_event", push_event),
       ])
       let msg =
-        socket_info.codec.encode_push(topic_name, push_event, push_payload)
+        codec.encode_push(socket_info.codec)(
+          topic_name,
+          push_event,
+          push_payload,
+        )
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }

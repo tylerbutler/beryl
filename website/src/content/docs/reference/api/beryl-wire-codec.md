@@ -24,16 +24,12 @@ Pluggable wire codec for beryl.
 
 A wire codec.
 
+ `Codec` is opaque; build one with `new` (and, for binary support,
+ `with_binary_decoder`). The coordinator reads the codec's behaviour
+ through the `@internal` accessors below.
+
 ```gleam
-pub type Codec {
-  Codec(
-    decode_text: fn(String) -> Result(Inbound, DecodeError),
-    decode_binary: option.Option(fn(BitArray) -> Result(Inbound, DecodeError)),
-    encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Frame,
-    encode_push: fn(String, String, json.Json) -> Frame,
-    encode_heartbeat_reply: fn(option.Option(String)) -> Frame
-  )
-}
+pub type Codec
 ```
 
 ### `DecodeError`
@@ -170,4 +166,42 @@ Format a `DecodeError` as a human-readable string. Used by the
 
 ```gleam
 pub fn format_decode_error(DecodeError) -> String
+```
+
+### `new`
+
+Build a text-only wire codec.
+
+ - `decode_text`: decode raw inbound text into a normalised `Inbound`.
+ - `encode_reply`: encode a reply to a client message:
+   `(join_ref, ref, topic, status, response_payload)`.
+ - `encode_push`: encode a server-initiated push: `(topic, event, payload)`.
+ - `encode_heartbeat_reply`: encode a heartbeat reply for a given client `ref`.
+
+ The resulting codec has no binary decoder; binary WebSocket frames are
+ routed to `channel.handle_binary` as raw data. Add a binary decoder with
+ `with_binary_decoder`.
+
+```gleam
+pub fn new(
+  decode_text: fn(String) -> Result(Inbound, DecodeError),
+  encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Frame,
+  encode_push: fn(String, String, json.Json) -> Frame,
+  encode_heartbeat_reply: fn(option.Option(String)) -> Frame
+) -> Codec
+```
+
+### `with_binary_decoder`
+
+Attach a binary decoder to a codec.
+
+ When set, binary WebSocket frames are decoded into a normalised `Inbound`
+ via `decode_binary` instead of being routed to `channel.handle_binary` as
+ raw data.
+
+```gleam
+pub fn with_binary_decoder(
+  Codec,
+  fn(BitArray) -> Result(Inbound, DecodeError)
+) -> Codec
 ```

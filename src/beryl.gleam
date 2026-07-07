@@ -903,7 +903,7 @@ fn typed_handle_info(
 }
 
 fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
-  socket.Transport(
+  socket.new_transport(
     send_text: fn(text) {
       ctx.send(text)
       |> result_to_transport_result()

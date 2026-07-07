@@ -17,13 +17,13 @@ pub fn main() {
 }
 
 fn binary_test_codec() -> codec.Codec {
-  codec.Codec(
+  codec.new(
     decode_text: fn(_) { Error(codec.InvalidFormat("text unsupported")) },
-    decode_binary: Some(decode_binary_frame),
     encode_reply: encode_reply,
     encode_push: encode_push,
     encode_heartbeat_reply: encode_heartbeat_reply,
   )
+  |> codec.with_binary_decoder(decode_binary_frame)
 }
 
 fn decode_binary_frame(
