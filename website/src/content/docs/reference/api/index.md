@@ -24,6 +24,7 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/socket`](/reference/api/beryl-socket/) | Socket - Connected client with typed state |
 | [`beryl/supervisor`](/reference/api/beryl-supervisor/) | Supervisor - OTP supervision tree for beryl subsystems |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Topic - Pattern matching for channel routing |
+| [`beryl/transport/ewe`](/reference/api/beryl-transport-ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
 | [`beryl/transport/mist`](/reference/api/beryl-transport-mist/) | Mist WebSocket Transport - Direct Mist integration for beryl |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
