@@ -53,7 +53,8 @@ src/
     ├── supervisor.gleam           # OTP supervision helpers
     ├── topic.gleam                # Topic pattern matching
     ├── transport/
-    │   └── mist.gleam             # Mist WebSocket transport integration
+    │   ├── mist.gleam             # Mist WebSocket transport integration
+    │   └── ewe.gleam              # Ewe WebSocket transport integration
     ├── wire.gleam                 # Wire protocol (JSON encode/decode)
     ├── presence/
     │   └── wire.gleam             # Presence wire format helpers
@@ -83,6 +84,7 @@ test/
 - `gleam_json` - JSON encoding/decoding
 - `gleam_crypto` - Cryptographic functions
 - `mist` - HTTP/WebSocket server and transport integration
+- `ewe` - Alternative HTTP/WebSocket server and transport integration
 
 #### Development
 - `gleeunit` - Testing framework
