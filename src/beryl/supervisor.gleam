@@ -33,7 +33,6 @@ import beryl/group
 import beryl/internal
 import beryl/log
 import beryl/presence
-import beryl/rate_limit
 import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
@@ -89,7 +88,7 @@ pub fn start(
 ) -> Result(SupervisedChannels, StartError) {
   // Validate heartbeat_timeout_ms before deriving check_interval
   use <- bool.guard(
-    when: config.channels.heartbeat_timeout_ms <= 0,
+    when: beryl.config_heartbeat_timeout_ms(config.channels) <= 0,
     return: Error(InvalidHeartbeatTimeout),
   )
   start_supervised(config)
@@ -115,38 +114,9 @@ fn start_supervised(
     False -> None
   }
 
-  // Build coordinator config from channels config.
-  // Server checks at half the timeout interval (same as beryl.start).
-  let check_interval = config.channels.heartbeat_timeout_ms / 2
-  let message_limiter =
-    rate_limit.start_optional(
-      config.channels.message_rate,
-      config.channels.message_burst,
-    )
-  let join_limiter =
-    rate_limit.start_optional(
-      config.channels.join_rate,
-      config.channels.join_burst,
-    )
-  let channel_limiter =
-    rate_limit.start_optional(
-      config.channels.channel_rate,
-      config.channels.channel_burst,
-    )
-  let coord_config =
-    coordinator.CoordinatorConfig(
-      codec: config.channels.codec,
-      heartbeat_check_interval_ms: check_interval,
-      heartbeat_timeout_ms: config.channels.heartbeat_timeout_ms,
-      message_limiter: message_limiter,
-      join_limiter: join_limiter,
-      channel_limiter: channel_limiter,
-      channel_limiter_max_keys_per_socket: config.channels.channel_rate_max_keys_per_socket,
-      max_topic_length: config.channels.max_topic_length,
-      max_event_length: config.channels.max_event_length,
-      max_joined_topics_per_socket: config.channels.max_joined_topics_per_socket,
-      logging: coordinator_logging(config.channels.logging),
-    )
+  // Build coordinator config from channels config (same mapping and
+  // half-timeout check interval as beryl.start).
+  let coord_config = beryl.to_coordinator_config(config.channels)
 
   // Build the supervisor with rest-for-one strategy.
   // If the coordinator crashes, presence and groups restart too to maintain
@@ -160,7 +130,7 @@ fn start_supervised(
     builder
     |> static_supervisor.add(
       supervision.worker(fn() {
-        let started = case config.channels.pubsub {
+        let started = case beryl.config_pubsub(config.channels) {
           Some(ps) ->
             coordinator.start_named_with_pubsub(
               coord_config,
@@ -250,25 +220,6 @@ fn start_supervised(
       ))
     }
   }
-}
-
-fn coordinator_log_level(level: beryl.LogLevel) -> coordinator.LogLevel {
-  case level {
-    beryl.Debug -> coordinator.Debug
-    beryl.Info -> coordinator.Info
-    beryl.Warn -> coordinator.Warn
-    beryl.Error -> coordinator.Err
-  }
-}
-
-fn coordinator_logging(
-  logging: beryl.LoggingConfig,
-) -> coordinator.LoggingConfig {
-  coordinator.LoggingConfig(
-    level: coordinator_log_level(logging.level),
-    include_payloads: logging.include_payloads,
-    payload_preview_bytes: logging.payload_preview_bytes,
-  )
 }
 
 /// Stop the supervisor and all its children

@@ -84,10 +84,8 @@ fn start_server_with_config(
 fn start_limited_server() -> #(Int, process.Pid) {
   let assert Ok(channels) =
     beryl.start(
-      beryl.Config(
-        ..beryl.config(wire.phoenix_codec()),
-        max_connections_per_ip: 1,
-      ),
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_connections_per_ip(max_connections: 1),
     )
   start_server(channels)
 }

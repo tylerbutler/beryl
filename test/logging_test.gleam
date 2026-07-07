@@ -70,11 +70,12 @@ fn drain(selector: process.Selector(CapturedLog)) -> Nil {
 pub fn default_logging_preserves_info_without_payloads_test() {
   let config = beryl.config(wire.phoenix_codec())
 
-  config.logging.level
+  let logging = beryl.config_logging(config)
+  logging.level
   |> should.equal(beryl.Info)
-  config.logging.include_payloads
+  logging.include_payloads
   |> should.be_false
-  config.logging.payload_preview_bytes
+  logging.payload_preview_bytes
   |> should.equal(200)
 }
 
@@ -87,11 +88,12 @@ pub fn with_logging_replaces_logging_config_test() {
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(logging)
 
-  config.logging.level
+  let logging = beryl.config_logging(config)
+  logging.level
   |> should.equal(beryl.Error)
-  config.logging.include_payloads
+  logging.include_payloads
   |> should.be_true
-  config.logging.payload_preview_bytes
+  logging.payload_preview_bytes
   |> should.equal(64)
 }
 
