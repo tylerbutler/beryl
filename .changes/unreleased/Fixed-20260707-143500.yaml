@@ -1,0 +1,6 @@
+kind: Fixed
+body: |-
+    `beryl.start` now rejects `heartbeat_timeout_ms < 2` with `InvalidHeartbeatTimeout` instead of silently disabling heartbeat eviction.
+
+    The server derives its staleness check interval as `heartbeat_timeout_ms / 2`, so a timeout of 1 rounded down to a check interval of 0, which the scheduler treated as "disabled". Configs with a timeout below 2 now fail loudly at `start`. Also re-documented `heartbeat_interval_ms` as client-advisory only — the server never reads it. (#154)
+time: 2026-07-07T14:35:00.000000-07:00

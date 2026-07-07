@@ -1,3 +1,4 @@
+import beryl
 import beryl/channel
 import beryl/coordinator
 import beryl/topic
@@ -272,6 +273,60 @@ pub fn positive_timeout_with_checking_enabled_is_ok_test() {
     )
   coordinator.start_with_config(config)
   |> should.be_ok
+}
+
+// --- Public API config validation (issue #154) ---------------------------
+//
+// `heartbeat_timeout_ms` drives the server's staleness check interval, which
+// is derived as `timeout_ms / 2`. A timeout of 1 integer-divides to a check
+// interval of 0, which the scheduler treats as "disabled" — silently turning
+// off heartbeat eviction. `beryl.start` must reject any timeout below 2 loudly
+// rather than accepting a config that disables eviction.
+
+pub fn beryl_start_rejects_timeout_of_one_test() {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 1)
+
+  beryl.start(config)
+  |> should.be_error
+  |> should.equal(beryl.InvalidHeartbeatTimeout)
+}
+
+pub fn beryl_start_rejects_zero_timeout_test() {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 0)
+
+  beryl.start(config)
+  |> should.be_error
+  |> should.equal(beryl.InvalidHeartbeatTimeout)
+}
+
+pub fn beryl_start_rejects_negative_timeout_test() {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: -5)
+
+  beryl.start(config)
+  |> should.be_error
+  |> should.equal(beryl.InvalidHeartbeatTimeout)
+}
+
+pub fn beryl_start_accepts_timeout_of_two_test() {
+  // 2 is the smallest timeout that still yields a non-zero derived check
+  // interval (2 / 2 = 1), so eviction stays enabled.
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 2)
+
+  let assert Ok(channels) = beryl.start(config)
+  beryl.stop(channels)
+}
+
+pub fn beryl_start_accepts_default_timeout_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  beryl.stop(channels)
 }
 
 pub fn start_named_validates_heartbeat_timeout_test() {

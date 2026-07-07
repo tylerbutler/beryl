@@ -161,7 +161,11 @@ The coordinator actor failed to start.
 
 ##### `InvalidHeartbeatTimeout`
 
-heartbeat_timeout_ms must be > 0 (it is used to derive the check interval)
+`heartbeat_timeout_ms` must be at least 2. The server derives its staleness
+ check interval as `heartbeat_timeout_ms / 2` (integer division), so a
+ timeout of 1 would round down to a check interval of 0 — which disables
+ heartbeat eviction entirely. `start` rejects such a config loudly rather
+ than silently turning eviction off.
 
 ## Functions
 
@@ -396,10 +400,14 @@ Start the channels system
  Call once at application startup. Returns a handle that can be passed
  to the WebSocket transport and used for broadcasting.
 
- Heartbeat timeout enforcement is configured via `heartbeat_interval_ms`
- and `heartbeat_timeout_ms` in the Config. The coordinator checks for
- stale sockets at `heartbeat_interval_ms` and evicts any socket that
- hasn't sent a heartbeat within `heartbeat_timeout_ms`.
+ Heartbeat eviction is configured via `heartbeat_timeout_ms` in the Config.
+ The coordinator evicts any socket that has not sent a heartbeat within that
+ window, checking for stale sockets at a server-derived interval of
+ `heartbeat_timeout_ms / 2`. `heartbeat_interval_ms` is client-advisory only
+ (see `with_heartbeat`) and does not schedule anything on the server.
+
+ Returns `Error(InvalidHeartbeatTimeout)` if `heartbeat_timeout_ms` is less
+ than 2.
 
  ## Example
 
@@ -461,10 +469,17 @@ pub fn with_channel_rate_max_keys_per_socket(
 
 Configure heartbeat timing.
 
- `interval_ms` is the client-facing heartbeat interval (informational: how
- often clients should send heartbeats). `timeout_ms` is the server-side
- staleness window — a socket that sends no heartbeat within this window is
- evicted. The defaults are 30000 ms and 60000 ms respectively.
+ `interval_ms` is **client-advisory only**: it is the interval clients should
+ use for their own outbound pings. The server never reads it and does not use
+ it to schedule anything — it exists purely to communicate a suggested ping
+ cadence to clients.
+
+ `timeout_ms` is the server-side staleness window — a socket that sends no
+ heartbeat within this window is evicted. The server derives its internal
+ check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
+ be at least 2; smaller values are rejected by `start` with
+ `InvalidHeartbeatTimeout` because a check interval of 0 would disable
+ eviction. The defaults are 30000 ms and 60000 ms respectively.
 
 ```gleam
 pub fn with_heartbeat(
