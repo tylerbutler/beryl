@@ -96,7 +96,7 @@ fn presence_diff() -> presence.Diff {
     joins: [
       #("room:lobby", [
         presence.PresenceEntry(
-          pid: "socket-1",
+          session_id: "socket-1",
           key: "user:1",
           meta: json.object([#("status", json.string("online"))]),
         ),

@@ -72,7 +72,7 @@ pub opaque type Diff {
 /// This type is intentionally transparent so callers can inspect query results
 /// and construct entries for `diff`.
 pub type PresenceEntry {
-  PresenceEntry(pid: String, key: String, meta: json.Json)
+  PresenceEntry(session_id: String, key: String, meta: json.Json)
 }
 
 /// Build a presence diff from topic-grouped joins and leaves.
@@ -133,7 +133,7 @@ fn state_entries_to_presence_entries(
       topic,
       list.map(topic_entries, fn(topic_entry) {
         let #(key, pid, meta) = topic_entry
-        PresenceEntry(pid: pid, key: key, meta: meta)
+        PresenceEntry(session_id: pid, key: key, meta: meta)
       }),
     )
   })
@@ -455,7 +455,9 @@ fn handle_message(
     List(topic, reply) -> {
       let entries =
         state.get_by_topic(actor_state.crdt, topic)
-        |> list.map(fn(t) { PresenceEntry(pid: t.0, key: t.1, meta: t.2) })
+        |> list.map(fn(t) {
+          PresenceEntry(session_id: t.0, key: t.1, meta: t.2)
+        })
       process.send(reply, entries)
       actor.continue(actor_state)
     }
@@ -502,7 +504,7 @@ fn single_join_diff(
   Diff(
     joins: dict.from_list([
       #(topic, [
-        PresenceEntry(pid: pid, key: key, meta: meta),
+        PresenceEntry(session_id: pid, key: key, meta: meta),
       ]),
     ]),
     leaves: dict.new(),
@@ -519,7 +521,7 @@ fn leave_diff(
     state.get_by_key(crdt, topic, key)
     |> list.filter(fn(entry) { entry.0 == pid })
     |> list.map(fn(entry) {
-      PresenceEntry(pid: entry.0, key: key, meta: entry.1)
+      PresenceEntry(session_id: entry.0, key: key, meta: entry.1)
     })
 
   Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
@@ -535,7 +537,7 @@ fn leave_all_diff(crdt: State, pid: String) -> Diff {
         dict.get(grouped, topic)
         |> result.unwrap([])
       dict.insert(grouped, topic, [
-        PresenceEntry(pid: pid, key: key, meta: meta),
+        PresenceEntry(session_id: pid, key: key, meta: meta),
         ..existing
       ])
     })
