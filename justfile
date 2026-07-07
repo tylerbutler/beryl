@@ -59,9 +59,13 @@ lint:
 
 # === DOCUMENTATION ===
 
-# Build documentation
-docs:
+# Build Gleam API documentation (HTML + docs metadata)
+gleam-docs:
     gleam docs build
+
+# Build documentation: Gleam docs + regenerated website reference pages
+docs: gleam-docs
+    pnpm -C website generate:reference
 
 # Render the architecture deck to HTML
 deck:
@@ -91,9 +95,8 @@ site-dev:
 site-deps:
     pnpm -C website install
 
-# Generate website reference docs from Gleam docs metadata
+# Regenerate website reference docs (delegates to `docs`, which regenerates them)
 site-reference: docs
-    pnpm -C website generate:reference
 
 # Test the website reference docs generator
 site-reference-test:
