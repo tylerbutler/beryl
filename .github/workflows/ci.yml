@@ -61,9 +61,6 @@ jobs:
       - name: Install Gleam dependencies
         run: gleam deps download
 
-      - name: Build documentation
-        run: just docs
-
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
         with:
@@ -76,6 +73,9 @@ jobs:
 
       - name: Install website dependencies
         run: pnpm -C website install --frozen-lockfile
+
+      - name: Build documentation (Gleam docs + website reference)
+        run: just docs
 
       - name: Test reference docs generator
         run: just site-reference-test
