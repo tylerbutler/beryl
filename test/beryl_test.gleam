@@ -1141,14 +1141,6 @@ pub fn with_max_joined_topics_per_socket_sets_field_test() {
   beryl.config_max_joined_topics_per_socket(cfg) |> should.equal(12)
 }
 
-pub fn extract_topic_id_test() {
-  beryl.extract_topic_id(topic.Wildcard("room:"), "room:lobby")
-  |> should.equal(Ok("lobby"))
-
-  beryl.extract_topic_id(topic.Exact("room:lobby"), "room:lobby")
-  |> should.equal(Error(topic.NoWildcard))
-}
-
 pub fn start_failure_description_is_public_test() {
   let describe = beryl_error.describe_start_failure
   should.be_true(True)

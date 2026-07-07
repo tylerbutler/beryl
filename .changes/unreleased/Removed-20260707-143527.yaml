@@ -1,0 +1,6 @@
+kind: Removed
+body: |-
+    Remove beryl.extract_topic_id (#163).
+
+    This was a one-line delegation to topic.extract_id with identical signature and semantics, so both names shipping at 1.0 would mean two permanent APIs for one function. Callers should use topic.extract_id directly.
+time: 2026-07-07T14:35:27.286035878-07:00

@@ -88,7 +88,7 @@ Channels are registered with topic patterns:
 - **Exact**: `"room:lobby"` — matches only that topic.
 - **Wildcard**: `"room:*"` — matches any topic starting with `"room:"`.
 
-The coordinator matches incoming join requests to the first registered pattern. `extract_topic_id` extracts the wildcard portion (e.g. `"room:123"` → `"123"`).
+The coordinator matches incoming join requests to the first registered pattern. `topic.extract_id` extracts the wildcard portion (e.g. `"room:123"` → `"123"`).
 
 #### FR-1.3: Socket Lifecycle
 

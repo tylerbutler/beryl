@@ -804,24 +804,6 @@ pub fn send_info(
   )
 }
 
-/// Get the topic ID from a topic using wildcard extraction
-///
-/// For pattern "room:*" and topic "room:lobby", returns Ok("lobby").
-/// For segment wildcard patterns with one wildcard segment, returns that
-/// segment. Use `topic.extract_wildcards` when extracting multiple segments.
-///
-/// ## Example
-///
-/// ```gleam
-/// let assert Ok("lobby") = topic.extract_id(topic.Wildcard("room:"), "room:lobby")
-/// ```
-pub fn extract_topic_id(
-  pattern: topic.TopicPattern,
-  topic_name: String,
-) -> Result(String, topic.ExtractError) {
-  topic.extract_id(pattern, topic_name)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Type erasure - Convert typed Channel to ChannelHandler
 // ─────────────────────────────────────────────────────────────────────────────

@@ -270,27 +270,6 @@ Build a configuration with sensible defaults.
 pub fn config(codec.Codec) -> Config
 ```
 
-### `extract_topic_id`
-
-Get the topic ID from a topic using wildcard extraction
-
- For pattern "room:*" and topic "room:lobby", returns Ok("lobby").
- For segment wildcard patterns with one wildcard segment, returns that
- segment. Use `topic.extract_wildcards` when extracting multiple segments.
-
- ## Example
-
- ```gleam
- let assert Ok("lobby") = topic.extract_id(topic.Wildcard("room:"), "room:lobby")
- ```
-
-```gleam
-pub fn extract_topic_id(
-  topic.TopicPattern,
-  String
-) -> Result(String, topic.ExtractError)
-```
-
 ### `logging_config`
 
 Build a logging configuration.
