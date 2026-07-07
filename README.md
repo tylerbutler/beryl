@@ -147,11 +147,10 @@ via `beryl.send_info`. The forwarder also monitors the channel process, so it is
 cleaned up automatically if that process dies — no leaked processes.
 
 ```gleam
-import beryl
+import beryl.{type RegisteredChannel}
 import beryl/bridge.{type Bridge}
 import beryl/channel.{type Channel}
 import beryl/socket
-import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{None}
 
@@ -164,12 +163,16 @@ pub type Assigns {
   Assigns(bridge: Bridge(DocEvent))
 }
 
-fn new_channel(channels: beryl.Channels, doc_actor) -> Channel(Assigns) {
+// `registered_channel` is the handle returned by `beryl.register`.
+fn new_channel(
+  registered_channel: RegisteredChannel(Assigns, DocEvent),
+  doc_actor,
+) -> Channel(Assigns, DocEvent) {
   channel.new(fn(topic, _payload, socket) {
     // Forward every DocEvent emitted by the actor to this socket/topic.
     let b =
       bridge.start(
-        channels: channels,
+        channel: registered_channel,
         socket_id: socket.id(socket),
         topic: topic,
         with: fn(event) { event },
@@ -178,15 +181,15 @@ fn new_channel(channels: beryl.Channels, doc_actor) -> Channel(Assigns) {
     doc.subscribe(doc_actor, bridge.subject(b))
     channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
   })
-  |> channel.with_handle_info(fn(message, socket) {
-    case decode.run(message, doc_event_decoder()) {
-      Ok(Updated(version)) ->
+  // `handle_info` receives the typed `DocEvent` directly — no decode step.
+  |> channel.with_handle_info(fn(event, socket) {
+    case event {
+      Updated(version) ->
         channel.Push(
           "doc_updated",
           json.object([#("version", json.int(version))]),
           socket,
         )
-      _ -> channel.NoReply(socket)
     }
   })
   // Always stop the bridge on terminate for prompt, deterministic cleanup.
@@ -198,16 +201,16 @@ fn new_channel(channels: beryl.Channels, doc_actor) -> Channel(Assigns) {
 
 ## Releases & changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes. Releases follow
-[Conventional Commits](https://www.conventionalcommits.org/) and are managed
-with [changie](https://changie.dev/).
+See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
+release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
+and the changelog is managed with [changie](https://changie.dev/).
 
 ## Development
 
 ### Prerequisites
 
 - [Erlang](https://www.erlang.org/) 27+
-- [Gleam](https://gleam.run/) 1.3+
+- [Gleam](https://gleam.run/) 1.13+
 - [just](https://github.com/casey/just) (task runner)
 
 Install tools via [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/):

@@ -112,16 +112,22 @@ fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {
 }
 
 /// Create a new named group
+///
+/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
 pub fn create(groups: Groups, name: String) -> Result(Nil, GroupError) {
   process.call(groups.subject, 5000, fn(reply) { Create(name, reply) })
 }
 
 /// Delete a group
+///
+/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
 pub fn delete(groups: Groups, name: String) -> Result(Nil, GroupError) {
   process.call(groups.subject, 5000, fn(reply) { Delete(name, reply) })
 }
 
 /// Add a topic to a group
+///
+/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
 pub fn add(
   groups: Groups,
   group_name: String,
@@ -131,6 +137,8 @@ pub fn add(
 }
 
 /// Remove a topic from a group
+///
+/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
 pub fn remove(
   groups: Groups,
   group_name: String,
@@ -142,6 +150,8 @@ pub fn remove(
 }
 
 /// Get all topics in a group
+///
+/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
 pub fn topics(
   groups: Groups,
   group_name: String,
@@ -150,6 +160,8 @@ pub fn topics(
 }
 
 /// List all group names
+///
+/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
 pub fn list_groups(groups: Groups) -> List(String) {
   process.call(groups.subject, 5000, fn(reply) { ListGroups(reply) })
 }

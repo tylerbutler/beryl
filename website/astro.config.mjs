@@ -106,6 +106,14 @@ export default defineConfig({
 							label: "WebSocket Transport",
 							slug: "guides/websocket",
 						},
+						{
+							label: "Authentication",
+							slug: "guides/authentication",
+						},
+						{
+							label: "Backend Integration",
+							slug: "guides/backend-integration",
+						},
 					],
 				},
 				{

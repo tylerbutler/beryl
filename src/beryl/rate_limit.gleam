@@ -363,6 +363,7 @@ pub fn stop(limiter: RateLimiter) -> Nil {
   )
 }
 
+/// Stop the rate limiter if one is present; a no-op when `None`.
 pub fn stop_optional(limiter: Option(RateLimiter)) -> Nil {
   case limiter {
     Some(limiter) -> stop(limiter)

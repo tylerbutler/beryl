@@ -194,6 +194,16 @@ test: add edge case tests for topic matching
 4. After merge, changie-release creates a release PR
 5. Merge the release PR to publish a new version
 
+### 1.0 release checklist
+
+One-time steps to perform in the same PR that tags `v1.0.0`:
+
+- Remove (or rewrite) the "beryl is not yet 1.0 / API is unstable" callout at
+  the top of `README.md`.
+- Confirm the documented Gleam version requirement in `README.md` and
+  `website/src/content/docs/installation.md` still matches `gleam.toml`.
+- Verify the publish tarball with `gleam export hex-tarball` before tagging.
+
 ## Troubleshooting
 
 ### Build Errors

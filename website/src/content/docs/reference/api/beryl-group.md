@@ -83,6 +83,8 @@ pub type Message
 
 Add a topic to a group
 
+ Panics if the groups actor is unavailable or does not reply within 5 seconds.
+
 ```gleam
 pub fn add(
   Groups,
@@ -112,6 +114,8 @@ pub fn broadcast(
 
 Create a new named group
 
+ Panics if the groups actor is unavailable or does not reply within 5 seconds.
+
 ```gleam
 pub fn create(
   Groups,
@@ -122,6 +126,8 @@ pub fn create(
 ### `delete`
 
 Delete a group
+
+ Panics if the groups actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn delete(
@@ -134,6 +140,8 @@ pub fn delete(
 
 List all group names
 
+ Panics if the groups actor is unavailable or does not reply within 5 seconds.
+
 ```gleam
 pub fn list_groups(Groups) -> List(String)
 ```
@@ -141,6 +149,8 @@ pub fn list_groups(Groups) -> List(String)
 ### `remove`
 
 Remove a topic from a group
+
+ Panics if the groups actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn remove(
@@ -158,9 +168,19 @@ Start the groups actor
 pub fn start() -> Result(Groups, GroupStartError)
 ```
 
+### `start_named`
+
+Start the groups actor with a registered name (for supervision)
+
+```gleam
+pub fn start_named(process.Name(Message)) -> Result(actor.Started(process.Subject(Message)), actor.StartError)
+```
+
 ### `topics`
 
 Get all topics in a group
+
+ Panics if the groups actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn topics(

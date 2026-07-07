@@ -26,6 +26,7 @@ pub fn describe_start_failure(failure: StartFailure) -> String {
   }
 }
 
+/// Convert a `gleam/otp/actor.StartError` into beryl's `StartFailure`.
 pub fn from_actor_start_error(error: actor.StartError) -> StartFailure {
   case error {
     actor.InitTimeout -> StartFailure(StartTimedOut)
