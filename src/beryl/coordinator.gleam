@@ -65,6 +65,7 @@ pub type JoinResultErased {
 pub type HandleResultErased {
   NoReplyErased(assigns: Dynamic)
   ReplyErased(event: String, payload: json.Json, assigns: Dynamic)
+  ReplyErrorErased(payload: json.Json, assigns: Dynamic)
   PushErased(event: String, payload: json.Json, assigns: Dynamic)
   StopErased(reason: StopReason)
 }
@@ -1750,6 +1751,34 @@ fn dispatch_handle_in(
       actor.continue(state)
     }
 
+    Ok(ReplyErrorErased(reply_payload, new_assigns)) -> {
+      logger
+      |> log.debug("Channel callback returned error reply", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+        #("event", event),
+        #("ref", optional_string(ref)),
+      ])
+      case ref {
+        Some(r) -> {
+          let reply =
+            codec.encode_reply(socket_info.codec)(
+              None,
+              Some(r),
+              topic_name,
+              codec.StatusError,
+              reply_payload,
+            )
+          let _send_result =
+            send_frame_logged(state, socket_info, topic_name, reply)
+          Nil
+        }
+        None -> Nil
+      }
+      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      actor.continue(state)
+    }
+
     Ok(PushErased(push_event, push_payload, new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned push", [
@@ -1851,6 +1880,18 @@ fn dispatch_handle_info(
       actor.continue(state)
     }
 
+    Ok(ReplyErrorErased(_payload, new_assigns)) -> {
+      // Error replies require a client ref for correlation; handle_info is
+      // server-originated so there is nothing to attach the error to.
+      logger
+      |> log.warn("Error reply dropped: no client ref in handle_info", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      actor.continue(state)
+    }
+
     Ok(StopErased(reason)) -> {
       logger
       |> log.debug("Channel callback stopped channel", [
@@ -1919,6 +1960,15 @@ fn dispatch_handle_binary(
           reply_payload,
         )
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
+      update_assigns(st, socket_id, topic_name, new_assigns)
+    }
+    Ok(ReplyErrorErased(_payload, new_assigns)) -> {
+      // Raw binary frames carry no ref to correlate an error reply with.
+      logger
+      |> log.warn("Error reply dropped: no client ref in handle_binary", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
     Ok(PushErased(push_event, push_payload, new_assigns)) -> {

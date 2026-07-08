@@ -47,6 +47,14 @@ pub type HandleResult(assigns) {
   /// coordinator. When returned from `handle_info` (where no client ref
   /// exists), it is sent as a push using `event` as the event name.
   Reply(event: String, payload: Json, socket: Socket(assigns))
+  /// Send an error reply to the client in response to their message
+  /// (`"status": "error"` in Phoenix framing, delivered to the client's
+  /// `push.receive("error", ...)` hook).
+  ///
+  /// Only meaningful from `handle_in` for messages carrying a client ref;
+  /// from `handle_info`/`handle_binary` (where no ref exists) the reply is
+  /// dropped with a warning.
+  ReplyError(payload: Json, socket: Socket(assigns))
   /// Push a message to the client (server-initiated)
   Push(event: String, payload: Json, socket: Socket(assigns))
   /// Stop the channel with a reason

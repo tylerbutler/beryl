@@ -971,6 +971,11 @@ fn erase_handle_result(
         payload: payload,
         assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
       )
+    channel.ReplyError(payload, new_socket) ->
+      coordinator.ReplyErrorErased(
+        payload: payload,
+        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+      )
     channel.Push(event, payload, new_socket) ->
       coordinator.PushErased(
         event: event,
