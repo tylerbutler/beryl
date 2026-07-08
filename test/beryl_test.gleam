@@ -18,7 +18,7 @@ import gleeunit/should
 
 // Test helper: create a mock transport
 fn mock_transport() -> socket.Transport {
-  socket.Transport(
+  socket.new_transport(
     send_text: fn(_) { Ok(Nil) },
     send_binary: fn(_) { Ok(Nil) },
     close: fn() { Ok(Nil) },

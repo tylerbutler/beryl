@@ -1,0 +1,11 @@
+kind: Changed
+body: |-
+  Make `codec.Codec` and `socket.Transport` opaque types before 1.0 (#157).
+
+  BREAKING: both records are now constructed through builders rather than their
+  constructors. Build a codec with `codec.new(decode_text:, encode_reply:,
+  encode_push:, encode_heartbeat_reply:)` and attach an optional binary decoder
+  with `codec.with_binary_decoder`. Build a transport with
+  `socket.new_transport(send_text:, send_binary:, close:)`. Making these opaque
+  lets new fields be added post-1.0 without a breaking change. Closes #157.
+time: 2026-07-07T14:00:00.000000000-07:00

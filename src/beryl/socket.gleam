@@ -30,12 +30,49 @@ import gleam/dynamic.{type Dynamic}
 /// Note: as constructed by the built-in Mist transport, `close` is a no-op
 /// that returns `Ok(Nil)`. Closing is driven by the transport's own
 /// connection lifecycle rather than by calling this function.
-pub type Transport {
+/// `Transport` is opaque; build one with `new_transport`. Its behaviour is
+/// read through the `@internal` accessors below.
+pub opaque type Transport {
   Transport(
     send_text: fn(String) -> Result(Nil, TransportError),
     send_binary: fn(BitArray) -> Result(Nil, TransportError),
     close: fn() -> Result(Nil, TransportError),
   )
+}
+
+/// Build a transport from its send/close functions.
+///
+/// - `send_text`: send a UTF-8 text frame to the client.
+/// - `send_binary`: send a binary frame to the client.
+/// - `close`: close the underlying connection.
+pub fn new_transport(
+  send_text send_text: fn(String) -> Result(Nil, TransportError),
+  send_binary send_binary: fn(BitArray) -> Result(Nil, TransportError),
+  close close: fn() -> Result(Nil, TransportError),
+) -> Transport {
+  Transport(send_text:, send_binary:, close:)
+}
+
+/// Accessor for the transport's text sender.
+@internal
+pub fn send_text(
+  transport: Transport,
+) -> fn(String) -> Result(Nil, TransportError) {
+  transport.send_text
+}
+
+/// Accessor for the transport's binary sender.
+@internal
+pub fn send_binary(
+  transport: Transport,
+) -> fn(BitArray) -> Result(Nil, TransportError) {
+  transport.send_binary
+}
+
+/// Accessor for the transport's close function.
+@internal
+pub fn close(transport: Transport) -> fn() -> Result(Nil, TransportError) {
+  transport.close
 }
 
 /// Errors returned by transport send/close operations.

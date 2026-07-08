@@ -19,8 +19,8 @@ const phoenix_codec_env = "BERYL_PHOENIX_CODEC"
 pub fn phoenix_codec_round_trip_test() {
   let phoenix = wire.phoenix_codec()
   let encoded =
-    text_frame(phoenix.encode_push("room:1", "msg", json.string("hi")))
-  let assert Ok(inbound) = phoenix.decode_text(encoded)
+    text_frame(codec.encode_push(phoenix)("room:1", "msg", json.string("hi")))
+  let assert Ok(inbound) = codec.decode_text(phoenix)(encoded)
   inbound.topic |> should.equal("room:1")
   inbound.kind |> should.equal(codec.Event("msg"))
 }
@@ -29,19 +29,19 @@ pub fn phoenix_codec_decodes_system_events_to_kinds_test() {
   let phoenix = wire.phoenix_codec()
 
   let assert Ok(join) =
-    phoenix.decode_text("[\"j\",\"r\",\"room:1\",\"phx_join\",{}]")
+    codec.decode_text(phoenix)("[\"j\",\"r\",\"room:1\",\"phx_join\",{}]")
   join.kind |> should.equal(codec.Join)
 
   let assert Ok(leave) =
-    phoenix.decode_text("[null,\"r\",\"room:1\",\"phx_leave\",{}]")
+    codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"phx_leave\",{}]")
   leave.kind |> should.equal(codec.Leave)
 
   let assert Ok(heartbeat) =
-    phoenix.decode_text("[null,\"r\",\"phoenix\",\"heartbeat\",{}]")
+    codec.decode_text(phoenix)("[null,\"r\",\"phoenix\",\"heartbeat\",{}]")
   heartbeat.kind |> should.equal(codec.Heartbeat)
 
   let assert Ok(event) =
-    phoenix.decode_text("[null,\"r\",\"room:1\",\"new_msg\",{}]")
+    codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"new_msg\",{}]")
   event.kind |> should.equal(codec.Event("new_msg"))
 }
 
@@ -49,7 +49,13 @@ pub fn phoenix_codec_reply_accepts_missing_ref_test() {
   let phoenix = wire.phoenix_codec()
 
   let frame =
-    phoenix.encode_reply(None, None, "room:1", codec.StatusOk, json.object([]))
+    codec.encode_reply(phoenix)(
+      None,
+      None,
+      "room:1",
+      codec.StatusOk,
+      json.object([]),
+    )
 
   let assert codec.TextFrame(encoded) = frame
   encoded
@@ -63,7 +69,7 @@ pub fn phoenix_codec_defaults_to_native_implementation_test() {
     let phoenix = wire.phoenix_codec()
 
     let assert Error(codec.InvalidFormat(reason)) =
-      phoenix.decode_text("[null,\"1\",123,\"event\",{}]")
+      codec.decode_text(phoenix)("[null,\"1\",123,\"event\",{}]")
 
     reason
     |> should.equal(
@@ -77,7 +83,7 @@ pub fn phoenix_codec_uses_native_when_env_is_unknown_test() {
     let phoenix = wire.phoenix_codec()
 
     let assert Error(codec.InvalidFormat(reason)) =
-      phoenix.decode_text("[null,\"1\",123,\"event\",{}]")
+      codec.decode_text(phoenix)("[null,\"1\",123,\"event\",{}]")
 
     reason
     |> should.equal(
@@ -89,7 +95,7 @@ pub fn phoenix_codec_uses_native_when_env_is_unknown_test() {
 pub fn phoenix_codec_preserves_missing_ref_reply_shape_test() {
   let phoenix = wire.phoenix_codec()
 
-  phoenix.encode_reply(
+  codec.encode_reply(phoenix)(
     Some("join-ref"),
     None,
     "room:1",
@@ -135,7 +141,7 @@ pub fn inbound_supports_optional_refs_test() {
 pub fn reply_status_round_trips_through_phoenix_codec_test() {
   let phoenix = wire.phoenix_codec()
   let s =
-    phoenix.encode_reply(
+    codec.encode_reply(phoenix)(
       Some("j"),
       Some("r"),
       "topic:1",
@@ -152,7 +158,7 @@ pub fn phoenix_codec_decodes_shared_inbound_fixtures_test() {
   let phoenix = wire.phoenix_codec()
   fixtures.inbound_common()
   |> list.each(fn(case_) {
-    let assert Ok(inbound) = phoenix.decode_text(case_.encoded)
+    let assert Ok(inbound) = codec.decode_text(phoenix)(case_.encoded)
     inbound.join_ref |> should.equal(case_.join_ref)
     inbound.ref |> should.equal(case_.ref)
     inbound.topic |> should.equal(case_.topic)
@@ -173,7 +179,7 @@ pub fn phoenix_codec_encodes_shared_server_push_fixtures_test() {
         && event != fixtures.error_event
         && event != fixtures.close_event
       ->
-        phoenix.encode_push(case_.topic, event, case_.payload)
+        codec.encode_push(phoenix)(case_.topic, event, case_.payload)
         |> text_frame()
         |> should.equal(case_.encoded)
       _, _, _ -> Nil
@@ -189,7 +195,7 @@ pub fn phoenix_codec_encodes_shared_reply_fixtures_test() {
       fixtures.StatusOk -> codec.StatusOk
       fixtures.StatusError -> codec.StatusError
     }
-    phoenix.encode_reply(
+    codec.encode_reply(phoenix)(
       case_.join_ref,
       Some(case_.ref),
       case_.topic,
@@ -208,12 +214,12 @@ pub fn phoenix_codec_rejects_shared_invalid_fixtures_test() {
     case case_.reason {
       fixtures.InvalidJson -> {
         let assert Error(codec.InvalidJson(_)) =
-          phoenix.decode_text(case_.encoded)
+          codec.decode_text(phoenix)(case_.encoded)
         Nil
       }
       fixtures.InvalidFormat -> {
         let assert Error(codec.InvalidFormat(_)) =
-          phoenix.decode_text(case_.encoded)
+          codec.decode_text(phoenix)(case_.encoded)
         Nil
       }
     }
@@ -226,7 +232,7 @@ pub fn phoenix_codec_rejects_excessively_nested_payload_test() {
     string.repeat("[", 70) <> "null" <> string.repeat("]", 70)
 
   let assert Error(codec.InvalidFormat(reason)) =
-    phoenix.decode_text(
+    codec.decode_text(phoenix)(
       "[null,\"r\",\"room:1\",\"event\"," <> nested_payload <> "]",
     )
 
