@@ -81,7 +81,7 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
       join_ref: join_ref,
       ref: ref,
       topic: topic,
-      kind: classify_phoenix_event(event),
+      kind: classify_phoenix_event(topic, event),
       payload: payload,
     ))
   }
@@ -118,12 +118,18 @@ pub fn encode(msg: Inbound) -> String {
   )
 }
 
-fn classify_phoenix_event(event: String) -> InboundKind {
-  case event {
-    "phx_join" -> Join
-    "phx_leave" -> Leave
-    "heartbeat" -> Heartbeat
-    other -> Event(other)
+/// Classify a Phoenix event name into a structural kind.
+///
+/// `phx_join`/`phx_leave` are reserved event names on every topic, but
+/// `heartbeat` is only special on the reserved `"phoenix"` topic — an
+/// application is free to define its own `"heartbeat"` channel event, which
+/// must reach `handle_in` rather than refresh the socket's liveness timer.
+fn classify_phoenix_event(topic: String, event: String) -> InboundKind {
+  case topic, event {
+    _, "phx_join" -> Join
+    _, "phx_leave" -> Leave
+    "phoenix", "heartbeat" -> Heartbeat
+    _, other -> Event(other)
   }
 }
 

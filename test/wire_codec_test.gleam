@@ -40,6 +40,12 @@ pub fn phoenix_codec_decodes_system_events_to_kinds_test() {
     codec.decode_text(phoenix)("[null,\"r\",\"phoenix\",\"heartbeat\",{}]")
   heartbeat.kind |> should.equal(codec.Heartbeat)
 
+  // "heartbeat" is only reserved on the "phoenix" topic; elsewhere it is an
+  // ordinary application event that must reach the channel's handle_in.
+  let assert Ok(app_heartbeat) =
+    codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"heartbeat\",{}]")
+  app_heartbeat.kind |> should.equal(codec.Event("heartbeat"))
+
   let assert Ok(event) =
     codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"new_msg\",{}]")
   event.kind |> should.equal(codec.Event("new_msg"))
