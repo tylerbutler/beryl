@@ -125,9 +125,13 @@ pub opaque type Config {
     /// Wire codec used to decode inbound text and encode replies/pushes.
     /// Use `wire.phoenix_codec()` for the historical Phoenix array format.
     codec: codec.Codec,
-    /// Heartbeat interval in milliseconds (default: 30000)
+    /// Client-advisory heartbeat interval in milliseconds (default: 30000).
+    /// The server does not read this value; it is the interval clients should
+    /// use for their own pings. See `with_heartbeat`.
     heartbeat_interval_ms: Int,
-    /// Heartbeat timeout - disconnect if no response (default: 60000)
+    /// Server-side heartbeat staleness window in milliseconds (default: 60000).
+    /// Sockets that send no heartbeat within this window are evicted. Must be
+    /// at least 2 (see `with_heartbeat`).
     heartbeat_timeout_ms: Int,
     /// Max connections per IP (0 = unlimited)
     max_connections_per_ip: Int,
@@ -216,10 +220,17 @@ pub fn with_pubsub(config: Config, ps: PubSub) -> Config {
 
 /// Configure heartbeat timing.
 ///
-/// `interval_ms` is the client-facing heartbeat interval (informational: how
-/// often clients should send heartbeats). `timeout_ms` is the server-side
-/// staleness window — a socket that sends no heartbeat within this window is
-/// evicted. The defaults are 30000 ms and 60000 ms respectively.
+/// `interval_ms` is **client-advisory only**: it is the interval clients should
+/// use for their own outbound pings. The server never reads it and does not use
+/// it to schedule anything — it exists purely to communicate a suggested ping
+/// cadence to clients.
+///
+/// `timeout_ms` is the server-side staleness window — a socket that sends no
+/// heartbeat within this window is evicted. The server derives its internal
+/// check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
+/// be at least 2; smaller values are rejected by `start` with
+/// `InvalidHeartbeatTimeout` because a check interval of 0 would disable
+/// eviction. The defaults are 30000 ms and 60000 ms respectively.
 pub fn with_heartbeat(
   config: Config,
   interval_ms interval_ms: Int,
@@ -525,7 +536,11 @@ pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
 pub type StartError {
   /// The coordinator actor failed to start.
   CoordinatorStartFailed(beryl_error.StartFailure)
-  /// heartbeat_timeout_ms must be > 0 (it is used to derive the check interval)
+  /// `heartbeat_timeout_ms` must be at least 2. The server derives its staleness
+  /// check interval as `heartbeat_timeout_ms / 2` (integer division), so a
+  /// timeout of 1 would round down to a check interval of 0 — which disables
+  /// heartbeat eviction entirely. `start` rejects such a config loudly rather
+  /// than silently turning eviction off.
   InvalidHeartbeatTimeout
 }
 
@@ -534,10 +549,14 @@ pub type StartError {
 /// Call once at application startup. Returns a handle that can be passed
 /// to the WebSocket transport and used for broadcasting.
 ///
-/// Heartbeat timeout enforcement is configured via `heartbeat_interval_ms`
-/// and `heartbeat_timeout_ms` in the Config. The coordinator checks for
-/// stale sockets at `heartbeat_interval_ms` and evicts any socket that
-/// hasn't sent a heartbeat within `heartbeat_timeout_ms`.
+/// Heartbeat eviction is configured via `heartbeat_timeout_ms` in the Config.
+/// The coordinator evicts any socket that has not sent a heartbeat within that
+/// window, checking for stale sockets at a server-derived interval of
+/// `heartbeat_timeout_ms / 2`. `heartbeat_interval_ms` is client-advisory only
+/// (see `with_heartbeat`) and does not schedule anything on the server.
+///
+/// Returns `Error(InvalidHeartbeatTimeout)` if `heartbeat_timeout_ms` is less
+/// than 2.
 ///
 /// ## Example
 ///
@@ -549,7 +568,7 @@ pub type StartError {
 /// ```
 pub fn start(config: Config) -> Result(Channels, StartError) {
   use <- bool.guard(
-    when: config.heartbeat_timeout_ms <= 0,
+    when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(InvalidHeartbeatTimeout),
   )
   let coord_config = to_coordinator_config(config)
