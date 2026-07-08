@@ -20,15 +20,14 @@ Supervisor - OTP supervision tree for beryl subsystems
  import beryl/supervisor
  import beryl/presence
  import beryl/wire
- import gleam/option.{None, Some}
 
- let config = supervisor.SupervisedConfig(
-   channels: beryl.config(wire.phoenix_codec()),
-   presence: Some(presence.default_config("node1")),
-   groups: True,
- )
+ let config =
+   supervisor.config(beryl.config(wire.phoenix_codec()))
+   |> supervisor.with_presence(presence.default_config("node1"))
+   |> supervisor.with_groups()
  let assert Ok(supervised) = supervisor.start(config)
- // supervised.channels, supervised.presence, supervised.groups
+ // supervisor.channels(supervised), supervisor.presence(supervised),
+ // supervisor.groups(supervised)
  ```
 
 ## Types
@@ -56,34 +55,38 @@ heartbeat_timeout_ms must be > 0
 
 ### `SupervisedChannels`
 
-Handle to all supervised beryl subsystems
+Handle to all supervised beryl subsystems.
+
+ Opaque: read its fields with the accessor functions
+ ([`channels`](#channels), [`presence`](#presence), [`groups`](#groups),
+ [`supervisor_pid`](#supervisor_pid)). This lets the handle grow new
+ fields post-1.0 without breaking readers.
 
 ```gleam
-pub type SupervisedChannels {
-  SupervisedChannels(
-    channels: beryl.Channels,
-    presence: option.Option(presence.Presence),
-    groups: option.Option(group.Groups),
-    supervisor_pid: process.Pid
-  )
-}
+pub type SupervisedChannels
 ```
 
 ### `SupervisedConfig`
 
-Configuration for starting all beryl subsystems under a supervisor
+Configuration for starting all beryl subsystems under a supervisor.
+
+ Opaque: build it with [`config`](#config) and refine it with the
+ `with_*` functions. This keeps the configuration extensible — new
+ subsystem options can be added post-1.0 without breaking callers.
 
 ```gleam
-pub type SupervisedConfig {
-  SupervisedConfig(
-    channels: beryl.Config,
-    presence: option.Option(presence.Config),
-    groups: Bool
-  )
-}
+pub type SupervisedConfig
 ```
 
 ## Functions
+
+### `channels`
+
+The channels system handle (always present).
+
+```gleam
+pub fn channels(SupervisedChannels) -> beryl.Channels
+```
 
 ### `child_spec`
 
@@ -99,11 +102,9 @@ Create a child specification for composing beryl into a larger supervision tree
  import beryl/supervisor
  import gleam/otp/static_supervisor
 
- let beryl_config = supervisor.SupervisedConfig(
-   channels: beryl.config(wire.phoenix_codec()),
-   presence: None,
-   groups: True,
- )
+ let beryl_config =
+   supervisor.config(beryl.config(wire.phoenix_codec()))
+   |> supervisor.with_groups()
 
  static_supervisor.new(static_supervisor.OneForOne)
  |> static_supervisor.add(supervisor.child_spec(beryl_config))
@@ -112,6 +113,34 @@ Create a child specification for composing beryl into a larger supervision tree
 
 ```gleam
 pub fn child_spec(SupervisedConfig) -> supervision.ChildSpecification(SupervisedChannels)
+```
+
+### `config`
+
+Start building a supervised configuration.
+
+ Requires the channels configuration (the coordinator is always started).
+ Presence and groups are opt-in via [`with_presence`](#with_presence) and
+ [`with_groups`](#with_groups); by default neither is started.
+
+```gleam
+pub fn config(beryl.Config) -> SupervisedConfig
+```
+
+### `groups`
+
+The groups handle, if groups were configured.
+
+```gleam
+pub fn groups(SupervisedChannels) -> option.Option(group.Groups)
+```
+
+### `presence`
+
+The presence handle, if presence was configured.
+
+```gleam
+pub fn presence(SupervisedChannels) -> option.Option(presence.Presence)
 ```
 
 ### `start`
@@ -139,4 +168,31 @@ Stop the supervisor and all its children
 
 ```gleam
 pub fn stop(SupervisedChannels) -> Nil
+```
+
+### `supervisor_pid`
+
+The supervisor process PID (for lifecycle management).
+
+```gleam
+pub fn supervisor_pid(SupervisedChannels) -> process.Pid
+```
+
+### `with_groups`
+
+Enable the named channel groups subsystem.
+
+```gleam
+pub fn with_groups(SupervisedConfig) -> SupervisedConfig
+```
+
+### `with_presence`
+
+Enable presence tracking with the given configuration.
+
+```gleam
+pub fn with_presence(
+  SupervisedConfig,
+  presence.Config
+) -> SupervisedConfig
 ```

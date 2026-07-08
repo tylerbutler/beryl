@@ -13,72 +13,54 @@ import test_helpers
 // ── Supervised startup tests ────────────────────────────────────────────────
 
 pub fn start_supervised_coordinator_only_test() {
-  let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: False,
-    )
+  let config = supervisor.config(beryl.config(wire.phoenix_codec()))
 
   let result = supervisor.start(config)
   result |> should.be_ok
 
   let assert Ok(supervised) = result
-  supervised.presence |> should.be_none
-  supervised.groups |> should.be_none
+  supervisor.presence(supervised) |> should.be_none
+  supervisor.groups(supervised) |> should.be_none
 }
 
 pub fn start_supervised_all_subsystems_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: Some(presence.default_config("test-node")),
-      groups: True,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_presence(presence.default_config("test-node"))
+    |> supervisor.with_groups()
 
   let result = supervisor.start(config)
   result |> should.be_ok
 
   let assert Ok(supervised) = result
-  supervised.presence |> should.be_some
-  supervised.groups |> should.be_some
+  supervisor.presence(supervised) |> should.be_some
+  supervisor.groups(supervised) |> should.be_some
 }
 
 pub fn start_supervised_with_presence_only_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: Some(presence.default_config("test-node-2")),
-      groups: False,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_presence(presence.default_config("test-node-2"))
 
   let assert Ok(supervised) = supervisor.start(config)
-  supervised.presence |> should.be_some
-  supervised.groups |> should.be_none
+  supervisor.presence(supervised) |> should.be_some
+  supervisor.groups(supervised) |> should.be_none
 }
 
 pub fn start_supervised_with_groups_only_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: True,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_groups()
 
   let assert Ok(supervised) = supervisor.start(config)
-  supervised.presence |> should.be_none
-  supervised.groups |> should.be_some
+  supervisor.presence(supervised) |> should.be_none
+  supervisor.groups(supervised) |> should.be_some
 }
 
 // ── Subsystem accessibility tests ───────────────────────────────────────────
 
 pub fn supervised_coordinator_accepts_register_test() {
-  let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: False,
-    )
+  let config = supervisor.config(beryl.config(wire.phoenix_codec()))
 
   let assert Ok(supervised) = supervisor.start(config)
 
@@ -88,20 +70,18 @@ pub fn supervised_coordinator_accepts_register_test() {
       channel.JoinOk(reply: None, socket: socket)
     })
 
-  let result = beryl.register(supervised.channels, "test:*", handler)
+  let result =
+    beryl.register(supervisor.channels(supervised), "test:*", handler)
   result |> should.be_ok
 }
 
 pub fn supervised_presence_tracks_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: Some(presence.default_config("test-track")),
-      groups: False,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_presence(presence.default_config("test-track"))
 
   let assert Ok(supervised) = supervisor.start(config)
-  let assert Some(pres) = supervised.presence
+  let assert Some(pres) = supervisor.presence(supervised)
 
   // Track a presence and verify it's queryable
   let _ref =
@@ -113,14 +93,11 @@ pub fn supervised_presence_tracks_test() {
 
 pub fn supervised_groups_work_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: True,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_groups()
 
   let assert Ok(supervised) = supervisor.start(config)
-  let assert Some(grps) = supervised.groups
+  let assert Some(grps) = supervisor.groups(supervised)
 
   // Create a group and verify it's queryable
   let assert Ok(Nil) = group.create(grps, "team:eng")
@@ -132,15 +109,13 @@ pub fn supervised_groups_work_test() {
 
 pub fn stop_shuts_down_supervisor_and_children_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: Some(presence.default_config("test-stop")),
-      groups: True,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_presence(presence.default_config("test-stop"))
+    |> supervisor.with_groups()
 
   let assert Ok(supervised) = supervisor.start(config)
-  let assert Some(pres) = supervised.presence
-  let assert Some(grps) = supervised.groups
+  let assert Some(pres) = supervisor.presence(supervised)
+  let assert Some(grps) = supervisor.groups(supervised)
 
   // Verify everything is running
   let _ref =
@@ -148,9 +123,9 @@ pub fn stop_shuts_down_supervisor_and_children_test() {
   let assert Ok(Nil) = group.create(grps, "team:stop")
 
   // Get PIDs before stopping
-  let sup_pid = supervised.supervisor_pid
+  let sup_pid = supervisor.supervisor_pid(supervised)
   let assert Ok(coord_pid) =
-    get_subject_pid(beryl.coordinator_subject(supervised.channels))
+    get_subject_pid(beryl.coordinator_subject(supervisor.channels(supervised)))
 
   // Stop the supervisor
   supervisor.stop(supervised)
@@ -163,12 +138,7 @@ pub fn stop_shuts_down_supervisor_and_children_test() {
 }
 
 pub fn stop_coordinator_only_test() {
-  let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: False,
-    )
+  let config = supervisor.config(beryl.config(wire.phoenix_codec()))
 
   let assert Ok(supervised) = supervisor.start(config)
 
@@ -177,9 +147,10 @@ pub fn stop_coordinator_only_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)
     })
-  let assert Ok(_) = beryl.register(supervised.channels, "pre-stop:*", handler)
+  let assert Ok(_) =
+    beryl.register(supervisor.channels(supervised), "pre-stop:*", handler)
 
-  let sup_pid = supervised.supervisor_pid
+  let sup_pid = supervisor.supervisor_pid(supervised)
   supervisor.stop(supervised)
 
   process.is_alive(sup_pid) |> should.be_false
@@ -188,12 +159,7 @@ pub fn stop_coordinator_only_test() {
 // ── Restart behavior test ───────────────────────────────────────────────────
 
 pub fn supervised_coordinator_restarts_on_crash_test() {
-  let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: False,
-    )
+  let config = supervisor.config(beryl.config(wire.phoenix_codec()))
 
   let assert Ok(supervised) = supervisor.start(config)
 
@@ -202,11 +168,14 @@ pub fn supervised_coordinator_restarts_on_crash_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)
     })
-  let assert Ok(_) = beryl.register(supervised.channels, "pre-crash:*", handler)
+  let assert Ok(_) =
+    beryl.register(supervisor.channels(supervised), "pre-crash:*", handler)
 
   // Kill the coordinator process
   let assert Ok(name) =
-    process.subject_name(beryl.coordinator_subject(supervised.channels))
+    process.subject_name(
+      beryl.coordinator_subject(supervisor.channels(supervised)),
+    )
   let coord_subject = process.named_subject(name)
 
   // Send an exit signal to crash the coordinator
@@ -230,7 +199,8 @@ pub fn supervised_coordinator_restarts_on_crash_test() {
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)
     })
-  let result = beryl.register(supervised.channels, "post-crash:*", handler2)
+  let result =
+    beryl.register(supervisor.channels(supervised), "post-crash:*", handler2)
   result |> should.be_ok
 }
 
@@ -241,14 +211,13 @@ pub fn supervised_coordinator_restarts_on_crash_test() {
 
 pub fn coordinator_crash_resets_presence_state_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: Some(presence.default_config("test-rest-for-one-pres")),
-      groups: False,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_presence(presence.default_config(
+      "test-rest-for-one-pres",
+    ))
 
   let assert Ok(supervised) = supervisor.start(config)
-  let assert Some(pres) = supervised.presence
+  let assert Some(pres) = supervisor.presence(supervised)
 
   // Track a presence entry and verify it exists
   let _ref =
@@ -257,7 +226,9 @@ pub fn coordinator_crash_resets_presence_state_test() {
 
   // Get coordinator PID and kill it
   let assert Ok(name) =
-    process.subject_name(beryl.coordinator_subject(supervised.channels))
+    process.subject_name(
+      beryl.coordinator_subject(supervisor.channels(supervised)),
+    )
   let coord_subject = process.named_subject(name)
   let assert Ok(old_coord_pid) = get_subject_pid(coord_subject)
 
@@ -298,14 +269,11 @@ pub fn coordinator_crash_resets_presence_state_test() {
 
 pub fn coordinator_crash_resets_groups_state_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: True,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_groups()
 
   let assert Ok(supervised) = supervisor.start(config)
-  let assert Some(grps) = supervised.groups
+  let assert Some(grps) = supervisor.groups(supervised)
 
   // Create a group and verify it exists
   let assert Ok(Nil) = group.create(grps, "team:cascade")
@@ -313,7 +281,9 @@ pub fn coordinator_crash_resets_groups_state_test() {
 
   // Get coordinator PID and kill it
   let assert Ok(name) =
-    process.subject_name(beryl.coordinator_subject(supervised.channels))
+    process.subject_name(
+      beryl.coordinator_subject(supervisor.channels(supervised)),
+    )
   let coord_subject = process.named_subject(name)
   let assert Ok(old_coord_pid) = get_subject_pid(coord_subject)
 
@@ -353,14 +323,11 @@ pub fn coordinator_crash_resets_groups_state_test() {
 
 pub fn independent_presence_crash_does_not_affect_coordinator_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: Some(presence.default_config("test-indep-pres")),
-      groups: False,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_presence(presence.default_config("test-indep-pres"))
 
   let assert Ok(supervised) = supervisor.start(config)
-  let assert Some(pres) = supervised.presence
+  let assert Some(pres) = supervisor.presence(supervised)
 
   // Register a channel handler on the coordinator
   let handler =
@@ -368,11 +335,11 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
       channel.JoinOk(reply: None, socket: socket)
     })
   let assert Ok(_) =
-    beryl.register(supervised.channels, "indep-pres:*", handler)
+    beryl.register(supervisor.channels(supervised), "indep-pres:*", handler)
 
   // Get coordinator PID before
   let assert Ok(coord_pid_before) =
-    get_subject_pid(beryl.coordinator_subject(supervised.channels))
+    get_subject_pid(beryl.coordinator_subject(supervisor.channels(supervised)))
 
   // Kill the presence process directly
   let assert Ok(old_pres_pid) = get_subject_pid(presence.subject(pres))
@@ -392,7 +359,7 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
 
   // Coordinator should still be the same process (not restarted)
   let assert Ok(coord_pid_after) =
-    get_subject_pid(beryl.coordinator_subject(supervised.channels))
+    get_subject_pid(beryl.coordinator_subject(supervisor.channels(supervised)))
   coord_pid_after |> should.equal(coord_pid_before)
 
   // Coordinator should still be functional with its existing state
@@ -401,20 +368,21 @@ pub fn independent_presence_crash_does_not_affect_coordinator_test() {
       channel.JoinOk(reply: None, socket: socket)
     })
   let result =
-    beryl.register(supervised.channels, "indep-pres-after:*", handler2)
+    beryl.register(
+      supervisor.channels(supervised),
+      "indep-pres-after:*",
+      handler2,
+    )
   result |> should.be_ok
 }
 
 pub fn independent_groups_crash_does_not_affect_coordinator_test() {
   let config =
-    supervisor.SupervisedConfig(
-      channels: beryl.config(wire.phoenix_codec()),
-      presence: None,
-      groups: True,
-    )
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_groups()
 
   let assert Ok(supervised) = supervisor.start(config)
-  let assert Some(grps) = supervised.groups
+  let assert Some(grps) = supervisor.groups(supervised)
 
   // Register a channel handler on the coordinator
   let handler =
@@ -422,11 +390,11 @@ pub fn independent_groups_crash_does_not_affect_coordinator_test() {
       channel.JoinOk(reply: None, socket: socket)
     })
   let assert Ok(_) =
-    beryl.register(supervised.channels, "indep-grps:*", handler)
+    beryl.register(supervisor.channels(supervised), "indep-grps:*", handler)
 
   // Get coordinator PID before
   let assert Ok(coord_pid_before) =
-    get_subject_pid(beryl.coordinator_subject(supervised.channels))
+    get_subject_pid(beryl.coordinator_subject(supervisor.channels(supervised)))
 
   // Kill the groups process directly
   let assert Ok(old_grps_pid) = get_subject_pid(group.subject(grps))
@@ -446,7 +414,7 @@ pub fn independent_groups_crash_does_not_affect_coordinator_test() {
 
   // Coordinator should still be the same process (not restarted)
   let assert Ok(coord_pid_after) =
-    get_subject_pid(beryl.coordinator_subject(supervised.channels))
+    get_subject_pid(beryl.coordinator_subject(supervisor.channels(supervised)))
   coord_pid_after |> should.equal(coord_pid_before)
 
   // Coordinator should still be functional
@@ -455,7 +423,11 @@ pub fn independent_groups_crash_does_not_affect_coordinator_test() {
       channel.JoinOk(reply: None, socket: socket)
     })
   let result =
-    beryl.register(supervised.channels, "indep-grps-after:*", handler2)
+    beryl.register(
+      supervisor.channels(supervised),
+      "indep-grps-after:*",
+      handler2,
+    )
   result |> should.be_ok
 }
 
