@@ -169,6 +169,24 @@ pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
   stop_supervisor(server_pid)
 }
 
+pub fn handler_rejects_unsupported_protocol_version_test() {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  // Phoenix V1 clients are rejected at the handshake instead of connecting
+  // successfully and having every frame silently fail to decode.
+  websocket_upgrade_status(port, "/socket?vsn=1.0.0")
+  |> should.equal(Ok(403))
+
+  // The V2 version Phoenix JS sends is accepted, as is omitting vsn.
+  let assert Ok(v2_client) = connect_websocket(port, "/socket?vsn=2.0.0")
+  close(v2_client)
+  let assert Ok(bare_client) = connect_websocket(port, "/socket")
+  close(bare_client)
+
+  stop_supervisor(server_pid)
+}
+
 pub fn handler_rejects_connections_over_per_ip_limit_test() {
   let #(port, server_pid) = start_limited_server()
 

@@ -7,6 +7,7 @@ import beryl.{type Channels}
 import beryl/connection_limit
 import beryl/coordinator.{type Message as CoordinatorMessage}
 import gleam/bit_array
+import gleam/bool
 import gleam/bytes_tree
 import gleam/crypto
 import gleam/dynamic.{type Dynamic}
@@ -159,18 +160,38 @@ fn handle_matched_upgrade(
   channels: Channels,
   config: TransportConfig(assigns),
 ) -> Response(ResponseData) {
-  case origin_allowed(request, config.allowed_origins) {
-    False -> forbidden()
-    True -> {
-      let ip = request_ip(request)
-      case beryl.acquire_connection_slot(channels, ip) {
-        Error(Nil) ->
-          response.new(429)
-          |> response.set_body(mist.Bytes(bytes_tree.new()))
-        Ok(connection_permit) ->
-          run_connect_and_upgrade(request, channels, config, connection_permit)
+  use <- bool.lazy_guard(
+    when: !origin_allowed(request, config.allowed_origins),
+    return: forbidden,
+  )
+  use <- bool.lazy_guard(when: !vsn_supported(request), return: forbidden)
+  let ip = request_ip(request)
+  case beryl.acquire_connection_slot(channels, ip) {
+    Error(Nil) ->
+      response.new(429)
+      |> response.set_body(mist.Bytes(bytes_tree.new()))
+    Ok(connection_permit) ->
+      run_connect_and_upgrade(request, channels, config, connection_permit)
+  }
+}
+
+/// Check the client's requested wire protocol version (`?vsn=` query
+/// parameter, sent by Phoenix clients) before upgrading.
+///
+/// Beryl speaks the Phoenix V2 array framing, so `vsn=2.x` is accepted. A
+/// missing `vsn` is accepted for non-Phoenix clients speaking the configured
+/// codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`) is
+/// rejected with `403 Forbidden` at the handshake — failing loudly instead
+/// of accepting a connection whose every frame would be undecodable.
+fn vsn_supported(request: Request(Connection)) -> Bool {
+  case request.get_query(request) {
+    Ok(params) ->
+      case list.key_find(params, "vsn") {
+        Ok(vsn) -> string.starts_with(vsn, "2.")
+        Error(Nil) -> True
       }
-    }
+    // No query string / unparseable query: no version was requested.
+    Error(Nil) -> True
   }
 }
 
