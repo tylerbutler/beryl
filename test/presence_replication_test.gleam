@@ -221,7 +221,7 @@ pub fn untrack_propagates_via_pubsub_test() {
   let assert Ok(p2) = presence.start(config2)
 
   // Track on node1
-  let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
+  let ref = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
 
   // Wait for convergence -- both should see the entry
   test_helpers.wait_until(
@@ -231,7 +231,7 @@ pub fn untrack_propagates_via_pubsub_test() {
   )
 
   // Untrack on node1
-  presence.untrack(p1, "room:lobby", "user:1", "socket-1")
+  presence.untrack(p1, ref)
 
   // Wait for the untrack to propagate via next broadcast tick
   test_helpers.wait_until(

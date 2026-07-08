@@ -47,11 +47,54 @@ pub fn presence_track_multiple_test() {
 pub fn presence_untrack_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
-  presence.untrack(p, "room:lobby", "user:1", "socket-1")
+  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  presence.untrack(p, ref)
 
   let entries = presence.list(p, "room:lobby")
   list.length(entries) |> should.equal(0)
+}
+
+pub fn presence_track_returns_ref_distinct_from_pid_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+
+  // The returned ref must be a server-generated handle, not the passed pid.
+  ref |> should.not_equal("socket-1")
+}
+
+pub fn presence_track_yields_distinct_refs_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref1 = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let ref2 = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+
+  ref1 |> should.not_equal(ref2)
+}
+
+pub fn presence_untrack_removes_only_that_ref_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref1 = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ref2 = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+
+  // Untracking ref1 removes exactly that presence, leaving ref2's intact.
+  presence.untrack(p, ref1)
+
+  let entries = presence.list(p, "room:lobby")
+  list.length(entries) |> should.equal(1)
+  let assert [entry] = entries
+  entry.session_id |> should.equal("socket-2")
+}
+
+pub fn presence_untrack_unknown_ref_is_noop_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  // An unknown/stale ref is a harmless no-op.
+  presence.untrack(p, "does-not-exist")
+
+  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
 }
 
 pub fn presence_untrack_all_test() {
@@ -69,6 +112,27 @@ pub fn presence_untrack_all_test() {
 
   list.length(presence.list(p, "room:lobby")) |> should.equal(0)
   list.length(presence.list(p, "room:general")) |> should.equal(0)
+}
+
+pub fn presence_untrack_all_leaves_no_dangling_refs_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref1 = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ref2 =
+    presence.track(p, "room:general", "user:1", "socket-1", json.null())
+
+  presence.untrack_all(p, "socket-1")
+
+  // A fresh track re-populates state.
+  let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+
+  // Replaying a ref that untrack_all should have dropped must be a no-op and
+  // must not disturb the surviving presence.
+  presence.untrack(p, ref1)
+  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  let assert [entry] = presence.list(p, "room:lobby")
+  entry.session_id |> should.equal("socket-2")
 }
 
 pub fn presence_get_by_key_test() {
@@ -151,7 +215,7 @@ pub fn on_diff_callback_receives_local_untrack_diff_test() {
     |> presence.with_on_diff(fn(diff) { process.send(diff_subject, diff) })
 
   let assert Ok(p) = presence.start(config)
-  let _ =
+  let ref =
     presence.track(
       p,
       "room:lobby",
@@ -161,7 +225,7 @@ pub fn on_diff_callback_receives_local_untrack_diff_test() {
     )
   let assert Ok(_) = process.receive(diff_subject, 1000)
 
-  presence.untrack(p, "room:lobby", "user:1", "socket-1")
+  presence.untrack(p, ref)
 
   let assert Ok(diff) = process.receive(diff_subject, 1000)
   presence.diff_topics(diff)
