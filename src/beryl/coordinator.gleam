@@ -887,17 +887,15 @@ fn handle_in_subscribed(
     }
     Ok(socket_info) -> {
       case set.contains(socket_info.subscribed_topics, topic_name) {
-        False -> {
-          let logger = coordinator_logger(state)
-          logger
-          |> log.debug("Inbound message ignored", [
-            #("socket_id", socket_id),
-            #("topic", topic_name),
-            #("event", event),
-            #("reason", "topic_not_joined"),
-          ])
-          actor.continue(state)
-        }
+        False ->
+          reject_unjoined_event(
+            state,
+            socket_info,
+            socket_id,
+            topic_name,
+            event,
+            ref,
+          )
         True ->
           handle_in_rate_limited(
             state,
@@ -911,6 +909,44 @@ fn handle_in_subscribed(
       }
     }
   }
+}
+
+/// Reject an event pushed to a topic the socket has not joined. Phoenix
+/// replies with `{"status":"error","response":{"reason":"unmatched topic"}}`
+/// so the client's push errors immediately instead of timing out; messages
+/// without a ref have nothing to correlate a reply with and are dropped.
+fn reject_unjoined_event(
+  state: State,
+  socket_info: SocketInfo,
+  socket_id: String,
+  topic_name: String,
+  event: String,
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  coordinator_logger(state)
+  |> log.debug("Inbound message rejected", [
+    #("socket_id", socket_id),
+    #("topic", topic_name),
+    #("event", event),
+    #("reason", "topic_not_joined"),
+  ])
+  case ref {
+    Some(r) -> {
+      let reply =
+        codec.encode_reply(socket_info.codec)(
+          None,
+          Some(r),
+          topic_name,
+          codec.StatusError,
+          json.object([#("reason", json.string("unmatched topic"))]),
+        )
+      let _send_result =
+        send_frame_logged(state, socket_info, topic_name, reply)
+      Nil
+    }
+    None -> Nil
+  }
+  actor.continue(state)
 }
 
 fn handle_in_rate_limited(

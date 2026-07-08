@@ -1,0 +1,5 @@
+kind: Fixed
+body: |-
+    Reply with an "unmatched topic" error for events on unjoined topics.
+    Matching Phoenix, an event pushed to a topic the socket has not joined now receives a phx_reply with status "error" and reason "unmatched topic" (when the message carries a ref), so client pushes error immediately instead of silently timing out.
+time: 2026-07-08T17:39:00.000000-00:00

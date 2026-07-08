@@ -101,6 +101,44 @@ pub fn reply_error_sends_error_status_reply_test() {
   |> should.be_true
 }
 
+pub fn event_on_unjoined_topic_gets_unmatched_topic_error_test() {
+  let channels = start_with_error_channel()
+  let socket = connect_socket(channels, "socket-1")
+
+  // Push to a topic this socket never joined: Phoenix clients expect an
+  // immediate error reply rather than a push timeout.
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-1",
+    "[null,\"ref-1\",\"room:lobby\",\"hello\",{}]",
+  )
+
+  let assert Ok(reply) = process.receive(socket, 500)
+  reply
+  |> string.contains("\"status\":\"error\"")
+  |> should.be_true
+  reply
+  |> string.contains("unmatched topic")
+  |> should.be_true
+  reply
+  |> string.contains("ref-1")
+  |> should.be_true
+}
+
+pub fn unjoined_event_without_ref_is_dropped_test() {
+  let channels = start_with_error_channel()
+  let socket = connect_socket(channels, "socket-1")
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "socket-1",
+    "[null,null,\"room:lobby\",\"hello\",{}]",
+  )
+
+  process.receive(socket, 100)
+  |> should.be_error
+}
+
 pub fn reply_error_without_ref_is_dropped_test() {
   let channels = start_with_error_channel()
   let socket = connect_socket(channels, "socket-1")
