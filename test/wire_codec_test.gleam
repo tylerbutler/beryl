@@ -21,8 +21,8 @@ pub fn phoenix_codec_round_trip_test() {
   let encoded =
     text_frame(codec.encode_push(phoenix)("room:1", "msg", json.string("hi")))
   let assert Ok(inbound) = codec.decode_text(phoenix)(encoded)
-  inbound.topic |> should.equal("room:1")
-  inbound.kind |> should.equal(codec.Event("msg"))
+  codec.inbound_topic(inbound) |> should.equal("room:1")
+  codec.inbound_kind(inbound) |> should.equal(codec.Event("msg"))
 }
 
 pub fn phoenix_codec_decodes_system_events_to_kinds_test() {
@@ -30,25 +30,25 @@ pub fn phoenix_codec_decodes_system_events_to_kinds_test() {
 
   let assert Ok(join) =
     codec.decode_text(phoenix)("[\"j\",\"r\",\"room:1\",\"phx_join\",{}]")
-  join.kind |> should.equal(codec.Join)
+  codec.inbound_kind(join) |> should.equal(codec.Join)
 
   let assert Ok(leave) =
     codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"phx_leave\",{}]")
-  leave.kind |> should.equal(codec.Leave)
+  codec.inbound_kind(leave) |> should.equal(codec.Leave)
 
   let assert Ok(heartbeat) =
     codec.decode_text(phoenix)("[null,\"r\",\"phoenix\",\"heartbeat\",{}]")
-  heartbeat.kind |> should.equal(codec.Heartbeat)
+  codec.inbound_kind(heartbeat) |> should.equal(codec.Heartbeat)
 
   // "heartbeat" is only reserved on the "phoenix" topic; elsewhere it is an
   // ordinary application event that must reach the channel's handle_in.
   let assert Ok(app_heartbeat) =
     codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"heartbeat\",{}]")
-  app_heartbeat.kind |> should.equal(codec.Event("heartbeat"))
+  codec.inbound_kind(app_heartbeat) |> should.equal(codec.Event("heartbeat"))
 
   let assert Ok(event) =
     codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"new_msg\",{}]")
-  event.kind |> should.equal(codec.Event("new_msg"))
+  codec.inbound_kind(event) |> should.equal(codec.Event("new_msg"))
 }
 
 pub fn phoenix_codec_reply_accepts_missing_ref_test() {
@@ -119,27 +119,27 @@ pub fn phoenix_codec_preserves_missing_ref_reply_shape_test() {
 pub fn inbound_record_holds_normalized_fields_test() {
   let payload = dynamic.string("body")
   let inbound =
-    codec.Inbound(
+    codec.inbound(
       join_ref: Some("j"),
       ref: Some("r"),
       topic: "room:1",
       kind: codec.Event("evt"),
       payload: payload,
     )
-  inbound.topic |> should.equal("room:1")
-  inbound.join_ref |> should.equal(Some("j"))
+  codec.inbound_topic(inbound) |> should.equal("room:1")
+  codec.inbound_join_ref(inbound) |> should.equal(Some("j"))
 }
 
 pub fn inbound_supports_optional_refs_test() {
   let inbound =
-    codec.Inbound(
+    codec.inbound(
       join_ref: None,
       ref: None,
       topic: "t",
       kind: codec.Event("e"),
       payload: dynamic.nil(),
     )
-  inbound.ref |> should.equal(None)
+  codec.inbound_ref(inbound) |> should.equal(None)
 }
 
 // === Reply status ===
@@ -165,13 +165,13 @@ pub fn phoenix_codec_decodes_shared_inbound_fixtures_test() {
   fixtures.inbound_common()
   |> list.each(fn(case_) {
     let assert Ok(inbound) = codec.decode_text(phoenix)(case_.encoded)
-    inbound.join_ref |> should.equal(case_.join_ref)
-    inbound.ref |> should.equal(case_.ref)
-    inbound.topic |> should.equal(case_.topic)
-    inbound.kind |> should.equal(phoenix_kind(case_.event))
+    codec.inbound_join_ref(inbound) |> should.equal(case_.join_ref)
+    codec.inbound_ref(inbound) |> should.equal(case_.ref)
+    codec.inbound_topic(inbound) |> should.equal(case_.topic)
+    codec.inbound_kind(inbound) |> should.equal(phoenix_kind(case_.event))
     let assert Ok(expected_payload) =
       json.parse(from: json.to_string(case_.payload), using: decode.dynamic)
-    inbound.payload |> should.equal(expected_payload)
+    codec.inbound_payload(inbound) |> should.equal(expected_payload)
   })
 }
 

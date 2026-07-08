@@ -114,7 +114,9 @@ pub fn supervisor_pid(supervised: SupervisedChannels) -> process.Pid {
 pub type StartError {
   /// The supervisor failed to start
   SupervisorStartFailed(beryl_error.StartFailure)
-  /// heartbeat_timeout_ms must be > 0
+  /// `heartbeat_timeout_ms` must be at least 2 — the same validation as
+  /// `beryl.start` (the staleness check interval is derived as
+  /// `heartbeat_timeout_ms / 2`, so 1 would silently disable eviction).
   InvalidHeartbeatTimeout
 }
 
@@ -129,9 +131,10 @@ pub type StartError {
 pub fn start(
   config: SupervisedConfig,
 ) -> Result(SupervisedChannels, StartError) {
-  // Validate heartbeat_timeout_ms before deriving check_interval
+  // Validate heartbeat_timeout_ms before deriving check_interval, using the
+  // same bound as beryl.start so both entry points reject the same configs.
   use <- bool.guard(
-    when: beryl.config_heartbeat_timeout_ms(config.channels) <= 0,
+    when: beryl.config_heartbeat_timeout_ms(config.channels) < 2,
     return: Error(InvalidHeartbeatTimeout),
   )
   start_supervised(config)
@@ -187,7 +190,8 @@ fn start_supervised(
         |> result.map_error(fn(err) {
           case err {
             coordinator.ActorStartFailed(e) -> e
-            coordinator.InvalidHeartbeatTimeout -> actor.InitTimeout
+            coordinator.InvalidHeartbeatTimeout ->
+              actor.InitFailed("invalid heartbeat timeout")
           }
         })
       }),
@@ -306,7 +310,8 @@ pub fn child_spec(
           Ok(actor.Started(pid: supervised.supervisor_pid, data: supervised))
         Error(SupervisorStartFailed(failure)) ->
           Error(actor.InitFailed(beryl_error.describe_start_failure(failure)))
-        Error(InvalidHeartbeatTimeout) -> Error(actor.InitTimeout)
+        Error(InvalidHeartbeatTimeout) ->
+          Error(actor.InitFailed("invalid heartbeat timeout"))
       }
     },
     restart: supervision.Permanent,

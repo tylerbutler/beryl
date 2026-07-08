@@ -260,7 +260,10 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
   })
 }
 
-/// Start the presence actor with a registered name (for supervision)
+// nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
+/// Start the presence actor with a registered name. Package-internal: used by
+/// `beryl/supervisor`; end users get supervision via `supervisor.child_spec`.
+@internal
 pub fn start_named(
   config: Config,
   name: process.Name(Message),
@@ -380,40 +383,42 @@ fn generate_ref() -> String {
 /// client-supplied `phx_ref` is replaced. Non-object metas are stored
 /// unchanged (Phoenix requires object metas for its Presence helpers).
 fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
-  let parsed =
-    json.parse(
-      from: json.to_string(meta),
-      using: gdecode.dict(gdecode.string, gdecode.dynamic),
-    )
-  case parsed {
-    Ok(fields) ->
-      fields
-      |> dict.delete("phx_ref")
-      |> dict.to_list
-      |> list.map(fn(field) { #(field.0, wire.dynamic_to_json(field.1)) })
-      |> list.append([#("phx_ref", json.string(ref))])
-      |> json.object
-    Error(_) -> meta
-  }
+  json.parse(
+    from: json.to_string(meta),
+    using: gdecode.dict(gdecode.string, gdecode.dynamic),
+  )
+  |> result.map(fn(fields) {
+    fields
+    |> dict.delete("phx_ref")
+    |> dict.to_list
+    |> list.map(fn(field) { #(field.0, wire.dynamic_to_json(field.1)) })
+    |> list.append([#("phx_ref", json.string(ref))])
+    |> json.object
+  })
+  |> result.unwrap(meta)
 }
 
 /// Track a presence in a topic.
 ///
+/// `session_id` identifies the session (e.g. socket) that owns this presence
+/// and is the value `untrack_all` matches on when the session disconnects.
+///
 /// Returns a server-generated tracking ref: an opaque, unique handle for this
 /// specific presence. Pass it to `untrack` to remove exactly this entry later.
-/// The ref is not the `pid`/session id — it is minted by the presence actor and
-/// is only meaningful to that actor.
+/// The ref is not the session id — it is minted by the presence actor and is
+/// only meaningful to that actor. The ref is also merged into object metas as
+/// `phx_ref` for Phoenix client compatibility.
 ///
 /// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn track(
   presence: Presence,
   topic: String,
   key: String,
-  pid: String,
+  session_id: String,
   meta: json.Json,
 ) -> String {
   process.call(presence.subject, 5000, fn(reply) {
-    Track(topic, key, pid, meta, reply)
+    Track(topic, key, session_id, meta, reply)
   })
 }
 
@@ -426,11 +431,13 @@ pub fn untrack(presence: Presence, ref: String) -> Nil {
   process.call(presence.subject, 5000, fn(reply) { Untrack(ref, reply) })
 }
 
-/// Untrack all presences for a pid (e.g., when a socket disconnects)
+/// Untrack all presences for a session (e.g., when a socket disconnects)
 ///
 /// Panics if the presence actor is unavailable or does not reply within 5 seconds.
-pub fn untrack_all(presence: Presence, pid: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) { UntrackAll(pid, reply) })
+pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
+  process.call(presence.subject, 5000, fn(reply) {
+    UntrackAll(session_id, reply)
+  })
 }
 
 /// List all presences for a topic

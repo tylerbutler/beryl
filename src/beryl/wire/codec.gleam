@@ -39,6 +39,21 @@ pub type InboundKind {
 
 /// Normalised inbound message shape.
 ///
+/// `Inbound` is opaque: construct it with `inbound` and read it with the
+/// `inbound_*` accessors. Keeping the record hidden lets Beryl add fields
+/// (which default sensibly) without breaking every custom codec.
+pub opaque type Inbound {
+  Inbound(
+    join_ref: Option(String),
+    ref: Option(String),
+    topic: String,
+    kind: InboundKind,
+    payload: Dynamic,
+  )
+}
+
+/// Construct a normalised inbound message.
+///
 /// - `join_ref`: optional client-side reference assigned at join time
 ///   (used by some Phoenix replies; codecs without this concept should
 ///   pass `None`)
@@ -47,14 +62,39 @@ pub type InboundKind {
 /// - `kind`: structural protocol event or user event
 /// - `payload`: message body as a `Dynamic` for the channel handler to
 ///   decode
-pub type Inbound {
-  Inbound(
-    join_ref: Option(String),
-    ref: Option(String),
-    topic: String,
-    kind: InboundKind,
-    payload: Dynamic,
-  )
+pub fn inbound(
+  join_ref join_ref: Option(String),
+  ref ref: Option(String),
+  topic topic: String,
+  kind kind: InboundKind,
+  payload payload: Dynamic,
+) -> Inbound {
+  Inbound(join_ref:, ref:, topic:, kind:, payload:)
+}
+
+/// The inbound message's join-time client reference, if any.
+pub fn inbound_join_ref(inbound: Inbound) -> Option(String) {
+  inbound.join_ref
+}
+
+/// The inbound message's per-message reference for reply correlation, if any.
+pub fn inbound_ref(inbound: Inbound) -> Option(String) {
+  inbound.ref
+}
+
+/// The inbound message's subscription topic.
+pub fn inbound_topic(inbound: Inbound) -> String {
+  inbound.topic
+}
+
+/// The inbound message's structural kind.
+pub fn inbound_kind(inbound: Inbound) -> InboundKind {
+  inbound.kind
+}
+
+/// The inbound message's body, for the channel handler to decode.
+pub fn inbound_payload(inbound: Inbound) -> Dynamic {
+  inbound.payload
 }
 
 /// Errors a codec may emit when decoding inbound bytes.

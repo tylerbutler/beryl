@@ -96,15 +96,22 @@ pub type RegisterError {
 }
 
 /// Logging verbosity for Beryl's internal loggers.
+///
+/// The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
+/// prelude's `Result` `Error` constructor when imported unqualified.
 pub type LogLevel {
-  Debug
-  Info
-  Warn
-  Error
+  DebugLevel
+  InfoLevel
+  WarnLevel
+  ErrorLevel
 }
 
 /// Logging configuration for Beryl diagnostics.
-pub type LoggingConfig {
+///
+/// This type is opaque: construct it with `logging_config` and adjust it with
+/// the `with_*` builder functions so Beryl can add logging options without a
+/// breaking change.
+pub opaque type LoggingConfig {
   LoggingConfig(
     /// Minimum level emitted by Beryl's namespaced loggers.
     level: LogLevel,
@@ -113,6 +120,22 @@ pub type LoggingConfig {
     /// Maximum number of bytes/characters included in payload previews.
     payload_preview_bytes: Int,
   )
+}
+
+// nolint: unused_exports -- package-internal accessors for tests; hidden from public docs with @internal
+@internal
+pub fn logging_level(logging: LoggingConfig) -> LogLevel {
+  logging.level
+}
+
+@internal
+pub fn logging_include_payloads(logging: LoggingConfig) -> Bool {
+  logging.include_payloads
+}
+
+@internal
+pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
+  logging.payload_preview_bytes
 }
 
 /// Configuration for the channels system.
@@ -209,7 +232,7 @@ pub fn config(codec: codec.Codec) -> Config {
     max_event_length: 64,
     max_inbound_frame_bytes: 1_048_576,
     max_joined_topics_per_socket: 1000,
-    logging: logging_config(level: Info, include_payloads: False),
+    logging: logging_config(level: InfoLevel, include_payloads: False),
   )
 }
 
@@ -286,10 +309,10 @@ pub fn with_payload_preview_bytes(
 
 fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
   case level {
-    Debug -> coordinator.Debug
-    Info -> coordinator.Info
-    Warn -> coordinator.Warn
-    Error -> coordinator.Err
+    DebugLevel -> coordinator.Debug
+    InfoLevel -> coordinator.Info
+    WarnLevel -> coordinator.Warn
+    ErrorLevel -> coordinator.Err
   }
 }
 
@@ -531,24 +554,37 @@ pub fn configured_codec(channels: Channels) -> codec.Codec {
   channels.config.codec
 }
 
+/// A held per-IP connection slot returned by `acquire_connection_slot`.
+///
+/// Opaque so Beryl can restructure the connection limiter without breaking
+/// transport authors. Hold it for the lifetime of the connection and pass it
+/// to `release_connection_slot` when the connection closes. When no per-IP
+/// limit is configured the permit is an admit-everything placeholder and
+/// releasing it is a no-op.
+pub opaque type ConnectionPermit {
+  ConnectionPermit(inner: Option(connection_limit.Permit))
+}
+
 /// Try to acquire a configured per-IP connection slot for transports.
 ///
 /// Transports call this before admitting a connection, passing the **real
 /// socket peer IP**. Do not pass a client-supplied address (e.g. from
 /// `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
-/// `Ok(Some(permit))` when admitted (release the permit with
-/// `release_connection_slot` on close), `Ok(None)` when no limit is configured
-/// (unlimited), or `Error(Nil)` when the peer is already at its limit.
+/// `Ok(permit)` when admitted (release the permit with
+/// `release_connection_slot` on close; when no limit is configured every
+/// connection is admitted), or `Error(Nil)` when the peer is already at its
+/// limit.
 pub fn acquire_connection_slot(
   channels: Channels,
   ip: String,
-) -> Result(Option(connection_limit.Permit), Nil) {
+) -> Result(ConnectionPermit, Nil) {
   connection_limit.acquire_optional(channels.connection_limiter, ip)
+  |> result.map(ConnectionPermit)
 }
 
 /// Release a per-IP connection slot acquired by a transport.
-pub fn release_connection_slot(permit: Option(connection_limit.Permit)) -> Nil {
-  connection_limit.release_optional(permit)
+pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.release_optional(permit.inner)
 }
 
 /// Return the configured inbound frame size cap for transports.

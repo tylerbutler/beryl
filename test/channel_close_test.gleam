@@ -121,7 +121,7 @@ pub fn leave_sends_reply_then_phx_close_test() {
 
 pub fn stop_with_error_sends_phx_error_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  register_stopping_channel(channels, channel.Error("boom"))
+  register_stopping_channel(channels, channel.Errored("boom"))
 
   let socket = connect_socket(channels, "socket-1")
   join_topic(channels, "socket-1", "room:lobby", socket)

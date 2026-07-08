@@ -194,7 +194,7 @@ fn stop_reason(reason: channel.StopReason) -> String {
     channel.Normal -> "normal"
     channel.Shutdown -> "shutdown"
     channel.HeartbeatTimeout -> "heartbeat_timeout"
-    channel.Error(message) -> message
+    channel.Errored(message) -> message
   }
 }
 
@@ -350,6 +350,7 @@ fn monotonic_time_ms() -> Int
 @external(erlang, "beryl_ffi", "identity")
 fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
+// nolint: stringly_typed_error -- the error is the formatted BEAM crash description; it is wrapped in channel.Errored at use sites
 /// Run a user-supplied channel callback, converting any crash into an error
 /// so a faulty channel cannot take down the shared coordinator actor.
 @external(erlang, "beryl_ffi", "rescue")
@@ -1396,10 +1397,13 @@ fn handle_route_text(
         list.append(
           [
             #("socket_id", socket_id),
-            #("topic", topic.sanitize_for_log(msg.topic)),
-            #("event", topic.sanitize_for_log(inbound_kind(msg.kind))),
-            #("ref", optional_string(msg.ref)),
-            #("join_ref", optional_string(msg.join_ref)),
+            #("topic", topic.sanitize_for_log(codec.inbound_topic(msg))),
+            #(
+              "event",
+              topic.sanitize_for_log(inbound_kind(codec.inbound_kind(msg))),
+            ),
+            #("ref", optional_string(codec.inbound_ref(msg))),
+            #("join_ref", optional_string(codec.inbound_join_ref(msg))),
           ],
           internal.preview_metadata("frame_preview", raw_text, logging),
         ),
@@ -1414,24 +1418,26 @@ fn dispatch_inbound(
   socket_id: String,
   msg: codec.Inbound,
 ) -> actor.Next(State, Message) {
-  case msg.kind {
+  let msg_topic = codec.inbound_topic(msg)
+  let msg_ref = codec.inbound_ref(msg)
+  case codec.inbound_kind(msg) {
     codec.Join ->
-      case is_valid_topic(msg.topic, state.config) {
+      case is_valid_topic(msg_topic, state.config) {
         True ->
           handle_join(
             state,
             socket_id,
-            msg.topic,
-            msg.payload,
-            msg.join_ref,
-            msg.ref,
+            msg_topic,
+            codec.inbound_payload(msg),
+            codec.inbound_join_ref(msg),
+            msg_ref,
           )
         False -> reject_invalid_join(state, socket_id, msg)
       }
     codec.Leave ->
-      case is_valid_topic(msg.topic, state.config) {
+      case is_valid_topic(msg_topic, state.config) {
         False -> {
-          let safe_topic = topic.sanitize_for_log(msg.topic)
+          let safe_topic = topic.sanitize_for_log(msg_topic)
           coordinator_logger(state)
           |> log.warn("Leave dropped: invalid topic", [
             #("socket_id", socket_id),
@@ -1439,19 +1445,26 @@ fn dispatch_inbound(
           ])
           actor.continue(state)
         }
-        True -> handle_leave(state, socket_id, msg.topic, msg.ref)
+        True -> handle_leave(state, socket_id, msg_topic, msg_ref)
       }
-    codec.Heartbeat -> handle_heartbeat(state, socket_id, msg.ref)
+    codec.Heartbeat -> handle_heartbeat(state, socket_id, msg_ref)
     codec.Event(event) -> {
-      let resolved = resolve_event_topic(state, socket_id, msg.topic)
+      let resolved = resolve_event_topic(state, socket_id, msg_topic)
       case
         is_valid_topic(resolved, state.config),
         is_valid_event(event, state.config)
       {
         True, True ->
-          handle_in(state, socket_id, resolved, event, msg.payload, msg.ref)
+          handle_in(
+            state,
+            socket_id,
+            resolved,
+            event,
+            codec.inbound_payload(msg),
+            msg_ref,
+          )
         False, _ -> {
-          let safe_topic = topic.sanitize_for_log(msg.topic)
+          let safe_topic = topic.sanitize_for_log(msg_topic)
           let safe_event = topic.sanitize_for_log(event)
           coordinator_logger(state)
           |> log.warn("Event dropped: invalid topic", [
@@ -1466,7 +1479,7 @@ fn dispatch_inbound(
           coordinator_logger(state)
           |> log.warn("Event dropped: invalid event", [
             #("socket_id", socket_id),
-            #("topic", msg.topic),
+            #("topic", msg_topic),
             #("event", safe_event),
           ])
           actor.continue(state)
@@ -1517,7 +1530,7 @@ fn reject_invalid_join(
   msg: codec.Inbound,
 ) -> actor.Next(State, Message) {
   let logger = coordinator_logger(state)
-  let safe_topic = topic.sanitize_for_log(msg.topic)
+  let safe_topic = topic.sanitize_for_log(codec.inbound_topic(msg))
   logger
   |> log.warn("Join rejected: invalid topic", [
     #("socket_id", socket_id),
@@ -1528,9 +1541,9 @@ fn reject_invalid_join(
     Ok(socket_info) -> {
       let reply =
         codec.encode_reply(socket_info.codec)(
-          msg.join_ref,
-          msg.ref,
-          msg.topic,
+          codec.inbound_join_ref(msg),
+          codec.inbound_ref(msg),
+          codec.inbound_topic(msg),
           codec.StatusError,
           json.object([#("reason", json.string("invalid_topic"))]),
         )
@@ -1705,7 +1718,7 @@ fn handle_callback_crash(
     #("callback", callback_name),
     #("crash", crash),
   ])
-  terminate_channel(state, socket_id, topic_name, channel.Error(crash))
+  terminate_channel(state, socket_id, topic_name, channel.Errored(crash))
 }
 
 fn dispatch_handle_in(
@@ -2048,7 +2061,7 @@ fn send_terminal_frame(
   reason: StopReason,
 ) -> Nil {
   let encoder = case reason {
-    channel.Error(_) -> codec.encode_error(socket_info.codec)
+    channel.Errored(_) -> codec.encode_error(socket_info.codec)
     channel.Normal | channel.Shutdown | channel.HeartbeatTimeout ->
       codec.encode_close(socket_info.codec)
   }

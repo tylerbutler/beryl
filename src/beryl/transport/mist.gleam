@@ -4,7 +4,6 @@
 //// and the beryl coordinator using Mist request and response types directly.
 
 import beryl.{type Channels}
-import beryl/connection_limit
 import beryl/coordinator.{type Message as CoordinatorMessage}
 import gleam/bit_array
 import gleam/bool
@@ -98,7 +97,7 @@ type ConnectionState {
   ConnectionState(
     socket_id: String,
     coordinator: Subject(CoordinatorMessage),
-    connection_permit: Option(connection_limit.Permit),
+    connection_permit: Option(beryl.ConnectionPermit),
     max_inbound_frame_bytes: Int,
   )
 }
@@ -218,7 +217,7 @@ fn run_connect_and_upgrade(
   request: Request(Connection),
   channels: Channels,
   config: TransportConfig(assigns),
-  connection_permit: Option(connection_limit.Permit),
+  connection_permit: beryl.ConnectionPermit,
 ) -> Response(ResponseData) {
   // Run on_connect callback if configured
   case config.on_connect {
@@ -229,7 +228,7 @@ fn run_connect_and_upgrade(
             request,
             channels,
             unsafe_coerce_to_dynamic(assigns),
-            connection_permit,
+            Some(connection_permit),
           )
         Error(ConnectRejected) -> {
           beryl.release_connection_slot(connection_permit)
@@ -237,7 +236,8 @@ fn run_connect_and_upgrade(
           |> response.set_body(mist.Bytes(bytes_tree.new()))
         }
       }
-    None -> do_upgrade(request, channels, dynamic.nil(), connection_permit)
+    None ->
+      do_upgrade(request, channels, dynamic.nil(), Some(connection_permit))
   }
 }
 
@@ -311,7 +311,7 @@ fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
   connect_assigns: Dynamic,
-  connection_permit: Option(connection_limit.Permit),
+  connection_permit: Option(beryl.ConnectionPermit),
 ) -> Response(ResponseData) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
   mist.websocket(
@@ -337,7 +337,7 @@ fn on_init(
   _connection: WebsocketConnection,
   coordinator: Subject(CoordinatorMessage),
   connect_assigns: Dynamic,
-  connection_permit: Option(connection_limit.Permit),
+  connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Generate unique socket ID
@@ -436,7 +436,10 @@ fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
 
 /// Cleanup when connection closes
 fn on_close(state: ConnectionState) -> Nil {
-  beryl.release_connection_slot(state.connection_permit)
+  case state.connection_permit {
+    Some(permit) -> beryl.release_connection_slot(permit)
+    None -> Nil
+  }
   process.send(
     state.coordinator,
     coordinator.SocketDisconnected(state.socket_id),

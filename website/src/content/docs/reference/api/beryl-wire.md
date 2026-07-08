@@ -18,6 +18,30 @@ Phoenix Wire Protocol — encoding/decoding helpers and the canonical
 
 ## Functions
 
+### `channel_close`
+
+Create a Phoenix `phx_close` frame, sent when a channel terminates
+ gracefully. Phoenix mirrors the channel's `join_ref` into the `ref` slot.
+
+```gleam
+pub fn channel_close(
+  option.Option(String),
+  String
+) -> codec.Frame
+```
+
+### `channel_error`
+
+Create a Phoenix `phx_error` frame, sent when a channel terminates
+ abnormally. Phoenix clients respond by scheduling an automatic rejoin.
+
+```gleam
+pub fn channel_error(
+  option.Option(String),
+  String
+) -> codec.Frame
+```
+
 ### `decode_message`
 
 Parse a JSON string into an `Inbound`.

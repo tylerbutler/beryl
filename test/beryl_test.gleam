@@ -866,20 +866,20 @@ pub fn decode_valid_message_test() {
   result |> should.be_ok
 
   let assert Ok(msg) = result
-  msg.join_ref |> should.equal(option.Some("j1"))
-  msg.ref |> should.equal(option.Some("r1"))
-  msg.topic |> should.equal("room:lobby")
-  msg.kind |> should.equal(codec.Join)
+  codec.inbound_join_ref(msg) |> should.equal(option.Some("j1"))
+  codec.inbound_ref(msg) |> should.equal(option.Some("r1"))
+  codec.inbound_topic(msg) |> should.equal("room:lobby")
+  codec.inbound_kind(msg) |> should.equal(codec.Join)
 }
 
 pub fn decode_message_with_null_refs_test() {
   let assert Ok(msg) =
     wire.decode_message("[null,\"ref\",\"topic\",\"event\",{}]")
 
-  msg.join_ref |> should.equal(option.None)
-  msg.ref |> should.equal(option.Some("ref"))
-  msg.topic |> should.equal("topic")
-  msg.kind |> should.equal(codec.Event("event"))
+  codec.inbound_join_ref(msg) |> should.equal(option.None)
+  codec.inbound_ref(msg) |> should.equal(option.Some("ref"))
+  codec.inbound_topic(msg) |> should.equal("topic")
+  codec.inbound_kind(msg) |> should.equal(codec.Event("event"))
 }
 
 pub fn decode_message_both_refs_null_test() {
@@ -888,10 +888,10 @@ pub fn decode_message_both_refs_null_test() {
       "[null,null,\"room:lobby\",\"new_msg\",{\"text\":\"hi\"}]",
     )
 
-  msg.join_ref |> should.equal(option.None)
-  msg.ref |> should.equal(option.None)
-  msg.topic |> should.equal("room:lobby")
-  msg.kind |> should.equal(codec.Event("new_msg"))
+  codec.inbound_join_ref(msg) |> should.equal(option.None)
+  codec.inbound_ref(msg) |> should.equal(option.None)
+  codec.inbound_topic(msg) |> should.equal("room:lobby")
+  codec.inbound_kind(msg) |> should.equal(codec.Event("new_msg"))
 }
 
 pub fn decode_invalid_json_test() {

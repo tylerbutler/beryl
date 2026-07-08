@@ -27,3 +27,24 @@ pub fn encode_diff(
   String
 ) -> json.Json
 ```
+
+### `encode_state`
+
+Encode a topic's full presence list as a Phoenix-compatible
+ `presence_state` payload.
+
+ The resulting JSON is a map keyed by presence key, where each value
+ contains the tracked metadata under `metas` — the same shape as one side
+ of a `presence_diff`:
+
+ ```json
+ { "user:1": { "metas": [{ "status": "online", "phx_ref": "..." }] } }
+ ```
+
+ Phoenix clients expect a `presence_state` event carrying this payload
+ after joining a presence-enabled topic (followed by incremental
+ `presence_diff` events). Build the entry list with `presence.list`.
+
+```gleam
+pub fn encode_state(List(presence.PresenceEntry)) -> json.Json
+```

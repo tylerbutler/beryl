@@ -39,7 +39,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
   case string.split(raw, "|") {
     ["J", join_ref, ref, topic, payload_json] -> {
       use payload <- result_try(decode_payload(payload_json))
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: Some(join_ref),
         ref: Some(ref),
         topic: topic,
@@ -48,7 +48,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
       ))
     }
     ["L", ref, topic] ->
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
         topic: topic,
@@ -56,7 +56,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
         payload: dynamic_nil(),
       ))
     ["H", ref] ->
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
         topic: "phoenix",
@@ -65,7 +65,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
       ))
     ["E", ref, topic, event, payload_json] -> {
       use payload <- result_try(decode_payload(payload_json))
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
         topic: topic,

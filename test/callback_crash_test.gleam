@@ -132,7 +132,7 @@ pub fn handle_in_crash_terminates_channel_but_not_coordinator_test() {
   )
 
   // The crashing channel's terminate ran with an Error reason
-  let assert Ok(channel.Error(_)) = process.receive(terminated, 500)
+  let assert Ok(channel.Errored(_)) = process.receive(terminated, 500)
 
   // The client is told its channel instance died
   let assert Ok(error_frame) = process.receive(crasher, 500)
@@ -247,7 +247,7 @@ pub fn handle_info_crash_terminates_channel_not_coordinator_test() {
     }),
   )
 
-  let assert Ok(channel.Error(_)) = process.receive(terminated, 500)
+  let assert Ok(channel.Errored(_)) = process.receive(terminated, 500)
 
   // The client is told its channel instance died
   let assert Ok(error_frame) = process.receive(socket, 500)

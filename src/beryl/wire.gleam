@@ -13,8 +13,8 @@
 
 import beryl/wire/codec.{
   type Codec, type DecodeError, type Frame, type Inbound, type InboundKind,
-  type ReplyStatus, Event, Heartbeat, Inbound, InvalidFormat, InvalidJson, Join,
-  Leave, StatusError, StatusOk, TextFrame,
+  type ReplyStatus, Event, Heartbeat, InvalidFormat, InvalidJson, Join, Leave,
+  StatusError, StatusOk, TextFrame,
 }
 import gleam/bool
 import gleam/dict
@@ -77,7 +77,7 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
     use topic <- decode.subfield([2], decode.string)
     use event <- decode.subfield([3], decode.string)
     use payload <- decode.subfield([4], decode.dynamic)
-    decode.success(Inbound(
+    decode.success(codec.inbound(
       join_ref: join_ref,
       ref: ref,
       topic: topic,
@@ -94,7 +94,7 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
 
 fn validate_inbound_depth(msg: Inbound) -> Result(Inbound, DecodeError) {
   use <- bool.guard(
-    when: !within_json_depth(msg.payload, max_json_nesting_depth),
+    when: !within_json_depth(codec.inbound_payload(msg), max_json_nesting_depth),
     return: Error(InvalidFormat("JSON nesting depth exceeded")),
   )
   Ok(msg)
@@ -102,16 +102,16 @@ fn validate_inbound_depth(msg: Inbound) -> Result(Inbound, DecodeError) {
 
 /// Encode an `Inbound` back to a Phoenix wire JSON string.
 pub fn encode(msg: Inbound) -> String {
-  let join_ref_json = option_to_json(msg.join_ref)
-  let ref_json = option_to_json(msg.ref)
-  let payload_json = dynamic_to_json(msg.payload)
-  let event = phoenix_event_name(msg.kind)
+  let join_ref_json = option_to_json(codec.inbound_join_ref(msg))
+  let ref_json = option_to_json(codec.inbound_ref(msg))
+  let payload_json = dynamic_to_json(codec.inbound_payload(msg))
+  let event = phoenix_event_name(codec.inbound_kind(msg))
 
   json.to_string(
     json.preprocessed_array([
       join_ref_json,
       ref_json,
-      json.string(msg.topic),
+      json.string(codec.inbound_topic(msg)),
       json.string(event),
       payload_json,
     ]),

@@ -61,7 +61,10 @@ pub type HandleResult(assigns) {
   Stop(reason: StopReason)
 }
 
-/// Why a channel is stopping
+/// Why a channel is stopping.
+///
+/// Delivered to every channel's `terminate` callback. Match with a catch-all
+/// (`_`) arm: new stop reasons may be added in minor releases.
 pub type StopReason {
   /// Normal shutdown (client left or disconnected cleanly)
   Normal
@@ -69,8 +72,10 @@ pub type StopReason {
   Shutdown
   /// Client failed to send heartbeat within the configured timeout
   HeartbeatTimeout
-  /// Error occurred
-  Error(String)
+  /// The channel stopped because of an error (named `Errored` so importing
+  /// it unqualified does not shadow the prelude's `Result` `Error`
+  /// constructor)
+  Errored(String)
 }
 
 /// Channel behavior definition

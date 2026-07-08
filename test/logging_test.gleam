@@ -71,17 +71,17 @@ pub fn default_logging_preserves_info_without_payloads_test() {
   let config = beryl.config(wire.phoenix_codec())
 
   let logging = beryl.config_logging(config)
-  logging.level
-  |> should.equal(beryl.Info)
-  logging.include_payloads
+  beryl.logging_level(logging)
+  |> should.equal(beryl.InfoLevel)
+  beryl.logging_include_payloads(logging)
   |> should.be_false
-  logging.payload_preview_bytes
+  beryl.logging_payload_preview_bytes(logging)
   |> should.equal(200)
 }
 
 pub fn with_logging_replaces_logging_config_test() {
   let logging =
-    beryl.logging_config(level: beryl.Error, include_payloads: True)
+    beryl.logging_config(level: beryl.ErrorLevel, include_payloads: True)
     |> beryl.with_payload_preview_bytes(bytes: 64)
 
   let config =
@@ -89,11 +89,11 @@ pub fn with_logging_replaces_logging_config_test() {
     |> beryl.with_logging(logging)
 
   let logging = beryl.config_logging(config)
-  logging.level
-  |> should.equal(beryl.Error)
-  logging.include_payloads
+  beryl.logging_level(logging)
+  |> should.equal(beryl.ErrorLevel)
+  beryl.logging_include_payloads(logging)
   |> should.be_true
-  logging.payload_preview_bytes
+  beryl.logging_payload_preview_bytes(logging)
   |> should.equal(64)
 }
 
@@ -101,7 +101,7 @@ pub fn channels_start_accepts_debug_logging_config_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
-      level: beryl.Debug,
+      level: beryl.DebugLevel,
       include_payloads: False,
     ))
 
@@ -122,10 +122,10 @@ pub fn coordinator_config_has_safe_logging_defaults_test() {
 
 pub fn payload_preview_bytes_never_negative_test() {
   let logging =
-    beryl.logging_config(level: beryl.Debug, include_payloads: True)
+    beryl.logging_config(level: beryl.DebugLevel, include_payloads: True)
     |> beryl.with_payload_preview_bytes(bytes: -1)
 
-  logging.payload_preview_bytes
+  beryl.logging_payload_preview_bytes(logging)
   |> should.equal(0)
 }
 
@@ -163,7 +163,7 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
-      level: beryl.Debug,
+      level: beryl.DebugLevel,
       include_payloads: False,
     ))
   let assert Ok(channels) = beryl.start(config)
@@ -207,7 +207,7 @@ pub fn debug_join_missing_handler_logs_routing_and_send_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
-      level: beryl.Debug,
+      level: beryl.DebugLevel,
       include_payloads: False,
     ))
   let assert Ok(channels) = beryl.start(config)
@@ -250,7 +250,7 @@ pub fn debug_channel_callback_logs_push_result_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
-      level: beryl.Debug,
+      level: beryl.DebugLevel,
       include_payloads: False,
     ))
   let assert Ok(channels) = beryl.start(config)
