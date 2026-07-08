@@ -255,8 +255,8 @@ fn terminate(_reason: channel.StopReason, socket: Socket(ChatAssigns)) -> Nil {
   let assigns = socket.get_assigns(socket)
   let socket_id = socket.id(socket)
 
-  // Untrack from presence
-  presence.untrack(assigns.presence, assigns.topic, assigns.username, socket_id)
+  // Untrack all presences for this disconnecting socket
+  presence.untrack_all(assigns.presence, socket_id)
 
   // Broadcast system leave message
   let sys_payload =
