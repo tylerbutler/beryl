@@ -246,7 +246,24 @@ pub fn with_heartbeat(
 /// Configure the maximum number of concurrent connections allowed per client
 /// IP address.
 ///
-/// A value of 0 (the default) means unlimited.
+/// A value of 0 (the default) means unlimited. When a limit is set, a transport
+/// admits a new connection only while the peer is below the limit and rejects
+/// it otherwise; the slot is freed when the connection closes.
+///
+/// ## Which IP is used
+///
+/// The limit is enforced on the **real socket peer IP** as reported by the
+/// transport (for the Mist transport, the address of the TCP connection).
+/// Beryl deliberately does **not** trust or parse forwarded headers such as
+/// `X-Forwarded-For`, because a client can set them freely and would otherwise
+/// be able to spoof its address and bypass this limit.
+///
+/// If Beryl runs behind a trusted reverse proxy or load balancer, every
+/// connection shares the proxy's address, so a per-IP limit throttles all
+/// clients as a single IP. In that topology you must resolve the real client
+/// IP yourself at the proxy layer (for example, by enforcing limits there). A
+/// built-in trusted-proxy opt-in may be added in a future release. See the
+/// WebSocket transport guide for deployment guidance.
 pub fn with_max_connections_per_ip(
   config: Config,
   max_connections max_connections: Int,
@@ -515,6 +532,13 @@ pub fn configured_codec(channels: Channels) -> codec.Codec {
 }
 
 /// Try to acquire a configured per-IP connection slot for transports.
+///
+/// Transports call this before admitting a connection, passing the **real
+/// socket peer IP**. Do not pass a client-supplied address (e.g. from
+/// `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
+/// `Ok(Some(permit))` when admitted (release the permit with
+/// `release_connection_slot` on close), `Ok(None)` when no limit is configured
+/// (unlimited), or `Error(Nil)` when the peer is already at its limit.
 pub fn acquire_connection_slot(
   channels: Channels,
   ip: String,

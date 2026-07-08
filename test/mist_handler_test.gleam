@@ -185,6 +185,22 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() {
   stop_supervisor(server_pid)
 }
 
+pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
+  // The default config leaves `max_connections_per_ip` at 0 (unlimited), so
+  // multiple concurrent connections from the same peer IP are all admitted.
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  let assert Ok(first) = connect_websocket(port, "/socket")
+  let assert Ok(second) = connect_websocket(port, "/socket")
+  let assert Ok(third) = connect_websocket(port, "/socket")
+
+  close(first)
+  close(second)
+  close(third)
+  stop_supervisor(server_pid)
+}
+
 pub fn handler_closes_socket_on_oversized_text_frame_test() {
   let #(port, server_pid) = start_frame_limited_server()
   let assert Ok(client) = connect_websocket(port, "/socket")

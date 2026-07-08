@@ -237,6 +237,42 @@ let config =
 | `join_rate` | Per socket | Join attempts per second |
 | `channel_rate` | Per socket+topic | Messages per second on a single topic |
 
+## Per-IP connection limits
+
+Cap the number of concurrent connections a single client IP may hold with
+`with_max_connections_per_ip`. A value of `0` (the default) means unlimited.
+
+```gleam
+let config =
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_max_connections_per_ip(max_connections: 5)
+```
+
+When a peer is already at its limit, the Mist transport rejects the new upgrade
+with `429 Too Many Requests` before the WebSocket handshake completes. The slot
+is released automatically when a connection closes, so disconnecting frees
+capacity for that IP.
+
+### Reverse proxies and `X-Forwarded-For`
+
+The limit is enforced on the **real socket peer IP** — the address of the TCP
+connection Mist accepts. beryl deliberately does **not** trust or parse
+forwarded headers such as `X-Forwarded-For`, because any client can set them and
+would otherwise be able to spoof its address and bypass the limit.
+
+This has an important consequence when beryl runs **behind a reverse proxy or
+load balancer** (nginx, HAProxy, a cloud LB, etc.): every connection arrives
+from the proxy's IP, so a per-IP limit sees all clients as one address and
+throttles them collectively. In that topology:
+
+- Enforce per-IP limits at the proxy layer, where the real client IP is known, or
+- Terminate connections directly (no intermediary) if you want beryl's built-in
+  per-IP limit to apply to individual clients.
+
+A built-in trusted-proxy opt-in (to derive the client IP from a forwarded header
+only when the immediate peer is a configured trusted proxy) may be added in a
+future release. Until then, treat `X-Forwarded-For` as untrusted input.
+
 ## Next steps
 
 - [Error Handling guide](/guides/error-handling/) — rejected joins, malformed frames, and client-visible error shapes
