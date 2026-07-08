@@ -349,6 +349,11 @@ fn monotonic_time_ms() -> Int
 @external(erlang, "beryl_ffi", "identity")
 fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
+/// Run a user-supplied channel callback, converting any crash into an error
+/// so a faulty channel cannot take down the shared coordinator actor.
+@external(erlang, "beryl_ffi", "rescue")
+fn rescue(callback: fn() -> value) -> Result(value, String)
+
 /// Start the coordinator actor with default heartbeat settings (no checking),
 /// using the supplied wire codec.
 pub fn start(codec: Codec) -> Result(Subject(Message), StartError) {
@@ -1538,8 +1543,10 @@ fn dispatch_join(
       send_binary: socket_info.send_binary,
     )
 
-  case handler.join(topic_name, payload, ctx) {
-    JoinErrorErased(reason) -> {
+  case rescue(fn() { handler.join(topic_name, payload, ctx) }) {
+    Error(crash) ->
+      reject_crashed_join(state, socket_info, topic_name, join_ref, ref, crash)
+    Ok(JoinErrorErased(reason)) -> {
       logger
       |> log.debug("Join rejected", [
         #("socket_id", socket_id),
@@ -1559,7 +1566,7 @@ fn dispatch_join(
         send_frame_logged(state, socket_info, topic_name, reply)
       actor.continue(state)
     }
-    JoinOkErased(reply_payload, assigns) -> {
+    Ok(JoinOkErased(reply_payload, assigns)) -> {
       logger
       |> log.debug("Join accepted", [
         #("socket_id", socket_id),
@@ -1615,6 +1622,54 @@ fn dispatch_join(
   }
 }
 
+/// Reject a join whose channel callback crashed. No subscription state has
+/// been created yet, so the socket keeps working; the client receives an
+/// error reply mirroring Phoenix's "join crashed" response.
+fn reject_crashed_join(
+  state: State,
+  socket_info: SocketInfo,
+  topic_name: String,
+  join_ref: Option(String),
+  ref: Option(String),
+  crash: String,
+) -> actor.Next(State, Message) {
+  coordinator_logger(state)
+  |> log.error("Channel join crashed", [
+    #("socket_id", socket_info.id),
+    #("topic", topic_name),
+    #("crash", crash),
+  ])
+  let reply =
+    codec.encode_reply(socket_info.codec)(
+      join_ref,
+      ref,
+      topic_name,
+      codec.StatusError,
+      json.object([#("reason", json.string("join crashed"))]),
+    )
+  let _send_result = send_frame_logged(state, socket_info, topic_name, reply)
+  actor.continue(state)
+}
+
+/// Tear down a channel whose callback crashed, leaving the socket and the
+/// coordinator's other channels untouched.
+fn handle_callback_crash(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  callback_name: String,
+  crash: String,
+) -> State {
+  coordinator_logger(state)
+  |> log.error("Channel callback crashed", [
+    #("socket_id", socket_id),
+    #("topic", topic_name),
+    #("callback", callback_name),
+    #("crash", crash),
+  ])
+  terminate_channel(state, socket_id, topic_name, channel.Error(crash))
+}
+
 fn dispatch_handle_in(
   state: State,
   socket_info: SocketInfo,
@@ -1646,8 +1701,16 @@ fn dispatch_handle_in(
       send_binary: socket_info.send_binary,
     )
 
-  case handler.handle_in(event, payload, ctx) {
-    NoReplyErased(new_assigns) -> {
+  case rescue(fn() { handler.handle_in(event, payload, ctx) }) {
+    Error(crash) ->
+      actor.continue(handle_callback_crash(
+        state,
+        socket_id,
+        topic_name,
+        "handle_in",
+        crash,
+      ))
+    Ok(NoReplyErased(new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned no reply", [
         #("socket_id", socket_id),
@@ -1658,7 +1721,7 @@ fn dispatch_handle_in(
       actor.continue(state)
     }
 
-    ReplyErased(_reply_event, reply_payload, new_assigns) -> {
+    Ok(ReplyErased(_reply_event, reply_payload, new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned reply", [
         #("socket_id", socket_id),
@@ -1686,7 +1749,7 @@ fn dispatch_handle_in(
       actor.continue(state)
     }
 
-    PushErased(push_event, push_payload, new_assigns) -> {
+    Ok(PushErased(push_event, push_payload, new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned push", [
         #("socket_id", socket_id),
@@ -1705,7 +1768,7 @@ fn dispatch_handle_in(
       actor.continue(state)
     }
 
-    StopErased(reason) -> {
+    Ok(StopErased(reason)) -> {
       logger
       |> log.debug("Channel callback stopped channel", [
         #("socket_id", socket_id),
@@ -1745,8 +1808,16 @@ fn dispatch_handle_info(
       send_binary: socket_info.send_binary,
     )
 
-  case callback(ctx) {
-    NoReplyErased(new_assigns) -> {
+  case rescue(fn() { callback(ctx) }) {
+    Error(crash) ->
+      actor.continue(handle_callback_crash(
+        state,
+        socket_id,
+        topic_name,
+        "handle_info",
+        crash,
+      ))
+    Ok(NoReplyErased(new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned no reply", [
         #("socket_id", socket_id),
@@ -1757,8 +1828,8 @@ fn dispatch_handle_info(
       actor.continue(state)
     }
 
-    ReplyErased(reply_event, reply_payload, new_assigns)
-    | PushErased(reply_event, reply_payload, new_assigns) -> {
+    Ok(ReplyErased(reply_event, reply_payload, new_assigns))
+    | Ok(PushErased(reply_event, reply_payload, new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned push", [
         #("socket_id", socket_id),
@@ -1779,7 +1850,7 @@ fn dispatch_handle_info(
       actor.continue(state)
     }
 
-    StopErased(reason) -> {
+    Ok(StopErased(reason)) -> {
       logger
       |> log.debug("Channel callback stopped channel", [
         #("socket_id", socket_id),
@@ -1821,8 +1892,10 @@ fn dispatch_handle_binary(
       send_binary: socket_info.send_binary,
     )
 
-  case handler.handle_binary(data, ctx) {
-    NoReplyErased(new_assigns) -> {
+  case rescue(fn() { handler.handle_binary(data, ctx) }) {
+    Error(crash) ->
+      handle_callback_crash(st, socket_id, topic_name, "handle_binary", crash)
+    Ok(NoReplyErased(new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned no reply", [
         #("socket_id", socket_id),
@@ -1831,7 +1904,7 @@ fn dispatch_handle_binary(
       ])
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
-    ReplyErased(_event, reply_payload, new_assigns) -> {
+    Ok(ReplyErased(_event, reply_payload, new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned reply", [
         #("socket_id", socket_id),
@@ -1847,7 +1920,7 @@ fn dispatch_handle_binary(
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
-    PushErased(push_event, push_payload, new_assigns) -> {
+    Ok(PushErased(push_event, push_payload, new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned push", [
         #("socket_id", socket_id),
@@ -1864,7 +1937,7 @@ fn dispatch_handle_binary(
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
-    StopErased(reason) -> {
+    Ok(StopErased(reason)) -> {
       logger
       |> log.debug("Channel callback stopped channel", [
         #("socket_id", socket_id),
@@ -1905,7 +1978,16 @@ fn do_terminate_channel(
           send: socket_info.send,
           send_binary: socket_info.send_binary,
         )
-      handler.terminate(reason, ctx)
+      case rescue(fn() { handler.terminate(reason, ctx) }) {
+        Ok(Nil) -> Nil
+        Error(crash) ->
+          logger
+          |> log.error("Channel terminate crashed", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+            #("crash", crash),
+          ])
+      }
     }
     None -> Nil
   }
