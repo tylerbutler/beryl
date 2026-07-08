@@ -23,6 +23,7 @@ import beryl/error as beryl_error
 import beryl/internal
 import beryl/log
 import beryl/pubsub.{type PubSub}
+import beryl/wire
 import gleam/bit_array
 import gleam/bool
 import gleam/crypto
@@ -372,6 +373,30 @@ fn generate_ref() -> String {
   |> bit_array.base16_encode()
 }
 
+/// Merge the server-generated tracking ref into the tracked meta as
+/// `phx_ref`, matching Phoenix behaviour. Phoenix client `Presence` helpers
+/// identify individual metas by `phx_ref` when applying diffs; without it a
+/// single leave would remove every meta stored under the same key. Any
+/// client-supplied `phx_ref` is replaced. Non-object metas are stored
+/// unchanged (Phoenix requires object metas for its Presence helpers).
+fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
+  let parsed =
+    json.parse(
+      from: json.to_string(meta),
+      using: gdecode.dict(gdecode.string, gdecode.dynamic),
+    )
+  case parsed {
+    Ok(fields) ->
+      fields
+      |> dict.delete("phx_ref")
+      |> dict.to_list
+      |> list.map(fn(field) { #(field.0, wire.dynamic_to_json(field.1)) })
+      |> list.append([#("phx_ref", json.string(ref))])
+      |> json.object
+    Error(_) -> meta
+  }
+}
+
 /// Track a presence in a topic.
 ///
 /// Returns a server-generated tracking ref: an opaque, unique handle for this
@@ -436,6 +461,7 @@ fn handle_message(
   case message {
     Track(topic, key, pid, meta, reply) -> {
       let ref = generate_ref()
+      let meta = meta_with_phx_ref(meta, ref)
       let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
       maybe_invoke_on_diff(
         actor_state.config,

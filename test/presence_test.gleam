@@ -2,6 +2,7 @@ import beryl/presence
 import gleam/erlang/process
 import gleam/json
 import gleam/list
+import gleam/string
 import gleeunit
 import gleeunit/should
 
@@ -196,14 +197,17 @@ pub fn on_diff_callback_receives_local_track_diff_test() {
   let assert Ok(diff) = process.receive(diff_subject, 1000)
   presence.diff_topics(diff)
   |> should.equal(["room:lobby"])
-  presence.diff_joins(diff, "room:lobby")
-  |> should.equal([
-    presence.PresenceEntry(
-      session_id: "socket-1",
-      key: "user:1",
-      meta: json.object([#("status", json.string("online"))]),
-    ),
-  ])
+  let assert [entry] = presence.diff_joins(diff, "room:lobby")
+  entry.session_id |> should.equal("socket-1")
+  entry.key |> should.equal("user:1")
+  // The tracked meta carries the original fields plus the injected phx_ref
+  let encoded_meta = json.to_string(entry.meta)
+  encoded_meta
+  |> string.contains("\"status\":\"online\"")
+  |> should.be_true
+  encoded_meta
+  |> string.contains("phx_ref")
+  |> should.be_true
   presence.diff_leaves(diff, "room:lobby") |> should.equal([])
 }
 
@@ -231,14 +235,17 @@ pub fn on_diff_callback_receives_local_untrack_diff_test() {
   presence.diff_topics(diff)
   |> should.equal(["room:lobby"])
   presence.diff_joins(diff, "room:lobby") |> should.equal([])
-  presence.diff_leaves(diff, "room:lobby")
-  |> should.equal([
-    presence.PresenceEntry(
-      session_id: "socket-1",
-      key: "user:1",
-      meta: json.object([#("status", json.string("online"))]),
-    ),
-  ])
+  let assert [entry] = presence.diff_leaves(diff, "room:lobby")
+  entry.session_id |> should.equal("socket-1")
+  entry.key |> should.equal("user:1")
+  // The leave carries the same meta the track stored, including its phx_ref
+  let encoded_meta = json.to_string(entry.meta)
+  encoded_meta
+  |> string.contains("\"status\":\"online\"")
+  |> should.be_true
+  encoded_meta
+  |> string.contains("phx_ref")
+  |> should.be_true
 }
 
 pub fn on_diff_callback_receives_all_rapid_diffs_test() {
