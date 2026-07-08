@@ -2,7 +2,7 @@
 
 import gleam/bool
 import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Subject}
+import gleam/erlang/process.{type Monitor, type Pid, type Subject}
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -20,7 +20,16 @@ pub opaque type Permit {
 }
 
 type State {
-  State(max_per_ip: Int, counts: Dict(String, Int))
+  State(
+    max_per_ip: Int,
+    counts: Dict(String, Int),
+    /// Monitors on bound permit-holder processes, so slots self-release when
+    /// the holder dies without running its close path (crash, brutal kill).
+    monitors: Dict(Monitor, #(Pid, String)),
+    /// Reverse index from holder pid to its monitor, so an explicit release
+    /// can drop the monitor and never double-decrement.
+    holders: Dict(Pid, Monitor),
+  )
 }
 
 type Message {
@@ -29,7 +38,9 @@ type Message {
     limiter: ConnectionLimiter,
     reply: Subject(Result(Permit, Nil)),
   )
-  Release(ip: String)
+  Bind(ip: String, owner: Pid)
+  Release(ip: String, owner: Pid)
+  HolderDown(down: process.Down)
   Stop(reply: Subject(Nil))
 }
 
@@ -56,10 +67,60 @@ fn handle_message(
         }
       }
     }
-    Release(ip) -> actor.continue(release_ip(state, ip))
+    Bind(ip, owner) -> actor.continue(bind_holder(state, ip, owner))
+    Release(ip, owner) -> {
+      // Drop the holder's monitor (when bound) before decrementing, so a
+      // later exit of the same process cannot decrement this IP twice.
+      let state = case dict.get(state.holders, owner) {
+        Ok(monitor) -> {
+          process.demonitor_process(monitor)
+          State(
+            ..state,
+            monitors: dict.delete(state.monitors, monitor),
+            holders: dict.delete(state.holders, owner),
+          )
+        }
+        Error(Nil) -> state
+      }
+      actor.continue(release_ip(state, ip))
+    }
+    HolderDown(down) ->
+      case down {
+        process.ProcessDown(monitor, pid, _reason) ->
+          case dict.get(state.monitors, monitor) {
+            Ok(#(_owner, ip)) -> {
+              let state =
+                State(
+                  ..state,
+                  monitors: dict.delete(state.monitors, monitor),
+                  holders: dict.delete(state.holders, pid),
+                )
+              actor.continue(release_ip(state, ip))
+            }
+            // Already explicitly released (or an unrelated monitor).
+            Error(Nil) -> actor.continue(state)
+          }
+        process.PortDown(_, _, _) -> actor.continue(state)
+      }
     Stop(reply) -> {
       process.send(reply, Nil)
       actor.stop()
+    }
+  }
+}
+
+/// Monitor a permit holder so its slot is reclaimed if the process dies
+/// without releasing. Rebinding the same pid is a no-op.
+fn bind_holder(state: State, ip: String, owner: Pid) -> State {
+  case dict.has_key(state.holders, owner) {
+    True -> state
+    False -> {
+      let monitor = process.monitor(owner)
+      State(
+        ..state,
+        monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
+        holders: dict.insert(state.holders, owner, monitor),
+      )
     }
   }
 }
@@ -91,8 +152,23 @@ fn request(
 
 /// Start a connection limiter with a maximum active connection count per IP.
 fn start(max_per_ip: Int) -> Result(ConnectionLimiter, actor.StartError) {
-  let state = State(max_per_ip: max_per_ip, counts: dict.new())
-  actor.new(state)
+  let state =
+    State(
+      max_per_ip: max_per_ip,
+      counts: dict.new(),
+      monitors: dict.new(),
+      holders: dict.new(),
+    )
+  actor.new_with_initialiser(1000, fn(subject) {
+    let selector =
+      process.new_selector()
+      |> process.select(subject)
+      |> process.select_monitors(HolderDown)
+    actor.initialised(state)
+    |> actor.selecting(selector)
+    |> actor.returning(subject)
+    |> Ok
+  })
   |> actor.on_message(handle_message)
   |> actor.start
   |> result.map(fn(started) { ConnectionLimiter(subject: started.data) })
@@ -123,9 +199,26 @@ pub fn acquire_optional(
   }
 }
 
+/// Bind a permit to the calling process (the long-lived connection process),
+/// so its slot is reclaimed if that process dies without releasing.
+fn bind(permit: Permit) -> Nil {
+  process.send(permit.limiter.subject, Bind(permit.ip, process.self()))
+}
+
+/// Bind a slot to the calling process if one was acquired.
+pub fn bind_optional(permit: Option(Permit)) -> Nil {
+  case permit {
+    Some(permit) -> bind(permit)
+    None -> Nil
+  }
+}
+
 /// Release a previously acquired slot.
+///
+/// Call from the process the permit was bound to (or from an unbound
+/// process, e.g. when the handshake fails before binding).
 fn release(permit: Permit) -> Nil {
-  process.send(permit.limiter.subject, Release(permit.ip))
+  process.send(permit.limiter.subject, Release(permit.ip, process.self()))
 }
 
 /// Release a slot if one was acquired.

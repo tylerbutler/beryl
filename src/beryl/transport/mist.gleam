@@ -105,6 +105,8 @@ type ConnectionState {
 type SendRequest {
   SendText(String)
   SendBinary(BitArray)
+  /// Coordinator-initiated close (e.g. heartbeat eviction).
+  Close
 }
 
 /// Upgrade a request to WebSocket if it matches the configured path
@@ -314,22 +316,36 @@ fn do_upgrade(
   connection_permit: Option(beryl.ConnectionPermit),
 ) -> Response(ResponseData) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
-  mist.websocket(
-    request: request,
-    handler: fn(state, message, connection) {
-      on_message(state, message, connection)
-    },
-    on_init: fn(connection) {
-      on_init(
-        connection,
-        beryl.coordinator_subject(channels),
-        connect_assigns,
-        connection_permit,
-        max_inbound_frame_bytes,
-      )
-    },
-    on_close: on_close,
-  )
+  let response =
+    mist.websocket(
+      request: request,
+      handler: fn(state, message, connection) {
+        on_message(state, message, connection)
+      },
+      on_init: fn(connection) {
+        on_init(
+          connection,
+          beryl.coordinator_subject(channels),
+          connect_assigns,
+          connection_permit,
+          max_inbound_frame_bytes,
+        )
+      },
+      on_close: on_close,
+    )
+  // A failed handshake (e.g. missing Sec-WebSocket-Key) never runs
+  // on_init/on_close, so the acquired per-IP slot must be released here or
+  // repeated bad handshakes would permanently exhaust the IP's slots.
+  case response.status >= 400 {
+    True -> {
+      case connection_permit {
+        Some(permit) -> beryl.release_connection_slot(permit)
+        None -> Nil
+      }
+      response
+    }
+    False -> response
+  }
 }
 
 /// Initialize WebSocket connection
@@ -340,6 +356,13 @@ fn on_init(
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
+  // Bind the per-IP slot to this WebSocket process so it is reclaimed even
+  // if the process dies without running on_close.
+  case connection_permit {
+    Some(permit) -> beryl.bind_connection_slot(permit)
+    None -> Nil
+  }
+
   // Generate unique socket ID
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
@@ -368,6 +391,15 @@ fn on_init(
       None,
       connect_assigns,
     ),
+  )
+
+  // Let the coordinator actively close this connection (heartbeat eviction,
+  // server-side disconnects) instead of leaving a zombie socket open.
+  process.send(
+    coordinator,
+    coordinator.RegisterCloser(socket_id, fn() {
+      process.send(send_subject, Close)
+    }),
   )
 
   let state =
@@ -417,6 +449,7 @@ fn on_message(
     }
 
     mist.Closed | mist.Shutdown -> mist.stop()
+    mist.Custom(Close) -> mist.stop()
     mist.Custom(SendText(text)) -> {
       mist.send_text_frame(connection, text)
       |> result.replace(mist.continue(state))

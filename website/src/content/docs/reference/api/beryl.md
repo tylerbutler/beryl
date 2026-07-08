@@ -203,6 +203,20 @@ pub fn acquire_connection_slot(
 ) -> Result(ConnectionPermit, Nil)
 ```
 
+### `bind_connection_slot`
+
+Bind an acquired connection slot to the calling process.
+
+ Call this from the long-lived connection process (e.g. the WebSocket
+ handler's init) after `acquire_connection_slot`. The limiter monitors the
+ caller so the slot is reclaimed even if the connection process dies
+ without running its close path — otherwise crashed connections would
+ permanently exhaust their IP's slots.
+
+```gleam
+pub fn bind_connection_slot(ConnectionPermit) -> Nil
+```
+
 ### `broadcast`
 
 Broadcast a message to all subscribers of a topic
@@ -370,6 +384,9 @@ pub fn register(
 ### `release_connection_slot`
 
 Release a per-IP connection slot acquired by a transport.
+
+ Call from the process the permit was bound to (or from an unbound
+ process when releasing before the connection was established).
 
 ```gleam
 pub fn release_connection_slot(ConnectionPermit) -> Nil

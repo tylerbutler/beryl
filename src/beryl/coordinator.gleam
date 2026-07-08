@@ -52,6 +52,8 @@ pub type SocketContext {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary data to this socket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    /// Ask the transport to close this socket's connection
+    close: fn() -> Nil,
   )
 }
 
@@ -236,6 +238,9 @@ type SocketInfo {
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary to this socket's WebSocket
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    /// Ask the transport to close this socket's connection. Registered by
+    /// the transport via `RegisterCloser`; a no-op until then.
+    close: fn() -> Nil,
     /// Wire codec negotiated for this connection. Used to decode inbound
     /// binary frames and encode replies/pushes destined for this socket, so
     /// different connections can use different serializers concurrently.
@@ -317,6 +322,11 @@ pub type Message {
     connect_assigns: Dynamic,
   )
   SocketDisconnected(socket_id: String)
+  /// Register a function that closes the socket's underlying connection.
+  /// Transports send this after `SocketConnected` so the coordinator can
+  /// actively close connections it evicts (e.g. heartbeat timeout) instead
+  /// of leaving zombie sockets whose frames are silently dropped.
+  RegisterCloser(socket_id: String, close: fn() -> Nil)
   // Channel operations
   HandleBinary(socket_id: String, data: BitArray)
   HandleInfo(
@@ -505,6 +515,9 @@ fn handle_message(
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
 
+    RegisterCloser(socket_id, close) ->
+      handle_register_closer(state, socket_id, close)
+
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
 
     HandleInfo(socket_id, topic_name, channel_id, callback) ->
@@ -603,6 +616,7 @@ fn handle_socket_connected(
       id: socket_id,
       send: send,
       send_binary: send_binary,
+      close: fn() { Nil },
       codec: option.unwrap(codec, state.config.codec),
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
@@ -615,6 +629,25 @@ fn handle_socket_connected(
   logger |> log.info("Socket connected", [#("socket_id", socket_id)])
   let new_sockets = dict.insert(state.sockets, socket_id, socket_info)
   actor.continue(State(..state, sockets: new_sockets))
+}
+
+fn handle_register_closer(
+  state: State,
+  socket_id: String,
+  close: fn() -> Nil,
+) -> actor.Next(State, Message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> actor.continue(state)
+    Ok(socket_info) -> {
+      let new_sockets =
+        dict.insert(
+          state.sockets,
+          socket_id,
+          SocketInfo(..socket_info, close: close),
+        )
+      actor.continue(State(..state, sockets: new_sockets))
+    }
+  }
 }
 
 fn handle_socket_disconnected(
@@ -1222,6 +1255,14 @@ fn disconnect_socket(
 
       let new_sockets = dict.delete(state.sockets, socket_id)
 
+      // Actively close the transport connection after the terminal frames
+      // above have been queued. Without this, evicted sockets stay open as
+      // zombies: the client believes it is connected while every frame it
+      // sends (including rejoins) is dropped, and per-IP connection slots
+      // remain held. A no-op when the transport already closed (Normal
+      // disconnects) or never registered a closer.
+      socket_info.close()
+
       State(..state, sockets: new_sockets, topics: new_topics)
     }
   }
@@ -1592,6 +1633,7 @@ fn dispatch_join(
       assigns: socket_info.connect_assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
+      close: socket_info.close,
     )
 
   case rescue(fn() { handler.join(topic_name, payload, ctx) }) {
@@ -1750,6 +1792,7 @@ fn dispatch_handle_in(
       assigns: assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
+      close: socket_info.close,
     )
 
   case rescue(fn() { handler.handle_in(event, payload, ctx) }) {
@@ -1885,6 +1928,7 @@ fn dispatch_handle_info(
       assigns: assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
+      close: socket_info.close,
     )
 
   case rescue(fn() { callback(ctx) }) {
@@ -1981,6 +2025,7 @@ fn dispatch_handle_binary(
       assigns: assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
+      close: socket_info.close,
     )
 
   case rescue(fn() { handler.handle_binary(data, ctx) }) {
@@ -2107,6 +2152,7 @@ fn do_terminate_channel(
           assigns: assigns,
           send: socket_info.send,
           send_binary: socket_info.send_binary,
+          close: socket_info.close,
         )
       case rescue(fn() { handler.terminate(reason, ctx) }) {
         Ok(Nil) -> Nil

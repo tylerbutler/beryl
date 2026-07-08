@@ -7,6 +7,7 @@
 
 import beryl
 import beryl/wire
+import gleam/erlang/process
 import gleeunit/should
 
 fn start_with_limit(max_connections: Int) -> beryl.Channels {
@@ -84,6 +85,28 @@ pub fn limit_is_per_ip_test() {
   beryl.acquire_connection_slot(channels, "10.0.0.5")
   |> should.equal(Error(Nil))
 
+  beryl.stop(channels)
+}
+
+// A slot is reclaimed when its holder process dies without releasing —
+// crashed connection handlers must not permanently exhaust an IP's slots.
+pub fn slot_reclaimed_when_holder_dies_without_release_test() {
+  let channels = start_with_limit(1)
+
+  let acquired = process.new_subject()
+  let _pid =
+    process.spawn_unlinked(fn() {
+      let assert Ok(permit) =
+        beryl.acquire_connection_slot(channels, "10.0.0.7")
+      beryl.bind_connection_slot(permit)
+      process.send(acquired, Nil)
+    })
+  let assert Ok(Nil) = process.receive(acquired, 500)
+
+  // Give the limiter time to observe the holder's exit.
+  process.sleep(50)
+
+  should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.7"))
   beryl.stop(channels)
 }
 

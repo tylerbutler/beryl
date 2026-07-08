@@ -582,7 +582,21 @@ pub fn acquire_connection_slot(
   |> result.map(ConnectionPermit)
 }
 
+/// Bind an acquired connection slot to the calling process.
+///
+/// Call this from the long-lived connection process (e.g. the WebSocket
+/// handler's init) after `acquire_connection_slot`. The limiter monitors the
+/// caller so the slot is reclaimed even if the connection process dies
+/// without running its close path — otherwise crashed connections would
+/// permanently exhaust their IP's slots.
+pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.bind_optional(permit.inner)
+}
+
 /// Release a per-IP connection slot acquired by a transport.
+///
+/// Call from the process the permit was bound to (or from an unbound
+/// process when releasing before the connection was established).
 pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
   connection_limit.release_optional(permit.inner)
 }
@@ -973,7 +987,10 @@ fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
       ctx.send_binary(data)
       |> result_to_transport_result()
     },
-    close: fn() { Ok(Nil) },
+    close: fn() {
+      ctx.close()
+      Ok(Nil)
+    },
   )
 }
 
