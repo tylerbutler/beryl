@@ -322,7 +322,9 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
       ),
     )
   let reply = latest_text_message(client)
-  let frame = assert_reply(serializer, reply, None, "event-1", "room:lobby")
+  // Event replies echo the channel's join_ref, matching Phoenix.
+  let frame =
+    assert_reply(serializer, reply, Some("join-ref"), "event-1", "room:lobby")
   let response = dynamic_field(frame.payload, "response")
   assert_json_bool(response, "pong", True)
 
@@ -392,7 +394,8 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
       serializer.leave("join-ref", "leave-1", "room:lobby", json.object([])),
     )
   let leave = latest_text_message(client)
-  let _ = assert_reply(serializer, leave, None, "leave-1", "room:lobby")
+  let _ =
+    assert_reply(serializer, leave, Some("join-ref"), "leave-1", "room:lobby")
   let assert Ok(reason) = process.receive(terminated, 200)
   reason |> should.equal(channel.Normal)
 

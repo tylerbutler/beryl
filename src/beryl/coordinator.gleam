@@ -251,6 +251,10 @@ type SocketInfo {
     channel_assigns: Dict(String, Dynamic),
     /// Per-topic registered channel id (topic -> handler id)
     channel_ids: Dict(String, Int),
+    /// Per-topic join_ref from the accepted `phx_join` (topic -> join_ref).
+    /// Used to echo the channel's join_ref in replies/terminal frames and to
+    /// drop messages from a stale channel instance after a rejoin.
+    join_refs: Dict(String, Option(String)),
     /// Socket-level assigns seeded by the transport connect hook (type-erased).
     /// Used as the initial assigns visible to a channel at join time.
     connect_assigns: Dynamic,
@@ -621,6 +625,7 @@ fn handle_socket_connected(
       subscribed_topics: set.new(),
       channel_assigns: dict.new(),
       channel_ids: dict.new(),
+      join_refs: dict.new(),
       connect_assigns: connect_assigns,
       last_heartbeat: monotonic_time_ms(),
     )
@@ -748,9 +753,8 @@ fn handle_join_inner(
       case can_join_topic(socket_info, topic_name, state.config) {
         False -> reject_join_cap(state, socket_info, topic_name, join_ref, ref)
         True ->
-          handle_join_with_handler(
+          replace_existing_then_join(
             state,
-            socket_info,
             socket_id,
             topic_name,
             payload,
@@ -759,6 +763,35 @@ fn handle_join_inner(
           )
       }
     }
+  }
+}
+
+/// Phoenix duplicate-join semantics: a `phx_join` for an already-joined
+/// topic replaces the previous channel instance. Terminate the old instance
+/// first (running its `terminate` callback and emitting `phx_close`) so
+/// cleanup keyed off termination — presence untracking, bridge shutdown —
+/// is never silently skipped by a rejoin.
+fn replace_existing_then_join(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  payload: Dynamic,
+  join_ref: Option(String),
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  let state = terminate_channel(state, socket_id, topic_name, channel.Normal)
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> actor.continue(state)
+    Ok(socket_info) ->
+      handle_join_with_handler(
+        state,
+        socket_info,
+        socket_id,
+        topic_name,
+        payload,
+        join_ref,
+        ref,
+      )
   }
 }
 
@@ -847,8 +880,24 @@ fn handle_leave(
   state: State,
   socket_id: String,
   topic_name: String,
+  msg_join_ref: Option(String),
   ref: Option(String),
 ) -> actor.Next(State, Message) {
+  // A leave carrying a join_ref from a previous channel instance (the
+  // client rejoined since sending it) must not close the new instance.
+  let stale = case dict.get(state.sockets, socket_id) {
+    Ok(socket_info) -> is_stale_join_ref(socket_info, topic_name, msg_join_ref)
+    Error(Nil) -> False
+  }
+  use <- bool.lazy_guard(when: stale, return: fn() {
+    coordinator_logger(state)
+    |> log.debug("Leave dropped: stale join_ref", [
+      #("socket_id", socket_id),
+      #("topic", topic_name),
+    ])
+    actor.continue(state)
+  })
+
   // Acknowledge the leave before terminating, so the client sees the reply
   // to its own ref first and the `phx_close` emitted by termination second —
   // matching the frame order Phoenix produces.
@@ -856,7 +905,7 @@ fn handle_leave(
     Some(r), Ok(socket_info) -> {
       let reply =
         codec.encode_reply(socket_info.codec)(
-          None,
+          joined_ref(socket_info, topic_name),
           Some(r),
           topic_name,
           codec.StatusOk,
@@ -872,12 +921,27 @@ fn handle_leave(
   actor.continue(terminate_channel(state, socket_id, topic_name, channel.Normal))
 }
 
+/// A message is stale when it carries a join_ref from a previous channel
+/// instance on this topic (the client rejoined since sending it). Messages
+/// without a join_ref are never treated as stale.
+fn is_stale_join_ref(
+  socket_info: SocketInfo,
+  topic_name: String,
+  msg_join_ref: Option(String),
+) -> Bool {
+  case msg_join_ref, joined_ref(socket_info, topic_name) {
+    Some(sent), Some(current) -> sent != current
+    _, _ -> False
+  }
+}
+
 fn handle_in(
   state: State,
   socket_id: String,
   topic_name: String,
   event: String,
   payload: Dynamic,
+  msg_join_ref: Option(String),
   ref: Option(String),
 ) -> actor.Next(State, Message) {
   // Check per-socket message rate limit
@@ -894,7 +958,15 @@ fn handle_in(
       actor.continue(state)
     }
     Ok(_) -> {
-      handle_in_subscribed(state, socket_id, topic_name, event, payload, ref)
+      handle_in_subscribed(
+        state,
+        socket_id,
+        topic_name,
+        event,
+        payload,
+        msg_join_ref,
+        ref,
+      )
     }
   }
 }
@@ -905,6 +977,7 @@ fn handle_in_subscribed(
   topic_name: String,
   event: String,
   payload: Dynamic,
+  msg_join_ref: Option(String),
   ref: Option(String),
 ) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
@@ -931,17 +1004,53 @@ fn handle_in_subscribed(
             ref,
           )
         True ->
-          handle_in_rate_limited(
+          handle_in_current_instance(
             state,
             socket_info,
             socket_id,
             topic_name,
             event,
             payload,
+            msg_join_ref,
             ref,
           )
       }
     }
+  }
+}
+
+/// Drop messages sent to a previous channel instance (stale join_ref after a
+/// rejoin), matching Phoenix; otherwise continue to per-channel rate limits.
+fn handle_in_current_instance(
+  state: State,
+  socket_info: SocketInfo,
+  socket_id: String,
+  topic_name: String,
+  event: String,
+  payload: Dynamic,
+  msg_join_ref: Option(String),
+  ref: Option(String),
+) -> actor.Next(State, Message) {
+  case is_stale_join_ref(socket_info, topic_name, msg_join_ref) {
+    True -> {
+      coordinator_logger(state)
+      |> log.debug("Inbound message dropped: stale join_ref", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+        #("event", event),
+      ])
+      actor.continue(state)
+    }
+    False ->
+      handle_in_rate_limited(
+        state,
+        socket_info,
+        socket_id,
+        topic_name,
+        event,
+        payload,
+        ref,
+      )
   }
 }
 
@@ -1486,7 +1595,14 @@ fn dispatch_inbound(
           ])
           actor.continue(state)
         }
-        True -> handle_leave(state, socket_id, msg_topic, msg_ref)
+        True ->
+          handle_leave(
+            state,
+            socket_id,
+            msg_topic,
+            codec.inbound_join_ref(msg),
+            msg_ref,
+          )
       }
     codec.Heartbeat -> handle_heartbeat(state, socket_id, msg_ref)
     codec.Event(event) -> {
@@ -1502,6 +1618,7 @@ fn dispatch_inbound(
             resolved,
             event,
             codec.inbound_payload(msg),
+            codec.inbound_join_ref(msg),
             msg_ref,
           )
         False, _ -> {
@@ -1672,12 +1789,15 @@ fn dispatch_join(
         dict.insert(socket_info.channel_assigns, topic_name, assigns)
       let new_channel_ids =
         dict.insert(socket_info.channel_ids, topic_name, handler.id)
+      let new_join_refs =
+        dict.insert(socket_info.join_refs, topic_name, join_ref)
       let new_socket_info =
         SocketInfo(
           ..socket_info,
           subscribed_topics: new_subscribed,
           channel_assigns: new_assigns,
           channel_ids: new_channel_ids,
+          join_refs: new_join_refs,
         )
 
       let existing_topic_subscribers =
@@ -1827,7 +1947,7 @@ fn dispatch_handle_in(
         Some(r) -> {
           let reply =
             codec.encode_reply(socket_info.codec)(
-              None,
+              joined_ref(socket_info, topic_name),
               Some(r),
               topic_name,
               codec.StatusOk,
@@ -1855,7 +1975,7 @@ fn dispatch_handle_in(
         Some(r) -> {
           let reply =
             codec.encode_reply(socket_info.codec)(
-              None,
+              joined_ref(socket_info, topic_name),
               Some(r),
               topic_name,
               codec.StatusError,
@@ -2117,12 +2237,18 @@ fn send_terminal_frame(
           state,
           socket_info,
           topic_name,
-          encode(None, topic_name),
+          encode(joined_ref(socket_info, topic_name), topic_name),
         )
       Nil
     }
     None -> Nil
   }
+}
+
+/// The join_ref of the socket's current channel instance on a topic, if any.
+fn joined_ref(socket_info: SocketInfo, topic_name: String) -> Option(String) {
+  dict.get(socket_info.join_refs, topic_name)
+  |> result.unwrap(None)
 }
 
 fn do_terminate_channel(
@@ -2178,12 +2304,14 @@ fn do_terminate_channel(
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
   let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)
   let new_channel_ids = dict.delete(socket_info.channel_ids, topic_name)
+  let new_join_refs = dict.delete(socket_info.join_refs, topic_name)
   let new_socket_info =
     SocketInfo(
       ..socket_info,
       subscribed_topics: new_subscribed,
       channel_assigns: new_assigns,
       channel_ids: new_channel_ids,
+      join_refs: new_join_refs,
     )
 
   let topic_subscribers =
