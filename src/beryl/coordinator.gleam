@@ -1572,7 +1572,9 @@ fn dispatch_inbound(
   let msg_ref = codec.inbound_ref(msg)
   case codec.inbound_kind(msg) {
     codec.Join ->
-      case is_valid_topic(msg_topic, state.config) {
+      case
+        is_valid_topic(msg_topic, state.config) && !is_reserved_topic(msg_topic)
+      {
         True ->
           handle_join(
             state,
@@ -1584,7 +1586,8 @@ fn dispatch_inbound(
           )
         False -> reject_invalid_join(state, socket_id, msg)
       }
-    codec.Leave ->
+    codec.Leave -> {
+      use <- with_message_rate_limit(state, socket_id, "leave")
       case is_valid_topic(msg_topic, state.config) {
         False -> {
           let safe_topic = topic.sanitize_for_log(msg_topic)
@@ -1604,7 +1607,11 @@ fn dispatch_inbound(
             msg_ref,
           )
       }
-    codec.Heartbeat -> handle_heartbeat(state, socket_id, msg_ref)
+    }
+    codec.Heartbeat -> {
+      use <- with_message_rate_limit(state, socket_id, "heartbeat")
+      handle_heartbeat(state, socket_id, msg_ref)
+    }
     codec.Event(event) -> {
       let resolved = resolve_event_topic(state, socket_id, msg_topic)
       case
@@ -1676,9 +1683,47 @@ fn is_valid_topic(topic_name: String, config: CoordinatorConfig) -> Bool {
   && result.is_ok(topic.validate(topic_name))
 }
 
+/// Topics under the `beryl:` prefix are reserved for internal machinery
+/// (e.g. the presence replication sync topic). Clients must not join them:
+/// with a catch-all handler registered, a client join would subscribe the
+/// coordinator to the internal topic and forward its traffic — including
+/// other users' presence state — to that client.
+fn is_reserved_topic(topic_name: String) -> Bool {
+  string.starts_with(topic_name, "beryl:")
+}
+
+/// Event names under the `phx_` prefix are reserved by the protocol.
+/// Client-supplied `phx_*` events (e.g. a forged `phx_reply`) must never
+/// reach channel handlers, where a naive echo channel could re-broadcast
+/// frames that confuse other clients.
 fn is_valid_event(event_name: String, config: CoordinatorConfig) -> Bool {
   string.byte_size(event_name) <= config.max_event_length
+  && !string.starts_with(event_name, "phx_")
   && result.is_ok(topic.validate_event(event_name))
+}
+
+/// Apply the per-socket message limiter to protocol frames (heartbeat,
+/// leave) so flooding them cannot bypass `with_message_rate` — each
+/// heartbeat otherwise generates an amplified reply exempt from limits.
+fn with_message_rate_limit(
+  state: State,
+  socket_id: String,
+  kind: String,
+  next: fn() -> actor.Next(State, Message),
+) -> actor.Next(State, Message) {
+  case
+    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
+  {
+    Error(Nil) -> {
+      coordinator_logger(state)
+      |> log.warn("Message rate limited", [
+        #("socket_id", socket_id),
+        #("kind", kind),
+      ])
+      actor.continue(state)
+    }
+    Ok(_) -> next()
+  }
 }
 
 /// Send a `phx_reply` error for a join with an invalid topic and drop the message.
