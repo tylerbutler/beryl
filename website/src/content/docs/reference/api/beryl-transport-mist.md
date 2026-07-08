@@ -103,6 +103,17 @@ Upgrade a request to WebSocket if it matches the configured path
  config path written with a trailing slash (e.g. `"/socket/"`) will never
  match. Configure the path without a trailing slash (e.g. `"/socket"`).
 
+ ## Per-IP connection limits
+
+ When `beryl.with_max_connections_per_ip` is configured, this transport
+ enforces the limit before completing the handshake and returns `429 Too
+ Many Requests` once the peer is at its limit. Enforcement uses the **real
+ socket peer IP** from the TCP connection; forwarded headers such as
+ `X-Forwarded-For` are **not** trusted or parsed, because clients can set
+ them and would otherwise spoof their address to bypass the limit. Behind a
+ trusted reverse proxy, all connections share the proxy's IP — resolve the
+ real client IP at the proxy layer. See the WebSocket transport guide.
+
 ```gleam
 pub fn upgrade(
   request.Request(http.Connection),
