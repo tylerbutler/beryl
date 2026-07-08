@@ -132,24 +132,23 @@ let assert Ok(Nil) = group.delete(groups, "team:eng")
 
 ## Using groups with the supervisor
 
-When using `beryl/supervisor`, set `groups: True` in `SupervisedConfig` and access the groups handle from the returned `SupervisedChannels`:
+When using `beryl/supervisor`, enable groups with `supervisor.with_groups` and access the groups handle from the returned `SupervisedChannels` via `supervisor.groups`:
 
 ```gleam
 import beryl
 import beryl/supervisor
 import beryl/wire
-import gleam/option.{None}
+import gleam/option.{None, Some}
 
-let config = supervisor.SupervisedConfig(
-  channels: beryl.config(wire.phoenix_codec()),
-  presence: None,
-  groups: True,
-)
+let config =
+  supervisor.config(beryl.config(wire.phoenix_codec()))
+  |> supervisor.with_groups()
 let assert Ok(supervised) = supervisor.start(config)
 
-// supervised.groups is Option(group.Groups)
-case supervised.groups {
-  Some(g) -> group.broadcast(g, supervised.channels, "team:eng", "alert", payload)
+// supervisor.groups(supervised) is Option(group.Groups)
+case supervisor.groups(supervised) {
+  Some(g) ->
+    group.broadcast(g, supervisor.channels(supervised), "team:eng", "alert", payload)
   None -> Nil
 }
 ```

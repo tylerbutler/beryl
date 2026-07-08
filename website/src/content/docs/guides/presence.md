@@ -56,12 +56,17 @@ The **key** groups multiple connections from the same user. The **pid** uniquely
 ## Untracking
 
 ```gleam
-// Remove a specific presence
-presence.untrack(p, "room:lobby", "user:alice", socket_id)
+// Remove a specific presence, using the ref returned by `track`
+presence.untrack(p, ref)
 
-// Remove all presences for a socket (e.g., on disconnect)
+// Remove all presences for a session id / socket (e.g., on disconnect)
 presence.untrack_all(p, socket_id)
 ```
+
+`track` returns a server-generated ref that identifies exactly the presence it
+created. Hold onto that ref if you need to remove one specific presence later
+with `untrack`. To clear every presence for a disconnecting socket, use
+`untrack_all` with the session id instead.
 
 ## Listing presences
 
@@ -116,13 +121,13 @@ let config =
 `broadcast_presence_diff` broadcasts to a single topic. The `diff` passed to `on_diff` may span multiple topics; if you track presence across several topics, iterate over the affected topics:
 
 ```gleam
-on_diff: option.Some(fn(diff) {
+|> presence.with_on_diff(fn(diff) {
   diff
   |> presence.diff_topics
   |> list.each(fn(topic) {
     beryl.broadcast_presence_diff(channels, topic, diff)
   })
-}),
+})
 ```
 
 Passing the full diff on each iteration is safe: `broadcast_presence_diff` encodes only the named topic's entries from the diff, so unrelated topics are never included in a broadcast.

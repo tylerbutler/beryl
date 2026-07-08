@@ -212,11 +212,12 @@ Clients should send periodic heartbeat messages to stay connected:
 Configure heartbeat timing in the beryl config:
 
 ```gleam
-let config = beryl.Config(
-  ..beryl.config(wire.phoenix_codec()),
-  heartbeat_interval_ms: 30_000,  // Client sends every 30s
-  heartbeat_timeout_ms: 60_000,   // Server evicts after 60s silence
-)
+let config =
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_heartbeat(
+    interval_ms: 30_000,  // Client-advisory ping cadence (server does not read it)
+    timeout_ms: 60_000,   // Server evicts after 60s silence (must be >= 2)
+  )
 ```
 
 ## Rate limiting
