@@ -814,8 +814,9 @@ fn handle_leave(
   topic_name: String,
   ref: Option(String),
 ) -> actor.Next(State, Message) {
-  let state = terminate_channel(state, socket_id, topic_name, channel.Normal)
-
+  // Acknowledge the leave before terminating, so the client sees the reply
+  // to its own ref first and the `phx_close` emitted by termination second —
+  // matching the frame order Phoenix produces.
   case ref, dict.get(state.sockets, socket_id) {
     Some(r), Ok(socket_info) -> {
       let reply =
@@ -833,7 +834,7 @@ fn handle_leave(
     _, _ -> Nil
   }
 
-  actor.continue(state)
+  actor.continue(terminate_channel(state, socket_id, topic_name, channel.Normal))
 }
 
 fn handle_in(
@@ -1950,6 +1951,36 @@ fn dispatch_handle_binary(
   }
 }
 
+/// Notify the client that its channel instance ended. Phoenix clients rely
+/// on `phx_close`/`phx_error` to leave the joined state (and, for errors,
+/// schedule a rejoin) instead of waiting out push timeouts. Codecs without
+/// close/error encoders skip the notification.
+fn send_terminal_frame(
+  state: State,
+  socket_info: SocketInfo,
+  topic_name: String,
+  reason: StopReason,
+) -> Nil {
+  let encoder = case reason {
+    channel.Error(_) -> codec.encode_error(socket_info.codec)
+    channel.Normal | channel.Shutdown | channel.HeartbeatTimeout ->
+      codec.encode_close(socket_info.codec)
+  }
+  case encoder {
+    Some(encode) -> {
+      let _send_result =
+        send_frame_logged(
+          state,
+          socket_info,
+          topic_name,
+          encode(None, topic_name),
+        )
+      Nil
+    }
+    None -> Nil
+  }
+}
+
 fn do_terminate_channel(
   state: State,
   socket_info: SocketInfo,
@@ -1991,6 +2022,8 @@ fn do_terminate_channel(
     }
     None -> Nil
   }
+
+  send_terminal_frame(state, socket_info, topic_name, reason)
 
   rate_limit.remove_optional(
     state.config.channel_limiter,

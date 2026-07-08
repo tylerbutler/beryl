@@ -37,6 +37,8 @@ pub fn phoenix_codec() -> Codec {
     encode_push: push,
     encode_heartbeat_reply: heartbeat_reply,
   )
+  |> codec.with_close_encoder(channel_close)
+  |> codec.with_error_encoder(channel_error)
 }
 
 /// Parse a JSON string into an `Inbound`.
@@ -300,6 +302,37 @@ pub fn push(topic: String, event: String, payload: json.Json) -> Frame {
         json.string(topic),
         json.string(event),
         payload,
+      ]),
+    ),
+  )
+}
+
+/// Create a Phoenix `phx_close` frame, sent when a channel terminates
+/// gracefully. Phoenix mirrors the channel's `join_ref` into the `ref` slot.
+pub fn channel_close(join_ref: Option(String), topic: String) -> Frame {
+  terminal_event(join_ref, topic, "phx_close")
+}
+
+/// Create a Phoenix `phx_error` frame, sent when a channel terminates
+/// abnormally. Phoenix clients respond by scheduling an automatic rejoin.
+pub fn channel_error(join_ref: Option(String), topic: String) -> Frame {
+  terminal_event(join_ref, topic, "phx_error")
+}
+
+fn terminal_event(
+  join_ref: Option(String),
+  topic: String,
+  event: String,
+) -> Frame {
+  let join_ref_json = option_to_json(join_ref)
+  TextFrame(
+    json.to_string(
+      json.preprocessed_array([
+        join_ref_json,
+        join_ref_json,
+        json.string(topic),
+        json.string(event),
+        json.object([]),
       ]),
     ),
   )

@@ -1,0 +1,5 @@
+kind: Fixed
+body: |-
+    Send phx_close/phx_error frames when a channel terminates.
+    Phoenix clients rely on these terminal events to leave the joined state and schedule rejoins; previously a server-side channel termination left clients believing they were still joined, with every subsequent push timing out. Custom codecs can opt in via codec.with_close_encoder and codec.with_error_encoder.
+time: 2026-07-08T17:20:00.000000-00:00

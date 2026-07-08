@@ -104,6 +104,8 @@ pub opaque type Codec {
     ) -> Frame,
     encode_push: fn(String, String, json.Json) -> Frame,
     encode_heartbeat_reply: fn(Option(String)) -> Frame,
+    encode_close: Option(fn(Option(String), String) -> Frame),
+    encode_error: Option(fn(Option(String), String) -> Frame),
   )
 }
 
@@ -136,6 +138,8 @@ pub fn new(
     encode_reply:,
     encode_push:,
     encode_heartbeat_reply:,
+    encode_close: None,
+    encode_error: None,
   )
 }
 
@@ -149,6 +153,32 @@ pub fn with_binary_decoder(
   decode_binary: fn(BitArray) -> Result(Inbound, DecodeError),
 ) -> Codec {
   Codec(..codec, decode_binary: Some(decode_binary))
+}
+
+/// Attach a channel-close encoder to a codec.
+///
+/// When set, the coordinator emits this frame to a client whenever one of
+/// its channels terminates gracefully (leave, server shutdown, heartbeat
+/// eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
+/// leave the joined state instead of waiting out push timeouts.
+pub fn with_close_encoder(
+  codec: Codec,
+  encode_close: fn(Option(String), String) -> Frame,
+) -> Codec {
+  Codec(..codec, encode_close: Some(encode_close))
+}
+
+/// Attach a channel-error encoder to a codec.
+///
+/// When set, the coordinator emits this frame to a client whenever one of
+/// its channels terminates abnormally (crashed or stopped with an error):
+/// `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
+/// automatic rejoin.
+pub fn with_error_encoder(
+  codec: Codec,
+  encode_error: fn(Option(String), String) -> Frame,
+) -> Codec {
+  Codec(..codec, encode_error: Some(encode_error))
 }
 
 /// Accessor for the codec's text decoder.
@@ -183,4 +213,20 @@ pub fn encode_push(codec: Codec) -> fn(String, String, json.Json) -> Frame {
 @internal
 pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
   codec.encode_heartbeat_reply
+}
+
+/// Accessor for the codec's optional channel-close encoder.
+@internal
+pub fn encode_close(
+  codec: Codec,
+) -> Option(fn(Option(String), String) -> Frame) {
+  codec.encode_close
+}
+
+/// Accessor for the codec's optional channel-error encoder.
+@internal
+pub fn encode_error(
+  codec: Codec,
+) -> Option(fn(Option(String), String) -> Frame) {
+  codec.encode_error
 }

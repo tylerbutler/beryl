@@ -207,6 +207,36 @@ pub fn phoenix_codec_encodes_shared_reply_fixtures_test() {
   })
 }
 
+pub fn phoenix_codec_encodes_shared_terminal_event_fixtures_test() {
+  let phoenix = wire.phoenix_codec()
+  let assert Some(encode_close) = codec.encode_close(phoenix)
+  let assert Some(encode_error) = codec.encode_error(phoenix)
+  fixtures.server_outbound()
+  |> list.each(fn(case_) {
+    case case_.event {
+      "phx_error" ->
+        encode_error(case_.join_ref, case_.topic)
+        |> text_frame()
+        |> should.equal(case_.encoded)
+      "phx_close" ->
+        encode_close(case_.join_ref, case_.topic)
+        |> text_frame()
+        |> should.equal(case_.encoded)
+      _ -> Nil
+    }
+  })
+}
+
+pub fn phoenix_terminal_events_mirror_join_ref_into_ref_test() {
+  wire.channel_close(Some("join-7"), "room:1")
+  |> text_frame()
+  |> should.equal("[\"join-7\",\"join-7\",\"room:1\",\"phx_close\",{}]")
+
+  wire.channel_error(Some("join-7"), "room:1")
+  |> text_frame()
+  |> should.equal("[\"join-7\",\"join-7\",\"room:1\",\"phx_error\",{}]")
+}
+
 pub fn phoenix_codec_rejects_shared_invalid_fixtures_test() {
   let phoenix = wire.phoenix_codec()
   fixtures.invalid_frames()

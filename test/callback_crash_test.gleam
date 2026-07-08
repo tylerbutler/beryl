@@ -134,6 +134,12 @@ pub fn handle_in_crash_terminates_channel_but_not_coordinator_test() {
   // The crashing channel's terminate ran with an Error reason
   let assert Ok(channel.Error(_)) = process.receive(terminated, 500)
 
+  // The client is told its channel instance died
+  let assert Ok(error_frame) = process.receive(crasher, 500)
+  error_frame
+  |> string.contains("phx_error")
+  |> should.be_true
+
   // The coordinator survived: broadcasts still reach the other socket
   beryl.broadcast(channels, "room:lobby", "still_alive", json.object([]))
   let assert Ok(message) = process.receive(other, 500)
@@ -210,10 +216,16 @@ pub fn terminate_crash_does_not_kill_coordinator_test() {
     "[null,\"leave-1\",\"room:lobby\",\"phx_leave\",{}]",
   )
 
-  // The leave reply is still delivered after the crashing terminate
+  // The leave reply is still delivered despite the crashing terminate
   let assert Ok(reply) = process.receive(socket, 500)
   reply
   |> string.contains("phx_reply")
+  |> should.be_true
+
+  // Followed by the phx_close for the terminated channel
+  let assert Ok(close) = process.receive(socket, 500)
+  close
+  |> string.contains("phx_close")
   |> should.be_true
 
   assert_heartbeat_answered(channels, "socket-1", socket)
@@ -236,5 +248,12 @@ pub fn handle_info_crash_terminates_channel_not_coordinator_test() {
   )
 
   let assert Ok(channel.Error(_)) = process.receive(terminated, 500)
+
+  // The client is told its channel instance died
+  let assert Ok(error_frame) = process.receive(socket, 500)
+  error_frame
+  |> string.contains("phx_error")
+  |> should.be_true
+
   assert_heartbeat_answered(channels, "socket-1", socket)
 }
