@@ -552,6 +552,7 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
     max_event_length: config.max_event_length,
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
     logging: coordinator_logging(config.logging),
+    registry: None,
   )
 }
 
@@ -567,6 +568,10 @@ pub opaque type Channels {
     config: Config,
     pubsub: Option(PubSub),
     connection_limiter: Option(connection_limit.ConnectionLimiter),
+    /// Crash-survivable handler registry. When present, `register` writes
+    /// here and syncs the coordinator, so registrations survive coordinator
+    /// restarts.
+    registry: Option(coordinator.Registry),
   )
 }
 
@@ -575,6 +580,7 @@ pub opaque type Channels {
 pub fn channels_from_coordinator(
   coordinator coordinator: Subject(coordinator.Message),
   config config: Config,
+  registry registry: Option(coordinator.Registry),
 ) -> Channels {
   Channels(
     coordinator: coordinator,
@@ -583,6 +589,7 @@ pub fn channels_from_coordinator(
     connection_limiter: connection_limit.start_optional(
       config.max_connections_per_ip,
     ),
+    registry: registry,
   )
 }
 
@@ -689,7 +696,20 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
     return: internal.result_error(InvalidHeartbeatTimeout),
   )
   warn_if_unprotected(config)
-  let coord_config = to_coordinator_config(config)
+  // Registrations live in a registry that outlives the coordinator, so a
+  // supervised restart (or manual coordinator replacement) can re-seed
+  // them.
+  use registry <- result.try(
+    coordinator.start_registry()
+    |> result.map_error(fn(error) {
+      CoordinatorStartFailed(beryl_error.from_actor_start_error(error))
+    }),
+  )
+  let coord_config =
+    coordinator.CoordinatorConfig(
+      ..to_coordinator_config(config),
+      registry: Some(registry),
+    )
 
   let coordinator_result = case config.pubsub {
     Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
@@ -698,7 +718,11 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 
   case coordinator_result {
     Ok(coord) ->
-      Ok(channels_from_coordinator(coordinator: coord, config: config))
+      Ok(channels_from_coordinator(
+        coordinator: coord,
+        config: config,
+        registry: Some(registry),
+      ))
     error_result -> {
       case
         result.unwrap_error(
@@ -727,6 +751,10 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 pub fn stop(channels: Channels) -> Nil {
   stop_coordinator(channels.coordinator)
   connection_limit.stop_optional(channels.connection_limiter)
+  case channels.registry {
+    Some(registry) -> coordinator.stop_registry(registry)
+    None -> Nil
+  }
 }
 
 fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
@@ -787,10 +815,29 @@ pub fn register(
   // Convert typed Channel to type-erased ChannelHandler
   let erased_handler = erase_channel_types(pattern, handler)
 
-  // Register with coordinator
-  process.call(channels.coordinator, 5000, fn(reply) {
-    coordinator.RegisterChannel(pattern, erased_handler, reply)
-  })
+  let registration = case channels.registry {
+    // Write to the crash-survivable registry, then sync the live
+    // coordinator so the handler is visible before this call returns.
+    Some(registry) -> {
+      use id <- result.try(coordinator.registry_put(
+        registry,
+        pattern,
+        erased_handler,
+      ))
+      let #(handlers, next_id) = coordinator.registry_snapshot(registry)
+      process.call(channels.coordinator, 5000, fn(reply) {
+        coordinator.SyncHandlers(handlers, next_id, reply)
+      })
+      Ok(id)
+    }
+    // No registry configured: register with the coordinator directly.
+    None ->
+      process.call(channels.coordinator, 5000, fn(reply) {
+        coordinator.RegisterChannel(pattern, erased_handler, reply)
+      })
+  }
+
+  registration
   |> result.map(fn(id) {
     RegisteredChannel(
       coordinator: channels.coordinator,

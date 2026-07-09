@@ -133,6 +133,10 @@ pub type CoordinatorConfig {
     max_joined_topics_per_socket: Int,
     /// Logging configuration for coordinator diagnostics.
     logging: LoggingConfig,
+    /// Optional crash-survivable handler registry. When set, the
+    /// coordinator seeds its handler table from the registry at init, so a
+    /// supervised restart recovers every registration.
+    registry: Option(Registry),
   )
 }
 
@@ -156,6 +160,7 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
       include_payloads: False,
       payload_preview_bytes: 200,
     ),
+    registry: None,
   )
 }
 
@@ -320,6 +325,16 @@ pub type Message {
     handler: ChannelHandler,
     reply: Subject(Result(Int, RegisterError)),
   )
+  /// Replace the handler table with a registry snapshot. Sent by
+  /// `beryl.register` after a registry write so the new registration
+  /// reaches the live coordinator; the reply confirms visibility. Do not
+  /// mix with direct `RegisterChannel` on the same coordinator — the
+  /// snapshot replaces the whole table.
+  SyncHandlers(
+    handlers: List(ChannelHandler),
+    next_handler_id: Int,
+    reply: Subject(Nil),
+  )
   // Socket lifecycle
   SocketConnected(
     socket_id: String,
@@ -377,6 +392,130 @@ fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 /// so a faulty channel cannot take down the shared coordinator actor.
 @external(erlang, "beryl_ffi", "rescue")
 fn rescue(callback: fn() -> value) -> Result(value, String)
+
+// ── Handler registry ────────────────────────────────────────────────────────
+
+/// A crash-survivable store for channel registrations.
+///
+/// Registrations live outside the coordinator so a coordinator restart can
+/// re-seed its handler table instead of coming back empty — which would
+/// fail every join with `no_channel_handler` until the application itself
+/// restarted. In the supervised tree the registry starts before the
+/// coordinator, so a rest-for-one coordinator restart leaves it untouched.
+pub opaque type Registry {
+  Registry(subject: Subject(RegistryMsg))
+}
+
+/// Messages the registry actor handles. Opaque: use `registry_put` and the
+/// coordinator's seeding; the type is public only so names can be created
+/// for supervised registries.
+pub opaque type RegistryMsg {
+  RegistryPut(
+    pattern: String,
+    handler: ChannelHandler,
+    reply: Subject(Result(Int, RegisterError)),
+  )
+  RegistrySnapshot(reply: Subject(#(List(ChannelHandler), Int)))
+  RegistryStop(reply: Subject(Nil))
+}
+
+type RegistryState {
+  RegistryState(handlers: List(ChannelHandler), next_id: Int)
+}
+
+fn handle_registry_msg(
+  state: RegistryState,
+  msg: RegistryMsg,
+) -> actor.Next(RegistryState, RegistryMsg) {
+  case msg {
+    RegistryPut(pattern, handler, reply) ->
+      case add_handler(state.handlers, state.next_id, pattern, handler) {
+        Error(error) -> {
+          process.send(reply, Error(error))
+          actor.continue(state)
+        }
+        Ok(#(handlers, next_id, handler_id)) -> {
+          process.send(reply, Ok(handler_id))
+          actor.continue(RegistryState(handlers: handlers, next_id: next_id))
+        }
+      }
+    RegistrySnapshot(reply) -> {
+      process.send(reply, #(state.handlers, state.next_id))
+      actor.continue(state)
+    }
+    RegistryStop(reply) -> {
+      process.send(reply, Nil)
+      actor.stop()
+    }
+  }
+}
+
+/// Start an unsupervised handler registry.
+pub fn start_registry() -> Result(Registry, actor.StartError) {
+  actor.new(RegistryState(handlers: [], next_id: 0))
+  |> actor.on_message(handle_registry_msg)
+  |> actor.start
+  |> result.map(fn(started) { Registry(subject: started.data) })
+}
+
+/// Start a handler registry with a registered name (for supervision).
+pub fn start_registry_named(
+  name: process.Name(RegistryMsg),
+) -> Result(actor.Started(Subject(RegistryMsg)), actor.StartError) {
+  actor.new(RegistryState(handlers: [], next_id: 0))
+  |> actor.on_message(handle_registry_msg)
+  |> actor.named(name)
+  |> actor.start
+}
+
+/// Build a registry handle from a registered name.
+pub fn registry_from_name(name: process.Name(RegistryMsg)) -> Registry {
+  Registry(subject: process.named_subject(name))
+}
+
+/// Validate and store a registration, returning its assigned handler id.
+///
+/// Panics if the registry is unavailable or does not reply within 5
+/// seconds, matching `beryl.register`'s contract.
+pub fn registry_put(
+  registry: Registry,
+  pattern: String,
+  handler: ChannelHandler,
+) -> Result(Int, RegisterError) {
+  process.call(registry.subject, 5000, fn(reply) {
+    RegistryPut(pattern, handler, reply)
+  })
+}
+
+/// Read the registry's full handler table and next id. Falls back to an
+/// empty table when the registry is unavailable, so a coordinator can still
+/// start (with a logged snapshot of nothing) rather than crash-loop.
+pub fn registry_snapshot(registry: Registry) -> #(List(ChannelHandler), Int) {
+  case process.subject_owner(registry.subject) {
+    Error(Nil) -> #([], 0)
+    Ok(_) -> {
+      let reply_subject = process.new_subject()
+      process.send(registry.subject, RegistrySnapshot(reply_subject))
+      case process.receive(reply_subject, 1000) {
+        Ok(snapshot) -> snapshot
+        Error(Nil) -> #([], 0)
+      }
+    }
+  }
+}
+
+/// Stop an unsupervised registry.
+pub fn stop_registry(registry: Registry) -> Nil {
+  let should_send = case process.subject_owner(registry.subject) {
+    Ok(pid) -> process.is_alive(pid)
+    Error(Nil) -> False
+  }
+  use <- bool.guard(when: !should_send, return: Nil)
+  let reply = process.new_subject()
+  process.send(registry.subject, RegistryStop(reply))
+  let _stop_result = process.receive(reply, 1000)
+  Nil
+}
 
 /// Start the coordinator actor with default heartbeat settings (no checking),
 /// using the supplied wire codec.
@@ -447,10 +586,16 @@ fn build_coordinator(
 ) -> actor.Builder(State, Message, Subject(Message)) {
   let logging = internal_logging(config.logging)
   internal.configure(logging)
+  // Seed the handler table from the registry (empty when none is
+  // configured), so a supervised restart recovers every registration.
+  let #(seeded_handlers, seeded_next_id) = case config.registry {
+    Some(registry) -> registry_snapshot(registry)
+    None -> #([], 0)
+  }
   let initial_state =
     State(
-      handlers: [],
-      next_handler_id: 0,
+      handlers: seeded_handlers,
+      next_handler_id: seeded_next_id,
       sockets: dict.new(),
       topics: dict.new(),
       config: config,
@@ -516,6 +661,13 @@ fn handle_message(
   case message {
     RegisterChannel(pattern, handler, reply) ->
       handle_register_channel(state, pattern, handler, reply)
+
+    SyncHandlers(handlers, next_handler_id, reply) -> {
+      process.send(reply, Nil)
+      actor.continue(
+        State(..state, handlers: handlers, next_handler_id: next_handler_id),
+      )
+    }
 
     SocketConnected(socket_id, send, send_binary, codec, connect_assigns) ->
       handle_socket_connected(
@@ -599,33 +751,50 @@ fn handle_register_channel(
       actor.continue(state)
     },
   )
-  let pattern = topic.parse_pattern(pattern_str)
-  let already_registered =
-    list.any(state.handlers, fn(h) { h.pattern == pattern })
-
-  case already_registered {
-    True -> {
-      process.send(reply, Error(PatternAlreadyRegistered(pattern_str)))
+  case
+    add_handler(state.handlers, state.next_handler_id, pattern_str, handler)
+  {
+    Error(error) -> {
+      process.send(reply, Error(error))
       actor.continue(state)
     }
-    False -> {
-      let handler_id = state.next_handler_id
-      let registered_handler =
-        ChannelHandler(
-          id: handler_id,
-          pattern: pattern,
-          join: handler.join,
-          handle_in: handler.handle_in,
-          handle_binary: handler.handle_binary,
-          terminate: handler.terminate,
-        )
-      let new_handlers = list.append(state.handlers, [registered_handler])
+    Ok(#(new_handlers, next_id, handler_id)) -> {
       process.send(reply, Ok(handler_id))
       actor.continue(
-        State(..state, handlers: new_handlers, next_handler_id: handler_id + 1),
+        State(..state, handlers: new_handlers, next_handler_id: next_id),
       )
     }
   }
+}
+
+/// Validate and append a handler to a handler table, assigning the next id.
+/// Shared by the coordinator's direct registration path and the registry.
+fn add_handler(
+  handlers: List(ChannelHandler),
+  next_id: Int,
+  pattern_str: String,
+  handler: ChannelHandler,
+) -> Result(#(List(ChannelHandler), Int, Int), RegisterError) {
+  use <- bool.guard(
+    when: result.is_error(topic.validate_pattern(pattern_str)),
+    return: Error(InvalidPattern(pattern_str)),
+  )
+  let pattern = topic.parse_pattern(pattern_str)
+  let already_registered = list.any(handlers, fn(h) { h.pattern == pattern })
+  use <- bool.guard(
+    when: already_registered,
+    return: Error(PatternAlreadyRegistered(pattern_str)),
+  )
+  let registered_handler =
+    ChannelHandler(
+      id: next_id,
+      pattern: pattern,
+      join: handler.join,
+      handle_in: handler.handle_in,
+      handle_binary: handler.handle_binary,
+      terminate: handler.terminate,
+    )
+  Ok(#(list.append(handlers, [registered_handler]), next_id + 1, next_id))
 }
 
 fn handle_socket_connected(
