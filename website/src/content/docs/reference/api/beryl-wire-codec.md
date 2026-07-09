@@ -287,3 +287,17 @@ pub fn with_error_encoder(
   fn(option.Option(String), String) -> Frame
 ) -> Codec
 ```
+
+### `with_topicless_events`
+
+Mark a codec's events as topicless.
+
+ Some framings (e.g. Socket.IO-style protocols) do not carry a per-frame
+ topic. When set, an inbound event whose topic is empty is routed to the
+ socket's single joined topic; with zero or multiple joins it is dropped.
+ Topic-carrying codecs (like the Phoenix codec) must leave this off so
+ empty-topic frames are rejected instead of guessed at.
+
+```gleam
+pub fn with_topicless_events(Codec) -> Codec
+```

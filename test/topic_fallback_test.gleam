@@ -11,7 +11,10 @@ import gleam/string
 import gleeunit/should
 
 fn start_with_socket(socket_id) {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  // Empty-topic fallback is an explicit codec capability for topicless
+  // framings; the plain Phoenix codec drops empty-topic events instead.
+  let topicless = wire.phoenix_codec() |> codec.with_topicless_events()
+  let assert Ok(channels) = beryl.start(beryl.config(topicless))
   let sent = process.new_subject()
   process.send(
     beryl.coordinator_subject(channels),
@@ -56,6 +59,41 @@ pub fn topicless_event_routes_to_single_join_test() {
   )
   let assert Ok(reply) = process.receive(sent, 500)
   reply |> string.contains("echoed") |> should.be_true
+}
+
+// The plain Phoenix codec never guesses: an empty-topic event is dropped
+// even when the socket has exactly one join, matching Phoenix.
+pub fn phoenix_codec_drops_topicless_events_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let sent = process.new_subject()
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "s3",
+      fn(text) {
+        process.send(sent, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+  let assert Ok(_) = beryl.register(channels, "room:*", echo_channel())
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "s3",
+    "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]",
+  )
+  let assert Ok(_) = process.receive(sent, 500)
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "s3",
+    "[null,null,\"\",\"submitOp\",{}]",
+  )
+  process.receive(sent, 200) |> should.be_error
 }
 
 // With no join, a topic-less event is dropped (nothing sent back).

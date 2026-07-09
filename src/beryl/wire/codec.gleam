@@ -146,6 +146,7 @@ pub opaque type Codec {
     encode_heartbeat_reply: fn(Option(String)) -> Frame,
     encode_close: Option(fn(Option(String), String) -> Frame),
     encode_error: Option(fn(Option(String), String) -> Frame),
+    topicless_events: Bool,
   )
 }
 
@@ -180,6 +181,7 @@ pub fn new(
     encode_heartbeat_reply:,
     encode_close: None,
     encode_error: None,
+    topicless_events: False,
   )
 }
 
@@ -261,6 +263,23 @@ pub fn encode_close(
   codec: Codec,
 ) -> Option(fn(Option(String), String) -> Frame) {
   codec.encode_close
+}
+
+/// Mark a codec's events as topicless.
+///
+/// Some framings (e.g. Socket.IO-style protocols) do not carry a per-frame
+/// topic. When set, an inbound event whose topic is empty is routed to the
+/// socket's single joined topic; with zero or multiple joins it is dropped.
+/// Topic-carrying codecs (like the Phoenix codec) must leave this off so
+/// empty-topic frames are rejected instead of guessed at.
+pub fn with_topicless_events(codec: Codec) -> Codec {
+  Codec(..codec, topicless_events: True)
+}
+
+/// Accessor for the codec's topicless-events flag.
+@internal
+pub fn topicless_events(codec: Codec) -> Bool {
+  codec.topicless_events
 }
 
 /// Accessor for the codec's optional channel-error encoder.

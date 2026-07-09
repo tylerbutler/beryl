@@ -535,7 +535,20 @@ fn handle_message(
     Broadcast(topic_name, event, payload, except) ->
       handle_broadcast(state, topic_name, event, payload, except)
 
-    RemoteBroadcast(pubsub_msg) -> handle_remote_broadcast(state, pubsub_msg)
+    RemoteBroadcast(pubsub_msg) ->
+      // The pg-delivered record is coerced without validation, so a
+      // malformed message (mixed-version cluster, stray tuple sent to the
+      // coordinator's pid) must not crash the coordinator.
+      case rescue(fn() { handle_remote_broadcast(state, pubsub_msg) }) {
+        Ok(next) -> next
+        Error(crash) -> {
+          coordinator_logger(state)
+          |> log.error("Remote broadcast dropped: malformed message", [
+            #("crash", crash),
+          ])
+          actor.continue(state)
+        }
+      }
 
     CheckHeartbeats -> handle_check_heartbeats(state)
 
@@ -1654,11 +1667,12 @@ fn dispatch_inbound(
   }
 }
 
-/// Resolve the topic for an inbound Event. Some codecs (e.g. Socket.IO/Fluid)
-/// omit a per-frame topic; in that case route to the socket's single joined
-/// topic. With zero or multiple joined topics the original (empty) topic is
-/// returned so existing validation drops it. Topic-carrying codecs (Phoenix)
-/// are unaffected.
+/// Resolve the topic for an inbound Event. Codecs that opt in via
+/// `codec.with_topicless_events` (e.g. Socket.IO-style framings) omit a
+/// per-frame topic; for those, an empty topic routes to the socket's single
+/// joined topic. With zero or multiple joined topics — or for
+/// topic-carrying codecs like Phoenix, where an empty topic is a protocol
+/// violation — the original (empty) topic is returned so validation drops it.
 fn resolve_event_topic(
   state: State,
   socket_id: String,
@@ -1668,9 +1682,12 @@ fn resolve_event_topic(
     "" ->
       case dict.get(state.sockets, socket_id) {
         Ok(info) ->
-          case set.to_list(info.subscribed_topics) {
-            [only] -> only
-            _ -> requested
+          case
+            codec.topicless_events(info.codec),
+            set.to_list(info.subscribed_topics)
+          {
+            True, [only] -> only
+            _, _ -> requested
           }
         Error(Nil) -> requested
       }
@@ -2205,17 +2222,20 @@ fn dispatch_handle_binary(
       ])
       update_assigns(st, socket_id, topic_name, new_assigns)
     }
-    Ok(ReplyErased(_event, reply_payload, new_assigns)) -> {
+    Ok(ReplyErased(reply_event, reply_payload, new_assigns)) -> {
       logger
       |> log.debug("Channel callback returned reply", [
         #("socket_id", socket_id),
         #("topic", topic_name),
         #("callback", "handle_binary"),
       ])
+      // Raw binary frames carry no ref to correlate a reply with, so the
+      // reply is delivered as a push under the handler's own event name
+      // (mirroring handle_info).
       let msg =
         codec.encode_push(socket_info.codec)(
           topic_name,
-          "binary_reply",
+          reply_event,
           reply_payload,
         )
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)

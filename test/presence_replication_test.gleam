@@ -130,6 +130,7 @@ pub fn remote_state_triggers_merge_via_pubsub_test() {
   let config1 =
     presence.default_config("node1")
     |> presence.with_pubsub(ps)
+    |> presence.with_broadcast_interval(0)
   let assert Ok(p1) = presence.start(config1)
 
   // Node2 with broadcasting enabled

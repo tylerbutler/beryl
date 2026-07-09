@@ -211,12 +211,17 @@ type ActorState {
   )
 }
 
-/// Default configuration (no PubSub, no replication)
+/// Default configuration (no PubSub).
+///
+/// The broadcast interval defaults to 1500 ms so that adding `with_pubsub`
+/// yields working two-way replication out of the box; without PubSub the
+/// interval is unused. Use `with_broadcast_interval(0)` to disable periodic
+/// broadcasts and control replication manually.
 pub fn default_config(replica: String) -> Config {
   Config(
     pubsub: None,
     replica: replica,
-    broadcast_interval_ms: 0,
+    broadcast_interval_ms: 1500,
     on_diff: None,
   )
 }

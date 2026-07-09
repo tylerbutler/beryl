@@ -26,6 +26,17 @@ A PubSub message delivered to subscribers.
  This type is intentionally transparent so subscribers can inspect the topic,
  event, payload, and sender metadata delivered to their process mailbox.
 
+ ## Frozen wire contract
+
+ `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
+ the record tag and its four fields, in this order — is a frozen v1 wire
+ contract, not just a source-level API. It will not change within 1.x:
+ subscribers select it as a 4-field `message` record, and a rolling
+ cluster upgrade must never mis-parse a frame from an older node. If the
+ envelope ever needs new fields, they will arrive as a **new record tag**
+ (a new variant), which old nodes' selectors simply do not match — never
+ as a change to this record. The same applies to `PubSubFrom`.
+
 ```gleam
 pub type Message {
   Message(
@@ -61,7 +72,9 @@ pub type PubSubConfig
 
 ### `PubSubFrom`
 
-Identifies the sender of a broadcast
+Identifies the sender of a broadcast.
+
+ Part of the frozen v1 wire contract described on `Message`.
 
 ```gleam
 pub type PubSubFrom {
