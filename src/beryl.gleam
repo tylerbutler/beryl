@@ -54,6 +54,7 @@ import beryl/connection_limit
 import beryl/coordinator
 import beryl/error as beryl_error
 import beryl/internal
+import beryl/log
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
@@ -482,6 +483,34 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
   config.max_joined_topics_per_socket
 }
 
+/// Warn when a channels system starts with every abuse control disabled.
+///
+/// Beryl ships with rate and connection limits off (like Phoenix) because
+/// no default is right for every deployment — but running that way in
+/// production leaves the server open to trivial floods, so the choice
+/// should be a visible one. Called by both `start` and `supervisor.start`.
+// nolint: unused_exports -- package-internal helper shared with beryl/supervisor; hidden from public docs with @internal
+
+@internal
+pub fn warn_if_unprotected(config: Config) -> Nil {
+  let unprotected =
+    config.max_connections_per_ip <= 0
+    && config.message_rate <= 0
+    && config.join_rate <= 0
+    && config.channel_rate <= 0
+  use <- bool.guard(when: !unprotected, return: Nil)
+  internal.logger("beryl")
+  |> log.warn("No abuse controls configured", [
+    #(
+      "hint",
+      "rate and connection limits are all disabled; fine for development, "
+        <> "but for production configure with_message_rate, with_join_rate, "
+        <> "and with_max_connections_per_ip (see the production hardening "
+        <> "guide)",
+    ),
+  ])
+}
+
 /// Build a coordinator config (starting rate-limiter actors) from a `Config`.
 /// Shared by `start` and the supervisor so the mapping lives in one place.
 @internal
@@ -645,6 +674,7 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(InvalidHeartbeatTimeout),
   )
+  warn_if_unprotected(config)
   let coord_config = to_coordinator_config(config)
 
   let coordinator_result = case config.pubsub {

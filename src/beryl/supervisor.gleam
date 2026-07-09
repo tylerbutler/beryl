@@ -137,6 +137,7 @@ pub fn start(
     when: beryl.config_heartbeat_timeout_ms(config.channels) < 2,
     return: Error(InvalidHeartbeatTimeout),
   )
+  beryl.warn_if_unprotected(config.channels)
   start_supervised(config)
 }
 

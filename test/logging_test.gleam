@@ -297,6 +297,34 @@ pub fn debug_channel_callback_logs_push_result_test() {
   stop_capture()
 }
 
+pub fn start_warns_when_no_abuse_controls_configured_test() {
+  let selector = begin_capture()
+
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+
+  receive_log(selector, "No abuse controls configured", 10)
+  |> should.be_ok
+
+  beryl.stop(channels)
+  stop_capture()
+}
+
+pub fn start_does_not_warn_when_a_limit_is_configured_test() {
+  let selector = begin_capture()
+
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 100, burst: 200),
+    )
+
+  receive_log(selector, "No abuse controls configured", 2)
+  |> should.be_error
+
+  beryl.stop(channels)
+  stop_capture()
+}
+
 fn receive_log(
   selector: process.Selector(CapturedLog),
   message: String,
