@@ -16,6 +16,7 @@ import beryl/wire/codec.{
   type ReplyStatus, Event, Heartbeat, InvalidFormat, InvalidJson, Join, Leave,
   StatusError, StatusOk, TextFrame,
 }
+import gleam/bit_array
 import gleam/bool
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
@@ -30,6 +31,11 @@ const expected_array_message = "Expected array of 5 elements [join_ref, ref, top
 const max_json_nesting_depth = 64
 
 /// The canonical Phoenix wire codec. Pass to `beryl.config/1`.
+///
+/// Handles both the JSON array framing on text frames and the Phoenix V2
+/// binary framing on binary frames (see `decode_binary_message`). Binary
+/// push payloads reach `handle_in` as a `BitArray` wrapped in `Dynamic`;
+/// decode them with `gleam/dynamic/decode.bit_array`.
 pub fn phoenix_codec() -> Codec {
   codec.new(
     decode_text: decode_message,
@@ -39,6 +45,7 @@ pub fn phoenix_codec() -> Codec {
   )
   |> codec.with_close_encoder(channel_close)
   |> codec.with_error_encoder(channel_error)
+  |> codec.with_binary_decoder(decode_binary_message)
 }
 
 /// Parse a JSON string into an `Inbound`.
@@ -366,6 +373,172 @@ fn option_to_json(opt: Option(String)) -> json.Json {
   case opt {
     None -> json.null()
     Some(s) -> json.string(s)
+  }
+}
+
+// ── Phoenix V2 binary framing ───────────────────────────────────────────────
+//
+// Phoenix clients switch to a compact binary framing whenever a push payload
+// is raw bytes (an ArrayBuffer in the JS client). Frames start with a kind
+// byte, then u8 lengths for each metadata component, then the components,
+// then the payload as the remaining bytes:
+//
+//   client push:      <<0, jr_len, ref_len, topic_len, event_len,
+//                       jr, ref, topic, event, payload>>
+//   server push:      <<0, jr_len, topic_len, event_len, jr, topic, event, payload>>
+//   server reply:     <<1, jr_len, ref_len, topic_len, status_len,
+//                       jr, ref, topic, status, payload>>
+//   server broadcast: <<2, topic_len, event_len, topic, event, payload>>
+
+const binary_push_kind = 0
+
+const binary_reply_kind = 1
+
+const binary_broadcast_kind = 2
+
+const expected_binary_message = "Expected Phoenix V2 binary push frame"
+
+/// Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
+///
+/// The payload is delivered to `handle_in` as raw bytes (`BitArray` wrapped
+/// in `Dynamic`); decode it with `gleam/dynamic/decode.bit_array`. Zero-length
+/// join_ref/ref components decode as `None`. Reserved protocol events are
+/// classified the same way as on the text framing.
+pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
+  case data {
+    <<
+      0,
+      join_ref_size,
+      ref_size,
+      topic_size,
+      event_size,
+      join_ref:bytes-size(join_ref_size),
+      ref:bytes-size(ref_size),
+      topic:bytes-size(topic_size),
+      event:bytes-size(event_size),
+      payload:bytes,
+    >> -> {
+      use join_ref <- result.try(optional_utf8(join_ref))
+      use ref <- result.try(optional_utf8(ref))
+      use topic <- result.try(required_utf8(topic, "topic"))
+      use event <- result.try(required_utf8(event, "event"))
+      Ok(codec.inbound(
+        join_ref: join_ref,
+        ref: ref,
+        topic: topic,
+        kind: classify_phoenix_event(topic, event),
+        payload: dynamic.bit_array(payload),
+      ))
+    }
+    _ -> Error(InvalidFormat(expected_binary_message))
+  }
+}
+
+fn optional_utf8(bytes: BitArray) -> Result(Option(String), DecodeError) {
+  case bit_array.byte_size(bytes) {
+    0 -> Ok(None)
+    _ ->
+      required_utf8(bytes, "ref")
+      |> result.map(Some)
+  }
+}
+
+fn required_utf8(bytes: BitArray, name: String) -> Result(String, DecodeError) {
+  bit_array.to_string(bytes)
+  |> result.replace_error(InvalidFormat(name <> " is not valid UTF-8"))
+}
+
+/// Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
+///
+/// Errors when a metadata component exceeds the framing's 255-byte length
+/// limit.
+pub fn binary_push(
+  join_ref join_ref: Option(String),
+  topic topic: String,
+  event event: String,
+  payload payload: BitArray,
+) -> Result(Frame, Nil) {
+  use #(jr_size, jr) <- result.try(u8_component(option.unwrap(join_ref, "")))
+  use #(topic_size, topic) <- result.try(u8_component(topic))
+  use #(event_size, event) <- result.try(u8_component(event))
+  Ok(
+    codec.BinaryFrame(<<
+      binary_push_kind,
+      jr_size,
+      topic_size,
+      event_size,
+      jr:bits,
+      topic:bits,
+      event:bits,
+      payload:bits,
+    >>),
+  )
+}
+
+/// Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
+///
+/// Errors when a metadata component exceeds the framing's 255-byte length
+/// limit.
+pub fn binary_reply(
+  join_ref join_ref: Option(String),
+  ref ref: Option(String),
+  topic topic: String,
+  status status: ReplyStatus,
+  payload payload: BitArray,
+) -> Result(Frame, Nil) {
+  let status_string = case status {
+    StatusOk -> "ok"
+    StatusError -> "error"
+  }
+  use #(jr_size, jr) <- result.try(u8_component(option.unwrap(join_ref, "")))
+  use #(ref_size, ref) <- result.try(u8_component(option.unwrap(ref, "")))
+  use #(topic_size, topic) <- result.try(u8_component(topic))
+  use #(status_size, status) <- result.try(u8_component(status_string))
+  Ok(
+    codec.BinaryFrame(<<
+      binary_reply_kind,
+      jr_size,
+      ref_size,
+      topic_size,
+      status_size,
+      jr:bits,
+      ref:bits,
+      topic:bits,
+      status:bits,
+      payload:bits,
+    >>),
+  )
+}
+
+/// Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
+///
+/// Errors when a metadata component exceeds the framing's 255-byte length
+/// limit.
+pub fn binary_broadcast(
+  topic topic: String,
+  event event: String,
+  payload payload: BitArray,
+) -> Result(Frame, Nil) {
+  use #(topic_size, topic) <- result.try(u8_component(topic))
+  use #(event_size, event) <- result.try(u8_component(event))
+  Ok(
+    codec.BinaryFrame(<<
+      binary_broadcast_kind,
+      topic_size,
+      event_size,
+      topic:bits,
+      event:bits,
+      payload:bits,
+    >>),
+  )
+}
+
+fn u8_component(value: String) -> Result(#(Int, BitArray), Nil) {
+  let bytes = bit_array.from_string(value)
+  let size = bit_array.byte_size(bytes)
+  case size <= 255 {
+    True -> Ok(#(size, bytes))
+    False -> Error(Nil)
   }
 }
 
