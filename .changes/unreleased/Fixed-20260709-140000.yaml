@@ -1,0 +1,5 @@
+kind: Fixed
+body: |-
+    Presence survives node restarts without losing joins or leaking ghosts.
+    Each presence actor start now derives a unique incarnation name from the configured replica base, so a restarted node never reuses its previous incarnation's CRDT clocks (which silently hid its new presences from peers). On every inbound sync, state left behind by dead incarnations of the sender's base — or of the node's own base, echoed back by peers — is pruned with leave diffs, so pre-crash ghost entries converge away within about one broadcast interval. The configured replica base must identify at most one live node.
+time: 2026-07-09T14:00:00.000000-00:00

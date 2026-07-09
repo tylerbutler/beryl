@@ -518,13 +518,12 @@ fn optional_limits(
   Some(rate_limit.config(per_second: rate, burst: burst))
 }
 
+// nolint: unused_exports -- package-internal accessor for transports; hidden from public docs with @internal
 /// Per-socket message rate limits for transports, `None` when unlimited.
 ///
 /// Transports enforce this with a local token bucket per connection so
 /// flooded sockets are shed at the edge, before frames are decoded or
 /// enqueued on the coordinator.
-// nolint: unused_exports -- package-internal accessor for transports; hidden from public docs with @internal
-
 @internal
 pub fn message_limits(
   channels: Channels,
