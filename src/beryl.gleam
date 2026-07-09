@@ -489,8 +489,6 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
 /// should be a visible one. Called by both `start` and `supervisor.start`.
-// nolint: unused_exports -- package-internal helper shared with beryl/supervisor; hidden from public docs with @internal
-
 @internal
 pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
@@ -511,7 +509,30 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
   ])
 }
 
-/// Build a coordinator config (starting rate-limiter actors) from a `Config`.
+/// Rate-limit settings as a pure config, `None` when the rate is unlimited.
+fn optional_limits(
+  rate: Int,
+  burst: Int,
+) -> Option(rate_limit.RateLimitConfig) {
+  use <- bool.guard(when: rate <= 0, return: None)
+  Some(rate_limit.config(per_second: rate, burst: burst))
+}
+
+/// Per-socket message rate limits for transports, `None` when unlimited.
+///
+/// Transports enforce this with a local token bucket per connection so
+/// flooded sockets are shed at the edge, before frames are decoded or
+/// enqueued on the coordinator.
+// nolint: unused_exports -- package-internal accessor for transports; hidden from public docs with @internal
+
+@internal
+pub fn message_limits(
+  channels: Channels,
+) -> Option(rate_limit.RateLimitConfig) {
+  optional_limits(channels.config.message_rate, channels.config.message_burst)
+}
+
+/// Build a coordinator config from a `Config`.
 /// Shared by `start` and the supervisor so the mapping lives in one place.
 @internal
 pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
@@ -519,20 +540,13 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
   // promptly. The client heartbeat_interval_ms is informational only.
   let check_interval = config.heartbeat_timeout_ms / 2
 
-  let message_limiter =
-    rate_limit.start_optional(config.message_rate, config.message_burst)
-  let join_limiter =
-    rate_limit.start_optional(config.join_rate, config.join_burst)
-  let channel_limiter =
-    rate_limit.start_optional(config.channel_rate, config.channel_burst)
-
   coordinator.CoordinatorConfig(
     codec: config.codec,
     heartbeat_check_interval_ms: check_interval,
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
-    message_limiter: message_limiter,
-    join_limiter: join_limiter,
-    channel_limiter: channel_limiter,
+    message_limits: optional_limits(config.message_rate, config.message_burst),
+    join_limits: optional_limits(config.join_rate, config.join_burst),
+    channel_limits: optional_limits(config.channel_rate, config.channel_burst),
     channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
     max_topic_length: config.max_topic_length,
     max_event_length: config.max_event_length,

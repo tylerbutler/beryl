@@ -5,6 +5,10 @@
 
 import beryl.{type Channels}
 import beryl/coordinator.{type Message as CoordinatorMessage}
+import beryl/internal
+import beryl/log
+import beryl/rate_limit
+import beryl/wire/codec
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -99,6 +103,14 @@ type ConnectionState {
     coordinator: Subject(CoordinatorMessage),
     connection_permit: Option(beryl.ConnectionPermit),
     max_inbound_frame_bytes: Int,
+    /// Wire codec for decoding inbound frames here in the connection
+    /// process, so parse cost and malformed input never reach the shared
+    /// coordinator.
+    codec: codec.Codec,
+    /// Per-connection message-rate token bucket (`None` = unlimited).
+    /// Enforced at the edge: frames over the rate are shed before decode,
+    /// so a flooding socket cannot fill the coordinator's mailbox.
+    message_bucket: Option(rate_limit.Bucket),
   )
 }
 
@@ -316,6 +328,8 @@ fn do_upgrade(
   connection_permit: Option(beryl.ConnectionPermit),
 ) -> Response(ResponseData) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
+  let active_codec = beryl.configured_codec(channels)
+  let message_limits = beryl.message_limits(channels)
   let response =
     mist.websocket(
       request: request,
@@ -329,6 +343,8 @@ fn do_upgrade(
           connect_assigns,
           connection_permit,
           max_inbound_frame_bytes,
+          active_codec,
+          message_limits,
         )
       },
       on_close: on_close,
@@ -355,6 +371,8 @@ fn on_init(
   connect_assigns: Dynamic,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
+  active_codec: codec.Codec,
+  message_limits: Option(rate_limit.RateLimitConfig),
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Bind the per-IP slot to this WebSocket process so it is reclaimed even
   // if the process dies without running on_close.
@@ -408,6 +426,8 @@ fn on_init(
       coordinator: coordinator,
       connection_permit: connection_permit,
       max_inbound_frame_bytes: max_inbound_frame_bytes,
+      codec: active_codec,
+      message_bucket: option.map(message_limits, rate_limit.new_bucket),
     )
 
   #(state, Some(selector))
@@ -427,10 +447,7 @@ fn on_message(
         frame_too_large(state.max_inbound_frame_bytes, string.byte_size(text))
       {
         True -> mist.stop()
-        False -> {
-          coordinator.route_message(state.coordinator, state.socket_id, text)
-          mist.continue(state)
-        }
+        False -> handle_inbound_text(state, text)
       }
     }
     mist.Binary(data) -> {
@@ -441,10 +458,7 @@ fn on_message(
         )
       {
         True -> mist.stop()
-        False -> {
-          coordinator.route_binary(state.coordinator, state.socket_id, data)
-          mist.continue(state)
-        }
+        False -> handle_inbound_binary(state, data)
       }
     }
 
@@ -461,6 +475,82 @@ fn on_message(
       |> result.unwrap(mist.continue(state))
     }
   }
+}
+
+/// Rate-check and decode a text frame in the connection process, so parse
+/// cost stays here and only valid, rate-admitted messages reach the shared
+/// coordinator.
+fn handle_inbound_text(
+  state: ConnectionState,
+  text: String,
+) -> mist.Next(ConnectionState, SendRequest) {
+  let #(state, allowed) = take_message_token(state)
+  use <- bool.guard(when: !allowed, return: mist.continue(state))
+  case codec.decode_text(state.codec)(text) {
+    Ok(msg) -> {
+      coordinator.route_decoded(state.coordinator, state.socket_id, msg)
+      mist.continue(state)
+    }
+    Error(err) -> {
+      transport_logger()
+      |> log.warn("Failed to decode wire protocol message", [
+        #("socket_id", state.socket_id),
+        #("error", codec.format_decode_error(err)),
+      ])
+      mist.continue(state)
+    }
+  }
+}
+
+/// Rate-check and decode a binary frame in the connection process. Codecs
+/// without a binary decoder keep the raw `handle_binary` fan-out, routed
+/// through the coordinator.
+fn handle_inbound_binary(
+  state: ConnectionState,
+  data: BitArray,
+) -> mist.Next(ConnectionState, SendRequest) {
+  let #(state, allowed) = take_message_token(state)
+  use <- bool.guard(when: !allowed, return: mist.continue(state))
+  case codec.decode_binary(state.codec) {
+    None -> {
+      coordinator.route_binary(state.coordinator, state.socket_id, data)
+      mist.continue(state)
+    }
+    Some(decode_binary) ->
+      case decode_binary(data) {
+        Ok(msg) -> {
+          coordinator.route_decoded(state.coordinator, state.socket_id, msg)
+          mist.continue(state)
+        }
+        Error(err) -> {
+          transport_logger()
+          |> log.warn("Failed to decode binary wire protocol message", [
+            #("socket_id", state.socket_id),
+            #("error", codec.format_decode_error(err)),
+          ])
+          mist.continue(state)
+        }
+      }
+  }
+}
+
+/// Take a token from the connection's message bucket; always allowed when
+/// no message rate is configured.
+fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
+  case state.message_bucket {
+    None -> #(state, True)
+    Some(bucket) -> {
+      let #(bucket, taken) = rate_limit.take(bucket)
+      #(
+        ConnectionState(..state, message_bucket: Some(bucket)),
+        result.is_ok(taken),
+      )
+    }
+  }
+}
+
+fn transport_logger() -> log.Logger {
+  internal.logger("beryl.transport.mist")
 }
 
 fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {

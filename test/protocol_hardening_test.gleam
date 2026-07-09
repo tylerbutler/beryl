@@ -73,13 +73,11 @@ fn count_messages(subject: process.Subject(String), count: Int) -> Int {
 }
 
 pub fn heartbeat_flood_is_message_rate_limited_test() {
-  let assert Ok(limiter) =
-    rate_limit.start(rate_limit.config(per_second: 1, burst: 2))
   let assert Ok(coord) =
     coordinator.start_with_config(
       coordinator.CoordinatorConfig(
         ..coordinator.config(wire.phoenix_codec()),
-        message_limiter: Some(limiter),
+        message_limits: Some(rate_limit.config(per_second: 1, burst: 2)),
       ),
     )
 
@@ -90,7 +88,6 @@ pub fn heartbeat_flood_is_message_rate_limited_test() {
   let replies = count_messages(sent, 0)
   { replies <= 2 } |> should.be_true
   { replies >= 1 } |> should.be_true
-  rate_limit.stop(limiter)
 }
 
 fn send_heartbeats(

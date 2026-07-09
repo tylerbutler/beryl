@@ -219,6 +219,45 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
   stop_supervisor(server_pid)
 }
 
+pub fn handler_sheds_message_flood_at_the_edge_test() {
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 1, burst: 2),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  // Flood heartbeats: only the burst allowance may produce replies. The
+  // rest are shed by the connection process before reaching the
+  // coordinator.
+  send_heartbeats(client, 10)
+  let replies = count_replies(client, 0)
+  { replies <= 2 } |> should.be_true
+  { replies >= 1 } |> should.be_true
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+fn send_heartbeats(client: WebsocketClient, remaining: Int) -> Nil {
+  case remaining <= 0 {
+    True -> Nil
+    False -> {
+      let assert Ok(_) =
+        send_text(client, "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]")
+      send_heartbeats(client, remaining - 1)
+    }
+  }
+}
+
+fn count_replies(client: WebsocketClient, count: Int) -> Int {
+  case receive_text(client, 200) {
+    Ok(_) -> count_replies(client, count + 1)
+    Error(Nil) -> count
+  }
+}
+
 pub fn handler_closes_socket_on_oversized_text_frame_test() {
   let #(port, server_pid) = start_frame_limited_server()
   let assert Ok(client) = connect_websocket(port, "/socket")

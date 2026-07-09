@@ -112,17 +112,13 @@ fn handle_message(
 /// Monitor a permit holder so its slot is reclaimed if the process dies
 /// without releasing. Rebinding the same pid is a no-op.
 fn bind_holder(state: State, ip: String, owner: Pid) -> State {
-  case dict.has_key(state.holders, owner) {
-    True -> state
-    False -> {
-      let monitor = process.monitor(owner)
-      State(
-        ..state,
-        monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
-        holders: dict.insert(state.holders, owner, monitor),
-      )
-    }
-  }
+  use <- bool.guard(when: dict.has_key(state.holders, owner), return: state)
+  let monitor = process.monitor(owner)
+  State(
+    ..state,
+    monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
+    holders: dict.insert(state.holders, owner, monitor),
+  )
 }
 
 fn release_ip(state: State, ip: String) -> State {

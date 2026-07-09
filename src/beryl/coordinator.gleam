@@ -11,7 +11,7 @@ import beryl/channel.{type StopReason}
 import beryl/internal
 import beryl/log.{type Logger}
 import beryl/pubsub.{type PubSub}
-import beryl/rate_limit.{type RateLimiter}
+import beryl/rate_limit.{type RateLimitConfig}
 import beryl/topic.{type TopicPattern}
 import beryl/wire/codec.{type Codec}
 import gleam/bool
@@ -115,13 +115,13 @@ pub type CoordinatorConfig {
     heartbeat_check_interval_ms: Int,
     /// Disconnect sockets that haven't sent a heartbeat within this duration
     heartbeat_timeout_ms: Int,
-    /// Per-socket message rate limiter (None = unlimited)
-    message_limiter: Option(RateLimiter),
-    /// Per-socket join rate limiter (None = unlimited)
-    join_limiter: Option(RateLimiter),
-    /// Per-channel message rate limiter (None = unlimited)
-    channel_limiter: Option(RateLimiter),
-    /// Maximum active channel-limiter keys per socket. Values <= 0 disable the cap.
+    /// Per-socket message rate limits (None = unlimited)
+    message_limits: Option(RateLimitConfig),
+    /// Per-socket join rate limits (None = unlimited)
+    join_limits: Option(RateLimitConfig),
+    /// Per-channel message rate limits (None = unlimited)
+    channel_limits: Option(RateLimitConfig),
+    /// Maximum active channel-limiter buckets per socket. Values <= 0 disable the cap.
     channel_limiter_max_keys_per_socket: Int,
     /// Maximum byte length for client-supplied topic strings (default: 256).
     /// Topics exceeding this limit are rejected before reaching a channel handler.
@@ -144,9 +144,9 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
     codec: codec,
     heartbeat_check_interval_ms: 0,
     heartbeat_timeout_ms: 60_000,
-    message_limiter: None,
-    join_limiter: None,
-    channel_limiter: None,
+    message_limits: None,
+    join_limits: None,
+    channel_limits: None,
     channel_limiter_max_keys_per_socket: 1000,
     max_topic_length: 256,
     max_event_length: 64,
@@ -227,6 +227,14 @@ type State {
     logger: Logger,
     /// The coordinator's own subject, used for scheduling timers
     self_subject: Option(Subject(Message)),
+    /// Per-socket message-rate token buckets (socket_id -> bucket).
+    message_buckets: Dict(String, rate_limit.Bucket),
+    /// Per-socket join-rate token buckets (socket_id -> bucket).
+    join_buckets: Dict(String, rate_limit.Bucket),
+    /// Per-channel token buckets (socket_id -> topic -> bucket). Keyed by
+    /// socket first so the per-socket cap and disconnect cleanup are O(1)
+    /// lookups instead of prefix scans.
+    channel_buckets: Dict(String, Dict(String, rate_limit.Bucket)),
   )
 }
 
@@ -449,6 +457,9 @@ fn build_coordinator(
       pubsub: ps,
       logger: internal.logger_with_config("beryl.coordinator", logging),
       self_subject: None,
+      message_buckets: dict.new(),
+      join_buckets: dict.new(),
+      channel_buckets: dict.new(),
     )
 
   actor.new_with_initialiser(5000, fn(subject) {
@@ -571,9 +582,6 @@ fn handle_stop(
     disconnect_socket(st, socket_id, channel.Shutdown)
   })
 
-  rate_limit.stop_optional(state.config.message_limiter)
-  rate_limit.stop_optional(state.config.join_limiter)
-  rate_limit.stop_optional(state.config.channel_limiter)
   process.send(reply, Nil)
   actor.stop()
 }
@@ -685,19 +693,122 @@ fn handle_socket_disconnected(
   actor.continue(disconnect_socket(state, socket_id, channel.Normal))
 }
 
-fn remove_socket_rate_limits(state: State, socket_id: String) -> Nil {
-  rate_limit.remove_by_prefix_optional(
-    state.config.message_limiter,
-    "msg:" <> socket_id,
+fn remove_socket_rate_limits(state: State, socket_id: String) -> State {
+  State(
+    ..state,
+    message_buckets: dict.delete(state.message_buckets, socket_id),
+    join_buckets: dict.delete(state.join_buckets, socket_id),
+    channel_buckets: dict.delete(state.channel_buckets, socket_id),
   )
-  rate_limit.remove_by_prefix_optional(
-    state.config.join_limiter,
-    "join:" <> socket_id,
+}
+
+/// Take a token from the socket's message-rate bucket. Always allowed when
+/// no message limits are configured.
+fn check_message_rate(state: State, socket_id: String) -> #(State, Bool) {
+  case state.config.message_limits {
+    None -> #(state, True)
+    Some(limits) -> {
+      let bucket =
+        dict.get(state.message_buckets, socket_id)
+        |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
+      let #(bucket, taken) = rate_limit.take(bucket)
+      #(
+        State(
+          ..state,
+          message_buckets: dict.insert(state.message_buckets, socket_id, bucket),
+        ),
+        result.is_ok(taken),
+      )
+    }
+  }
+}
+
+/// Take a token from the socket's join-rate bucket. Always allowed when no
+/// join limits are configured.
+fn check_join_rate(state: State, socket_id: String) -> #(State, Bool) {
+  case state.config.join_limits {
+    None -> #(state, True)
+    Some(limits) -> {
+      let bucket =
+        dict.get(state.join_buckets, socket_id)
+        |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
+      let #(bucket, taken) = rate_limit.take(bucket)
+      #(
+        State(
+          ..state,
+          join_buckets: dict.insert(state.join_buckets, socket_id, bucket),
+        ),
+        result.is_ok(taken),
+      )
+    }
+  }
+}
+
+/// Take a token from the socket's per-topic channel bucket, refusing to
+/// create a new bucket beyond the per-socket cap. Always allowed when no
+/// channel limits are configured.
+fn check_channel_rate(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+) -> #(State, Bool) {
+  case state.config.channel_limits {
+    None -> #(state, True)
+    Some(limits) -> take_channel_token(state, socket_id, topic_name, limits)
+  }
+}
+
+fn take_channel_token(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+  limits: RateLimitConfig,
+) -> #(State, Bool) {
+  let socket_buckets =
+    dict.get(state.channel_buckets, socket_id)
+    |> result.unwrap(dict.new())
+  let cap = state.config.channel_limiter_max_keys_per_socket
+  let over_cap = case dict.has_key(socket_buckets, topic_name) {
+    True -> False
+    False -> cap > 0 && dict.size(socket_buckets) >= cap
+  }
+  use <- bool.guard(when: over_cap, return: #(state, False))
+  let bucket =
+    dict.get(socket_buckets, topic_name)
+    |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
+  let #(bucket, taken) = rate_limit.take(bucket)
+  let socket_buckets = dict.insert(socket_buckets, topic_name, bucket)
+  #(
+    State(
+      ..state,
+      channel_buckets: dict.insert(
+        state.channel_buckets,
+        socket_id,
+        socket_buckets,
+      ),
+    ),
+    result.is_ok(taken),
   )
-  rate_limit.remove_by_prefix_optional(
-    state.config.channel_limiter,
-    "ch:" <> socket_id <> ":",
-  )
+}
+
+/// Drop the channel bucket for a terminated socket/topic pair.
+fn remove_channel_bucket(
+  state: State,
+  socket_id: String,
+  topic_name: String,
+) -> State {
+  case dict.get(state.channel_buckets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket_buckets) ->
+      State(
+        ..state,
+        channel_buckets: dict.insert(
+          state.channel_buckets,
+          socket_id,
+          dict.delete(socket_buckets, topic_name),
+        ),
+      )
+  }
 }
 
 fn handle_join(
@@ -709,10 +820,9 @@ fn handle_join(
   ref: Option(String),
 ) -> actor.Next(State, Message) {
   // Check join rate limit
-  case
-    rate_limit.check_optional(state.config.join_limiter, "join:" <> socket_id)
-  {
-    Error(Nil) -> {
+  let #(state, join_allowed) = check_join_rate(state, socket_id)
+  case join_allowed {
+    False -> {
       let logger = coordinator_logger(state)
       logger
       |> log.warn("Join rate limited", [
@@ -738,7 +848,7 @@ fn handle_join(
       }
       actor.continue(state)
     }
-    Ok(_) ->
+    True ->
       handle_join_inner(state, socket_id, topic_name, payload, join_ref, ref)
   }
 }
@@ -958,10 +1068,9 @@ fn handle_in(
   ref: Option(String),
 ) -> actor.Next(State, Message) {
   // Check per-socket message rate limit
-  case
-    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
-  {
-    Error(Nil) -> {
+  let #(state, allowed) = check_message_rate(state, socket_id)
+  case allowed {
+    False -> {
       let logger = coordinator_logger(state)
       logger
       |> log.warn("Message rate limited", [
@@ -970,7 +1079,7 @@ fn handle_in(
       ])
       actor.continue(state)
     }
-    Ok(_) -> {
+    True -> {
       handle_in_subscribed(
         state,
         socket_id,
@@ -1114,15 +1223,9 @@ fn handle_in_rate_limited(
   payload: Dynamic,
   ref: Option(String),
 ) -> actor.Next(State, Message) {
-  case
-    rate_limit.check_capped_optional(
-      state.config.channel_limiter,
-      "ch:" <> socket_id <> ":" <> topic_name,
-      "ch:" <> socket_id <> ":",
-      state.config.channel_limiter_max_keys_per_socket,
-    )
-  {
-    Error(Nil) -> {
+  let #(state, allowed) = check_channel_rate(state, socket_id, topic_name)
+  case allowed {
+    False -> {
       let logger = coordinator_logger(state)
       logger
       |> log.warn("Channel rate limited", [
@@ -1131,7 +1234,7 @@ fn handle_in_rate_limited(
       ])
       actor.continue(state)
     }
-    Ok(_) ->
+    True ->
       route_in_to_handler(
         state,
         socket_info,
@@ -1213,18 +1316,15 @@ fn handle_raw_binary_with_rate_limit(
   socket_id: String,
   data: BitArray,
 ) -> actor.Next(State, Message) {
-  case
-    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
-  {
-    Error(Nil) -> {
+  let #(state, allowed) = check_message_rate(state, socket_id)
+  case allowed {
+    False -> {
       let logger = coordinator_logger(state)
       logger
-      |> log.warn("Binary message rate limited", [
-        #("socket_id", socket_id),
-      ])
+      |> log.warn("Binary message rate limited", [#("socket_id", socket_id)])
       actor.continue(state)
     }
-    Ok(_) -> handle_raw_binary_in_inner(state, socket_id, data)
+    True -> handle_raw_binary_in_inner(state, socket_id, data)
   }
 }
 
@@ -1352,7 +1452,7 @@ fn disconnect_socket(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket_info) -> {
-      remove_socket_rate_limits(state, socket_id)
+      let state = remove_socket_rate_limits(state, socket_id)
       let logger = coordinator_logger(state)
       logger
       |> log.debug(
@@ -1516,7 +1616,6 @@ pub fn route_message(
   process.send(coord, RouteText(socket_id, raw_text))
 }
 
-// nolint: unused_exports -- public transport API for callers that decode frames before routing
 /// Route a transport-decoded inbound message to the coordinator.
 pub fn route_decoded(
   coord: Subject(Message),
@@ -1600,7 +1699,7 @@ fn dispatch_inbound(
         False -> reject_invalid_join(state, socket_id, msg)
       }
     codec.Leave -> {
-      use <- with_message_rate_limit(state, socket_id, "leave")
+      use state <- with_message_rate_limit(state, socket_id, "leave")
       case is_valid_topic(msg_topic, state.config) {
         False -> {
           let safe_topic = topic.sanitize_for_log(msg_topic)
@@ -1622,7 +1721,7 @@ fn dispatch_inbound(
       }
     }
     codec.Heartbeat -> {
-      use <- with_message_rate_limit(state, socket_id, "heartbeat")
+      use state <- with_message_rate_limit(state, socket_id, "heartbeat")
       handle_heartbeat(state, socket_id, msg_ref)
     }
     codec.Event(event) -> {
@@ -1726,12 +1825,11 @@ fn with_message_rate_limit(
   state: State,
   socket_id: String,
   kind: String,
-  next: fn() -> actor.Next(State, Message),
+  next: fn(State) -> actor.Next(State, Message),
 ) -> actor.Next(State, Message) {
-  case
-    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
-  {
-    Error(Nil) -> {
+  let #(state, allowed) = check_message_rate(state, socket_id)
+  case allowed {
+    False -> {
       coordinator_logger(state)
       |> log.warn("Message rate limited", [
         #("socket_id", socket_id),
@@ -1739,7 +1837,7 @@ fn with_message_rate_limit(
       ])
       actor.continue(state)
     }
-    Ok(_) -> next()
+    True -> next(state)
   }
 }
 
@@ -2361,10 +2459,7 @@ fn do_terminate_channel(
 
   send_terminal_frame(state, socket_info, topic_name, reason)
 
-  rate_limit.remove_optional(
-    state.config.channel_limiter,
-    "ch:" <> socket_id <> ":" <> topic_name,
-  )
+  let state = remove_channel_bucket(state, socket_id, topic_name)
 
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
   let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)
