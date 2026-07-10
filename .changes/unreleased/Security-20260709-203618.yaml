@@ -6,6 +6,6 @@ body: |-
     restricted EPMD/distribution port access, and avoiding shared untrusted clusters. The docs
     distinguish internal PubSub/presence messages from Erlang peers (trusted) from WebSocket
     client messages (untrusted, gated by authorization callbacks). The `pubsub.config_with_scope`
-    API doc now clearly states the argument must be a compile-time constant and must never
-    receive user-derived values.
+    API doc now clearly states the argument must be a static, bounded deployment or
+    configuration value and must never receive raw user-derived or unbounded input.
 time: 2026-07-09T20:36:18.576000-00:00
