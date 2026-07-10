@@ -37,6 +37,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import gleam/set.{type Set}
 import gleam/string
 import lattice_presence/presence_state as state
 import lattice_presence/state_json
@@ -91,7 +92,7 @@ pub fn diff(
 /// List topics touched by this diff.
 pub fn diff_topics(diff: Diff) -> List(String) {
   list.append(dict.keys(diff.joins), dict.keys(diff.leaves))
-  |> unique_strings([])
+  |> unique_strings(set.new(), [])
 }
 
 /// Get presence joins for a topic in this diff.
@@ -106,13 +107,18 @@ pub fn diff_leaves(diff: Diff, topic: String) -> List(PresenceEntry) {
   |> result.unwrap([])
 }
 
-fn unique_strings(values: List(String), seen: List(String)) -> List(String) {
+fn unique_strings(
+  values: List(String),
+  seen: Set(String),
+  unique: List(String),
+) -> List(String) {
   case values {
-    [] -> list.reverse(seen)
+    [] -> list.reverse(unique)
     [value, ..rest] ->
-      case list.contains(seen, value) {
-        True -> unique_strings(rest, seen)
-        False -> unique_strings(rest, [value, ..seen])
+      case set.contains(seen, value) {
+        True -> unique_strings(rest, seen, unique)
+        False ->
+          unique_strings(rest, set.insert(seen, value), [value, ..unique])
       }
   }
 }

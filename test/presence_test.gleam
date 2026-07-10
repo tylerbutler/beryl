@@ -173,6 +173,14 @@ pub fn presence_default_config_test() {
   |> should.equal(1)
 }
 
+pub fn diff_topics_deduplicates_topics_in_joins_and_leaves_test() {
+  let diff =
+    presence.diff(joins: [#("room:lobby", [])], leaves: [#("room:lobby", [])])
+
+  presence.diff_topics(diff)
+  |> should.equal(["room:lobby"])
+}
+
 // ── on_diff callback tests ──────────────────────────────────────────────────
 
 pub fn on_diff_callback_receives_local_track_diff_test() {

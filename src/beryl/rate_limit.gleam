@@ -7,7 +7,6 @@ import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -93,21 +92,25 @@ pub opaque type RateLimiter {
 }
 
 type RegistryState {
-  RegistryState(config: RateLimitConfig, buckets: Dict(String, BucketState))
+  RegistryState(
+    config: RateLimitConfig,
+    groups: Dict(String, Dict(String, BucketState)),
+    bucket_count: Int,
+  )
 }
 
 type RegistryMsg {
-  Check(key: String, reply: Subject(Result(Nil, Nil)))
+  Check(group: String, key: String, reply: Subject(Result(Nil, Nil)))
   CheckCapped(
+    group: String,
     key: String,
-    prefix: String,
     max_keys: Int,
     reply: Subject(Result(Nil, Nil)),
   )
   Count(reply: Subject(Int))
-  CountByPrefix(prefix: String, reply: Subject(Int))
-  RemoveKey(key: String)
-  RemoveByPrefix(prefix: String)
+  CountGroup(group: String, reply: Subject(Int))
+  RemoveKey(group: String, key: String)
+  RemoveGroup(group: String)
   RegistryStop(reply: Subject(Nil))
 }
 
@@ -121,54 +124,55 @@ fn handle_registry_msg(
       actor.stop()
     }
 
-    Check(key, reply) -> actor.continue(check_key(state, key, reply))
+    Check(group, key, reply) ->
+      actor.continue(check_key(state, group, key, reply))
 
-    CheckCapped(key, prefix, max_keys, reply) ->
-      actor.continue(check_key_capped(state, key, prefix, max_keys, reply))
+    CheckCapped(group, key, max_keys, reply) ->
+      actor.continue(check_key_capped(state, group, key, max_keys, reply))
 
     Count(reply) -> {
-      process.send(reply, list.length(dict.to_list(state.buckets)))
+      process.send(reply, state.bucket_count)
       actor.continue(state)
     }
 
-    CountByPrefix(prefix, reply) -> {
-      process.send(reply, count_by_prefix(state.buckets, prefix))
+    CountGroup(group, reply) -> {
+      process.send(reply, group_size(state, group))
       actor.continue(state)
     }
 
-    RemoveKey(key) -> {
-      actor.continue(
-        RegistryState(..state, buckets: dict.delete(state.buckets, key)),
-      )
-    }
+    RemoveKey(group, key) -> actor.continue(remove_key(state, group, key))
 
-    RemoveByPrefix(prefix) -> {
-      let to_keep =
-        dict.to_list(state.buckets)
-        |> list.filter(fn(entry) { !string_starts_with(entry.0, prefix) })
-      actor.continue(RegistryState(..state, buckets: dict.from_list(to_keep)))
-    }
+    RemoveGroup(group) -> actor.continue(remove_group_state(state, group))
   }
 }
 
-fn count_by_prefix(buckets: Dict(String, BucketState), prefix: String) -> Int {
-  dict.to_list(buckets)
-  |> list.filter(fn(entry) { string_starts_with(entry.0, prefix) })
-  |> list.length
+fn group_size(state: RegistryState, group: String) -> Int {
+  dict.get(state.groups, group)
+  |> result.map(dict.size)
+  |> result.unwrap(0)
 }
 
 fn check_key(
   state: RegistryState,
+  group: String,
   key: String,
   reply: Subject(Result(Nil, Nil)),
 ) -> RegistryState {
-  case dict.get(state.buckets, key) {
+  let buckets =
+    dict.get(state.groups, group)
+    |> result.unwrap(dict.new())
+
+  case dict.get(buckets, key) {
     Ok(bucket) -> {
       let #(updated_bucket, check_result) = take_token(bucket)
       process.send(reply, check_result)
       RegistryState(
         ..state,
-        buckets: dict.insert(state.buckets, key, updated_bucket),
+        groups: dict.insert(
+          state.groups,
+          group,
+          dict.insert(buckets, key, updated_bucket),
+        ),
       )
     }
     Error(Nil) -> {
@@ -177,7 +181,12 @@ fn check_key(
       process.send(reply, check_result)
       RegistryState(
         ..state,
-        buckets: dict.insert(state.buckets, key, new_bucket),
+        groups: dict.insert(
+          state.groups,
+          group,
+          dict.insert(buckets, key, new_bucket),
+        ),
+        bucket_count: state.bucket_count + 1,
       )
     }
   }
@@ -185,27 +194,66 @@ fn check_key(
 
 fn check_key_capped(
   state: RegistryState,
+  group: String,
   key: String,
-  prefix: String,
   max_keys: Int,
   reply: Subject(Result(Nil, Nil)),
 ) -> RegistryState {
-  case dict.get(state.buckets, key) {
-    Ok(_) -> check_key(state, key, reply)
+  let buckets =
+    dict.get(state.groups, group)
+    |> result.unwrap(dict.new())
+
+  case dict.get(buckets, key) {
+    Ok(_) -> check_key(state, group, key, reply)
     Error(Nil) -> {
-      case max_keys > 0 && count_by_prefix(state.buckets, prefix) >= max_keys {
+      case max_keys > 0 && dict.size(buckets) >= max_keys {
         True -> {
           process.send(reply, Error(Nil))
           state
         }
-        False -> check_key(state, key, reply)
+        False -> check_key(state, group, key, reply)
       }
     }
   }
 }
 
-@external(erlang, "beryl_ffi", "string_starts_with")
-fn string_starts_with(string: String, prefix: String) -> Bool
+fn remove_key(
+  state: RegistryState,
+  group: String,
+  key: String,
+) -> RegistryState {
+  case dict.get(state.groups, group) {
+    Error(Nil) -> state
+    Ok(buckets) ->
+      case dict.get(buckets, key) {
+        Error(Nil) -> state
+        Ok(_) -> {
+          let remaining = dict.delete(buckets, key)
+          let groups = case dict.is_empty(remaining) {
+            True -> dict.delete(state.groups, group)
+            False -> dict.insert(state.groups, group, remaining)
+          }
+          RegistryState(
+            ..state,
+            groups: groups,
+            bucket_count: state.bucket_count - 1,
+          )
+        }
+      }
+  }
+}
+
+fn remove_group_state(state: RegistryState, group: String) -> RegistryState {
+  case dict.get(state.groups, group) {
+    Error(Nil) -> state
+    Ok(buckets) ->
+      RegistryState(
+        ..state,
+        groups: dict.delete(state.groups, group),
+        bucket_count: state.bucket_count - dict.size(buckets),
+      )
+  }
+}
 
 // Send a registry request without letting timeouts or dead subjects exit the
 // caller. If the limiter is unavailable, return the provided fallback so rate
@@ -234,7 +282,7 @@ fn request(
 /// Start a new rate limiter registry with the given config.
 /// All keys managed by this registry share the same rate/burst settings.
 pub fn start(cfg: RateLimitConfig) -> Result(RateLimiter, Nil) {
-  let state = RegistryState(config: cfg, buckets: dict.new())
+  let state = RegistryState(config: cfg, groups: dict.new(), bucket_count: 0)
   actor.new(state)
   |> actor.on_message(handle_registry_msg)
   |> actor.start
@@ -242,29 +290,33 @@ pub fn start(cfg: RateLimitConfig) -> Result(RateLimiter, Nil) {
   |> result.replace_error(Nil)
 }
 
-/// Check if a request for the given key is allowed.
+/// Check if a request for the given group and key is allowed.
 /// Returns Ok(Nil) if allowed, Error(Nil) if rate limited.
-pub fn check(limiter: RateLimiter, key: String) -> Result(Nil, Nil) {
+pub fn check(
+  limiter: RateLimiter,
+  group: String,
+  key: String,
+) -> Result(Nil, Nil) {
   request(
     limiter.subject,
     registry_call_timeout_ms,
-    fn(reply) { Check(key, reply) },
+    fn(reply) { Check(group, key, reply) },
     Ok(Nil),
   )
 }
 
-/// Check if a request is allowed, rejecting new keys after a per-prefix cap.
+/// Check if a request is allowed, rejecting new keys after a per-group cap.
 pub fn check_capped(
   limiter: RateLimiter,
+  group: String,
   key: String,
-  prefix: String,
   max_keys: Int,
 ) -> Result(Nil, Nil) {
   request(
     limiter.subject,
     registry_call_timeout_ms,
     fn(reply) {
-      CheckCapped(key: key, prefix: prefix, max_keys: max_keys, reply: reply)
+      CheckCapped(group: group, key: key, max_keys: max_keys, reply: reply)
     },
     Ok(Nil),
   )
@@ -273,24 +325,25 @@ pub fn check_capped(
 /// Check an optional rate limiter. If None, always allows.
 pub fn check_optional(
   limiter: Option(RateLimiter),
+  group: String,
   key: String,
 ) -> Result(Nil, Nil) {
   case limiter {
     None -> Ok(Nil)
-    Some(l) -> check(l, key)
+    Some(l) -> check(l, group, key)
   }
 }
 
-/// Check an optional rate limiter with a per-prefix key cap.
+/// Check an optional rate limiter with a per-group key cap.
 pub fn check_capped_optional(
   limiter: Option(RateLimiter),
+  group: String,
   key: String,
-  prefix: String,
   max_keys: Int,
 ) -> Result(Nil, Nil) {
   case limiter {
     None -> Ok(Nil)
-    Some(l) -> check_capped(l, key, prefix, max_keys)
+    Some(l) -> check_capped(l, group, key, max_keys)
   }
 }
 
@@ -304,43 +357,47 @@ pub fn bucket_count(limiter: RateLimiter) -> Int {
   )
 }
 
-/// Return the number of active token buckets matching a key prefix.
-pub fn bucket_count_by_prefix(limiter: RateLimiter, prefix: String) -> Int {
+/// Return the number of active token buckets in a group.
+pub fn bucket_count_by_group(limiter: RateLimiter, group: String) -> Int {
   request(
     limiter.subject,
     registry_call_timeout_ms,
-    fn(reply) { CountByPrefix(prefix: prefix, reply: reply) },
+    fn(reply) { CountGroup(group: group, reply: reply) },
     0,
   )
 }
 
-/// Remove rate limit state for an exact key.
-fn remove(limiter: RateLimiter, key: String) -> Nil {
-  process.send(limiter.subject, RemoveKey(key))
+/// Remove rate limit state for an exact group and key.
+fn remove(limiter: RateLimiter, group: String, key: String) -> Nil {
+  process.send(limiter.subject, RemoveKey(group, key))
 }
 
-/// Remove rate limit state for an exact key (optional limiter).
-pub fn remove_optional(limiter: Option(RateLimiter), key: String) -> Nil {
-  case limiter {
-    None -> Nil
-    Some(l) -> remove(l, key)
-  }
-}
-
-/// Remove all rate limit state for keys matching a prefix.
-/// Call this when a socket disconnects to clean up its buckets.
-pub fn remove_by_prefix(limiter: RateLimiter, prefix: String) -> Nil {
-  process.send(limiter.subject, RemoveByPrefix(prefix))
-}
-
-/// Remove rate limit state for keys matching a prefix (optional limiter).
-pub fn remove_by_prefix_optional(
+/// Remove rate limit state for an exact group and key (optional limiter).
+pub fn remove_optional(
   limiter: Option(RateLimiter),
-  prefix: String,
+  group: String,
+  key: String,
 ) -> Nil {
   case limiter {
     None -> Nil
-    Some(l) -> remove_by_prefix(l, prefix)
+    Some(l) -> remove(l, group, key)
+  }
+}
+
+/// Remove all rate limit state for a group.
+/// Call this when a socket disconnects to clean up its buckets.
+pub fn remove_group(limiter: RateLimiter, group: String) -> Nil {
+  process.send(limiter.subject, RemoveGroup(group))
+}
+
+/// Remove all rate limit state for a group (optional limiter).
+pub fn remove_group_optional(
+  limiter: Option(RateLimiter),
+  group: String,
+) -> Nil {
+  case limiter {
+    None -> Nil
+    Some(l) -> remove_group(l, group)
   }
 }
 
