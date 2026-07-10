@@ -628,18 +628,9 @@ fn handle_socket_disconnected(
 }
 
 fn remove_socket_rate_limits(state: State, socket_id: String) -> Nil {
-  rate_limit.remove_by_prefix_optional(
-    state.config.message_limiter,
-    "msg:" <> socket_id,
-  )
-  rate_limit.remove_by_prefix_optional(
-    state.config.join_limiter,
-    "join:" <> socket_id,
-  )
-  rate_limit.remove_by_prefix_optional(
-    state.config.channel_limiter,
-    "ch:" <> socket_id <> ":",
-  )
+  rate_limit.remove_group_optional(state.config.message_limiter, socket_id)
+  rate_limit.remove_group_optional(state.config.join_limiter, socket_id)
+  rate_limit.remove_group_optional(state.config.channel_limiter, socket_id)
 }
 
 fn handle_join(
@@ -651,9 +642,7 @@ fn handle_join(
   ref: Option(String),
 ) -> actor.Next(State, Message) {
   // Check join rate limit
-  case
-    rate_limit.check_optional(state.config.join_limiter, "join:" <> socket_id)
-  {
+  case rate_limit.check_optional(state.config.join_limiter, socket_id, "join") {
     Error(Nil) -> {
       let logger = coordinator_logger(state)
       logger
@@ -841,7 +830,11 @@ fn handle_in(
 ) -> actor.Next(State, Message) {
   // Check per-socket message rate limit
   case
-    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
+    rate_limit.check_optional(
+      state.config.message_limiter,
+      socket_id,
+      "message",
+    )
   {
     Error(Nil) -> {
       let logger = coordinator_logger(state)
@@ -918,8 +911,8 @@ fn handle_in_rate_limited(
   case
     rate_limit.check_capped_optional(
       state.config.channel_limiter,
-      "ch:" <> socket_id <> ":" <> topic_name,
-      "ch:" <> socket_id <> ":",
+      socket_id,
+      topic_name,
       state.config.channel_limiter_max_keys_per_socket,
     )
   {
@@ -1015,7 +1008,11 @@ fn handle_raw_binary_with_rate_limit(
   data: BitArray,
 ) -> actor.Next(State, Message) {
   case
-    rate_limit.check_optional(state.config.message_limiter, "msg:" <> socket_id)
+    rate_limit.check_optional(
+      state.config.message_limiter,
+      socket_id,
+      "message",
+    )
   {
     Error(Nil) -> {
       let logger = coordinator_logger(state)
@@ -1067,14 +1064,7 @@ fn handle_raw_binary_in_inner(
     Ok(socket_info) -> {
       let state =
         set.fold(socket_info.subscribed_topics, state, fn(st, topic_name) {
-          route_binary_to_handler(
-            state,
-            st,
-            socket_info,
-            socket_id,
-            topic_name,
-            data,
-          )
+          route_binary_to_handler(st, socket_info, socket_id, topic_name, data)
         })
       actor.continue(state)
     }
@@ -1794,7 +1784,6 @@ fn dispatch_handle_info(
 }
 
 fn dispatch_handle_binary(
-  _state: State,
   st: State,
   socket_info: SocketInfo,
   handler: ChannelHandler,
@@ -1912,7 +1901,8 @@ fn do_terminate_channel(
 
   rate_limit.remove_optional(
     state.config.channel_limiter,
-    "ch:" <> socket_id <> ":" <> topic_name,
+    socket_id,
+    topic_name,
   )
 
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
@@ -2045,7 +2035,6 @@ fn find_joined_handler(
 }
 
 fn route_binary_to_handler(
-  state: State,
   st: State,
   socket_info: SocketInfo,
   socket_id: String,
@@ -2065,7 +2054,6 @@ fn route_binary_to_handler(
     }
     Some(handler) ->
       dispatch_handle_binary(
-        state,
         st,
         socket_info,
         handler,

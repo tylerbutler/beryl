@@ -73,6 +73,38 @@ pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() {
   rate_limit.stop(limiter)
 }
 
+pub fn channel_bucket_cap_is_isolated_per_socket_test() {
+  let assert Ok(limiter) =
+    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
+  let assert Ok(coord) =
+    coordinator.start_with_config(
+      coordinator.CoordinatorConfig(
+        ..coordinator.config(wire.phoenix_codec()),
+        channel_limiter: option.Some(limiter),
+        channel_limiter_max_keys_per_socket: 1,
+      ),
+    )
+  let sent = process.new_subject()
+  let assert Ok(_) = register_test_channel(coord, sent)
+
+  connect(coord, sent, "socket-one")
+  connect(coord, sent, "socket-two")
+  join(coord, "socket-one", "room:one")
+  join(coord, "socket-two", "room:two")
+  process.sleep(20)
+  drain(sent)
+
+  event(coord, "socket-one", "room:one", "ref-one")
+  event(coord, "socket-two", "room:two", "ref-two")
+
+  let assert Ok("handled") = process.receive(sent, 100)
+  let assert Ok("handled") = process.receive(sent, 100)
+  rate_limit.bucket_count(limiter) |> should.equal(2)
+  rate_limit.bucket_count_by_group(limiter, "socket-one") |> should.equal(1)
+  rate_limit.bucket_count_by_group(limiter, "socket-two") |> should.equal(1)
+  rate_limit.stop(limiter)
+}
+
 pub fn heartbeat_eviction_removes_channel_buckets_test() {
   let assert Ok(limiter) =
     rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
