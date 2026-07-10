@@ -155,16 +155,23 @@ Create a PubSub configuration with a custom scope name
 
  The scope name is converted to an Erlang atom via `binary_to_atom`.
  Atoms are never garbage-collected, so the scope name must be a
- **compile-time constant** — never pass a user-supplied or
- runtime-computed value. A malicious or high-cardinality source can
- exhaust the BEAM atom table and crash the VM.
+ **static, bounded deployment or configuration value** — never raw
+ user-derived, per-request, per-tenant, database-derived, or otherwise
+ unbounded high-cardinality runtime input. A deployment-controlled value
+ is acceptable only when validated or selected from a fixed bounded set.
+ A malicious or high-cardinality source can exhaust the BEAM atom table
+ and crash the VM.
 
  ```gleam
- // Correct — compile-time constant
+ // Correct — static deployment constant
  pubsub.config_with_scope("my_app_pubsub")
+
+ // Correct — deployment-controlled, selected from a fixed bounded set
+ // pubsub.config_with_scope(config.pubsub_scope())
 
  // WRONG — never do this
  // pubsub.config_with_scope(user_request.tenant_id)
+ // pubsub.config_with_scope(database_row.name)
  ```
 
 ```gleam

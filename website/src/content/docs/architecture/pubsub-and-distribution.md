@@ -77,6 +77,9 @@ A process on any peer node can:
 - Subscribe to any `pg` group (PubSub topic) and receive all broadcasts.
 - Inject messages that downstream coordinators will process as legitimate
   internal traffic.
+- Inject reserved presence sync traffic, delivering false presence state to
+  subscribers on all nodes. Ordinary WebSocket clients cannot reach these
+  reserved internal topics — this vector is exclusive to trusted cluster peers.
 
 **Channel-level authorization** — the `join` and `handle_in` callbacks —
 applies only to inbound WebSocket frames. It does not screen messages that
