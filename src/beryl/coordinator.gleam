@@ -1535,14 +1535,7 @@ fn handle_raw_binary_in_inner(
     Ok(socket_info) -> {
       let state =
         set.fold(socket_info.subscribed_topics, state, fn(st, topic_name) {
-          route_binary_to_handler(
-            state,
-            st,
-            socket_info,
-            socket_id,
-            topic_name,
-            data,
-          )
+          route_binary_to_handler(st, socket_info, socket_id, topic_name, data)
         })
       actor.continue(state)
     }
@@ -2449,7 +2442,6 @@ fn dispatch_handle_info(
 }
 
 fn dispatch_handle_binary(
-  _state: State,
   st: State,
   socket_info: SocketInfo,
   handler: ChannelHandler,
@@ -2762,7 +2754,6 @@ fn find_joined_handler(
 }
 
 fn route_binary_to_handler(
-  state: State,
   st: State,
   socket_info: SocketInfo,
   socket_id: String,
@@ -2782,7 +2773,6 @@ fn route_binary_to_handler(
     }
     Some(handler) ->
       dispatch_handle_binary(
-        state,
         st,
         socket_info,
         handler,

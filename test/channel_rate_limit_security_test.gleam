@@ -101,6 +101,23 @@ pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() {
   expect_dropped(sent)
 }
 
+pub fn channel_bucket_cap_is_isolated_per_socket_test() {
+  let coord = start_capped_coordinator(1)
+  let sent = process.new_subject()
+  let assert Ok(_) = register_test_channel(coord, sent)
+
+  connect(coord, sent, "socket-one")
+  connect(coord, sent, "socket-two")
+  join(coord, "socket-one", "room:one")
+  join(coord, "socket-two", "room:two")
+  drain_replies(sent)
+
+  event(coord, "socket-one", "room:one", "ref-one")
+  expect_handled(sent)
+  event(coord, "socket-two", "room:two", "ref-two")
+  expect_handled(sent)
+}
+
 pub fn heartbeat_eviction_releases_channel_buckets_test() {
   let assert Ok(coord) =
     coordinator.start_with_config(
