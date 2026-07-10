@@ -23,6 +23,7 @@ import beryl/error as beryl_error
 import beryl/internal
 import beryl/log
 import beryl/pubsub.{type PubSub}
+import beryl/wire
 import gleam/bit_array
 import gleam/bool
 import gleam/crypto
@@ -156,7 +157,12 @@ pub opaque type Config {
   Config(
     /// PubSub instance for cross-node replication
     pubsub: Option(PubSub),
-    /// This node's replica name (must be unique across the cluster)
+    /// This node's replica base name. Must identify at most one live node
+    /// in the cluster. Each actor start derives a unique incarnation name
+    /// from it (`base@suffix`), so restarting a node never reuses the
+    /// previous incarnation's CRDT clocks; state from older incarnations
+    /// of the same base is pruned automatically. Two *live* nodes sharing
+    /// a base will continuously prune each other — do not do that.
     replica: String,
     /// How often to broadcast state for replication (ms). 0 = disabled.
     broadcast_interval_ms: Int,
@@ -216,12 +222,17 @@ type ActorState {
   )
 }
 
-/// Default configuration (no PubSub, no replication)
+/// Default configuration (no PubSub).
+///
+/// The broadcast interval defaults to 1500 ms so that adding `with_pubsub`
+/// yields working two-way replication out of the box; without PubSub the
+/// interval is unused. Use `with_broadcast_interval(0)` to disable periodic
+/// broadcasts and control replication manually.
 pub fn default_config(replica: String) -> Config {
   Config(
     pubsub: None,
     replica: replica,
-    broadcast_interval_ms: 0,
+    broadcast_interval_ms: 1500,
     on_diff: None,
   )
 }
@@ -265,7 +276,10 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
   })
 }
 
-/// Start the presence actor with a registered name (for supervision)
+// nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
+/// Start the presence actor with a registered name. Package-internal: used by
+/// `beryl/supervisor`; end users get supervision via `supervisor.child_spec`.
+@internal
 pub fn start_named(
   config: Config,
   name: process.Name(Message),
@@ -278,7 +292,13 @@ pub fn start_named(
 fn build_presence(
   config: Config,
 ) -> actor.Builder(ActorState, Message, Subject(Message)) {
-  let crdt = state.new(config.replica)
+  // Each actor start is a fresh CRDT incarnation. Reusing the bare replica
+  // name after a restart would reset its clocks while peers still remember
+  // the old ones: new joins would be silently filtered as already-seen,
+  // and the previous incarnation's entries would resurrect via merges.
+  // A unique per-start suffix makes every incarnation a distinct replica;
+  // `prune_superseded` cleans up the dead predecessors.
+  let crdt = state.new(incarnate_replica(config.replica))
 
   actor.new_with_initialiser(5000, fn(subject) {
     let initial =
@@ -348,7 +368,9 @@ fn maybe_broadcast_state(actor_state: ActorState, ps: PubSub) -> ActorState {
   let payload =
     json.object([
       #("v", json.int(1)),
-      #("sender", json.string(actor_state.config.replica)),
+      // The sender is the full incarnation name; receivers use its base to
+      // prune state left behind by this node's previous incarnations.
+      #("sender", json.string(state.replica(actor_state.crdt))),
       #("state", state_json.to_json(actor_state.crdt)),
     ])
 
@@ -378,23 +400,99 @@ fn generate_ref() -> String {
   |> bit_array.base16_encode()
 }
 
+/// Separates a replica base name from its per-start incarnation suffix.
+const incarnation_separator = "@"
+
+/// Derive a unique incarnation name for this actor start.
+fn incarnate_replica(base: String) -> String {
+  base
+  <> incarnation_separator
+  <> bit_array.base16_encode(crypto.strong_random_bytes(4))
+}
+
+/// Recover the configured base from an incarnation-qualified replica name.
+///
+/// The suffix we mint never contains the separator, so everything before
+/// the last separator is the base — even when the base itself contains one
+/// (e.g. Erlang-style `app@host` names). Names without a separator (from
+/// nodes running older beryl versions) are their own base.
+fn base_replica(replica: String) -> String {
+  case list.reverse(string.split(replica, incarnation_separator)) {
+    [_suffix, ..rest] if rest != [] ->
+      string.join(list.reverse(rest), incarnation_separator)
+    _ -> replica
+  }
+}
+
+/// Prune CRDT state left behind by dead incarnations of the given live
+/// replicas (the sync sender and ourselves).
+///
+/// This is the beryl-side workaround for replica reuse across restarts
+/// (first-class incarnations are proposed upstream in lattice): any replica
+/// sharing a live replica's base but not its suffix belongs to a dead
+/// predecessor. Hide it (emitting leave diffs through `on_diff`) and prune
+/// it. A lagging peer can briefly resurrect pruned entries until it
+/// observes the live incarnation itself; the prune re-applies on every
+/// sync, so the cluster converges within about one broadcast interval.
+fn prune_superseded(config: Config, crdt: State, live: List(String)) -> State {
+  let stale =
+    dict.keys(state.compacted_clocks(crdt))
+    |> list.filter(fn(replica) {
+      list.any(live, fn(live_replica) {
+        replica != live_replica
+        && base_replica(replica) == base_replica(live_replica)
+      })
+    })
+  list.fold(stale, crdt, fn(crdt, replica) {
+    let #(crdt, down_diff) = state.replica_down(crdt, replica)
+    maybe_invoke_on_diff(config, wrap_state_diff(down_diff))
+    state.remove_down_replica(crdt, replica)
+  })
+}
+
+/// Merge the server-generated tracking ref into the tracked meta as
+/// `phx_ref`, matching Phoenix behaviour. Phoenix client `Presence` helpers
+/// identify individual metas by `phx_ref` when applying diffs; without it a
+/// single leave would remove every meta stored under the same key. Any
+/// client-supplied `phx_ref` is replaced. Non-object metas are stored
+/// unchanged (Phoenix requires object metas for its Presence helpers).
+fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
+  json.parse(
+    from: json.to_string(meta),
+    using: gdecode.dict(gdecode.string, gdecode.dynamic),
+  )
+  |> result.map(fn(fields) {
+    fields
+    |> dict.delete("phx_ref")
+    |> dict.to_list
+    |> list.map(fn(field) { #(field.0, wire.dynamic_to_json(field.1)) })
+    |> list.append([#("phx_ref", json.string(ref))])
+    |> json.object
+  })
+  |> result.unwrap(meta)
+}
+
 /// Track a presence in a topic.
+///
+/// `session_id` identifies the session (e.g. socket) that owns this presence
+/// and is the value `untrack_all` matches on when the session disconnects.
 ///
 /// Returns a server-generated tracking ref: an opaque, unique handle for this
 /// specific presence. Pass it to `untrack` to remove exactly this entry later.
-/// The ref is not the `pid`/session id — it is minted by the presence actor and
-/// is only meaningful to that actor.
+/// The ref is not the session id — it is minted by the presence actor and is
+/// only meaningful to that actor. The ref is also merged into object metas as
+/// `phx_ref` for Phoenix client compatibility.
 ///
 /// Panics if the presence actor is unavailable or does not reply within 5 seconds.
 pub fn track(
   presence: Presence,
   topic: String,
   key: String,
-  pid: String,
+  session_id: String,
   meta: json.Json,
 ) -> String {
   process.call(presence.subject, 5000, fn(reply) {
-    Track(topic, key, pid, meta, reply)
+    Track(topic, key, session_id, meta, reply)
   })
 }
 
@@ -407,11 +505,13 @@ pub fn untrack(presence: Presence, ref: String) -> Nil {
   process.call(presence.subject, 5000, fn(reply) { Untrack(ref, reply) })
 }
 
-/// Untrack all presences for a pid (e.g., when a socket disconnects)
+/// Untrack all presences for a session (e.g., when a socket disconnects)
 ///
 /// Panics if the presence actor is unavailable or does not reply within 5 seconds.
-pub fn untrack_all(presence: Presence, pid: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) { UntrackAll(pid, reply) })
+pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
+  process.call(presence.subject, 5000, fn(reply) {
+    UntrackAll(session_id, reply)
+  })
 }
 
 /// List all presences for a topic
@@ -442,6 +542,7 @@ fn handle_message(
   case message {
     Track(topic, key, pid, meta, reply) -> {
       let ref = generate_ref()
+      let meta = meta_with_phx_ref(meta, ref)
       let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
       maybe_invoke_on_diff(
         actor_state.config,
@@ -650,12 +751,21 @@ fn handle_sync_payload(
       ])
       actor.continue(actor_state)
     }
-    Ok(#(_sender, remote_state)) -> {
+    Ok(#(sender, remote_state)) -> {
       let #(new_crdt, state_diff) =
         state.merge_with_diff(actor_state.crdt, remote_state)
       let diff = wrap_state_diff(state_diff)
       let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
       maybe_invoke_on_diff(actor_state.config, diff)
+      // The merge may have (re)admitted state from dead incarnations —
+      // the sender's predecessors, or our own pre-restart self echoed back
+      // by a peer. Prune anything superseded by the two incarnations known
+      // to be live right now: the sender and ourselves.
+      let new_crdt =
+        prune_superseded(actor_state.config, new_crdt, [
+          sender,
+          state.replica(new_crdt),
+        ])
       actor.continue(
         ActorState(
           ..actor_state,

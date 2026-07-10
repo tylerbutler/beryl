@@ -55,6 +55,10 @@ pub type HandleResult(a) {
     payload: json.Json,
     socket: socket.Socket(a)
   )
+  ReplyError(
+    payload: json.Json,
+    socket: socket.Socket(a)
+  )
   Push(
     event: String,
     payload: json.Json,
@@ -82,6 +86,19 @@ Send a reply to the client in response to their message.
  tied to the original client ref — the `event` field is ignored by the
  coordinator. When returned from `handle_info` (where no client ref
  exists), it is sent as a push using `event` as the event name.
+
+##### `ReplyError(
+  payload: json.Json,
+  socket: socket.Socket(a)
+)`
+
+Send an error reply to the client in response to their message
+ (`"status": "error"` in Phoenix framing, delivered to the client's
+ `push.receive("error", ...)` hook).
+
+ Only meaningful from `handle_in` for messages carrying a client ref;
+ from `handle_info`/`handle_binary` (where no ref exists) the reply is
+ dropped with a warning.
 
 ##### `Push(
   event: String,
@@ -124,14 +141,17 @@ Join failed with error payload
 
 ### `StopReason`
 
-Why a channel is stopping
+Why a channel is stopping.
+
+ Delivered to every channel's `terminate` callback. Match with a catch-all
+ (`_`) arm: new stop reasons may be added in minor releases.
 
 ```gleam
 pub type StopReason {
   Normal
   Shutdown
   HeartbeatTimeout
-  Error(String)
+  Errored(String)
 }
 ```
 
@@ -149,9 +169,11 @@ Server-initiated shutdown
 
 Client failed to send heartbeat within the configured timeout
 
-##### `Error(String)`
+##### `Errored(String)`
 
-Error occurred
+The channel stopped because of an error (named `Errored` so importing
+ it unqualified does not shadow the prelude's `Result` `Error`
+ constructor)
 
 ## Functions
 

@@ -1,12 +1,15 @@
 import beryl
 import beryl/channel
+import beryl/coordinator
 import beryl/group
 import beryl/presence
 import beryl/supervisor
 import beryl/wire
+import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import test_helpers
 
@@ -202,6 +205,63 @@ pub fn supervised_coordinator_restarts_on_crash_test() {
   let result =
     beryl.register(supervisor.channels(supervised), "post-crash:*", handler2)
   result |> should.be_ok
+}
+
+pub fn registrations_survive_coordinator_restart_test() {
+  let config = supervisor.config(beryl.config(wire.phoenix_codec()))
+  let assert Ok(supervised) = supervisor.start(config)
+  let channels = supervisor.channels(supervised)
+
+  // Register before the crash — and never again afterwards.
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: None, socket: socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "survivor:*", handler)
+
+  // Crash the coordinator and wait for the supervisor to restart it.
+  let assert Ok(name) =
+    process.subject_name(beryl.coordinator_subject(channels))
+  let coord_subject = process.named_subject(name)
+  let assert Ok(old_pid) = get_subject_pid(coord_subject)
+  process.send_abnormal_exit(old_pid, crash_reason())
+  test_helpers.wait_until(
+    fn() {
+      case get_subject_pid(coord_subject) {
+        Ok(new_pid) -> new_pid != old_pid && process.is_alive(new_pid)
+        Error(_) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  // A join on the pre-crash pattern succeeds without re-registering: the
+  // restarted coordinator re-seeded its handlers from the registry.
+  let sent = process.new_subject()
+  process.send(
+    coord_subject,
+    coordinator.SocketConnected(
+      "post-restart-socket",
+      fn(text) {
+        process.send(sent, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      None,
+      dynamic.nil(),
+    ),
+  )
+  process.sleep(10)
+  coordinator.route_message(
+    coord_subject,
+    "post-restart-socket",
+    "[\"j1\",\"j1\",\"survivor:lobby\",\"phx_join\",{}]",
+  )
+
+  let assert Ok(reply) = process.receive(sent, 1000)
+  reply |> string.contains("phx_reply") |> should.be_true
+  reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
 // ── RestForOne cascading restart tests ─────────────────────────────────────

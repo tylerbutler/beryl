@@ -1,0 +1,5 @@
+kind: Added
+body: |-
+    Negotiate the wire protocol version at the WebSocket handshake.
+    The Mist transport now reads the ?vsn= query parameter Phoenix clients send: vsn=2.x is accepted, a missing vsn is accepted for non-Phoenix clients, and unsupported versions (e.g. the V1 object framing) are rejected with 403 at the handshake instead of connecting successfully and silently dropping every frame.
+time: 2026-07-08T17:30:00.000000-00:00

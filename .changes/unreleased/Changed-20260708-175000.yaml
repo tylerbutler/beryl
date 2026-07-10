@@ -1,0 +1,5 @@
+kind: Changed
+body: |-
+    Lock down the public API ahead of 1.0 (breaking).
+    LoggingConfig and codec.Inbound are now opaque (use logging_config/codec.inbound and the inbound_* accessors); connection permits are an opaque beryl.ConnectionPermit instead of leaking the internal connection_limit module; LogLevel variants are now DebugLevel/InfoLevel/WarnLevel/ErrorLevel and channel.StopReason's Error is now Errored, so neither shadows the prelude's Error; group/presence start_named and topic.sanitize_for_log are package-internal; supervisor.start now validates heartbeat_timeout_ms with the same bound as beryl.start and reports invalid configs as InitFailed instead of InitTimeout; presence.track/untrack_all name their session parameter session_id.
+time: 2026-07-08T17:50:00.000000-00:00

@@ -39,7 +39,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
   case string.split(raw, "|") {
     ["J", join_ref, ref, topic, payload_json] -> {
       use payload <- result_try(decode_payload(payload_json))
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: Some(join_ref),
         ref: Some(ref),
         topic: topic,
@@ -48,7 +48,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
       ))
     }
     ["L", ref, topic] ->
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
         topic: topic,
@@ -56,7 +56,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
         payload: dynamic_nil(),
       ))
     ["H", ref] ->
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
         topic: "phoenix",
@@ -65,7 +65,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
       ))
     ["E", ref, topic, event, payload_json] -> {
       use payload <- result_try(decode_payload(payload_json))
-      Ok(codec.Inbound(
+      Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
         topic: topic,
@@ -330,10 +330,20 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
   process.receive(sent_text, 50) |> should.be_error
 }
 
-pub fn phoenix_codec_without_binary_decoder_preserves_raw_binary_handler_test() {
+pub fn codec_without_binary_decoder_preserves_raw_binary_handler_test() {
   let sent_text = process.new_subject()
   let seen_binary = process.new_subject()
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  // A text-only codec (no binary decoder): raw binary frames fan out to
+  // handle_binary. The Phoenix codec now ships its own binary decoder, so
+  // this path applies only to custom codecs that opt out.
+  let text_only =
+    codec.new(
+      decode_text: wire.decode_message,
+      encode_reply: wire.reply_json,
+      encode_push: wire.push,
+      encode_heartbeat_reply: wire.heartbeat_reply,
+    )
+  let assert Ok(channels) = beryl.start(beryl.config(text_only))
 
   process.send(
     beryl.coordinator_subject(channels),

@@ -45,9 +45,6 @@ Transport abstraction for sending messages
  Wraps the underlying connection (e.g. a Mist WebSocket) with functions to
  send text/binary frames and close the connection.
 
- Note: as constructed by the built-in Mist transport, `close` is a no-op
- that returns `Ok(Nil)`. Closing is driven by the transport's own
- connection lifecycle rather than by calling this function.
  `Transport` is opaque; build one with `new_transport`. Its behaviour is
  read through the `@internal` accessors below.
 

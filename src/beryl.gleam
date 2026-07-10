@@ -54,6 +54,7 @@ import beryl/connection_limit
 import beryl/coordinator
 import beryl/error as beryl_error
 import beryl/internal
+import beryl/log
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
@@ -96,15 +97,22 @@ pub type RegisterError {
 }
 
 /// Logging verbosity for Beryl's internal loggers.
+///
+/// The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
+/// prelude's `Result` `Error` constructor when imported unqualified.
 pub type LogLevel {
-  Debug
-  Info
-  Warn
-  Error
+  DebugLevel
+  InfoLevel
+  WarnLevel
+  ErrorLevel
 }
 
 /// Logging configuration for Beryl diagnostics.
-pub type LoggingConfig {
+///
+/// This type is opaque: construct it with `logging_config` and adjust it with
+/// the `with_*` builder functions so Beryl can add logging options without a
+/// breaking change.
+pub opaque type LoggingConfig {
   LoggingConfig(
     /// Minimum level emitted by Beryl's namespaced loggers.
     level: LogLevel,
@@ -113,6 +121,22 @@ pub type LoggingConfig {
     /// Maximum number of bytes/characters included in payload previews.
     payload_preview_bytes: Int,
   )
+}
+
+// nolint: unused_exports -- package-internal accessors for tests; hidden from public docs with @internal
+@internal
+pub fn logging_level(logging: LoggingConfig) -> LogLevel {
+  logging.level
+}
+
+@internal
+pub fn logging_include_payloads(logging: LoggingConfig) -> Bool {
+  logging.include_payloads
+}
+
+@internal
+pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
+  logging.payload_preview_bytes
 }
 
 /// Configuration for the channels system.
@@ -209,7 +233,7 @@ pub fn config(codec: codec.Codec) -> Config {
     max_event_length: 64,
     max_inbound_frame_bytes: 1_048_576,
     max_joined_topics_per_socket: 1000,
-    logging: logging_config(level: Info, include_payloads: False),
+    logging: logging_config(level: InfoLevel, include_payloads: False),
   )
 }
 
@@ -286,10 +310,10 @@ pub fn with_payload_preview_bytes(
 
 fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
   case level {
-    Debug -> coordinator.Debug
-    Info -> coordinator.Info
-    Warn -> coordinator.Warn
-    Error -> coordinator.Err
+    DebugLevel -> coordinator.Debug
+    InfoLevel -> coordinator.Info
+    WarnLevel -> coordinator.Warn
+    ErrorLevel -> coordinator.Err
   }
 }
 
@@ -459,7 +483,55 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
   config.max_joined_topics_per_socket
 }
 
-/// Build a coordinator config (starting rate-limiter actors) from a `Config`.
+/// Warn when a channels system starts with every abuse control disabled.
+///
+/// Beryl ships with rate and connection limits off (like Phoenix) because
+/// no default is right for every deployment — but running that way in
+/// production leaves the server open to trivial floods, so the choice
+/// should be a visible one. Called by both `start` and `supervisor.start`.
+@internal
+pub fn warn_if_unprotected(config: Config) -> Nil {
+  let unprotected =
+    config.max_connections_per_ip <= 0
+    && config.message_rate <= 0
+    && config.join_rate <= 0
+    && config.channel_rate <= 0
+  use <- bool.guard(when: !unprotected, return: Nil)
+  internal.logger("beryl")
+  |> log.warn("No abuse controls configured", [
+    #(
+      "hint",
+      "rate and connection limits are all disabled; fine for development, "
+        <> "but for production configure with_message_rate, with_join_rate, "
+        <> "and with_max_connections_per_ip (see the production hardening "
+        <> "guide)",
+    ),
+  ])
+}
+
+/// Rate-limit settings as a pure config, `None` when the rate is unlimited.
+fn optional_limits(
+  rate: Int,
+  burst: Int,
+) -> Option(rate_limit.RateLimitConfig) {
+  use <- bool.guard(when: rate <= 0, return: None)
+  Some(rate_limit.config(per_second: rate, burst: burst))
+}
+
+// nolint: unused_exports -- package-internal accessor for transports; hidden from public docs with @internal
+/// Per-socket message rate limits for transports, `None` when unlimited.
+///
+/// Transports enforce this with a local token bucket per connection so
+/// flooded sockets are shed at the edge, before frames are decoded or
+/// enqueued on the coordinator.
+@internal
+pub fn message_limits(
+  channels: Channels,
+) -> Option(rate_limit.RateLimitConfig) {
+  optional_limits(channels.config.message_rate, channels.config.message_burst)
+}
+
+/// Build a coordinator config from a `Config`.
 /// Shared by `start` and the supervisor so the mapping lives in one place.
 @internal
 pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
@@ -467,25 +539,19 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
   // promptly. The client heartbeat_interval_ms is informational only.
   let check_interval = config.heartbeat_timeout_ms / 2
 
-  let message_limiter =
-    rate_limit.start_optional(config.message_rate, config.message_burst)
-  let join_limiter =
-    rate_limit.start_optional(config.join_rate, config.join_burst)
-  let channel_limiter =
-    rate_limit.start_optional(config.channel_rate, config.channel_burst)
-
   coordinator.CoordinatorConfig(
     codec: config.codec,
     heartbeat_check_interval_ms: check_interval,
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
-    message_limiter: message_limiter,
-    join_limiter: join_limiter,
-    channel_limiter: channel_limiter,
+    message_limits: optional_limits(config.message_rate, config.message_burst),
+    join_limits: optional_limits(config.join_rate, config.join_burst),
+    channel_limits: optional_limits(config.channel_rate, config.channel_burst),
     channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
     max_topic_length: config.max_topic_length,
     max_event_length: config.max_event_length,
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
     logging: coordinator_logging(config.logging),
+    registry: None,
   )
 }
 
@@ -501,6 +567,10 @@ pub opaque type Channels {
     config: Config,
     pubsub: Option(PubSub),
     connection_limiter: Option(connection_limit.ConnectionLimiter),
+    /// Crash-survivable handler registry. When present, `register` writes
+    /// here and syncs the coordinator, so registrations survive coordinator
+    /// restarts.
+    registry: Option(coordinator.Registry),
   )
 }
 
@@ -509,6 +579,7 @@ pub opaque type Channels {
 pub fn channels_from_coordinator(
   coordinator coordinator: Subject(coordinator.Message),
   config config: Config,
+  registry registry: Option(coordinator.Registry),
 ) -> Channels {
   Channels(
     coordinator: coordinator,
@@ -517,6 +588,7 @@ pub fn channels_from_coordinator(
     connection_limiter: connection_limit.start_optional(
       config.max_connections_per_ip,
     ),
+    registry: registry,
   )
 }
 
@@ -531,24 +603,51 @@ pub fn configured_codec(channels: Channels) -> codec.Codec {
   channels.config.codec
 }
 
+/// A held per-IP connection slot returned by `acquire_connection_slot`.
+///
+/// Opaque so Beryl can restructure the connection limiter without breaking
+/// transport authors. Hold it for the lifetime of the connection and pass it
+/// to `release_connection_slot` when the connection closes. When no per-IP
+/// limit is configured the permit is an admit-everything placeholder and
+/// releasing it is a no-op.
+pub opaque type ConnectionPermit {
+  ConnectionPermit(inner: Option(connection_limit.Permit))
+}
+
 /// Try to acquire a configured per-IP connection slot for transports.
 ///
 /// Transports call this before admitting a connection, passing the **real
 /// socket peer IP**. Do not pass a client-supplied address (e.g. from
 /// `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
-/// `Ok(Some(permit))` when admitted (release the permit with
-/// `release_connection_slot` on close), `Ok(None)` when no limit is configured
-/// (unlimited), or `Error(Nil)` when the peer is already at its limit.
+/// `Ok(permit)` when admitted (release the permit with
+/// `release_connection_slot` on close; when no limit is configured every
+/// connection is admitted), or `Error(Nil)` when the peer is already at its
+/// limit.
 pub fn acquire_connection_slot(
   channels: Channels,
   ip: String,
-) -> Result(Option(connection_limit.Permit), Nil) {
+) -> Result(ConnectionPermit, Nil) {
   connection_limit.acquire_optional(channels.connection_limiter, ip)
+  |> result.map(ConnectionPermit)
+}
+
+/// Bind an acquired connection slot to the calling process.
+///
+/// Call this from the long-lived connection process (e.g. the WebSocket
+/// handler's init) after `acquire_connection_slot`. The limiter monitors the
+/// caller so the slot is reclaimed even if the connection process dies
+/// without running its close path — otherwise crashed connections would
+/// permanently exhaust their IP's slots.
+pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.bind_optional(permit.inner)
 }
 
 /// Release a per-IP connection slot acquired by a transport.
-pub fn release_connection_slot(permit: Option(connection_limit.Permit)) -> Nil {
-  connection_limit.release_optional(permit)
+///
+/// Call from the process the permit was bound to (or from an unbound
+/// process when releasing before the connection was established).
+pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.release_optional(permit.inner)
 }
 
 /// Return the configured inbound frame size cap for transports.
@@ -595,7 +694,21 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(InvalidHeartbeatTimeout),
   )
-  let coord_config = to_coordinator_config(config)
+  warn_if_unprotected(config)
+  // Registrations live in a registry that outlives the coordinator, so a
+  // supervised restart (or manual coordinator replacement) can re-seed
+  // them.
+  use registry <- result.try(
+    coordinator.start_registry()
+    |> result.map_error(fn(error) {
+      CoordinatorStartFailed(beryl_error.from_actor_start_error(error))
+    }),
+  )
+  let coord_config =
+    coordinator.CoordinatorConfig(
+      ..to_coordinator_config(config),
+      registry: Some(registry),
+    )
 
   let coordinator_result = case config.pubsub {
     Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
@@ -604,7 +717,11 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 
   case coordinator_result {
     Ok(coord) ->
-      Ok(channels_from_coordinator(coordinator: coord, config: config))
+      Ok(channels_from_coordinator(
+        coordinator: coord,
+        config: config,
+        registry: Some(registry),
+      ))
     error_result -> {
       case
         result.unwrap_error(
@@ -633,6 +750,10 @@ pub fn start(config: Config) -> Result(Channels, StartError) {
 pub fn stop(channels: Channels) -> Nil {
   stop_coordinator(channels.coordinator)
   connection_limit.stop_optional(channels.connection_limiter)
+  case channels.registry {
+    Some(registry) -> coordinator.stop_registry(registry)
+    None -> Nil
+  }
 }
 
 fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
@@ -693,10 +814,29 @@ pub fn register(
   // Convert typed Channel to type-erased ChannelHandler
   let erased_handler = erase_channel_types(pattern, handler)
 
-  // Register with coordinator
-  process.call(channels.coordinator, 5000, fn(reply) {
-    coordinator.RegisterChannel(pattern, erased_handler, reply)
-  })
+  let registration = case channels.registry {
+    // Write to the crash-survivable registry, then sync the live
+    // coordinator so the handler is visible before this call returns.
+    Some(registry) -> {
+      use id <- result.try(coordinator.registry_put(
+        registry,
+        pattern,
+        erased_handler,
+      ))
+      let #(handlers, next_id) = coordinator.registry_snapshot(registry)
+      process.call(channels.coordinator, 5000, fn(reply) {
+        coordinator.SyncHandlers(handlers, next_id, reply)
+      })
+      Ok(id)
+    }
+    // No registry configured: register with the coordinator directly.
+    None ->
+      process.call(channels.coordinator, 5000, fn(reply) {
+        coordinator.RegisterChannel(pattern, erased_handler, reply)
+      })
+  }
+
+  registration
   |> result.map(fn(id) {
     RegisteredChannel(
       coordinator: channels.coordinator,
@@ -937,7 +1077,10 @@ fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
       ctx.send_binary(data)
       |> result_to_transport_result()
     },
-    close: fn() { Ok(Nil) },
+    close: fn() {
+      ctx.close()
+      Ok(Nil)
+    },
   )
 }
 
@@ -968,6 +1111,11 @@ fn erase_handle_result(
     channel.Reply(event, payload, new_socket) ->
       coordinator.ReplyErased(
         event: event,
+        payload: payload,
+        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+      )
+    channel.ReplyError(payload, new_socket) ->
+      coordinator.ReplyErrorErased(
         payload: payload,
         assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
       )

@@ -1,0 +1,5 @@
+kind: Added
+body: |-
+    Add channel.ReplyError for error-status replies from handle_in.
+    Channels can now answer a client message with a Phoenix "status": "error" reply (delivered to the JS client's push.receive("error", ...) hook), the equivalent of Phoenix's {:reply, {:error, payload}, socket}. Previously error-ness had to be smuggled inside an ok reply payload.
+time: 2026-07-08T17:36:00.000000-00:00

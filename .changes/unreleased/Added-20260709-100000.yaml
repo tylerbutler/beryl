@@ -1,0 +1,5 @@
+kind: Added
+body: |-
+    Implement the Phoenix V2 binary subprotocol.
+    The Phoenix codec now decodes client binary push frames (the framing the JS client uses for ArrayBuffer payloads) into normal channel dispatch: correct topic/event routing, ref/join_ref correlation, rate limits, and join checks all apply, and the payload reaches handle_in as a BitArray. Previously binary frames were fanned out raw to every joined topic's handle_binary regardless of the topic inside the frame. wire also gains binary_push/binary_reply/binary_broadcast encoders for the server-to-client shapes. Raw handle_binary fan-out now applies only to custom codecs without a binary decoder.
+time: 2026-07-09T10:00:00.000000-00:00

@@ -39,6 +39,21 @@ pub type InboundKind {
 
 /// Normalised inbound message shape.
 ///
+/// `Inbound` is opaque: construct it with `inbound` and read it with the
+/// `inbound_*` accessors. Keeping the record hidden lets Beryl add fields
+/// (which default sensibly) without breaking every custom codec.
+pub opaque type Inbound {
+  Inbound(
+    join_ref: Option(String),
+    ref: Option(String),
+    topic: String,
+    kind: InboundKind,
+    payload: Dynamic,
+  )
+}
+
+/// Construct a normalised inbound message.
+///
 /// - `join_ref`: optional client-side reference assigned at join time
 ///   (used by some Phoenix replies; codecs without this concept should
 ///   pass `None`)
@@ -47,14 +62,39 @@ pub type InboundKind {
 /// - `kind`: structural protocol event or user event
 /// - `payload`: message body as a `Dynamic` for the channel handler to
 ///   decode
-pub type Inbound {
-  Inbound(
-    join_ref: Option(String),
-    ref: Option(String),
-    topic: String,
-    kind: InboundKind,
-    payload: Dynamic,
-  )
+pub fn inbound(
+  join_ref join_ref: Option(String),
+  ref ref: Option(String),
+  topic topic: String,
+  kind kind: InboundKind,
+  payload payload: Dynamic,
+) -> Inbound {
+  Inbound(join_ref:, ref:, topic:, kind:, payload:)
+}
+
+/// The inbound message's join-time client reference, if any.
+pub fn inbound_join_ref(inbound: Inbound) -> Option(String) {
+  inbound.join_ref
+}
+
+/// The inbound message's per-message reference for reply correlation, if any.
+pub fn inbound_ref(inbound: Inbound) -> Option(String) {
+  inbound.ref
+}
+
+/// The inbound message's subscription topic.
+pub fn inbound_topic(inbound: Inbound) -> String {
+  inbound.topic
+}
+
+/// The inbound message's structural kind.
+pub fn inbound_kind(inbound: Inbound) -> InboundKind {
+  inbound.kind
+}
+
+/// The inbound message's body, for the channel handler to decode.
+pub fn inbound_payload(inbound: Inbound) -> Dynamic {
+  inbound.payload
 }
 
 /// Errors a codec may emit when decoding inbound bytes.
@@ -104,6 +144,9 @@ pub opaque type Codec {
     ) -> Frame,
     encode_push: fn(String, String, json.Json) -> Frame,
     encode_heartbeat_reply: fn(Option(String)) -> Frame,
+    encode_close: Option(fn(Option(String), String) -> Frame),
+    encode_error: Option(fn(Option(String), String) -> Frame),
+    topicless_events: Bool,
   )
 }
 
@@ -136,6 +179,9 @@ pub fn new(
     encode_reply:,
     encode_push:,
     encode_heartbeat_reply:,
+    encode_close: None,
+    encode_error: None,
+    topicless_events: False,
   )
 }
 
@@ -149,6 +195,32 @@ pub fn with_binary_decoder(
   decode_binary: fn(BitArray) -> Result(Inbound, DecodeError),
 ) -> Codec {
   Codec(..codec, decode_binary: Some(decode_binary))
+}
+
+/// Attach a channel-close encoder to a codec.
+///
+/// When set, the coordinator emits this frame to a client whenever one of
+/// its channels terminates gracefully (leave, server shutdown, heartbeat
+/// eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
+/// leave the joined state instead of waiting out push timeouts.
+pub fn with_close_encoder(
+  codec: Codec,
+  encode_close: fn(Option(String), String) -> Frame,
+) -> Codec {
+  Codec(..codec, encode_close: Some(encode_close))
+}
+
+/// Attach a channel-error encoder to a codec.
+///
+/// When set, the coordinator emits this frame to a client whenever one of
+/// its channels terminates abnormally (crashed or stopped with an error):
+/// `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
+/// automatic rejoin.
+pub fn with_error_encoder(
+  codec: Codec,
+  encode_error: fn(Option(String), String) -> Frame,
+) -> Codec {
+  Codec(..codec, encode_error: Some(encode_error))
 }
 
 /// Accessor for the codec's text decoder.
@@ -183,4 +255,37 @@ pub fn encode_push(codec: Codec) -> fn(String, String, json.Json) -> Frame {
 @internal
 pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
   codec.encode_heartbeat_reply
+}
+
+/// Accessor for the codec's optional channel-close encoder.
+@internal
+pub fn encode_close(
+  codec: Codec,
+) -> Option(fn(Option(String), String) -> Frame) {
+  codec.encode_close
+}
+
+/// Mark a codec's events as topicless.
+///
+/// Some framings (e.g. Socket.IO-style protocols) do not carry a per-frame
+/// topic. When set, an inbound event whose topic is empty is routed to the
+/// socket's single joined topic; with zero or multiple joins it is dropped.
+/// Topic-carrying codecs (like the Phoenix codec) must leave this off so
+/// empty-topic frames are rejected instead of guessed at.
+pub fn with_topicless_events(codec: Codec) -> Codec {
+  Codec(..codec, topicless_events: True)
+}
+
+/// Accessor for the codec's topicless-events flag.
+@internal
+pub fn topicless_events(codec: Codec) -> Bool {
+  codec.topicless_events
+}
+
+/// Accessor for the codec's optional channel-error encoder.
+@internal
+pub fn encode_error(
+  codec: Codec,
+) -> Option(fn(Option(String), String) -> Frame) {
+  codec.encode_error
 }

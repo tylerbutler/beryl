@@ -47,13 +47,24 @@ pub type HandleResult(assigns) {
   /// coordinator. When returned from `handle_info` (where no client ref
   /// exists), it is sent as a push using `event` as the event name.
   Reply(event: String, payload: Json, socket: Socket(assigns))
+  /// Send an error reply to the client in response to their message
+  /// (`"status": "error"` in Phoenix framing, delivered to the client's
+  /// `push.receive("error", ...)` hook).
+  ///
+  /// Only meaningful from `handle_in` for messages carrying a client ref;
+  /// from `handle_info`/`handle_binary` (where no ref exists) the reply is
+  /// dropped with a warning.
+  ReplyError(payload: Json, socket: Socket(assigns))
   /// Push a message to the client (server-initiated)
   Push(event: String, payload: Json, socket: Socket(assigns))
   /// Stop the channel with a reason
   Stop(reason: StopReason)
 }
 
-/// Why a channel is stopping
+/// Why a channel is stopping.
+///
+/// Delivered to every channel's `terminate` callback. Match with a catch-all
+/// (`_`) arm: new stop reasons may be added in minor releases.
 pub type StopReason {
   /// Normal shutdown (client left or disconnected cleanly)
   Normal
@@ -61,8 +72,10 @@ pub type StopReason {
   Shutdown
   /// Client failed to send heartbeat within the configured timeout
   HeartbeatTimeout
-  /// Error occurred
-  Error(String)
+  /// The channel stopped because of an error (named `Errored` so importing
+  /// it unqualified does not shadow the prelude's `Result` `Error`
+  /// constructor)
+  Errored(String)
 }
 
 /// Channel behavior definition

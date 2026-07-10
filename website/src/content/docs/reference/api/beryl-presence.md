@@ -104,7 +104,12 @@ The presence actor failed to start.
 
 ### `default_config`
 
-Default configuration (no PubSub, no replication)
+Default configuration (no PubSub).
+
+ The broadcast interval defaults to 1500 ms so that adding `with_pubsub`
+ yields working two-way replication out of the box; without PubSub the
+ interval is unused. Use `with_broadcast_interval(0)` to disable periodic
+ broadcasts and control replication manually.
 
 ```gleam
 pub fn default_config(String) -> Config
@@ -189,25 +194,18 @@ Start the presence actor
 pub fn start(Config) -> Result(Presence, PresenceError)
 ```
 
-### `start_named`
-
-Start the presence actor with a registered name (for supervision)
-
-```gleam
-pub fn start_named(
-  Config,
-  process.Name(Message)
-) -> Result(actor.Started(process.Subject(Message)), actor.StartError)
-```
-
 ### `track`
 
 Track a presence in a topic.
 
+ `session_id` identifies the session (e.g. socket) that owns this presence
+ and is the value `untrack_all` matches on when the session disconnects.
+
  Returns a server-generated tracking ref: an opaque, unique handle for this
  specific presence. Pass it to `untrack` to remove exactly this entry later.
- The ref is not the `pid`/session id — it is minted by the presence actor and
- is only meaningful to that actor.
+ The ref is not the session id — it is minted by the presence actor and is
+ only meaningful to that actor. The ref is also merged into object metas as
+ `phx_ref` for Phoenix client compatibility.
 
  Panics if the presence actor is unavailable or does not reply within 5 seconds.
 
@@ -238,7 +236,7 @@ pub fn untrack(
 
 ### `untrack_all`
 
-Untrack all presences for a pid (e.g., when a socket disconnects)
+Untrack all presences for a session (e.g., when a socket disconnects)
 
  Panics if the presence actor is unavailable or does not reply within 5 seconds.
 

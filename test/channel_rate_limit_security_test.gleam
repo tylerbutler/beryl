@@ -1,3 +1,7 @@
+//// Behavioural tests for per-channel rate-limit bucket accounting: buckets
+//// are only created for joined topics, are capped per socket, and are
+//// released when the channel or socket goes away.
+
 import beryl/coordinator
 import beryl/rate_limit
 import beryl/topic
@@ -7,7 +11,6 @@ import gleam/erlang/process
 import gleam/int
 import gleam/json
 import gleam/option
-import gleam/string
 import gleeunit
 import gleeunit/should
 
@@ -15,47 +18,71 @@ pub fn main() {
   gleeunit.main()
 }
 
-pub fn unjoined_events_do_not_create_channel_buckets_test() {
-  let assert Ok(limiter) =
-    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
+fn start_capped_coordinator(
+  max_keys: Int,
+) -> process.Subject(coordinator.Message) {
   let assert Ok(coord) =
     coordinator.start_with_config(
       coordinator.CoordinatorConfig(
         ..coordinator.config(wire.phoenix_codec()),
-        channel_limiter: option.Some(limiter),
-        channel_limiter_max_keys_per_socket: 1000,
+        channel_limits: option.Some(rate_limit.config(
+          per_second: 1000,
+          burst: 1000,
+        )),
+        channel_limiter_max_keys_per_socket: max_keys,
       ),
     )
+  coord
+}
 
-  process.send(
-    coord,
-    coordinator.SocketConnected(
-      "socket-131",
-      fn(_) { Ok(Nil) },
-      fn(_) { Ok(Nil) },
-      option.None,
-      dynamic.nil(),
-    ),
-  )
+/// Wait for a "handled" marker from the channel, skipping wire frames (join
+/// replies etc.) that share the same capture subject.
+fn expect_handled(sent: process.Subject(String)) -> Nil {
+  case process.receive(sent, 500) {
+    Ok("handled") -> Nil
+    Ok(_frame) -> expect_handled(sent)
+    Error(Nil) -> should.fail()
+  }
+}
 
+/// Assert that no "handled" marker arrives, skipping wire frames.
+fn expect_dropped(sent: process.Subject(String)) -> Nil {
+  case process.receive(sent, 100) {
+    Ok("handled") -> should.fail()
+    Ok(_frame) -> expect_dropped(sent)
+    Error(Nil) -> Nil
+  }
+}
+
+/// Discard everything currently queued on the capture subject.
+fn drain_replies(subject: process.Subject(String)) -> Nil {
+  case process.receive(subject, 0) {
+    Ok(_) -> drain_replies(subject)
+    Error(Nil) -> Nil
+  }
+}
+
+pub fn unjoined_events_do_not_consume_channel_bucket_cap_test() {
+  let coord = start_capped_coordinator(1)
+  let sent = process.new_subject()
+  let assert Ok(_) = register_test_channel(coord, sent)
+
+  connect(coord, sent, "socket-131")
+
+  // A flood of events for never-joined topics must not create buckets and
+  // must not consume the per-socket cap.
   send_unjoined_events(coord, 50)
   process.sleep(50)
+  drain_replies(sent)
 
-  rate_limit.bucket_count(limiter) |> should.equal(0)
-  rate_limit.stop(limiter)
+  // The single cap slot is still available for a legitimately joined topic.
+  join(coord, "socket-131", "room:one")
+  event(coord, "socket-131", "room:one", "ref-one")
+  expect_handled(sent)
 }
 
 pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() {
-  let assert Ok(limiter) =
-    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
-  let assert Ok(coord) =
-    coordinator.start_with_config(
-      coordinator.CoordinatorConfig(
-        ..coordinator.config(wire.phoenix_codec()),
-        channel_limiter: option.Some(limiter),
-        channel_limiter_max_keys_per_socket: 2,
-      ),
-    )
+  let coord = start_capped_coordinator(2)
   let sent = process.new_subject()
   let assert Ok(_) = register_test_channel(coord, sent)
 
@@ -65,25 +92,17 @@ pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() {
   join(coord, "socket-cap", "room:three")
 
   event(coord, "socket-cap", "room:one", "ref-one")
+  expect_handled(sent)
   event(coord, "socket-cap", "room:two", "ref-two")
-  event(coord, "socket-cap", "room:three", "ref-three")
-  process.sleep(50)
+  expect_handled(sent)
 
-  rate_limit.bucket_count(limiter) |> should.equal(2)
-  rate_limit.stop(limiter)
+  // The third topic would need a third bucket, over the cap: dropped.
+  event(coord, "socket-cap", "room:three", "ref-three")
+  expect_dropped(sent)
 }
 
 pub fn channel_bucket_cap_is_isolated_per_socket_test() {
-  let assert Ok(limiter) =
-    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
-  let assert Ok(coord) =
-    coordinator.start_with_config(
-      coordinator.CoordinatorConfig(
-        ..coordinator.config(wire.phoenix_codec()),
-        channel_limiter: option.Some(limiter),
-        channel_limiter_max_keys_per_socket: 1,
-      ),
-    )
+  let coord = start_capped_coordinator(1)
   let sent = process.new_subject()
   let assert Ok(_) = register_test_channel(coord, sent)
 
@@ -91,30 +110,25 @@ pub fn channel_bucket_cap_is_isolated_per_socket_test() {
   connect(coord, sent, "socket-two")
   join(coord, "socket-one", "room:one")
   join(coord, "socket-two", "room:two")
-  process.sleep(20)
-  drain(sent)
+  drain_replies(sent)
 
   event(coord, "socket-one", "room:one", "ref-one")
+  expect_handled(sent)
   event(coord, "socket-two", "room:two", "ref-two")
-
-  let assert Ok("handled") = process.receive(sent, 100)
-  let assert Ok("handled") = process.receive(sent, 100)
-  rate_limit.bucket_count(limiter) |> should.equal(2)
-  rate_limit.bucket_count_by_group(limiter, "socket-one") |> should.equal(1)
-  rate_limit.bucket_count_by_group(limiter, "socket-two") |> should.equal(1)
-  rate_limit.stop(limiter)
+  expect_handled(sent)
 }
 
-pub fn heartbeat_eviction_removes_channel_buckets_test() {
-  let assert Ok(limiter) =
-    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
+pub fn heartbeat_eviction_releases_channel_buckets_test() {
   let assert Ok(coord) =
     coordinator.start_with_config(
       coordinator.CoordinatorConfig(
         ..coordinator.config(wire.phoenix_codec()),
         heartbeat_timeout_ms: 20,
-        channel_limiter: option.Some(limiter),
-        channel_limiter_max_keys_per_socket: 1000,
+        channel_limits: option.Some(rate_limit.config(
+          per_second: 1000,
+          burst: 1000,
+        )),
+        channel_limiter_max_keys_per_socket: 1,
       ),
     )
   let sent = process.new_subject()
@@ -123,28 +137,24 @@ pub fn heartbeat_eviction_removes_channel_buckets_test() {
   connect(coord, sent, "socket-heartbeat")
   join(coord, "socket-heartbeat", "room:one")
   event(coord, "socket-heartbeat", "room:one", "ref-one")
-  process.sleep(20)
-  rate_limit.bucket_count(limiter) |> should.equal(1)
+  expect_handled(sent)
 
+  // Let the socket go stale and evict it.
   process.sleep(30)
   process.send(coord, coordinator.CheckHeartbeats)
   process.sleep(20)
 
-  rate_limit.bucket_count(limiter) |> should.equal(0)
-  rate_limit.stop(limiter)
+  // A reconnect under the same socket id starts with a free cap: if the old
+  // bucket had leaked, this event would exceed max_keys_per_socket = 1.
+  connect(coord, sent, "socket-heartbeat")
+  join(coord, "socket-heartbeat", "room:two")
+  drain_replies(sent)
+  event(coord, "socket-heartbeat", "room:two", "ref-two")
+  expect_handled(sent)
 }
 
 pub fn leave_removes_channel_bucket_so_cap_recovers_test() {
-  let assert Ok(limiter) =
-    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
-  let assert Ok(coord) =
-    coordinator.start_with_config(
-      coordinator.CoordinatorConfig(
-        ..coordinator.config(wire.phoenix_codec()),
-        channel_limiter: option.Some(limiter),
-        channel_limiter_max_keys_per_socket: 2,
-      ),
-    )
+  let coord = start_capped_coordinator(2)
   let sent = process.new_subject()
   let assert Ok(_) = register_test_channel(coord, sent)
 
@@ -152,42 +162,17 @@ pub fn leave_removes_channel_bucket_so_cap_recovers_test() {
   join(coord, "socket-leave", "room:one")
   join(coord, "socket-leave", "room:two")
   event(coord, "socket-leave", "room:one", "ref-one")
+  expect_handled(sent)
   event(coord, "socket-leave", "room:two", "ref-two")
-  process.sleep(20)
-  rate_limit.bucket_count(limiter) |> should.equal(2)
+  expect_handled(sent)
 
+  // Leaving frees room:one's bucket, so a third topic fits under the cap.
   leave(coord, "socket-leave", "room:one", "leave-one")
   join(coord, "socket-leave", "room:three")
   process.sleep(20)
-  drain(sent)
+  drain_replies(sent)
   event(coord, "socket-leave", "room:three", "ref-three")
-  process.sleep(20)
-
-  let assert Ok("handled") = process.receive(sent, 100)
-  rate_limit.bucket_count(limiter) |> should.equal(2)
-  rate_limit.stop(limiter)
-}
-
-pub fn stopped_join_limiter_does_not_crash_coordinator_test() {
-  let assert Ok(limiter) =
-    rate_limit.start(rate_limit.config(per_second: 1000, burst: 1000))
-  let assert Ok(coord) =
-    coordinator.start_with_config(
-      coordinator.CoordinatorConfig(
-        ..coordinator.config(wire.phoenix_codec()),
-        join_limiter: option.Some(limiter),
-      ),
-    )
-  let sent = process.new_subject()
-  let assert Ok(_) = register_test_channel(coord, sent)
-  connect(coord, sent, "socket-dead-limiter")
-  rate_limit.stop(limiter)
-
-  join(coord, "socket-dead-limiter", "room:alive")
-
-  let assert Ok(join_reply) = process.receive(sent, 200)
-  join_reply |> string.contains("phx_reply") |> should.be_true
-  join_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+  expect_handled(sent)
 }
 
 fn send_unjoined_events(
@@ -230,6 +215,7 @@ fn connect(
       dynamic.nil(),
     ),
   )
+  process.sleep(10)
 }
 
 fn join(
@@ -253,13 +239,7 @@ fn event(
   coordinator.route_message(
     coord,
     socket_id,
-    "[\"join-"
-      <> topic
-      <> "\",\""
-      <> ref
-      <> "\",\""
-      <> topic
-      <> "\",\"client_event\",{}]",
+    "[null,\"" <> ref <> "\",\"" <> topic <> "\",\"client_event\",{}]",
   )
 }
 
@@ -272,21 +252,8 @@ fn leave(
   coordinator.route_message(
     coord,
     socket_id,
-    "[\"join-"
-      <> topic
-      <> "\",\""
-      <> ref
-      <> "\",\""
-      <> topic
-      <> "\",\"phx_leave\",{}]",
+    "[null,\"" <> ref <> "\",\"" <> topic <> "\",\"phx_leave\",{}]",
   )
-}
-
-fn drain(subject: process.Subject(String)) -> Nil {
-  case process.receive(subject, 0) {
-    Ok(_) -> drain(subject)
-    Error(Nil) -> Nil
-  }
 }
 
 fn register_test_channel(

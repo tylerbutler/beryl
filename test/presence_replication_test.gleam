@@ -130,6 +130,7 @@ pub fn remote_state_triggers_merge_via_pubsub_test() {
   let config1 =
     presence.default_config("node1")
     |> presence.with_pubsub(ps)
+    |> presence.with_broadcast_interval(0)
   let assert Ok(p1) = presence.start(config1)
 
   // Node2 with broadcasting enabled
@@ -355,4 +356,96 @@ fn drain_mailbox() -> Nil {
     Ok(_) -> drain_mailbox()
     Error(_) -> Nil
   }
+}
+
+// ── Restart safety: incarnation-unique replicas ───────────────────────
+
+/// Kill a presence actor's process, simulating a crash without cleanup.
+fn kill_presence(p: presence.Presence) -> Nil {
+  let assert Ok(pid) = process.subject_owner(presence.subject(p))
+  // The actor is linked to this (test) process; unlink before killing so
+  // the exit signal does not take the test runner down with it.
+  process.unlink(pid)
+  process.kill(pid)
+  // Wait for the process to actually be gone.
+  test_helpers.wait_until(fn() { !process.is_alive(pid) }, 1000, 5)
+  Nil
+}
+
+pub fn restarted_node_presences_replicate_to_peers_test() {
+  let ps = test_pubsub("restart_join")
+  let assert Ok(p1) = presence.start(test_config(ps, "node1", 30))
+  let assert Ok(p2) = presence.start(test_config(ps, "node2", 30))
+
+  // Seed replication both ways so node2's context covers node1's clocks.
+  let _ =
+    presence.track(p1, "room:lobby", "user:old", "socket-old", json.null())
+  test_helpers.wait_until(
+    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    2000,
+    10,
+  )
+
+  // Crash node1 and restart it under the same configured base name.
+  kill_presence(p1)
+  let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
+
+  // A presence tracked by the restarted incarnation must become visible on
+  // node2. Without incarnation-unique replicas, node2's causal context
+  // already covered the reused clocks and silently dropped this join.
+  let _ =
+    presence.track(p1b, "room:lobby", "user:new", "socket-new", json.null())
+  test_helpers.wait_until(
+    fn() {
+      presence.list(p2, "room:lobby")
+      |> list.any(fn(entry) { entry.key == "user:new" })
+    },
+    2000,
+    10,
+  )
+  presence.list(p2, "room:lobby")
+  |> list.any(fn(entry) { entry.key == "user:new" })
+  |> should.be_true
+}
+
+pub fn restart_prunes_previous_incarnations_ghosts_test() {
+  let ps = test_pubsub("restart_ghosts")
+  let assert Ok(p1) = presence.start(test_config(ps, "node1", 30))
+  let assert Ok(p2) = presence.start(test_config(ps, "node2", 30))
+
+  // node1 tracks a presence whose session dies with the node.
+  let _ =
+    presence.track(p1, "room:lobby", "user:ghost", "socket-dead", json.null())
+  test_helpers.wait_until(
+    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    2000,
+    10,
+  )
+
+  kill_presence(p1)
+  let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
+  // Give the new incarnation something to gossip so peers observe it.
+  let _ =
+    presence.track(p1b, "room:lobby", "user:live", "socket-live", json.null())
+
+  // The dead incarnation's entry disappears from the peer once it observes
+  // the new incarnation, and it must not resurrect into the restarted node
+  // via merges of the peer's state.
+  test_helpers.wait_until(
+    fn() {
+      let on_p2 =
+        presence.list(p2, "room:lobby") |> list.map(fn(entry) { entry.key })
+      let on_p1b =
+        presence.list(p1b, "room:lobby") |> list.map(fn(entry) { entry.key })
+      on_p2 == ["user:live"] && on_p1b == ["user:live"]
+    },
+    3000,
+    10,
+  )
+  presence.list(p2, "room:lobby")
+  |> list.map(fn(entry) { entry.key })
+  |> should.equal(["user:live"])
+  presence.list(p1b, "room:lobby")
+  |> list.map(fn(entry) { entry.key })
+  |> should.equal(["user:live"])
 }

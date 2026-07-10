@@ -10,8 +10,12 @@
 //// `bridge` packages that plumbing into a single helper. Start a bridge inside
 //// a channel `join`, store the handle in the socket assigns, subscribe the
 //// returned `Subject` to your domain actor, and stop the bridge in `terminate`.
-//// The forwarder also monitors the owning channel process, so it is cleaned up
-//// automatically if that process dies — no leaked processes.
+////
+//// Calling `stop` from `terminate` is **required** for cleanup: channels are
+//// dispatched by a shared coordinator rather than one process per channel, so
+//// the process the forwarder monitors is the coordinator itself — the monitor
+//// is a backstop for coordinator death, not a per-channel lifecycle. A bridge
+//// whose `stop` is never called keeps running until the coordinator exits.
 ////
 //// ## Example
 ////
@@ -90,9 +94,11 @@ type Event(message) {
 /// `handle_info` expects. If no translation is needed, pass the identity
 /// function `fn(value) { value }`.
 ///
-/// The forwarder monitors the calling (channel) process and exits if it dies,
-/// so a missed `stop` will not leak a process. Always call `stop` from your
-/// channel's `terminate` for prompt, deterministic cleanup.
+/// Always call `stop` from your channel's `terminate` — that is the only
+/// per-channel cleanup. The forwarder also monitors the calling process, but
+/// because channel callbacks run inside the shared coordinator, that monitor
+/// fires only if the coordinator itself dies; it does not detect an
+/// individual channel ending.
 pub fn start(
   channel channel: RegisteredChannel(assigns, info),
   socket_id socket_id: String,

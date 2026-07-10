@@ -4,9 +4,13 @@
 //// and the beryl coordinator using Mist request and response types directly.
 
 import beryl.{type Channels}
-import beryl/connection_limit
 import beryl/coordinator.{type Message as CoordinatorMessage}
+import beryl/internal
+import beryl/log
+import beryl/rate_limit
+import beryl/wire/codec
 import gleam/bit_array
+import gleam/bool
 import gleam/bytes_tree
 import gleam/crypto
 import gleam/dynamic.{type Dynamic}
@@ -97,14 +101,24 @@ type ConnectionState {
   ConnectionState(
     socket_id: String,
     coordinator: Subject(CoordinatorMessage),
-    connection_permit: Option(connection_limit.Permit),
+    connection_permit: Option(beryl.ConnectionPermit),
     max_inbound_frame_bytes: Int,
+    /// Wire codec for decoding inbound frames here in the connection
+    /// process, so parse cost and malformed input never reach the shared
+    /// coordinator.
+    codec: codec.Codec,
+    /// Per-connection message-rate token bucket (`None` = unlimited).
+    /// Enforced at the edge: frames over the rate are shed before decode,
+    /// so a flooding socket cannot fill the coordinator's mailbox.
+    message_bucket: Option(rate_limit.Bucket),
   )
 }
 
 type SendRequest {
   SendText(String)
   SendBinary(BitArray)
+  /// Coordinator-initiated close (e.g. heartbeat eviction).
+  Close
 }
 
 /// Upgrade a request to WebSocket if it matches the configured path
@@ -159,18 +173,38 @@ fn handle_matched_upgrade(
   channels: Channels,
   config: TransportConfig(assigns),
 ) -> Response(ResponseData) {
-  case origin_allowed(request, config.allowed_origins) {
-    False -> forbidden()
-    True -> {
-      let ip = request_ip(request)
-      case beryl.acquire_connection_slot(channels, ip) {
-        Error(Nil) ->
-          response.new(429)
-          |> response.set_body(mist.Bytes(bytes_tree.new()))
-        Ok(connection_permit) ->
-          run_connect_and_upgrade(request, channels, config, connection_permit)
+  use <- bool.lazy_guard(
+    when: !origin_allowed(request, config.allowed_origins),
+    return: forbidden,
+  )
+  use <- bool.lazy_guard(when: !vsn_supported(request), return: forbidden)
+  let ip = request_ip(request)
+  case beryl.acquire_connection_slot(channels, ip) {
+    Error(Nil) ->
+      response.new(429)
+      |> response.set_body(mist.Bytes(bytes_tree.new()))
+    Ok(connection_permit) ->
+      run_connect_and_upgrade(request, channels, config, connection_permit)
+  }
+}
+
+/// Check the client's requested wire protocol version (`?vsn=` query
+/// parameter, sent by Phoenix clients) before upgrading.
+///
+/// Beryl speaks the Phoenix V2 array framing, so `vsn=2.x` is accepted. A
+/// missing `vsn` is accepted for non-Phoenix clients speaking the configured
+/// codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`) is
+/// rejected with `403 Forbidden` at the handshake — failing loudly instead
+/// of accepting a connection whose every frame would be undecodable.
+fn vsn_supported(request: Request(Connection)) -> Bool {
+  case request.get_query(request) {
+    Ok(params) ->
+      case list.key_find(params, "vsn") {
+        Ok(vsn) -> string.starts_with(vsn, "2.")
+        Error(Nil) -> True
       }
-    }
+    // No query string / unparseable query: no version was requested.
+    Error(Nil) -> True
   }
 }
 
@@ -197,7 +231,7 @@ fn run_connect_and_upgrade(
   request: Request(Connection),
   channels: Channels,
   config: TransportConfig(assigns),
-  connection_permit: Option(connection_limit.Permit),
+  connection_permit: beryl.ConnectionPermit,
 ) -> Response(ResponseData) {
   // Run on_connect callback if configured
   case config.on_connect {
@@ -208,7 +242,7 @@ fn run_connect_and_upgrade(
             request,
             channels,
             unsafe_coerce_to_dynamic(assigns),
-            connection_permit,
+            Some(connection_permit),
           )
         Error(ConnectRejected) -> {
           beryl.release_connection_slot(connection_permit)
@@ -216,7 +250,8 @@ fn run_connect_and_upgrade(
           |> response.set_body(mist.Bytes(bytes_tree.new()))
         }
       }
-    None -> do_upgrade(request, channels, dynamic.nil(), connection_permit)
+    None ->
+      do_upgrade(request, channels, dynamic.nil(), Some(connection_permit))
   }
 }
 
@@ -290,25 +325,43 @@ fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
   connect_assigns: Dynamic,
-  connection_permit: Option(connection_limit.Permit),
+  connection_permit: Option(beryl.ConnectionPermit),
 ) -> Response(ResponseData) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
-  mist.websocket(
-    request: request,
-    handler: fn(state, message, connection) {
-      on_message(state, message, connection)
-    },
-    on_init: fn(connection) {
-      on_init(
-        connection,
-        beryl.coordinator_subject(channels),
-        connect_assigns,
-        connection_permit,
-        max_inbound_frame_bytes,
-      )
-    },
-    on_close: on_close,
-  )
+  let active_codec = beryl.configured_codec(channels)
+  let message_limits = beryl.message_limits(channels)
+  let response =
+    mist.websocket(
+      request: request,
+      handler: fn(state, message, connection) {
+        on_message(state, message, connection)
+      },
+      on_init: fn(connection) {
+        on_init(
+          connection,
+          beryl.coordinator_subject(channels),
+          connect_assigns,
+          connection_permit,
+          max_inbound_frame_bytes,
+          active_codec,
+          message_limits,
+        )
+      },
+      on_close: on_close,
+    )
+  // A failed handshake (e.g. missing Sec-WebSocket-Key) never runs
+  // on_init/on_close, so the acquired per-IP slot must be released here or
+  // repeated bad handshakes would permanently exhaust the IP's slots.
+  case response.status >= 400 {
+    True -> {
+      case connection_permit {
+        Some(permit) -> beryl.release_connection_slot(permit)
+        None -> Nil
+      }
+      response
+    }
+    False -> response
+  }
 }
 
 /// Initialize WebSocket connection
@@ -316,9 +369,18 @@ fn on_init(
   _connection: WebsocketConnection,
   coordinator: Subject(CoordinatorMessage),
   connect_assigns: Dynamic,
-  connection_permit: Option(connection_limit.Permit),
+  connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
+  active_codec: codec.Codec,
+  message_limits: Option(rate_limit.RateLimitConfig),
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
+  // Bind the per-IP slot to this WebSocket process so it is reclaimed even
+  // if the process dies without running on_close.
+  case connection_permit {
+    Some(permit) -> beryl.bind_connection_slot(permit)
+    None -> Nil
+  }
+
   // Generate unique socket ID
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
@@ -349,12 +411,23 @@ fn on_init(
     ),
   )
 
+  // Let the coordinator actively close this connection (heartbeat eviction,
+  // server-side disconnects) instead of leaving a zombie socket open.
+  process.send(
+    coordinator,
+    coordinator.RegisterCloser(socket_id, fn() {
+      process.send(send_subject, Close)
+    }),
+  )
+
   let state =
     ConnectionState(
       socket_id: socket_id,
       coordinator: coordinator,
       connection_permit: connection_permit,
       max_inbound_frame_bytes: max_inbound_frame_bytes,
+      codec: active_codec,
+      message_bucket: option.map(message_limits, rate_limit.new_bucket),
     )
 
   #(state, Some(selector))
@@ -374,10 +447,7 @@ fn on_message(
         frame_too_large(state.max_inbound_frame_bytes, string.byte_size(text))
       {
         True -> mist.stop()
-        False -> {
-          coordinator.route_message(state.coordinator, state.socket_id, text)
-          mist.continue(state)
-        }
+        False -> handle_inbound_text(state, text)
       }
     }
     mist.Binary(data) -> {
@@ -388,14 +458,12 @@ fn on_message(
         )
       {
         True -> mist.stop()
-        False -> {
-          coordinator.route_binary(state.coordinator, state.socket_id, data)
-          mist.continue(state)
-        }
+        False -> handle_inbound_binary(state, data)
       }
     }
 
     mist.Closed | mist.Shutdown -> mist.stop()
+    mist.Custom(Close) -> mist.stop()
     mist.Custom(SendText(text)) -> {
       mist.send_text_frame(connection, text)
       |> result.replace(mist.continue(state))
@@ -409,13 +477,92 @@ fn on_message(
   }
 }
 
+/// Rate-check and decode a text frame in the connection process, so parse
+/// cost stays here and only valid, rate-admitted messages reach the shared
+/// coordinator.
+fn handle_inbound_text(
+  state: ConnectionState,
+  text: String,
+) -> mist.Next(ConnectionState, SendRequest) {
+  let #(state, allowed) = take_message_token(state)
+  use <- bool.guard(when: !allowed, return: mist.continue(state))
+  case codec.decode_text(state.codec)(text) {
+    Ok(msg) -> {
+      coordinator.route_decoded(state.coordinator, state.socket_id, msg)
+      mist.continue(state)
+    }
+    Error(err) -> {
+      transport_logger()
+      |> log.warn("Failed to decode wire protocol message", [
+        #("socket_id", state.socket_id),
+        #("error", codec.format_decode_error(err)),
+      ])
+      mist.continue(state)
+    }
+  }
+}
+
+/// Rate-check and decode a binary frame in the connection process. Codecs
+/// without a binary decoder keep the raw `handle_binary` fan-out, routed
+/// through the coordinator.
+fn handle_inbound_binary(
+  state: ConnectionState,
+  data: BitArray,
+) -> mist.Next(ConnectionState, SendRequest) {
+  let #(state, allowed) = take_message_token(state)
+  use <- bool.guard(when: !allowed, return: mist.continue(state))
+  case codec.decode_binary(state.codec) {
+    None -> {
+      coordinator.route_binary(state.coordinator, state.socket_id, data)
+      mist.continue(state)
+    }
+    Some(decode_binary) ->
+      case decode_binary(data) {
+        Ok(msg) -> {
+          coordinator.route_decoded(state.coordinator, state.socket_id, msg)
+          mist.continue(state)
+        }
+        Error(err) -> {
+          transport_logger()
+          |> log.warn("Failed to decode binary wire protocol message", [
+            #("socket_id", state.socket_id),
+            #("error", codec.format_decode_error(err)),
+          ])
+          mist.continue(state)
+        }
+      }
+  }
+}
+
+/// Take a token from the connection's message bucket; always allowed when
+/// no message rate is configured.
+fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
+  case state.message_bucket {
+    None -> #(state, True)
+    Some(bucket) -> {
+      let #(bucket, taken) = rate_limit.take(bucket)
+      #(
+        ConnectionState(..state, message_bucket: Some(bucket)),
+        result.is_ok(taken),
+      )
+    }
+  }
+}
+
+fn transport_logger() -> log.Logger {
+  internal.logger("beryl.transport.mist")
+}
+
 fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
   max_bytes > 0 && actual_bytes > max_bytes
 }
 
 /// Cleanup when connection closes
 fn on_close(state: ConnectionState) -> Nil {
-  beryl.release_connection_slot(state.connection_permit)
+  case state.connection_permit {
+    Some(permit) -> beryl.release_connection_slot(permit)
+    None -> Nil
+  }
   process.send(
     state.coordinator,
     coordinator.SocketDisconnected(state.socket_id),

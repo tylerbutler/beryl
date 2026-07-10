@@ -13,9 +13,10 @@
 
 import beryl/wire/codec.{
   type Codec, type DecodeError, type Frame, type Inbound, type InboundKind,
-  type ReplyStatus, Event, Heartbeat, Inbound, InvalidFormat, InvalidJson, Join,
-  Leave, StatusError, StatusOk, TextFrame,
+  type ReplyStatus, Event, Heartbeat, InvalidFormat, InvalidJson, Join, Leave,
+  StatusError, StatusOk, TextFrame,
 }
+import gleam/bit_array
 import gleam/bool
 import gleam/dict
 import gleam/dynamic.{type Dynamic}
@@ -30,6 +31,11 @@ const expected_array_message = "Expected array of 5 elements [join_ref, ref, top
 const max_json_nesting_depth = 64
 
 /// The canonical Phoenix wire codec. Pass to `beryl.config/1`.
+///
+/// Handles both the JSON array framing on text frames and the Phoenix V2
+/// binary framing on binary frames (see `decode_binary_message`). Binary
+/// push payloads reach `handle_in` as a `BitArray` wrapped in `Dynamic`;
+/// decode them with `gleam/dynamic/decode.bit_array`.
 pub fn phoenix_codec() -> Codec {
   codec.new(
     decode_text: decode_message,
@@ -37,6 +43,9 @@ pub fn phoenix_codec() -> Codec {
     encode_push: push,
     encode_heartbeat_reply: heartbeat_reply,
   )
+  |> codec.with_close_encoder(channel_close)
+  |> codec.with_error_encoder(channel_error)
+  |> codec.with_binary_decoder(decode_binary_message)
 }
 
 /// Parse a JSON string into an `Inbound`.
@@ -75,11 +84,11 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
     use topic <- decode.subfield([2], decode.string)
     use event <- decode.subfield([3], decode.string)
     use payload <- decode.subfield([4], decode.dynamic)
-    decode.success(Inbound(
+    decode.success(codec.inbound(
       join_ref: join_ref,
       ref: ref,
       topic: topic,
-      kind: classify_phoenix_event(event),
+      kind: classify_phoenix_event(topic, event),
       payload: payload,
     ))
   }
@@ -92,7 +101,7 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
 
 fn validate_inbound_depth(msg: Inbound) -> Result(Inbound, DecodeError) {
   use <- bool.guard(
-    when: !within_json_depth(msg.payload, max_json_nesting_depth),
+    when: !within_json_depth(codec.inbound_payload(msg), max_json_nesting_depth),
     return: Error(InvalidFormat("JSON nesting depth exceeded")),
   )
   Ok(msg)
@@ -100,28 +109,34 @@ fn validate_inbound_depth(msg: Inbound) -> Result(Inbound, DecodeError) {
 
 /// Encode an `Inbound` back to a Phoenix wire JSON string.
 pub fn encode(msg: Inbound) -> String {
-  let join_ref_json = option_to_json(msg.join_ref)
-  let ref_json = option_to_json(msg.ref)
-  let payload_json = dynamic_to_json(msg.payload)
-  let event = phoenix_event_name(msg.kind)
+  let join_ref_json = option_to_json(codec.inbound_join_ref(msg))
+  let ref_json = option_to_json(codec.inbound_ref(msg))
+  let payload_json = dynamic_to_json(codec.inbound_payload(msg))
+  let event = phoenix_event_name(codec.inbound_kind(msg))
 
   json.to_string(
     json.preprocessed_array([
       join_ref_json,
       ref_json,
-      json.string(msg.topic),
+      json.string(codec.inbound_topic(msg)),
       json.string(event),
       payload_json,
     ]),
   )
 }
 
-fn classify_phoenix_event(event: String) -> InboundKind {
-  case event {
-    "phx_join" -> Join
-    "phx_leave" -> Leave
-    "heartbeat" -> Heartbeat
-    other -> Event(other)
+/// Classify a Phoenix event name into a structural kind.
+///
+/// `phx_join`/`phx_leave` are reserved event names on every topic, but
+/// `heartbeat` is only special on the reserved `"phoenix"` topic — an
+/// application is free to define its own `"heartbeat"` channel event, which
+/// must reach `handle_in` rather than refresh the socket's liveness timer.
+fn classify_phoenix_event(topic: String, event: String) -> InboundKind {
+  case topic, event {
+    _, "phx_join" -> Join
+    _, "phx_leave" -> Leave
+    "phoenix", "heartbeat" -> Heartbeat
+    _, other -> Event(other)
   }
 }
 
@@ -305,6 +320,37 @@ pub fn push(topic: String, event: String, payload: json.Json) -> Frame {
   )
 }
 
+/// Create a Phoenix `phx_close` frame, sent when a channel terminates
+/// gracefully. Phoenix mirrors the channel's `join_ref` into the `ref` slot.
+pub fn channel_close(join_ref: Option(String), topic: String) -> Frame {
+  terminal_event(join_ref, topic, "phx_close")
+}
+
+/// Create a Phoenix `phx_error` frame, sent when a channel terminates
+/// abnormally. Phoenix clients respond by scheduling an automatic rejoin.
+pub fn channel_error(join_ref: Option(String), topic: String) -> Frame {
+  terminal_event(join_ref, topic, "phx_error")
+}
+
+fn terminal_event(
+  join_ref: Option(String),
+  topic: String,
+  event: String,
+) -> Frame {
+  let join_ref_json = option_to_json(join_ref)
+  TextFrame(
+    json.to_string(
+      json.preprocessed_array([
+        join_ref_json,
+        join_ref_json,
+        json.string(topic),
+        json.string(event),
+        json.object([]),
+      ]),
+    ),
+  )
+}
+
 /// Create a Phoenix heartbeat reply.
 pub fn heartbeat_reply(ref: Option(String)) -> Frame {
   TextFrame(
@@ -327,6 +373,172 @@ fn option_to_json(opt: Option(String)) -> json.Json {
   case opt {
     None -> json.null()
     Some(s) -> json.string(s)
+  }
+}
+
+// ── Phoenix V2 binary framing ───────────────────────────────────────────────
+//
+// Phoenix clients switch to a compact binary framing whenever a push payload
+// is raw bytes (an ArrayBuffer in the JS client). Frames start with a kind
+// byte, then u8 lengths for each metadata component, then the components,
+// then the payload as the remaining bytes:
+//
+//   client push:      <<0, jr_len, ref_len, topic_len, event_len,
+//                       jr, ref, topic, event, payload>>
+//   server push:      <<0, jr_len, topic_len, event_len, jr, topic, event, payload>>
+//   server reply:     <<1, jr_len, ref_len, topic_len, status_len,
+//                       jr, ref, topic, status, payload>>
+//   server broadcast: <<2, topic_len, event_len, topic, event, payload>>
+
+const binary_push_kind = 0
+
+const binary_reply_kind = 1
+
+const binary_broadcast_kind = 2
+
+const expected_binary_message = "Expected Phoenix V2 binary push frame"
+
+/// Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
+///
+/// The payload is delivered to `handle_in` as raw bytes (`BitArray` wrapped
+/// in `Dynamic`); decode it with `gleam/dynamic/decode.bit_array`. Zero-length
+/// join_ref/ref components decode as `None`. Reserved protocol events are
+/// classified the same way as on the text framing.
+pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
+  case data {
+    <<
+      0,
+      join_ref_size,
+      ref_size,
+      topic_size,
+      event_size,
+      join_ref:bytes-size(join_ref_size),
+      ref:bytes-size(ref_size),
+      topic:bytes-size(topic_size),
+      event:bytes-size(event_size),
+      payload:bytes,
+    >> -> {
+      use join_ref <- result.try(optional_utf8(join_ref))
+      use ref <- result.try(optional_utf8(ref))
+      use topic <- result.try(required_utf8(topic, "topic"))
+      use event <- result.try(required_utf8(event, "event"))
+      Ok(codec.inbound(
+        join_ref: join_ref,
+        ref: ref,
+        topic: topic,
+        kind: classify_phoenix_event(topic, event),
+        payload: dynamic.bit_array(payload),
+      ))
+    }
+    _ -> Error(InvalidFormat(expected_binary_message))
+  }
+}
+
+fn optional_utf8(bytes: BitArray) -> Result(Option(String), DecodeError) {
+  case bit_array.byte_size(bytes) {
+    0 -> Ok(None)
+    _ ->
+      required_utf8(bytes, "ref")
+      |> result.map(Some)
+  }
+}
+
+fn required_utf8(bytes: BitArray, name: String) -> Result(String, DecodeError) {
+  bit_array.to_string(bytes)
+  |> result.replace_error(InvalidFormat(name <> " is not valid UTF-8"))
+}
+
+/// Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
+///
+/// Errors when a metadata component exceeds the framing's 255-byte length
+/// limit.
+pub fn binary_push(
+  join_ref join_ref: Option(String),
+  topic topic: String,
+  event event: String,
+  payload payload: BitArray,
+) -> Result(Frame, Nil) {
+  use #(jr_size, jr) <- result.try(u8_component(option.unwrap(join_ref, "")))
+  use #(topic_size, topic) <- result.try(u8_component(topic))
+  use #(event_size, event) <- result.try(u8_component(event))
+  Ok(
+    codec.BinaryFrame(<<
+      binary_push_kind,
+      jr_size,
+      topic_size,
+      event_size,
+      jr:bits,
+      topic:bits,
+      event:bits,
+      payload:bits,
+    >>),
+  )
+}
+
+/// Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
+///
+/// Errors when a metadata component exceeds the framing's 255-byte length
+/// limit.
+pub fn binary_reply(
+  join_ref join_ref: Option(String),
+  ref ref: Option(String),
+  topic topic: String,
+  status status: ReplyStatus,
+  payload payload: BitArray,
+) -> Result(Frame, Nil) {
+  let status_string = case status {
+    StatusOk -> "ok"
+    StatusError -> "error"
+  }
+  use #(jr_size, jr) <- result.try(u8_component(option.unwrap(join_ref, "")))
+  use #(ref_size, ref) <- result.try(u8_component(option.unwrap(ref, "")))
+  use #(topic_size, topic) <- result.try(u8_component(topic))
+  use #(status_size, status) <- result.try(u8_component(status_string))
+  Ok(
+    codec.BinaryFrame(<<
+      binary_reply_kind,
+      jr_size,
+      ref_size,
+      topic_size,
+      status_size,
+      jr:bits,
+      ref:bits,
+      topic:bits,
+      status:bits,
+      payload:bits,
+    >>),
+  )
+}
+
+/// Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
+///
+/// Errors when a metadata component exceeds the framing's 255-byte length
+/// limit.
+pub fn binary_broadcast(
+  topic topic: String,
+  event event: String,
+  payload payload: BitArray,
+) -> Result(Frame, Nil) {
+  use #(topic_size, topic) <- result.try(u8_component(topic))
+  use #(event_size, event) <- result.try(u8_component(event))
+  Ok(
+    codec.BinaryFrame(<<
+      binary_broadcast_kind,
+      topic_size,
+      event_size,
+      topic:bits,
+      event:bits,
+      payload:bits,
+    >>),
+  )
+}
+
+fn u8_component(value: String) -> Result(#(Int, BitArray), Nil) {
+  let bytes = bit_array.from_string(value)
+  let size = bit_array.byte_size(bytes)
+  case size <= 255 {
+    True -> Ok(#(size, bytes))
+    False -> Error(Nil)
   }
 }
 

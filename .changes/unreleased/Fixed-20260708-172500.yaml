@@ -1,0 +1,5 @@
+kind: Fixed
+body: |-
+    Inject phx_ref into tracked presence metas and add a presence_state encoder.
+    Phoenix client Presence helpers identify individual metas by phx_ref when applying diffs; without it a single leave removed every meta stored under the same key, corrupting multi-device presence. presence.track now merges the tracking ref into object metas as phx_ref, and presence/wire.encode_state encodes the Phoenix presence_state payload clients expect after joining.
+time: 2026-07-08T17:25:00.000000-00:00

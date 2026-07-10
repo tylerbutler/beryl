@@ -51,7 +51,9 @@ The supervisor failed to start
 
 ##### `InvalidHeartbeatTimeout`
 
-heartbeat_timeout_ms must be > 0
+`heartbeat_timeout_ms` must be at least 2 — the same validation as
+ `beryl.start` (the staleness check interval is derived as
+ `heartbeat_timeout_ms / 2`, so 1 would silently disable eviction).
 
 ### `SupervisedChannels`
 

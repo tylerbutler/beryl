@@ -114,7 +114,9 @@ pub fn supervisor_pid(supervised: SupervisedChannels) -> process.Pid {
 pub type StartError {
   /// The supervisor failed to start
   SupervisorStartFailed(beryl_error.StartFailure)
-  /// heartbeat_timeout_ms must be > 0
+  /// `heartbeat_timeout_ms` must be at least 2 — the same validation as
+  /// `beryl.start` (the staleness check interval is derived as
+  /// `heartbeat_timeout_ms / 2`, so 1 would silently disable eviction).
   InvalidHeartbeatTimeout
 }
 
@@ -129,11 +131,13 @@ pub type StartError {
 pub fn start(
   config: SupervisedConfig,
 ) -> Result(SupervisedChannels, StartError) {
-  // Validate heartbeat_timeout_ms before deriving check_interval
+  // Validate heartbeat_timeout_ms before deriving check_interval, using the
+  // same bound as beryl.start so both entry points reject the same configs.
   use <- bool.guard(
-    when: beryl.config_heartbeat_timeout_ms(config.channels) <= 0,
+    when: beryl.config_heartbeat_timeout_ms(config.channels) < 2,
     return: Error(InvalidHeartbeatTimeout),
   )
+  beryl.warn_if_unprotected(config.channels)
   start_supervised(config)
 }
 
@@ -145,6 +149,7 @@ fn start_supervised(
   // Create names for each subsystem up front. The supervisor starts children
   // via callbacks, so we use named actors to retrieve subjects afterward.
   // Names must be created before supervisor start (not dynamically in loops).
+  let registry_name = process.new_name("beryl_registry")
   let coordinator_name = process.new_name("beryl_coordinator")
 
   let presence_name = case config.presence {
@@ -158,17 +163,35 @@ fn start_supervised(
   }
 
   // Build coordinator config from channels config (same mapping and
-  // half-timeout check interval as beryl.start).
-  let coord_config = beryl.to_coordinator_config(config.channels)
+  // half-timeout check interval as beryl.start), pointing the coordinator
+  // at the supervised registry so restarts recover registrations.
+  let registry = coordinator.registry_from_name(registry_name)
+  let coord_config =
+    coordinator.CoordinatorConfig(
+      ..beryl.to_coordinator_config(config.channels),
+      registry: Some(registry),
+    )
 
   // Build the supervisor with rest-for-one strategy.
   // If the coordinator crashes, presence and groups restart too to maintain
-  // consistency — a fresh coordinator has empty state.
+  // consistency — a fresh coordinator reloads its handler registrations
+  // from the registry, which starts earlier and survives the restart.
   let builder =
     static_supervisor.new(static_supervisor.RestForOne)
     |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
 
-  // Always add coordinator as the first child
+  // The registry is the first child: with rest-for-one, a coordinator crash
+  // restarts everything after it but never the registry itself, so channel
+  // registrations survive.
+  let builder =
+    builder
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        coordinator.start_registry_named(registry_name)
+      }),
+    )
+
+  // The coordinator follows the registry
   let builder =
     builder
     |> static_supervisor.add(
@@ -187,7 +210,8 @@ fn start_supervised(
         |> result.map_error(fn(err) {
           case err {
             coordinator.ActorStartFailed(e) -> e
-            coordinator.InvalidHeartbeatTimeout -> actor.InitTimeout
+            coordinator.InvalidHeartbeatTimeout ->
+              actor.InitFailed("invalid heartbeat timeout")
           }
         })
       }),
@@ -243,6 +267,7 @@ fn start_supervised(
         beryl.channels_from_coordinator(
           coordinator: coord_subject,
           config: config.channels,
+          registry: Some(registry),
         )
 
       let pres = case presence_name {
@@ -306,7 +331,8 @@ pub fn child_spec(
           Ok(actor.Started(pid: supervised.supervisor_pid, data: supervised))
         Error(SupervisorStartFailed(failure)) ->
           Error(actor.InitFailed(beryl_error.describe_start_failure(failure)))
-        Error(InvalidHeartbeatTimeout) -> Error(actor.InitTimeout)
+        Error(InvalidHeartbeatTimeout) ->
+          Error(actor.InitFailed("invalid heartbeat timeout"))
       }
     },
     restart: supervision.Permanent,

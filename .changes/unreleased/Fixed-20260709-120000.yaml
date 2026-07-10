@@ -1,0 +1,5 @@
+kind: Fixed
+body: |-
+    Channel registrations now survive coordinator restarts.
+    Registrations live in a crash-survivable registry that starts before the coordinator in the supervised tree; a restarted coordinator re-seeds its handler table from it, so a coordinator crash no longer leaves the node unable to serve joins until the whole application restarts. beryl.register is unchanged for callers.
+time: 2026-07-09T12:00:00.000000-00:00

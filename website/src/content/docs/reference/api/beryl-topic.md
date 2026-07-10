@@ -205,18 +205,6 @@ Parse a pattern string into TopicPattern
 pub fn parse_pattern(String) -> TopicPattern
 ```
 
-### `sanitize_for_log`
-
-Escape control characters in a string for safe use in log metadata.
-
- Replaces codepoints in the range 0–31 and 127 with `?` so that
- client-supplied strings cannot inject additional fields into structured
- log output.
-
-```gleam
-pub fn sanitize_for_log(String) -> String
-```
-
 ### `segments`
 
 Parse a topic into segments by splitting on ":"

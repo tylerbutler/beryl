@@ -169,6 +169,24 @@ pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
   stop_supervisor(server_pid)
 }
 
+pub fn handler_rejects_unsupported_protocol_version_test() {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  // Phoenix V1 clients are rejected at the handshake instead of connecting
+  // successfully and having every frame silently fail to decode.
+  websocket_upgrade_status(port, "/socket?vsn=1.0.0")
+  |> should.equal(Ok(403))
+
+  // The V2 version Phoenix JS sends is accepted, as is omitting vsn.
+  let assert Ok(v2_client) = connect_websocket(port, "/socket?vsn=2.0.0")
+  close(v2_client)
+  let assert Ok(bare_client) = connect_websocket(port, "/socket")
+  close(bare_client)
+
+  stop_supervisor(server_pid)
+}
+
 pub fn handler_rejects_connections_over_per_ip_limit_test() {
   let #(port, server_pid) = start_limited_server()
 
@@ -199,6 +217,45 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
   close(second)
   close(third)
   stop_supervisor(server_pid)
+}
+
+pub fn handler_sheds_message_flood_at_the_edge_test() {
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 1, burst: 2),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  // Flood heartbeats: only the burst allowance may produce replies. The
+  // rest are shed by the connection process before reaching the
+  // coordinator.
+  send_heartbeats(client, 10)
+  let replies = count_replies(client, 0)
+  { replies <= 2 } |> should.be_true
+  { replies >= 1 } |> should.be_true
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+fn send_heartbeats(client: WebsocketClient, remaining: Int) -> Nil {
+  case remaining <= 0 {
+    True -> Nil
+    False -> {
+      let assert Ok(_) =
+        send_text(client, "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]")
+      send_heartbeats(client, remaining - 1)
+    }
+  }
+}
+
+fn count_replies(client: WebsocketClient, count: Int) -> Int {
+  case receive_text(client, 200) {
+    Ok(_) -> count_replies(client, count + 1)
+    Error(Nil) -> count
+  }
 }
 
 pub fn handler_closes_socket_on_oversized_text_frame_test() {

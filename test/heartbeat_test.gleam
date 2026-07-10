@@ -168,6 +168,23 @@ pub fn periodic_check_runs_repeatedly_test() {
   |> should.be_false
 }
 
+pub fn heartbeat_eviction_closes_the_transport_connection_test() {
+  let coord = start_coordinator_with_heartbeat(20, 50)
+  let closed = process.new_subject()
+
+  let _sent = connect_mock_socket(coord, "zombie-socket")
+  process.send(
+    coord,
+    coordinator.RegisterCloser("zombie-socket", fn() {
+      process.send(closed, Nil)
+    }),
+  )
+
+  // Never send a heartbeat: eviction must actively close the connection
+  // instead of leaving a zombie socket whose frames are silently dropped.
+  let assert Ok(Nil) = process.receive(closed, 1000)
+}
+
 pub fn no_heartbeat_check_when_interval_is_zero_test() {
   let coord = start_coordinator_with_heartbeat(0, 50)
   let sent = connect_mock_socket(coord, "socket-1")

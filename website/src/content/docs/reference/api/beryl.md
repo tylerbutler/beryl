@@ -81,30 +81,45 @@ Configuration for the channels system.
 pub type Config
 ```
 
+### `ConnectionPermit`
+
+A held per-IP connection slot returned by `acquire_connection_slot`.
+
+ Opaque so Beryl can restructure the connection limiter without breaking
+ transport authors. Hold it for the lifetime of the connection and pass it
+ to `release_connection_slot` when the connection closes. When no per-IP
+ limit is configured the permit is an admit-everything placeholder and
+ releasing it is a no-op.
+
+```gleam
+pub type ConnectionPermit
+```
+
 ### `LoggingConfig`
 
 Logging configuration for Beryl diagnostics.
 
+ This type is opaque: construct it with `logging_config` and adjust it with
+ the `with_*` builder functions so Beryl can add logging options without a
+ breaking change.
+
 ```gleam
-pub type LoggingConfig {
-  LoggingConfig(
-    level: LogLevel,
-    include_payloads: Bool,
-    payload_preview_bytes: Int
-  )
-}
+pub type LoggingConfig
 ```
 
 ### `LogLevel`
 
 Logging verbosity for Beryl's internal loggers.
 
+ The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
+ prelude's `Result` `Error` constructor when imported unqualified.
+
 ```gleam
 pub type LogLevel {
-  Debug
-  Info
-  Warn
-  Error
+  DebugLevel
+  InfoLevel
+  WarnLevel
+  ErrorLevel
 }
 ```
 
@@ -176,15 +191,30 @@ Try to acquire a configured per-IP connection slot for transports.
  Transports call this before admitting a connection, passing the **real
  socket peer IP**. Do not pass a client-supplied address (e.g. from
  `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
- `Ok(Some(permit))` when admitted (release the permit with
- `release_connection_slot` on close), `Ok(None)` when no limit is configured
- (unlimited), or `Error(Nil)` when the peer is already at its limit.
+ `Ok(permit)` when admitted (release the permit with
+ `release_connection_slot` on close; when no limit is configured every
+ connection is admitted), or `Error(Nil)` when the peer is already at its
+ limit.
 
 ```gleam
 pub fn acquire_connection_slot(
   Channels,
   String
-) -> Result(option.Option(connection_limit.Permit), Nil)
+) -> Result(ConnectionPermit, Nil)
+```
+
+### `bind_connection_slot`
+
+Bind an acquired connection slot to the calling process.
+
+ Call this from the long-lived connection process (e.g. the WebSocket
+ handler's init) after `acquire_connection_slot`. The limiter monitors the
+ caller so the slot is reclaimed even if the connection process dies
+ without running its close path — otherwise crashed connections would
+ permanently exhaust their IP's slots.
+
+```gleam
+pub fn bind_connection_slot(ConnectionPermit) -> Nil
 ```
 
 ### `broadcast`
@@ -355,8 +385,11 @@ pub fn register(
 
 Release a per-IP connection slot acquired by a transport.
 
+ Call from the process the permit was bound to (or from an unbound
+ process when releasing before the connection was established).
+
 ```gleam
-pub fn release_connection_slot(option.Option(connection_limit.Permit)) -> Nil
+pub fn release_connection_slot(ConnectionPermit) -> Nil
 ```
 
 ### `send_info`

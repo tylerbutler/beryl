@@ -114,6 +114,10 @@ export default defineConfig({
 							label: "Backend Integration",
 							slug: "guides/backend-integration",
 						},
+						{
+							label: "Production Hardening",
+							slug: "guides/production-hardening",
+						},
 					],
 				},
 				{

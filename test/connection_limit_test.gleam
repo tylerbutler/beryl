@@ -7,7 +7,7 @@
 
 import beryl
 import beryl/wire
-import gleam/option.{None, Some}
+import gleam/erlang/process
 import gleeunit/should
 
 fn start_with_limit(max_connections: Int) -> beryl.Channels {
@@ -19,17 +19,17 @@ fn start_with_limit(max_connections: Int) -> beryl.Channels {
   channels
 }
 
-// A limit of 0 means unlimited: every acquire from the same IP succeeds and no
-// permit is handed back (there is nothing to release).
+// A limit of 0 means unlimited: every acquire from the same IP succeeds, and
+// releasing the placeholder permit is a harmless no-op.
 pub fn zero_means_unlimited_test() {
   let channels = start_with_limit(0)
 
-  beryl.acquire_connection_slot(channels, "1.2.3.4")
-  |> should.equal(Ok(None))
-  beryl.acquire_connection_slot(channels, "1.2.3.4")
-  |> should.equal(Ok(None))
-  beryl.acquire_connection_slot(channels, "1.2.3.4")
-  |> should.equal(Ok(None))
+  let assert Ok(first) = beryl.acquire_connection_slot(channels, "1.2.3.4")
+  should.be_ok(beryl.acquire_connection_slot(channels, "1.2.3.4"))
+  should.be_ok(beryl.acquire_connection_slot(channels, "1.2.3.4"))
+
+  beryl.release_connection_slot(first)
+  |> should.equal(Nil)
 
   beryl.stop(channels)
 }
@@ -88,21 +88,33 @@ pub fn limit_is_per_ip_test() {
   beryl.stop(channels)
 }
 
-// Releasing an unlimited (`None`) permit is a harmless no-op.
-pub fn releasing_none_permit_is_noop_test() {
-  beryl.release_connection_slot(None)
-  |> should.equal(Nil)
+// A slot is reclaimed when its holder process dies without releasing —
+// crashed connection handlers must not permanently exhaust an IP's slots.
+pub fn slot_reclaimed_when_holder_dies_without_release_test() {
+  let channels = start_with_limit(1)
+
+  let acquired = process.new_subject()
+  let _pid =
+    process.spawn_unlinked(fn() {
+      let assert Ok(permit) =
+        beryl.acquire_connection_slot(channels, "10.0.0.7")
+      beryl.bind_connection_slot(permit)
+      process.send(acquired, Nil)
+    })
+  let assert Ok(Nil) = process.receive(acquired, 500)
+
+  // Give the limiter time to observe the holder's exit.
+  process.sleep(50)
+
+  should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.7"))
+  beryl.stop(channels)
 }
 
 // A permit obtained under a limit can be released explicitly.
-pub fn some_permit_can_be_released_test() {
+pub fn permit_can_be_released_test() {
   let channels = start_with_limit(1)
 
   let assert Ok(permit) = beryl.acquire_connection_slot(channels, "10.0.0.6")
-  case permit {
-    Some(_) -> Nil
-    None -> should.fail()
-  }
   beryl.release_connection_slot(permit)
 
   beryl.stop(channels)
