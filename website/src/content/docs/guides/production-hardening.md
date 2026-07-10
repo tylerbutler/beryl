@@ -75,6 +75,72 @@ attackers rotating connections.
 - Authorize each topic in your channel's `join` callback; clients cannot
   send events to topics they have not joined.
 
+## Erlang cluster security boundary
+
+Beryl's distributed PubSub and presence replication run over Erlang
+distribution. Every node in your Erlang cluster is **fully trusted**: a
+process on any peer node can subscribe to any topic, receive all
+broadcasts, and deliver messages that beryl's coordinator will process as
+legitimate internal traffic. Channel authorization callbacks and
+WebSocket-layer controls do **not** apply to messages delivered over
+distribution — they protect only inbound WebSocket clients.
+
+### Internal vs. client messages
+
+| Source | Trust level | Gated by |
+|---|---|---|
+| WebSocket clients | Untrusted | `on_connect`, `join`, `handle_in` authorization callbacks |
+| Erlang distribution peers | Fully trusted | Erlang cookie + network controls |
+
+A hostile distribution peer can broadcast arbitrary messages into any
+channel and read all presence state. Secure the cluster boundary **before**
+deploying multi-node beryl.
+
+### Erlang cookie
+
+Set a long, randomly generated cookie in `vm.args` or the
+`RELEASE_COOKIE` environment variable. The cookie is the only
+authentication mechanism for distribution peers; a weak or default cookie
+(`CHANGE_ME`, the hostname, etc.) allows any process that can reach your
+distribution port to join the cluster.
+
+Generate a strong cookie with, for example:
+
+```shell
+openssl rand -base64 48
+```
+
+### TLS distribution
+
+When nodes communicate across networks you do not fully control — cloud
+subnets, VPNs, or any link that may traverse untrusted infrastructure —
+enable TLS distribution. See the
+[Erlang TLS Distribution guide](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html)
+for setup instructions.
+
+### Restrict EPMD and distribution ports
+
+The EPMD port (default 4369) and the Erlang distribution listen range must
+not be reachable from untrusted networks. Use firewall rules or security
+groups to allow only cluster-internal traffic. You can fix the distribution
+port to a known value for simpler rules:
+
+```shell
+# vm.args
+-kernel inet_dist_listen_min 9100
+-kernel inet_dist_listen_max 9100
+```
+
+Or set `ERL_DIST_PORT` when using Elixir/Mix releases. Restrict both 4369
+and your chosen distribution port at the network layer.
+
+### Do not share clusters with untrusted tenants
+
+Adding a node to an existing cluster grants it full visibility into all `pg`
+groups (PubSub topics) and all presence state on every node. Never connect
+beryl to a cluster that contains nodes owned or operated by parties outside
+your trust boundary.
+
 ## Operational notes
 
 - The coordinator is a single actor per channels system. The transport

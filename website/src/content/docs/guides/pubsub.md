@@ -18,6 +18,13 @@ let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 
 The scope maps to a `pg` scope atom. Different scopes are completely isolated from each other.
 
+:::danger[Never pass user-derived values to `config_with_scope`]
+The scope name is converted to an Erlang atom. Atoms are never
+garbage-collected; exhausting the atom table crashes the VM. Always use a
+compile-time constant string literal — never a value derived from a user
+request, environment variable, or database record.
+:::
+
 ## Subscribing
 
 The calling process receives `pubsub.Message` values when broadcasts are sent to the topic:

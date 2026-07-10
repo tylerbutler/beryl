@@ -1,0 +1,11 @@
+kind: Security
+body: |-
+    Document the trusted Erlang cluster boundary for distributed PubSub and presence.
+    Production and architecture docs now explicitly state that every Erlang distribution peer
+    is fully trusted, and include requirements for a strong Erlang cookie, TLS distribution,
+    restricted EPMD/distribution port access, and avoiding shared untrusted clusters. The docs
+    distinguish internal PubSub/presence messages from Erlang peers (trusted) from WebSocket
+    client messages (untrusted, gated by authorization callbacks). The `pubsub.config_with_scope`
+    API doc now clearly states the argument must be a compile-time constant and must never
+    receive user-derived values.
+time: 2026-07-09T20:36:18.576000-00:00
