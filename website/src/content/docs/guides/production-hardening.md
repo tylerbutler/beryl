@@ -89,7 +89,7 @@ distribution — they protect only inbound WebSocket clients.
 
 | Source | Trust level | Gated by |
 |---|---|---|
-| WebSocket clients | Untrusted | `on_connect`, `join`, `handle_in` authorization callbacks |
+| WebSocket clients | Untrusted | `with_on_connect` authentication, channel `join` authorization, and `handle_in` event handling |
 | Erlang distribution peers | Fully trusted | Erlang cookie + network controls |
 
 A hostile distribution peer can broadcast arbitrary messages into any
