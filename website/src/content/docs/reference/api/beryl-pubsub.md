@@ -154,9 +154,18 @@ pub fn broadcast_from_socket(
 Create a PubSub configuration with a custom scope name
 
  The scope name is converted to an Erlang atom via `binary_to_atom`.
- Atoms are never garbage-collected, so the scope name must be a static,
- bounded value — never derive it from user input, or a malicious or
- high-cardinality source could exhaust the atom table and crash the VM.
+ Atoms are never garbage-collected, so the scope name must be a
+ **compile-time constant** — never pass a user-supplied or
+ runtime-computed value. A malicious or high-cardinality source can
+ exhaust the BEAM atom table and crash the VM.
+
+ ```gleam
+ // Correct — compile-time constant
+ pubsub.config_with_scope("my_app_pubsub")
+
+ // WRONG — never do this
+ // pubsub.config_with_scope(user_request.tenant_id)
+ ```
 
 ```gleam
 pub fn config_with_scope(String) -> PubSubConfig
