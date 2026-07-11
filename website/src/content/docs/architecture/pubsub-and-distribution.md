@@ -66,6 +66,29 @@ flowchart LR
 
 When socket A sends a message on Node 1, its coordinator calls `broadcast_from`, which iterates the `pg` group members. Members on Node 2 receive the message via Erlang distribution — no extra message-bus infrastructure is required.
 
+## Trust Model
+
+All traffic arriving over Erlang distribution is treated as **fully trusted
+cluster input**. There is no additional authentication layer between nodes:
+the Erlang cookie and network controls are the security boundary.
+
+A process on any peer node can:
+
+- Subscribe to any `pg` group (PubSub topic) and receive all broadcasts.
+- Inject messages that downstream coordinators will process as legitimate
+  internal traffic.
+- Inject reserved presence sync traffic, delivering false presence state to
+  subscribers on all nodes. Ordinary WebSocket clients cannot reach these
+  reserved internal topics — this vector is exclusive to trusted cluster peers.
+
+**Channel-level authorization** — the `join` and `handle_in` callbacks —
+applies only to inbound WebSocket frames. It does not screen messages that
+arrive via distribution.
+
+Refer to the [Production Hardening guide](/guides/production-hardening/#erlang-cluster-security-boundary)
+for the full cluster security requirements (cookie strength, TLS
+distribution, EPMD port restrictions, and cluster isolation).
+
 ## Where this lives
 
 | File | Role |
