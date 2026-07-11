@@ -205,6 +205,28 @@ See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page fo
 release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
 and the changelog is managed with [changie](https://changie.dev/).
 
+## Security
+
+Beryl uses **Erlang distribution** for its distributed PubSub and presence
+replication, which means **every node in your cluster is fully trusted**.
+Application- and channel-level authorization protects you against untrusted
+WebSocket clients; it does **not** protect you against a hostile Erlang
+distribution peer, which can inject internal beryl traffic and presence state.
+
+Before running beryl in production, read **[SECURITY.md](SECURITY.md)**, which
+covers:
+
+- The Erlang distribution **trust boundary** and what a compromised peer can do.
+- Distribution hardening: a strong protected cookie, TLS distribution, EPMD/port
+  firewalling, and keeping cluster membership closed.
+- Why internal PubSub/presence messages are trusted while client WebSocket
+  messages are validated and rate-limited.
+- The `pubsub.config_with_scope` atom-table constraint (never pass it
+  user-derived values).
+
+For client-facing abuse controls (rate limits, connection caps, origin checks),
+see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/production-hardening/).
+
 ## Development
 
 ### Prerequisites

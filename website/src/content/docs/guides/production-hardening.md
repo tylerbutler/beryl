@@ -141,6 +141,9 @@ groups (PubSub topics) and all presence state on every node. Never connect
 beryl to a cluster that contains nodes owned or operated by parties outside
 your trust boundary.
 
+See [SECURITY.md](https://github.com/tylerbutler/beryl/blob/main/SECURITY.md)
+for the full trust-boundary and distribution-hardening reference.
+
 ## Operational notes
 
 - The coordinator is a single actor per channels system. The transport
