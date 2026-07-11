@@ -1,6 +1,0 @@
-kind: Removed
-body: |-
-    Remove Beryl presence state facades.
-
-    Use beryl/presence.State and beryl/presence.Diff for Beryl APIs, and import lattice_presence directly only for low-level CRDT construction or state JSON helpers. Legacy pre-lattice state JSON payloads with serialized replicas are no longer decoded.
-time: 2026-05-17T14:46:12.200828343-07:00

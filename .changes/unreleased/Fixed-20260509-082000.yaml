@@ -1,3 +1,0 @@
-kind: Fixed
-body: Guard `beryl.broadcast`/`broadcast_from` against panicking when the coordinator process has exited; the cluster fanout is now skipped instead of crashing the caller.
-time: 2026-05-09T08:20:00.000000-07:00

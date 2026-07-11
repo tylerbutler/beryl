@@ -1,5 +1,0 @@
-kind: Security
-body: |-
-    Harden the protocol surface against hostile clients.
-    Heartbeat and leave frames now count against the per-socket message rate limit (flooding them previously bypassed with_message_rate entirely, with each heartbeat generating an amplified reply); client joins to reserved beryl:* topics are rejected, closing a path where a catch-all handler would forward internal presence replication traffic to a client; and client-sent phx_* reserved events are dropped before reaching channel handlers.
-time: 2026-07-08T18:25:00.000000-00:00

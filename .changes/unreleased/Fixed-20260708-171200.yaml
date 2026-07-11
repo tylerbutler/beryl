@@ -1,5 +1,0 @@
-kind: Fixed
-body: |-
-    Isolate channel callback crashes from the shared coordinator.
-    A panicking join, handle_in, handle_info, handle_binary, or terminate callback now terminates only the offending channel (the client receives a "join crashed" error reply for join crashes) instead of crashing the coordinator and destroying every connected socket's state.
-time: 2026-07-08T17:12:00.000000-00:00

@@ -1,5 +1,0 @@
-kind: Fixed
-body: |-
-    Track join_ref per channel and adopt Phoenix duplicate-join semantics.
-    A phx_join for an already-joined topic now terminates the previous channel instance (running its terminate callback and emitting phx_close) before dispatching the new join, so cleanup like presence untracking is never skipped by a rejoin. Messages and leaves carrying a stale join_ref from a previous instance are dropped, and replies plus terminal frames now echo the channel's join_ref.
-time: 2026-07-08T18:15:00.000000-00:00

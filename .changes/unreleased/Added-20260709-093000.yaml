@@ -1,5 +1,0 @@
-kind: Added
-body: |-
-    Warn at startup when no abuse controls are configured, and add a production hardening guide.
-    Rate and connection limits stay opt-in, but beryl.start and supervisor.start now log a prominent warning when every control is disabled, and the website gains a Production Hardening guide with recommended limits and deployment caveats (reverse proxies, NAT, reconnect semantics).
-time: 2026-07-09T09:30:00.000000-00:00

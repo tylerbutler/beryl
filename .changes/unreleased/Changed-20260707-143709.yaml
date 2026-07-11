@@ -1,6 +1,0 @@
-kind: Changed
-body: |-
-    Presence track now returns a server-generated tracking ref, and untrack takes that ref.
-
-    BREAKING: presence.track previously echoed back the caller-supplied pid; it now returns an opaque, unique ref minted by the presence actor. presence.untrack changes from untrack(presence, topic, key, pid) to untrack(presence, ref). The actor maps each ref to its topic/key/session_id so the correct entry is removed, and untrack_all drops any refs pointing at the removed session. Closes #162.
-time: 2026-07-07T14:00:00.000000000-07:00
