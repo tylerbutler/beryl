@@ -1,0 +1,4 @@
+kind: Security
+body: |-
+    Document the trusted Erlang distribution cluster boundary and required deployment hardening.
+time: 2026-07-11T16:51:02.000000-00:00

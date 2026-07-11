@@ -75,6 +75,36 @@ attackers rotating connections.
 - Authorize each topic in your channel's `join` callback; clients cannot
   send events to topics they have not joined.
 
+## The cluster trust boundary
+
+Everything above hardens beryl against untrusted **WebSocket clients**. Beryl's
+distributed features — PubSub (`pg` process groups) and presence replication —
+work over **Erlang distribution**, and that traffic is delivered directly
+between BEAM nodes with no application-level validation. The consequence is
+blunt:
+
+**Every Erlang distribution peer is fully trusted.** A node that can join your
+cluster can publish internal beryl messages (including to reserved `beryl:*`
+topics), inject presence sync data, and cause unbounded fan-out work. The
+client-facing controls on this page do not defend against a hostile peer — the
+security boundary is the edge of your Erlang cluster.
+
+If you run more than one node, that boundary is a deployment responsibility:
+
+- Use a **strong, secret Erlang cookie**; never a committed or default cookie.
+- Enable **TLS distribution** for traffic crossing untrusted networks.
+- **Firewall EPMD (4369) and the distribution port range** so they are reachable
+  only from cluster peers.
+- **Do not connect beryl to shared or untrusted clusters** — run it in a
+  dedicated cluster whose membership you control.
+
+Related: `pubsub.config_with_scope` creates an Erlang atom from its argument, so
+it must only ever receive static, operator-chosen values (never user input), or
+you risk atom-table exhaustion.
+
+See [SECURITY.md](https://github.com/tylerbutler/beryl/blob/main/SECURITY.md)
+for the full trust-boundary and distribution-hardening reference.
+
 ## Operational notes
 
 - The coordinator is a single actor per channels system. The transport
