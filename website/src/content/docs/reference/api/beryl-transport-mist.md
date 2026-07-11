@@ -26,6 +26,63 @@ pub type ConnectError {
 
 Reject the WebSocket upgrade with `403 Forbidden`.
 
+### `OriginPolicy`
+
+Policy for validating the browser `Origin` header before a WebSocket
+ upgrade completes.
+
+ The `Origin` check is the primary defence against Cross-Site WebSocket
+ Hijacking (CSWSH): a browser attaches ambient cookies/session credentials
+ to a WebSocket handshake regardless of which site initiated it, so a socket
+ that authenticates from those credentials must reject upgrades that
+ originate from other sites.
+
+ In every policy, a request with **no** `Origin` header is allowed: browsers
+ always send `Origin` on WebSocket handshakes, so an absent header signals a
+ non-browser client (native app, server-to-server, CLI) that is not subject
+ to the browser same-origin model and cannot be tricked into a cross-site
+ upgrade. The one exception is [`AllowList`](#OriginPolicy), which requires a
+ matching `Origin` and therefore rejects absent ones.
+
+```gleam
+pub type OriginPolicy {
+  SameOrigin
+  AllowList(List(String))
+  AllowAll
+}
+```
+
+#### Constructors
+
+##### `SameOrigin`
+
+Allow an upgrade only when the request `Origin` authority (host plus any
+ port, with the scheme stripped) matches the request `Host` authority.
+ This is the default and rejects cross-site upgrades before the handshake.
+
+ A malformed or opaque `Origin` (e.g. `null` from a sandboxed iframe, or a
+ value with no host) is rejected. Comparison is over the full `host:port`
+ authority, so a non-default port must match on both sides.
+
+ Behind a reverse proxy this compares against the `Host` header as the app
+ sees it: ensure the proxy forwards the public `Host` unchanged, or use
+ [`AllowList`](#OriginPolicy) with the public origins instead. Forwarded
+ headers such as `X-Forwarded-Host` are not trusted, because clients can
+ spoof them.
+
+##### `AllowList(List(String))`
+
+Allow an upgrade only when the request `Origin` header matches one of the
+ listed values exactly (including scheme, host, and any port), such as
+ `"https://app.example.com"`. Requests without an `Origin` header, or with
+ a non-matching one, are rejected.
+
+##### `AllowAll`
+
+Allow every upgrade regardless of `Origin`. This is an explicit opt-out
+ of CSWSH protection: only use it for sockets that do not rely on ambient
+ browser credentials (or that authenticate every message independently).
+
 ### `TransportConfig`
 
 Configuration for the Mist WebSocket transport
@@ -43,8 +100,15 @@ pub type TransportConfig(a)
 
 Create a default transport config with no connect hook.
 
- The resulting config seeds `Nil` assigns. Add `with_on_connect` to
- authenticate connections and/or seed initial assigns.
+ The resulting config seeds `Nil` assigns and applies the
+ [`SameOrigin`](#OriginPolicy) origin policy, which rejects cross-site
+ WebSocket upgrades before the handshake (CSWSH protection). Same-origin
+ upgrades and non-browser clients (no `Origin` header) are admitted without
+ configuration.
+
+ Add `with_on_connect` to authenticate connections and/or seed initial
+ assigns. Use `with_allowed_origins` to pin an explicit allow-list, or
+ `with_allow_all_origins` to opt out of origin checking entirely.
 
 ```gleam
 pub fn default_config(String) -> TransportConfig(Nil)
@@ -139,14 +203,35 @@ pub fn upgrade_connection(
 ) -> response.Response(mist.ResponseData)
 ```
 
+### `with_allow_all_origins`
+
+Disable `Origin` checking, allowing WebSocket upgrades from any origin.
+
+ This is an explicit opt-out of the default [`SameOrigin`](#OriginPolicy)
+ CSWSH protection and restores the pre-1.0 allow-all behaviour. Only use it
+ for sockets that do not rely on ambient browser credentials (cookies,
+ sessions) for authorization, or that authenticate every message
+ independently. For cookie/session-authenticated apps, prefer the default
+ `SameOrigin` policy or `with_allowed_origins`.
+
+```gleam
+pub fn with_allow_all_origins(TransportConfig(a)) -> TransportConfig(a)
+```
+
 ### `with_allowed_origins`
 
-Restrict WebSocket upgrades to requests with an allowed `Origin` header.
+Restrict WebSocket upgrades to requests whose `Origin` header exactly
+ matches one of the given values.
 
- Values are matched exactly against the full Origin header value, including
- scheme and host (and port when present), such as
- `"https://app.example.com"`. When configured, missing or non-matching
- origins are rejected with `403 Forbidden` before the WebSocket handshake.
+ This replaces the default [`SameOrigin`](#OriginPolicy) policy with an
+ [`AllowList`](#OriginPolicy). Values are matched exactly against the full
+ `Origin` header, including scheme and host (and port when present), such as
+ `"https://app.example.com"`. Missing or non-matching origins are rejected
+ with `403 Forbidden` before the WebSocket handshake.
+
+ Prefer this over `with_allow_all_origins` when you know the exact origins
+ that should be allowed (e.g. behind a reverse proxy that rewrites the
+ `Host` header, where `SameOrigin` cannot see the public host).
 
 ```gleam
 pub fn with_allowed_origins(
