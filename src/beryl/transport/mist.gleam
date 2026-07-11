@@ -215,7 +215,7 @@ type SendRequest {
 /// config path written with a trailing slash (e.g. `"/socket/"`) will never
 /// match. Configure the path without a trailing slash (e.g. `"/socket"`).
 ///
-/// ## Per-IP connection limits
+/// ## Connection limits
 ///
 /// When `beryl.with_max_connections_per_ip` is configured, this transport
 /// enforces the limit before completing the handshake and returns `429 Too
@@ -225,6 +225,16 @@ type SendRequest {
 /// them and would otherwise spoof their address to bypass the limit. Behind a
 /// trusted reverse proxy, all connections share the proxy's IP — resolve the
 /// real client IP at the proxy layer. See the WebSocket transport guide.
+///
+/// When `beryl.with_max_connections` is configured, this transport also
+/// enforces a node-wide ceiling on concurrent connections across all IPs,
+/// likewise returning `429` and rejecting the upgrade before allocating any
+/// long-lived channel/coordinator state. The two limits compose: a connection
+/// must be under both to be admitted. The node-wide ceiling bounds total
+/// resource use when a per-IP limit alone cannot (many distributed source
+/// addresses / IPv6 rotation). It is enforced per BEAM node, so across a
+/// load-balanced cluster the effective ceiling scales with the node count —
+/// use the load balancer's own controls for a cluster-wide cap.
 pub fn upgrade(
   request: Request(Connection),
   channels: Channels,

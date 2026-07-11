@@ -1,0 +1,5 @@
+kind: Added
+body: |-
+    Add `with_max_connections` to configure a node-wide ceiling on concurrent connections across all source IPs.
+    Connections above the ceiling are rejected with a 429 before any long-lived channel or coordinator state is allocated, and capacity is reclaimed on normal close, transport failure, heartbeat eviction, crash, and setup failure. It composes with the per-IP limit (`with_max_connections_per_ip`): a connection must be under both to be admitted, so distributed or rotating source addresses that a per-IP limit cannot stop still cannot exhaust the node. The ceiling is enforced per BEAM node; use an external load balancer for a cluster-wide cap.
+time: 2026-07-11T16:56:38.000000000Z

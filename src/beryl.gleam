@@ -159,6 +159,8 @@ pub opaque type Config {
     heartbeat_timeout_ms: Int,
     /// Max connections per IP (0 = unlimited)
     max_connections_per_ip: Int,
+    /// Max concurrent connections node-wide across all IPs (0 = unlimited)
+    max_connections: Int,
     /// Optional PubSub for distributed broadcasts across nodes
     pubsub: Option(PubSub),
     /// Per-socket message rate limit (messages/sec, 0 = unlimited)
@@ -221,6 +223,7 @@ pub fn config(codec: codec.Codec) -> Config {
     heartbeat_interval_ms: 30_000,
     heartbeat_timeout_ms: 60_000,
     max_connections_per_ip: 0,
+    max_connections: 0,
     pubsub: None,
     message_rate: 0,
     message_burst: 0,
@@ -293,6 +296,41 @@ pub fn with_max_connections_per_ip(
   max_connections max_connections: Int,
 ) -> Config {
   Config(..config, max_connections_per_ip: max_connections)
+}
+
+/// Configure the maximum number of concurrent connections allowed across the
+/// whole node, regardless of source IP.
+///
+/// A value of 0 (the default) means unlimited. When a limit is set, a transport
+/// admits a new connection only while the node is below the limit and rejects
+/// it (before allocating any long-lived channel/coordinator state) otherwise;
+/// the slot is freed when the connection closes, its process dies, or its
+/// handshake/setup fails. The check-and-increment is atomic inside the limiter
+/// actor, so a burst of concurrent opens cannot materially exceed the ceiling.
+///
+/// ## Composition with per-IP limits
+///
+/// This node-wide ceiling composes with `with_max_connections_per_ip`: when
+/// both are set a connection must be under *both* limits to be admitted. The
+/// per-IP limit throttles any single abusive peer, while this global ceiling
+/// bounds the node's total resource use so that many distinct source addresses
+/// (for example a botnet or IPv6 address rotation) still cannot exhaust the
+/// node's process, socket, and coordinator budget — a case a per-IP limit alone
+/// cannot stop.
+///
+/// ## Composition with external load balancers
+///
+/// This ceiling is enforced per BEAM node. If you run several nodes behind a
+/// load balancer, each node enforces its own limit independently, so the
+/// cluster's effective ceiling is roughly `max_connections × node_count`
+/// (subject to how the balancer distributes connections). Size the per-node
+/// value against a single node's capacity, and use the load balancer's own
+/// global connection/rate controls when you need a cluster-wide cap.
+pub fn with_max_connections(
+  config: Config,
+  max_connections max_connections: Int,
+) -> Config {
+  Config(..config, max_connections: max_connections)
 }
 
 /// Configure Beryl's internal logging.
@@ -429,6 +467,11 @@ pub fn config_max_connections_per_ip(config: Config) -> Int {
 }
 
 @internal
+pub fn config_max_connections(config: Config) -> Int {
+  config.max_connections
+}
+
+@internal
 pub fn config_pubsub(config: Config) -> Option(PubSub) {
   config.pubsub
 }
@@ -493,6 +536,7 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
     config.max_connections_per_ip <= 0
+    && config.max_connections <= 0
     && config.message_rate <= 0
     && config.join_rate <= 0
     && config.channel_rate <= 0
@@ -503,8 +547,8 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
       "hint",
       "rate and connection limits are all disabled; fine for development, "
         <> "but for production configure with_message_rate, with_join_rate, "
-        <> "and with_max_connections_per_ip (see the production hardening "
-        <> "guide)",
+        <> "with_max_connections_per_ip, and with_max_connections (see the "
+        <> "production hardening guide)",
     ),
   ])
 }
@@ -587,6 +631,7 @@ pub fn channels_from_coordinator(
     pubsub: config.pubsub,
     connection_limiter: connection_limit.start_optional(
       config.max_connections_per_ip,
+      config.max_connections,
     ),
     registry: registry,
   )

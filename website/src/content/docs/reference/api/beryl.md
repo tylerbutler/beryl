@@ -531,6 +531,44 @@ pub fn with_logging(
 ) -> Config
 ```
 
+### `with_max_connections`
+
+Configure the maximum number of concurrent connections allowed across the
+ whole node, regardless of source IP.
+
+ A value of 0 (the default) means unlimited. When a limit is set, a transport
+ admits a new connection only while the node is below the limit and rejects
+ it (before allocating any long-lived channel/coordinator state) otherwise;
+ the slot is freed when the connection closes, its process dies, or its
+ handshake/setup fails. The check-and-increment is atomic inside the limiter
+ actor, so a burst of concurrent opens cannot materially exceed the ceiling.
+
+ ## Composition with per-IP limits
+
+ This node-wide ceiling composes with `with_max_connections_per_ip`: when
+ both are set a connection must be under *both* limits to be admitted. The
+ per-IP limit throttles any single abusive peer, while this global ceiling
+ bounds the node's total resource use so that many distinct source addresses
+ (for example a botnet or IPv6 address rotation) still cannot exhaust the
+ node's process, socket, and coordinator budget — a case a per-IP limit alone
+ cannot stop.
+
+ ## Composition with external load balancers
+
+ This ceiling is enforced per BEAM node. If you run several nodes behind a
+ load balancer, each node enforces its own limit independently, so the
+ cluster's effective ceiling is roughly `max_connections × node_count`
+ (subject to how the balancer distributes connections). Size the per-node
+ value against a single node's capacity, and use the load balancer's own
+ global connection/rate controls when you need a cluster-wide cap.
+
+```gleam
+pub fn with_max_connections(
+  Config,
+  max_connections: Int
+) -> Config
+```
+
 ### `with_max_connections_per_ip`
 
 Configure the maximum number of concurrent connections allowed per client
