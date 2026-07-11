@@ -1,0 +1,3 @@
+kind: Fixed
+body: Presence RemoteSync merge/prune now runs inside an exception boundary, so a malformed or hostile cluster sync message can no longer crash the shared presence actor or partially mutate presence state.
+time: 2026-07-11T16:57:24.000000Z

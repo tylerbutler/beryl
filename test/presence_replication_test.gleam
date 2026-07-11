@@ -345,6 +345,55 @@ pub fn survives_wrong_types_payload_test() {
   list.length(presence.list(p, "room:lobby")) |> should.equal(2)
 }
 
+// ── Resilience: exception raised inside the merge/processing path ─────
+
+/// A valid remote sync can decode successfully yet still crash while the
+/// merge result is processed — for example, a user-supplied `on_diff`
+/// callback that panics, a mixed-version peer, or a compromised node. The
+/// exception must be contained: the shared presence actor stays alive and its
+/// state is not partially mutated by the poisoned sync.
+pub fn survives_exception_in_processing_path_test() {
+  let ps = test_pubsub("processing_crash")
+
+  // Node1's on_diff panics whenever a diff touches "room:poison". Diffs for
+  // any other topic pass through untouched, so local tracking still works.
+  let config1 =
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
+    |> presence.with_on_diff(fn(diff) {
+      case presence.diff_joins(diff, "room:poison") {
+        [] -> Nil
+        _ -> panic as "poisoned diff"
+      }
+    })
+  let assert Ok(p1) = presence.start(config1)
+
+  // Prove the actor is alive and record its state before the poisoned sync.
+  let _ =
+    presence.track(p1, "room:lobby", "user:safe", "socket-safe", json.null())
+  list.length(presence.list(p1, "room:lobby")) |> should.equal(1)
+
+  // Node2 broadcasts a *valid* sync that decodes cleanly but produces a diff
+  // touching "room:poison", tripping node1's panicking callback inside the
+  // merge/processing path.
+  let config2 = test_config(ps, "node2", 50)
+  let assert Ok(p2) = presence.start(config2)
+  let _ =
+    presence.track(p2, "room:poison", "user:boom", "socket-boom", json.null())
+
+  // Give node1 time to receive and reject several broadcasts of the poison.
+  process.sleep(200)
+
+  // The actor is still alive: a fresh local track succeeds.
+  let _ =
+    presence.track(p1, "room:lobby", "user:safe2", "socket-safe2", json.null())
+  list.length(presence.list(p1, "room:lobby")) |> should.equal(2)
+
+  // State was not partially mutated: the poisoned sync never merged, so
+  // "room:poison" remains empty on node1.
+  presence.list(p1, "room:poison") |> should.equal([])
+}
+
 // ── Helper to drain stray messages ──────────────────────────────────
 
 fn drain_mailbox() -> Nil {

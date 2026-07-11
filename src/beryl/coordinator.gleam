@@ -387,12 +387,6 @@ fn monotonic_time_ms() -> Int
 @external(erlang, "beryl_ffi", "identity")
 fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
-// nolint: stringly_typed_error -- the error is the formatted BEAM crash description; it is wrapped in channel.Errored at use sites
-/// Run a user-supplied channel callback, converting any crash into an error
-/// so a faulty channel cannot take down the shared coordinator actor.
-@external(erlang, "beryl_ffi", "rescue")
-fn rescue(callback: fn() -> value) -> Result(value, String)
-
 // ── Handler registry ────────────────────────────────────────────────────────
 
 /// A crash-survivable store for channel registrations.
@@ -702,7 +696,9 @@ fn handle_message(
       // The pg-delivered record is coerced without validation, so a
       // malformed message (mixed-version cluster, stray tuple sent to the
       // coordinator's pid) must not crash the coordinator.
-      case rescue(fn() { handle_remote_broadcast(state, pubsub_msg) }) {
+      case
+        internal.rescue(fn() { handle_remote_broadcast(state, pubsub_msg) })
+      {
         Ok(next) -> next
         Error(crash) -> {
           coordinator_logger(state)
@@ -2075,7 +2071,7 @@ fn dispatch_join(
       close: socket_info.close,
     )
 
-  case rescue(fn() { handler.join(topic_name, payload, ctx) }) {
+  case internal.rescue(fn() { handler.join(topic_name, payload, ctx) }) {
     Error(crash) ->
       reject_crashed_join(state, socket_info, topic_name, join_ref, ref, crash)
     Ok(JoinErrorErased(reason)) -> {
@@ -2237,7 +2233,7 @@ fn dispatch_handle_in(
       close: socket_info.close,
     )
 
-  case rescue(fn() { handler.handle_in(event, payload, ctx) }) {
+  case internal.rescue(fn() { handler.handle_in(event, payload, ctx) }) {
     Error(crash) ->
       actor.continue(handle_callback_crash(
         state,
@@ -2373,7 +2369,7 @@ fn dispatch_handle_info(
       close: socket_info.close,
     )
 
-  case rescue(fn() { callback(ctx) }) {
+  case internal.rescue(fn() { callback(ctx) }) {
     Error(crash) ->
       actor.continue(handle_callback_crash(
         state,
@@ -2469,7 +2465,7 @@ fn dispatch_handle_binary(
       close: socket_info.close,
     )
 
-  case rescue(fn() { handler.handle_binary(data, ctx) }) {
+  case internal.rescue(fn() { handler.handle_binary(data, ctx) }) {
     Error(crash) ->
       handle_callback_crash(st, socket_id, topic_name, "handle_binary", crash)
     Ok(NoReplyErased(new_assigns)) -> {
@@ -2604,7 +2600,7 @@ fn do_terminate_channel(
           send_binary: socket_info.send_binary,
           close: socket_info.close,
         )
-      case rescue(fn() { handler.terminate(reason, ctx) }) {
+      case internal.rescue(fn() { handler.terminate(reason, ctx) }) {
         Ok(Nil) -> Nil
         Error(crash) ->
           logger
