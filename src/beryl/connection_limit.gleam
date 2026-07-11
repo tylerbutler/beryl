@@ -1,8 +1,21 @@
-//// Shared per-IP connection counter for transports.
+//// Shared connection counter for transports.
+////
+//// Enforces two independent dimensions in a single serialized actor:
+////
+//// - a per-IP ceiling (`max_per_ip`), which throttles a single peer, and
+//// - a node-wide ceiling (`max_total`), which caps concurrent connections
+////   across every IP so distributed/rotating source addresses cannot exhaust
+////   the node's process, socket, and coordinator budget.
+////
+//// Both are checked atomically inside `handle_message` on acquire, so
+//// concurrent opens cannot race past either ceiling. A single `Permit` tracks
+//// both dimensions and the same process monitor reclaims both when the holder
+//// dies without releasing.
 
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
+import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -21,7 +34,12 @@ pub opaque type Permit {
 
 type State {
   State(
+    /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
+    /// Node-wide ceiling across all IPs; 0 disables the global check.
+    max_total: Int,
+    /// Live connection count across every IP, checked against `max_total`.
+    total: Int,
     counts: Dict(String, Int),
     /// Monitors on bound permit-holder processes, so slots self-release when
     /// the holder dies without running its close path (crash, brutal kill).
@@ -54,7 +72,13 @@ fn handle_message(
         dict.get(state.counts, ip)
         |> result.unwrap(0)
 
-      case current >= state.max_per_ip {
+      // Both ceilings are checked here, inside the actor, so concurrent opens
+      // are serialized and cannot race past either limit. A 0 ceiling disables
+      // that dimension.
+      let ip_full = state.max_per_ip > 0 && current >= state.max_per_ip
+      let total_full = state.max_total > 0 && state.total >= state.max_total
+
+      case ip_full || total_full {
         True -> {
           process.send(reply, Error(Nil))
           actor.continue(state)
@@ -62,7 +86,11 @@ fn handle_message(
         False -> {
           process.send(reply, Ok(Permit(limiter: limiter, ip: ip)))
           actor.continue(
-            State(..state, counts: dict.insert(state.counts, ip, current + 1)),
+            State(
+              ..state,
+              total: state.total + 1,
+              counts: dict.insert(state.counts, ip, current + 1),
+            ),
           )
         }
       }
@@ -82,7 +110,7 @@ fn handle_message(
         }
         Error(Nil) -> state
       }
-      actor.continue(release_ip(state, ip))
+      actor.continue(release_slot(state, ip))
     }
     HolderDown(down) ->
       case down {
@@ -95,7 +123,7 @@ fn handle_message(
                   monitors: dict.delete(state.monitors, monitor),
                   holders: dict.delete(state.holders, pid),
                 )
-              actor.continue(release_ip(state, ip))
+              actor.continue(release_slot(state, ip))
             }
             // Already explicitly released (or an unrelated monitor).
             Error(Nil) -> actor.continue(state)
@@ -121,11 +149,19 @@ fn bind_holder(state: State, ip: String, owner: Pid) -> State {
   )
 }
 
-fn release_ip(state: State, ip: String) -> State {
+/// Reclaim a slot in both dimensions: decrement the node-wide total and the
+/// per-IP count. Every acquire increments both, so every release (explicit or
+/// via a holder's death) decrements both symmetrically.
+fn release_slot(state: State, ip: String) -> State {
+  let total = int.max(state.total - 1, 0)
   case dict.get(state.counts, ip) {
     Ok(count) if count > 1 ->
-      State(..state, counts: dict.insert(state.counts, ip, count - 1))
-    _ -> State(..state, counts: dict.delete(state.counts, ip))
+      State(
+        ..state,
+        total: total,
+        counts: dict.insert(state.counts, ip, count - 1),
+      )
+    _ -> State(..state, total: total, counts: dict.delete(state.counts, ip))
   }
 }
 
@@ -146,11 +182,17 @@ fn request(
   }
 }
 
-/// Start a connection limiter with a maximum active connection count per IP.
-fn start(max_per_ip: Int) -> Result(ConnectionLimiter, actor.StartError) {
+/// Start a connection limiter enforcing a per-IP ceiling and/or a node-wide
+/// ceiling. A ceiling of 0 disables that dimension.
+fn start(
+  max_per_ip: Int,
+  max_total: Int,
+) -> Result(ConnectionLimiter, actor.StartError) {
   let state =
     State(
       max_per_ip: max_per_ip,
+      max_total: max_total,
+      total: 0,
       counts: dict.new(),
       monitors: dict.new(),
       holders: dict.new(),
@@ -170,10 +212,18 @@ fn start(max_per_ip: Int) -> Result(ConnectionLimiter, actor.StartError) {
   |> result.map(fn(started) { ConnectionLimiter(subject: started.data) })
 }
 
-/// Start a limiter only when `max_per_ip` is positive.
-pub fn start_optional(max_per_ip: Int) -> Option(ConnectionLimiter) {
-  use <- bool.guard(when: max_per_ip <= 0, return: None)
-  let assert Ok(limiter) = start(max_per_ip)
+/// Start a limiter only when at least one ceiling is positive.
+///
+/// `max_per_ip` caps concurrent connections from a single peer; `max_total`
+/// caps concurrent connections across the whole node. They compose: a
+/// connection is admitted only when it is under both configured ceilings. When
+/// both are 0 no limiter is started and every connection is admitted.
+pub fn start_optional(
+  max_per_ip: Int,
+  max_total: Int,
+) -> Option(ConnectionLimiter) {
+  use <- bool.guard(when: max_per_ip <= 0 && max_total <= 0, return: None)
+  let assert Ok(limiter) = start(max_per_ip, max_total)
   Some(limiter)
 }
 

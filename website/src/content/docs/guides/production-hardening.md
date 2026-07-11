@@ -39,11 +39,34 @@ let config =
   // Concurrent connections per client IP. Size to your expected
   // clients-behind-one-NAT worst case; see the caveat below.
   |> beryl.with_max_connections_per_ip(max_connections: 100)
+  // Node-wide ceiling on concurrent connections across all IPs. Size to a
+  // single node's process/socket/coordinator budget; see below.
+  |> beryl.with_max_connections(max_connections: 10_000)
 ```
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
 starve others.
+
+### Per-IP and node-wide limits compose
+
+`with_max_connections_per_ip` throttles a single abusive peer, while
+`with_max_connections` caps concurrent connections across the whole node. When
+both are set a connection must be under **both** ceilings to be admitted;
+otherwise the transport rejects it with `429` **before** allocating any
+long-lived channel or coordinator state. Freed capacity is reclaimed on normal
+close, transport failure, heartbeat eviction, crash, and setup failure.
+
+The node-wide ceiling exists because a per-IP limit alone cannot stop many
+**distinct** source addresses — a botnet, or a single host rotating through an
+IPv6 range — from each opening a few connections and collectively exhausting
+the node's process, socket, and coordinator budget. The global ceiling bounds
+that total regardless of how the connections are spread across IPs.
+
+Because it is enforced per BEAM node, a load-balanced cluster of N nodes has an
+effective ceiling of roughly `max_connections × N`. Size the per-node value
+against one node's capacity, and use your load balancer's own global
+connection/rate controls when you need a cluster-wide cap.
 
 ### The per-IP caveat
 
