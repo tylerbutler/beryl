@@ -48,6 +48,16 @@ pub fn result_error(error: e) -> Result(a, e) {
   Error(error)
 }
 
+// nolint: stringly_typed_error -- the error is the formatted BEAM crash description; callers wrap or log it at use sites
+/// Run a callback, converting any BEAM crash (error/exit/throw) into an
+/// `Error(description)` so a faulty callback cannot take down the shared actor
+/// that invoked it.
+///
+/// The description is depth-limited and truncated by the FFI so a
+/// client-triggered crash cannot bloat log metadata.
+@external(erlang, "beryl_ffi", "rescue")
+pub fn rescue(callback: fn() -> value) -> Result(value, String)
+
 /// Return a named logger.
 pub fn logger(name: String) -> Logger {
   log.new(name)

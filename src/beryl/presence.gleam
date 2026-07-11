@@ -752,27 +752,47 @@ fn handle_sync_payload(
       actor.continue(actor_state)
     }
     Ok(#(sender, remote_state)) -> {
-      let #(new_crdt, state_diff) =
-        state.merge_with_diff(actor_state.crdt, remote_state)
-      let diff = wrap_state_diff(state_diff)
-      let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
-      maybe_invoke_on_diff(actor_state.config, diff)
-      // The merge may have (re)admitted state from dead incarnations —
-      // the sender's predecessors, or our own pre-restart self echoed back
-      // by a peer. Prune anything superseded by the two incarnations known
-      // to be live right now: the sender and ourselves.
-      let new_crdt =
-        prune_superseded(actor_state.config, new_crdt, [
-          sender,
-          state.replica(new_crdt),
-        ])
-      actor.continue(
-        ActorState(
-          ..actor_state,
-          crdt: new_crdt,
-          dirty: actor_state.dirty || changed,
-        ),
-      )
+      // Merge, diff, on_diff, and prune all run inside a crash boundary. The
+      // remote state originates from another cluster node (possibly a mixed
+      // version, a compromised peer, or a malformed dynamic value); an
+      // exception here must not terminate the shared presence actor. On
+      // failure we return the previous, unchanged `actor_state` so invalid
+      // sync input cannot partially mutate presence state.
+      let processed =
+        internal.rescue(fn() {
+          let #(new_crdt, state_diff) =
+            state.merge_with_diff(actor_state.crdt, remote_state)
+          let diff = wrap_state_diff(state_diff)
+          let changed =
+            !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
+          maybe_invoke_on_diff(actor_state.config, diff)
+          // The merge may have (re)admitted state from dead incarnations —
+          // the sender's predecessors, or our own pre-restart self echoed back
+          // by a peer. Prune anything superseded by the two incarnations known
+          // to be live right now: the sender and ourselves.
+          let new_crdt =
+            prune_superseded(actor_state.config, new_crdt, [
+              sender,
+              state.replica(new_crdt),
+            ])
+          ActorState(
+            ..actor_state,
+            crdt: new_crdt,
+            dirty: actor_state.dirty || changed,
+          )
+        })
+      case processed {
+        Ok(next_state) -> actor.continue(next_state)
+        Error(crash) -> {
+          let logger = internal.logger("beryl.presence")
+          logger
+          |> log.error("Remote presence sync dropped: processing failed", [
+            #("crash", crash),
+            #("payload_length", int.to_string(string.length(payload_str))),
+          ])
+          actor.continue(actor_state)
+        }
+      }
     }
   }
 }
