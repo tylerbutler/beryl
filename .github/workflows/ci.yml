@@ -28,9 +28,7 @@ jobs:
           run-deps: false
 
       - name: Install rebar3
-        run: |
-          wget -q https://s3.amazonaws.com/rebar3/rebar3 -O /usr/local/bin/rebar3
-          chmod +x /usr/local/bin/rebar3
+        uses: ./.github/actions/install-rebar3
 
       - name: Install Gleam dependencies
         run: gleam deps download
@@ -106,9 +104,7 @@ jobs:
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
 
       - name: Install rebar3
-        run: |
-          wget -q https://s3.amazonaws.com/rebar3/rebar3 -O /usr/local/bin/rebar3
-          chmod +x /usr/local/bin/rebar3
+        uses: ./.github/actions/install-rebar3
 
       - name: Install Playwright browsers
         run: pnpm -C examples exec playwright install --with-deps chromium
