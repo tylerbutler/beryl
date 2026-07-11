@@ -1,0 +1,5 @@
+kind: Changed
+body: |-
+    WebSocket transport now defaults to a same-origin Origin policy, rejecting cross-site upgrades before the handshake.
+    This mitigates Cross-Site WebSocket Hijacking (CSWSH) for cookie/session-authenticated apps (#193). Same-origin upgrades and non-browser clients (no Origin header) still connect without configuration. To restore the previous allow-all behaviour use with_allow_all_origins; to pin specific origins use with_allowed_origins (now an explicit allow-list).
+time: 2026-07-11T09:54:25-0700

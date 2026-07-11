@@ -9,6 +9,7 @@ import beryl/wire
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/response
+import gleam/int
 import gleam/string
 import gleeunit/should
 import mist
@@ -166,6 +167,63 @@ pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
   let assert Ok(client) =
     connect_websocket_with_origin(port, "/socket", "https://app.example.com")
   close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_default_rejects_cross_origin_upgrade_test() {
+  // The default config uses the SameOrigin policy, so a browser upgrade whose
+  // Origin does not match the request Host is rejected before the handshake.
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  websocket_upgrade_status_with_origin(
+    port,
+    "/socket",
+    "https://evil.example.com",
+  )
+  |> should.equal(Ok(403))
+
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_default_allows_same_origin_upgrade_test() {
+  // A same-origin browser upgrade (Origin authority matches the Host authority
+  // `127.0.0.1:<port>`) is admitted under the default SameOrigin policy.
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  let origin = "http://127.0.0.1:" <> int.to_string(port)
+  let assert Ok(client) = connect_websocket_with_origin(port, "/socket", origin)
+  close(client)
+
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_default_allows_absent_origin_upgrade_test() {
+  // Non-browser clients omit the Origin header entirely; the SameOrigin policy
+  // admits them (they are not subject to the browser same-origin model).
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  close(client)
+
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_allow_all_origins_admits_cross_origin_test() {
+  // Explicit opt-out: with_allow_all_origins restores the pre-1.0 allow-all
+  // behaviour for apps that intentionally accept cross-origin sockets.
+  let channels = start_channels()
+  let config =
+    mist_transport.default_config("/socket")
+    |> mist_transport.with_allow_all_origins()
+  let #(port, server_pid) = start_server_with_config(channels, config)
+
+  let assert Ok(client) =
+    connect_websocket_with_origin(port, "/socket", "https://evil.example.com")
+  close(client)
+
   stop_supervisor(server_pid)
 }
 

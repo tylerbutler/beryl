@@ -41,9 +41,9 @@ pub opaque type TransportConfig(assigns) {
     /// with a 403 Forbidden response. When None, all connections are allowed
     /// and assigns start empty (`Nil`).
     on_connect: Option(fn(Request(Connection)) -> Result(assigns, ConnectError)),
-    /// Optional exact Origin header allow-list checked before the WebSocket
-    /// handshake. When None, all origins are allowed.
-    allowed_origins: Option(List(String)),
+    /// Policy applied to the request `Origin` header before the WebSocket
+    /// handshake. Defaults to [`SameOrigin`](#OriginPolicy).
+    origin_policy: OriginPolicy,
   )
 }
 
@@ -53,12 +53,60 @@ pub type ConnectError {
   ConnectRejected
 }
 
+/// Policy for validating the browser `Origin` header before a WebSocket
+/// upgrade completes.
+///
+/// The `Origin` check is the primary defence against Cross-Site WebSocket
+/// Hijacking (CSWSH): a browser attaches ambient cookies/session credentials
+/// to a WebSocket handshake regardless of which site initiated it, so a socket
+/// that authenticates from those credentials must reject upgrades that
+/// originate from other sites.
+///
+/// In every policy, a request with **no** `Origin` header is allowed: browsers
+/// always send `Origin` on WebSocket handshakes, so an absent header signals a
+/// non-browser client (native app, server-to-server, CLI) that is not subject
+/// to the browser same-origin model and cannot be tricked into a cross-site
+/// upgrade. The one exception is [`AllowList`](#OriginPolicy), which requires a
+/// matching `Origin` and therefore rejects absent ones.
+pub type OriginPolicy {
+  /// Allow an upgrade only when the request `Origin` authority (host plus any
+  /// port, with the scheme stripped) matches the request `Host` authority.
+  /// This is the default and rejects cross-site upgrades before the handshake.
+  ///
+  /// A malformed or opaque `Origin` (e.g. `null` from a sandboxed iframe, or a
+  /// value with no host) is rejected. Comparison is over the full `host:port`
+  /// authority, so a non-default port must match on both sides.
+  ///
+  /// Behind a reverse proxy this compares against the `Host` header as the app
+  /// sees it: ensure the proxy forwards the public `Host` unchanged, or use
+  /// [`AllowList`](#OriginPolicy) with the public origins instead. Forwarded
+  /// headers such as `X-Forwarded-Host` are not trusted, because clients can
+  /// spoof them.
+  SameOrigin
+  /// Allow an upgrade only when the request `Origin` header matches one of the
+  /// listed values exactly (including scheme, host, and any port), such as
+  /// `"https://app.example.com"`. Requests without an `Origin` header, or with
+  /// a non-matching one, are rejected.
+  AllowList(List(String))
+  /// Allow every upgrade regardless of `Origin`. This is an explicit opt-out
+  /// of CSWSH protection: only use it for sockets that do not rely on ambient
+  /// browser credentials (or that authenticate every message independently).
+  AllowAll
+}
+
 /// Create a default transport config with no connect hook.
 ///
-/// The resulting config seeds `Nil` assigns. Add `with_on_connect` to
-/// authenticate connections and/or seed initial assigns.
+/// The resulting config seeds `Nil` assigns and applies the
+/// [`SameOrigin`](#OriginPolicy) origin policy, which rejects cross-site
+/// WebSocket upgrades before the handshake (CSWSH protection). Same-origin
+/// upgrades and non-browser clients (no `Origin` header) are admitted without
+/// configuration.
+///
+/// Add `with_on_connect` to authenticate connections and/or seed initial
+/// assigns. Use `with_allowed_origins` to pin an explicit allow-list, or
+/// `with_allow_all_origins` to opt out of origin checking entirely.
 pub fn default_config(path: String) -> TransportConfig(Nil) {
-  TransportConfig(path: path, on_connect: None, allowed_origins: None)
+  TransportConfig(path: path, on_connect: None, origin_policy: SameOrigin)
 }
 
 /// Set a socket-level connect/authentication callback on the transport config.
@@ -75,16 +123,22 @@ pub fn with_on_connect(
   TransportConfig(
     path: config.path,
     on_connect: Some(callback),
-    allowed_origins: config.allowed_origins,
+    origin_policy: config.origin_policy,
   )
 }
 
-/// Restrict WebSocket upgrades to requests with an allowed `Origin` header.
+/// Restrict WebSocket upgrades to requests whose `Origin` header exactly
+/// matches one of the given values.
 ///
-/// Values are matched exactly against the full Origin header value, including
-/// scheme and host (and port when present), such as
-/// `"https://app.example.com"`. When configured, missing or non-matching
-/// origins are rejected with `403 Forbidden` before the WebSocket handshake.
+/// This replaces the default [`SameOrigin`](#OriginPolicy) policy with an
+/// [`AllowList`](#OriginPolicy). Values are matched exactly against the full
+/// `Origin` header, including scheme and host (and port when present), such as
+/// `"https://app.example.com"`. Missing or non-matching origins are rejected
+/// with `403 Forbidden` before the WebSocket handshake.
+///
+/// Prefer this over `with_allow_all_origins` when you know the exact origins
+/// that should be allowed (e.g. behind a reverse proxy that rewrites the
+/// `Host` header, where `SameOrigin` cannot see the public host).
 pub fn with_allowed_origins(
   config: TransportConfig(assigns),
   origins: List(String),
@@ -92,7 +146,25 @@ pub fn with_allowed_origins(
   TransportConfig(
     path: config.path,
     on_connect: config.on_connect,
-    allowed_origins: Some(origins),
+    origin_policy: AllowList(origins),
+  )
+}
+
+/// Disable `Origin` checking, allowing WebSocket upgrades from any origin.
+///
+/// This is an explicit opt-out of the default [`SameOrigin`](#OriginPolicy)
+/// CSWSH protection and restores the pre-1.0 allow-all behaviour. Only use it
+/// for sockets that do not rely on ambient browser credentials (cookies,
+/// sessions) for authorization, or that authenticate every message
+/// independently. For cookie/session-authenticated apps, prefer the default
+/// `SameOrigin` policy or `with_allowed_origins`.
+pub fn with_allow_all_origins(
+  config: TransportConfig(assigns),
+) -> TransportConfig(assigns) {
+  TransportConfig(
+    path: config.path,
+    on_connect: config.on_connect,
+    origin_policy: AllowAll,
   )
 }
 
@@ -174,7 +246,7 @@ fn handle_matched_upgrade(
   config: TransportConfig(assigns),
 ) -> Response(ResponseData) {
   use <- bool.lazy_guard(
-    when: !origin_allowed(request, config.allowed_origins),
+    when: !origin_allowed(request, config.origin_policy),
     return: forbidden,
   )
   use <- bool.lazy_guard(when: !vsn_supported(request), return: forbidden)
@@ -208,17 +280,64 @@ fn vsn_supported(request: Request(Connection)) -> Bool {
   }
 }
 
-fn origin_allowed(
-  request: Request(Connection),
-  allowed_origins: Option(List(String)),
-) -> Bool {
-  case allowed_origins {
-    None -> True
-    Some(origins) ->
+/// Decide whether an upgrade is allowed under the configured origin policy.
+///
+/// A request with no `Origin` header is admitted for `SameOrigin` and
+/// `AllowAll` (non-browser clients omit `Origin`), but rejected for
+/// `AllowList`, which requires an explicit match.
+fn origin_allowed(request: Request(Connection), policy: OriginPolicy) -> Bool {
+  case policy {
+    AllowAll -> True
+    AllowList(origins) ->
       case request.get_header(request, "origin") {
         Ok(origin) -> list.contains(origins, origin)
         Error(Nil) -> False
       }
+    SameOrigin ->
+      case request.get_header(request, "origin") {
+        // Non-browser clients don't send Origin; they can't be driven into a
+        // cross-site upgrade, so admit them.
+        Error(Nil) -> True
+        Ok(origin) ->
+          case request.get_header(request, "host") {
+            Ok(host) -> same_origin(origin, host)
+            // Without a Host header we cannot establish the request's own
+            // authority, so fail closed.
+            Error(Nil) -> False
+          }
+      }
+  }
+}
+
+/// Compare an `Origin` header value against a `Host` header value under the
+/// same-origin rule: strip the scheme from the origin and compare its
+/// authority (host plus any port) to the host authority, case-insensitively.
+///
+/// A malformed or opaque origin (no `scheme://host`, e.g. `null`) never
+/// matches. Comparison is over the full `host:port` authority, so a
+/// non-default port must be present and equal on both sides.
+@internal
+pub fn same_origin(origin: String, host: String) -> Bool {
+  case origin_authority(origin) {
+    Ok(authority) -> authority == string.lowercase(host)
+    Error(Nil) -> False
+  }
+}
+
+/// Extract the lower-cased authority (`host[:port]`) from an `Origin` header
+/// value, stripping the `scheme://` prefix. Returns `Error(Nil)` for values
+/// without a scheme-delimited host (malformed or opaque origins such as
+/// `null`).
+fn origin_authority(origin: String) -> Result(String, Nil) {
+  use #(_scheme, rest) <- result.try(string.split_once(origin, "://"))
+  // An Origin has no path, but strip a trailing path defensively.
+  let authority = case string.split_once(rest, "/") {
+    Ok(#(authority, _path)) -> authority
+    Error(Nil) -> rest
+  }
+  case authority {
+    "" -> Error(Nil)
+    _ -> Ok(string.lowercase(authority))
   }
 }
 
