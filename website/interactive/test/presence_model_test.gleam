@@ -64,6 +64,26 @@ pub fn offline_close_preserves_client_for_phoenix_reconnect_test() {
   commands |> should.equal([])
 }
 
+pub fn reconnect_exhausted_enters_failed_and_closes_all_test() {
+  let connected =
+    model.Model(
+      ..model.initial(),
+      status: model.Connected,
+      topic: "demo:presence:0123456789abcdef0123456789abcdef",
+    )
+  let #(updated, commands) =
+    model.update(
+      connected,
+      model.TransportClosed(model.Primary, "reconnect_exhausted"),
+    )
+
+  updated.status |> should.equal(model.Failed("reconnect_exhausted"))
+  commands
+  |> should.equal([
+    model.CloseAll("demo:presence:0123456789abcdef0123456789abcdef"),
+  ])
+}
+
 pub fn expired_session_stops_reconnects_test() {
   let connected =
     model.Model(

@@ -16,6 +16,21 @@ pub fn rejects_join_reply_without_compatibility_version_test() {
   |> should.equal(Error("invalid_join_reply"))
 }
 
+pub fn decodes_presence_diff_test() {
+  let encoded =
+    "{\"joins\":{\"client-b\":{\"metas\":[{\"name\":\"Bob\",\"color\":\"magenta\",\"phx_ref\":\"ref-b\"}]}},\"leaves\":{\"client-a\":{\"metas\":[{\"name\":\"Alice\",\"color\":\"emerald\",\"phx_ref\":\"ref-a\"}]}}}"
+  let assert Ok(diff) = protocol.decode_diff(encoded)
+  dict.has_key(diff.joins, "client-b") |> should.be_true
+  dict.has_key(diff.leaves, "client-a") |> should.be_true
+}
+
+pub fn rejects_diff_missing_leaves_field_test() {
+  protocol.decode_diff(
+    "{\"joins\":{\"client-b\":{\"metas\":[{\"name\":\"Bob\",\"color\":\"magenta\",\"phx_ref\":\"ref-b\"}]}}}",
+  )
+  |> should.equal(Error("invalid_presence_diff"))
+}
+
 pub fn applies_join_and_leave_diff_by_phx_ref_test() {
   let state =
     protocol.state([
