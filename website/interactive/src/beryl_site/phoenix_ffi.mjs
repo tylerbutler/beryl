@@ -28,8 +28,8 @@ export function connect(
   onPresenceDiff,
   onClose,
 ) {
-  const map = clientMap(topic);
   disconnect(topic, role);
+  const map = clientMap(topic);
 
   const clientId = crypto.randomUUID();
   let client;
