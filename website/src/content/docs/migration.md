@@ -11,10 +11,10 @@ beryl is not yet 1.0. Minor releases may include breaking changes. Read this pag
 
 beryl uses a fully automated release pipeline:
 
-1. **Changelog fragments** are authored with `changie new` (or `just change`) and committed alongside the code change. Fragments live in `.changes/unreleased/` until a release is cut.
-2. **changie-release** collects unreleased fragments, bumps the version in `gleam.toml`, and opens a release PR.
-3. Merging the release PR triggers `auto-tag`, which creates a GitHub release and the version tag.
-4. The `publish` workflow fires on the tag and publishes the new version to [Hex.pm](https://hex.pm/packages/beryl).
+1. **Changelog fragments** are authored with `trellis changelog new` (or `just change <package> <kind> "<body>"`) and committed alongside the code change. Fragments live in `.changes/unreleased/` until a release is cut.
+2. **`trellis release pr`** collects unreleased fragments, bumps each affected package's version, regenerates its CHANGELOG.md, and opens a release PR.
+3. Merging the release PR publishes each package to [Hex.pm](https://hex.pm/packages/beryl) in dependency order.
+4. Per-package tags (`beryl-v1.2.3`, `beryl_mist-v1.2.3`) and GitHub releases are created after a successful publish.
 
 **Where to find changelogs:**
 
