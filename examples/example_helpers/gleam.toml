@@ -5,7 +5,7 @@ gleam = ">= 1.4.0"
 target = "erlang"
 
 [dependencies]
-beryl = { path = "../.." }
+beryl = { path = "../../packages/beryl" }
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 gleam_erlang = ">= 0.29.0 and < 2.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"

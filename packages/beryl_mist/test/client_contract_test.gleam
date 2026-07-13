@@ -3,8 +3,8 @@ import aquamarine/error as aquamarine_error
 import aquamarine/phoenix
 import beryl
 import beryl/channel as bchannel
-import beryl/transport/mist as mist_transport
 import beryl/wire
+import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -34,7 +34,7 @@ type TestEvent {
   Terminated(String, bchannel.StopReason)
 }
 
-@external(erlang, "beryl_ffi", "stop_supervisor")
+@external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
 
 pub fn main() {

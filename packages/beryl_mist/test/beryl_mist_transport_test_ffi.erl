@@ -2,7 +2,24 @@
 -export([connect_websocket/2, connect_websocket_with_origin/3,
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, send_binary/2, receive_text/2, receive_binary/2,
-         close/1, http_get/2]).
+         close/1, http_get/2, stop_supervisor/1]).
+
+%% Stop a supervisor process cleanly.
+%% Unlinks first so the calling process is not affected, then sends
+%% a shutdown exit signal which the supervisor handles by terminating
+%% all children before itself.
+stop_supervisor(Pid) ->
+    erlang:unlink(Pid),
+    MRef = erlang:monitor(process, Pid),
+    erlang:exit(Pid, shutdown),
+    receive
+        {'DOWN', MRef, process, Pid, _Reason} -> nil
+    after
+        5000 ->
+            erlang:demonitor(MRef, [flush]),
+            erlang:exit(Pid, kill),
+            nil
+    end.
 
 http_get(Port, Path) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of

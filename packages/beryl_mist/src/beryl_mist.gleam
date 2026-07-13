@@ -665,7 +665,7 @@ fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
 }
 
 fn transport_logger() -> transport.Logger {
-  transport.logger("beryl.transport.mist")
+  transport.logger("beryl_mist")
 }
 
 fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {

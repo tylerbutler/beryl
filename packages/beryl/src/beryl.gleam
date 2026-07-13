@@ -695,6 +695,7 @@ pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
   connection_limit.release_optional(permit.inner)
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Return the configured inbound frame size cap for transports.
 pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
   channels.config.max_inbound_frame_bytes

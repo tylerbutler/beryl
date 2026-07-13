@@ -4,8 +4,8 @@
 //// handler routes WebSocket upgrades versus plain HTTP requests.
 
 import beryl
-import beryl/transport/mist as mist_transport
 import beryl/wire
+import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/response
@@ -51,7 +51,7 @@ fn close(client: WebsocketClient) -> Nil
 @external(erlang, "beryl_mist_transport_test_ffi", "http_get")
 fn http_get(port: Int, path: String) -> Result(Int, Nil)
 
-@external(erlang, "beryl_ffi", "stop_supervisor")
+@external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
 
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback

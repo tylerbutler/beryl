@@ -1,8 +1,8 @@
 import beryl
 import beryl/channel
 import beryl/socket
-import beryl/transport/mist as mist_transport
 import beryl/wire
+import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/dynamic
 import gleam/dynamic/decode
@@ -38,7 +38,7 @@ fn receive_text(client: WebsocketClient, timeout: Int) -> Result(String, Nil)
 @external(erlang, "beryl_mist_transport_test_ffi", "close")
 fn close(client: WebsocketClient) -> Nil
 
-@external(erlang, "beryl_ffi", "stop_supervisor")
+@external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
 
 type Frame {

@@ -26,6 +26,7 @@ import gleam/result
 
 // --- Socket lifecycle ---
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce a newly connected socket. `send`/`send_binary` deliver outbound
 /// frames on this connection; `assigns` seeds connect-time socket assigns
 /// (type-erased internally) that channels see at join. Call `register_closer`
@@ -49,6 +50,7 @@ pub fn socket_connected(
   )
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Register a function that force-closes the socket's underlying connection
 /// so the coordinator can actively evict it (e.g. heartbeat timeout) instead
 /// of leaving a zombie socket whose frames are silently dropped.
@@ -63,6 +65,7 @@ pub fn register_closer(
   )
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce that a socket's connection has closed.
 pub fn socket_disconnected(
   channels channels: Channels,
@@ -76,6 +79,7 @@ pub fn socket_disconnected(
 
 // --- Inbound routing ---
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Route a transport-decoded inbound message to the coordinator. Decode in
 /// the connection process (see `active_codec`) so parse cost and malformed
 /// input never reach the shared coordinator.
@@ -91,6 +95,7 @@ pub fn route_decoded(
   )
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Route a raw binary frame, for codecs without a binary decoder (fans out
 /// to the socket's joined topics' `handle_binary`).
 pub fn route_binary(
@@ -103,6 +108,7 @@ pub fn route_binary(
 
 // --- Configuration ---
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// The wire codec configured for these channels. Transports decode inbound
 /// frames with it in the connection process.
 pub fn active_codec(channels: Channels) -> Codec {
@@ -118,6 +124,7 @@ pub opaque type RateLimiter {
   RateLimiter(bucket: rate_limit.Bucket)
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Create a fresh per-connection message limiter, `None` when no message
 /// rate is configured.
 pub fn new_message_limiter(channels: Channels) -> Option(RateLimiter) {
@@ -125,6 +132,7 @@ pub fn new_message_limiter(channels: Channels) -> Option(RateLimiter) {
   |> option.map(fn(config) { RateLimiter(rate_limit.new_bucket(config)) })
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Take one token; returns the updated limiter and whether the frame is
 /// admitted. Transports drop the frame when `False`.
 pub fn take_token(limiter: RateLimiter) -> #(RateLimiter, Bool) {
@@ -140,11 +148,13 @@ pub opaque type Logger {
   Logger(inner: log.Logger)
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Create a named transport logger (e.g. `"beryl.transport.mist"`).
 pub fn logger(name: String) -> Logger {
   Logger(internal.logger(name))
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Log a warning with structured metadata.
 pub fn log_warning(
   logger logger: Logger,

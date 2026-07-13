@@ -1,4 +1,4 @@
-import beryl/transport/mist as mist_transport
+import beryl_mist as mist_transport
 import gleam/http/request.{type Request}
 import gleeunit/should
 import mist.{type Connection}
