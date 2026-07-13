@@ -6,4 +6,5 @@
   # website/ changed AND there is a valid, distinct cached ref to diff against
   # (on a first build Netlify sets CACHED_COMMIT_REF == COMMIT_REF, which would
   # otherwise diff a commit against itself, find no change, and cancel).
+  # The website-wide diff includes interactive/ sources and bundle inputs.
   ignore = "if [ \"$CONTEXT\" != \"production\" ]; then exit 1; fi; if [ -z \"$CACHED_COMMIT_REF\" ] || [ \"$CACHED_COMMIT_REF\" = \"$COMMIT_REF\" ]; then exit 1; fi; git diff --quiet \"$CACHED_COMMIT_REF\" \"$COMMIT_REF\" -- website/"

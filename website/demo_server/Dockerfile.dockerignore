@@ -1,0 +1,9 @@
+**/build/
+**/_build/
+**/node_modules/
+**/.git/
+**/test-results/
+**/playwright-report/
+**/.lustre/
+*.log
+erl_crash.dump
