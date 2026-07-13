@@ -1,0 +1,21 @@
+name: Install trellis
+description: >
+  Install a pinned trellis release (https://trellis.tylerbutler.com) and add
+  it to GITHUB_PATH.
+
+inputs:
+  version:
+    description: trellis release tag to install
+    # Requires >= 0.3.0 for git-dependency parsing and glob member skipping
+    # (tylerbutler/trellis#9).
+    default: v0.3.0
+
+runs:
+  using: composite
+  steps:
+    - name: Install trellis
+      shell: bash
+      run: |
+        curl --proto '=https' --tlsv1.2 -LsSf \
+          "https://github.com/tylerbutler/trellis/releases/download/${{ inputs.version }}/trellis-installer.sh" | sh
+        trellis --version
