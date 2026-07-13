@@ -11,8 +11,12 @@
 ## Install
 
 ```sh
-gleam add beryl
+gleam add beryl beryl_mist
 ```
+
+`beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
+WebSocket transport. Both live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
+workspace under `packages/`).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -22,7 +26,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 import beryl
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/socket.{type Socket}
-import beryl/transport/mist as mist_transport
+import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
 import gleam/erlang/process

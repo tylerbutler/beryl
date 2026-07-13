@@ -27,6 +27,19 @@ beryl uses a fully automated release pipeline:
 
 The following changes have accumulated since the last release. They are described at a high level here; see GitHub for exact signatures.
 
+### Mist transport split into `beryl_mist`
+
+The Mist WebSocket transport now ships as its own package. Add it alongside the core library (`gleam add beryl beryl_mist`) and change imports from `beryl/transport/mist` to `beryl_mist`:
+
+```gleam
+// before
+import beryl/transport/mist as mist_transport
+// after
+import beryl_mist as mist_transport
+```
+
+Call sites are unchanged. Applications that don't serve WebSockets (or that use a custom transport built on the new public `beryl/transport` SPI) no longer pull in `mist` and `gleam_http` through beryl.
+
 ### `send_info` and `with_handle_info`
 
 Channels can now receive server-originated OTP messages. Add a `handle_info` callback with `channel.with_handle_info/2`, then deliver messages from anywhere using `beryl.send_info/4`. The callback receives the **typed** message you sent (see the `info` type parameter below) — no `Dynamic` decode and no unsafe cast. A `Reply` returned from `handle_info` becomes a push (no client ref exists, so no `phx_reply` is sent).
@@ -41,7 +54,7 @@ Channels can now receive server-originated OTP messages. Add a `handle_info` cal
 
 ### Mist direct transport
 
-The core WebSocket transport now uses Mist directly instead of Wisp. If your application used `beryl/transport/wisp`, migrate to `beryl/transport/mist`. Examples also use Mist for HTTP routing and static assets. See the [WebSocket Transport guide](/guides/websocket) for the updated setup.
+The core WebSocket transport now uses Mist directly instead of Wisp. If your application used `beryl/transport/wisp`, migrate to `beryl_mist`. Examples also use Mist for HTTP routing and static assets. See the [WebSocket Transport guide](/guides/websocket) for the updated setup.
 
 ### PubSub socket exclusion fix
 

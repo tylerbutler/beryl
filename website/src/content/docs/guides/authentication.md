@@ -71,7 +71,7 @@ verifier such as [`vestibule`](https://hex.pm/) or a call to
 It must validate the signature and expiry and return typed `Claims`:
 
 ```gleam
-import beryl/transport/mist as mist_transport
+import beryl_mist as mist_transport
 
 // let verify_token: fn(String) -> Result(Claims, Nil)
 

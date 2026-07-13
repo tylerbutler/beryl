@@ -11,7 +11,7 @@ When a client initiates a WebSocket upgrade, the Mist transport layer generates 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as transport/mist
+  participant Mist as beryl_mist
   participant Coord as coordinator
   Client->>Mist: WebSocket upgrade
   Mist->>Mist: generate socket id
@@ -26,7 +26,7 @@ A client joins a topic by sending a `phx_join` frame. The wire codec decodes the
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as transport/mist
+  participant Mist as beryl_mist
   participant Wire as wire/codec
   participant Coord as coordinator
   participant Ch as channel handler
@@ -92,7 +92,7 @@ When a client closes the WebSocket connection, Mist notifies the coordinator, wh
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as transport/mist
+  participant Mist as beryl_mist
   participant Coord as coordinator
   participant Ch as channel handler
   Client->>Mist: socket close
@@ -107,7 +107,7 @@ The coordinator is a single OTP actor processing its mailbox sequentially; broad
 
 ## Where this lives
 
-- `src/beryl/transport/mist.gleam` — connect/close, frame routing
+- `packages/beryl_mist/src/beryl_mist.gleam` — connect/close, frame routing
 - `src/beryl/coordinator.gleam` — `route_message`, `route_decoded`, `route_binary`, heartbeat timer
 - `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam` — decode/encode frames
 - `src/beryl/pubsub.gleam` — fan-out
