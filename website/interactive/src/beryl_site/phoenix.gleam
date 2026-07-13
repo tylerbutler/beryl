@@ -8,10 +8,6 @@ import lustre/effect.{type Effect}
 @external(javascript, "./phoenix_ffi.mjs", "scenarioId")
 fn scenario_id() -> String
 
-/// Returns a fresh scenario ID for use in synchronous event handlers.
-@external(javascript, "./phoenix_ffi.mjs", "scenarioId")
-pub fn new_scenario_id() -> String
-
 @external(javascript, "./phoenix_ffi.mjs", "connect")
 fn connect_ffi(
   role: String,
