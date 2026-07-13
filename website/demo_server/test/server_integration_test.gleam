@@ -403,3 +403,61 @@ pub fn expired_scenario_closes_channels_and_rejects_rejoin_test() {
   close(rejoin)
   stop_started(started)
 }
+
+/// Regression for the `untrack_all` presence-cleanup bug: leaving one topic on
+/// a socket that has joined two topics must remove only the ref-tracked
+/// presence for the topic being left. The other topic's presence must remain
+/// intact, which a fresh verifier proves by observing the original client in
+/// the second topic's `presence_state`.
+pub fn leaving_one_topic_preserves_other_topic_presence_test() {
+  let started = start_test_server(server.TestOnlyAllowAll)
+  let topic_x = "demo:presence:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  let topic_y = "demo:presence:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  let alice_key = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+  let assert Ok(alice) = connect_websocket(started.port, config.socket_path)
+  let assert Ok(_) =
+    send_text(alice, join_frame("1", topic_x, alice_key, "Alice", "emerald"))
+  let _reply_x = receive_frame(alice, "phx_reply", Some("1"), 10)
+  let assert Ok(_) =
+    send_text(alice, join_frame("2", topic_y, alice_key, "Alice", "emerald"))
+  let _reply_y = receive_frame(alice, "phx_reply", Some("2"), 10)
+
+  // Leave only topic X. join_ref matches the ref used when joining X so the
+  // leave is not treated as a stale rejoin.
+  let leave =
+    encode_json_frame(
+      Some("1"),
+      Some("3"),
+      topic_x,
+      "phx_leave",
+      json.object([]),
+    )
+  let assert Ok(_) = send_text(alice, leave)
+  let _leave_reply = receive_frame(alice, "phx_reply", Some("3"), 10)
+  let _leave_close = receive_frame(alice, "phx_close", None, 10)
+
+  // Fresh verifier joins topic Y and reads Alice from the presence_state
+  // captured at join. If terminate had used `presence.untrack_all(socket_id)`,
+  // Alice's Y presence would be gone by now and this assertion would fail.
+  let assert Ok(verifier) = connect_websocket(started.port, config.socket_path)
+  let verifier_key = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+  let assert Ok(_) =
+    send_text(
+      verifier,
+      join_frame("1", topic_y, verifier_key, "Bob", "magenta"),
+    )
+  let reply = receive_frame(verifier, "phx_reply", Some("1"), 10)
+  assert_json_string(reply.payload, "status", "ok")
+  let response = dynamic_field(reply.payload, "response")
+  let presence_state = dynamic_field(response, "presence_state")
+  let alice_entry = dynamic_field(presence_state, alice_key)
+  let alice_metas = dynamic_field(alice_entry, "metas")
+  alice_metas
+  |> decode.run(decode.list(decode.dynamic))
+  |> should.be_ok
+
+  close(alice)
+  close(verifier)
+  stop_started(started)
+}

@@ -19,8 +19,18 @@ import gleam/option.{Some}
 import gleam/string
 
 /// Socket assigns retained across `join`, `handle_info`, and `terminate`.
+///
+/// `presence_ref` is the ref returned by `presence.track` for the join that
+/// created these assigns; it identifies exactly this one presence entry and is
+/// used at teardown so leaving one topic never disturbs presences on other
+/// topics the same socket has joined.
 pub type Assigns {
-  Assigns(presence: Presence, expiry: Expiry, topic: String)
+  Assigns(
+    presence: Presence,
+    expiry: Expiry,
+    topic: String,
+    presence_ref: String,
+  )
 }
 
 /// Server-originated messages delivered to `handle_info`.
@@ -196,12 +206,17 @@ fn track_and_reply(
       #("name", json.string(payload.name)),
       #("color", json.string(payload.color)),
     ])
-  let _ref =
+  let presence_ref =
     presence.track(presence_actor, topic, payload.client_id, socket_id, meta)
   expiry.track(expiry_actor, topic, socket_id)
 
   let assigns =
-    Assigns(presence: presence_actor, expiry: expiry_actor, topic: topic)
+    Assigns(
+      presence: presence_actor,
+      expiry: expiry_actor,
+      topic: topic,
+      presence_ref: presence_ref,
+    )
   let updated_socket = socket.set_assigns(client_socket, assigns)
 
   let reply =
@@ -243,6 +258,6 @@ fn terminate(
   let assigns = socket.get_assigns(client_socket)
   let socket_id = socket.id(client_socket)
   expiry.untrack(assigns.expiry, assigns.topic, socket_id)
-  presence.untrack_all(assigns.presence, socket_id)
+  presence.untrack(assigns.presence, assigns.presence_ref)
   Nil
 }

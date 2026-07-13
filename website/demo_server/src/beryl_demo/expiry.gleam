@@ -25,7 +25,7 @@ type Message {
   IsExpired(topic: String, reply: Subject(Bool))
   ExpireTopic(String)
   ForgetTopic(String)
-  Stop
+  Stop(reply: Subject(Nil))
 }
 
 /// Internal state for the expiry actor.
@@ -99,9 +99,13 @@ pub fn is_expired(expiry: Expiry, topic: String) -> Bool {
   })
 }
 
-/// Stop the expiry actor.
+/// Stop the expiry actor synchronously.
+///
+/// Blocks until the actor has processed the stop message, which guarantees no
+/// further `ExpireTopic` or `ForgetTopic` timer messages already queued behind
+/// the stop can invoke the callback after this function returns.
 pub fn stop(expiry: Expiry) -> Nil {
-  process.send(expiry.subject, Stop)
+  process.call(expiry.subject, 5000, fn(reply) { Stop(reply: reply) })
 }
 
 fn handle_message(
@@ -129,7 +133,10 @@ fn handle_message(
       actor.continue(State(..state, scheduled: scheduled, expired: expired))
     }
 
-    Stop -> actor.stop()
+    Stop(reply) -> {
+      process.send(reply, Nil)
+      actor.stop()
+    }
   }
 }
 

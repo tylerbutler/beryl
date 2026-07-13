@@ -21,3 +21,25 @@ pub fn expires_a_tracked_topic_test() {
   |> should.be_true
   expiry.stop(manager)
 }
+
+/// Regression: synchronous `stop` must fully drain the actor before it returns,
+/// so a scheduled expiry timer already in flight cannot invoke the callback
+/// after teardown reports success. The TTL is chosen long enough that the
+/// `ExpireTopic` timer message has not yet been enqueued when `stop` is called,
+/// which lets the Stop message be processed first and terminate the actor
+/// before the timer fires.
+pub fn synchronous_stop_prevents_scheduled_callback_test() {
+  let expired = process.new_subject()
+  let assert Ok(manager) = expiry.start(100)
+  expiry.initialize(manager, fn(socket_id, topic) {
+    process.send(expired, #(socket_id, topic))
+  })
+  expiry.track(manager, "demo:presence:sync", "socket-1")
+  expiry.stop(manager)
+
+  // Wait well past the configured TTL. The timer scheduled inside the actor
+  // fires against a dead process, so the callback must never run.
+  process.sleep(400)
+  process.receive(expired, 50)
+  |> should.equal(Error(Nil))
+}
