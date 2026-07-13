@@ -4,6 +4,7 @@ description: Three runnable beryl demos — collaborative cursors, multi-room ch
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+import PresenceLab from '../../components/PresenceLab.astro';
 
 beryl ships three fully runnable example applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
@@ -13,6 +14,13 @@ different realtime collaboration patterns.
 <Aside type="caution" title="Pre-1.0 Software">
 beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
 </Aside>
+
+## Live presence lab
+
+Connect a primary participant, add a second participant, and inspect the
+Phoenix-compatible presence state and diffs that beryl emits.
+
+<PresenceLab />
 
 ## Collaborative Cursors
 

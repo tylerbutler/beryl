@@ -19,7 +19,7 @@
 		"astro": "astro",
 		"build:interactive": "node scripts/build-interactive.mjs",
 		"build:site": "pnpm run generate:og && pnpm run build:interactive && astro build",
-		"check:astro": "astro check",
+		"check:astro": "pnpm run build:interactive && astro check",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
 		"dev": "astro dev",
 		"generate:og": "node scripts/generate-og-image.mjs",

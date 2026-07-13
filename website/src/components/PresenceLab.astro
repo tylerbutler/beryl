@@ -1,0 +1,40 @@
+---
+const serviceUrl =
+  import.meta.env.PUBLIC_BERYL_DEMO_URL ??
+  "https://demos.beryl.tylerbutler.com";
+---
+
+<beryl-presence-lab
+  service-url={serviceUrl}
+  compatibility-version="1"
+>
+  <section
+    slot="fallback"
+    class="presence-lab-fallback"
+    aria-label="Presence lab explanation"
+  >
+    <p>
+      This lab connects two short-lived Phoenix clients to an isolated beryl
+      topic and shows the resulting presence state and diffs.
+    </p>
+    <p>
+      Enable JavaScript to run the live scenario. The Presence guide below
+      describes the same join, track, diff, and leave flow.
+    </p>
+  </section>
+</beryl-presence-lab>
+
+<script is:inline type="module" src="/interactive/beryl_site.mjs"></script>
+
+<style>
+  beryl-presence-lab {
+    display: block;
+    margin-block: 1.5rem 2.5rem;
+  }
+  .presence-lab-fallback {
+    border: 1px solid var(--beryl-hairline);
+    border-radius: 16px;
+    background: var(--beryl-surface);
+    padding: 1.25rem;
+  }
+</style>
