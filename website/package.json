@@ -27,7 +27,8 @@
 		"preview": "astro preview",
 		"start": "astro dev",
 		"test:interactive": "cd interactive && gleam test --target javascript",
-		"test:reference": "node --test scripts/generate-reference.test.mjs"
+		"test:reference": "node --test scripts/generate-reference.test.mjs",
+		"test:e2e": "playwright test"
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.6",
@@ -47,6 +48,7 @@
 	},
 	"devDependencies": {
 		"@fec/remark-a11y-emoji": "^4.0.2",
+		"@playwright/test": "^1.61.1",
 		"rimraf": "^6.0.0"
 	}
 }

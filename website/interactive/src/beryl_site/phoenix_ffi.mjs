@@ -15,6 +15,14 @@ export function scenarioId() {
   return crypto.randomUUID().replaceAll("-", "");
 }
 
+/// Sets the `reset-token` attribute on the custom element host, triggering a
+/// synchronous (queueMicrotask) Lustre dispatch via attributeChangedCallback.
+/// Used by the reset button click handler to avoid the rAF render delay.
+export function setResetToken(event) {
+  const host = event.target?.getRootNode?.()?.host;
+  if (host) host.setAttribute("reset-token", scenarioId());
+}
+
 export function connect(
   role,
   serviceUrl,
@@ -56,24 +64,48 @@ export function connect(
     name,
     color: role === "primary" ? "emerald" : "magenta",
   });
-  client = { socket, channel, manual: false, exhausted: false };
+  client = { socket, channel, manual: false, exhausted: false, offlineFired: false };
 
-  socket.onOpen(onOpen);
+  socket.onOpen(() => {
+    client.offlineFired = false;
+    onOpen();
+  });
   socket.onClose(() => {
-    if (!client.manual) {
+    if (!client.manual && !client.offlineFired) {
       onClose(navigator.onLine ? "socket_closed" : "offline");
     }
   });
   socket.onError(() => {
-    if (!client.manual) {
+    if (!client.manual && !client.offlineFired) {
       onClose(navigator.onLine ? "socket_error" : "offline");
     }
   });
+
+  const handleOffline = () => {
+    if (!client.manual && !client.offlineFired) {
+      client.offlineFired = true;
+      onClose("offline");
+      // Force the underlying WebSocket closed so Phoenix schedules a reconnect.
+      // Playwright's setOffline blocks packets but doesn't terminate TCP, so
+      // Phoenix would otherwise sit connected indefinitely.
+      client.socket.conn?.close();
+    }
+  };
+  const handleOnline = () => {
+    client.offlineFired = false;
+  };
+  window.addEventListener("offline", handleOffline);
+  window.addEventListener("online", handleOnline);
+  client.cleanup = () => {
+    window.removeEventListener("offline", handleOffline);
+    window.removeEventListener("online", handleOnline);
+  };
+
   channel.on("presence_diff", (payload) => {
     onPresenceDiff(JSON.stringify(payload));
   });
   channel.onClose(() => {
-    if (!client.manual) onClose("session_expired");
+    if (!client.manual && !client.offlineFired) onClose("session_expired");
   });
 
   map.set(role, client);
@@ -90,6 +122,7 @@ export function disconnect(topic, role) {
   const client = map?.get(role);
   if (!client) return;
   client.manual = true;
+  client.cleanup?.();
   client.channel.leave();
   client.socket.disconnect();
   map.delete(role);

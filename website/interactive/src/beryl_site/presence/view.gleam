@@ -2,6 +2,8 @@ import beryl_site/presence/model
 import beryl_site/presence/protocol
 import beryl_site/presence/transcript
 import gleam/dict
+import gleam/dynamic
+import gleam/dynamic/decode
 import gleam/int
 import gleam/list
 import lustre/attribute
@@ -15,11 +17,24 @@ const styles = "
   display: block;
   color: var(--sl-color-gray-1, #e8f2ed);
 }
+*, *::before, *::after {
+  box-sizing: border-box;
+}
 .lab {
   border: 1px solid var(--beryl-hairline, #48665a);
   border-radius: 16px;
   background: var(--beryl-surface, #173126);
   padding: clamp(1rem, 3vw, 1.5rem);
+  max-width: 100%;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+code, li {
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 button:focus-visible,
 input:focus-visible {
@@ -31,7 +46,10 @@ input:focus-visible {
 }
 "
 
-/// Renders the presence lab component's accessible Shadow DOM contents.
+@external(javascript, "../phoenix_ffi.mjs", "setResetToken")
+fn set_reset_token(event: dynamic.Dynamic) -> Nil
+
+
 pub fn view(current: model.Model) -> Element(model.Message) {
   html.section([attribute.aria_labelledby("presence-lab-title")], [
     html.style([], styles),
@@ -116,7 +134,7 @@ fn add_secondary_enabled(current: model.Model) -> Bool {
 }
 
 fn controls(current: model.Model) -> Element(model.Message) {
-  html.div([], [
+  html.div([attribute.class("controls")], [
     html.button(
       [
         attribute.attribute("data-testid", "connect-primary"),
@@ -145,7 +163,13 @@ fn controls(current: model.Model) -> Element(model.Message) {
       [
         attribute.attribute("data-testid", "reset-scenario"),
         attribute.disabled(current.topic == ""),
-        event.on_click(model.ResetRequested),
+        event.on(
+          "click",
+          decode.then(decode.dynamic, fn(ev) {
+            set_reset_token(ev)
+            decode.failure(model.ConnectRequested, "reset-handled-via-attribute")
+          }),
+        ),
       ],
       [html.text("Reset")],
     ),

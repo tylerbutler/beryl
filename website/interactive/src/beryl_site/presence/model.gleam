@@ -45,7 +45,7 @@ pub type Message {
   DisconnectSecondaryRequested
   TransportClosed(ClientRole, String)
   ProtocolFailed(String)
-  ResetRequested
+  ResetRequested(new_scenario_id: String)
   ComponentDisconnected
 }
 
@@ -185,8 +185,16 @@ pub fn update(model: Model, message: Message) -> #(Model, List(Command)) {
 
     JoinFailed(role, reason) -> {
       let m = record_event(model, "join_error", reason)
-      let m = Model(..m, status: Failed(reason))
-      #(m, [CloseClient(model.topic, role)])
+      case protocol.decode_join_error(reason) {
+        Ok(protocol.JoinError(code: 409, ..)) -> {
+          let m = Model(..m, status: Incompatible)
+          #(m, [CloseAll(model.topic)])
+        }
+        _ -> {
+          let m = Model(..m, status: Failed(reason))
+          #(m, [CloseClient(model.topic, role)])
+        }
+      }
     }
 
     PresenceDiffReceived(diff) -> {
@@ -253,16 +261,27 @@ pub fn update(model: Model, message: Message) -> #(Model, List(Command)) {
       #(m, [CloseAll(model.topic)])
     }
 
-    ResetRequested -> {
+    ResetRequested(new_scenario_id) -> {
+      let new_topic = "demo:presence:" <> new_scenario_id
       let m =
         Model(
           ..model,
           status: Connecting,
+          topic: new_topic,
           presences: dict.new(),
           primary_client_id: "",
           secondary_connected: False,
         )
-      #(m, [CloseAll(model.topic), GenerateScenario])
+      #(m, [
+        CloseAll(model.topic),
+        OpenClient(
+          role: Primary,
+          service_url: model.service_url,
+          topic: new_topic,
+          name: model.name,
+          compatibility_version: model.expected_compatibility_version,
+        ),
+      ])
     }
 
     ComponentDisconnected -> #(model, [CloseAll(model.topic)])

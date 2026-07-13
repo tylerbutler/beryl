@@ -42,6 +42,9 @@ pub fn app() {
       |> result.map(model.CompatibilityVersionChanged)
       |> result.replace_error(Nil)
     }),
+    component.on_attribute_change("reset-token", fn(value) {
+      Ok(model.ResetRequested(value))
+    }),
     component.on_disconnect(model.ComponentDisconnected),
     component.adopt_styles(False),
   ])

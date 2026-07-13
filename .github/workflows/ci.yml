@@ -72,6 +72,15 @@ jobs:
       - name: Install website dependencies
         run: pnpm -C website install --frozen-lockfile
 
+      - name: Install rebar3
+        uses: ./.github/actions/install-rebar3
+
+      - name: Install interactive client dependencies
+        run: cd website/interactive && gleam deps download
+
+      - name: Install demo server dependencies
+        run: cd website/demo_server && gleam deps download
+
       - name: Build documentation (Gleam docs + website reference)
         run: just docs
 
@@ -83,6 +92,24 @@ jobs:
           just site-reference
           git diff --exit-code -- website/src/content/docs/reference/api \
             || { echo "::error::Generated reference docs are out of date. Run 'just site-reference' and commit the result."; exit 1; }
+
+      - name: Test Lustre interactive client
+        run: just site-interactive-test
+
+      - name: Test demo server
+        run: just site-demo-test
+
+      - name: Check website
+        run: just site-check
+
+      - name: Build website
+        run: just site-build
+
+      - name: Install Playwright browser
+        run: pnpm -C website exec playwright install --with-deps chromium
+
+      - name: Test interactive website
+        run: just site-e2e
 
   examples:
     runs-on: ubuntu-latest

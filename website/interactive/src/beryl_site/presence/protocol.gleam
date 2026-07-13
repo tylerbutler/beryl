@@ -4,6 +4,22 @@ import gleam/json
 import gleam/list
 import gleam/result
 
+pub type JoinError {
+  JoinError(code: Int, error: String)
+}
+
+/// Decodes a join error JSON string from the Phoenix channel (e.g. 409
+/// unsupported compatibility_version).
+pub fn decode_join_error(encoded: String) -> Result(JoinError, String) {
+  let decoder = {
+    use code <- decode.field("code", decode.int)
+    use error <- decode.field("error", decode.string)
+    decode.success(JoinError(code:, error:))
+  }
+  json.parse(encoded, decoder)
+  |> result.replace_error("invalid_join_error")
+}
+
 pub type Meta {
   Meta(name: String, color: String, phx_ref: String)
 }
