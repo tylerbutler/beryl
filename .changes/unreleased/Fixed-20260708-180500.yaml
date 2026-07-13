@@ -1,5 +1,0 @@
-kind: Fixed
-body: |-
-    Close the WebSocket on heartbeat eviction and stop leaking per-IP connection slots.
-    Evicted sockets previously stayed open as zombies: the client believed it was connected while every frame (including rejoins) was dropped, and the per-IP slot stayed held. The coordinator now actively closes evicted connections, socket.Transport.close is wired to the real transport, failed WebSocket handshakes release their acquired slot, and the connection limiter monitors bound holder processes (beryl.bind_connection_slot) so slots are reclaimed even when a connection process dies without running its close path.
-time: 2026-07-08T18:05:00.000000-00:00

@@ -1,8 +1,0 @@
-kind: Changed
-body: |-
-  Rename the `PresenceEntry.pid` field to `session_id` (#161).
-
-  The field holds a caller-supplied session/socket identifier, not an Erlang
-  `Pid`. This is a breaking rename of a transparent record field; update any
-  `entry.pid` reads and `PresenceEntry(pid: ...)` constructions to `session_id`.
-time: 2026-07-07T00:00:00.000000000-07:00

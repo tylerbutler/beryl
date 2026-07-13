@@ -1,5 +1,0 @@
-kind: Performance
-body: |-
-    Shed hostile traffic at the transport edge and make rate limiting pure.
-    The Mist transport now decodes frames and enforces the per-socket message rate in each connection's own process, so floods and malformed input are dropped before they can fill the shared coordinator's mailbox or consume its CPU. Token buckets are now plain data held in coordinator/connection state instead of separate limiter actors, eliminating the 100 ms blocking check per frame, a coordinator mailbox leak under limiter backlog, O(n) bucket scans on new topics, and limiter-actor leaks on supervisor restarts.
-time: 2026-07-09T11:00:00.000000-00:00

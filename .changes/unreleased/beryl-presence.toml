@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Added"
+body = "Phoenix-compatible presence tracking backed by lattice_presence CRDTs: track/untrack with server-minted refs, presence_state and presence_diff wire encoding (including phx_ref metas), and cluster replication over PubSub guarded by an exception boundary."
