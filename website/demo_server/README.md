@@ -61,7 +61,7 @@ curl --fail http://127.0.0.1:4100/v1/status
 ```
 
 The service holds no persistent data. Presence state (name, client ID, and
-cursor metadata) is kept in memory only; it is removed when the owning socket
+color metadata) is kept in memory only; it is removed when the owning socket
 disconnects. Scenarios have a fixed 10-minute absolute TTL: when a scenario
 expires the service disconnects all connected clients and rejects rejoins for
 that scenario ID.
