@@ -4,17 +4,13 @@
 //// and the beryl coordinator using Mist request and response types directly.
 
 import beryl.{type Channels}
-import beryl/coordinator.{type Message as CoordinatorMessage}
-import beryl/internal
-import beryl/log
-import beryl/rate_limit
+import beryl/transport
 import beryl/wire/codec
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
 import gleam/crypto
-import gleam/dynamic.{type Dynamic}
-import gleam/erlang/process.{type Subject}
+import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/list
@@ -172,17 +168,17 @@ pub fn with_allow_all_origins(
 type ConnectionState {
   ConnectionState(
     socket_id: String,
-    coordinator: Subject(CoordinatorMessage),
+    channels: Channels,
     connection_permit: Option(beryl.ConnectionPermit),
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
     /// coordinator.
     codec: codec.Codec,
-    /// Per-connection message-rate token bucket (`None` = unlimited).
+    /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
     /// so a flooding socket cannot fill the coordinator's mailbox.
-    message_bucket: Option(rate_limit.Bucket),
+    message_limiter: Option(transport.RateLimiter),
   )
 }
 
@@ -367,20 +363,14 @@ fn run_connect_and_upgrade(
     Some(callback) ->
       case callback(request) {
         Ok(assigns) ->
-          do_upgrade(
-            request,
-            channels,
-            unsafe_coerce_to_dynamic(assigns),
-            Some(connection_permit),
-          )
+          do_upgrade(request, channels, assigns, Some(connection_permit))
         Error(ConnectRejected) -> {
           beryl.release_connection_slot(connection_permit)
           response.new(403)
           |> response.set_body(mist.Bytes(bytes_tree.new()))
         }
       }
-    None ->
-      do_upgrade(request, channels, dynamic.nil(), Some(connection_permit))
+    None -> do_upgrade(request, channels, Nil, Some(connection_permit))
   }
 }
 
@@ -446,19 +436,18 @@ pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
 ) -> Response(ResponseData) {
-  do_upgrade(request, channels, dynamic.nil(), None)
+  do_upgrade(request, channels, Nil, None)
 }
 
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
-  connect_assigns: Dynamic,
+  connect_assigns: assigns,
   connection_permit: Option(beryl.ConnectionPermit),
 ) -> Response(ResponseData) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
-  let active_codec = beryl.configured_codec(channels)
-  let message_limits = beryl.message_limits(channels)
+  let active_codec = transport.active_codec(channels)
   let response =
     mist.websocket(
       request: request,
@@ -468,12 +457,11 @@ fn do_upgrade(
       on_init: fn(connection) {
         on_init(
           connection,
-          beryl.coordinator_subject(channels),
+          channels,
           connect_assigns,
           connection_permit,
           max_inbound_frame_bytes,
           active_codec,
-          message_limits,
         )
       },
       on_close: on_close,
@@ -496,12 +484,11 @@ fn do_upgrade(
 /// Initialize WebSocket connection
 fn on_init(
   _connection: WebsocketConnection,
-  coordinator: Subject(CoordinatorMessage),
-  connect_assigns: Dynamic,
+  channels: Channels,
+  connect_assigns: assigns,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
   active_codec: codec.Codec,
-  message_limits: Option(rate_limit.RateLimitConfig),
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Bind the per-IP slot to this WebSocket process so it is reclaimed even
   // if the process dies without running on_close.
@@ -529,34 +516,30 @@ fn on_init(
   }
 
   // Register with coordinator, seeding any connect-time assigns
-  process.send(
-    coordinator,
-    coordinator.SocketConnected(
-      socket_id,
-      send_fn,
-      send_binary_fn,
-      None,
-      connect_assigns,
-    ),
+  transport.socket_connected(
+    channels: channels,
+    socket_id: socket_id,
+    send: send_fn,
+    send_binary: send_binary_fn,
+    assigns: connect_assigns,
   )
 
   // Let the coordinator actively close this connection (heartbeat eviction,
   // server-side disconnects) instead of leaving a zombie socket open.
-  process.send(
-    coordinator,
-    coordinator.RegisterCloser(socket_id, fn() {
-      process.send(send_subject, Close)
-    }),
+  transport.register_closer(
+    channels: channels,
+    socket_id: socket_id,
+    close: fn() { process.send(send_subject, Close) },
   )
 
   let state =
     ConnectionState(
       socket_id: socket_id,
-      coordinator: coordinator,
+      channels: channels,
       connection_permit: connection_permit,
       max_inbound_frame_bytes: max_inbound_frame_bytes,
       codec: active_codec,
-      message_bucket: option.map(message_limits, rate_limit.new_bucket),
+      message_limiter: transport.new_message_limiter(channels),
     )
 
   #(state, Some(selector))
@@ -617,15 +600,18 @@ fn handle_inbound_text(
   use <- bool.guard(when: !allowed, return: mist.continue(state))
   case codec.decode_text(state.codec)(text) {
     Ok(msg) -> {
-      coordinator.route_decoded(state.coordinator, state.socket_id, msg)
+      transport.route_decoded(state.channels, state.socket_id, msg)
       mist.continue(state)
     }
     Error(err) -> {
-      transport_logger()
-      |> log.warn("Failed to decode wire protocol message", [
-        #("socket_id", state.socket_id),
-        #("error", codec.format_decode_error(err)),
-      ])
+      transport.log_warning(
+        transport_logger(),
+        "Failed to decode wire protocol message",
+        [
+          #("socket_id", state.socket_id),
+          #("error", codec.format_decode_error(err)),
+        ],
+      )
       mist.continue(state)
     }
   }
@@ -642,44 +628,44 @@ fn handle_inbound_binary(
   use <- bool.guard(when: !allowed, return: mist.continue(state))
   case codec.decode_binary(state.codec) {
     None -> {
-      coordinator.route_binary(state.coordinator, state.socket_id, data)
+      transport.route_binary(state.channels, state.socket_id, data)
       mist.continue(state)
     }
     Some(decode_binary) ->
       case decode_binary(data) {
         Ok(msg) -> {
-          coordinator.route_decoded(state.coordinator, state.socket_id, msg)
+          transport.route_decoded(state.channels, state.socket_id, msg)
           mist.continue(state)
         }
         Error(err) -> {
-          transport_logger()
-          |> log.warn("Failed to decode binary wire protocol message", [
-            #("socket_id", state.socket_id),
-            #("error", codec.format_decode_error(err)),
-          ])
+          transport.log_warning(
+            transport_logger(),
+            "Failed to decode binary wire protocol message",
+            [
+              #("socket_id", state.socket_id),
+              #("error", codec.format_decode_error(err)),
+            ],
+          )
           mist.continue(state)
         }
       }
   }
 }
 
-/// Take a token from the connection's message bucket; always allowed when
+/// Take a token from the connection's message limiter; always allowed when
 /// no message rate is configured.
 fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
-  case state.message_bucket {
+  case state.message_limiter {
     None -> #(state, True)
-    Some(bucket) -> {
-      let #(bucket, taken) = rate_limit.take(bucket)
-      #(
-        ConnectionState(..state, message_bucket: Some(bucket)),
-        result.is_ok(taken),
-      )
+    Some(limiter) -> {
+      let #(limiter, allowed) = transport.take_token(limiter)
+      #(ConnectionState(..state, message_limiter: Some(limiter)), allowed)
     }
   }
 }
 
-fn transport_logger() -> log.Logger {
-  internal.logger("beryl.transport.mist")
+fn transport_logger() -> transport.Logger {
+  transport.logger("beryl.transport.mist")
 }
 
 fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
@@ -692,10 +678,7 @@ fn on_close(state: ConnectionState) -> Nil {
     Some(permit) -> beryl.release_connection_slot(permit)
     None -> Nil
   }
-  process.send(
-    state.coordinator,
-    coordinator.SocketDisconnected(state.socket_id),
-  )
+  transport.socket_disconnected(state.channels, state.socket_id)
 }
 
 /// Generate a unique socket ID
@@ -703,8 +686,3 @@ fn generate_socket_id() -> String {
   crypto.strong_random_bytes(16)
   |> bit_array.base16_encode()
 }
-
-/// Unsafe coercion to Dynamic - only used to type-erase connect-time assigns
-/// before handing them to the coordinator.
-@external(erlang, "beryl_ffi", "identity")
-fn unsafe_coerce_to_dynamic(value: a) -> Dynamic
