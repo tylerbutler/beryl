@@ -17,5 +17,5 @@ runs:
       shell: bash
       run: |
         curl --proto '=https' --tlsv1.2 -LsSf \
-          "https://github.com/tylerbutler/trellis/releases/download/${{ inputs.version }}/trellis-installer.sh" | sh
+          "https://github.com/tylerbutler/trellis/releases/download/${{ inputs.version }}/trellis-gleam-installer.sh" | sh
         trellis --version
