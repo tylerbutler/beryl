@@ -103,3 +103,49 @@ pub fn expired_session_stops_reconnects_test() {
     model.CloseAll("demo:presence:0123456789abcdef0123456789abcdef"),
   ])
 }
+
+pub fn name_changed_accepted_in_failed_state_test() {
+  let failed =
+    model.Model(..model.initial(), status: model.Failed("reconnect_exhausted"))
+  let #(updated, commands) = model.update(failed, model.NameChanged("Charlie"))
+
+  updated.name |> should.equal("Charlie")
+  commands |> should.equal([])
+}
+
+pub fn reset_closes_old_topic_and_opens_new_test() {
+  let old_topic = "demo:presence:0123456789abcdef0123456789abcdef"
+  let new_id = "fedcba9876543210fedcba9876543210"
+  let new_topic = "demo:presence:" <> new_id
+  let current =
+    model.Model(
+      ..model.initial(),
+      status: model.Connected,
+      topic: old_topic,
+      name: "Alice",
+      secondary_connected: True,
+      presences: dict.from_list([
+        #("client-x", [
+          protocol.Meta(name: "Alice", color: "#ff0000", phx_ref: "ref-1"),
+        ]),
+      ]),
+    )
+  let #(updated, commands) = model.update(current, model.ResetRequested(new_id))
+
+  updated.status |> should.equal(model.Connecting)
+  updated.topic |> should.equal(new_topic)
+  updated.presences |> should.equal(dict.new())
+  updated.primary_client_id |> should.equal("")
+  updated.secondary_connected |> should.equal(False)
+  commands
+  |> should.equal([
+    model.CloseAll(old_topic),
+    model.OpenClient(
+      role: model.Primary,
+      service_url: "https://demos.beryl.tylerbutler.com",
+      topic: new_topic,
+      name: "Alice",
+      compatibility_version: 1,
+    ),
+  ])
+}

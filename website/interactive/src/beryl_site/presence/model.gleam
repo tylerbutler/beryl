@@ -109,7 +109,7 @@ pub fn update(model: Model, message: Message) -> #(Model, List(Command)) {
 
     NameChanged(name) ->
       case model.status {
-        Static -> #(Model(..model, name: name), [])
+        Static | Failed(_) -> #(Model(..model, name: name), [])
         _ -> #(model, [])
       }
 

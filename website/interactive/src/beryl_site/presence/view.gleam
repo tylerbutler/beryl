@@ -49,7 +49,6 @@ input:focus-visible {
 @external(javascript, "../phoenix_ffi.mjs", "setResetToken")
 fn set_reset_token(event: dynamic.Dynamic) -> Nil
 
-
 pub fn view(current: model.Model) -> Element(model.Message) {
   html.section([attribute.aria_labelledby("presence-lab-title")], [
     html.style([], styles),
@@ -165,9 +164,14 @@ fn controls(current: model.Model) -> Element(model.Message) {
         attribute.disabled(current.topic == ""),
         event.on(
           "click",
+          // Sets a host attribute then deliberately fails: Lustre's synchronous
+          // attribute-change flush routes the reset token without a stale rAF-render race.
           decode.then(decode.dynamic, fn(ev) {
             set_reset_token(ev)
-            decode.failure(model.ConnectRequested, "reset-handled-via-attribute")
+            decode.failure(
+              model.ConnectRequested,
+              "reset-handled-via-attribute",
+            )
           }),
         ),
       ],
