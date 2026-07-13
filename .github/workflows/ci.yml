@@ -108,12 +108,17 @@ jobs:
 
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          run-deps: false
 
       - name: Install rebar3
         uses: ./.github/actions/install-rebar3
 
       - name: Install trellis
         uses: ./.github/actions/install-trellis
+
+      - name: Install dependencies
+        run: just deps
 
       - name: Install Playwright browsers
         run: pnpm -C examples exec playwright install --with-deps chromium
