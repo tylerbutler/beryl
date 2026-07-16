@@ -1,0 +1,4 @@
+kind: Changed
+body: |-
+    Clarify that with_max_inbound_frame_bytes is enforced post-assembly and document the required edge-proxy frame-size limit for transport memory bounds.
+time: 2026-07-11T16:51:18.000000-00:00
