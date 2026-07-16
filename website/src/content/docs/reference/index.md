@@ -28,7 +28,8 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
 | `beryl/wire` | Phoenix-compatible codec and JSON helpers | Phoenix clients, custom transports, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
-| `beryl/transport/mist` | Mist WebSocket upgrade and dispatch | Wiring beryl to an HTTP server |
+| `beryl/transport` | Transport SPI: socket lifecycle, inbound routing, edge rate limiting | Writing a custom WebSocket transport |
+| `beryl_mist` | Mist WebSocket upgrade and dispatch (separate `beryl_mist` package) | Wiring beryl to an HTTP server |
 
 ---
 
@@ -140,6 +141,6 @@ beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**.
 - **Minor version bumps** (`0.x → 0.x+1`) may include breaking changes to the public API.
 - **Patch version bumps** (`0.x.y → 0.x.y+1`) fix bugs without intentional breakage.
 - Public API is defined as the exports of the modules listed in the module map above.
-- Coordinator, rate-limit, and internal helper modules are intentionally hidden from downstream packages. Custom transports are not a stable extension point yet; use `beryl/transport/mist` for supported WebSocket integration.
+- Coordinator, rate-limit, and internal helper modules are intentionally hidden from downstream packages. Transports integrate through the public `beryl/transport` SPI; `beryl_mist` is the supported WebSocket transport.
 
 Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) and the [Migration & Releases page](/migration) before upgrading to a new minor version.

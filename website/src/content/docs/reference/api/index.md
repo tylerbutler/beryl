@@ -3,13 +3,13 @@ title: API Reference
 description: Generated API reference from Gleam docs metadata.
 ---
 
-This reference is generated from Gleam's docs metadata for `beryl` `0.1.0`.
+This reference is generated from Gleam's docs metadata for `beryl` and `beryl_mist`.
 
 :::note[Generated content]
-Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on [HexDocs](https://hexdocs.pm/beryl/).
+Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: [beryl](https://hexdocs.pm/beryl/), [beryl_mist](https://hexdocs.pm/beryl_mist/).
 :::
 
-## Modules
+## `beryl` `0.0.1`
 
 | Module | Description |
 |---|---|
@@ -24,6 +24,12 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/socket`](/reference/api/beryl-socket/) | Socket - Connected client with typed state |
 | [`beryl/supervisor`](/reference/api/beryl-supervisor/) | Supervisor - OTP supervision tree for beryl subsystems |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Topic - Pattern matching for channel routing |
-| [`beryl/transport/mist`](/reference/api/beryl-transport-mist/) | Mist WebSocket Transport - Direct Mist integration for beryl |
+| [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
+
+## `beryl_mist` `0.0.1`
+
+| Module | Description |
+|---|---|
+| [`beryl_mist`](/reference/api/beryl_mist/) | Mist WebSocket Transport - Direct Mist integration for beryl |

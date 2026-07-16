@@ -1,3 +1,0 @@
-kind: Added
-body: Transport — `mist_transport.with_on_connect` now seeds socket-level assigns. The hook signature changed from `fn(Request(Connection)) -> Result(Nil, Nil)` to `fn(Request(Connection)) -> Result(assigns, Nil)`. Returning `Ok(assigns)` seeds initial socket assigns visible to channels at join time via `socket.get_assigns`, while `Error(Nil)` still rejects the upgrade with a 403 before any channel join. This is beryl's Phoenix `UserSocket.connect/3` analogue, letting you authenticate once per socket instead of repeating per-join auth. `TransportConfig` is now `TransportConfig(assigns)` and `default_config` returns `TransportConfig(Nil)`; existing `Ok(Nil)`/`Error(Nil)` hooks compile unchanged.
-time: 2026-06-12T20:49:21.137993-07:00

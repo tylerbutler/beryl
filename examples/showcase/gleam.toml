@@ -5,7 +5,8 @@ gleam = ">= 1.7.0"
 target = "erlang"
 
 [dependencies]
-beryl = { path = "../.." }
+beryl = { path = "../../packages/beryl" }
+beryl_mist = { path = "../../packages/beryl_mist" }
 example_helpers = { path = "../example_helpers" }
 cursors = { path = "../cursors" }
 chatrooms = { path = "../chatrooms" }

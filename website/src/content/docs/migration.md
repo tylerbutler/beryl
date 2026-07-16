@@ -11,10 +11,10 @@ beryl is not yet 1.0. Minor releases may include breaking changes. Read this pag
 
 beryl uses a fully automated release pipeline:
 
-1. **Changelog fragments** are authored with `changie new` (or `just change`) and committed alongside the code change. Fragments live in `.changes/unreleased/` until a release is cut.
-2. **changie-release** collects unreleased fragments, bumps the version in `gleam.toml`, and opens a release PR.
-3. Merging the release PR triggers `auto-tag`, which creates a GitHub release and the version tag.
-4. The `publish` workflow fires on the tag and publishes the new version to [Hex.pm](https://hex.pm/packages/beryl).
+1. **Changelog fragments** are authored with `trellis changelog new` (or `just change <package> <kind> "<body>"`) and committed alongside the code change. Fragments live in `.changes/unreleased/` until a release is cut.
+2. **`trellis release pr`** collects unreleased fragments, bumps each affected package's version, regenerates its CHANGELOG.md, and opens a release PR.
+3. Merging the release PR publishes each package to [Hex.pm](https://hex.pm/packages/beryl) in dependency order.
+4. Per-package tags (`beryl-v1.2.3`, `beryl_mist-v1.2.3`) and GitHub releases are created after a successful publish.
 
 **Where to find changelogs:**
 
@@ -26,6 +26,19 @@ beryl uses a fully automated release pipeline:
 ## Recent notable changes
 
 The following changes have accumulated since the last release. They are described at a high level here; see GitHub for exact signatures.
+
+### Mist transport split into `beryl_mist`
+
+The Mist WebSocket transport now ships as its own package. Add it alongside the core library (`gleam add beryl beryl_mist`) and change imports from `beryl/transport/mist` to `beryl_mist`:
+
+```gleam
+// before
+import beryl/transport/mist as mist_transport
+// after
+import beryl_mist as mist_transport
+```
+
+Call sites are unchanged. Applications that don't serve WebSockets (or that use a custom transport built on the new public `beryl/transport` SPI) no longer pull in `mist` and `gleam_http` through beryl.
 
 ### `send_info` and `with_handle_info`
 
@@ -41,7 +54,7 @@ Channels can now receive server-originated OTP messages. Add a `handle_info` cal
 
 ### Mist direct transport
 
-The core WebSocket transport now uses Mist directly instead of Wisp. If your application used `beryl/transport/wisp`, migrate to `beryl/transport/mist`. Examples also use Mist for HTTP routing and static assets. See the [WebSocket Transport guide](/guides/websocket) for the updated setup.
+The core WebSocket transport now uses Mist directly instead of Wisp. If your application used `beryl/transport/wisp`, migrate to `beryl_mist`. Examples also use Mist for HTTP routing and static assets. See the [WebSocket Transport guide](/guides/websocket) for the updated setup.
 
 ### PubSub socket exclusion fix
 

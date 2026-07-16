@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Added"
+body = "pg-based PubSub for multi-node broadcast fan-out and presence replication, with a frozen v1 inter-node wire contract across the trusted Erlang cluster boundary."

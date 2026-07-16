@@ -157,6 +157,58 @@ test("surfaces deprecations as a caution block", async () => {
 	});
 });
 
+test("merges multiple packages into one grouped reference", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-multi-"));
+	try {
+		const corePath = path.join(dir, "beryl.json");
+		const transportPath = path.join(dir, "beryl_mist.json");
+		const outputDir = path.join(dir, "out");
+		await writeFile(corePath, JSON.stringify(fixture));
+		await writeFile(
+			transportPath,
+			JSON.stringify({
+				name: "beryl_mist",
+				version: "1.2.3",
+				modules: {
+					beryl_mist: {
+						documentation: "Mist WebSocket transport.",
+						types: {},
+						"type-aliases": {},
+						constants: {},
+						functions: {},
+					},
+				},
+			}),
+		);
+		const result = await generateReference({
+			docsJsonPaths: [transportPath, corePath],
+			outputDir,
+		});
+		assert.equal(result.moduleCount, 3);
+
+		const index = await readFile(path.join(outputDir, "index.md"), "utf8");
+		// Packages are grouped and sorted by name regardless of input order.
+		assert.match(index, /## `beryl` `9\.9\.9`/);
+		assert.match(index, /## `beryl_mist` `1\.2\.3`/);
+		assert.ok(index.indexOf("## `beryl`") < index.indexOf("## `beryl_mist`"));
+		assert.match(index, /hexdocs\.pm\/beryl_mist/);
+
+		const page = await readFile(path.join(outputDir, "beryl_mist.md"), "utf8");
+		assert.match(page, /Mist WebSocket transport\./);
+	} finally {
+		await rm(dir, { force: true, recursive: true });
+	}
+});
+
+test("rejects module slug collisions across packages", async () => {
+	await withFixture(async ({ jsonPath, outputDir }) => {
+		await assert.rejects(
+			generateReference({ docsJsonPaths: [jsonPath, jsonPath], outputDir }),
+			/collision/,
+		);
+	});
+});
+
 test("reports a helpful error when the docs JSON is missing", async () => {
 	await withFixture(async ({ outputDir }) => {
 		await assert.rejects(

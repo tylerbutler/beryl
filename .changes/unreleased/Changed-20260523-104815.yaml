@@ -1,3 +1,0 @@
-kind: Changed
-body: Examples — temporarily hide the collab_docs demo from the `examples/showcase` deployment. The card on the landing page and the `/docs` route are removed; the handler is still registered in `showcase.main`, so re-enabling is a small, localized change to `showcase/router.gleam`. Standalone `examples/collab_docs` is unaffected.
-time: 2026-05-23T10:48:15.673972-07:00
