@@ -26,6 +26,17 @@ A PubSub message delivered to subscribers.
  This type is intentionally transparent so subscribers can inspect the topic,
  event, payload, and sender metadata delivered to their process mailbox.
 
+ ## Frozen wire contract
+
+ `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
+ the record tag and its four fields, in this order — is a frozen v1 wire
+ contract, not just a source-level API. It will not change within 1.x:
+ subscribers select it as a 4-field `message` record, and a rolling
+ cluster upgrade must never mis-parse a frame from an older node. If the
+ envelope ever needs new fields, they will arrive as a **new record tag**
+ (a new variant), which old nodes' selectors simply do not match — never
+ as a change to this record. The same applies to `PubSubFrom`.
+
 ```gleam
 pub type Message {
   Message(
@@ -61,7 +72,9 @@ pub type PubSubConfig
 
 ### `PubSubFrom`
 
-Identifies the sender of a broadcast
+Identifies the sender of a broadcast.
+
+ Part of the frozen v1 wire contract described on `Message`.
 
 ```gleam
 pub type PubSubFrom {
@@ -141,9 +154,25 @@ pub fn broadcast_from_socket(
 Create a PubSub configuration with a custom scope name
 
  The scope name is converted to an Erlang atom via `binary_to_atom`.
- Atoms are never garbage-collected, so the scope name must be a static,
- bounded value — never derive it from user input, or a malicious or
- high-cardinality source could exhaust the atom table and crash the VM.
+ Atoms are never garbage-collected, so the scope name must be a
+ **static, bounded deployment or configuration value** — never raw
+ user-derived, per-request, per-tenant, database-derived, or otherwise
+ unbounded high-cardinality runtime input. A deployment-controlled value
+ is acceptable only when validated or selected from a fixed bounded set.
+ A malicious or high-cardinality source can exhaust the BEAM atom table
+ and crash the VM.
+
+ ```gleam
+ // Correct — static deployment constant
+ pubsub.config_with_scope("my_app_pubsub")
+
+ // Correct — deployment-controlled, selected from a fixed bounded set
+ // pubsub.config_with_scope(config.pubsub_scope())
+
+ // WRONG — never do this
+ // pubsub.config_with_scope(user_request.tenant_id)
+ // pubsub.config_with_scope(database_row.name)
+ ```
 
 ```gleam
 pub fn config_with_scope(String) -> PubSubConfig

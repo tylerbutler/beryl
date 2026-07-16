@@ -18,6 +18,91 @@ Phoenix Wire Protocol — encoding/decoding helpers and the canonical
 
 ## Functions
 
+### `binary_broadcast`
+
+Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
+
+ Errors when a metadata component exceeds the framing's 255-byte length
+ limit.
+
+```gleam
+pub fn binary_broadcast(
+  topic: String,
+  event: String,
+  payload: BitArray
+) -> Result(codec.Frame, Nil)
+```
+
+### `binary_push`
+
+Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
+
+ Errors when a metadata component exceeds the framing's 255-byte length
+ limit.
+
+```gleam
+pub fn binary_push(
+  join_ref: option.Option(String),
+  topic: String,
+  event: String,
+  payload: BitArray
+) -> Result(codec.Frame, Nil)
+```
+
+### `binary_reply`
+
+Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
+
+ Errors when a metadata component exceeds the framing's 255-byte length
+ limit.
+
+```gleam
+pub fn binary_reply(
+  join_ref: option.Option(String),
+  ref: option.Option(String),
+  topic: String,
+  status: codec.ReplyStatus,
+  payload: BitArray
+) -> Result(codec.Frame, Nil)
+```
+
+### `channel_close`
+
+Create a Phoenix `phx_close` frame, sent when a channel terminates
+ gracefully. Phoenix mirrors the channel's `join_ref` into the `ref` slot.
+
+```gleam
+pub fn channel_close(
+  option.Option(String),
+  String
+) -> codec.Frame
+```
+
+### `channel_error`
+
+Create a Phoenix `phx_error` frame, sent when a channel terminates
+ abnormally. Phoenix clients respond by scheduling an automatic rejoin.
+
+```gleam
+pub fn channel_error(
+  option.Option(String),
+  String
+) -> codec.Frame
+```
+
+### `decode_binary_message`
+
+Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
+
+ The payload is delivered to `handle_in` as raw bytes (`BitArray` wrapped
+ in `Dynamic`); decode it with `gleam/dynamic/decode.bit_array`. Zero-length
+ join_ref/ref components decode as `None`. Reserved protocol events are
+ classified the same way as on the text framing.
+
+```gleam
+pub fn decode_binary_message(BitArray) -> Result(codec.Inbound, codec.DecodeError)
+```
+
 ### `decode_message`
 
 Parse a JSON string into an `Inbound`.
@@ -64,6 +149,11 @@ pub fn heartbeat_reply(option.Option(String)) -> codec.Frame
 ### `phoenix_codec`
 
 The canonical Phoenix wire codec. Pass to `beryl.config/1`.
+
+ Handles both the JSON array framing on text frames and the Phoenix V2
+ binary framing on binary frames (see `decode_binary_message`). Binary
+ push payloads reach `handle_in` as a `BitArray` wrapped in `Dynamic`;
+ decode them with `gleam/dynamic/decode.bit_array`.
 
 ```gleam
 pub fn phoenix_codec() -> codec.Codec

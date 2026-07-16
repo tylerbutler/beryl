@@ -168,14 +168,6 @@ Start the groups actor
 pub fn start() -> Result(Groups, GroupStartError)
 ```
 
-### `start_named`
-
-Start the groups actor with a registered name (for supervision)
-
-```gleam
-pub fn start_named(process.Name(Message)) -> Result(actor.Started(process.Subject(Message)), actor.StartError)
-```
-
 ### `topics`
 
 Get all topics in a group

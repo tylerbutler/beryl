@@ -1,3 +1,0 @@
-kind: Added
-body: 'Channels — new `beryl/bridge` module forwards an external OTP actor''s message stream to a socket channel. `bridge.start` spawns a forwarder process that maps each value received on its `Subject` and delivers it via `beryl.send_info` to a socket/topic''s `handle_info`; `bridge.subject` exposes the subject to wire up a domain actor, and `bridge.stop` tears the forwarder down. The forwarder also monitors the owning channel process, so it is cleaned up automatically if that process dies — removing the error-prone per-socket forwarder boilerplate (#92).'
-time: 2026-06-12T20:45:09.000000-07:00

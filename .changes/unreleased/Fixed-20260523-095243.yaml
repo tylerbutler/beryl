@@ -1,3 +1,0 @@
-kind: Fixed
-body: Fix cursors example Docker build OTP version mismatch. The upstream gleam build image ships OTP 28, but the runtime image uses OTP 27, causing 'corrupt atom table' errors that surfaced as 'cursors@@main:run/1 undef' at boot on Railway. Build stage now uses the same erlang:27.2.1-alpine base and installs the pinned Gleam binary from GitHub releases.
-time: 2026-05-23T09:52:43.260437-07:00

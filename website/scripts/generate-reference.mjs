@@ -1,11 +1,13 @@
 // Generates Markdown reference pages from Gleam's package-interface.json.
 //
-// Reads build/dev/docs/<package-name>/package-interface.json (produced by
-// `gleam docs build`) and writes one Markdown page per public module into
-// website/src/content/docs/reference/api. The hand-written reference index at
-// website/src/content/docs/reference/index.md is intentionally left untouched.
+// Discovers every workspace package under packages/*, reads each package's
+// build/dev/docs/<package-name>/package-interface.json (produced by
+// `gleam docs build`, e.g. via `trellis run docs`), and writes one Markdown
+// page per public module into website/src/content/docs/reference/api. The
+// hand-written reference index at website/src/content/docs/reference/index.md
+// is intentionally left untouched.
 
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -27,43 +29,73 @@ const referenceBasePath = "/reference/api";
 
 export async function generateReference({
 	docsJsonPath,
+	docsJsonPaths,
 	outputDir = defaultOutputDir,
 } = {}) {
-	const packageName = await readPackageName();
-	const jsonPath =
-		docsJsonPath ??
-		path.join(
-			repoRoot,
-			"build",
-			"dev",
-			"docs",
-			packageName,
-			"package-interface.json",
+	const jsonPaths =
+		docsJsonPaths ??
+		(docsJsonPath ? [docsJsonPath] : await discoverPackageInterfaces());
+	const packages = [];
+	for (const jsonPath of jsonPaths) {
+		packages.push(await readPackageInterface(jsonPath));
+	}
+	packages.sort((left, right) => left.name.localeCompare(right.name));
+
+	const pages = new Map();
+	for (const packageInterface of packages) {
+		const modules = Object.entries(packageInterface.modules).sort(
+			([left], [right]) => left.localeCompare(right),
 		);
-	const packageInterface = await readPackageInterface(jsonPath, packageName);
-	const modules = Object.entries(packageInterface.modules).sort(
-		([left], [right]) => left.localeCompare(right),
-	);
+		for (const [moduleName, moduleInterface] of modules) {
+			const slug = moduleSlug(moduleName);
+			if (pages.has(slug)) {
+				throw new Error(
+					`Module page collision: two packages both provide \`${moduleName}\``,
+				);
+			}
+			pages.set(slug, renderModulePage(moduleName, moduleInterface));
+		}
+	}
 
 	await rm(outputDir, { force: true, recursive: true });
 	await mkdir(outputDir, { recursive: true });
-	await writeFile(
-		path.join(outputDir, "index.md"),
-		renderIndex(packageInterface, modules),
-	);
-
-	for (const [moduleName, moduleInterface] of modules) {
-		await writeFile(
-			path.join(outputDir, `${moduleSlug(moduleName)}.md`),
-			renderModulePage(moduleName, moduleInterface),
-		);
+	await writeFile(path.join(outputDir, "index.md"), renderIndex(packages));
+	for (const [slug, content] of pages) {
+		await writeFile(path.join(outputDir, `${slug}.md`), content);
 	}
 
-	return { pageCount: modules.length + 1, moduleCount: modules.length };
+	return { pageCount: pages.size + 1, moduleCount: pages.size };
 }
 
-async function readPackageName() {
-	const gleamTomlPath = path.join(repoRoot, "gleam.toml");
+// Find every workspace package's package-interface.json under packages/*.
+async function discoverPackageInterfaces() {
+	const packagesDir = path.join(repoRoot, "packages");
+	const entries = await readdir(packagesDir, { withFileTypes: true });
+	const jsonPaths = [];
+	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+		if (!entry.isDirectory()) {
+			continue;
+		}
+		const packageDir = path.join(packagesDir, entry.name);
+		const name = await readPackageName(path.join(packageDir, "gleam.toml"));
+		jsonPaths.push(
+			path.join(
+				packageDir,
+				"build",
+				"dev",
+				"docs",
+				name,
+				"package-interface.json",
+			),
+		);
+	}
+	if (jsonPaths.length === 0) {
+		throw new Error(`No packages found under ${path.relative(repoRoot, packagesDir)}`);
+	}
+	return jsonPaths;
+}
+
+async function readPackageName(gleamTomlPath) {
 	const gleamToml = await readFile(gleamTomlPath, "utf8");
 	const match = gleamToml.match(/^name\s*=\s*"([^"]+)"/m);
 	if (!match) {
@@ -74,21 +106,25 @@ async function readPackageName() {
 	return match[1];
 }
 
-async function readPackageInterface(docsJsonPath, packageName) {
+async function readPackageInterface(docsJsonPath) {
 	let raw;
 	try {
 		raw = await readFile(docsJsonPath, "utf8");
 	} catch (error) {
 		if (error && error.code === "ENOENT") {
 			throw new Error(
-				`Missing ${path.relative(repoRoot, docsJsonPath)}. Run \`gleam docs build\` from the repository root first.`,
+				`Missing ${path.relative(repoRoot, docsJsonPath)}. Run \`gleam docs build\` in each package (e.g. \`just gleam-docs\`) first.`,
 			);
 		}
 		throw error;
 	}
 
 	const parsed = JSON.parse(raw);
-	if (!parsed || parsed.name !== packageName || typeof parsed.modules !== "object") {
+	if (
+		!parsed ||
+		typeof parsed.name !== "string" ||
+		typeof parsed.modules !== "object"
+	) {
 		throw new Error(
 			`Invalid Gleam package interface JSON at ${path.relative(repoRoot, docsJsonPath)}`,
 		);
@@ -225,33 +261,50 @@ function deprecationBlock(deprecation) {
 	return `\n\n:::caution[Deprecated]\n${body}\n:::`;
 }
 
-function renderIndex(packageInterface, modules) {
-	const moduleRows = modules
-		.map(([moduleName, moduleInterface]) => {
-			const description = descriptionFromDocs(
-				moduleInterface.documentation,
-				`Reference for ${moduleName}.`,
+function renderIndex(packages) {
+	const packageSections = packages
+		.map((packageInterface) => {
+			const modules = Object.entries(packageInterface.modules).sort(
+				([left], [right]) => left.localeCompare(right),
 			);
-			return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${description} |`;
+			const moduleRows = modules
+				.map(([moduleName, moduleInterface]) => {
+					const description = descriptionFromDocs(
+						moduleInterface.documentation,
+						`Reference for ${moduleName}.`,
+					);
+					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${description} |`;
+				})
+				.join("\n");
+			return `## ${code(packageInterface.name)} ${code(packageInterface.version)}
+
+| Module | Description |
+|---|---|
+${moduleRows}`;
 		})
-		.join("\n");
+		.join("\n\n");
+
+	const hexDocsLinks = packages
+		.map(
+			(packageInterface) =>
+				`[${packageInterface.name}](https://hexdocs.pm/${packageInterface.name}/)`,
+		)
+		.join(", ");
 
 	return `---
 title: API Reference
 description: Generated API reference from Gleam docs metadata.
 ---
 
-This reference is generated from Gleam's docs metadata for ${code(packageInterface.name)} ${code(packageInterface.version)}.
+This reference is generated from Gleam's docs metadata for ${packages
+		.map((packageInterface) => code(packageInterface.name))
+		.join(" and ")}.
 
 :::note[Generated content]
-Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on [HexDocs](https://hexdocs.pm/${packageInterface.name}/).
+Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: ${hexDocsLinks}.
 :::
 
-## Modules
-
-| Module | Description |
-|---|---|
-${moduleRows}
+${packageSections}
 `;
 }
 

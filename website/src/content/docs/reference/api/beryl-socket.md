@@ -45,18 +45,11 @@ Transport abstraction for sending messages
  Wraps the underlying connection (e.g. a Mist WebSocket) with functions to
  send text/binary frames and close the connection.
 
- Note: as constructed by the built-in Mist transport, `close` is a no-op
- that returns `Ok(Nil)`. Closing is driven by the transport's own
- connection lifecycle rather than by calling this function.
+ `Transport` is opaque; build one with `new_transport`. Its behaviour is
+ read through the `@internal` accessors below.
 
 ```gleam
-pub type Transport {
-  Transport(
-    send_text: fn(String) -> Result(Nil, TransportError),
-    send_binary: fn(BitArray) -> Result(Nil, TransportError),
-    close: fn() -> Result(Nil, TransportError)
-  )
-}
+pub type Transport
 ```
 
 ### `TransportError`
@@ -129,6 +122,22 @@ pub fn new(
   a,
   Transport
 ) -> Socket(a)
+```
+
+### `new_transport`
+
+Build a transport from its send/close functions.
+
+ - `send_text`: send a UTF-8 text frame to the client.
+ - `send_binary`: send a binary frame to the client.
+ - `close`: close the underlying connection.
+
+```gleam
+pub fn new_transport(
+  send_text: fn(String) -> Result(Nil, TransportError),
+  send_binary: fn(BitArray) -> Result(Nil, TransportError),
+  close: fn() -> Result(Nil, TransportError)
+) -> Transport
 ```
 
 ### `set_assigns`

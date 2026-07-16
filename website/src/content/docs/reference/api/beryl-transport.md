@@ -1,0 +1,158 @@
+---
+title: beryl/transport
+description: Transport SPI — the contract between beryl core and WebSocket transport
+---
+
+Transport SPI — the contract between beryl core and WebSocket transport
+ implementations such as the `beryl_mist` package.
+
+ A transport implementation:
+ 1. Admits a connection (origin/auth policy is the transport's concern),
+    acquiring a slot with `beryl.acquire_connection_slot` and binding it
+    with `beryl.bind_connection_slot`.
+ 2. Announces the socket with `socket_connected` then `register_closer`.
+ 3. Decodes inbound frames with the codec from `active_codec` (see
+    `beryl/wire/codec`) and routes them with `route_decoded` /
+    `route_binary`, shedding over-rate frames via `new_message_limiter` /
+    `take_token` and oversized frames via `beryl.max_inbound_frame_bytes`.
+ 4. Announces disconnects with `socket_disconnected` and releases the
+    slot with `beryl.release_connection_slot`.
+
+## Types
+
+### `Logger`
+
+A named logger for transport diagnostics, routed through beryl's
+ configured logging backend.
+
+```gleam
+pub type Logger
+```
+
+### `RateLimiter`
+
+A per-connection token bucket enforcing the configured message rate at
+ the transport edge, so a flooding socket is shed before frames are
+ decoded or enqueued on the coordinator.
+
+```gleam
+pub type RateLimiter
+```
+
+## Functions
+
+### `active_codec`
+
+The wire codec configured for these channels. Transports decode inbound
+ frames with it in the connection process.
+
+```gleam
+pub fn active_codec(beryl.Channels) -> codec.Codec
+```
+
+### `log_warning`
+
+Log a warning with structured metadata.
+
+```gleam
+pub fn log_warning(
+  logger: Logger,
+  message: String,
+  metadata: List(#(String, String))
+) -> Nil
+```
+
+### `logger`
+
+Create a named transport logger (e.g. `"beryl.transport.mist"`).
+
+```gleam
+pub fn logger(String) -> Logger
+```
+
+### `new_message_limiter`
+
+Create a fresh per-connection message limiter, `None` when no message
+ rate is configured.
+
+```gleam
+pub fn new_message_limiter(beryl.Channels) -> option.Option(RateLimiter)
+```
+
+### `register_closer`
+
+Register a function that force-closes the socket's underlying connection
+ so the coordinator can actively evict it (e.g. heartbeat timeout) instead
+ of leaving a zombie socket whose frames are silently dropped.
+
+```gleam
+pub fn register_closer(
+  channels: beryl.Channels,
+  socket_id: String,
+  close: fn() -> Nil
+) -> Nil
+```
+
+### `route_binary`
+
+Route a raw binary frame, for codecs without a binary decoder (fans out
+ to the socket's joined topics' `handle_binary`).
+
+```gleam
+pub fn route_binary(
+  channels: beryl.Channels,
+  socket_id: String,
+  data: BitArray
+) -> Nil
+```
+
+### `route_decoded`
+
+Route a transport-decoded inbound message to the coordinator. Decode in
+ the connection process (see `active_codec`) so parse cost and malformed
+ input never reach the shared coordinator.
+
+```gleam
+pub fn route_decoded(
+  channels: beryl.Channels,
+  socket_id: String,
+  message: codec.Inbound
+) -> Nil
+```
+
+### `socket_connected`
+
+Announce a newly connected socket. `send`/`send_binary` deliver outbound
+ frames on this connection; `assigns` seeds connect-time socket assigns
+ (type-erased internally) that channels see at join. Call `register_closer`
+ immediately after this.
+
+```gleam
+pub fn socket_connected(
+  channels: beryl.Channels,
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  assigns: a
+) -> Nil
+```
+
+### `socket_disconnected`
+
+Announce that a socket's connection has closed.
+
+```gleam
+pub fn socket_disconnected(
+  channels: beryl.Channels,
+  socket_id: String
+) -> Nil
+```
+
+### `take_token`
+
+Take one token; returns the updated limiter and whether the frame is
+ admitted. Transports drop the frame when `False`.
+
+```gleam
+pub fn take_token(RateLimiter) -> #(RateLimiter, Bool)
+```

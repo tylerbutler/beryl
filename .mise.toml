@@ -1,7 +1,9 @@
 [tools]
-changie = "latest"
 erlang = "28"
 rebar = "latest"
+# Requires >= 0.3.0 for git-dependency parsing and glob member skipping
+# (tylerbutler/trellis#9).
+"github:tylerbutler/trellis" = "0.3.0"
 
 [env]
 LC_ALL = "en_US.UTF-8"

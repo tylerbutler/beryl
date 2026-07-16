@@ -1,3 +1,0 @@
-kind: Added
-body: Add channel handle_info support for OTP messages.\nChannels can now receive server-originated messages through with_handle_info and beryl.send_info, including push-style delivery for Reply and Push results.
-time: 2026-05-04T11:20:43.636204777-07:00

@@ -71,56 +71,55 @@ pub type Channels
 
 ### `Config`
 
-Configuration for the channels system
+Configuration for the channels system.
+
+ This type is opaque: construct it with `config` and adjust it with the
+ `with_*` builder functions. Keeping it opaque lets Beryl add configuration
+ options in the future without a breaking change.
 
 ```gleam
-pub type Config {
-  Config(
-    codec: codec.Codec,
-    heartbeat_interval_ms: Int,
-    heartbeat_timeout_ms: Int,
-    max_connections_per_ip: Int,
-    pubsub: option.Option(pubsub.PubSub),
-    message_rate: Int,
-    message_burst: Int,
-    join_rate: Int,
-    join_burst: Int,
-    channel_rate: Int,
-    channel_burst: Int,
-    channel_rate_max_keys_per_socket: Int,
-    max_topic_length: Int,
-    max_event_length: Int,
-    max_inbound_frame_bytes: Int,
-    max_joined_topics_per_socket: Int,
-    logging: LoggingConfig
-  )
-}
+pub type Config
+```
+
+### `ConnectionPermit`
+
+A held per-IP connection slot returned by `acquire_connection_slot`.
+
+ Opaque so Beryl can restructure the connection limiter without breaking
+ transport authors. Hold it for the lifetime of the connection and pass it
+ to `release_connection_slot` when the connection closes. When no per-IP
+ limit is configured the permit is an admit-everything placeholder and
+ releasing it is a no-op.
+
+```gleam
+pub type ConnectionPermit
 ```
 
 ### `LoggingConfig`
 
 Logging configuration for Beryl diagnostics.
 
+ This type is opaque: construct it with `logging_config` and adjust it with
+ the `with_*` builder functions so Beryl can add logging options without a
+ breaking change.
+
 ```gleam
-pub type LoggingConfig {
-  LoggingConfig(
-    level: LogLevel,
-    include_payloads: Bool,
-    payload_preview_bytes: Int
-  )
-}
+pub type LoggingConfig
 ```
 
 ### `LogLevel`
 
 Logging verbosity for Beryl's internal loggers.
 
+ The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
+ prelude's `Result` `Error` constructor when imported unqualified.
+
 ```gleam
 pub type LogLevel {
-  Debug
-  Info
-  Warn
-  Error
+  DebugLevel
+  InfoLevel
+  WarnLevel
+  ErrorLevel
 }
 ```
 
@@ -177,7 +176,11 @@ The coordinator actor failed to start.
 
 ##### `InvalidHeartbeatTimeout`
 
-heartbeat_timeout_ms must be > 0 (it is used to derive the check interval)
+`heartbeat_timeout_ms` must be at least 2. The server derives its staleness
+ check interval as `heartbeat_timeout_ms / 2` (integer division), so a
+ timeout of 1 would round down to a check interval of 0 — which disables
+ heartbeat eviction entirely. `start` rejects such a config loudly rather
+ than silently turning eviction off.
 
 ## Functions
 
@@ -185,11 +188,33 @@ heartbeat_timeout_ms must be > 0 (it is used to derive the check interval)
 
 Try to acquire a configured per-IP connection slot for transports.
 
+ Transports call this before admitting a connection, passing the **real
+ socket peer IP**. Do not pass a client-supplied address (e.g. from
+ `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
+ `Ok(permit)` when admitted (release the permit with
+ `release_connection_slot` on close; when no limit is configured every
+ connection is admitted), or `Error(Nil)` when the peer is already at its
+ limit.
+
 ```gleam
 pub fn acquire_connection_slot(
   Channels,
   String
-) -> Result(option.Option(connection_limit.Permit), Nil)
+) -> Result(ConnectionPermit, Nil)
+```
+
+### `bind_connection_slot`
+
+Bind an acquired connection slot to the calling process.
+
+ Call this from the long-lived connection process (e.g. the WebSocket
+ handler's init) after `acquire_connection_slot`. The limiter monitors the
+ caller so the slot is reclaimed even if the connection process dies
+ without running its close path — otherwise crashed connections would
+ permanently exhaust their IP's slots.
+
+```gleam
+pub fn bind_connection_slot(ConnectionPermit) -> Nil
 ```
 
 ### `broadcast`
@@ -286,27 +311,6 @@ Build a configuration with sensible defaults.
 pub fn config(codec.Codec) -> Config
 ```
 
-### `extract_topic_id`
-
-Get the topic ID from a topic using wildcard extraction
-
- For pattern "room:*" and topic "room:lobby", returns Ok("lobby").
- For segment wildcard patterns with one wildcard segment, returns that
- segment. Use `topic.extract_wildcards` when extracting multiple segments.
-
- ## Example
-
- ```gleam
- let assert Ok("lobby") = topic.extract_id(topic.Wildcard("room:"), "room:lobby")
- ```
-
-```gleam
-pub fn extract_topic_id(
-  topic.TopicPattern,
-  String
-) -> Result(String, topic.ExtractError)
-```
-
 ### `logging_config`
 
 Build a logging configuration.
@@ -381,8 +385,11 @@ pub fn register(
 
 Release a per-IP connection slot acquired by a transport.
 
+ Call from the process the permit was bound to (or from an unbound
+ process when releasing before the connection was established).
+
 ```gleam
-pub fn release_connection_slot(option.Option(connection_limit.Permit)) -> Nil
+pub fn release_connection_slot(ConnectionPermit) -> Nil
 ```
 
 ### `send_info`
@@ -412,10 +419,14 @@ Start the channels system
  Call once at application startup. Returns a handle that can be passed
  to the WebSocket transport and used for broadcasting.
 
- Heartbeat timeout enforcement is configured via `heartbeat_interval_ms`
- and `heartbeat_timeout_ms` in the Config. The coordinator checks for
- stale sockets at `heartbeat_interval_ms` and evicts any socket that
- hasn't sent a heartbeat within `heartbeat_timeout_ms`.
+ Heartbeat eviction is configured via `heartbeat_timeout_ms` in the Config.
+ The coordinator evicts any socket that has not sent a heartbeat within that
+ window, checking for stale sockets at a server-derived interval of
+ `heartbeat_timeout_ms / 2`. `heartbeat_interval_ms` is client-advisory only
+ (see `with_heartbeat`) and does not schedule anything on the server.
+
+ Returns `Error(InvalidHeartbeatTimeout)` if `heartbeat_timeout_ms` is less
+ than 2.
 
  ## Example
 
@@ -473,6 +484,30 @@ pub fn with_channel_rate_max_keys_per_socket(
 ) -> Config
 ```
 
+### `with_heartbeat`
+
+Configure heartbeat timing.
+
+ `interval_ms` is **client-advisory only**: it is the interval clients should
+ use for their own outbound pings. The server never reads it and does not use
+ it to schedule anything — it exists purely to communicate a suggested ping
+ cadence to clients.
+
+ `timeout_ms` is the server-side staleness window — a socket that sends no
+ heartbeat within this window is evicted. The server derives its internal
+ check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
+ be at least 2; smaller values are rejected by `start` with
+ `InvalidHeartbeatTimeout` because a check interval of 0 would disable
+ eviction. The defaults are 30000 ms and 60000 ms respectively.
+
+```gleam
+pub fn with_heartbeat(
+  Config,
+  interval_ms: Int,
+  timeout_ms: Int
+) -> Config
+```
+
 ### `with_join_rate`
 
 Configure per-socket join rate limiting
@@ -496,6 +531,75 @@ pub fn with_logging(
 ) -> Config
 ```
 
+### `with_max_connections`
+
+Configure the maximum number of concurrent connections allowed across the
+ whole node, regardless of source IP.
+
+ A value of 0 (the default) means unlimited. When a limit is set, a transport
+ admits a new connection only while the node is below the limit and rejects
+ it (before allocating any long-lived channel/coordinator state) otherwise;
+ the slot is freed when the connection closes, its process dies, or its
+ handshake/setup fails. The check-and-increment is atomic inside the limiter
+ actor, so a burst of concurrent opens cannot materially exceed the ceiling.
+
+ ## Composition with per-IP limits
+
+ This node-wide ceiling composes with `with_max_connections_per_ip`: when
+ both are set a connection must be under *both* limits to be admitted. The
+ per-IP limit throttles any single abusive peer, while this global ceiling
+ bounds the node's total resource use so that many distinct source addresses
+ (for example a botnet or IPv6 address rotation) still cannot exhaust the
+ node's process, socket, and coordinator budget — a case a per-IP limit alone
+ cannot stop.
+
+ ## Composition with external load balancers
+
+ This ceiling is enforced per BEAM node. If you run several nodes behind a
+ load balancer, each node enforces its own limit independently, so the
+ cluster's effective ceiling is roughly `max_connections × node_count`
+ (subject to how the balancer distributes connections). Size the per-node
+ value against a single node's capacity, and use the load balancer's own
+ global connection/rate controls when you need a cluster-wide cap.
+
+```gleam
+pub fn with_max_connections(
+  Config,
+  max_connections: Int
+) -> Config
+```
+
+### `with_max_connections_per_ip`
+
+Configure the maximum number of concurrent connections allowed per client
+ IP address.
+
+ A value of 0 (the default) means unlimited. When a limit is set, a transport
+ admits a new connection only while the peer is below the limit and rejects
+ it otherwise; the slot is freed when the connection closes.
+
+ ## Which IP is used
+
+ The limit is enforced on the **real socket peer IP** as reported by the
+ transport (for the Mist transport, the address of the TCP connection).
+ Beryl deliberately does **not** trust or parse forwarded headers such as
+ `X-Forwarded-For`, because a client can set them freely and would otherwise
+ be able to spoof its address and bypass this limit.
+
+ If Beryl runs behind a trusted reverse proxy or load balancer, every
+ connection shares the proxy's address, so a per-IP limit throttles all
+ clients as a single IP. In that topology you must resolve the real client
+ IP yourself at the proxy layer (for example, by enforcing limits there). A
+ built-in trusted-proxy opt-in may be added in a future release. See the
+ WebSocket transport guide for deployment guidance.
+
+```gleam
+pub fn with_max_connections_per_ip(
+  Config,
+  max_connections: Int
+) -> Config
+```
+
 ### `with_max_event_length`
 
 Configure the maximum allowed byte length for client-supplied event name
@@ -515,8 +619,24 @@ pub fn with_max_event_length(
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- Frames larger than `max_bytes` are closed before decoding. Values <= 0
- disable the cap. The default is 1 MiB.
+ The limit is enforced **post-assembly**: the transport (Mist/gramps)
+ buffers and assembles a complete frame first, and only then does Beryl
+ measure it and close the connection if it exceeds `max_bytes`. This bounds
+ per-message processing cost (decode, routing, rate-limit accounting), but
+ it does **not** by itself bound transport memory. A hostile client can
+ declare a huge payload and stream it slowly, or send many fragmented
+ continuation frames, and the transport's receive buffer grows before this
+ check ever runs — so this setting alone does not stop a single connection
+ from exhausting node memory.
+
+ For a true transport memory bound you **must** place an edge proxy or load
+ balancer in front of Beryl and configure a WebSocket frame-size limit
+ there (and a matching request/body size limit). Beryl's per-IP connection
+ limit and per-socket message-rate limit do not mitigate this vector. See
+ the "Security & deployment" section of the README and
+ `docs/security/frame-buffering-followup.md` for details.
+
+ Values <= 0 disable the cap. The default is 1 MiB.
 
 ```gleam
 pub fn with_max_inbound_frame_bytes(

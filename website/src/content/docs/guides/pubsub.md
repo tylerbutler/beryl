@@ -18,6 +18,15 @@ let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 
 The scope maps to a `pg` scope atom. Different scopes are completely isolated from each other.
 
+:::danger[The scope must be a static, bounded deployment value]
+The scope name is converted to an Erlang atom. Atoms are never
+garbage-collected; exhausting the BEAM atom table crashes the VM. The scope
+must be a static, bounded deployment or configuration value — never raw
+user-derived, per-request, per-tenant, database-derived, or otherwise
+unbounded high-cardinality runtime input. A deployment-controlled value is
+acceptable only when validated or selected from a fixed bounded set.
+:::
+
 ## Subscribing
 
 The calling process receives `pubsub.Message` values when broadcasts are sent to the topic:

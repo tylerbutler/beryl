@@ -2,29 +2,48 @@
 
 ## Project Overview
 
-Type-safe real-time channels and presence for Gleam, targeting the Erlang (BEAM) runtime.
+Type-safe real-time channels and presence for Gleam, targeting the Erlang
+(BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
+monorepo with two publishable packages:
+
+- **`packages/beryl`** — core channels library (channels, presence, PubSub,
+  wire protocol, abuse controls, transport SPI)
+- **`packages/beryl_mist`** — Mist WebSocket transport (module `beryl_mist`),
+  built on the public `beryl/transport` SPI
+
+The root `gleam.toml` is workspace configuration only (`[tools.trellis]`);
+per-package manifests live in each package directory.
 
 ## Build Commands
 
+Run gleam commands inside a package directory, or use trellis/just from the
+root to fan out across the workspace:
+
 ```bash
-gleam build              # Compile project
-gleam test               # Run tests
-gleam check              # Type check without building
-gleam format src test    # Format code
-gleam docs build         # Generate documentation
+trellis run build        # Compile all packages (in dependency order)
+trellis run test         # Run tests in all packages
+trellis run check        # Type check
+trellis run format       # Format code
+trellis run docs         # Build Gleam docs (packages only)
+trellis doctor           # Validate workspace invariants
 ```
 
 ## Just Commands
 
 ```bash
-just deps         # Download dependencies
-just build        # Build project
-just test         # Run tests
-just format       # Format code
-just format-check # Check formatting
-just check        # Type check
-just docs         # Build documentation
-just ci           # Run all CI checks (format, check, test, build)
+just deps         # Download dependencies (gleam + pnpm workspaces)
+just build        # trellis run build
+just build-strict # trellis run build --strict
+just test         # trellis run test (scope: `just test beryl_mist`)
+just format       # trellis run format
+just format-check # trellis run format --check
+just check        # trellis run check
+just lint         # trellis run lint (glinter; packages only)
+just doctor       # trellis doctor
+just docs         # Gleam docs + website reference regeneration
+just change P K B # trellis changelog new --package P --kind K --body B
+just version-plan # Preview next versions from unreleased fragments
+just ci           # Run all CI checks (format, check, test, build, examples)
 just pr           # Alias for ci (use before PR)
 just main         # Extended checks for main branch
 just clean        # Remove build artifacts
@@ -33,37 +52,42 @@ just clean        # Remove build artifacts
 ## Project Structure
 
 ```
-src/
-├── beryl.gleam                    # Main public API (channels, config, start/register)
-├── beryl_ffi.erl                  # Erlang FFI (identity coercion)
-├── beryl_pubsub_ffi.erl           # Erlang FFI for pg-based PubSub
-└── beryl/
-    ├── bridge.gleam               # Bridge between transports and channels
-    ├── channel.gleam              # Channel behaviour/callbacks
-    ├── connection_limit.gleam     # Connection limit enforcement
-    ├── coordinator.gleam          # Channel lifecycle coordinator (OTP actor)
-    ├── error.gleam                # Shared error types/helpers
-    ├── group.gleam                # Named channel groups
-    ├── internal.gleam             # Internal helpers
-    ├── log.gleam                  # Logging helpers
-    ├── presence.gleam             # Presence tracking (OTP actor wrapping lattice_presence)
-    ├── pubsub.gleam               # PubSub abstraction (pg-based)
-    ├── rate_limit.gleam           # Rate limiting helpers
-    ├── socket.gleam               # Socket abstraction
-    ├── supervisor.gleam           # OTP supervision helpers
-    ├── topic.gleam                # Topic pattern matching
-    ├── transport/
-    │   ├── mist.gleam             # Mist WebSocket transport integration
-    │   └── ewe.gleam              # Ewe WebSocket transport integration
-    ├── wire.gleam                 # Wire protocol (JSON encode/decode)
-    ├── presence/
-    │   └── wire.gleam             # Presence wire format helpers
-    └── wire/
-        └── codec.gleam            # Wire codec helpers
-test/
-├── *_test.gleam                  # Gleam test modules for public API, transport, presence, etc.
-├── *_test_ffi.erl                # Erlang helpers for tests that need BEAM interop
-└── test_helpers.gleam            # Shared test helpers
+gleam.toml                         # Workspace config only ([tools.trellis])
+packages/
+├── beryl/                         # Core library package
+│   ├── gleam.toml
+│   ├── src/
+│   │   ├── beryl.gleam            # Main public API (channels, config, start/register)
+│   │   ├── beryl_ffi.erl          # Erlang FFI (identity coercion, timing)
+│   │   ├── beryl_pubsub_ffi.erl   # Erlang FFI for pg-based PubSub
+│   │   └── beryl/
+│   │       ├── bridge.gleam       # Bridge between transports and channels
+│   │       ├── channel.gleam      # Channel behaviour/callbacks
+│   │       ├── connection_limit.gleam  # Connection limit enforcement (internal)
+│   │       ├── coordinator.gleam  # Channel lifecycle coordinator (internal)
+│   │       ├── error.gleam        # Shared error types/helpers
+│   │       ├── group.gleam        # Named channel groups
+│   │       ├── internal.gleam     # Internal helpers (internal)
+│   │       ├── log.gleam          # Logging helpers (internal)
+│   │       ├── presence.gleam     # Presence tracking (CRDT-backed actor)
+│   │       ├── pubsub.gleam       # PubSub abstraction (pg-based)
+│   │       ├── rate_limit.gleam   # Rate limiting helpers (internal)
+│   │       ├── socket.gleam       # Socket abstraction
+│   │       ├── supervisor.gleam   # OTP supervision helpers
+│   │       ├── topic.gleam        # Topic pattern matching
+│   │       ├── transport.gleam    # Public transport SPI (used by beryl_mist)
+│   │       ├── wire.gleam         # Wire protocol (JSON encode/decode)
+│   │       ├── presence/wire.gleam    # Presence wire format helpers
+│   │       └── wire/codec.gleam   # Wire codec helpers
+│   └── test/                      # Core tests + Erlang test FFI helpers
+└── beryl_mist/                    # Mist WebSocket transport package
+    ├── gleam.toml                 # depends on beryl by path
+    ├── src/beryl_mist.gleam       # Transport implementation
+    └── test/                      # Transport/contract tests + WS client FFI
+examples/                          # Runnable example apps (workspace members,
+                                   # excluded from release) + pnpm/Playwright e2e
+website/                           # Astro/Starlight docs site (not a member)
+.changes/unreleased/               # trellis changelog fragments (TOML)
 ```
 
 ## Architecture
@@ -74,27 +98,32 @@ test/
 2. **PubSub** (`beryl/pubsub`) - pg-based process groups
 3. **Presence** - CRDT-backed actor using `lattice_presence/presence_state` (`beryl/presence`)
 4. **Groups** (`beryl/group`) - Named channel groups for broadcast
+5. **Transport SPI** (`beryl/transport`) - public contract for transports;
+   `beryl_mist` consumes only public beryl API
 
 ### Dependencies
 
-#### Runtime
-- `gleam_stdlib` - Standard library
-- `gleam_erlang` - Erlang interop
-- `gleam_otp` - OTP actors
-- `gleam_json` - JSON encoding/decoding
-- `gleam_crypto` - Cryptographic functions
-- `mist` - HTTP/WebSocket server and transport integration
-- `ewe` - Alternative HTTP/WebSocket server and transport integration
+#### packages/beryl (runtime)
+- `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`, `gleam_crypto`
+- `lattice_presence` - Presence CRDTs
+- `palabres` - Logging
+
+#### packages/beryl_mist (runtime)
+- `beryl` (path dep; rewritten to a Hex requirement at publish)
+- `mist`, `gleam_http` - HTTP/WebSocket server integration
+- `gleam_stdlib`, `gleam_erlang`, `gleam_crypto`
 
 #### Development
 - `gleeunit` - Testing framework
+- git-sourced test helpers: `phoenix_channel_fixtures` (beryl),
+  `aquamarine`, `gluegun` (beryl_mist)
 
 ## Testing
 
 ```bash
-just test
-# or
-gleam test
+just test                # All packages
+just test beryl_mist     # One package
+cd packages/beryl && gleam test   # Directly
 ```
 
 ## Tool Versions
@@ -104,23 +133,27 @@ Managed via `.tool-versions` (source of truth for CI):
 - Gleam 1.16.0
 - just 1.50.0
 
-Local development can use `.mise.toml` for flexible versions.
+trellis (>= 0.3.0) is pinned in `.mise.toml` for local development and
+installed in CI via `.github/actions/install-trellis`.
 
 ## CI/CD
 
 ### Workflows
-- **ci.yml**: Format check, type check, build, test
-- **pr.yml**: PR title validation (commitlint), changelog entry check (changie)
-- **release.yml**: Automated versioning via changie-release
-- **auto-tag.yml**: Auto-tag on release PR merge
-- **publish.yml**: Publish to Hex.pm on tag push
+- **ci.yml**: format check, type check, strict build, tests (via trellis),
+  docs job (website reference must be up to date), examples job (Playwright)
+- **pr.yml**: PR title validation (commitlint), `trellis doctor`,
+  `trellis changelog check`
+- **release.yml**: `trellis release pr` on push to main
+- **publish.yml**: on release-PR merge — `trellis publish --all-untagged`
+  then `trellis tag create --push --github-release`
 
 ### Release Flow
 1. Push commits with conventional commit messages
-2. Add changelog entries with `changie new`
-3. changie-release creates a PR with version bump
-4. Merge PR → auto-tag creates GitHub release
-5. publish.yml triggers → publishes to Hex.pm
+2. Add changelog fragments with `just change <package> <kind> "<body>"`
+3. `trellis release pr` maintains a release PR (branch `release/pending`)
+   with version bumps and CHANGELOGs
+4. Merge the release PR → packages publish to Hex in dependency order,
+   per-package tags (`beryl-v1.2.3`) and GitHub releases are created
 
 ## Conventions
 
@@ -129,6 +162,9 @@ Local development can use `.mise.toml` for flexible versions.
 - Follow `gleam format` output
 - Keep public API minimal
 - Document public functions with `///` comments
+- beryl's internal modules (`coordinator`, `internal`, `log`, `rate_limit`,
+  `connection_limit`) must not be imported by other packages; transports use
+  the `beryl/transport` SPI
 
 ## Commit Messages
 

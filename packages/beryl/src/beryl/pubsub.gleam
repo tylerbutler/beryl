@@ -1,0 +1,232 @@
+//// PubSub - Distributed publish/subscribe using Erlang pg
+////
+//// Provides topic-based pub/sub messaging backed by Erlang's built-in `pg`
+//// module. Subscribers are tracked by process group, so messages are delivered
+//// to all nodes in the cluster automatically.
+////
+//// ## Quick Start
+////
+//// ```gleam
+//// let ps = pubsub.start(pubsub.default_config())
+//// pubsub.subscribe(ps, "room:lobby")
+//// pubsub.broadcast(ps, "room:lobby", "new_msg", json.string("hello"))
+//// ```
+
+import gleam/dynamic.{type Dynamic}
+import gleam/erlang/process.{type Pid}
+import gleam/json
+import gleam/list
+
+/// A PubSub message delivered to subscribers.
+///
+/// This type is intentionally transparent so subscribers can inspect the topic,
+/// event, payload, and sender metadata delivered to their process mailbox.
+///
+/// ## Frozen wire contract
+///
+/// `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
+/// the record tag and its four fields, in this order — is a frozen v1 wire
+/// contract, not just a source-level API. It will not change within 1.x:
+/// subscribers select it as a 4-field `message` record, and a rolling
+/// cluster upgrade must never mis-parse a frame from an older node. If the
+/// envelope ever needs new fields, they will arrive as a **new record tag**
+/// (a new variant), which old nodes' selectors simply do not match — never
+/// as a change to this record. The same applies to `PubSubFrom`.
+pub type Message {
+  Message(topic: String, event: String, payload: json.Json, from: PubSubFrom)
+}
+
+/// Identifies the sender of a broadcast.
+///
+/// Part of the frozen v1 wire contract described on `Message`.
+pub type PubSubFrom {
+  /// Broadcast originated from the system (no sender pid)
+  System
+  /// Broadcast originated from a specific process
+  FromPid(Pid)
+  /// Broadcast originated from a process and should exclude a socket ID
+  FromSocket(Pid, String)
+}
+
+/// PubSub configuration.
+///
+/// Build with `default_config` or `config_with_scope` so the underlying pg
+/// scope representation can evolve without exposing record fields.
+pub opaque type PubSubConfig {
+  PubSubConfig(
+    /// The pg scope name (atom). Different scopes are isolated.
+    scope: Dynamic,
+  )
+}
+
+/// A running PubSub instance.
+///
+/// This handle is intentionally opaque so callers cannot forge pg scopes or
+/// depend on the runtime representation.
+pub opaque type PubSub {
+  PubSub(scope: Dynamic)
+}
+
+// ── FFI declarations ────────────────────────────────────────────────────────
+
+@external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
+fn ffi_start_pg_scope(scope: Dynamic) -> Dynamic
+
+@external(erlang, "beryl_pubsub_ffi", "join_group")
+fn ffi_join_group(scope: Dynamic, group: String, pid: Pid) -> Dynamic
+
+@external(erlang, "beryl_pubsub_ffi", "leave_group")
+fn ffi_leave_group(scope: Dynamic, group: String, pid: Pid) -> Dynamic
+
+@external(erlang, "beryl_pubsub_ffi", "get_members")
+fn ffi_get_members(scope: Dynamic, group: String) -> List(Pid)
+
+@external(erlang, "beryl_pubsub_ffi", "get_local_members")
+fn ffi_get_local_members(scope: Dynamic, group: String) -> List(Pid)
+
+@external(erlang, "beryl_pubsub_ffi", "send_to_pid")
+fn ffi_send_to_pid(pid: Pid, msg: Message) -> Nil
+
+@external(erlang, "erlang", "binary_to_atom")
+fn binary_to_atom(name: String) -> Dynamic
+
+// ── Public API ──────────────────────────────────────────────────────────────
+
+/// Create a default PubSub configuration with scope `beryl_pubsub`
+pub fn default_config() -> PubSubConfig {
+  PubSubConfig(scope: binary_to_atom("beryl_pubsub"))
+}
+
+/// Create a PubSub configuration with a custom scope name
+///
+/// The scope name is converted to an Erlang atom via `binary_to_atom`.
+/// Atoms are never garbage-collected, so the scope name must be a
+/// **static, bounded deployment or configuration value** — never raw
+/// user-derived, per-request, per-tenant, database-derived, or otherwise
+/// unbounded high-cardinality runtime input. A deployment-controlled value
+/// is acceptable only when validated or selected from a fixed bounded set.
+/// A malicious or high-cardinality source can exhaust the BEAM atom table
+/// and crash the VM.
+///
+/// ```gleam
+/// // Correct — static deployment constant
+/// pubsub.config_with_scope("my_app_pubsub")
+///
+/// // Correct — deployment-controlled, selected from a fixed bounded set
+/// // pubsub.config_with_scope(config.pubsub_scope())
+///
+/// // WRONG — never do this
+/// // pubsub.config_with_scope(user_request.tenant_id)
+/// // pubsub.config_with_scope(database_row.name)
+/// ```
+pub fn config_with_scope(name: String) -> PubSubConfig {
+  PubSubConfig(scope: binary_to_atom(name))
+}
+
+/// Start a PubSub instance
+///
+/// This starts a pg scope. If the scope is already started (e.g., by another
+/// node or previous call), this is a no-op.
+pub fn start(config: PubSubConfig) -> PubSub {
+  // pg:start returns {ok, Pid} or {error, {already_started, Pid}}
+  // Both are success cases for us
+  let _start_result = ffi_start_pg_scope(config.scope)
+  PubSub(scope: config.scope)
+}
+
+/// Subscribe the current process to a topic
+///
+/// The calling process will receive `Message` values when broadcasts
+/// are sent to this topic.
+pub fn subscribe(ps: PubSub, topic: String) -> Nil {
+  let pid = process.self()
+  let _join_result = ffi_join_group(ps.scope, topic, pid)
+  Nil
+}
+
+/// Unsubscribe the current process from a topic
+pub fn unsubscribe(ps: PubSub, topic: String) -> Nil {
+  let pid = process.self()
+  let _leave_result = ffi_leave_group(ps.scope, topic, pid)
+  Nil
+}
+
+/// Broadcast a message to all subscribers of a topic (all nodes)
+pub fn broadcast(
+  ps: PubSub,
+  topic: String,
+  event: String,
+  payload: json.Json,
+) -> Nil {
+  let msg = Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_members(ps.scope, topic)
+  list.each(members, fn(pid) { ffi_send_to_pid(pid, msg) })
+}
+
+/// Broadcast a message to all subscribers except those from a specific pid
+pub fn broadcast_from(
+  ps: PubSub,
+  from: Pid,
+  topic: String,
+  event: String,
+  payload: json.Json,
+) -> Nil {
+  let msg =
+    Message(topic: topic, event: event, payload: payload, from: FromPid(from))
+  let members = ffi_get_members(ps.scope, topic)
+  list.each(members, fn(pid) {
+    case pid == from {
+      True -> Nil
+      False -> ffi_send_to_pid(pid, msg)
+    }
+  })
+}
+
+/// Broadcast a message to all subscribers except a process, preserving a socket
+/// ID that receiving channel coordinators should exclude locally.
+pub fn broadcast_from_socket(
+  ps: PubSub,
+  from: Pid,
+  except_socket_id: String,
+  topic: String,
+  event: String,
+  payload: json.Json,
+) -> Nil {
+  let msg =
+    Message(
+      topic: topic,
+      event: event,
+      payload: payload,
+      from: FromSocket(from, except_socket_id),
+    )
+  let members = ffi_get_members(ps.scope, topic)
+  list.each(members, fn(pid) {
+    case pid == from {
+      True -> Nil
+      False -> ffi_send_to_pid(pid, msg)
+    }
+  })
+}
+
+// nolint: unused_exports -- public PubSub API surface alongside broadcast/broadcast_from; intended for downstream consumers
+/// Broadcast a message to local subscribers only (current node)
+pub fn local_broadcast(
+  ps: PubSub,
+  topic: String,
+  event: String,
+  payload: json.Json,
+) -> Nil {
+  let msg = Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_local_members(ps.scope, topic)
+  list.each(members, fn(pid) { ffi_send_to_pid(pid, msg) })
+}
+
+/// Get all subscribers for a topic (all nodes)
+pub fn subscribers(ps: PubSub, topic: String) -> List(Pid) {
+  ffi_get_members(ps.scope, topic)
+}
+
+/// Get the number of subscribers for a topic (all nodes)
+pub fn subscriber_count(ps: PubSub, topic: String) -> Int {
+  list.length(ffi_get_members(ps.scope, topic))
+}

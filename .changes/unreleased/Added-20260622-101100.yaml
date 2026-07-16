@@ -1,5 +1,0 @@
-kind: Added
-body: |-
-    Generate native API reference pages on the documentation website from Gleam's docs metadata.
-    A new `pnpm generate:reference` script (wired into `just site-build` and `just site-check`) turns `package-interface.json` into Starlight reference pages for every public module, surfaced in the same navigation, styling, and search as the rest of the docs site.
-time: 2026-06-22T10:11:00.000000-07:00

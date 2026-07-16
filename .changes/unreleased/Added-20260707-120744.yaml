@@ -1,3 +1,0 @@
-kind: Added
-body: Ewe WebSocket transport — new `beryl/transport/ewe` module mirrors `beryl/transport/mist`, letting beryl channels run on the [ewe](https://github.com/vshakitskiy/ewe) web server. Exposes the same config-builder and handler API (`default_config`, `with_on_connect`, `with_allowed_origins`, `upgrade`, `handler`, `upgrade_connection`), including per-IP connection limits, origin allow-lists, and inbound frame-size enforcement.
-time: 2026-07-07T12:07:44.523956763-07:00

@@ -24,16 +24,12 @@ Pluggable wire codec for beryl.
 
 A wire codec.
 
+ `Codec` is opaque; build one with `new` (and, for binary support,
+ `with_binary_decoder`). The coordinator reads the codec's behaviour
+ through the `@internal` accessors below.
+
 ```gleam
-pub type Codec {
-  Codec(
-    decode_text: fn(String) -> Result(Inbound, DecodeError),
-    decode_binary: option.Option(fn(BitArray) -> Result(Inbound, DecodeError)),
-    encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Frame,
-    encode_push: fn(String, String, json.Json) -> Frame,
-    encode_heartbeat_reply: fn(option.Option(String)) -> Frame
-  )
-}
+pub type Codec
 ```
 
 ### `DecodeError`
@@ -88,25 +84,12 @@ A binary frame.
 
 Normalised inbound message shape.
 
- - `join_ref`: optional client-side reference assigned at join time
-   (used by some Phoenix replies; codecs without this concept should
-   pass `None`)
- - `ref`: optional per-message reference for reply correlation
- - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
- - `kind`: structural protocol event or user event
- - `payload`: message body as a `Dynamic` for the channel handler to
-   decode
+ `Inbound` is opaque: construct it with `inbound` and read it with the
+ `inbound_*` accessors. Keeping the record hidden lets Beryl add fields
+ (which default sensibly) without breaking every custom codec.
 
 ```gleam
-pub type Inbound {
-  Inbound(
-    join_ref: option.Option(String),
-    ref: option.Option(String),
-    topic: String,
-    kind: InboundKind,
-    payload: dynamic.Dynamic
-  )
-}
+pub type Inbound
 ```
 
 ### `InboundKind`
@@ -170,4 +153,151 @@ Format a `DecodeError` as a human-readable string. Used by the
 
 ```gleam
 pub fn format_decode_error(DecodeError) -> String
+```
+
+### `inbound`
+
+Construct a normalised inbound message.
+
+ - `join_ref`: optional client-side reference assigned at join time
+   (used by some Phoenix replies; codecs without this concept should
+   pass `None`)
+ - `ref`: optional per-message reference for reply correlation
+ - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
+ - `kind`: structural protocol event or user event
+ - `payload`: message body as a `Dynamic` for the channel handler to
+   decode
+
+```gleam
+pub fn inbound(
+  join_ref: option.Option(String),
+  ref: option.Option(String),
+  topic: String,
+  kind: InboundKind,
+  payload: dynamic.Dynamic
+) -> Inbound
+```
+
+### `inbound_join_ref`
+
+The inbound message's join-time client reference, if any.
+
+```gleam
+pub fn inbound_join_ref(Inbound) -> option.Option(String)
+```
+
+### `inbound_kind`
+
+The inbound message's structural kind.
+
+```gleam
+pub fn inbound_kind(Inbound) -> InboundKind
+```
+
+### `inbound_payload`
+
+The inbound message's body, for the channel handler to decode.
+
+```gleam
+pub fn inbound_payload(Inbound) -> dynamic.Dynamic
+```
+
+### `inbound_ref`
+
+The inbound message's per-message reference for reply correlation, if any.
+
+```gleam
+pub fn inbound_ref(Inbound) -> option.Option(String)
+```
+
+### `inbound_topic`
+
+The inbound message's subscription topic.
+
+```gleam
+pub fn inbound_topic(Inbound) -> String
+```
+
+### `new`
+
+Build a text-only wire codec.
+
+ - `decode_text`: decode raw inbound text into a normalised `Inbound`.
+ - `encode_reply`: encode a reply to a client message:
+   `(join_ref, ref, topic, status, response_payload)`.
+ - `encode_push`: encode a server-initiated push: `(topic, event, payload)`.
+ - `encode_heartbeat_reply`: encode a heartbeat reply for a given client `ref`.
+
+ The resulting codec has no binary decoder; binary WebSocket frames are
+ routed to `channel.handle_binary` as raw data. Add a binary decoder with
+ `with_binary_decoder`.
+
+```gleam
+pub fn new(
+  decode_text: fn(String) -> Result(Inbound, DecodeError),
+  encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Frame,
+  encode_push: fn(String, String, json.Json) -> Frame,
+  encode_heartbeat_reply: fn(option.Option(String)) -> Frame
+) -> Codec
+```
+
+### `with_binary_decoder`
+
+Attach a binary decoder to a codec.
+
+ When set, binary WebSocket frames are decoded into a normalised `Inbound`
+ via `decode_binary` instead of being routed to `channel.handle_binary` as
+ raw data.
+
+```gleam
+pub fn with_binary_decoder(
+  Codec,
+  fn(BitArray) -> Result(Inbound, DecodeError)
+) -> Codec
+```
+
+### `with_close_encoder`
+
+Attach a channel-close encoder to a codec.
+
+ When set, the coordinator emits this frame to a client whenever one of
+ its channels terminates gracefully (leave, server shutdown, heartbeat
+ eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
+ leave the joined state instead of waiting out push timeouts.
+
+```gleam
+pub fn with_close_encoder(
+  Codec,
+  fn(option.Option(String), String) -> Frame
+) -> Codec
+```
+
+### `with_error_encoder`
+
+Attach a channel-error encoder to a codec.
+
+ When set, the coordinator emits this frame to a client whenever one of
+ its channels terminates abnormally (crashed or stopped with an error):
+ `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
+ automatic rejoin.
+
+```gleam
+pub fn with_error_encoder(
+  Codec,
+  fn(option.Option(String), String) -> Frame
+) -> Codec
+```
+
+### `with_topicless_events`
+
+Mark a codec's events as topicless.
+
+ Some framings (e.g. Socket.IO-style protocols) do not carry a per-frame
+ topic. When set, an inbound event whose topic is empty is routed to the
+ socket's single joined topic; with zero or multiple joins it is dropped.
+ Topic-carrying codecs (like the Phoenix codec) must leave this off so
+ empty-topic frames are rejected instead of guessed at.
+
+```gleam
+pub fn with_topicless_events(Codec) -> Codec
 ```

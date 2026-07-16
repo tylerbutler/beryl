@@ -1,73 +1,41 @@
-name = "beryl"
-version = "0.1.0"
-description = "Type-safe real-time channels and presence for Gleam"
-licences = ["MIT"]
-repository = { type = "github", user = "tylerbutler", repo = "beryl" }
-gleam = ">= 1.13.0"
-target = "erlang"
-internal_modules = [
-  "beryl/connection_limit",
-  "beryl/coordinator",
-  "beryl/internal",
-  "beryl/log",
-  "beryl/rate_limit",
+# Workspace configuration only — this is not a Gleam package.
+# Publishable packages live under packages/; runnable examples under examples/.
+# Managed by trellis: https://trellis.tylerbutler.com
+
+[tools.trellis]
+# examples/ also holds a pnpm workspace (node_modules, package.json);
+# glob matches without a gleam.toml are skipped by trellis.
+members = ["packages/*", "examples/*", "examples/collab_docs/client"]
+
+[tools.trellis.exclude]
+release = ["examples/*", "examples/collab_docs/client"]
+lint = ["examples/*", "examples/collab_docs/client"]
+docs = ["examples/*", "examples/collab_docs/client"]
+# Examples without a test/ directory (gleam test fails when the
+# <package>_test module is missing). collab_docs and its client have tests
+# and stay in.
+test = [
+  "examples/chatrooms",
+  "examples/cursors",
+  "examples/example_helpers",
+  "examples/showcase",
 ]
 
-[dependencies]
-envoy = ">= 1.0.0 and < 2.0.0"
-palabres = ">= 1.0.4 and < 2.0.0"
-gleam_stdlib = ">= 0.44.0 and < 2.0.0"
-gleam_erlang = ">= 0.29.0 and < 2.0.0"
-gleam_otp = ">= 0.12.0 and < 2.0.0"
-gleam_json = ">= 3.0.0 and < 4.0.0"
-gleam_crypto = ">= 1.5.1 and < 2.0.0"
-gleam_http = ">= 4.3.0 and < 5.0.0"
-lattice_presence = ">= 1.0.0 and < 2.0.0"
-mist = ">= 6.0.0 and < 7.0.0"
-ewe = ">= 4.0.0 and < 5.0.0"
+[tools.trellis.tasks.lint]
+command = "gleam run -m glinter"
+needs-deps = true
 
+[tools.trellis.publish]
+tag-format = "{name}-v{version}"
 
-[dev-dependencies]
-gleeunit = ">= 1.0.0 and < 2.0.0"
-aquamarine = { git = "https://github.com/tylerbutler/aquamarine.git", ref = "main" }
-gluegun = { git = "https://github.com/tylerbutler/gluegun.git", ref = "532af1ac0308ff93c8a957467dbb638859593c93" }
-phoenix_channel_fixtures = { git = "https://github.com/tylerbutler/phoenix_channel_fixtures.git", ref = "7daccb856d17db6278980277237c201b2acdcdf1" }
-qcheck = ">= 1.0.0 and < 2.0.0"
-glinter = ">= 2.19.0 and < 3.0.0"
-
-[tools.licence_audit]
-allow = ["Apache-2.0", "MIT"]
-deny = []
-
-[tools.glinter]
-# Promote enabled-rule warnings to errors so any violation fails the lint.
-# glinter 2.19.0 only fails the run via this global flag; per-rule "error" does
-# not escalate severity for most rules (see glinter.gleam apply_config).
-warnings_as_errors = true
-
-[tools.glinter.rules]
-# --- Enforced at error level (this work item, issues #102-#111) ---
-thrown_away_error = "error"
-discarded_result = "error"
-unused_exports = "error"
-deep_nesting = "error"
-prefer_guard_clause = "error"
-error_context_lost = "error"
-unqualified_import = "error"
-stringly_typed_error = "error"
-short_variable_name = "error"
-string_inspect = "error"
-# --- Out-of-scope default-warning rules: disabled so warnings_as_errors only
-#     gates the ten rules above (these carry pre-existing, out-of-scope findings) ---
-assert_ok_pattern = "off"
-echo = "off"
-panic_without_message = "off"
-todo_without_message = "off"
-unnecessary_variable = "off"
-redundant_case = "off"
-trailing_underscore = "off"
-unnecessary_string_concatenation = "off"
-missing_type_annotation = "off"
-label_possible = "off"
-missing_labels = "off"
-duplicate_import = "off"
+[tools.trellis.changelog]
+kinds = [
+  { label = "Added", bump = "minor" },
+  { label = "Changed", bump = "minor" },
+  { label = "Fixed", bump = "patch" },
+  { label = "Performance", bump = "patch" },
+  { label = "Removed", bump = "minor" },
+  { label = "Deprecated", bump = "patch" },
+  { label = "Security", bump = "patch" },
+  { label = "Dependencies", bump = "patch" },
+]

@@ -23,54 +23,50 @@ import beryl
 import beryl/supervisor
 import beryl/presence
 import beryl/wire
-import gleam/option.{None, Some}
 
 pub fn main() {
-  let config = supervisor.SupervisedConfig(
-    channels: beryl.config(wire.phoenix_codec()),
-    presence: Some(presence.default_config("node1")),
-    groups: True,
-  )
+  let config =
+    supervisor.config(beryl.config(wire.phoenix_codec()))
+    |> supervisor.with_presence(presence.default_config("node1"))
+    |> supervisor.with_groups()
 
   let assert Ok(supervised) = supervisor.start(config)
 
-  // Use the handles
-  // supervised.channels  → beryl.Channels
-  // supervised.presence  → option.Option(presence.Presence)
-  // supervised.groups    → option.Option(group.Groups)
+  // Read the handles with the accessor functions
+  // supervisor.channels(supervised)  → beryl.Channels
+  // supervisor.presence(supervised)  → option.Option(presence.Presence)
+  // supervisor.groups(supervised)    → option.Option(group.Groups)
 }
 ```
 
 ## SupervisedConfig
 
+`SupervisedConfig` is an opaque type. Build it with `supervisor.config` and refine
+it with the `with_*` functions:
+
 ```gleam
-pub type SupervisedConfig {
-  SupervisedConfig(
-    channels: beryl.Config,         // always started
-    presence: Option(presence.Config), // Some → start presence, None → skip
-    groups: Bool,                   // True → start groups actor
-  )
-}
+supervisor.config(beryl.config(wire.phoenix_codec())) // coordinator only
+|> supervisor.with_presence(presence.default_config("node1")) // enable presence
+|> supervisor.with_groups()                                   // enable groups
 ```
 
-Pass `None` for presence and `False` for groups if your application does not use them. The coordinator is always started.
+The coordinator (channels) is always started. Omit `with_presence` to skip
+presence and `with_groups` to skip the groups actor.
 
 ## SupervisedChannels
 
-`supervisor.start` returns `SupervisedChannels`:
+`supervisor.start` returns an opaque `SupervisedChannels` handle. Read its
+subsystems with the accessor functions:
 
 ```gleam
-pub type SupervisedChannels {
-  SupervisedChannels(
-    channels: beryl.Channels,
-    presence: Option(presence.Presence),
-    groups: Option(group.Groups),
-    supervisor_pid: process.Pid,
-  )
-}
+supervisor.channels(supervised)       // beryl.Channels (always present)
+supervisor.presence(supervised)       // Option(presence.Presence)
+supervisor.groups(supervised)         // Option(group.Groups)
+supervisor.supervisor_pid(supervised) // process.Pid
 ```
 
-The optional fields reflect your configuration — if you passed `groups: False`, `supervised.groups` is `None`.
+The optional accessors reflect your configuration — if you did not call
+`with_groups`, `supervisor.groups(supervised)` is `None`.
 
 ## Restart strategy
 
@@ -89,7 +85,7 @@ Under rest-for-one, if a child crashes, that child and all children started *aft
 The default restart tolerance is **3 restarts in 5 seconds** before the supervisor itself shuts down.
 
 :::note[PubSub is not supervised]
-`beryl/pubsub` is backed by Erlang's `pg` module, which has its own lifecycle managed by the BEAM runtime. Start PubSub separately and pass it to `beryl.Config` via `beryl.with_pubsub`.
+`beryl/pubsub` is backed by Erlang's `pg` module, which has its own lifecycle managed by the BEAM runtime. Start PubSub separately and add it to the channels config via `beryl.with_pubsub`.
 :::
 
 ## Stopping the supervisor
@@ -111,11 +107,9 @@ import beryl/supervisor
 import beryl/wire
 import gleam/otp/static_supervisor
 
-let beryl_config = supervisor.SupervisedConfig(
-  channels: beryl.config(wire.phoenix_codec()),
-  presence: None,
-  groups: True,
-)
+let beryl_config =
+  supervisor.config(beryl.config(wire.phoenix_codec()))
+  |> supervisor.with_groups()
 
 static_supervisor.new(static_supervisor.OneForOne)
 |> static_supervisor.add(supervisor.child_spec(beryl_config))

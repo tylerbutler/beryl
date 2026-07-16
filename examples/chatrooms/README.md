@@ -30,7 +30,7 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 | Feature | Module | Usage |
 |---|---|---|
 | **Groups** | `beryl/group` | Rooms organized in "public" group |
-| **on_connect auth** | `beryl/transport/mist` | Token query param validated before WS upgrade |
+| **on_connect auth** | `beryl_mist` | Token query param validated before WS upgrade |
 | **JoinError** | `beryl/channel` | Room capacity check rejects when full |
 | **Reply** | `beryl/channel` | Message delivery confirmed with `msg_ack` |
 | **Push** | `beryl/channel` | System join/leave messages broadcast to room |
