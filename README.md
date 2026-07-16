@@ -11,8 +11,12 @@
 ## Install
 
 ```sh
-gleam add beryl
+gleam add beryl beryl_mist
 ```
+
+`beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
+WebSocket transport. Both live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
+workspace under `packages/`).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -22,7 +26,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 import beryl
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/socket.{type Socket}
-import beryl/transport/mist as mist_transport
+import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -203,7 +207,7 @@ fn new_channel(
 
 See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
 release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
-and the changelog is managed with [changie](https://changie.dev/).
+and changelogs are managed with [trellis](https://trellis.tylerbutler.com) changelog fragments.
 
 ## Security
 
@@ -226,6 +230,49 @@ covers:
 
 For client-facing abuse controls (rate limits, connection caps, origin checks),
 see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/production-hardening/).
+
+### Required: an edge proxy frame-size limit
+
+Beryl's `with_max_inbound_frame_bytes` limit is enforced **post-assembly** —
+the WebSocket transport (Mist/gramps) buffers and reassembles a complete frame
+*before* Beryl measures it and rejects oversized frames. This bounds
+per-message processing cost, but it does **not** bound transport memory.
+
+A hostile client can therefore exhaust node memory with a single connection by
+either:
+
+- declaring a huge payload length in a frame header and streaming the body
+  slowly, or
+- sending a long run of fragmented continuation frames that the transport
+  aggregates into one buffer.
+
+In both cases the transport's receive buffer grows unbounded *before* Beryl's
+frame-size check ever runs. **Beryl's per-IP connection limit
+(`with_max_connections_per_ip`) and per-socket message-rate limit
+(`with_message_rate`) do not mitigate this vector** — the buffer grows within a
+single admitted connection and before any message is emitted to a channel.
+
+To bound transport memory in production you **must** place an edge proxy or
+load balancer (e.g. nginx, HAProxy, Envoy, or your cloud LB) in front of Beryl
+and configure:
+
+- a **maximum WebSocket frame/message size** at or below your chosen
+  `with_max_inbound_frame_bytes` value, and
+- a matching **request/body size limit** for the initial HTTP upgrade.
+
+Set the proxy limit to reject oversized frames at the edge, before they are
+buffered by the BEAM node. Beryl's in-process limit should be treated as
+defense-in-depth for per-message cost, not as a memory bound.
+
+The upstream work needed to enforce a size cap *before* buffering (in
+gramps/mist) is tracked in
+[`docs/security/frame-buffering-followup.md`](docs/security/frame-buffering-followup.md).
+
+## Releases & changelog
+
+See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
+release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
+and the changelog is managed with [changie](https://changie.dev/).
 
 ## Development
 
@@ -260,9 +307,9 @@ just ci        # Run all CI checks
 This project uses GitHub Actions for CI and automated releases:
 
 - **CI**: Runs on every push/PR to main
-- **PR Validation**: Checks PR title (commitlint) and changelog entries (changie)
-- **Release**: Uses [changie](https://changie.dev/) for changelog-driven versioning
-- **Publish**: Automatically publishes to [Hex.pm](https://hex.pm) on tag push
+- **PR Validation**: Checks PR title (commitlint), workspace invariants (`trellis doctor`), and changelog fragments (`trellis changelog check`)
+- **Release**: [trellis](https://trellis.tylerbutler.com) maintains a release PR from unreleased changelog fragments
+- **Publish**: Merging the release PR publishes each package to [Hex.pm](https://hex.pm) in dependency order and creates per-package tags
 
 ### GitHub Secrets Required
 

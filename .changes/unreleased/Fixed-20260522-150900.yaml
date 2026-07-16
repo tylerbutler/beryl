@@ -1,3 +1,0 @@
-kind: Fixed
-body: Install `git` in the cursors example Dockerfile so `gleam deps download` can resolve hex dependencies on clean builds (e.g. Railway).
-time: 2026-05-22T15:09:00.000000-07:00

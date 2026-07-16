@@ -1,5 +1,0 @@
-kind: Fixed
-body: |-
-    Reserve the heartbeat event only on the "phoenix" topic.
-    Previously any event named "heartbeat" on any topic was hijacked as a protocol heartbeat, so applications could not define their own heartbeat channel event and such frames incorrectly refreshed the socket's liveness timer. Matching Phoenix, only topic "phoenix" is special; elsewhere "heartbeat" now reaches handle_in as an ordinary event.
-time: 2026-07-08T17:33:00.000000-00:00

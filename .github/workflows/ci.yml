@@ -30,8 +30,11 @@ jobs:
       - name: Install rebar3
         uses: ./.github/actions/install-rebar3
 
+      - name: Install trellis
+        uses: ./.github/actions/install-trellis
+
       - name: Install Gleam dependencies
-        run: gleam deps download
+        run: just deps-gleam
 
       - name: Check formatting
         run: just format-check
@@ -56,8 +59,11 @@ jobs:
         with:
           run-deps: false
 
+      - name: Install trellis
+        uses: ./.github/actions/install-trellis
+
       - name: Install Gleam dependencies
-        run: gleam deps download
+        run: just deps-gleam
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
@@ -129,9 +135,17 @@ jobs:
 
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          run-deps: false
 
       - name: Install rebar3
         uses: ./.github/actions/install-rebar3
+
+      - name: Install trellis
+        uses: ./.github/actions/install-trellis
+
+      - name: Install dependencies
+        run: just deps
 
       - name: Install Playwright browsers
         run: pnpm -C examples exec playwright install --with-deps chromium

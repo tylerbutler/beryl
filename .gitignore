@@ -1,9 +1,7 @@
-# Build artifacts
+# Build artifacts (any package: root, packages/*, examples/*)
 *.beam
 *.ez
-/build
-examples/*/build/
-examples/*/client/build/
+build/
 examples/*/test-results/
 website/*/build/
 erl_crash.dump

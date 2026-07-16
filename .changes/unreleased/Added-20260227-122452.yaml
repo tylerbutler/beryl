@@ -1,5 +1,0 @@
-kind: Added
-body: |-
-    Add on_connect authentication hook to WebSocket transport config.
-    Allows rejecting unauthenticated connections before the WebSocket upgrade with a 403 response.
-time: 2026-02-27T12:24:52.7194-08:00

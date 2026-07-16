@@ -1,4 +1,0 @@
-kind: Security
-body: |-
-    CI now pins and SHA-256 verifies the rebar3 binary before execution.
-time: 2026-07-11T16:51:21.000000-00:00

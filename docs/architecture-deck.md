@@ -37,7 +37,7 @@ covering distribution, presence, and where to start contributing.
 
 ```mermaid
 flowchart TB
-  T["WebSocket Transport<br/>beryl/transport/mist"]
+  T["WebSocket Transport<br/>beryl_mist"]
   W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
   subgraph Domain["Channel domain"]
     C["Channels<br/>beryl/channel"]
@@ -73,7 +73,7 @@ meet.
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg` |
 | `beryl/presence` | Add-wins OR-set CRDT; track/untrack, cross-node diff broadcast |
 | `beryl/wire` | Pluggable codec; ships `phoenix_codec()` |
-| `beryl/transport/mist` | Mist WebSocket adapter; assigns IDs, routes frames |
+| `beryl_mist` | Mist WebSocket adapter; assigns IDs, routes frames |
 | `beryl/group` | Named topic collections; supports grouped broadcast |
 | `beryl/topic` | Topic pattern matching: exact, `"ns:*"` prefix, and segment wildcards |
 
@@ -153,7 +153,7 @@ than demanding to be the top of the application.
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as transport/mist
+  participant Mist as beryl_mist
   participant Coord as coordinator
   Client->>Mist: WebSocket upgrade
   Mist->>Mist: generate socket id
@@ -183,7 +183,7 @@ happened yet; this slide is purely "a connection now exists and is tracked."
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as transport/mist
+  participant Mist as beryl_mist
   participant Wire as wire/codec
   participant Coord as coordinator
   participant Ch as channel handler
@@ -273,7 +273,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as transport/mist
+  participant Mist as beryl_mist
   participant Coord as coordinator
   participant Ch as channel handler
   Client->>Mist: socket close
@@ -379,7 +379,7 @@ whenever the merged view actually changes, which is what you wire your UI to.
 
 ```mermaid
 flowchart LR
-  FR["raw WS frame"] --> MI["transport/mist"]
+  FR["raw WS frame"] --> MI["beryl_mist"]
   MI -->|text| CD["wire/codec"]
   MI -->|binary, no codec| RB["raw binary handler"]
   CD --> CO["coordinator"]
@@ -438,7 +438,7 @@ so it's worth the slide.
 | Start here | Module | Purpose |
 |---|---|---|
 | 💡 Heart of beryl | `src/beryl/coordinator.gleam` | Actor, registry, message routing |
-| 📨 Message flow | `src/beryl/transport/mist.gleam` | Connect → decode → route |
+| 📨 Message flow | `packages/beryl_mist/src/beryl_mist.gleam` | Connect → decode → route |
 | 🔌 Channel API | `src/beryl/channel.gleam` | `join`, `handle_in`, `terminate` callbacks |
 | 📡 Fan-out | `src/beryl/pubsub.gleam` | pg-based broadcast |
 | 👥 Presence | `src/beryl/presence.gleam` | CRDT actor, track/untrack, diffs |

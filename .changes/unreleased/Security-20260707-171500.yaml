@@ -1,6 +1,0 @@
-kind: Security
-body: |-
-    Document that per-IP connection limits (with_max_connections_per_ip) enforce on the real socket peer IP and that X-Forwarded-For is not trusted or parsed, so clients cannot spoof their address to bypass the limit.
-
-    Adds guidance for deployments behind a trusted reverse proxy, where all connections share the proxy IP and per-IP limits must be enforced at the proxy layer. Also adds tests covering admission under the limit, rejection over it, slot release on disconnect, per-IP isolation, and 0 meaning unlimited. Closes #153 and #176.
-time: 2026-07-07T17:15:00.000000000-07:00

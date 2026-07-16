@@ -4,18 +4,18 @@
 
 Beryl is a Gleam library for type-safe realtime channels and presence on the Erlang/BEAM target.
 
-- `src/beryl.gleam` is the main public API for starting/registering channels and broadcasting.
-- `src/beryl/channel.gleam` defines typed channel callbacks; `src/beryl/coordinator.gleam` owns socket/topic lifecycle and callback dispatch.
-- `src/beryl/pubsub.gleam` wraps Erlang `pg` via `src/beryl_pubsub_ffi.erl` for distributed broadcasts.
-- Presence is the OTP actor in `src/beryl/presence.gleam`, backed directly by `lattice_presence/presence_state`.
-- Core WebSocket transport is Mist-based in `src/beryl/transport/mist.gleam`; examples also use Mist directly for HTTP routing/static assets.
+- `packages/beryl/src/beryl.gleam` is the main public API for starting/registering channels and broadcasting.
+- `packages/beryl/src/beryl/channel.gleam` defines typed channel callbacks; `packages/beryl/src/beryl/coordinator.gleam` owns socket/topic lifecycle and callback dispatch.
+- `packages/beryl/src/beryl/pubsub.gleam` wraps Erlang `pg` via `packages/beryl/src/beryl_pubsub_ffi.erl` for distributed broadcasts.
+- Presence is the OTP actor in `packages/beryl/src/beryl/presence.gleam`, backed directly by `lattice_presence/presence_state`.
+- Core WebSocket transport is Mist-based in `packages/beryl_mist/src/beryl_mist.gleam` (its own package, built on the `beryl/transport` SPI); examples also use Mist directly for HTTP routing/static assets.
 
 ## Commands
 
 Prefer the just recipes because they match CI:
 
 ```bash
-just deps          # install root, examples, and example JS deps
+just deps          # install all workspace packages, examples, and JS deps
 just check         # Gleam type check
 just test          # Gleam test suite
 just format        # format src and test
@@ -35,7 +35,7 @@ Example Playwright runs can create untracked test artifacts; clean those before 
 
 ## Tooling and dependencies
 
-- `.tool-versions` is the source of truth for Erlang, Gleam, and just versions. Keep `.mise.toml` limited to mise-only helper tools such as changie/rebar unless the user asks otherwise.
+- `.tool-versions` is the source of truth for Erlang, Gleam, and just versions. Keep `.mise.toml` limited to mise-only helper tools such as trellis/rebar unless the user asks otherwise.
 - Avoid declaring the same package in both `[dependencies]` and `[dev-dependencies]`; keep shared requirements in the runtime dependency with the stricter compatible range.
 - When changing generated dependency files, update `gleam.toml` and `manifest.toml` consistently with Gleam tooling rather than hand-editing only one side.
 
@@ -50,8 +50,8 @@ Example Playwright runs can create untracked test artifacts; clean those before 
 
 - Before creating or updating a PR, fetch the current default branch and validate the branch against it; PR CI tests the merge result, so local `just ci` on an outdated branch can miss failures.
 - PR titles must follow Conventional Commits and should keep type/scope lowercase, for example `fix(pubsub): preserve broadcast_from exclusion`.
-- Add a changie fragment for public API, behavior, dependency, or user-visible changes. Use `just change` or the repo changie workflow instead of inventing changelog filenames.
-- Commit only intended source, test, docs, manifest, and changie files. Do not stage generated Playwright output or temporary PR body files.
+- Add a trellis changelog fragment for public API, behavior, dependency, or user-visible changes. Use `just change <package> <kind> "<body>"` (trellis changelog new) instead of inventing changelog filenames.
+- Commit only intended source, test, docs, manifest, and changelog fragment files. Do not stage generated Playwright output or temporary PR body files.
 
 ## Code conventions
 

@@ -1,4 +1,5 @@
-# Gleam Project Tasks
+# beryl workspace tasks — gleam packages are managed by trellis
+# (https://trellis.tylerbutler.com); see [tools.trellis] in gleam.toml.
 
 # === ALIASES ===
 alias b := build
@@ -6,62 +7,64 @@ alias t := test
 alias f := format
 alias c := check
 alias d := docs
-alias cl := change
 
 default:
     @just --list
 
 # === DEPENDENCIES ===
 
-# Download project dependencies (including examples)
-deps:
-    gleam deps download
-    cd examples/example_helpers && gleam deps download
-    cd examples/cursors && gleam deps download
-    cd examples/chatrooms && gleam deps download
-    cd examples/collab_docs && gleam deps download
-    cd examples/collab_docs/client && gleam deps download
+# Download all dependencies (gleam packages + pnpm workspaces)
+deps: deps-gleam
     pnpm -C examples install
+    pnpm -C website install
+
+# Download gleam dependencies for every workspace member
+deps-gleam:
+    trellis run deps
 
 # === BUILD ===
 
-# Build project (Erlang target)
-build:
-    gleam build
+# Build all packages (Erlang target)
+build *ARGS:
+    trellis run build {{ARGS}}
 
 # Build with warnings as errors
 build-strict:
-    gleam build --warnings-as-errors
+    trellis run build --strict
 
 # === TESTING ===
 
-# Run all tests
-test:
-    gleam test
+# Run all tests (optionally scope to packages: `just test beryl_mist`)
+test *ARGS:
+    trellis run test {{ARGS}}
 
 # === CODE QUALITY ===
 
-# Format source code
+# Format source code in every package
 format:
-    gleam format src test
+    trellis run format
 
 # Check formatting without changes
 format-check:
-    gleam format --check src test
+    trellis run format --check
 
 # Type check without building
 check:
-    gleam check
+    trellis run check
 
-# Run the glinter linter
+# Run the glinter linter (packages only; examples are excluded)
 lint:
-    gleam run -m glinter
+    trellis run lint
+
+# Check workspace invariants (members, graph, versions, fragments)
+doctor:
+    trellis doctor
 
 # === DOCUMENTATION ===
 
-# Build Gleam API documentation (HTML + docs metadata)
+# Build Gleam API documentation (HTML + docs metadata) for both packages
 gleam-docs:
-    gleam docs build
+    trellis run docs
 
 # Build documentation: Gleam docs + regenerated website reference pages
 docs: gleam-docs
@@ -71,19 +74,19 @@ docs: gleam-docs
 deck:
     npx -y -p @marp-team/marp-core -p @marp-team/marp-cli marp docs/architecture-deck.md --engine docs/marp.engine.mjs --html -o docs/architecture-deck.html
 
-# === CHANGELOG ===
+# === CHANGELOG / RELEASE ===
 
-# Create a new changelog entry
-change:
-    changie new
+# Create a new changelog entry, e.g. `just change beryl Fixed "handle X"`
+change PACKAGE KIND BODY:
+    trellis changelog new --package {{PACKAGE}} --kind {{KIND}} --body "{{BODY}}"
 
-# Preview unreleased changelog
-changelog-preview:
-    changie batch auto --dry-run
+# Check fragments against changes since main
+changelog-check:
+    trellis changelog check --base origin/main
 
-# Generate CHANGELOG.md
-changelog:
-    changie merge
+# Preview the next versions computed from unreleased fragments
+version-plan:
+    trellis version plan
 
 # === WEBSITE ===
 
@@ -146,17 +149,8 @@ examples-list:
     @ls examples/
 
 # Build all examples
-examples-build: examples-clean examples-client-build
-    cd examples/cursors && gleam build
-    cd examples/chatrooms && gleam build
-    cd examples/collab_docs && gleam build
-
-# Clean example build artifacts
-examples-clean:
-    rm -rf examples/cursors/_build
-    rm -rf examples/chatrooms/_build
-    rm -rf examples/collab_docs/_build
-    rm -rf examples/collab_docs/client/_build
+examples-build: examples-client-build
+    trellis run build chatrooms collab_docs cursors example_helpers showcase collab_docs_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
@@ -179,9 +173,9 @@ examples-cursors-docker tag="beryl-cursors":
 # === MAINTENANCE ===
 
 # Remove build artifacts
-clean: examples-clean
-    rm -rf _build
-    rm -rf build
+clean:
+    trellis run clean
+    pnpm -C website clean
 
 # === CI ===
 
@@ -193,56 +187,3 @@ alias pr := ci
 
 # Run extended checks for main branch
 main: ci docs
-
-# =============================================================================
-# MULTI-TARGET SUPPORT (Uncomment if targeting JavaScript)
-# =============================================================================
-
-# # Build for JavaScript target
-# build-js:
-#     gleam build --target javascript
-
-# # Build all targets
-# build-all: build build-js
-
-# # Build JavaScript with warnings as errors
-# build-strict-js:
-#     gleam build --target javascript --warnings-as-errors
-
-# # Build all targets strictly
-# build-strict-all: build-strict build-strict-js
-
-# # Test on Erlang target
-# test-erlang:
-#     gleam test
-
-# # Test on JavaScript target
-# test-js:
-#     gleam test --target javascript
-
-# # Test on all targets
-# test-all: test-erlang test-js
-
-# =============================================================================
-# JAVASCRIPT INTEGRATION TESTS (Uncomment if needed)
-# =============================================================================
-
-# # Run integration tests with Node.js
-# test-integration-node: build-js
-#     node --test test/integration/test_runner.mjs
-
-# # Run integration tests with Deno
-# test-integration-deno: build-js
-#     deno test --allow-read --allow-env test/integration/test_runner.mjs
-
-# # Run integration tests with Bun
-# test-integration-bun: build-js
-#     bun test test/integration/test_runner.mjs
-
-# =============================================================================
-# COVERAGE (Uncomment if needed)
-# =============================================================================
-
-# # Run tests with coverage (requires setup - see README)
-# coverage:
-#     @echo "Coverage requires additional setup. See README.md"

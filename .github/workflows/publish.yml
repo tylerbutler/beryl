@@ -1,23 +1,47 @@
 name: Publish
 
+# "Tags as record": publishing is triggered by merging the trellis release PR
+# (branch release/pending); per-package tags and GitHub releases are created
+# after a successful Hex publish. workflow_dispatch allows re-running a
+# failed publish — trellis publish is idempotent (--all-untagged skips
+# versions that already have tags).
 on:
-  push:
-    tags: ['v*']
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       github.event.pull_request.head.ref == 'release/pending')
     uses: ./.github/workflows/ci.yml
 
   publish:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
 
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
 
+      - name: Install trellis
+        uses: ./.github/actions/install-trellis
+
       - name: Publish to Hex.pm
-        run: gleam publish --yes
+        run: trellis publish --all-untagged
         env:
           HEXPM_API_KEY: ${{ secrets.HEXPM_API_KEY }}
+
+      - name: Tag and create GitHub releases
+        run: trellis tag create --push --github-release
+        env:
+          GH_TOKEN: ${{ github.token }}

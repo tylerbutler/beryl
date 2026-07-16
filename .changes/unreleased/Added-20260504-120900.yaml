@@ -1,6 +1,0 @@
-kind: Added
-body: |-
-    Add Phoenix wire protocol contract tests.
-
-    Covers JSON WebSocket join replies, custom event replies and pushes, broadcast frame shape, heartbeat replies, leave cleanup, and broadcast_from sender exclusion through the Wisp transport boundary.
-time: 2026-05-04T12:09:00-07:00
