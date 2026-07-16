@@ -1,5 +1,0 @@
-kind: Added
-body: |-
-    Add `mist_transport.handler` to compose WebSocket channels and an HTTP fallback into a single Mist request handler.
-    Integrators no longer hand-write the websocket-upgrade guard around `mist_transport.upgrade`; a new `is_websocket_request` helper is also exposed.
-time: 2026-06-12T20:42:00.000000-08:00

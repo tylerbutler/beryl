@@ -11,8 +11,12 @@
 ## Install
 
 ```sh
-gleam add beryl
+gleam add beryl beryl_mist
 ```
+
+`beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
+WebSocket transport. Both live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
+workspace under `packages/`).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -22,7 +26,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 import beryl
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/socket.{type Socket}
-import beryl/transport/mist as mist_transport
+import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -203,7 +207,7 @@ fn new_channel(
 
 See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
 release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
-and the changelog is managed with [changie](https://changie.dev/).
+and changelogs are managed with [trellis](https://trellis.tylerbutler.com) changelog fragments.
 
 ## Security
 
@@ -260,9 +264,9 @@ just ci        # Run all CI checks
 This project uses GitHub Actions for CI and automated releases:
 
 - **CI**: Runs on every push/PR to main
-- **PR Validation**: Checks PR title (commitlint) and changelog entries (changie)
-- **Release**: Uses [changie](https://changie.dev/) for changelog-driven versioning
-- **Publish**: Automatically publishes to [Hex.pm](https://hex.pm) on tag push
+- **PR Validation**: Checks PR title (commitlint), workspace invariants (`trellis doctor`), and changelog fragments (`trellis changelog check`)
+- **Release**: [trellis](https://trellis.tylerbutler.com) maintains a release PR from unreleased changelog fragments
+- **Publish**: Merging the release PR publishes each package to [Hex.pm](https://hex.pm) in dependency order and creates per-package tags
 
 ### GitHub Secrets Required
 

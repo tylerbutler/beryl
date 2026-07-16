@@ -1,5 +1,0 @@
-kind: Changed
-body: |-
-    Wire-contract cleanups ahead of the 1.0 freeze.
-    Empty-topic event routing is now an explicit codec capability (codec.with_topicless_events); the Phoenix codec drops empty-topic frames instead of guessing. Replies from handle_binary use the handler's own event name instead of the undocumented "binary_reply". Malformed pg-delivered broadcasts are dropped with a log instead of crashing the coordinator, and pubsub.Message is documented as a frozen v1 inter-node wire contract. presence.default_config now defaults the broadcast interval to 1500 ms so with_pubsub replicates out of the box (0 still disables). Bridge docs no longer overpromise automatic cleanup: bridge.stop in terminate is required.
-time: 2026-07-09T09:00:00.000000-00:00

@@ -1,4 +1,4 @@
-name: Changie Release
+name: Release PR
 
 on:
   push:
@@ -18,32 +18,18 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
         with:
+          fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - uses: tylerbutler/actions/changie-release@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/changie-release@main
-        id: release
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          pr-title-template: 'release: {version}'
-          version-files: |
-            gleam.toml:version
+      - name: Install trellis
+        uses: ./.github/actions/install-trellis
 
-      - name: Summary
-        if: steps.release.outputs.skipped != 'true'
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create or update release PR
+        run: trellis release pr
         env:
-          VERSION: ${{ steps.release.outputs.version }}
-          PR_URL: ${{ steps.release.outputs.pr-url }}
-          PR_OP: ${{ steps.release.outputs.pr-operation }}
-        run: |
-          echo "### Release PR Created" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Version:** $VERSION" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **PR:** $PR_URL" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Operation:** $PR_OP" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Skipped
-        if: steps.release.outputs.skipped == 'true'
-        run: |
-          echo "### Release Skipped" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "No unreleased change fragments found." >> "$GITHUB_STEP_SUMMARY"
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}

@@ -1,3 +1,0 @@
-kind: Changed
-body: "BREAKING: Channel is now parameterized as Channel(assigns, info) to make the server-originated message path type-safe. handle_info receives the typed info value sent via beryl.send_info instead of a Dynamic, removing the need for an unsafe identity FFI cast in application code. Channels that do not use handle_info leave info generic; explicit Channel(MyAssigns) annotations must become Channel(MyAssigns, info)."
-time: 2026-06-12T20:39:00.000000000-07:00

@@ -11,8 +11,15 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
+| [trellis](https://trellis.tylerbutler.com) | 0.3.0+ | Gleam workspace manager (tasks, versions, publishing) |
 
-**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file.
+**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew.
+
+This repository is a trellis-managed workspace: the publishable packages live
+in `packages/beryl` and `packages/beryl_mist`, runnable examples in
+`examples/`, and the root `gleam.toml` holds only the `[tools.trellis]`
+configuration. `just` recipes fan out across the workspace through
+`trellis run`.
 
 ```bash
 # With mise
@@ -188,11 +195,23 @@ test: add edge case tests for topic matching
 
 ## Release Process
 
+Releases are driven by trellis changelog fragments (TOML files in
+`.changes/unreleased/` with `project`, `kind`, and `body` fields).
+
 1. Make changes following the commit message convention
-2. Push to a feature branch and create a PR
-3. Add changelog entries with `changie new`
-4. After merge, changie-release creates a release PR
-5. Merge the release PR to publish a new version
+2. Add a changelog entry: `just change <package> <kind> "<body>"`
+   (e.g. `just change beryl Fixed "handle concurrent leave/join"`); PR CI
+   enforces this via `trellis changelog check`
+3. Push to a feature branch and create a PR
+4. After merge, the release workflow runs `trellis release pr`, which batches
+   fragments into a release PR (branch `release/pending`) bumping versions
+   and regenerating each package's CHANGELOG.md
+5. Merging the release PR publishes every untagged package to Hex in
+   dependency order and creates per-package tags (`beryl-v1.2.3`) and GitHub
+   releases
+
+Useful commands: `just version-plan` previews the next versions;
+`just doctor` validates workspace invariants.
 
 ### 1.0 release checklist
 

@@ -29,7 +29,7 @@ with a shared secret so only your backend — never a browser — can publish:
 
 ```gleam
 import beryl
-import beryl/transport/mist as mist_transport
+import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/dynamic/decode
 import gleam/http.{Post}

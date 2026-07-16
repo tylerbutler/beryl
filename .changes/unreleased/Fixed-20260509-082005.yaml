@@ -1,3 +1,0 @@
-kind: Fixed
-body: Examples — Phoenix.js loaded from unpkg.com now carries an SRI `integrity` attribute (`sha384-9Rsr2KoQMtWNQakugNsDiGsZ/5eQnJHeBhiocJMdHvnyN8ifwcytSTzPpb1xydYk`) and `crossorigin="anonymous"` across collab_docs, cursors, and chatrooms, preventing CDN-tampering from injecting arbitrary JS into demo pages.
-time: 2026-05-09T08:20:05.000000-07:00

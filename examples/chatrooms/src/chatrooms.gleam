@@ -1,8 +1,8 @@
 import beryl
 import beryl/group
 import beryl/presence
-import beryl/transport/mist as mist_transport
 import beryl/wire
+import beryl_mist as mist_transport
 import chatrooms/chat_channel
 import chatrooms/router
 import gleam/erlang/process

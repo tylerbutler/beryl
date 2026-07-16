@@ -1,6 +1,0 @@
-kind: Added
-body: |-
-    Add Phoenix-compatible presence_diff broadcasting.
-
-    Adds a presence diff encoder and channel broadcast helper so applications can send Phoenix-shaped joins/leaves payloads to subscribed sockets locally or through PubSub. Local presence track and untrack operations now also invoke on_diff with concrete diffs.
-time: 2026-05-04T11:46:57.387265609-07:00

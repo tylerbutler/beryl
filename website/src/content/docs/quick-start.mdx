@@ -20,7 +20,7 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 ## Prerequisites
 
 - Gleam project targeting **Erlang** (`gleam new my_app`)
-- `gleam add beryl` adds beryl and all its dependencies
+- `gleam add beryl beryl_mist` adds beryl, the Mist WebSocket transport, and all their dependencies
 
 ## 1. Define a channel
 
@@ -133,7 +133,7 @@ Wire everything together in your application entry point:
 ```gleam
 // src/my_app.gleam
 import beryl
-import beryl/transport/mist as mist_transport
+import beryl_mist as mist_transport
 import beryl/wire
 import gleam/bytes_tree
 import gleam/erlang/process

@@ -1,3 +1,0 @@
-kind: Changed
-body: Use Mist directly for WebSocket transport.\n\nReplaces the core Wisp WebSocket transport with a Mist-backed transport, updates Phoenix contract coverage to use a real Mist WebSocket path, and keeps Wisp only where examples need routing.
-time: 2026-05-05T18:43:38.34569065-07:00

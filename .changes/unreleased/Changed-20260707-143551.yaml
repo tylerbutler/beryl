@@ -1,3 +1,0 @@
-kind: Changed
-body: 'Make `supervisor.SupervisedConfig` an opaque type built via `supervisor.config(channels) |> with_presence(..) |> with_groups()`, and make `SupervisedChannels` opaque with `channels`, `presence`, `groups`, and `supervisor_pid` accessor functions. BREAKING: replace direct `SupervisedConfig(..)` construction and field access with the builder and accessors (#160).'
-time: 2026-07-07T14:35:51.300301269-07:00

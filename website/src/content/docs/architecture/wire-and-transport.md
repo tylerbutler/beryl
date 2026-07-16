@@ -54,7 +54,7 @@ The `join_ref` and `ref` fields are nullable strings used for reply correlation.
 
 ## Mist transport
 
-The Mist transport (`src/beryl/transport/mist.gleam`) bridges Mist's native WebSocket handling to the beryl coordinator. It is responsible for:
+The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's native WebSocket handling to the beryl coordinator. It is responsible for:
 
 1. **Generating a unique socket id** — `crypto.strong_random_bytes` produces a 16-byte random id encoded as base16.
 2. **Registering the send fn** — on connection init, the transport sends a `SocketConnected` message to the coordinator containing both a text send fn and a binary send fn.
@@ -81,7 +81,7 @@ The Mist transport (`src/beryl/transport/mist.gleam`) bridges Mist's native WebS
 
 ```mermaid
 flowchart LR
-  FR["raw WS frame"] --> MI["transport/mist"]
+  FR["raw WS frame"] --> MI["beryl_mist"]
   MI -->|text| CD["wire/codec"]
   MI -->|binary, no codec| RB["raw binary handler"]
   CD --> CO["coordinator"]
@@ -94,4 +94,4 @@ flowchart LR
 |---|---|
 | Codec abstraction | `src/beryl/wire/codec.gleam` |
 | Phoenix wire helpers | `src/beryl/wire.gleam` |
-| Mist transport | `src/beryl/transport/mist.gleam` |
+| Mist transport | `packages/beryl_mist/src/beryl_mist.gleam` |

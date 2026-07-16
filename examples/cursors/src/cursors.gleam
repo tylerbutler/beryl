@@ -1,7 +1,7 @@
 import beryl
 import beryl/presence
-import beryl/transport/mist as mist_transport
 import beryl/wire
+import beryl_mist as mist_transport
 import cursors/cursor_channel
 import cursors/router
 import envoy
