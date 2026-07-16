@@ -24,6 +24,29 @@ jobs:
       - name: Install trellis
         uses: ./.github/actions/install-trellis
 
+      # Toolchain needed to regenerate the website API reference after the
+      # version bump (mirrors the Docs job in ci.yml).
+      - name: Setup environment
+        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          run-deps: false
+
+      - name: Install Gleam dependencies
+        run: just deps-gleam
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # ratchet:pnpm/action-setup@v6
+        with:
+          package_json_file: website/package.json
+
+      - name: Install website dependencies
+        run: pnpm -C website install --frozen-lockfile
+
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
@@ -33,3 +56,25 @@ jobs:
         run: trellis release pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      # The release PR bumps package versions, and the generated API reference
+      # stamps the version into its headings. Regenerate on the release branch
+      # so the Docs check passes on the release PR. Pushing with the app token
+      # re-triggers the PR's checks. No release/pending branch → nothing to do.
+      - name: Regenerate reference docs on the release branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if ! git fetch origin release/pending; then
+            echo "No release/pending branch; skipping docs regeneration."
+            exit 0
+          fi
+          git checkout -B release/pending FETCH_HEAD
+          just site-reference
+          if git diff --quiet -- website/src/content/docs/reference/api; then
+            echo "Reference docs already up to date."
+            exit 0
+          fi
+          git add website/src/content/docs/reference/api
+          git commit -m "docs: regenerate API reference for release"
+          git push origin HEAD:release/pending
