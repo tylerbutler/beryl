@@ -1,9 +1,10 @@
 [tools]
 erlang = "28"
 rebar = "latest"
-# Requires >= 0.3.0 for git-dependency parsing and glob member skipping
-# (tylerbutler/trellis#9).
-"github:tylerbutler/trellis" = "0.3.0"
+# Requires >= 0.4.1 for the lowercase `release:` PR title
+# (tylerbutler/trellis#17); >= 0.3.0 added git-dependency parsing and glob
+# member skipping (tylerbutler/trellis#9).
+"github:tylerbutler/trellis" = "0.4.1"
 
 [env]
 LC_ALL = "en_US.UTF-8"
