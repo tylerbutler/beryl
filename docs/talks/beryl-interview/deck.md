@@ -483,6 +483,13 @@ Kill the naive fixes one by one:
 KEY LINE: "The problem isn't the data structure, it's that 'the set of
 online users' has no single authoritative order of events. So we need
 math that doesn't require one."
+
+LIVE AID: presence-demo.html (this directory) — open it in a browser
+tab beforehand; it's a single file, double-click works, no server.
+Arrow keys step, 1/2/3 switch scenarios. Scenario 1 is EXACTLY the
+Alice story above with the naive set — step through it while talking
+instead of hand-waving. Scenario 2 is the node-crash phantom-users
+case. STOP before scenario 3 — that's the payoff for the next slide.
 -->
 
 ---
@@ -517,6 +524,14 @@ Decode the name on the slide, one term at a time:
 Audience takeaway if they remember one sentence: "Any two nodes that
 have seen the same events agree on who's present — regardless of the
 order they saw them in."
+
+LIVE AID: switch presence-demo.html to scenario 3 (press 3). It
+replays the same wifi-blip story with tagged joins — the stale leave
+arrives late and removes ONLY the tag it observed, and both nodes
+converge with Alice online. The final step covers the crash case too
+(origin-tagged entries dropped when the runtime reports a node down).
+Seeing the same messages arrive in the same broken order and NOT break
+is the whole argument, animated.
 
 Implementation notes (brief): the CRDT comes from the `lattice_presence`
 package — beryl wraps it in an OTP actor per node and replicates diffs
