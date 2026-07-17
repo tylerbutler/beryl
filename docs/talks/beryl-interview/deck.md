@@ -23,8 +23,10 @@ OPEN: Quick intro — who I am, what I work on. Then the one-liner:
 presence — in Gleam, a typed language on the Erlang VM."
 
 Set expectations up front:
-- It's pre-1.0. The API is unstable and I'm actively looking for feedback.
-  Saying this early buys credibility for everything that follows.
+- The API is stable and locked — 1.0 is imminent (check whether it has
+  shipped before the talk and say whichever is true). What's young is the
+  production track record, and real-world reports are the thing I'm
+  actively after. Saying this early buys credibility for what follows.
 - Two packages: `beryl` (the core) and `beryl_mist` (the WebSocket transport).
   Don't explain why yet — that pays off on the architecture slide.
 
@@ -304,7 +306,8 @@ INEVITABLE QUESTION — "Why not just use Phoenix?" Have this ready:
 3. beryl is smaller and unbundled: codec and transport are both
    swappable interfaces, not framework internals.
 Concede the flip side honestly: Phoenix is battle-tested and huge;
-beryl is pre-1.0. If you're on Elixir, use Phoenix.
+beryl's API is stable but its production mileage is young. If you're
+on Elixir, use Phoenix.
 -->
 
 ---
@@ -588,8 +591,8 @@ Two sentences to deliver slowly, because they're the design thesis:
 LIKELY QUESTION: "Is the single coordinator actor a bottleneck?" —
 fair question; answer honestly: it's a routing/registry actor, the
 heavy per-connection work lives in per-socket processes, and it's
-per-node (not per-cluster). Pre-1.0, benchmarking exactly this kind
-of thing is on the road to 1.0.
+per-node (not per-cluster). Published benchmarks for exactly this
+kind of thing are near the top of the post-1.0 roadmap.
 -->
 
 ---
@@ -602,7 +605,7 @@ token-bucket rate limits · same-origin WebSocket policy by default
 **Still on you:** edge proxy with a frame-size limit
 Erlang distribution trusts every cluster node — keep the cluster closed
 
-> Pre-1.0 — the API is still moving.
+> The API is stable — what's still accruing is production mileage.
 
 <!--
 Frame the slide: "Real-time endpoints are abuse magnets — every one is
@@ -637,7 +640,9 @@ STILL ON YOU — two boundaries, stated plainly:
 WHY SAY ALL THIS IN AN INTERVIEW: most young libraries hand-wave
 security. Writing down what the library does NOT protect against is a
 feature — users can only defend boundaries they know exist. And repeat
-the pre-1.0 caveat here, where it matters most.
+the honest framing here, where it matters most: the API is locked;
+what a young library lacks is production mileage, which is exactly why
+these boundaries are written down instead of hand-waved.
 -->
 
 ---
@@ -694,9 +699,10 @@ CLOSE — three beats:
 1. Recap in one breath: "The BEAM already solved real-time's hard
    problems — cheap processes, supervision, clustering. Gleam adds the
    type system. beryl is just those two things pointed at channels."
-2. The honest ask: it's pre-1.0 ON PURPOSE — API feedback now actually
-   shapes what 1.0 looks like. The most useful thing anyone here can
-   do is build something small with it and tell me where it hurt.
+2. The honest ask: the API is stable and 1.0 is here (or days away) —
+   what shapes the roadmap now is real-world reports. The most useful
+   thing anyone here can do is build something small with it and tell
+   me where it hurt.
    Concrete on-ramp: clone the repo, run `examples/cursors`, read the
    Quick Start.
 3. Where to find me: the earde space (link on screen) is the home for
@@ -707,11 +713,12 @@ CLOSE — three beats:
 Leave this slide up during Q&A — it's the one with all the links.
 
 LIKELY Q&A NOT COVERED BY EARLIER NOTES:
-- "Production users?" — pre-1.0, be straight: it's for early adopters
-  and feedback right now; the examples and conformance suites are the
-  current proof of behavior.
-- "Roadmap to 1.0?" — API stabilization, hardening the transport-memory
-  story upstream (frame caps before buffering), and benchmarks.
+- "Production users?" — be straight: the library is young and early
+  adopters are the audience right now; the examples and conformance
+  suites are the current proof of behavior.
+- "What's next after 1.0?" — benchmarks, hardening the transport-memory
+  story upstream (frame caps before buffering), and whatever the first
+  wave of production feedback surfaces.
 - "Does it work with Elixir/Phoenix apps?" — same wire protocol, so
   Phoenix CLIENTS work with beryl servers; it's a Gleam server library,
   not a Phoenix replacement inside an Elixir app.
