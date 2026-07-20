@@ -30,6 +30,7 @@ tag-format = "{name}-v{version}"
 
 [tools.trellis.changelog]
 kinds = [
+  { label = "Initial Release", bump = "major" },
   { label = "Added", bump = "minor" },
   { label = "Changed", bump = "minor" },
   { label = "Fixed", bump = "patch" },
