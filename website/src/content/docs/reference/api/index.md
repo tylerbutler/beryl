@@ -3,10 +3,10 @@ title: API Reference
 description: Generated API reference from Gleam docs metadata.
 ---
 
-This reference is generated from Gleam's docs metadata for `beryl` and `beryl_mist`.
+This reference is generated from Gleam's docs metadata for `beryl` and `beryl_ewe` and `beryl_mist`.
 
 :::note[Generated content]
-Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: [beryl](https://hexdocs.pm/beryl/), [beryl_mist](https://hexdocs.pm/beryl_mist/).
+Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: [beryl](https://hexdocs.pm/beryl/), [beryl_ewe](https://hexdocs.pm/beryl_ewe/), [beryl_mist](https://hexdocs.pm/beryl_mist/).
 :::
 
 ## `beryl` `0.0.1`
@@ -27,6 +27,12 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
+
+## `beryl_ewe` `0.0.1`
+
+| Module | Description |
+|---|---|
+| [`beryl_ewe`](/reference/api/beryl_ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
 
 ## `beryl_mist` `0.0.1`
 
