@@ -6,9 +6,7 @@ description: >
 inputs:
   version:
     description: trellis release tag to install
-    # Requires >= 0.3.0 for git-dependency parsing and glob member skipping
-    # (tylerbutler/trellis#9).
-    default: v0.3.0
+    default: v0.4.1
 
 runs:
   using: composite

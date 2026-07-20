@@ -44,7 +44,10 @@ jobs:
       - name: Check workspace invariants
         run: trellis doctor
 
+      # The release PR (branch release/pending) consumes all unreleased
+      # fragments into the CHANGELOGs, so it can never satisfy this check.
       - name: Check changelog fragments
+        if: github.head_ref != 'release/pending'
         run: |
           trellis changelog check \
             --base ${{ github.event.pull_request.base.sha }} \
