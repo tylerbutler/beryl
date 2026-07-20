@@ -33,7 +33,7 @@
 		"@fontsource-variable/hanken-grotesk": "^5.2.8",
 		"@fontsource-variable/jetbrains-mono": "^5.2.8",
 		"@fontsource-variable/unbounded": "^5.2.8",
-		"astro": "^6.4.6",
+		"astro": "^7.1.0",
 		"astro-mermaid": "^2.1.0",
 		"astro-tinylytics": "^0.1.0",
 		"mermaid": "^11.16.0",
