@@ -5,12 +5,19 @@
 [tools.trellis]
 # examples/ also holds a pnpm workspace (node_modules, package.json);
 # glob matches without a gleam.toml are skipped by trellis.
+# NOTE: can't use "examples/**" here — a `**` in members recurses into each
+# example's build/packages/* vendored deps and errors on duplicate members.
+# See https://github.com/tylerbutler/trellis/issues/21. Enumerate single-level
+# globs plus the nested client instead. (`**` is fine in exclude keys below.)
 members = ["packages/*", "examples/*", "examples/collab_docs/client"]
 
 [tools.trellis.exclude]
-release = ["examples/*", "examples/collab_docs/client"]
-lint = ["examples/*", "examples/collab_docs/client"]
-docs = ["examples/*", "examples/collab_docs/client"]
+# beryl_ewe is not yet ready to publish; the reserved "@release" key keeps it
+# built/tested/linted while excluding it from changelog, versioning, tagging,
+# publishing, and release CI.
+"@release" = ["examples/**", "packages/beryl_ewe"]
+lint = ["examples/**"]
+docs = ["examples/**"]
 # Examples without a test/ directory (gleam test fails when the
 # <package>_test module is missing). collab_docs and its client have tests
 # and stay in.
