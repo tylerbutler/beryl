@@ -4,12 +4,14 @@
 
 Type-safe real-time channels and presence for Gleam, targeting the Erlang
 (BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
-monorepo with two publishable packages:
+monorepo with three publishable packages:
 
 - **`packages/beryl`** — core channels library (channels, presence, PubSub,
   wire protocol, abuse controls, transport SPI)
 - **`packages/beryl_mist`** — Mist WebSocket transport (module `beryl_mist`),
   built on the public `beryl/transport` SPI
+- **`packages/beryl_ewe`** — Ewe WebSocket transport (module `beryl_ewe`),
+  built on the public `beryl/transport` SPI; mirrors the `beryl_mist` API
 
 The root `gleam.toml` is workspace configuration only (`[tools.trellis]`);
 per-package manifests live in each package directory.
@@ -75,15 +77,19 @@ packages/
 │   │       ├── socket.gleam       # Socket abstraction
 │   │       ├── supervisor.gleam   # OTP supervision helpers
 │   │       ├── topic.gleam        # Topic pattern matching
-│   │       ├── transport.gleam    # Public transport SPI (used by beryl_mist)
+│   │       ├── transport.gleam    # Public transport SPI (used by beryl_mist/beryl_ewe)
 │   │       ├── wire.gleam         # Wire protocol (JSON encode/decode)
 │   │       ├── presence/wire.gleam    # Presence wire format helpers
 │   │       └── wire/codec.gleam   # Wire codec helpers
 │   └── test/                      # Core tests + Erlang test FFI helpers
-└── beryl_mist/                    # Mist WebSocket transport package
+├── beryl_mist/                    # Mist WebSocket transport package
+│   ├── gleam.toml                 # depends on beryl by path
+│   ├── src/beryl_mist.gleam       # Transport implementation
+│   └── test/                      # Transport/contract tests + WS client FFI
+└── beryl_ewe/                     # Ewe WebSocket transport package
     ├── gleam.toml                 # depends on beryl by path
-    ├── src/beryl_mist.gleam       # Transport implementation
-    └── test/                      # Transport/contract tests + WS client FFI
+    ├── src/beryl_ewe.gleam        # Transport implementation
+    └── test/                      # Transport/handler tests + WS client FFI
 examples/                          # Runnable example apps (workspace members,
                                    # excluded from release) + pnpm/Playwright e2e
 website/                           # Astro/Starlight docs site (not a member)
@@ -99,7 +105,7 @@ website/                           # Astro/Starlight docs site (not a member)
 3. **Presence** - CRDT-backed actor using `lattice_presence/presence_state` (`beryl/presence`)
 4. **Groups** (`beryl/group`) - Named channel groups for broadcast
 5. **Transport SPI** (`beryl/transport`) - public contract for transports;
-   `beryl_mist` consumes only public beryl API
+   `beryl_mist` and `beryl_ewe` consume only public beryl API
 
 ### Dependencies
 
@@ -111,6 +117,11 @@ website/                           # Astro/Starlight docs site (not a member)
 #### packages/beryl_mist (runtime)
 - `beryl` (path dep; rewritten to a Hex requirement at publish)
 - `mist`, `gleam_http` - HTTP/WebSocket server integration
+- `gleam_stdlib`, `gleam_erlang`, `gleam_crypto`
+
+#### packages/beryl_ewe (runtime)
+- `beryl` (path dep; rewritten to a Hex requirement at publish)
+- `ewe`, `gleam_http` - HTTP/WebSocket server integration
 - `gleam_stdlib`, `gleam_erlang`, `gleam_crypto`
 
 #### Development

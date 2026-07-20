@@ -15,7 +15,9 @@ gleam add beryl beryl_mist
 ```
 
 `beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
-WebSocket transport. Both live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
+WebSocket transport. An [Ewe](https://hex.pm/packages/ewe) transport is also
+available as `beryl_ewe` (`gleam add beryl beryl_ewe`) and mirrors the
+`beryl_mist` API. All live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
 workspace under `packages/`).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
