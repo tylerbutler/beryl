@@ -50,7 +50,7 @@ type State {
   )
 }
 
-type Message {
+pub opaque type Message {
   Acquire(
     ip: String,
     limiter: ConnectionLimiter,
@@ -188,6 +188,15 @@ fn start(
   max_per_ip: Int,
   max_total: Int,
 ) -> Result(ConnectionLimiter, actor.StartError) {
+  build(max_per_ip, max_total)
+  |> actor.start
+  |> result.map(fn(started) { ConnectionLimiter(subject: started.data) })
+}
+
+fn build(
+  max_per_ip: Int,
+  max_total: Int,
+) -> actor.Builder(State, Message, Subject(Message)) {
   let state =
     State(
       max_per_ip: max_per_ip,
@@ -208,8 +217,22 @@ fn start(
     |> Ok
   })
   |> actor.on_message(handle_message)
+}
+
+@internal
+pub fn start_named(
+  max_per_ip: Int,
+  max_total: Int,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build(max_per_ip, max_total)
+  |> actor.named(name)
   |> actor.start
-  |> result.map(fn(started) { ConnectionLimiter(subject: started.data) })
+}
+
+@internal
+pub fn from_name(name: process.Name(Message)) -> ConnectionLimiter {
+  ConnectionLimiter(subject: process.named_subject(name))
 }
 
 /// Start a limiter only when at least one ceiling is positive.
@@ -218,13 +241,19 @@ fn start(
 /// caps concurrent connections across the whole node. They compose: a
 /// connection is admitted only when it is under both configured ceilings. When
 /// both are 0 no limiter is started and every connection is admitted.
+@internal
 pub fn start_optional(
   max_per_ip: Int,
   max_total: Int,
 ) -> Option(ConnectionLimiter) {
-  use <- bool.guard(when: max_per_ip <= 0 && max_total <= 0, return: None)
+  use <- bool.guard(when: !enabled(max_per_ip, max_total), return: None)
   let assert Ok(limiter) = start(max_per_ip, max_total)
   Some(limiter)
+}
+
+@internal
+pub fn enabled(max_per_ip: Int, max_total: Int) -> Bool {
+  max_per_ip > 0 || max_total > 0
 }
 
 /// Acquire a connection slot, failing when the IP already has too many sockets.

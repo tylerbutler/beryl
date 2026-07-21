@@ -46,7 +46,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    use <- mist_transport.upgrade(req, channels, config)
    ```
 
-3. **Join callback panics or crashes.** A panic in `join` terminates the coordinator actor. Under unsupervised `beryl.start`, the coordinator dies and no more joins are processed. Use `beryl/supervisor.start` so the coordinator restarts, then fix the panic.
+3. **Join callback panics or crashes.** A panic in `join` terminates the coordinator actor. Ensure `supervisor.start(config)` was added to the application's supervision tree so the coordinator restarts, then fix the panic.
 
 4. **Topic segment mismatch.** `"document:*:ops"` uses segment wildcards — each `*` matches exactly one colon-delimited segment. `"document:tenant-a:sub:ops"` would not match because there is an extra segment. Verify with `topic.parse_pattern` and `topic.matches`.
 
@@ -212,7 +212,7 @@ Without `proxy_http_version 1.1` and the upgrade headers, nginx downgrades to HT
 
 **Checks:**
 
-1. **Are you using `beryl.start` (unsupervised)?** A panic in any callback kills the coordinator actor. Switch to `beryl/supervisor.start` so the coordinator is automatically restarted.
+1. **Is Beryl in the application supervision tree?** Add `supervisor.start(config)` to the root supervisor. It returns the child specification that restarts the coordinator automatically.
 
 2. **Panic in a callback.** Gleam's `assert` expressions panic on mismatch. Audit your `join`, `handle_in`, and `terminate` callbacks for `let assert` expressions that may fail on unexpected inputs.
 
