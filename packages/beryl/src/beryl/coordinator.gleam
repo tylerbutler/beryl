@@ -17,7 +17,6 @@ import beryl/wire/codec.{type Codec}
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
-import gleam/erlang/atom
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
@@ -227,7 +226,7 @@ type State {
     /// Heartbeat timeout configuration
     config: CoordinatorConfig,
     /// Optional PubSub for distributed broadcasts
-    pubsub: Option(PubSub),
+    pubsub: Option(PubSub(json.Json)),
     /// Configured coordinator logger, cached for hot message paths.
     logger: Logger,
     /// The coordinator's own subject, used for scheduling timers
@@ -373,7 +372,7 @@ pub type Message {
     payload: json.Json,
     except: Option(String),
   )
-  RemoteBroadcast(pubsub.Message)
+  RemoteBroadcast(pubsub.Message(json.Json))
   // Heartbeat timeout enforcement
   CheckHeartbeats
   Stop(reply: Subject(Nil))
@@ -382,10 +381,6 @@ pub type Message {
 /// Erlang monotonic time in milliseconds
 @external(erlang, "beryl_ffi", "monotonic_time_ms")
 fn monotonic_time_ms() -> Int
-
-/// Coerce an external PubSub record message into the typed PubSub message.
-@external(erlang, "beryl_ffi", "identity")
-fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
 // ── Handler registry ────────────────────────────────────────────────────────
 
@@ -531,7 +526,7 @@ pub fn start_with_config(
 /// Start the coordinator actor with heartbeat timeout enforcement and PubSub.
 pub fn start_with_config_and_pubsub(
   config: CoordinatorConfig,
-  ps: PubSub,
+  ps: PubSub(json.Json),
 ) -> Result(Subject(Message), StartError) {
   use _ <- result.try(validate_config(config))
   build_coordinator(config, Some(ps))
@@ -555,7 +550,7 @@ pub fn start_named(
 /// Start a named coordinator actor with PubSub.
 pub fn start_named_with_pubsub(
   config: CoordinatorConfig,
-  ps: PubSub,
+  ps: PubSub(json.Json),
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), StartError) {
   use _ <- result.try(validate_config(config))
@@ -576,7 +571,7 @@ fn validate_config(config: CoordinatorConfig) -> Result(Nil, StartError) {
 
 fn build_coordinator(
   config: CoordinatorConfig,
-  ps: Option(PubSub),
+  ps: Option(PubSub(json.Json)),
 ) -> actor.Builder(State, Message, Subject(Message)) {
   let logging = internal_logging(config.logging)
   internal.configure(logging)
@@ -614,13 +609,7 @@ fn build_coordinator(
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> process.select_record(
-            atom.create("message"),
-            4,
-            fn(raw: Dynamic) -> Message {
-              RemoteBroadcast(coerce_to_pubsub_message(raw))
-            },
-          )
+          |> pubsub.selecting(RemoteBroadcast)
 
         initialised
         |> actor.selecting(selector)
@@ -1693,7 +1682,7 @@ fn handle_broadcast(
 
 fn handle_remote_broadcast(
   state: State,
-  pubsub_msg: pubsub.Message,
+  pubsub_msg: pubsub.Message(json.Json),
 ) -> actor.Next(State, Message) {
   let except = case pubsub_msg.from {
     pubsub.FromSocket(_, socket_id) -> Some(socket_id)

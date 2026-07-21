@@ -5,6 +5,7 @@ import gleam/json
 import gleam/list
 import gleeunit
 import gleeunit/should
+import lattice_presence/presence_state
 import test_helpers
 
 pub fn main() {
@@ -14,13 +15,13 @@ pub fn main() {
 // ── Helper ──────────────────────────────────────────────────────────
 
 /// Create a unique PubSub scope per test to avoid cross-test interference
-fn test_pubsub(name: String) -> pubsub.PubSub {
+fn test_pubsub(name: String) -> pubsub.PubSub(presence.SyncPayload) {
   let config = pubsub.config_with_scope("test_presence_repl_" <> name)
   pubsub.start(config)
 }
 
 fn test_config(
-  ps: pubsub.PubSub,
+  ps: pubsub.PubSub(presence.SyncPayload),
   replica: String,
   interval_ms: Int,
 ) -> presence.Config {
@@ -246,9 +247,17 @@ pub fn untrack_propagates_via_pubsub_test() {
 }
 
 // ── Resilience: malformed sync messages ──────────────────────────────
+//
+// The sync payload is now a native, typed `SyncPayload` term rather than a
+// JSON string, so the previous "malformed JSON string" and "wrong schema"
+// scenarios can no longer be constructed through the public API at all —
+// the compiler rejects them. The one still-reachable failure mode is an
+// envelope whose version this node does not recognise (e.g. a peer running
+// a newer/older presence build), which `handle_sync_payload` discards
+// rather than attempting to interpret.
 
-pub fn survives_empty_string_payload_test() {
-  let ps = test_pubsub("malform_empty")
+pub fn survives_unknown_envelope_version_test() {
+  let ps = test_pubsub("malform_version")
   let config =
     presence.default_config("node1")
     |> presence.with_pubsub(ps)
@@ -258,89 +267,22 @@ pub fn survives_empty_string_payload_test() {
   let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
   list.length(presence.list(p, "room:lobby")) |> should.equal(1)
 
-  // Send malformed message: empty string payload
-  pubsub.broadcast(ps, "beryl:presence:sync", "presence_sync", json.string(""))
+  // Send a sync envelope with a version this node does not understand
+  pubsub.broadcast(
+    ps,
+    "beryl:presence:sync",
+    "presence_sync",
+    presence.SyncPayload(
+      v: 99,
+      sender: "node2@ghost",
+      state: presence_state.new("node2@ghost"),
+    ),
+  )
 
-  // Give the actor time to process the malformed message
+  // Give the actor time to process (and discard) the unknown version
   process.sleep(50)
 
   // Track another entry and verify the actor is still alive
-  let _ = presence.track(p, "room:lobby", "user:2", "s2", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(2)
-}
-
-pub fn survives_malformed_json_payload_test() {
-  let ps = test_pubsub("malform_json")
-  let config =
-    presence.default_config("node1")
-    |> presence.with_pubsub(ps)
-  let assert Ok(p) = presence.start(config)
-
-  let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-
-  // Send malformed message: invalid JSON content
-  pubsub.broadcast(
-    ps,
-    "beryl:presence:sync",
-    "presence_sync",
-    json.string("not json{{}"),
-  )
-
-  process.sleep(50)
-
-  let _ = presence.track(p, "room:lobby", "user:2", "s2", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(2)
-}
-
-pub fn survives_wrong_schema_payload_test() {
-  let ps = test_pubsub("malform_schema")
-  let config =
-    presence.default_config("node1")
-    |> presence.with_pubsub(ps)
-  let assert Ok(p) = presence.start(config)
-
-  let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-
-  // Send valid JSON with wrong schema (missing required fields)
-  pubsub.broadcast(
-    ps,
-    "beryl:presence:sync",
-    "presence_sync",
-    json.object([#("foo", json.string("bar"))]),
-  )
-
-  process.sleep(50)
-
-  let _ = presence.track(p, "room:lobby", "user:2", "s2", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(2)
-}
-
-pub fn survives_wrong_types_payload_test() {
-  let ps = test_pubsub("malform_types")
-  let config =
-    presence.default_config("node1")
-    |> presence.with_pubsub(ps)
-  let assert Ok(p) = presence.start(config)
-
-  let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-
-  // Send valid JSON with correct keys but wrong types
-  pubsub.broadcast(
-    ps,
-    "beryl:presence:sync",
-    "presence_sync",
-    json.object([
-      #("v", json.string("one")),
-      #("sender", json.int(123)),
-      #("state", json.null()),
-    ]),
-  )
-
-  process.sleep(50)
-
   let _ = presence.track(p, "room:lobby", "user:2", "s2", json.null())
   list.length(presence.list(p, "room:lobby")) |> should.equal(2)
 }
