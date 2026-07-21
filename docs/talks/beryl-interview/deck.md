@@ -597,7 +597,7 @@ kind of thing are near the top of the post-1.0 roadmap.
 
 ---
 
-## Honest about production
+## Production ready?
 
 **Built in:** per-IP connection caps · node-wide connection ceiling
 token-bucket rate limits · same-origin WebSocket policy by default
@@ -647,6 +647,21 @@ these boundaries are written down instead of hand-waved.
 
 ---
 
+## Earde
+
+### Earde is a community platform that combines the immediacy of live communication with the permanence and discoverability of forums.
+
+Technical communities can chat in real time and turn the valuable parts of a conversation into durable, searchable discussions instead of losing them in the scroll.
+
+They can also decide if their knowledge must be indexed by search engines or kept private.
+
+https://earde.com/
+
+> Earde uses beryl!
+
+---
+
+
 ## The ecosystem around it
 
 ```
@@ -656,6 +671,8 @@ phoenix_channel_fixtures ──── shared wire-format test data
         │                            │
    beryl_mist (WS)                roost · gluegun
 ```
+
+Use aquamarine for a BEAM client, and use the office PhoenixJS client for JS
 
 <!--
 beryl is the SERVER half of a matched pair — quick tour of the boxes:
@@ -688,6 +705,8 @@ in the browser is a perfectly good day-one setup.
 ## Try it, argue with me about it
 
 `gleam add beryl beryl_mist`
+
+(`beryl_ewe` coming soon!)
 
 **Docs** — [beryl.tylerbutler.com](https://beryl.tylerbutler.com)
 **Discuss** — [earde.com/c/beryl/s/general](https://earde.com/c/beryl/s/general)
