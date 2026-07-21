@@ -51,13 +51,15 @@ The client never receives a WebSocket handshake and cannot send any messages.
 
 beryl parses incoming frames as Phoenix protocol arrays `[join_ref, ref, topic, event, payload]`. Frames that cannot be decoded are dropped silently — no error is sent to the client. This is intentional: malformed frames are treated as protocol violations and do not warrant a reply.
 
-If you need to surface decode errors in your own payload handling, use `gleam/json.decode` and return an explicit `Reply` or `Push` from `handle_in`:
+If you need to surface decode errors in your own payload handling, decode the
+`Dynamic` payload with `channel.decode_payload` and return an explicit `Reply`
+or `Push` from `handle_in`:
 
 ```gleam
 fn handle_in(event, payload, socket) -> HandleResult(MyAssigns) {
   case event {
     "create_item" -> {
-      case json.decode(json.to_string(payload), item_decoder()) {
+      case channel.decode_payload(payload, item_decoder()) {
         Ok(item) -> {
           // process item
           channel.Reply("ok", json.object([#("id", json.string(item.id))]), socket)
@@ -145,7 +147,7 @@ case supervisor.start(config) {
     // proceed
   }
   Error(supervisor.InvalidHeartbeatTimeout) -> {
-    // Config error: heartbeat_timeout_ms must be > 0
+    // Config error: heartbeat_timeout_ms must be >= 2
     panic
   }
   Error(supervisor.SupervisorStartFailed(err)) -> {

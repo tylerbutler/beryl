@@ -15,11 +15,12 @@ gleam add beryl beryl_mist
 
 ```gleam
 import beryl
+import beryl/wire
 import beryl_mist as mist_transport
 import mist
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.default_config())
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   // register channels...
 
   let assert Ok(_) =

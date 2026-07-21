@@ -31,6 +31,5 @@ beryl brings in these Gleam packages automatically:
 | `gleam_otp` | OTP actors |
 | `gleam_json` | JSON encoding/decoding |
 | `gleam_crypto` | Socket ID generation |
-| `gleam_http` | HTTP request types for transport integration |
-| `mist` | WebSocket and HTTP server |
+| `lattice_presence` | CRDT-backed presence tracking |
 | `palabres` | Structured logging |

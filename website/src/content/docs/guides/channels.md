@@ -194,7 +194,7 @@ fn terminate(
     channel.Normal -> Nil           // Clean disconnect
     channel.Shutdown -> Nil         // Server-initiated
     channel.HeartbeatTimeout -> Nil // Client went silent
-    channel.Error(msg) -> Nil       // Something went wrong
+    channel.Errored(msg) -> Nil     // Something went wrong
   }
 }
 ```
@@ -289,9 +289,9 @@ import beryl/wire
 let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
 
 // Register handlers for different topic patterns
-let assert Ok(Nil) = beryl.register(channels, "room:*", room_channel.new())
-let assert Ok(Nil) = beryl.register(channels, "user:*", user_channel.new())
-let assert Ok(Nil) = beryl.register(channels, "system", system_channel.new())
+let assert Ok(_) = beryl.register(channels, "room:*", room_channel.new())
+let assert Ok(_) = beryl.register(channels, "user:*", user_channel.new())
+let assert Ok(_) = beryl.register(channels, "system", system_channel.new())
 ```
 
 ## Broadcasting
