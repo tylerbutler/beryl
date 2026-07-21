@@ -311,14 +311,13 @@ This project uses GitHub Actions for CI and automated releases:
 - **CI**: Runs on every push/PR to main
 - **PR Validation**: Checks PR title (commitlint), workspace invariants (`trellis doctor`), and changelog fragments (`trellis changelog check`)
 - **Release**: [trellis](https://trellis.tylerbutler.com) maintains a release PR from unreleased changelog fragments
-- **Publish**: Merging the release PR publishes each package to [Hex.pm](https://hex.pm) in dependency order and creates per-package tags
+- **Publish**: Merging the release PR creates per-package tags and GitHub releases (Hex.pm publishing is temporarily disabled)
 
 ### GitHub Secrets Required
 
 | Secret | Description |
 |--------|-------------|
 | `RELEASE_PAT` | GitHub PAT with `contents:write` and `pull-requests:write` permissions |
-| `HEXPM_API_KEY` | API key from [hex.pm](https://hex.pm) for publishing |
 
 ### Commit Convention
 

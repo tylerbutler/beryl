@@ -1,10 +1,15 @@
 name: Publish
 
-# "Tags as record": publishing is triggered by merging the trellis release PR
-# (branch release/pending); per-package tags and GitHub releases are created
-# after a successful Hex publish. workflow_dispatch allows re-running a
-# failed publish — trellis publish is idempotent (--all-untagged skips
-# versions that already have tags).
+# "Tags as record": triggered by merging the trellis release PR (branch
+# release/pending); per-package tags and GitHub releases are created for
+# every version bump. workflow_dispatch allows re-running manually — trellis
+# tag create is idempotent (only creates tags that don't exist yet).
+#
+# Hex publishing is temporarily disabled (`trellis publish` is not run) while
+# packages are not ready for a public Hex release. Tags and GitHub releases
+# still record what would have shipped. To resume Hex publishing, re-add a
+# "Publish to Hex.pm" step running `trellis publish --all-untagged` (with
+# HEXPM_API_KEY) before the tag/release step.
 on:
   pull_request:
     types: [closed]
@@ -35,11 +40,6 @@ jobs:
 
       - name: Install trellis
         uses: ./.github/actions/install-trellis
-
-      - name: Publish to Hex.pm
-        run: trellis publish --all-untagged
-        env:
-          HEXPM_API_KEY: ${{ secrets.HEXPM_API_KEY }}
 
       - name: Tag and create GitHub releases
         run: trellis tag create --push --github-release

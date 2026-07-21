@@ -143,4 +143,4 @@ beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**.
 - Public API is defined as the exports of the modules listed in the module map above.
 - Coordinator, rate-limit, and internal helper modules are intentionally hidden from downstream packages. Transports integrate through the public `beryl/transport` SPI; `beryl_mist` is the supported WebSocket transport.
 
-Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) and the [Migration & Releases page](/migration) before upgrading to a new minor version.
+Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) before upgrading to a new minor version.
