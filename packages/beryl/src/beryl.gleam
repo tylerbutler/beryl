@@ -78,13 +78,12 @@ type ChannelHandler =
 /// Pass this handle to `send_info` so the compiler can prove that the message
 /// matches the receiving channel's `info` type. The handle also identifies the
 /// exact registered channel used for a joined socket/topic pair.
+///
+/// The `assigns` and `info` parameters are phantom: they carry the registered
+/// channel's types so `send_info` is type-checked, while the handle itself
+/// stores only the coordinator subject and the registration id.
 pub opaque type RegisteredChannel(assigns, info) {
-  RegisteredChannel(
-    coordinator: Subject(coordinator.Message),
-    id: Int,
-    handle_info: fn(info, coordinator.SocketContext) ->
-      coordinator.HandleResultErased,
-  )
+  RegisteredChannel(coordinator: Subject(coordinator.Message), id: Int)
 }
 
 /// Errors when registering a channel handler.
@@ -872,7 +871,6 @@ pub fn register(
   pattern: String,
   handler: Channel(assigns, info),
 ) -> Result(RegisteredChannel(assigns, info), RegisterError) {
-  let handle_info = typed_handle_info(handler)
   // Convert typed Channel to type-erased ChannelHandler
   let erased_handler = erase_channel_types(pattern, handler)
 
@@ -900,11 +898,7 @@ pub fn register(
 
   registration
   |> result.map(fn(id) {
-    RegisteredChannel(
-      coordinator: channels.coordinator,
-      id: id,
-      handle_info: handle_info,
-    )
+    RegisteredChannel(coordinator: channels.coordinator, id: id)
   })
   |> result.map_error(map_register_error)
 }
@@ -1043,9 +1037,12 @@ pub fn send_info(
 ) -> Nil {
   process.send(
     registered.coordinator,
-    coordinator.HandleInfo(socket_id, topic_name, registered.id, fn(ctx) {
-      registered.handle_info(message, ctx)
-    }),
+    coordinator.HandleInfo(
+      socket_id,
+      topic_name,
+      registered.id,
+      erase_info(message),
+    ),
   )
 }
 
@@ -1056,16 +1053,16 @@ pub fn send_info(
 /// Convert a typed Channel to a type-erased ChannelHandler
 ///
 /// This is necessary because we need to store handlers for different
-/// channel types in the same registry.
+/// channel types in the same registry. The erased handler carries only
+/// `join`: a successful join returns a `JoinedChannel` instance whose
+/// closures capture the channel's typed assigns (see `channel_instance`),
+/// so assigns never cross the coordinator boundary type-erased.
 fn erase_channel_types(
   pattern_str: String,
   typed_channel: Channel(assigns, info),
 ) -> ChannelHandler {
   let pattern = topic.parse_pattern(pattern_str)
   let join = channel.join_callback(typed_channel)
-  let handle_in = channel.handle_in_callback(typed_channel)
-  let handle_binary = channel.handle_binary_callback(typed_channel)
-  let terminate = channel.terminate_callback(typed_channel)
 
   coordinator.ChannelHandler(
     id: 0,
@@ -1073,60 +1070,74 @@ fn erase_channel_types(
     join: fn(
       topic_name: String,
       payload: Dynamic,
+      connect_assigns: Dynamic,
       ctx: coordinator.SocketContext,
     ) {
-      // Create a typed socket seeded with any connect-time assigns from the
-      // transport's on_connect hook (Nil when none were seeded).
-      let typed_socket = create_socket_with_assigns(ctx)
-
-      // Call the typed join handler (unsafe coerce socket to expected type)
-      case join(topic_name, payload, unsafe_coerce_socket(typed_socket)) {
-        channel.JoinOk(reply, new_socket) -> {
-          // Extract assigns and type-erase them
-          let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
-          coordinator.JoinOkErased(reply: reply, assigns: erased_assigns)
-        }
-        channel.JoinError(reason) -> {
-          coordinator.JoinErrorErased(reason: reason)
-        }
+      // Connect-time assigns are seeded type-erased by the transport's
+      // on_connect hook (Nil when none were seeded); restoring them to this
+      // channel's assigns type is unchecked (ADR 0001).
+      let seeded = restore_connect_assigns(connect_assigns)
+      case join(topic_name, payload, context_socket(ctx, seeded)) {
+        channel.JoinOk(reply, new_socket) ->
+          coordinator.JoinOkErased(
+            reply: reply,
+            channel: channel_instance(
+              typed_channel,
+              socket.get_assigns(new_socket),
+            ),
+          )
+        channel.JoinError(reason) -> coordinator.JoinErrorErased(reason: reason)
       }
     },
+  )
+}
+
+/// Build the erased instance for a joined channel, capturing the current
+/// typed assigns in its closures. Each callback returns the next instance
+/// via `erase_handle_result`, so assigns threading between callbacks is
+/// compiler-checked here instead of round-tripped through Dynamic.
+fn channel_instance(
+  typed_channel: Channel(assigns, info),
+  assigns: assigns,
+) -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
     handle_in: fn(
       event: String,
       payload: Dynamic,
       ctx: coordinator.SocketContext,
     ) {
-      let typed_socket = create_socket_with_assigns(ctx)
-
-      handle_in(event, payload, unsafe_coerce_socket(typed_socket))
-      |> erase_handle_result
+      channel.handle_in_callback(typed_channel)(
+        event,
+        payload,
+        context_socket(ctx, assigns),
+      )
+      |> erase_handle_result(typed_channel, _)
     },
     handle_binary: fn(data: BitArray, ctx: coordinator.SocketContext) {
-      let typed_socket = create_socket_with_assigns(ctx)
-
-      handle_binary(data, unsafe_coerce_socket(typed_socket))
-      |> erase_handle_result
+      channel.handle_binary_callback(typed_channel)(
+        data,
+        context_socket(ctx, assigns),
+      )
+      |> erase_handle_result(typed_channel, _)
+    },
+    handle_info: fn(message: Dynamic, ctx: coordinator.SocketContext) {
+      // Restore the info type erased by send_info. Sound because the
+      // coordinator dispatches only after matching the joined channel id
+      // against the RegisteredChannel handle the message was sent through,
+      // and both derive from the same register call.
+      channel.handle_info_callback(typed_channel)(
+        restore_info(message),
+        context_socket(ctx, assigns),
+      )
+      |> erase_handle_result(typed_channel, _)
     },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
-      let typed_socket = create_socket_with_assigns(ctx)
-      // Unsafe coerce socket to expected type
-      terminate(reason, unsafe_coerce_socket(typed_socket))
+      channel.terminate_callback(typed_channel)(
+        reason,
+        context_socket(ctx, assigns),
+      )
     },
   )
-}
-
-fn typed_handle_info(
-  typed_channel: Channel(assigns, info),
-) -> fn(info, coordinator.SocketContext) -> coordinator.HandleResultErased {
-  let handle_info = channel.handle_info_callback(typed_channel)
-
-  fn(message: info, ctx: coordinator.SocketContext) {
-    let typed_socket = create_socket_with_assigns(ctx)
-
-    handle_info(message, unsafe_coerce_socket(typed_socket))
-    |> erase_handle_result
-  }
 }
 
 fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
@@ -1146,10 +1157,11 @@ fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
   )
 }
 
-fn create_socket_with_assigns(
+fn context_socket(
   ctx: coordinator.SocketContext,
-) -> Socket(Dynamic) {
-  socket.new(ctx.socket_id, ctx.assigns, transport_from_context(ctx))
+  assigns: assigns,
+) -> Socket(assigns) {
+  socket.new(ctx.socket_id, assigns, transport_from_context(ctx))
 }
 
 fn result_to_transport_result(
@@ -1161,40 +1173,55 @@ fn result_to_transport_result(
   }
 }
 
-/// Convert a typed HandleResult to the type-erased coordinator variant
+/// Convert a typed HandleResult to the type-erased coordinator variant,
+/// wrapping the updated assigns in the next channel instance.
 fn erase_handle_result(
+  typed_channel: Channel(assigns, info),
   result: channel.HandleResult(assigns),
 ) -> coordinator.HandleResultErased {
   case result {
     channel.NoReply(new_socket) ->
-      coordinator.NoReplyErased(
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
-      )
+      coordinator.NoReplyErased(next: next_instance(typed_channel, new_socket))
     channel.Reply(event, payload, new_socket) ->
       coordinator.ReplyErased(
         event: event,
         payload: payload,
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+        next: next_instance(typed_channel, new_socket),
       )
     channel.ReplyError(payload, new_socket) ->
       coordinator.ReplyErrorErased(
         payload: payload,
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+        next: next_instance(typed_channel, new_socket),
       )
     channel.Push(event, payload, new_socket) ->
       coordinator.PushErased(
         event: event,
         payload: payload,
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+        next: next_instance(typed_channel, new_socket),
       )
     channel.Stop(reason) -> coordinator.StopErased(reason: reason)
   }
 }
 
-/// Unsafe coercion to Dynamic - only use for type erasure
-@external(erlang, "beryl_ffi", "identity")
-fn unsafe_coerce_to_dynamic(value: a) -> Dynamic
+fn next_instance(
+  typed_channel: Channel(assigns, info),
+  new_socket: Socket(assigns),
+) -> coordinator.JoinedChannel {
+  channel_instance(typed_channel, socket.get_assigns(new_socket))
+}
 
-/// Unsafe coercion of socket types - only use for type erasure
+/// Erase a typed server message for transit through the coordinator.
+/// Paired with `restore_info`; sound via the registered-channel id check
+/// performed before dispatch (see ADR 0001).
 @external(erlang, "beryl_ffi", "identity")
-fn unsafe_coerce_socket(socket: Socket(a)) -> Socket(b)
+fn erase_info(message: info) -> Dynamic
+
+/// Restore a server message erased by `erase_info`.
+@external(erlang, "beryl_ffi", "identity")
+fn restore_info(message: Dynamic) -> info
+
+/// Restore transport-seeded connect assigns to the channel's assigns type.
+/// Unchecked: transports and channels must agree on the seeded type
+/// (ADR 0001).
+@external(erlang, "beryl_ffi", "identity")
+fn restore_connect_assigns(assigns: Dynamic) -> assigns

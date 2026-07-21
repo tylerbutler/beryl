@@ -11,6 +11,7 @@ import gleam/option.{None}
 import gleam/string
 import gleeunit
 import gleeunit/should
+import test_helpers
 
 pub fn main() {
   gleeunit.main()
@@ -21,16 +22,12 @@ fn register_test_channel(channels: beryl.Channels) -> Nil {
     coordinator.ChannelHandler(
       id: 0,
       pattern: topic.parse_pattern("room:*"),
-      join: fn(_topic, _payload, _ctx) {
-        coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
+      join: fn(_topic, _payload, _connect_assigns, _ctx) {
+        coordinator.JoinOkErased(
+          reply: None,
+          channel: test_helpers.noop_instance(),
+        )
       },
-      handle_in: fn(_event, _payload, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      handle_binary: fn(_data, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      terminate: fn(_reason, _ctx) { Nil },
     )
 
   let reply = process.new_subject()

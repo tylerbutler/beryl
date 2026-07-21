@@ -256,6 +256,24 @@ fn leave(
   )
 }
 
+fn handled_notifying_instance(
+  sent: process.Subject(String),
+) -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
+    handle_in: fn(_event, _payload, _ctx) {
+      process.send(sent, "handled")
+      coordinator.NoReplyErased(next: handled_notifying_instance(sent))
+    },
+    handle_binary: fn(_data, _ctx) {
+      coordinator.NoReplyErased(next: handled_notifying_instance(sent))
+    },
+    handle_info: fn(_message, _ctx) {
+      coordinator.NoReplyErased(next: handled_notifying_instance(sent))
+    },
+    terminate: fn(_, _) { Nil },
+  )
+}
+
 fn register_test_channel(
   coord: process.Subject(coordinator.Message),
   sent: process.Subject(String),
@@ -268,15 +286,12 @@ fn register_test_channel(
       coordinator.ChannelHandler(
         id: 0,
         pattern: topic.Wildcard("room:"),
-        join: fn(_topic, _payload, ctx) {
-          coordinator.JoinOkErased(option.Some(json.object([])), ctx.assigns)
+        join: fn(_topic, _payload, _connect_assigns, _ctx) {
+          coordinator.JoinOkErased(
+            option.Some(json.object([])),
+            handled_notifying_instance(sent),
+          )
         },
-        handle_in: fn(_event, _payload, ctx) {
-          process.send(sent, "handled")
-          coordinator.NoReplyErased(ctx.assigns)
-        },
-        handle_binary: fn(_data, ctx) { coordinator.NoReplyErased(ctx.assigns) },
-        terminate: fn(_, _) { Nil },
       ),
       reply,
     ),

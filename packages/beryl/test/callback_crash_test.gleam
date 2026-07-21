@@ -96,20 +96,31 @@ fn assert_heartbeat_answered(
   |> should.be_true
 }
 
+fn crashing_instance(
+  terminated: process.Subject(channel.StopReason),
+) -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
+    handle_in: fn(_event, _payload, _ctx) { panic as "handle_in boom" },
+    handle_binary: fn(_data, _ctx) {
+      coordinator.NoReplyErased(next: crashing_instance(terminated))
+    },
+    handle_info: fn(_message, _ctx) { panic as "info boom" },
+    terminate: fn(reason, _ctx) { process.send(terminated, reason) },
+  )
+}
+
 fn crashing_handle_in_handler(
   terminated: process.Subject(channel.StopReason),
 ) -> coordinator.ChannelHandler {
   coordinator.ChannelHandler(
     id: 0,
     pattern: topic.parse_pattern("room:*"),
-    join: fn(_topic, _payload, _ctx) {
-      coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
+    join: fn(_topic, _payload, _connect_assigns, _ctx) {
+      coordinator.JoinOkErased(
+        reply: None,
+        channel: crashing_instance(terminated),
+      )
     },
-    handle_in: fn(_event, _payload, _ctx) { panic as "handle_in boom" },
-    handle_binary: fn(_data, ctx) {
-      coordinator.NoReplyErased(assigns: ctx.assigns)
-    },
-    terminate: fn(reason, _ctx) { process.send(terminated, reason) },
   )
 }
 
@@ -158,14 +169,9 @@ pub fn join_crash_sends_error_reply_and_coordinator_survives_test() {
     coordinator.ChannelHandler(
       id: 0,
       pattern: topic.parse_pattern("room:*"),
-      join: fn(_topic, _payload, _ctx) { panic as "join boom" },
-      handle_in: fn(_event, _payload, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
+      join: fn(_topic, _payload, _connect_assigns, _ctx) {
+        panic as "join boom"
       },
-      handle_binary: fn(_data, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      terminate: fn(_reason, _ctx) { Nil },
     )
   let _id = register_channel(channels, handler)
 
@@ -187,22 +193,33 @@ pub fn join_crash_sends_error_reply_and_coordinator_survives_test() {
   assert_heartbeat_answered(channels, "socket-1", socket)
 }
 
+fn crashing_terminate_instance() -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
+    handle_in: fn(_event, _payload, _ctx) {
+      coordinator.NoReplyErased(next: crashing_terminate_instance())
+    },
+    handle_binary: fn(_data, _ctx) {
+      coordinator.NoReplyErased(next: crashing_terminate_instance())
+    },
+    handle_info: fn(_message, _ctx) {
+      coordinator.NoReplyErased(next: crashing_terminate_instance())
+    },
+    terminate: fn(_reason, _ctx) { panic as "terminate boom" },
+  )
+}
+
 pub fn terminate_crash_does_not_kill_coordinator_test() {
   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let handler =
     coordinator.ChannelHandler(
       id: 0,
       pattern: topic.parse_pattern("room:*"),
-      join: fn(_topic, _payload, _ctx) {
-        coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
+      join: fn(_topic, _payload, _connect_assigns, _ctx) {
+        coordinator.JoinOkErased(
+          reply: None,
+          channel: crashing_terminate_instance(),
+        )
       },
-      handle_in: fn(_event, _payload, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      handle_binary: fn(_data, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      terminate: fn(_reason, _ctx) { panic as "terminate boom" },
     )
   let _id = register_channel(channels, handler)
 
@@ -242,9 +259,7 @@ pub fn handle_info_crash_terminates_channel_not_coordinator_test() {
 
   process.send(
     beryl.coordinator_subject(channels),
-    coordinator.HandleInfo("socket-1", "room:lobby", id, fn(_ctx) {
-      panic as "info boom"
-    }),
+    coordinator.HandleInfo("socket-1", "room:lobby", id, dynamic.nil()),
   )
 
   let assert Ok(channel.Errored(_)) = process.receive(terminated, 500)
