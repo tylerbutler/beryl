@@ -1,0 +1,241 @@
+/* @theme beryl */
+/*
+ * MARP theme matching the beryl website visual system
+ * (website/src/styles/custom.css + fonts.css).
+ * Dark emerald ground, emerald accent, morganite magenta pop.
+ */
+
+@import 'default';
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Hanken+Grotesk:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+  --beryl-bg: oklch(0.165 0.022 162);
+  --beryl-surface: oklch(0.215 0.028 163);
+  --beryl-code-bg: oklch(0.255 0.03 163);
+  --beryl-hairline: oklch(0.42 0.04 161 / 0.5);
+  --beryl-muted: oklch(0.6 0.04 159);
+  --beryl-text: oklch(0.81 0.032 157);
+  --beryl-strong: oklch(0.91 0.024 155);
+  --beryl-white: oklch(0.97 0.018 152);
+  --beryl-accent: oklch(0.78 0.16 158);
+  --beryl-accent-high: oklch(0.9 0.1 154);
+  --beryl-magenta: oklch(0.72 0.2 350);
+  --beryl-magenta-soft: oklch(0.72 0.2 350 / 0.16);
+
+  --beryl-font-display: 'Unbounded', 'Hanken Grotesk', system-ui, sans-serif;
+  --beryl-font-text: 'Hanken Grotesk', system-ui, sans-serif;
+  --beryl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+section {
+  background: var(--beryl-bg);
+  color: var(--beryl-text);
+  font-family: var(--beryl-font-text);
+  font-size: 28px;
+  line-height: 1.45;
+  padding: 64px 72px;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2 {
+  font-family: var(--beryl-font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--beryl-white);
+  line-height: 1.1;
+}
+
+h1 {
+  font-size: 1.7em;
+}
+
+h2 {
+  font-size: 1.35em;
+  margin-bottom: 0.9em;
+}
+
+/* Morganite marker under slide titles — echoes the site's H2 rule. */
+h2::after {
+  content: '';
+  display: block;
+  width: 2rem;
+  height: 4px;
+  margin-top: 0.45rem;
+  border-radius: 999px;
+  background: var(--beryl-magenta);
+}
+
+h3 {
+  font-family: var(--beryl-font-text);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--beryl-strong);
+}
+
+strong {
+  color: var(--beryl-accent-high);
+  font-weight: 700;
+}
+
+em {
+  color: var(--beryl-strong);
+}
+
+a {
+  color: var(--beryl-accent);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+
+ul,
+ol {
+  margin-block: 0.35em;
+}
+
+li {
+  margin-block: 0.3em;
+}
+
+li::marker {
+  color: var(--beryl-accent);
+}
+
+/* Inline code — magenta-soft chip, as on the site. */
+code {
+  font-family: var(--beryl-font-mono);
+  background: var(--beryl-magenta-soft);
+  color: var(--beryl-white);
+  border-radius: 5px;
+  padding: 0.12em 0.35em;
+  font-size: 0.85em;
+}
+
+/* Code blocks — surface panel with hairline border, rounded like the site. */
+pre {
+  background: var(--beryl-code-bg);
+  border: 1px solid var(--beryl-hairline);
+  border-radius: 12px;
+  padding: 0.9em 1.1em;
+  font-size: 0.72em;
+  line-height: 1.5;
+}
+
+pre code {
+  background: transparent;
+  color: var(--beryl-strong);
+  padding: 0;
+  font-size: 1em;
+}
+
+blockquote {
+  border-left: 4px solid var(--beryl-magenta);
+  background: var(--beryl-surface);
+  border-radius: 0 12px 12px 0;
+  padding: 0.6em 1em;
+  color: var(--beryl-strong);
+  font-style: normal;
+}
+
+table {
+  font-size: 0.85em;
+  background: transparent;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--beryl-hairline);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+table th {
+  background: var(--beryl-surface);
+  color: var(--beryl-white);
+  font-weight: 650;
+  text-align: start;
+  border: none;
+  border-bottom: 1px solid var(--beryl-hairline);
+  padding: 0.5rem 0.9rem;
+}
+
+table td {
+  background: transparent;
+  color: var(--beryl-text);
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-bottom: 1px solid var(--beryl-hairline);
+}
+
+table tbody tr:nth-child(even) td {
+  background: oklch(0.205 0.026 163 / 0.6);
+}
+
+table tr:last-child td {
+  border-bottom: none;
+}
+
+section::after {
+  color: var(--beryl-muted);
+  font-family: var(--beryl-font-mono);
+  font-size: 0.55em;
+}
+
+footer,
+header {
+  color: var(--beryl-muted);
+  font-size: 0.55em;
+}
+
+/* Title / closing slides */
+section.lead {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+section.lead h1 {
+  font-size: 2.6em;
+  margin-block: 0.2em;
+}
+
+section.lead h2 {
+  margin-inline: auto;
+}
+
+section.lead h2::after {
+  margin-inline: auto;
+}
+
+section.lead img {
+  margin-inline: auto;
+}
+
+section.lead p {
+  color: var(--beryl-strong);
+}
+
+/* Section-divider slides: big display type, magenta kicker. */
+section.divider {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+section.divider h1 {
+  font-size: 2.1em;
+}
+
+section.divider h1::before {
+  content: '';
+  display: block;
+  width: 3rem;
+  height: 5px;
+  margin-bottom: 0.6rem;
+  border-radius: 999px;
+  background: var(--beryl-magenta);
+}
+
+section.divider p {
+  color: var(--beryl-muted);
+  font-size: 1.05em;
+}
