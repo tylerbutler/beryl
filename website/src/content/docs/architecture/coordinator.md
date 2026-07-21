@@ -50,22 +50,25 @@ beryl ships a dedicated supervisor in `beryl/supervisor` that starts all subsyst
 ```mermaid
 flowchart TB
   APP["your app supervisor"]
-  APP --> SUP["beryl supervisor<br/>rest-for-one"]
-  SUP --> CO["coordinator"]
-  SUP --> PR["presence (optional)"]
-  SUP --> GR["groups (optional)"]
+  APP --> SUP["beryl supervisor<br/>one-for-one"]
+  SUP --> LI["connection limiter (optional)"]
+  SUP --> CH["channel supervisor<br/>rest-for-one"]
+  CH --> RE["handler registry"]
+  CH --> CO["coordinator"]
+  CH --> PR["presence (optional)"]
+  CH --> GR["groups (optional)"]
 ```
 
-Start order is coordinator → presence (optional) → groups (optional). Presence and groups are only started when configured via `SupervisedConfig`.
+The connection limiter is isolated under the one-for-one parent. The nested channel supervisor starts registry -> coordinator -> presence (optional) -> groups (optional) with rest-for-one semantics. Presence and groups are only started when configured via `SupervisedConfig`.
 
-`supervisor.child_spec/1` returns an OTP `ChildSpecification(SupervisedChannels)` — a spec for the beryl supervisor process — so you can embed the entire beryl subtree inside your application's top-level supervisor:
+`supervisor.start/1` returns an OTP `ChildSpecification(static_supervisor.Supervisor)` for the Beryl supervisor process:
 
 ```gleam
 import beryl/supervisor
 import gleam/otp/static_supervisor
 
 static_supervisor.new(static_supervisor.OneForOne)
-|> static_supervisor.add(supervisor.child_spec(beryl_config))
+|> static_supervisor.add(supervisor.start(beryl_config))
 |> static_supervisor.start()
 ```
 
@@ -74,4 +77,4 @@ PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which
 ## Where this lives
 
 - `src/beryl/coordinator.gleam` — `ChannelHandler`, `SocketContext`, `JoinResultErased`, `HandleResultErased`, `route_message`, `route_decoded`, `route_binary`, heartbeat timer.
-- `src/beryl/supervisor.gleam` — `SupervisedConfig`, `SupervisedChannels`, `start`, `stop`, `child_spec`; rest-for-one child ordering.
+- `src/beryl/supervisor.gleam` — `SupervisedConfig`, stable named handles, and the `start` child specification; one-for-one isolation around a rest-for-one channel subtree.

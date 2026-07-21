@@ -641,14 +641,47 @@ pub fn channels_from_coordinator(
   config config: Config,
   registry registry: Option(coordinator.Registry),
 ) -> Channels {
-  Channels(
+  channels_from_parts(
     coordinator: coordinator,
     config: config,
-    pubsub: config.pubsub,
+    registry: registry,
     connection_limiter: connection_limit.start_optional(
       config.max_connections_per_ip,
       config.max_connections,
     ),
+  )
+}
+
+@internal
+pub fn channels_from_supervised_parts(
+  coordinator coordinator: Subject(coordinator.Message),
+  config config: Config,
+  registry registry: coordinator.Registry,
+  connection_limiter connection_limiter: Option(
+    connection_limit.ConnectionLimiter,
+  ),
+) -> Channels {
+  channels_from_parts(
+    coordinator: coordinator,
+    config: config,
+    registry: Some(registry),
+    connection_limiter: connection_limiter,
+  )
+}
+
+fn channels_from_parts(
+  coordinator coordinator: Subject(coordinator.Message),
+  config config: Config,
+  registry registry: Option(coordinator.Registry),
+  connection_limiter connection_limiter: Option(
+    connection_limit.ConnectionLimiter,
+  ),
+) -> Channels {
+  Channels(
+    coordinator: coordinator,
+    config: config,
+    pubsub: config.pubsub,
+    connection_limiter: connection_limiter,
     registry: registry,
   )
 }
