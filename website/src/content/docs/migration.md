@@ -13,8 +13,8 @@ beryl uses a fully automated release pipeline:
 
 1. **Changelog fragments** are authored with `trellis changelog new` (or `just change <package> <kind> "<body>"`) and committed alongside the code change. Fragments live in `.changes/unreleased/` until a release is cut.
 2. **`trellis release pr`** collects unreleased fragments, bumps each affected package's version, regenerates its CHANGELOG.md, and opens a release PR.
-3. Merging the release PR publishes each package to [Hex.pm](https://hex.pm/packages/beryl) in dependency order.
-4. Per-package tags (`beryl-v1.2.3`, `beryl_mist-v1.2.3`) and GitHub releases are created after a successful publish.
+3. Merging the release PR creates per-package tags (`beryl-v1.2.3`, `beryl_mist-v1.2.3`) and GitHub releases for each version bump.
+4. Publishing to [Hex.pm](https://hex.pm/packages/beryl) is temporarily disabled; packages are not yet available there.
 
 **Where to find changelogs:**
 
