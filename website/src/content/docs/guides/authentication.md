@@ -65,10 +65,13 @@ fn query_param(req: Request(mist.Connection), name: String) -> Result(String, Ni
 
 ## 3. Verify the token in `on_connect`
 
-`verify_token` is where you plug in your token library — for example a JWT
-verifier such as [`vestibule`](https://hex.pm/) or a call to
-[`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature.
-It must validate the signature and expiry and return typed `Claims`:
+`verify_token` is where you plug in your token library — for example a call to
+[`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature, or
+a JWT library to validate a signed token issued by your identity provider. It
+must validate the signature and expiry and return typed `Claims`. (The upstream
+sign-in flow that mints these tokens is a separate concern — an OAuth2 library
+such as [`vestibule`](https://vestibule.tylerbutler.com) handles social login
+and hands you an authenticated identity to build the token from.)
 
 ```gleam
 import beryl_mist as mist_transport

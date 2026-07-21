@@ -47,7 +47,7 @@ Presence state uses an **add-wins observed-remove set** (AWORSet) with causal co
 
 ### Focused dependencies
 
-The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`, `gleam_crypto`, `gleam_http`, `mist`, and `palabres` — all standard BEAM ecosystem packages. No external message brokers or databases required.
+The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres` — all standard BEAM ecosystem packages. A WebSocket transport such as `beryl_mist` adds `mist` and `gleam_http`, but the core library pulls in neither. No external message brokers or databases required.
 
 ### Phoenix wire protocol compatibility
 

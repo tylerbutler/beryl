@@ -16,7 +16,7 @@ import beryl/group
 let assert Ok(groups) = group.start()
 ```
 
-`group.start()` returns `Result(Groups, GroupError)`. The only failure case is `StartFailed` — an OTP actor spawn failure.
+`group.start()` returns `Result(Groups, GroupStartError)`. The only failure case is `GroupActorStartFailed` — an OTP actor spawn failure.
 
 ## Creating and deleting groups
 

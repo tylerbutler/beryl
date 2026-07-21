@@ -123,11 +123,11 @@ static_supervisor.new(static_supervisor.OneForOne)
 ```gleam
 pub type StartError {
   SupervisorStartFailed(error.StartFailure)
-  InvalidHeartbeatTimeout   // heartbeat_timeout_ms must be > 0
+  InvalidHeartbeatTimeout   // heartbeat_timeout_ms must be >= 2
 }
 ```
 
-`InvalidHeartbeatTimeout` is a configuration mistake — check that `heartbeat_timeout_ms` in your `beryl.Config` is a positive integer.
+`InvalidHeartbeatTimeout` is a configuration mistake — check that `heartbeat_timeout_ms` in your `beryl.Config` is at least 2 (the staleness check interval is derived as `heartbeat_timeout_ms / 2`, so 1 would disable eviction).
 
 ## Production checklist
 

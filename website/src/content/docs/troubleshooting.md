@@ -74,7 +74,7 @@ Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*` 
 let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_logging(beryl.logging_config(
-    level: beryl.Debug,
+    level: beryl.DebugLevel,
     include_payloads: False,
   ))
 ```
@@ -83,7 +83,7 @@ Debug logs cover frame decode, join routing, callback results, reply/push send o
 
 ```gleam
 let logging =
-  beryl.logging_config(level: beryl.Debug, include_payloads: True)
+  beryl.logging_config(level: beryl.DebugLevel, include_payloads: True)
   |> beryl.with_payload_preview_bytes(bytes: 100)
 ```
 
