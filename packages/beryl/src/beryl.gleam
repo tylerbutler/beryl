@@ -813,10 +813,8 @@ fn stop_app_subtree(
     Ok(runtime_pid) -> {
       let runtime_monitor = process.monitor(runtime_pid)
       let limiter_monitor =
-        option_map(
-          option.from_result(app_limiter_owner(connection_limiter)),
-          process.monitor,
-        )
+        option.from_result(app_limiter_owner(connection_limiter))
+        |> option.map(process.monitor)
       // Drain sockets (deliver `Closed`, presence cleanup, close transports)
       // and stop the runtime; this triggers the subtree auto-shutdown.
       case app.stop() {
@@ -1033,7 +1031,7 @@ fn build_app_subtree(
   let handle =
     Sockets(
       config: config,
-      connection_limiter: option_map(limiter_name, connection_limit.from_name),
+      connection_limiter: option.map(limiter_name, connection_limit.from_name),
       app: app_handle(process.named_subject(runtime_name), config.pubsub),
     )
 
@@ -1098,13 +1096,6 @@ fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
     runtime.ActorStartFailed(error) -> error
     runtime.InvalidHeartbeatTimeout ->
       actor.InitFailed("invalid heartbeat timeout")
-  }
-}
-
-fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
-  case option {
-    Some(value) -> Some(transform(value))
-    None -> None
   }
 }
 
