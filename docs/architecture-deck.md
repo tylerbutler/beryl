@@ -133,7 +133,7 @@ scale across nodes via pg, not by adding runtime threads.
 
 ```mermaid
 flowchart LR
-  subgraph Standalone["beryl.start"]
+  subgraph Standalone["beryl.child_spec"]
     Caller["caller process"] -->|starts, unlinks| Sup1["Beryl subtree supervisor<br/>OneForOne"]
     Sup1 --> Rt1["runtime<br/>Transient · significant"]
     Sup1 --> Lim1["connection limiter (optional)"]
@@ -145,24 +145,17 @@ flowchart LR
   end
 ```
 
-- Same subtree shape either way: runtime (significant, transient) + optional limiter
-- `start` unlinks the caller so the subtree's own shutdown can't kill it
-- `child_spec` hands the subtree to *your* supervisor instead
+- `child_spec` returns the runtime subtree and stable handle
+- Add the subtree to *your* application supervisor
 - PubSub, presence, and groups are **borrowed** — never children of this subtree
 
 <!--
 Speaker notes:
-Two entry points, one subtree shape. `beryl.start` is for apps that just want
-a working system: it builds the OneForOne subtree (runtime as the
-significant, transient child, plus an optional connection limiter sibling),
-starts it, and then unlinks the caller from the supervisor pid — that
-unlinking matters because the subtree auto-shuts-down on a graceful `stop`,
-and without unlinking that exit would propagate up and kill the caller.
-`beryl.child_spec` is for apps that already have their own supervision tree:
-it validates and builds the identical subtree but hands back a
+One supervised entry point. `beryl.child_spec` validates and builds the
+OneForOne subtree (runtime as the significant, transient child, plus an
+optional connection limiter sibling), then hands back a
 `ChildSpecification` for the caller to `static_supervisor.add` themselves —
-no unlinking needed because a real OTP supervisor traps exits. Either way,
-the big change from the old design: presence, PubSub, and groups are NOT
+the application supervisor owns its lifecycle. Presence, PubSub, and groups are NOT
 part of this tree anymore. They're started and owned by the application, and
 the runtime just borrows a handle. `beryl.stop` only tears down Beryl's own
 subtree — never your PubSub instance, presence actor, or group actors.

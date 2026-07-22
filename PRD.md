@@ -227,7 +227,7 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 | PubSub | **Complete** | pg-backed, local + distributed broadcast, typed `Subscriber` |
 | Presence CRDT | **Complete** | Pure state module, property-based tested |
 | Presence actor | **Complete** | Actor wraps CRDT; periodic delta replication via PubSub |
-| Supervision | **Complete** | `beryl.start` (standalone) and `beryl.child_spec` (embedded); OneForOne subtree, validation |
+| Supervision | **Complete** | `beryl.child_spec` returns a OneForOne subtree for the application supervisor |
 | Groups | **Complete** | Named topic collections with broadcast |
 | Mist/Ewe transport | **Complete** | WebSocket upgrade + lifecycle management, no Wisp dependency |
 | Binary transport | **Complete** | Raw BitArray frames via the `Binary` event |

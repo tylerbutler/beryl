@@ -1,85 +1,85 @@
 ---
 title: WebSocket Transport
-description: Connect browsers and other clients to a Beryl sockets system with the Mist transport.
 ---
 
-Beryl provides a WebSocket transport layer that integrates directly with [Mist](https://hexdocs.pm/mist/). `beryl_ewe` mirrors the same connect-metadata model and overall transport flow, but this guide uses `beryl_mist` examples.
+beryl provides a WebSocket transport layer that integrates directly with [Mist](https://hexdocs.pm/mist/) for handling browser client connections.
 
 ## Basic setup
 
-Start a `beryl.Sockets` system, then hand that handle to the Mist transport.
+The simplest way to add WebSocket support is with `mist_transport.upgrade`:
 
 ```gleam
 import beryl
-import beryl/event as event
 import beryl_mist as mist_transport
-import beryl/wire
 import gleam/bytes_tree
+import gleam/http/request
 import gleam/http/request.{type Request}
-import gleam/http/response as response
-import gleam/http/response.{type Response}
+import gleam/http/response
 import mist
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
-  #(Nil, [])
-}
-
-fn update(model: Nil, _event: event.Event(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
-}
-
-pub fn main() {
-  let assert Ok(sockets) =
-    beryl.start(
-      beryl.config(wire.phoenix_codec()),
-      init: init,
-      update: update,
-    )
-
-  mist_transport.handler(
-    sockets,
+fn handle_request(
+  req: Request(mist.Connection),
+  channels: beryl.Sockets,
+) -> response.Response(mist.ResponseData) {
+  // Upgrade /socket/websocket requests to WebSocket
+  use <- mist_transport.upgrade(
+    req,
+    channels,
     mist_transport.default_config("/socket/websocket"),
-    http_handler,
   )
-  |> mist.new
-  |> mist.port(8000)
-  |> mist.start
-}
 
-fn http_handler(_req: Request(mist.Connection)) -> Response(mist.ResponseData) {
-  response.new(404)
-  |> response.set_body(mist.Bytes(bytes_tree.new()))
+  // Non-WebSocket requests fall through here
+  case request.path_segments(req) {
+    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
+    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
 }
 ```
 
-The transport upgrades matching WebSocket requests, assembles `event.ConnectInfo`, and forwards frames into your `init` / `update` app. For the routing model itself, see [App-Side Dispatch](/guides/dispatch/).
+The `upgrade` function checks if the request path matches, performs the WebSocket upgrade, and wires the connection to the beryl runtime.
 
 :::tip[Phoenix JS clients]
-Phoenix JS connects to `/socket/websocket` by default when you write `new Socket("/socket", ...)`, so set the Mist transport path to match.
+The Phoenix JS client (`new Socket("/socket", ...)`) connects to `/socket/websocket` by default — it appends `/websocket` to the path you pass. Configure the transport path to match:
+
+```gleam
+// Matches Phoenix JS: new Socket("/socket", ...)
+mist_transport.default_config("/socket/websocket")
+```
+
+Raw WebSocket clients connect directly to the configured path with no suffix appended.
 :::
 
 ## Authentication
 
-Use `with_on_connect` to authenticate a connection before upgrading. The callback runs once per socket and returns either connect metadata or `ConnectRejected`.
+Use `with_on_connect` to authenticate connections before upgrading. The hook is
+beryl's analogue of Phoenix's `UserSocket.connect/3`: it runs **once per socket**,
+before any channel join, and can reject the whole connection.
 
 ```gleam
 let config =
   mist_transport.default_config("/socket/websocket")
   |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+    // Check auth token, session, etc.
     case validate_token(req) {
-      Ok(user_id) -> Ok([#("user_id", user_id)])
-      Error(_) -> Error(mist_transport.ConnectRejected)
+      Ok(_user) -> Ok(Nil)                              // Allow connection
+      Error(_) -> Error(mist_transport.ConnectRejected)  // Reject with 403
     }
   })
 
-use <- mist_transport.upgrade(req, sockets, config)
+use <- mist_transport.upgrade(req, channels, config)
 ```
 
-Returning `Error(mist_transport.ConnectRejected)` sends HTTP 403 before the WebSocket handshake.
+Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
 
 ### Origin validation and CSWSH
 
-Browsers include cookies on WebSocket handshakes. If your socket authentication relies on ambient browser credentials, validate the `Origin` header to prevent Cross-Site WebSocket Hijacking.
+Browsers include cookies on WebSocket handshakes. If your socket authentication
+uses cookies, a malicious site can open a WebSocket to your application from a
+victim's browser unless you validate the `Origin` header. This is Cross-Site
+WebSocket Hijacking (CSWSH).
+
+Use `with_allowed_origins` to allow only your application origins. Values match
+the full `Origin` header exactly: scheme, host, and port when present.
 
 ```gleam
 let config =
@@ -90,95 +90,143 @@ let config =
   })
 ```
 
-The default policy is `SameOrigin`. Use `with_allow_all_origins` only when you intentionally opt out of browser-origin checks.
+Requests with missing or non-matching origins are rejected with HTTP 403 before
+the WebSocket handshake. If you do not configure an allow-list, existing behavior
+is unchanged and all origins are accepted.
 
-### Seeding connect metadata
+If you cannot use an origin allow-list, avoid cookie-based WebSocket
+authentication. Use a token passed explicitly to `on_connect` and reject invalid
+tokens before upgrading.
 
-`with_on_connect` returns `List(#(String, String))`, not application model state. Those key-value pairs become `ConnectSeed.metadata`, and `init` decides how to turn them into your typed socket model.
+### Connect-time data and the ConnectSeed
+
+`on_connect` is a pure gate — it allows or rejects the upgrade. The request
+data itself (path, query parameters, headers) reaches your app separately:
+the transport assembles a `ConnectSeed` from the upgrade request and delivers
+it to your `init` as `ConnectInfo.seed`. Authenticate once in `on_connect`,
+then derive per-socket state from the seed in `init` — no re-auth in any
+join:
 
 ```gleam
-import beryl/event as event
-import gleam/list
-import gleam/result
-
-pub type Model {
-  Model(user_id: String)
-}
-
-fn init(info: event.ConnectInfo(Nil)) -> #(Model, List(event.Effect)) {
-  let user_id =
-    list.key_find(info.seed.metadata, "user_id")
-    |> result.unwrap("anonymous")
-  #(Model(user_id: user_id), [])
-}
+let config =
+  mist_transport.default_config("/socket/websocket")
+  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+    // Validate once; reject the whole connection on failure.
+    case validate_token(req) {
+      Ok(_) -> Ok(Nil)
+      Error(_) -> Error(mist_transport.ConnectRejected) // Reject with 403
+    }
+  })
 ```
 
-`ConnectInfo.seed` also includes the request path, query parameters, and headers seen during the upgrade.
+```gleam
+// init derives the user from the same request data — no re-auth needed.
+beryl.child_spec(
+  config,
+  init: fn(info: event.ConnectInfo(Msg)) {
+    let user_id =
+      list.key_find(info.seed.query, "token")
+      |> result.map(decode_user_id)
+      |> result.unwrap("anonymous")
+    #(Model(user_id: user_id), [])
+  },
+  update: update,
+)
+```
 
 ## Direct upgrade
 
-If you want to handle path matching yourself, use `upgrade_connection` directly.
+If you handle path matching yourself, use `upgrade_connection` directly:
 
 ```gleam
-import gleam/bytes_tree
-import gleam/http/request
-import gleam/http/response as response
-import gleam/http/response.{type Response}
-
-fn handle_request(req, sockets) -> Response(mist.ResponseData) {
+fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
   case request.path_segments(req) {
-    ["ws"] -> mist_transport.upgrade_connection(req, sockets)
+    ["ws"] -> mist_transport.upgrade_connection(req, channels)
     _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
   }
 }
 ```
 
-`upgrade_connection` does **not** run the configured `with_on_connect` callback and seeds empty connect metadata, so run your own checks first if you need them.
+Note: `upgrade_connection` does not invoke the `on_connect` callback. Run your own auth check before calling it.
+
+:::tip[Troubleshooting connections]
+If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
+:::
 
 ## Wire protocol
 
-`wire.phoenix_codec()` keeps Phoenix-compatible JSON array frames:
+Pass `wire.phoenix_codec()` to `beryl.config` to use the Phoenix JSON array format:
 
 ```json
 [join_ref, ref, topic, event, payload]
 ```
 
-Applications can pass a custom codec to `beryl.config(codec)` if they want a different framing.
+Applications can pass a custom codec to `beryl.config(codec)` to use another text framing or a binary framing. Codec-produced outbound frames are sent as text or binary WebSocket frames according to the codec result.
+
+`wire.phoenix_codec()` uses Beryl's native Phoenix wire implementation, which has no extra dependencies. The public `beryl/wire/codec.Codec` API and wire format are stable, so applications can supply their own codec to `beryl.config` for alternative framings.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `join_ref` | `string \| null` | Reference from the join (for reply routing) |
+| `ref` | `string \| null` | Unique message reference (for reply matching) |
+| `topic` | `string` | Topic name (e.g., `"room:lobby"`) |
+| `event` | `string` | Event name (e.g., `"phx_join"`, `"new_message"`) |
+| `payload` | `any` | JSON payload |
+
+### System events
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `phx_join` | Client -> Server | Join a channel |
+| `phx_leave` | Client -> Server | Leave a channel |
+| `heartbeat` | Client -> Server | Keepalive ping |
+| `phx_reply` | Server -> Client | Reply to a client message |
+| `phx_error` | Server -> Client | Error notification |
+| `phx_close` | Server -> Client | Channel closed |
+
+### Example: join flow
+
+Client sends:
+```json
+["1", "1", "room:lobby", "phx_join", {"user": "alice"}]
+```
+
+Server replies:
+```json
+["1", "1", "room:lobby", "phx_reply", {"status": "ok", "response": {}}]
+```
 
 ## Connection lifecycle
 
-1. the client opens a WebSocket to the configured path,
-2. origin policy is checked,
-3. `with_on_connect` runs, optionally rejecting with HTTP 403 or seeding metadata,
-4. the transport creates a socket id and calls your `init`,
-5. clients send `phx_join` and message frames,
-6. the runtime delivers `event.Join`, `event.Message`, `event.Binary`, `event.Info`, and `event.Closed` into your `update`,
-7. when a topic or socket ends, the runtime delivers `event.Closed` for every joined topic and the transport closes the connection.
-
-If the runtime crashes or restarts, the Mist transport notices and closes the affected connections instead of leaving zombie sockets open.
+1. Client connects via WebSocket to the configured path
+2. `on_connect` callback runs (if configured) — reject returns 403
+3. Transport generates a unique socket ID, builds the `ConnectSeed`, and announces the socket to the runtime, which calls your `init`
+4. Client sends `phx_join` messages to subscribe to topics — each arrives at `update` as a `Join` event
+5. Messages are routed through the runtime to `update` as `Message` events
+6. On disconnect, `update` receives a `Closed` event for every joined topic
 
 ## Heartbeats
 
-Clients should send heartbeat messages periodically to stay connected:
+Clients should send periodic heartbeat messages to stay connected:
 
 ```json
 [null, "ref_123", "phoenix", "heartbeat", {}]
 ```
 
-Configure heartbeat timing on the Beryl config:
+Configure heartbeat timing in the beryl config:
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_heartbeat(
-    interval_ms: 30_000,
-    timeout_ms: 60_000,
+    interval_ms: 30_000,  // Client-advisory ping cadence (server does not read it)
+    timeout_ms: 60_000,   // Server evicts after 60s silence (must be >= 2)
   )
 ```
 
-`interval_ms` is advisory for clients. `timeout_ms` is the server-side silence window.
-
 ## Rate limiting
+
+Protect against flood attacks with built-in rate limiting:
 
 ```gleam
 let config =
@@ -188,27 +236,51 @@ let config =
   |> beryl.with_channel_rate(per_second: 50, burst: 100)
 ```
 
-| Limiter | Scope |
-|---------|-------|
-| `message_rate` | Per socket |
-| `join_rate` | Per socket |
-| `channel_rate` | Per socket plus topic |
+| Limiter | Scope | Description |
+|---------|-------|-------------|
+| `message_rate` | Per socket | Total messages per second across all topics |
+| `join_rate` | Per socket | Join attempts per second |
+| `channel_rate` | Per socket+topic | Messages per second on a single topic |
+| `topic_rates` | Per socket+topic | Pattern-scoped override of `channel_rate` (`with_topic_rate`) |
 
-## Connection limits
+## Per-IP connection limits
 
-Cap concurrent connections per client IP with `with_max_connections_per_ip` and across the whole node with `with_max_connections`.
+Cap the number of concurrent connections a single client IP may hold with
+`with_max_connections_per_ip`. A value of `0` (the default) means unlimited.
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_max_connections_per_ip(max_connections: 5)
-  |> beryl.with_max_connections(max_connections: 10_000)
 ```
 
-When a peer is already over the limit, the transport rejects the upgrade with HTTP 429 before allocating long-lived socket state.
+When a peer is already at its limit, the Mist transport rejects the new upgrade
+with `429 Too Many Requests` before the WebSocket handshake completes. The slot
+is released automatically when a connection closes, so disconnecting frees
+capacity for that IP.
+
+### Reverse proxies and `X-Forwarded-For`
+
+The limit is enforced on the **real socket peer IP** — the address of the TCP
+connection Mist accepts. beryl deliberately does **not** trust or parse
+forwarded headers such as `X-Forwarded-For`, because any client can set them and
+would otherwise be able to spoof its address and bypass the limit.
+
+This has an important consequence when beryl runs **behind a reverse proxy or
+load balancer** (nginx, HAProxy, a cloud LB, etc.): every connection arrives
+from the proxy's IP, so a per-IP limit sees all clients as one address and
+throttles them collectively. In that topology:
+
+- Enforce per-IP limits at the proxy layer, where the real client IP is known, or
+- Terminate connections directly (no intermediary) if you want beryl's built-in
+  per-IP limit to apply to individual clients.
+
+A built-in trusted-proxy opt-in (to derive the client IP from a forwarded header
+only when the immediate peer is a configured trusted proxy) may be added in a
+future release. Until then, treat `X-Forwarded-For` as untrusted input.
 
 ## Next steps
 
-- [Authentication](/guides/authentication/) — a complete token-verification flow
-- [Error Handling](/guides/error-handling/) — join rejection, malformed frames, and client-visible error shapes
-- [Supervision](/guides/supervision/) — what happens when the runtime stops or restarts
+- [Error Handling guide](/guides/error-handling/) — rejected joins, malformed frames, and client-visible error shapes
+- [Supervision guide](/guides/supervision/) — the built-in runtime supervision and restart semantics
+- [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for connection, join, and message delivery failures

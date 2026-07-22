@@ -10,7 +10,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 **Checks:**
 
-1. **Is Mist listening?** Confirm your HTTP server started without error. `mist.serve`, `mist.serve_ssl`, or `mist.start` returns a `Result` — make sure you handle `Error`.
+1. **Is Mist listening?** Confirm your HTTP server started without error. `mist.serve` or `mist.serve_ssl` returns a `Result` — make sure you handle `Error`.
 
 2. **Path mismatch.** The Phoenix JS client appends `/websocket` to the socket path you pass:
    ```js
@@ -22,7 +22,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    ```
    Raw WebSocket clients (non-Phoenix) connect directly to the path with no suffix.
 
-3. **`on_connect` rejection.** If you configured `with_on_connect`, returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
+3. **on_connect rejection.** If you configured `with_on_connect`, returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
 
 4. **Reverse proxy not forwarding upgrade headers.** See [Reverse proxy / nginx](#reverse-proxy--nginx) below.
 
@@ -30,42 +30,39 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 ## Client connects but joins are never acknowledged
 
-**Symptoms:** Phoenix JS client hangs in "connecting" or "joining" state, or `.join()` always lands in the `"error"` branch.
+**Symptoms:** Phoenix JS client hangs in "connecting" or "joining" state; no `phx_reply` received.
 
 **Checks:**
 
-1. **Does your `update` function match this topic and answer the join?** There is no registry anymore. A `Join` must return `event.AcceptJoin(ref, ...)` or `event.RejectJoin(ref, ...)` in the same `update` turn:
+1. **Does your `update` answer the join?** Every `Join` event must be answered with an `AcceptJoin` or `RejectJoin` effect. An unanswered join is rejected automatically (fail closed) — check the server logs for `Join not acknowledged by update; rejecting`, and confirm your topic match arms cover the topic the client is joining:
    ```gleam
-   case ev {
-     event.Join("room:" <> _, _payload, ref) ->
-       event.Next(model, [event.AcceptJoin(ref, None)])
-     _ ->
-       event.Next(model, [])
-   }
+   // "room:" <> _ matches "room:lobby", "room:42", etc.
+   event.Join("room:" <> _, payload, ref) ->
+     event.Next(model, [event.AcceptJoin(ref, option.None)])
    ```
-   If a `Join` falls through to `event.Next(model, [])`, beryl rejects it automatically (fail closed).
 
-2. **Is the same `beryl.Sockets` handle passed to the transport?** `mist_transport.upgrade` or `mist_transport.handler` must receive the exact `sockets` value returned by `beryl.start` or `beryl.child_spec`.
+2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` after its child spec is started:
+   ```gleam
+   use <- mist_transport.upgrade(req, channels, config)
+   ```
 
-3. **`update` panics or crashes.** One runtime actor serves every socket for a `beryl.Sockets` handle. A panic in `update` terminates that shared runtime, drops its existing connections, and restarts a fresh runtime under supervision. See [Runtime & Effect Interpreter](/architecture/runtime/) and [Supervision](/guides/supervision/).
+3. **Update crashes on `Join`.** A crash while handling a `Join` rejects that join (the socket survives). Check the logs for the crash description and fix the panic.
 
-4. **Topic segment mismatch.** `"document:*:ops"` uses segment wildcards — each `*` matches exactly one colon-delimited segment. `"document:tenant-a:sub:ops"` does not match because there is an extra segment. Verify with `topic.parse_pattern` and `topic.matches`.
+4. **Topic string mismatch.** Your `update` routes topics with ordinary pattern matching — verify the prefix or shape you match covers the exact topic the client sends (`"room:" <> _` does not match `"rooms:lobby"`). For multi-segment shapes, `topic.extract_wildcards` with `topic.parse_pattern("document:*:*")` verifies the shape explicitly.
 
 ---
 
 ## Messages sent from the client are not received
 
-**Symptoms:** Your `update` function never sees the expected `event.Message(...)`; no reply or push received.
+**Symptoms:** `update` never receives a `Message` event; no reply or push received.
 
 **Checks:**
 
-1. **Did the client successfully join?** `event.Message` is only delivered after a successful `phx_join`. If join was rejected, no further topic messages are delivered.
+1. **Did the client successfully join?** `Message` events are only delivered after a successful `phx_join`. If join was rejected, messages to the topic get an `unmatched topic` error reply (when they carry a ref) or are dropped.
 
-2. **Does your `update` branch match both topic and event name?** `event.Message(topic, event_name, payload, ref)` carries the raw topic and event string. Verify the branch you expect actually matches.
+2. **Rate limits dropping messages.** If `with_message_rate`, `with_channel_rate`, or `with_topic_rate` is configured and the client is sending faster than the limit, excess messages are silently dropped. Check your rate limit values or the `Message rate limited` / `Channel rate limited` warnings in the logs.
 
-3. **Rate limits dropping messages.** If `with_message_rate`, `with_channel_rate`, or `with_topic_rate` is configured and the client sends faster than the limit, excess messages are dropped before your application logic sees them.
-
-4. **Event name limits.** If you configured `with_max_event_length`, overlong event names are dropped before they reach `update`.
+3. **Event name mismatch.** The `Message` event carries the raw event string. Verify the client sends the exact event name your `update` matches on.
 
 ---
 
@@ -82,7 +79,7 @@ let config =
   ))
 ```
 
-Debug logs cover frame decode, join routing, effect interpretation, reply/push send outcomes, disconnects, heartbeat decisions, broadcasts, and rate limiting. Payload and frame previews are omitted by default to reduce accidental sensitive-data exposure. If you need bounded previews locally, enable them explicitly:
+Debug logs cover frame decode, join delivery, effect outcomes, reply/push send outcomes, disconnects, heartbeat decisions, broadcasts, and rate limiting. Payload and frame previews are omitted by default to reduce accidental sensitive-data exposure. If you need bounded previews locally, enable them explicitly:
 
 ```gleam
 let logging =
@@ -98,7 +95,7 @@ let logging =
 
 **Checks:**
 
-1. **Topic string must match exactly.** `beryl.broadcast(sockets, "room:lobby", ...)` delivers only to sockets subscribed to the exact topic `"room:lobby"`. Wildcard patterns are for routing incoming events, not for targeting broadcasts.
+1. **Topic string must match exactly.** `beryl.broadcast("room:lobby", ...)` delivers only to sockets subscribed to the *exact* topic `"room:lobby"`. Wildcard patterns are for *routing incoming messages*, not for targeting broadcasts.
 
 2. **Client has not joined the topic.** A socket must have successfully completed `phx_join` for the topic before it receives broadcasts on that topic.
 
@@ -108,25 +105,28 @@ let logging =
    let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
    ```
 
-4. **`broadcast_from` excluding the wrong socket.** `beryl.broadcast_from` excludes the socket ID you pass. Verify that the ID belongs to the sender in this same `beryl.Sockets` system. When PubSub is configured, that exclusion is preserved across nodes.
+4. **broadcast_from excluding the wrong socket.** `beryl.broadcast_from` excludes the socket whose ID you pass. Verify that the socket ID matches the sender.
 
 ---
 
 ## Presence is stale or incorrect
 
-**Symptoms:** Presence snapshots or `presence_diff` events do not reflect joins, leaves, or typing state.
+**Symptoms:** `presence.list` returns entries for users who have disconnected; joins/leaves are not reflected.
 
 **Checks:**
 
-1. **Did you attach a presence handle?** `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and `BroadcastPresence` require `beryl.with_presence_handle(presence_actor)`. Without it, those effects are dropped with a warning.
+1. **Untrack on `Closed`.** Return a `PresenceUntrack` effect from the `Closed` arm of `update`:
+   ```gleam
+   event.Closed(topic, _reason) ->
+     event.Next(model, [event.PresenceUntrack(topic, presence_key(model))])
+   ```
+   Presence entries tracked through effects are also cleaned up automatically when the topic closes; entries written with direct `presence.track` calls from outside `update` are your responsibility to untrack.
 
-2. **Are you returning the right effects?** `PresenceTrack` and `PresenceUntrack` emit standard Phoenix `presence_diff` updates automatically. If your UI expects a custom snapshot such as `presence_list`, return `PushPresence` or `BroadcastPresence` too.
+2. **Cross-node sync.** If running multiple nodes, each node must be configured with the same PubSub instance and each presence actor needs a unique replica ID. The CRDT merges state over PubSub; without PubSub, nodes have independent state.
 
-3. **Effect ordering matters.** Presence snapshot effects encode at apply time. Put `PresenceTrack` / `PresenceUntrack` before `PushPresence` / `BroadcastPresence` when you want the snapshot to reflect the new state.
+3. **`on_diff` not broadcasting.** If clients rely on receiving `presence_diff` events, confirm `on_diff` is configured and calls `beryl.broadcast_presence_diff`. See the [Presence guide](/guides/presence).
 
-4. **Cross-node sync.** If running multiple nodes, each node must use the same PubSub instance and each presence actor needs a unique replica ID. Without PubSub, nodes have independent presence state.
-
-5. **Clean up your own app model on `Closed`.** Presence entries tracked through effects are auto-untracked when a topic or socket closes, but any extra topic-local state you keep in your `Model` still needs to be pruned from your `event.Closed(topic, reason)` branch.
+4. **CRDT compaction.** The CRDT can accumulate causal history. Call `presence.compact` (on the state layer) if memory usage grows unexpectedly over a long uptime.
 
 ---
 
@@ -136,21 +136,21 @@ let logging =
 
 **Checks:**
 
-1. **`on_connect` bug.** Add logging to your `with_on_connect` callback to confirm tokens are being extracted correctly from headers or query parameters.
+1. **`on_connect` bug.** Add logging to your `on_connect` callback to confirm tokens are being extracted correctly from headers/query parameters.
 
-2. **Token validation error.** Make sure failed validation returns `Error(mist_transport.ConnectRejected)` (for connect-level auth) or a controlled `event.RejectJoin` (for join-level auth), not a panic.
+2. **Token validation error.** Check that your token validation logic handles expired or malformed tokens gracefully and returns `Error(Nil)` rather than panicking.
 
-3. **`update` returns `RejectJoin` for every `Join`.** Log the incoming topic and decode the join payload you expect. Join payloads arrive as `gleam/dynamic.Dynamic`, so shape mismatches are easy to miss without explicit decoding.
+3. **`update` rejecting every join.** Log the `payload` argument of the `Join` event to confirm the client is sending the expected shape. `payload` arrives as `Dynamic` (already decoded from the raw frame) — run your decoder against it explicitly.
 
 ---
 
 ## Heartbeat disconnects
 
-**Symptoms:** Clients are disconnected after a period of inactivity; `Closed(topic, HeartbeatTimeout)` follows.
+**Symptoms:** Clients are disconnected after a period of inactivity; `update` receives `Closed(topic, HeartbeatTimeout)`.
 
 **Checks:**
 
-1. **Client heartbeat interval vs. server timeout.** The Phoenix JS client sends heartbeats every 30 s by default. The beryl default server timeout is 60 s, which gives a safe margin. If you've lowered `heartbeat_timeout_ms`, ensure the client interval is at most half the server timeout.
+1. **Client heartbeat interval vs. server timeout.** The Phoenix JS client sends heartbeats every 30 s by default. The beryl default server timeout is 60 s, which gives a safe margin. If you've lowered `heartbeat_timeout_ms`, ensure the client interval is at least half the server timeout.
 
 2. **Load balancer idle timeout.** Some load balancers (AWS ALB, nginx) have their own WebSocket idle timeouts. Set the load balancer timeout to be longer than the client heartbeat interval, or configure load-balancer-level keepalives.
 
@@ -168,7 +168,7 @@ let logging =
 
 2. **Same pg scope.** All nodes must use the same `pg` scope name. `pubsub.default_config()` uses the default scope. If you customized it, make sure all nodes use the same value.
 
-3. **Subscribers joined the topic.** PubSub delivery is subscriber-based. If you're debugging your own consumers of `beryl/pubsub`, make sure you created a `subscriber`, called `pubsub.join(sub, topic)`, and folded `pubsub.selecting(sub, ...)` into the receiving actor.
+3. **broadcast_from exclusion is cluster-aware by socket id.** `beryl.broadcast_from` excludes the named socket locally and carries the excluded socket ID across PubSub. On remote nodes, all other sockets subscribed to the topic receive the message; a socket with the matching ID on a remote node is also suppressed.
 
 ---
 
@@ -178,11 +178,11 @@ let logging =
 
 **Checks:**
 
-1. **Check burst values.** The `burst` parameter sets the token bucket capacity. If burst is too small, a legitimate burst of messages (for example right after reconnect) can exceed the limit.
+1. **Check burst values.** The `burst` parameter sets the token bucket capacity. If burst is too small, a legitimate burst of messages (e.g., on reconnect) exceeds the limit.
 
-2. **Global vs. per-topic limits.** `message_rate` is per socket overall; `channel_rate` is per socket per joined topic; `topic_rate` overrides `channel_rate` for the first matching topic pattern.
+2. **message_rate vs. channel_rate.** `message_rate` is per-socket total; `channel_rate` is per-socket-per-topic. If a client joins many topics, `message_rate` limits across all of them while `channel_rate` limits each topic independently.
 
-3. **No client error is sent automatically.** Over-limit messages are dropped before your `update` function runs. If clients need explicit feedback, design that at the application protocol level.
+3. **No error is sent to the client.** Rate-limited messages are dropped silently (over-rate joins get an error reply). If you need clients to know they were limited, implement application-level feedback in `update`.
 
 ---
 
@@ -211,8 +211,8 @@ Without `proxy_http_version 1.1` and the upgrade headers, nginx downgrades to HT
 
 **Checks:**
 
-1. **Are you starting Beryl the right way?** `beryl.start(...)` already runs Beryl inside its own supervised subtree. If you use `beryl.child_spec(...)`, make sure the returned child spec is actually added to a running supervisor.
+1. **Crash loop exhausted the restart budget.** The runtime always starts supervised and restarts automatically, but after 3 restarts in 5 seconds the supervisor gives up and the crash propagates to the process that called `child_spec`. Check the logs for the underlying crash.
 
-2. **Panic in `init` or `update`.** Gleam's `assert` expressions panic on mismatch. Audit your `init`/`update` code for `let assert` expressions or partial matches that may fail on unexpected inputs.
+2. **Panic in your app code.** Crashes inside `init`/`update` are rescued and scoped to one socket or topic — they do not stop the runtime. A runtime-wide stop points at a crash outside the rescued paths; audit `let assert` expressions in code the runtime calls indirectly (e.g. presence `on_diff` callbacks).
 
-3. **A runtime crash affects every socket on that handle.** One runtime actor backs each `beryl.Sockets` system. After a crash, existing WebSocket connections close, clients must reconnect and rejoin, and the fresh runtime starts with no per-socket model or joined-topic state. See [Runtime & Effect Interpreter](/architecture/runtime/).
+3. **After a restart, clients must rejoin.** A restarted runtime has no socket state. Connected clients will see their topics close (or stop receiving replies) and the Phoenix JS client will reconnect and rejoin automatically.

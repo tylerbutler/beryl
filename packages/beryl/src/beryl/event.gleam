@@ -1,4 +1,4 @@
-//// Types for building app-side dispatch systems with `beryl.start`.
+//// Types for building app-side dispatch systems with `beryl.child_spec`.
 ////
 //// With app-side dispatch the application owns routing: beryl delivers
 //// every wire event for a socket to one `update` function, and the

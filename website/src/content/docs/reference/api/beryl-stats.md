@@ -1,6 +1,6 @@
 ---
 title: beryl/stats
-description: Local coordinator statistics.
+description: Local runtime statistics.
 ---
 
 <!--
@@ -9,12 +9,12 @@ description: Local coordinator statistics.
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-Local coordinator statistics.
+Local runtime statistics.
 
- Snapshots are point-in-time values captured when the local coordinator
+ Snapshots are point-in-time values captured when the local socket runtime
  services a request. They are intended for operational polling, not as an
  event stream. Poll no more frequently than roughly once per second so
- observation does not add meaningful coordinator load.
+ observation does not add meaningful runtime load.
 
 ## Types
 
@@ -28,7 +28,7 @@ pub type Snapshot
 
 ### `SnapshotError`
 
-Errors returned while requesting a coordinator snapshot.
+Errors returned while requesting a runtime snapshot.
 
 ```gleam
 pub type SnapshotError {
@@ -41,11 +41,11 @@ pub type SnapshotError {
 
 ##### `CoordinatorUnavailable`
 
-The local coordinator is not currently running.
+The local socket runtime is not currently running.
 
 ##### `RequestTimedOut`
 
-The coordinator did not service the request within the bounded timeout.
+The runtime did not service the request within the bounded timeout.
 
 ## Functions
 
@@ -59,7 +59,7 @@ pub fn active_topics(Snapshot) -> Int
 
 ### `connected_sockets`
 
-Return the number of sockets connected to the local coordinator.
+Return the number of sockets connected to the local runtime.
 
 ```gleam
 pub fn connected_sockets(Snapshot) -> Int
@@ -67,7 +67,7 @@ pub fn connected_sockets(Snapshot) -> Int
 
 ### `coordinator_mailbox_length`
 
-Return the coordinator mailbox length when it serviced the request.
+Return the runtime mailbox length when it serviced the request.
 
 ```gleam
 pub fn coordinator_mailbox_length(Snapshot) -> Int
@@ -85,7 +85,7 @@ pub fn joined_socket_topic_pairs(Snapshot) -> Int
 
 ### `registered_channel_handlers`
 
-Return the number of channel handlers registered with the coordinator.
+Return the number of app dispatch handlers (one for a running app).
 
 ```gleam
 pub fn registered_channel_handlers(Snapshot) -> Int
@@ -93,16 +93,16 @@ pub fn registered_channel_handlers(Snapshot) -> Int
 
 ### `snapshot`
 
-Request a point-in-time snapshot from the local coordinator.
+Request a point-in-time snapshot from the local runtime.
 
  The request waits for at most approximately one second. During a
- coordinator restart this returns `CoordinatorUnavailable` or
- `RequestTimedOut`; an overloaded coordinator returns `RequestTimedOut`.
+ runtime restart this returns `CoordinatorUnavailable` or
+ `RequestTimedOut`; an overloaded runtime returns `RequestTimedOut`.
  Neither condition panics. This API reports only the node represented by
  `channels`; aggregate multi-node statistics outside Beryl.
 
  Poll no more frequently than roughly once per second.
 
 ```gleam
-pub fn snapshot(beryl.Channels) -> Result(Snapshot, SnapshotError)
+pub fn snapshot(beryl.Sockets) -> Result(Snapshot, SnapshotError)
 ```
