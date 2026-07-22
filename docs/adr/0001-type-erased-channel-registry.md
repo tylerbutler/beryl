@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted (2026-07-21)
+Superseded (2026-07-21) by [ADR 0002](0002-app-side-dispatch.md). ADR 0002
+replaced the channel-module registry described below with app-side dispatch;
+this document is retained for historical context on why type erasure was
+chosen at the time and is no longer an accurate description of Beryl's
+public API.
 
 ## Context
 

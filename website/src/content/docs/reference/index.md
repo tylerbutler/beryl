@@ -4,14 +4,12 @@ description: Module map, wire protocol, broadcast cheatsheet, and client compati
 ---
 
 :::caution[Pre-1.0 Software]
-beryl is not yet 1.0. The API is unstable, features may be removed in minor releases, and quality should not be considered production-ready. We welcome usage and feedback in the meantime! See the [Stability policy](#pre-10-stability-policy) section below.
+beryl is not yet 1.0. The API is unstable and may change in minor releases. See the [Stability policy](#pre-10-stability-policy) section below.
 :::
 
-The canonical function-level API reference is generated from Gleam's docs metadata and published here:
+The canonical function-level API reference is the generated Gleam documentation hosted on HexDocs:
 
-**[API Reference](/reference/api/)**
-
-beryl is not on Hex yet, so there is no `hexdocs.pm` listing.
+**[https://hexdocs.pm/beryl/](https://hexdocs.pm/beryl/)**
 
 This page provides a module map, broadcast cheatsheet, Phoenix wire protocol reference, and client compatibility notes.
 
@@ -21,26 +19,17 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 
 | Module | What it does | When to use it |
 |---|---|---|
-| `beryl` | Top-level API: register channels, broadcast, `send_info` | Entry point for all applications |
-| `beryl/supervisor` | Supervised startup: builds beryl's child specification and resolves stable subsystem handles | Starting beryl — this is the only entry point |
-| `beryl/channel` | Channel builder, callback types, `HandleResult` | Defining channel behaviour |
-| `beryl/socket` | Socket abstraction, assigns helpers | Inside channel callbacks |
+| `beryl` | Top-level app-side dispatch lifecycle, config builders, and broadcast helpers | Entry point for starting/stopping a Beryl socket system |
+| `beryl/event` | `Event`, `Next`, `Effect`, `ConnectInfo`, and `Sender` types | Writing your app's `init` and `update` functions |
+| `beryl/bridge` | Forward an external OTP actor's message stream into `event.Info(...)` | Bridging domain actors to one socket without hand-rolled forwarders |
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
-| `beryl/pubsub` | Distributed PubSub backed by Erlang `pg`, generic over payload type | Multi-node fan-out, cluster broadcasts |
+| `beryl/pubsub` | Distributed PubSub backed by Erlang `pg`, with typed subscribers and topic joins/leaves | Multi-node fan-out, cluster broadcasts, custom background consumers |
 | `beryl/presence` | OTP actor wrapping the presence CRDT, plus opaque `Diff` accessors | Tracking who is online |
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
-| `beryl/bridge` | Forwards an external OTP actor's stream to a socket channel | Pushing a domain actor's updates to clients |
-| `beryl/error` | Opaque `StartFailure` type returned by subsystem start functions | Handling startup errors |
-| `beryl/wire` | Phoenix-compatible codec and JSON helpers | Phoenix clients, custom transports, protocol debugging |
+| `beryl/wire` | Phoenix-compatible codec and Dynamic→JSON helpers | Phoenix clients, payload relays, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
-| `beryl/transport` | Transport SPI: socket lifecycle, inbound routing, edge rate limiting | Writing a custom WebSocket transport |
-| `beryl/stats` | Point-in-time local coordinator snapshots and typed availability/timeout errors | Operational polling and application metrics |
-| `beryl_mist` | Mist WebSocket upgrade and dispatch (separate `beryl_mist` package) | Wiring beryl to a Mist server |
-| `beryl_ewe` | Ewe WebSocket upgrade and dispatch (separate `beryl_ewe` package); mirrors the `beryl_mist` API | Wiring beryl to an Ewe server |
-
-For the stable `:telemetry` event taxonomy, snapshot semantics, and
-application-owned Prometheus/Grafana export pattern, see the
-[Observability guide](/guides/observability/).
+| `beryl/transport` | Transport SPI: socket lifecycle, inbound routing, and edge rate limiting | Writing a custom transport package |
+| `beryl_mist` | Mist WebSocket upgrade and request handler integration (separate `beryl_mist` package) | Wiring beryl to a Mist HTTP server |
 
 ---
 
@@ -48,14 +37,15 @@ application-owned Prometheus/Grafana export pattern, see the
 
 | Goal | API | Notes |
 |---|---|---|
-| Reply to an incoming message | `channel.Reply(event, payload, socket)` from `handle_in` | Sends `phx_reply` with `"status": "ok"`; the `event` arg is ignored on the wire — reply is keyed by ref |
-| Fail an incoming message | `channel.ReplyError(payload, socket)` from `handle_in` | Sends `phx_reply` with `"status": "error"`, firing the client's `receive("error", ...)` hook. `Reply` cannot do this — it is always `"ok"` |
-| Push to the current socket only | `channel.Push(event, payload, socket)` from `handle_in` or `handle_info` | Server-originated push on this socket's topic |
-| No response | `channel.NoReply(socket)` | Use when the callback has no output |
-| Broadcast to all sockets on a topic | `beryl.broadcast(channels, topic, event, payload)` | All subscribers including the sender |
-| Broadcast, excluding sender | `beryl.broadcast_from(channels, socket.id(socket), topic, event, payload)` | Second arg is `except_socket_id: String`; use `socket.id/1` to extract it when you have a `Socket` value. Skips the originating socket; works across PubSub nodes |
-| Send an OTP message to a joined channel context | `beryl.send_info(channels, socket_id, topic_name, message)` | Delivers the typed message to `handle_info`; the callback receives the concrete `info` value — no `Dynamic` decode and no unsafe cast required |
-| Broadcast presence diff | `beryl.broadcast_presence_diff(channels, topic, diff)` | Encodes Phoenix-shaped `joins`/`leaves`; only named topic entries are included |
+| Accept a join | `event.AcceptJoin(ref, reply)` from `event.Join` | Sends the join `phx_reply` and subscribes the socket to the topic |
+| Reject a join | `event.RejectJoin(ref, reason)` from `event.Join` | Fails the join immediately; unanswered joins are rejected automatically too |
+| Reply to an incoming message | `event.ReplyOk(ref, payload)` or `event.ReplyError(ref, payload)` from `event.Message(..., Some(ref))` | Sends `phx_reply`; replies are keyed by ref, not by event name |
+| Push to the current socket only | `event.Push(topic, event, payload)` | Server-originated push on a topic this socket already joined |
+| No response | `event.Next(model, [])` | Continue without outgoing frames or side effects |
+| Broadcast to all sockets on a topic | `event.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
+| Broadcast, excluding sender | `event.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
+| Send a typed server-side message to one socket | `event.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `event.Info(message)` |
+| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; `PresenceTrack` / `PresenceUntrack` already emit standard diffs |
 
 ---
 
@@ -81,21 +71,17 @@ beryl speaks the same JSON array wire format as Phoenix channels. All frames are
 |---|---|---|
 | `phx_join` | client → server | Request to join a topic |
 | `phx_leave` | client → server | Unsubscribe from a topic |
-| `phx_reply` | server → client | Reply to a client message, `"status"` of `"ok"` or `"error"`. Rejected joins arrive this way, not as `phx_error` |
-| `phx_error` | server → client | The channel terminated abnormally |
+| `phx_reply` | server → client | Reply to a client message |
+| `phx_error` | server → client | Join rejected or channel error |
 | `phx_close` | server → client | Channel closed by server |
 | `heartbeat` | client → server | Keep-alive ping (topic `"phoenix"`) |
 
 ### Reply shape (`phx_reply`)
 
-Sent in response to any client message. The `event` arg passed to `channel.Reply` is not reflected on the wire — the frame always uses `phx_reply` and the original `ref`. `status` is what distinguishes success from failure, and it is set by which result you return, never by the payload:
+Sent in response to any client message. `event.ReplyOk` and `event.ReplyError` always serialize as `phx_reply` keyed by the original ref.
 
 ```json
-// channel.Reply(event, payload, socket)
 [join_ref, original_ref, "topic:name", "phx_reply", {"status": "ok", "response": <your_payload>}]
-
-// channel.ReplyError(payload, socket)
-[join_ref, original_ref, "topic:name", "phx_reply", {"status": "error", "response": <your_payload>}]
 ```
 
 A join reply uses the `join_ref` as both `join_ref` and `ref`:
@@ -146,7 +132,7 @@ When started with `wire.phoenix_codec()`, beryl uses the standard Phoenix wire f
 | Phoenix Swift / Kotlin clients | Community Phoenix clients; wire-compatible |
 | Plain WebSocket | Use the JSON array format directly; no reconnect logic |
 
-The WebSocket upgrade path is caller-provided — there is no default. Pass the path when constructing your transport config with `mist_transport.default_config(path)`. The Phoenix JS client appends `/websocket` to the socket endpoint, so if you configure the client with `"/socket"`, mount your handler at `"/socket/websocket"`. See the [WebSocket Transport guide](/guides/websocket/) for details.
+The WebSocket upgrade path is caller-provided — there is no default. Pass the path when constructing your transport config with `mist_transport.default_config(path)`. The Phoenix JS client appends `/websocket` to the socket endpoint, so if you configure the client with `"/socket"`, mount your handler at `"/socket/websocket"`. See the [WebSocket Transport guide](/guides/websocket) for details.
 
 ---
 
@@ -157,6 +143,6 @@ beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**.
 - **Minor version bumps** (`0.x → 0.x+1`) may include breaking changes to the public API.
 - **Patch version bumps** (`0.x.y → 0.x.y+1`) fix bugs without intentional breakage.
 - Public API is defined as the exports of the modules listed in the module map above.
-- Coordinator, rate-limit, and internal helper modules are intentionally hidden from downstream packages. Transports integrate through the public `beryl/transport` SPI; `beryl_mist` and `beryl_ewe` are the supported WebSocket transports.
+- The internal modules `beryl/connection_limit`, `beryl/internal`, `beryl/log`, `beryl/rate_limit`, and `beryl/runtime` are intentionally hidden from downstream packages. Transports integrate through the public `beryl/transport` SPI; `beryl_mist` is the supported Mist WebSocket transport.
 
 Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) before upgrading to a new minor version.

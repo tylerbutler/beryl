@@ -1,11 +1,12 @@
 ---
 title: Groups
+description: Organize topics into named server-side collections and broadcast to all of them with one call.
 ---
 
-Groups are **server-side named collections of topics**. They let you broadcast a single event to many topics at once without tracking subscriptions yourself — similar to Socket.IO rooms or SignalR groups, but adapted to beryl's topic/channel model.
+Groups are **server-side named collections of topics**. They let you broadcast one event to many topics without tracking those topic lists yourself.
 
 :::note[Server-side only]
-Groups are a server concern. Clients join individual topics via `phx_join`; they have no concept of groups. Groups exist purely to make multi-topic server broadcasts convenient.
+Clients join ordinary topics such as `room:lobby`. Groups are a server convenience for your own code.
 :::
 
 ## Starting the groups actor
@@ -16,7 +17,7 @@ import beryl/group
 let assert Ok(groups) = group.start()
 ```
 
-`group.start()` returns `Result(Groups, GroupStartError)`. The only failure case is `GroupActorStartFailed` — an OTP actor spawn failure.
+`group.start()` returns `Result(group.Groups, group.GroupStartError)`. The only startup failure is `GroupActorStartFailed`.
 
 ## Creating and deleting groups
 
@@ -27,142 +28,113 @@ let assert Ok(Nil) = group.create(groups, "team:engineering")
 // Error: GroupAlreadyExists if the name is taken
 case group.create(groups, "team:engineering") {
   Ok(Nil) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // already there
+  Error(group.GroupAlreadyExists) -> Nil
   Error(_) -> Nil
 }
 
-// Delete a group (removes it and all its topic memberships)
+// Delete a group (removes it and all topic memberships)
 let assert Ok(Nil) = group.delete(groups, "team:engineering")
-
-// Error: GroupNotFound if it doesn't exist
-case group.delete(groups, "team:gone") {
-  Ok(Nil) -> Nil
-  Error(group.GroupNotFound) -> Nil
-  Error(_) -> Nil
-}
 ```
 
 ## Adding and removing topics
 
-Topics are plain strings that match existing channel topics. Groups do not validate that a topic has any subscribers — they are just sets of strings.
+Groups store plain topic strings. They do not care whether a topic currently has subscribers.
 
 ```gleam
 let assert Ok(Nil) = group.add(groups, "team:engineering", "room:frontend")
 let assert Ok(Nil) = group.add(groups, "team:engineering", "room:backend")
 let assert Ok(Nil) = group.add(groups, "team:engineering", "room:infra")
 
-// Remove one topic
 let assert Ok(Nil) = group.remove(groups, "team:engineering", "room:infra")
-
-// Both add and remove return Error(GroupNotFound) if the group doesn't exist
 ```
 
-Adding the same topic twice is a no-op (topics are stored in a set).
+Adding the same topic twice is a no-op because groups store topics in a set.
 
 ## Inspecting groups
 
 ```gleam
-// List all topics in a group
+import gleam/set
+
 case group.topics(groups, "team:engineering") {
-  Ok(topic_set) -> set.to_list(topic_set)  // ["room:frontend", "room:backend"]
+  Ok(topic_set) -> set.to_list(topic_set)
   Error(group.GroupNotFound) -> []
   Error(_) -> []
 }
 
-// List all group names
-let names = group.list_groups(groups)  // ["team:engineering", "team:design"]
+let names = group.list_groups(groups)
 ```
 
 ## Broadcasting to a group
 
-`group.broadcast` sends an event to every topic in the named group using `beryl.broadcast` internally. It is **fire-and-forget**: the return type is `Nil`, not `Result`. If the named group does not exist, the call silently does nothing.
+`group.broadcast` sends through `beryl.broadcast` for every topic in the named group.
 
 ```gleam
+import beryl
+import gleam/json
+
 group.broadcast(
   groups,
-  channels,
+  sockets,
   "team:engineering",
   "deploy_started",
   json.object([#("env", json.string("production"))]),
 )
 ```
 
-This is equivalent to calling `beryl.broadcast` on each topic in the group in sequence.
+Signature shape:
 
-:::note[Missing group is a no-op]
-`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `GroupNotFound`.
-:::
+```gleam
+pub fn broadcast(
+  groups: group.Groups,
+  sockets: beryl.Sockets,
+  group_name: String,
+  event: String,
+  payload: json.Json,
+) -> Nil
+```
+
+Missing groups are a silent no-op.
+
+## Starting groups alongside Beryl
+
+Groups are **independent** of the Beryl runtime subtree. Start them separately, then use the handle anywhere you already have `beryl.Sockets`.
+
+```gleam
+import beryl
+import beryl/event as event
+import beryl/group
+import beryl/wire
+
+fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+  #(Nil, [])
+}
+
+fn update(model: Nil, _event: event.Event(Nil)) -> event.Next(Nil, Nil) {
+  event.Next(model, [])
+}
+
+let assert Ok(groups) = group.start()
+let assert Ok(sockets) =
+  beryl.start(beryl.config(wire.phoenix_codec()), init: init, update: update)
+
+let assert Ok(Nil) = group.create(groups, "team:eng")
+let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
+
+group.broadcast(groups, sockets, "team:eng", "alert", payload)
+```
+
+If your application supervises groups, do that in your own tree. They are not part of the Beryl subtree returned by `beryl.start` or `beryl.child_spec`.
 
 ## Error reference
 
-Group operations return `GroupError`:
-
-| `GroupError` | When |
+| Error | When |
 |-------|------|
 | `GroupAlreadyExists` | `create` called for a name already in use |
-| `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
+| `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group |
+| `GroupActorStartFailed` | `group.start()` could not start the actor |
 
-Startup has its own separate type, `GroupStartError`:
+## Next steps
 
-| `GroupStartError` | When |
-|-------|------|
-| `GroupActorStartFailed` | `group.start()` — the internal group actor failed to initialize |
-
-## Full example: team rooms
-
-```gleam
-import beryl
-import beryl/group
-import gleam/json
-
-// At startup
-let assert Ok(groups) = group.start()
-let assert Ok(Nil) = group.create(groups, "team:eng")
-let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
-let assert Ok(Nil) = group.add(groups, "team:eng", "room:backend")
-
-// Later: broadcast deployment notice to all engineering rooms
-group.broadcast(
-  groups,
-  channels,
-  "team:eng",
-  "deploy_complete",
-  json.object([
-    #("version", json.string("1.4.2")),
-    #("deployed_by", json.string("ci")),
-  ]),
-)
-
-// When a team is disbanded
-let assert Ok(Nil) = group.delete(groups, "team:eng")
-```
-
-## Using groups with the supervisor
-
-When using `beryl/supervisor`, enable groups in the supervised configuration, add beryl to the application's supervision tree, then resolve the stable groups handle with `supervisor.groups`:
-
-```gleam
-import beryl
-import beryl/group
-import beryl/supervisor
-import beryl/wire
-import gleam/option.{None, Some}
-import gleam/otp/static_supervisor
-
-let beryl =
-  supervisor.config(beryl.config(wire.phoenix_codec()))
-  |> supervisor.with_groups()
-
-let assert Ok(_root) =
-  static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(supervisor.start(beryl))
-  |> static_supervisor.start()
-
-case supervisor.groups(beryl) {
-  Some(g) ->
-    group.broadcast(g, supervisor.channels(beryl), "team:eng", "alert", payload)
-  None -> Nil
-}
-```
-
-See the [Supervision guide](/guides/supervision/) for details on the supervised startup pattern.
+- [App-Side Dispatch](/guides/dispatch/) — route joins and messages, then call `group.broadcast` from your own app logic
+- [Backend Integration](/guides/backend-integration/) — publish into Beryl from ordinary HTTP handlers and background processes
+- [Supervision](/guides/supervision/) — understand which processes Beryl owns and which ones, like groups, stay application-owned
