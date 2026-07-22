@@ -140,6 +140,7 @@ examples-test: examples-build
     pnpm -C examples/cursors test
     pnpm -C examples/chatrooms test
     pnpm -C examples/collab_docs test
+    pnpm -C examples/showcase test
 
 # Build the cursors example Docker image (must run from repo root for path-based beryl dep)
 examples-cursors-docker tag="beryl-cursors":

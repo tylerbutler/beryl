@@ -1,37 +1,56 @@
+//// Showcase: all three example channels on one socket, composed through
+//// app-side dispatch (ADR 0002).
+////
+//// This is the acceptance-gate example for the `beryl.start_app` API: the
+//// cursors, chatrooms, and collab_docs packages each export an embeddable
+//// `Model`/`join`/`update`/`closed` triple (`<example>/app`), and this app
+//// owns the socket-wide model and router — one `Dict` of sub-models per
+//// topic namespace, routed by topic prefix, pruned on `Closed`.
+
 import beryl
+import beryl/event.{type Event, type Next}
 import beryl/group
 import beryl/presence
 import beryl/wire
 import beryl_mist as mist_transport
-import chatrooms/chat_channel
+import chatrooms/app as chat_app
 import chatrooms/router as chatrooms_router
+import collab_docs/app as docs_app
 import collab_docs/auth as docs_auth
-import collab_docs/channel as docs_channel
 import collab_docs/doc_store
 import collab_docs/router as collab_docs_router
-import cursors/cursor_channel
+import cursors/app as cursors_app
 import cursors/router as cursors_router
 import envoy
+import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/json
+import gleam/option.{None, Some}
 import gleam/result
 import mist
 import showcase/router
 
+/// Socket-wide state: one sub-model per joined topic, grouped by the
+/// namespace that owns it. `Closed` events prune their entry.
+type Model {
+  Model(
+    socket_id: String,
+    cursors: Dict(String, cursors_app.Model),
+    rooms: Dict(String, chat_app.Model),
+    docs: Dict(String, docs_app.Model),
+  )
+}
+
+/// Dependencies for the three embedded apps.
+type Ctx {
+  Ctx(cursors: cursors_app.Ctx, rooms: chat_app.Ctx, docs: docs_app.Ctx)
+}
+
 pub fn main() {
-  // Single beryl instance, rate-limited using cursors' tighter knobs
-  // (cursors emits the most messages per second of the three examples).
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_message_rate(per_second: 30, burst: 60)
-    |> beryl.with_join_rate(per_second: 5, burst: 10)
-    |> beryl.with_channel_rate(per_second: 10, burst: 20)
-
-  let assert Ok(channels) = beryl.start(config)
-
-  // Shared presence actor — each example's handler scopes presence to its
-  // own topic namespace, so a single actor is safe.
+  // Shared presence actor — each embedded app scopes presence to its own
+  // topic namespace, so a single actor is safe.
   let presence_config = presence.default_config("node1")
   let assert Ok(presence_actor) = presence.start(presence_config)
 
@@ -46,16 +65,40 @@ pub fn main() {
   let docs_secret = docs_auth.new_secret()
   let assert Ok(docs_store) = doc_store.start()
 
-  // Register all three handlers on the single channels instance. Topic
-  // namespaces (cursor:*, room:*, document:*:*) don't collide.
-  let cursors_handler = cursor_channel.new_handler(channels, presence_actor)
-  let assert Ok(_) = beryl.register(channels, "cursor:*", cursors_handler)
+  let ctx =
+    Ctx(
+      cursors: cursors_app.Ctx(presence: presence_actor),
+      rooms: chat_app.Ctx(presence: presence_actor, groups: groups),
+      docs: docs_app.Ctx(store: docs_store, secret: docs_secret),
+    )
 
-  let chat_handler = chat_channel.new_handler(channels, presence_actor, groups)
-  let assert Ok(_) = beryl.register(channels, "room:*", chat_handler)
+  // Per-topic-pattern rate limits replace the old single global
+  // channel-rate compromise: cursors stream fast, chat and docs do not.
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
+    |> beryl.with_join_rate(per_second: 5, burst: 10)
+    |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
+    |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
+    |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
+    |> beryl.with_presence_handle(presence_actor)
 
-  let docs_handler = docs_channel.new_handler(channels, docs_store, docs_secret)
-  let assert Ok(_) = beryl.register(channels, "document:*:*", docs_handler)
+  let assert Ok(channels) =
+    beryl.start_app(
+      config,
+      init: fn(info: event.ConnectInfo(Nil)) {
+        #(
+          Model(
+            socket_id: info.socket_id,
+            cursors: dict.new(),
+            rooms: dict.new(),
+            docs: dict.new(),
+          ),
+          [],
+        )
+      },
+      update: fn(model, ev) { update(ctx, model, ev) },
+    )
 
   // Build per-example contexts pinned to their URL prefix.
   let cursors_ctx =
@@ -93,7 +136,7 @@ pub fn main() {
     envoy.get("BIND_ADDRESS")
     |> result.unwrap("localhost")
 
-  io.println("✨ beryl examples showcase")
+  io.println("✨ beryl examples showcase (app-side dispatch)")
   io.println("   Listening on " <> interface <> ":" <> int.to_string(port))
   io.println("")
 
@@ -115,4 +158,159 @@ pub fn main() {
     |> mist.start
 
   process.sleep_forever()
+}
+
+/// The socket-wide router: dispatch every event to the embedded app that
+/// owns its topic namespace, threading that app's sub-model through the
+/// per-namespace `Dict`.
+fn update(ctx: Ctx, model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
+  case ev {
+    event.Join(topic, payload, ref) ->
+      case topic {
+        "cursor:" <> _ -> {
+          let #(joined, effects) =
+            cursors_app.join(ctx.cursors, model.socket_id, topic, payload, ref)
+          event.Next(store_cursor(model, topic, joined), effects)
+        }
+        "room:" <> _ -> {
+          let #(joined, effects) =
+            chat_app.join(ctx.rooms, model.socket_id, topic, payload, ref)
+          event.Next(store_room(model, topic, joined), effects)
+        }
+        "document:" <> _ -> {
+          let #(joined, effects) =
+            docs_app.join(ctx.docs, model.socket_id, topic, payload, ref)
+          event.Next(store_doc(model, topic, joined), effects)
+        }
+        _ ->
+          event.Next(model, [
+            event.RejectJoin(
+              ref,
+              json.object([#("reason", json.string("unknown_topic"))]),
+            ),
+          ])
+      }
+
+    event.Message(topic, event_name, payload, ref) ->
+      case topic {
+        "cursor:" <> _ ->
+          case dict.get(model.cursors, topic) {
+            Ok(sub) -> {
+              let #(sub, effects) =
+                cursors_app.update(
+                  ctx.cursors,
+                  model.socket_id,
+                  topic,
+                  sub,
+                  event_name,
+                  payload,
+                )
+              event.Next(store_cursor(model, topic, Some(sub)), effects)
+            }
+            Error(Nil) -> event.Next(model, [])
+          }
+        "room:" <> _ ->
+          case dict.get(model.rooms, topic) {
+            Ok(sub) -> {
+              let #(sub, effects) =
+                chat_app.update(
+                  ctx.rooms,
+                  model.socket_id,
+                  topic,
+                  sub,
+                  event_name,
+                  payload,
+                  ref,
+                )
+              event.Next(store_room(model, topic, Some(sub)), effects)
+            }
+            Error(Nil) -> event.Next(model, [])
+          }
+        "document:" <> _ ->
+          case dict.get(model.docs, topic) {
+            Ok(sub) -> {
+              let #(sub, effects) =
+                docs_app.update(
+                  ctx.docs,
+                  model.socket_id,
+                  topic,
+                  sub,
+                  event_name,
+                  payload,
+                  ref,
+                )
+              event.Next(store_doc(model, topic, Some(sub)), effects)
+            }
+            Error(Nil) -> event.Next(model, [])
+          }
+        _ -> event.Next(model, [])
+      }
+
+    event.Closed(topic, _reason) ->
+      case topic {
+        "cursor:" <> _ ->
+          case dict.get(model.cursors, topic) {
+            Ok(sub) ->
+              event.Next(
+                Model(..model, cursors: dict.delete(model.cursors, topic)),
+                cursors_app.closed(ctx.cursors, model.socket_id, topic, sub),
+              )
+            Error(Nil) -> event.Next(model, [])
+          }
+        "room:" <> _ ->
+          case dict.get(model.rooms, topic) {
+            Ok(sub) ->
+              event.Next(
+                Model(..model, rooms: dict.delete(model.rooms, topic)),
+                chat_app.closed(ctx.rooms, model.socket_id, topic, sub),
+              )
+            Error(Nil) -> event.Next(model, [])
+          }
+        "document:" <> _ ->
+          case dict.get(model.docs, topic) {
+            Ok(sub) ->
+              event.Next(
+                Model(..model, docs: dict.delete(model.docs, topic)),
+                docs_app.closed(ctx.docs, model.socket_id, topic, sub),
+              )
+            Error(Nil) -> event.Next(model, [])
+          }
+        _ -> event.Next(model, [])
+      }
+
+    event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
+  }
+}
+
+fn store_cursor(
+  model: Model,
+  topic: String,
+  sub: option.Option(cursors_app.Model),
+) -> Model {
+  case sub {
+    Some(sub) -> Model(..model, cursors: dict.insert(model.cursors, topic, sub))
+    None -> model
+  }
+}
+
+fn store_room(
+  model: Model,
+  topic: String,
+  sub: option.Option(chat_app.Model),
+) -> Model {
+  case sub {
+    Some(sub) -> Model(..model, rooms: dict.insert(model.rooms, topic, sub))
+    None -> model
+  }
+}
+
+fn store_doc(
+  model: Model,
+  topic: String,
+  sub: option.Option(docs_app.Model),
+) -> Model {
+  case sub {
+    Some(sub) -> Model(..model, docs: dict.insert(model.docs, topic, sub))
+    None -> model
+  }
 }
