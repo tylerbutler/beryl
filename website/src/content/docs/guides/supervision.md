@@ -2,119 +2,124 @@
 title: Supervision
 ---
 
-`beryl/supervisor` integrates Beryl into your application's OTP supervision tree. It does not expose a separate function that starts an unmanaged Beryl process. Instead, `supervisor.start` returns a supervisor child specification for your root supervisor.
+Beryl supervises itself. `beryl.start_app` has no unsupervised mode: the
+runtime actor always starts under an internal supervisor, with your
+`init`/`update` functions captured in the child specification. You do not
+add Beryl to a supervision tree — you call `start_app` once at application
+startup and hold on to the returned `Channels` handle.
 
-## Add Beryl to your application supervisor
+## What start_app supervises
+
+```text
+beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
+`- runtime actor (Transient)
+```
+
+- The **runtime actor** holds every socket's model and dispatches events to
+  your `update` function. If it crashes, the supervisor restarts it with
+  dispatch intact — the `init`/`update` closures live in the child
+  specification, so no re-registration step exists or is needed.
+- The runtime is registered under a stable name, so the `Channels` handle
+  (and every transport connection holding it) keeps working across
+  restarts. Sends that race a restart window degrade to quiet no-ops
+  instead of crashes.
+- The child is `Transient`: a graceful `beryl.stop` is final and is not
+  resurrected.
+
+After **3 restarts in 5 seconds** the internal supervisor gives up and
+exits, taking the process that called `start_app` with it (they are
+linked). Crash loops surface loudly instead of spinning forever.
+
+## What a restart means for your app
+
+A runtime restart drops **per-socket state**: models, joined topics, and
+pending joins. Connected clients keep their WebSocket connection (the
+transport processes are independent), but their topics are no longer
+joined on the server. The Phoenix JS client handles this the same way it
+handles any server restart — rejoin on the next error/timeout — and your
+`init` runs again when sockets reconnect.
+
+Crashes inside `update` itself do **not** restart the runtime. Beryl
+rescues callback crashes and contains the blast radius to the socket that
+triggered them:
+
+| Crash site | Effect |
+|------------|--------|
+| `init` | The connecting socket is not registered; others unaffected |
+| `update` on `Join` | The join is rejected; the socket survives |
+| `update` on `Message`/`Binary` | Only that topic is closed |
+| `update` on `Info` | The socket is torn down |
+| `update` on `Closed` | Logged; the close completes anyway |
+
+See the [Error Handling guide](/guides/error-handling/) for details.
+
+## Presence and groups
+
+`presence.start` and `group.start` return plain OTP actors linked to the
+calling process. Start them alongside `start_app` from your long-lived
+application process:
 
 ```gleam
 import beryl
+import beryl/group
 import beryl/presence
-import beryl/supervisor
 import beryl/wire
-import gleam/otp/static_supervisor
 
 pub fn main() {
-  let beryl =
-    supervisor.config(beryl.config(wire.phoenix_codec()))
-    |> supervisor.with_presence(presence.default_config("node1"))
-    |> supervisor.with_groups()
+  let assert Ok(presence_actor) =
+    presence.start(presence.default_config("node1"))
+  let assert Ok(groups) = group.start()
 
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(beryl))
-    |> static_supervisor.start()
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(presence_actor),
+      init: init,
+      update: update,
+    )
 
-  let channels = supervisor.channels(beryl)
-  let presence = supervisor.presence(beryl)
-  let groups = supervisor.groups(beryl)
-
-  // Register channels and start the rest of the application.
+  // ... start the transport, run forever
 }
 ```
 
-The application owns the root supervisor and its lifecycle. Beryl only provides the child specification for its subtree.
-
-## SupervisedConfig
-
-`SupervisedConfig` contains both the subsystem configuration and stable names for the supervised processes. Build it with `supervisor.config` and refine it with the `with_*` functions:
-
-```gleam
-let beryl =
-  supervisor.config(beryl.config(wire.phoenix_codec()))
-  |> supervisor.with_presence(presence.default_config("node1"))
-  |> supervisor.with_groups()
-```
-
-The coordinator is always included. Omit `with_presence` to skip presence and `with_groups` to skip groups.
-
-The accessor functions resolve stable named subjects, so the same handles continue routing to replacement processes after a crash:
-
-```gleam
-supervisor.channels(beryl)  // beryl.Channels
-supervisor.presence(beryl)  // Option(presence.Presence)
-supervisor.groups(beryl)    // Option(group.Groups)
-```
-
-Add `supervisor.start(beryl)` to a running supervision tree before using these handles.
-
-## The start return type
-
-`supervisor.start` returns:
-
-```gleam
-supervision.ChildSpecification(static_supervisor.Supervisor)
-```
-
-This is the type accepted by `static_supervisor.add`. The child specification starts a supervisor process, so OTP applies supervisor shutdown semantics and can restart the entire Beryl subtree as part of the application's tree.
-
-## Restart strategy
-
-The Beryl subtree has a one-for-one parent with two independent children:
-
-```text
-beryl supervisor (one-for-one)
-|- connection limiter (optional)
-`- channel supervisor (rest-for-one)
-   |- registry
-   |- coordinator
-   |- presence (optional)
-   `- groups (optional)
-```
-
-- A connection limiter crash restarts only the limiter.
-- The registry survives coordinator crashes, preserving channel registrations.
-- The connection limiter survives coordinator crashes, preserving live connection counts.
-- A coordinator crash restarts the coordinator, presence, and groups.
-- A presence crash restarts presence and groups.
-- A groups crash restarts only groups.
-
-The default restart tolerance is **3 restarts in 5 seconds** before the Beryl supervisor itself shuts down and lets its parent decide what to do next.
+Both also offer `start_named` variants that register the actor under a
+`process.Name` for callers integrating them into their own supervision
+arrangements.
 
 :::note[PubSub is not supervised]
-`beryl/pubsub` is backed by Erlang's `pg` module, whose lifecycle is managed by the BEAM runtime. Configure it with `beryl.with_pubsub`.
+`beryl/pubsub` is backed by Erlang's `pg` module, whose lifecycle is
+managed by the BEAM runtime. Configure it with `beryl.with_pubsub`.
 :::
 
 ## Startup errors
 
-Configuration and child startup failures are reported when the application starts its root supervisor:
+`start_app` validates its configuration and reports child startup failures
+directly:
 
 ```gleam
-case
-  static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(supervisor.start(beryl))
-  |> static_supervisor.start()
-{
-  Ok(root) -> run(root)
-  Error(error) -> handle_start_error(error)
+case beryl.start_app(config, init: init, update: update) {
+  Ok(channels) -> run(channels)
+  Error(beryl.InvalidHeartbeatTimeout) ->
+    // heartbeat_timeout_ms below 2 would silently disable eviction
+    panic as "fix the heartbeat config"
+  Error(beryl.RuntimeStartFailed(failure)) ->
+    handle_start_failure(failure)
 }
 ```
 
-A heartbeat timeout below 2 is reported as `actor.InitFailed("invalid heartbeat timeout")`.
+## Stopping
+
+`beryl.stop(channels)` drains sockets gracefully: every joined topic
+receives a `Closed` event, transport connections are closed, and the
+runtime exits without being restarted. Calling `stop` again — or using the
+handle after `stop` — is a quiet no-op.
 
 ## Production checklist
 
-- Add `supervisor.start(config)` to the application's root supervision tree.
-- Start the root supervisor before registering channels or using subsystem handles.
+- Call `start_app` once, from a process that lives as long as the
+  application (crash loops propagate to it by design).
+- Start presence and groups before `start_app` so the config can carry the
+  presence handle.
 - Configure PubSub when running more than one BEAM node.
-- Configure rate limits to protect against runaway clients.
-- Let the application supervisor own startup, shutdown, and restart policy.
+- Configure rate limits to protect against runaway clients — see
+  [Production Hardening](/guides/production-hardening/).

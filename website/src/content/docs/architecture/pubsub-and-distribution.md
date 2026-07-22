@@ -40,10 +40,10 @@ pub type PubSubFrom {
 
 ## Exclusion Semantics
 
-`broadcast_from` and `broadcast_from_socket` implement **sender exclusion**: the originating process does not receive its own broadcast. This prevents a channel coordinator from echoing a message back to the socket that sent it.
+`broadcast_from` and `broadcast_from_socket` implement **sender exclusion**: the originating process does not receive its own broadcast. This prevents a runtime from echoing a message back to the socket that sent it.
 
 - `broadcast_from(ps, from, ...)` — skips delivery to the process whose `Pid` matches `from`.
-- `broadcast_from_socket(ps, from, except_socket_id, ...)` — also skips delivery to `from`, and carries `FromSocket(from, except_socket_id)` in the message so that any remote coordinator receiving it can optionally suppress re-delivery to a matching socket ID on their node.
+- `broadcast_from_socket(ps, from, except_socket_id, ...)` — also skips delivery to `from`, and carries `FromSocket(from, except_socket_id)` in the message so that any remote runtime receiving it can optionally suppress re-delivery to a matching socket ID on their node.
 
 :::caution[Regression-prone contract]
 The exclusion behaviour is load-bearing for channel correctness. If the comparison `pid == from` is ever changed or skipped, senders will receive their own messages. Tests that cover `broadcast_from` exclusion must be preserved when refactoring the PubSub layer.
@@ -54,17 +54,17 @@ The exclusion behaviour is load-bearing for channel correctness. If the comparis
 ```mermaid
 flowchart LR
   subgraph Node1
-    A[socket A] --- C1[coordinator]
+    A[socket A] --- C1[runtime]
   end
   subgraph Node2
-    B[socket B] --- C2[coordinator]
+    B[socket B] --- C2[runtime]
   end
   C1 -- pg broadcast --> PG((pg group: topic))
   C2 -- subscribe --> PG
   PG -- deliver --> C2
 ```
 
-When socket A sends a message on Node 1, its coordinator calls `broadcast_from`, which iterates the `pg` group members. Members on Node 2 receive the message via Erlang distribution — no extra message-bus infrastructure is required.
+When socket A sends a message on Node 1, its runtime calls `broadcast_from`, which iterates the `pg` group members. Members on Node 2 receive the message via Erlang distribution — no extra message-bus infrastructure is required.
 
 ## Trust Model
 
@@ -75,13 +75,13 @@ the Erlang cookie and network controls are the security boundary.
 A process on any peer node can:
 
 - Subscribe to any `pg` group (PubSub topic) and receive all broadcasts.
-- Inject messages that downstream coordinators will process as legitimate
+- Inject messages that downstream runtimes will process as legitimate
   internal traffic.
 - Inject reserved presence sync traffic, delivering false presence state to
   subscribers on all nodes. Ordinary WebSocket clients cannot reach these
   reserved internal topics — this vector is exclusive to trusted cluster peers.
 
-**Channel-level authorization** — the `join` and `handle_in` callbacks —
+**App-level authorization** — the `Join` and `Message` arms of `update` —
 applies only to inbound WebSocket frames. It does not screen messages that
 arrive via distribution.
 

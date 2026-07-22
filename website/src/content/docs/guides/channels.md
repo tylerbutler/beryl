@@ -2,301 +2,284 @@
 title: Channels
 ---
 
-Channels are the core abstraction in beryl. A channel maps a topic pattern to a set of typed callback functions that handle joins, messages, and cleanup.
+Beryl delivers every WebSocket event to a single pair of functions your app
+supplies to `beryl.start_app`: `init`, which builds a per-socket **model**
+when a client connects, and `update`, which receives every **event** for
+that socket and returns the next model plus a list of **effects**. Your app
+routes topics itself by pattern matching on the event's topic — there is no
+handler registry and no per-topic callback modules.
 
-## Topics and patterns
+```gleam
+import beryl
+import beryl/event.{type Event, type Next}
+import beryl/wire
 
-Topics are colon-delimited string identifiers. Patterns can be exact matches, legacy trailing prefix wildcards, or segment-aware wildcards:
+pub fn main() {
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(initial_model(), []) },
+      update: update,
+    )
+  // Hand `channels` to a transport (beryl_mist / beryl_ewe) and to any
+  // code that broadcasts.
+}
+```
+
+If you've used Elm or Lustre, this is the same architecture applied to a
+socket: model in, event in, new model and effects out.
+
+## Topics
+
+Topics are colon-delimited string identifiers like `room:lobby` or
+`document:tenant-a:doc-42`. Clients join topics with `phx_join`; your
+`update` decides which joins to accept by matching on the topic string:
+
+```gleam
+case ev {
+  event.Join("room:" <> room_id, payload, ref) -> // accept or reject
+  event.Join("admin", payload, ref) -> // ...
+  event.Join(_, _, ref) ->
+    event.Next(model, [event.RejectJoin(ref, unknown_topic_error())])
+  // ...
+}
+```
+
+For topics with several dynamic segments, `beryl/topic` helps take them
+apart:
 
 ```gleam
 import beryl/topic
 
-// Exact: only matches "room:lobby"
-topic.parse_pattern("room:lobby")  // -> Exact("room:lobby")
+topic.segments("room:lobby")   // -> ["room", "lobby"]
+topic.namespace("room:lobby")  // -> Ok("room")
 
-// Wildcard: matches "room:lobby", "room:123", etc.
-topic.parse_pattern("room:*")  // -> Wildcard("room:")
-
-// Segment wildcard: matches one complete segment per "*"
-topic.parse_pattern("document:*:ops")
-// -> SegmentWildcard(["document", "*", "ops"])
-
-// Multi-segment wildcard: extract tenant and document IDs
-topic.parse_pattern("document:*:*")
-// -> SegmentWildcard(["document", "*", "*"])
-
-// Single trailing "*" keeps prefix wildcard behavior
-topic.parse_pattern("document:tenant-a:*")
-// -> Wildcard("document:tenant-a:")
-
-// Extract the dynamic part
-topic.extract_id(Wildcard("room:"), "room:lobby")  // -> Ok("lobby")
-
-// Extract multiple dynamic segments
+// Extract multiple dynamic segments with a pattern
 topic.extract_wildcards(
   topic.parse_pattern("document:*:*"),
   "document:tenant-a:doc-42",
 )
 // -> Ok(["tenant-a", "doc-42"])
-
-// Parse topic segments
-topic.segments("room:lobby")  // -> ["room", "lobby"]
-topic.namespace("room:lobby")  // -> Ok("room")
 ```
 
-Use `document:tenant-a:*` to route all documents for one tenant while keeping the existing trailing-wildcard prefix semantics. Use `document:*:*` when a handler needs to extract both tenant and document IDs from a topic with the exact shape `document:{tenant_id}:{document_id}`:
+## Events
 
-```gleam
-let pattern = topic.parse_pattern("document:*:*")
+`update` receives one of five events (`beryl/event.Event(msg)`):
 
-case topic.extract_wildcards(pattern, "document:tenant-a:doc-42") {
-  Ok([tenant_id, document_id]) -> {
-    // tenant_id == "tenant-a"
-    // document_id == "doc-42"
-  }
-  _ -> {
-    // Topic did not match the expected document shape.
-  }
-}
-```
+| Event | When |
+|-------|------|
+| `Join(topic, payload, ref)` | Client asked to join a topic. Answer with `AcceptJoin` or `RejectJoin`. |
+| `Message(topic, event, payload, ref)` | Client message on a joined topic. `ref` is `Some` when the client expects a reply. |
+| `Binary(topic, data)` | Raw binary frame on a joined topic (codecs without a binary decoder). |
+| `Closed(topic, reason)` | A joined topic ended — client leave, kick, heartbeat eviction, or socket close. |
+| `Info(msg)` | Typed server-side message delivered through the socket's `Sender`. |
 
-## Defining a channel
+The `msg` parameter is your own type: whatever server-side processes send
+to this socket arrives as `Info(msg)` with no casts and no `Dynamic`.
 
-Channels are built using a builder pattern starting with `channel.new()`:
+## Effects
 
-```gleam
-import beryl/channel.{type Channel, type HandleResult, type JoinResult}
-import beryl/socket.{type Socket}
-import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
-import gleam/json.{type Json}
-import gleam/option.{type Option, None, Some}
+One update may return several effects; they are applied in list order:
 
-/// Typed assigns — compile-time checked socket state
-pub type RoomAssigns {
-  RoomAssigns(user_id: String, room_id: String)
-}
-
-pub fn new() -> Channel(RoomAssigns, info) {
-  channel.new(join)
-  |> channel.with_handle_in(handle_in)
-  |> channel.with_handle_binary(handle_binary)
-  |> channel.with_terminate(terminate)
-}
-```
-
-### Join callback
-
-Called when a client sends a `phx_join` message. Return `JoinOk` to accept or `JoinError` to reject:
-
-```gleam
-fn join(
-  topic: String,
-  payload: Dynamic,
-  socket: Socket(RoomAssigns),
-) -> JoinResult(RoomAssigns) {
-  // Extract room ID from topic pattern
-  let assert Ok(room_id) =
-    topic.extract_id(topic.Wildcard("room:"), topic)
-
-  let assigns = RoomAssigns(user_id: "user_123", room_id: room_id)
-  let socket = socket.set_assigns(socket, assigns)
-
-  // Optionally send a reply payload
-  let reply = json.object([#("status", json.string("joined"))])
-  channel.JoinOk(reply: Some(reply), socket: socket)
-}
-```
-
-:::tip[Authenticate once at connect time]
-If every topic needs the same per-socket auth (e.g. the same JWT), validate it
-**once** with the transport-level `on_connect` hook instead of repeating the
-check in every `join`. `on_connect` runs once per socket, can reject the whole
-connection before any join, and can seed initial assigns that this `join`
-callback reads via `socket.get_assigns`. See
-[WebSocket Transport → Authentication](/guides/websocket#authentication).
-:::
-
-Called for each incoming text message. The `event` string identifies the message type:
-
-```gleam
-fn handle_in(
-  event: String,
-  payload: Dynamic,
-  socket: Socket(RoomAssigns),
-) -> HandleResult(RoomAssigns) {
-  case event {
-    "new_message" -> {
-      let text_decoder = {
-        use text <- decode.field("text", decode.string)
-        decode.success(text)
-      }
-      let reply_payload = case channel.decode_payload(payload, text_decoder) {
-        Ok(text) -> json.object([#("text", json.string(text))])
-        Error(_) -> channel.error("invalid payload")
-      }
-      // Reply to the sender — event arg is ignored, phx_reply is always sent
-      channel.Reply("ok", reply_payload, socket)
-    }
-    "typing" -> {
-      // No reply needed
-      channel.NoReply(socket)
-    }
-    "update_status" -> {
-      // Push a server-initiated message
-      let response = json.object([#("updated", json.bool(True))])
-      channel.Push("status_changed", response, socket)
-    }
-    _ -> channel.NoReply(socket)
-  }
-}
-```
-
-### Handle results
-
-Channel handlers return one of these results:
-
-| Result | Description |
+| Effect | Description |
 |--------|-------------|
-| `NoReply(socket)` | Continue without sending anything |
-| `Reply(event, payload, socket)` | Send a `phx_reply` tied to the client message ref (only meaningful from `handle_in`; see note below) |
-| `Push(event, payload, socket)` | Send a server-initiated message with no ref |
-| `Stop(reason)` | Terminate the channel |
+| `AcceptJoin(ref, reply)` | Accept a pending join, optionally with a reply payload |
+| `RejectJoin(ref, reason)` | Reject a pending join with an error payload |
+| `ReplyOk(ref, payload)` / `ReplyError(ref, payload)` | Answer a client message's ref with an ok/error `phx_reply` |
+| `Push(topic, event, payload)` | Server-initiated message to this socket |
+| `Broadcast(topic, event, payload)` | Message to every subscriber of a topic |
+| `BroadcastFrom(topic, event, payload)` | Broadcast excluding this socket |
+| `PresenceTrack(topic, key, meta)` / `PresenceUntrack(topic, key)` | Presence writes (see the [Presence guide](/guides/presence/)) |
+| `PushPresence(topic, event, encode)` / `BroadcastPresence(topic, event, encode)` | Apply-time presence snapshots |
+| `KickTopic(topic)` | Close this socket's subscription to a topic |
 
-:::note[Reply vs Push from handle_info]
-`Reply` is designed for `handle_in`, where the coordinator has a client message ref to reply to. When returned from `handle_info`, there is no client ref, so the coordinator sends it as a push instead. Prefer `Push` in `handle_info` to make this intent explicit.
-:::
+A `Join` left unanswered by the end of the update is rejected automatically
+(fail closed), and `Push`/`Broadcast` to a topic whose join has not been
+accepted yet are dropped. An `AcceptJoin` earlier in the list is guaranteed
+to reach the wire before a `Push` later in the same list.
 
-### Binary handler
+To end the whole socket instead of returning effects, return
+`event.Stop(reason)`.
 
-Handle raw binary WebSocket frames when the configured codec does not decode binary frames:
+## A minimal channel
+
+A single-topic-namespace app needs no routing machinery — your model and
+message types are used directly:
 
 ```gleam
-fn handle_binary(
-  data: BitArray,
-  socket: Socket(RoomAssigns),
-) -> HandleResult(RoomAssigns) {
-  // Process binary data (e.g., file uploads, audio chunks)
-  channel.NoReply(socket)
+import beryl
+import beryl/event.{
+  type Event, type Next, AcceptJoin, Broadcast, Join, Message, Next, ReplyOk,
 }
-```
+import beryl/wire
+import gleam/dynamic/decode
+import gleam/json
+import gleam/option.{None, Some}
 
-### Terminate callback
+pub type Model {
+  Model(username: String, joined: Bool)
+}
 
-Called when a client leaves or disconnects. Use for cleanup:
+pub fn main() {
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(Model(username: "anonymous", joined: False), []) },
+      update: update,
+    )
+  // ... wire up the transport
+}
 
-```gleam
-fn terminate(
-  reason: channel.StopReason,
-  socket: Socket(RoomAssigns),
-) -> Nil {
-  case reason {
-    channel.Normal -> Nil           // Clean disconnect
-    channel.Shutdown -> Nil         // Server-initiated
-    channel.HeartbeatTimeout -> Nil // Client went silent
-    channel.Errored(msg) -> Nil     // Something went wrong
+fn update(model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
+  case ev {
+    Join("room:" <> _, payload, ref) -> {
+      let username = decode_username(payload)
+      Next(Model(username: username, joined: True), [
+        AcceptJoin(ref, Some(json.object([#("status", json.string("joined"))]))),
+      ])
+    }
+    Join(_, _, ref) ->
+      Next(model, [
+        event.RejectJoin(
+          ref,
+          json.object([#("reason", json.string("unknown_topic"))]),
+        ),
+      ])
+
+    Message(topic, "new_message", payload, Some(ref)) ->
+      Next(model, [
+        ReplyOk(ref, json.object([#("ok", json.bool(True))])),
+        Broadcast(topic, "new_message", relay(payload, model.username)),
+      ])
+    Message(_, "typing", _, _) ->
+      // No reply needed
+      Next(model, [])
+
+    event.Closed(_topic, _reason) ->
+      // Clean up anything this topic owned
+      Next(Model(..model, joined: False), [])
+
+    _ -> Next(model, [])
   }
 }
 ```
 
-### Server-originated message handler
+Note how state threading is just the model: no socket handle, no assigns
+API — the value you return is the value the next event sees.
 
-Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications, timer ticks, background job results).
+## Routing multiple topic namespaces
 
-The handler receives the **typed** message you sent — there is no `Dynamic` and no unsafe cast. Channels are parameterized as `Channel(assigns, info)`, where `info` is your server-message type:
+Apps that serve several kinds of topics keep one sub-model per joined topic
+and route by prefix. The conventional shape is a `Dict` per namespace,
+pruned on `Closed`:
 
 ```gleam
-type ServerMessage {
+import gleam/dict.{type Dict}
+
+type Model {
+  Model(socket_id: String, rooms: Dict(String, chat.Model))
+}
+
+fn update(ctx: chat.Ctx, model: Model, ev: Event(Msg)) -> Next(Model, Msg) {
+  case ev {
+    event.Join(topic, payload, ref) ->
+      case topic {
+        "room:" <> _ -> {
+          let #(joined, effects) =
+            chat.join(ctx, model.socket_id, topic, payload, ref)
+          event.Next(store(model, topic, joined), effects)
+        }
+        _ -> event.Next(model, [event.RejectJoin(ref, unknown_topic())])
+      }
+
+    event.Message(topic, event_name, payload, ref) ->
+      case dict.get(model.rooms, topic) {
+        Ok(sub) -> {
+          let #(sub, effects) =
+            chat.update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
+          event.Next(store(model, topic, Some(sub)), effects)
+        }
+        Error(Nil) -> event.Next(model, [])
+      }
+
+    event.Closed(topic, _reason) ->
+      case dict.get(model.rooms, topic) {
+        Ok(sub) ->
+          event.Next(
+            Model(..model, rooms: dict.delete(model.rooms, topic)),
+            chat.closed(ctx, model.socket_id, topic, sub),
+          )
+        Error(Nil) -> event.Next(model, [])
+      }
+
+    _ -> event.Next(model, [])
+  }
+}
+```
+
+Here `chat` is an **embeddable app**: a module exporting a topic-scoped
+`Model`, a `join`/`update`/`closed` triple, and its own `Ctx` of
+dependencies. This is the Elm/Lustre composition pattern — third-party
+functionality ships as such triples and apps wire them in exactly like
+their own namespaces. The repository's `examples/showcase` composes three
+embeddable apps (chat rooms, live cursors, collaborative documents) on one
+socket this way.
+
+## Connect-time data
+
+`init` receives a `ConnectInfo(msg)` with everything known at connect
+time:
+
+```gleam
+init: fn(info: event.ConnectInfo(Msg)) {
+  // info.socket_id — unique id for this socket
+  // info.seed      — request path, query params, and headers from the upgrade
+  // info.self      — typed Sender for server-side messages (see below)
+  let token = list.key_find(info.seed.query, "token")
+  #(build_model(info.socket_id, token), [])
+}
+```
+
+The `seed` replaces connect-time "assigns": the transport gathers the
+upgrade request's path, query, and headers, and your `init` turns them into
+whatever model state it wants. Transport-level `on_connect` hooks remain
+available as pure auth gates that can reject the upgrade before any join —
+see [WebSocket Transport → Authentication](/guides/websocket#authentication).
+
+## Server-side messages
+
+Any process can push typed messages into a socket through the `Sender`
+handed to `init`:
+
+```gleam
+type Msg {
   Tick(at: Int)
   Notify(text: String)
 }
 
-fn handle_info(
-  message: ServerMessage,
-  socket: Socket(RoomAssigns),
-) -> HandleResult(RoomAssigns) {
-  case message {
-    Tick(at) ->
-      channel.Push(
-        "tick",
-        json.object([#("at", json.int(at))]),
-        socket,
-      )
-    Notify(text) ->
-      channel.Push(
-        "notification",
-        json.object([#("text", json.string(text))]),
-        socket,
-      )
-  }
+init: fn(info: event.ConnectInfo(Msg)) {
+  // Hand info.self to whatever server-side process needs to reach this
+  // socket — a timer, a DB listener, a job runner.
+  start_ticker(info.self)
+  #(initial_model(), [])
 }
 
-// Register the handler when building the channel
-channel.new(join)
-|> channel.with_handle_in(handle_in)
-|> channel.with_handle_info(handle_info)
+// Elsewhere, in the ticker process:
+event.notify(sender, Tick(now_ms))
 ```
 
-Because the `info` type is recovered by the channel, you match on `message` directly with exhaustive pattern matching — no `gleam/dynamic/decode` round-trip and no identity FFI cast in application code.
+The message arrives in `update` as `Info(Tick(at))` — an ordinary typed
+send with exhaustive pattern matching, no `Dynamic`, and no registry
+lookup. If the socket has disconnected, `notify` is a quiet no-op.
 
-#### Sending messages with send_info
+For timers and background jobs, spawn the process in `init` (or on join)
+and stop it when you see `Closed` for the owning topic or when the model is
+torn down.
 
-Use `beryl.send_info` from any process to deliver a message to a specific socket/topic pair:
+## Broadcasting from outside update
 
-```gleam
-// In a background process or timer callback:
-beryl.send_info(channels, socket_id, "room:lobby", Notify("hello!"))
-```
-
-If the socket is not connected, the topic is not joined, or no `handle_info` is registered, the message is silently ignored.
-
-#### Timer and background job patterns
-
-A common use case is scheduling periodic pushes to a specific client. Spawn a process when the client joins and cancel it in `terminate`:
-
-```gleam
-import gleam/erlang/process
-
-fn join(topic, _payload, socket) -> JoinResult(RoomAssigns) {
-  let socket_id = socket.id(socket)
-
-  // Spawn a timer process that sends a tick every 5 seconds
-  let _pid = process.spawn(fn() {
-    let rec = process.new_subject()
-    timer_loop(channels, socket_id, topic, rec)
-  })
-
-  channel.JoinOk(reply: None, socket: socket)
-}
-
-fn timer_loop(channels, socket_id, topic, _self) {
-  process.sleep(5000)
-  beryl.send_info(channels, socket_id, topic, Tick(erlang.system_time(erlang.Millisecond)))
-  timer_loop(channels, socket_id, topic, _self)
-}
-```
-
-For production use, prefer OTP-based timers (e.g., Erlang's `:timer.send_interval`) over bare recursion, and track the timer PID in assigns so you can cancel it in `terminate`.
-
-## Registering channels
-
-Register channels with the beryl system using topic patterns:
-
-```gleam
-import beryl
-import beryl/wire
-
-let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-
-// Register handlers for different topic patterns
-let assert Ok(_) = beryl.register(channels, "room:*", room_channel.new())
-let assert Ok(_) = beryl.register(channels, "user:*", user_channel.new())
-let assert Ok(_) = beryl.register(channels, "system", system_channel.new())
-```
-
-## Broadcasting
-
-Send messages to all subscribers of a topic:
+Code that holds the `Channels` handle can broadcast without going through
+`update`:
 
 ```gleam
 // Broadcast to everyone on a topic
@@ -317,24 +300,8 @@ beryl.broadcast_from(
 )
 ```
 
-## Socket state
-
-Sockets carry typed assigns that persist across messages:
-
-```gleam
-import beryl/socket
-
-// Get current assigns
-let assigns = socket.get_assigns(socket)
-
-// Update assigns (returns new socket)
-let socket = socket.set_assigns(socket, RoomAssigns(..assigns, room_id: "new"))
-
-// Transform assigns to a different type
-let socket = socket.map_assigns(socket, fn(old) {
-  NewType(user_id: old.user_id)
-})
-```
+Inside `update`, prefer the `Broadcast`/`BroadcastFrom` effects — they are
+ordered relative to the other effects in the same list.
 
 ## Next steps
 

@@ -158,19 +158,30 @@ The underlying CRDT state is intentionally internal. Applications should use Pub
 
 ## Integration with channels
 
-A common pattern is to track presence in your channel's join handler and untrack in terminate:
+Inside `update`, prefer the presence **effects** over direct actor calls: they
+are applied in order with the rest of the effects list, and apply-time
+snapshots (`PushPresence`/`BroadcastPresence`) see the writes that precede
+them. Pass the presence handle to the config with
+`beryl.with_presence_handle`, then track on join and untrack on close:
 
 ```gleam
-fn join(topic, payload, socket) -> JoinResult(MyAssigns) {
-  let socket_id = socket.id(socket)
-  let _ref = presence.track(p, topic, "user:" <> user_id, socket_id, meta)
-  channel.JoinOk(reply: None, socket: socket)
-}
+event.Join(topic, _payload, ref) ->
+  event.Next(model, [
+    event.AcceptJoin(ref, option.None),
+    event.PresenceTrack(topic, "user:" <> model.user_id, meta),
+    event.BroadcastPresence(topic, "presence_list", encode_users),
+  ])
 
-fn terminate(reason, socket) -> Nil {
-  presence.untrack_all(p, socket.id(socket))
-}
+event.Closed(topic, _reason) ->
+  event.Next(model, [
+    event.PresenceUntrack(topic, "user:" <> model.user_id),
+    event.BroadcastPresence(topic, "presence_list", encode_users),
+  ])
 ```
+
+Presence entries left when a topic closes without an explicit untrack are
+cleaned up automatically. Direct calls (`presence.track`, `presence.list`,
+…) remain available for code outside `update`.
 
 ## Next steps
 

@@ -12,7 +12,7 @@ beryl is a **type-safe real-time channels and presence library** for Gleam, targ
 
 Building real-time features — like chat rooms, live cursors, collaborative editing, or presence indicators — requires coordinating state across many connected clients. beryl gives you:
 
-- **Channels** — Topic-based message handlers with typed callbacks and pattern matching (`"room:*"`)
+- **Channels** — One typed `init`/`update` pair per socket handles every topic; your app routes topics itself with ordinary pattern matching (`"room:" <> _`)
 - **Presence** — Distributed tracking of connected users backed by a conflict-free CRDT
 - **PubSub** — Distributed publish/subscribe built on Erlang's `pg` process groups
 - **Groups** — Named collections of topics for multi-topic broadcasting
@@ -22,24 +22,29 @@ Building real-time features — like chat rooms, live cursors, collaborative edi
 
 ### Type safety first
 
-All channel callbacks are fully typed. Define your own assigns type per channel, and the Gleam compiler catches mismatches at build time:
+Your app supplies a model type and an update function, and the Gleam compiler
+checks every event end to end — there are no unchecked casts and no `Dynamic`
+round-trips anywhere in the dispatch path:
 
 ```gleam
-pub type RoomAssigns {
-  RoomAssigns(user_id: String, room_id: String)
+pub type Model {
+  Model(user_id: String, room_id: String)
 }
 
-// The compiler ensures handle_in receives Socket(RoomAssigns)
-fn handle_in(event: String, payload: Json, socket: Socket(RoomAssigns)) -> HandleResult(RoomAssigns) {
-  let assigns = socket.get_assigns(socket)
-  // assigns.user_id and assigns.room_id are guaranteed to exist
-  channel.NoReply(socket)
+// The compiler ensures update receives your Model and returns the next one
+fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+  // model.user_id and model.room_id are guaranteed to exist
+  event.Next(model, [])
 }
 ```
 
+Server-side messages are typed too: processes reach a socket through a
+`Sender(msg)`, and the message arrives in `update` as `Info(msg)` for
+exhaustive pattern matching.
+
 ### Built on OTP
 
-beryl leverages OTP actors and Erlang's `pg` process groups rather than reinventing distributed primitives. The coordinator is an OTP actor, presence tracking is an OTP actor wrapping a CRDT, and PubSub uses `pg` directly.
+beryl leverages OTP actors and Erlang's `pg` process groups rather than reinventing distributed primitives. The runtime is a supervised OTP actor, presence tracking is an OTP actor wrapping a CRDT, and PubSub uses `pg` directly.
 
 ### CRDT-backed presence
 
@@ -56,7 +61,7 @@ beryl uses the same JSON array wire format as Phoenix channels (`[join_ref, ref,
 ## Next steps
 
 - [Quick Start](/quick-start/) — get a working server in minutes
-- [Channels guide](/guides/channels) — topics, callbacks, and broadcasting
-- [Supervision guide](/guides/supervision) — production startup with OTP supervision
+- [Channels guide](/guides/channels) — events, effects, and broadcasting
+- [Supervision guide](/guides/supervision) — the built-in runtime supervision
 - [Error Handling guide](/guides/error-handling) — rejected joins, rate limits, and more
 - [Troubleshooting](/troubleshooting) — symptom-first diagnostics

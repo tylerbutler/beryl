@@ -2,11 +2,11 @@
 title: Wire & Transport
 ---
 
-The wire and transport layer sits between raw WebSocket frames and the coordinator. It is split into two concerns: a pluggable **codec** that translates bytes into structured messages, and the **Mist transport** that owns the socket lifecycle.
+The wire and transport layer sits between raw WebSocket frames and the runtime. It is split into two concerns: a pluggable **codec** that translates bytes into structured messages, and the **Mist transport** that owns the socket lifecycle.
 
 ## Codec abstraction
 
-A `Codec` is a plain data value that pairs a decoder with a set of encoders. The coordinator is framing-agnostic: it only ever sees `Inbound` values and emits `Frame` values; the codec performs every translation.
+A `Codec` is a plain data value that pairs a decoder with a set of encoders. The runtime is framing-agnostic: it only ever sees `Inbound` values and emits `Frame` values; the codec performs every translation.
 
 ```
 src/beryl/wire/codec.gleam
@@ -28,7 +28,7 @@ The built-in `phoenix_codec()` (from `src/beryl/wire.gleam`) wires the Phoenix J
 beryl.config(wire.phoenix_codec())
 ```
 
-Custom codecs can be swapped in by constructing a `Codec` value directly, allowing alternative protocols without changing the coordinator or channel logic.
+Custom codecs can be swapped in by constructing a `Codec` value directly, allowing alternative protocols without changing the runtime or your app logic.
 
 ## Frame shapes
 
@@ -54,20 +54,20 @@ The `join_ref` and `ref` fields are nullable strings used for reply correlation.
 
 ## Mist transport
 
-The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's native WebSocket handling to the beryl coordinator. It is responsible for:
+The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's native WebSocket handling to the beryl runtime through the frame-level SPI in `beryl/transport`. It is responsible for:
 
 1. **Generating a unique socket id** — `crypto.strong_random_bytes` produces a 16-byte random id encoded as base16.
-2. **Registering the send fn** — on connection init, the transport sends a `SocketConnected` message to the coordinator containing both a text send fn and a binary send fn.
-3. **Routing text frames** — `mist.Text` frames are forwarded to `coordinator.route_message`, which decodes them through the codec.
-4. **Routing binary frames** — `mist.Binary` frames are forwarded to `coordinator.route_binary`; the coordinator passes them through the codec's `decode_binary` when present, otherwise delivers the raw `BitArray` to `channel.handle_binary`.
-5. **Notifying on close** — `mist.Closed` and `mist.Shutdown` send `SocketDisconnected` to the coordinator so it can clean up subscriptions.
+2. **Announcing the socket** — on connection init, the transport calls `transport.socket_connected` with a text send fn, a binary send fn, and the `ConnectSeed` assembled from the upgrade request (delivered to the app's `init`).
+3. **Routing text frames** — `mist.Text` frames are decoded in the connection process with the codec from `transport.active_codec` and routed with `transport.route_decoded`.
+4. **Routing binary frames** — `mist.Binary` frames are routed with `transport.route_binary`; the runtime passes them through the codec's `decode_binary` when present, otherwise delivers the raw `BitArray` to the app as `Binary` events.
+5. **Notifying on close** — `mist.Closed` and `mist.Shutdown` call `transport.socket_disconnected` so the runtime can clean up subscriptions.
 6. **Rejecting disallowed origins** — when configured, `with_allowed_origins` checks the full `Origin` header before the WebSocket handshake and returns HTTP 403 for missing or non-matching origins.
 
 ### Key functions
 
-**`default_config(path)`** — creates a `TransportConfig(Nil)` with no connect hook. Accepts all connections and seeds `Nil` assigns.
+**`default_config(path)`** — creates a `TransportConfig` with no connect hook. Accepts all (same-origin) connections.
 
-**`with_on_connect(config, callback)`** — attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(assigns)` to allow the connection, `Error(ConnectRejected)` to reject with 403.
+**`with_on_connect(config, callback)`** — attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(Nil)` to allow the connection, `Error(ConnectRejected)` to reject with 403. Connect-time request data reaches the app's `init` via the `ConnectSeed`.
 
 **`with_allowed_origins(config, origins)`** — attaches an exact-match allow-list for browser `Origin` headers, such as `["https://app.example.com"]`. Use this when cookie-authenticated WebSockets need CSWSH protection.
 
@@ -83,9 +83,10 @@ The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's n
 flowchart LR
   FR["raw WS frame"] --> MI["beryl_mist"]
   MI -->|text| CD["wire/codec"]
-  MI -->|binary, no codec| RB["raw binary handler"]
-  CD --> CO["coordinator"]
-  CO --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
+  MI -->|binary, no decoder| RB["Binary event"]
+  CD --> RT["runtime"]
+  RB --> RT
+  RT --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
 ```
 
 ## Where this lives

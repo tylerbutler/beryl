@@ -151,8 +151,8 @@ export default defineConfig({
 							slug: "architecture/message-lifecycle",
 						},
 						{
-							label: "Coordinator & Supervision",
-							slug: "architecture/coordinator",
+							label: "Runtime & Supervision",
+							slug: "architecture/runtime",
 						},
 						{
 							label: "PubSub & Distribution",

@@ -26,8 +26,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 
 ```gleam
 import beryl
-import beryl/channel.{type Channel, type HandleResult, type JoinResult}
-import beryl/socket.{type Socket}
+import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
@@ -36,28 +35,38 @@ import gleam/json
 import gleam/option.{None}
 import mist
 
-pub type RoomAssigns { RoomAssigns(username: String) }
+pub type Model { Model(username: String) }
 
-fn new_channel() -> Channel(RoomAssigns, info) {
-  channel.new(fn(_topic, payload, socket) {
-    let username_decoder = {
-      use username <- decode.field("username", decode.string)
-      decode.success(username)
+fn init(_info: event.ConnectInfo(Nil)) -> #(Model, List(event.Effect)) {
+  #(Model(username: "anonymous"), [])
+}
+
+fn update(model: Model, ev: event.Event(Nil)) -> event.Next(Model, Nil) {
+  case ev {
+    Join("room:" <> _, payload, ref) -> {
+      let username_decoder = {
+        use username <- decode.field("username", decode.string)
+        decode.success(username)
+      }
+      let username = case decode.run(payload, username_decoder) {
+        Ok(username) -> username
+        Error(_) -> "anonymous"
+      }
+      Next(Model(username:), [AcceptJoin(ref, None)])
     }
-    let username = case channel.decode_payload(payload, username_decoder) {
-      Ok(username) -> username
-      Error(_) -> "anonymous"
-    }
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, RoomAssigns(username:)))
-  })
-  |> channel.with_handle_in(fn(_event, _payload, socket) {
-    channel.NoReply(socket)
-  })
+    Join(_, _, ref) ->
+      Next(model, [
+        event.RejectJoin(ref, json.object([#("reason", json.string("unknown_topic"))])),
+      ])
+    Message(topic, "new_msg", payload, _ref) ->
+      Next(model, [Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))])
+    _ -> Next(model, [])
+  }
 }
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
+  let assert Ok(channels) =
+    beryl.start_app(beryl.config(wire.phoenix_codec()), init: init, update: update)
 
   let assert Ok(_) =
     mist_transport.handler(channels, mist_transport.default_config("/socket/websocket"), fn(_req) {
@@ -122,13 +131,13 @@ flowchart TD
 
 ## Features
 
-- **Channels** — Topic-based pub/sub with typed callbacks and pattern matching (e.g. `room:*`, `document:*:*`)
+- **App-side dispatch** — one typed `init`/`update` pair per socket handles every topic; effects express replies, pushes, broadcasts, presence, and kicks
 - **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
 - **Groups** — Named channel groups for multi-topic broadcasting
 - **PubSub** — pg-based distributed publish/subscribe
-- **Actor bridge** — forward an external OTP actor's stream to a socket with `beryl/bridge`
+- **Typed server messages** — any process reaches a socket through a typed `Sender(msg)`; messages arrive in `update` as `Info(msg)` with no casts
 - **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
-- **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds initial assigns
+- **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket and can reject the whole connection before any join; request data reaches `init` via the `ConnectSeed`
 
 ## Examples
 
@@ -137,72 +146,48 @@ Three runnable demos are included in the `examples/` directory:
 | Example | What it demonstrates |
 |---------|----------------------|
 | [`examples/cursors`](examples/cursors/) | Channels, topic wildcards, presence, `broadcast_from`, rate limiting |
-| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, `Reply`, `Push`, groups, validation, typing indicators |
+| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, replies, pushes, groups, validation, typing indicators |
 | [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 
-## Recipe: bridge an external actor to a socket
+## Recipe: push server-side events to a socket
 
 A long-lived domain actor (for example a per-document session) often emits
-updates that need to be pushed to each joined socket. The `beryl/bridge` module
-removes the per-socket forwarder boilerplate: start a bridge in `join`, subscribe
-your actor to the bridge's `Subject`, and stop it in `terminate`. Each value the
-actor emits is translated and delivered to the channel's `handle_info` callback
-via `beryl.send_info`. The forwarder also monitors the channel process, so it is
-cleaned up automatically if that process dies — no leaked processes.
+updates that need to be pushed to each joined socket. Every socket's `init`
+receives a typed `Sender(msg)` (`ConnectInfo.self`); hand it to the domain
+actor as a subscriber, and each emitted value arrives in `update` as a typed
+`Info` event — no `Dynamic`, no forwarder boilerplate. If the socket has
+disconnected, `event.notify` is a quiet no-op.
 
 ```gleam
-import beryl.{type RegisteredChannel}
-import beryl/bridge.{type Bridge}
-import beryl/channel.{type Channel}
-import beryl/socket
+import beryl/event.{Info, Join, Next, Push}
 import gleam/json
-import gleam/option.{None}
 
 // Messages emitted by your domain actor.
 pub type DocEvent {
   Updated(version: Int)
 }
 
-pub type Assigns {
-  Assigns(bridge: Bridge(DocEvent))
+fn init(info: event.ConnectInfo(DocEvent)) -> #(Model, List(event.Effect)) {
+  // Hand the sender to the domain actor as this socket's subscriber.
+  doc.subscribe(doc_actor, info.self)
+  #(initial_model(), [])
 }
 
-// `registered_channel` is the handle returned by `beryl.register`.
-fn new_channel(
-  registered_channel: RegisteredChannel(Assigns, DocEvent),
-  doc_actor,
-) -> Channel(Assigns, DocEvent) {
-  channel.new(fn(topic, _payload, socket) {
-    // Forward every DocEvent emitted by the actor to this socket/topic.
-    let b =
-      bridge.start(
-        channel: registered_channel,
-        socket_id: socket.id(socket),
-        topic: topic,
-        with: fn(event) { event },
-      )
-    // Hand the bridge's subject to the domain actor as its subscriber.
-    doc.subscribe(doc_actor, bridge.subject(b))
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
-  })
-  // `handle_info` receives the typed `DocEvent` directly — no decode step.
-  |> channel.with_handle_info(fn(event, socket) {
-    case event {
-      Updated(version) ->
-        channel.Push(
-          "doc_updated",
-          json.object([#("version", json.int(version))]),
-          socket,
-        )
-    }
-  })
-  // Always stop the bridge on terminate for prompt, deterministic cleanup.
-  |> channel.with_terminate(fn(_reason, socket) {
-    bridge.stop(socket.get_assigns(socket).bridge)
-  })
+fn update(model: Model, ev: event.Event(DocEvent)) -> event.Next(Model, DocEvent) {
+  case ev {
+    // `Info` receives the typed `DocEvent` directly — no decode step.
+    Info(Updated(version)) ->
+      Next(model, [
+        Push("doc:1", "doc_updated", json.object([#("version", json.int(version))])),
+      ])
+    _ -> Next(model, [])
+  }
 }
+
+// In the domain actor, emit with:
+// event.notify(subscriber, Updated(version))
 ```
 
 ## Releases & changelog
@@ -265,12 +250,6 @@ and configure:
 Set the proxy limit to reject oversized frames at the edge, before they are
 buffered by the BEAM node. Beryl's in-process limit should be treated as
 defense-in-depth for per-message cost, not as a memory bound.
-
-## Releases & changelog
-
-See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
-release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
-and the changelog is managed with [changie](https://changie.dev/).
 
 ## Development
 

@@ -60,7 +60,7 @@ pub type PubSubFrom {
 }
 ```
 
-`FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving coordinators use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
+`FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving runtimes use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
 
 ## Broadcasting
 
@@ -82,8 +82,8 @@ pubsub.broadcast_from(
 // Broadcast to all except a specific socket ID (clustered "broadcast except this socket")
 pubsub.broadcast_from_socket(
   ps,
-  process.self(),   // sending coordinator process
-  socket_id,        // socket ID to exclude on receiving coordinators
+  process.self(),   // sending runtime process
+  socket_id,        // socket ID to exclude on receiving runtimes
   "room:lobby",
   "new_message",
   json.string("hello"),
@@ -93,7 +93,7 @@ pubsub.broadcast_from_socket(
 pubsub.local_broadcast(ps, "room:lobby", "new_message", json.string("hello"))
 ```
 
-Use `broadcast_from_socket` when you need to broadcast to all subscribers across a cluster while excluding one specific socket — even if that socket's coordinator is on a different node. `beryl.broadcast_from` calls this internally.
+Use `broadcast_from_socket` when you need to broadcast to all subscribers across a cluster while excluding one specific socket — even if that socket's runtime is on a different node. `beryl.broadcast_from` calls this internally.
 
 ## Querying subscribers
 
@@ -119,7 +119,8 @@ import beryl/wire
 
 let ps = pubsub.start(pubsub.default_config())
 let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-let assert Ok(channels) = beryl.start(config)
+let assert Ok(channels) =
+  beryl.start_app(config, init: init, update: update)
 
 // beryl.broadcast() now sends to all nodes automatically
 beryl.broadcast(channels, "room:lobby", "event", payload)

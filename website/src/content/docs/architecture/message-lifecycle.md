@@ -4,110 +4,114 @@ title: Message Lifecycle
 
 This page traces every significant step a message takes from the moment a WebSocket connection opens until it is pushed back to one or more clients. Each diagram corresponds to a distinct phase; together they give you a complete mental model of how beryl processes real-time traffic.
 
-## Connect and register
+## Connect and init
 
-When a client initiates a WebSocket upgrade, the Mist transport layer generates a unique socket id and hands the socket—along with its send function—to the coordinator for bookkeeping.
+When a client initiates a WebSocket upgrade, the Mist transport layer generates a unique socket id, assembles a `ConnectSeed` from the upgrade request (path, query, headers), and hands the socket — along with its send functions — to the runtime. The runtime calls your app's `init` with a `ConnectInfo` carrying the socket id, the seed, and a typed `Sender` for server-side messages, and stores the returned model.
 
 ```mermaid
 sequenceDiagram
   participant Client
   participant Mist as beryl_mist
-  participant Coord as coordinator
+  participant RT as runtime
+  participant App as your init
   Client->>Mist: WebSocket upgrade
-  Mist->>Mist: generate socket id
-  Mist->>Coord: register socket + send fn
-  Coord-->>Mist: ack
+  Mist->>Mist: generate socket id, build ConnectSeed
+  Mist->>RT: socket_connected(id, send fns, seed)
+  RT->>App: init(ConnectInfo)
+  App-->>RT: #(model, effects)
 ```
 
 ## Join a topic
 
-A client joins a topic by sending a `phx_join` frame. The wire codec decodes the raw text frame, the coordinator looks up the matching channel handler in its registry, and the handler's `join/3` callback decides whether to accept or reject the connection.
+A client joins a topic by sending a `phx_join` frame. The transport decodes the raw frame in the connection process, and the runtime delivers a `Join` event to your `update` function, which answers with an `AcceptJoin` or `RejectJoin` effect.
 
 ```mermaid
 sequenceDiagram
   participant Client
   participant Mist as beryl_mist
   participant Wire as wire/codec
-  participant Coord as coordinator
-  participant Ch as channel handler
+  participant RT as runtime
+  participant App as your update
   Client->>Mist: text frame [join_ref, ref, topic, "phx_join", payload]
-  Mist->>Wire: decode_message
-  Wire-->>Coord: route_decoded(join)
-  Coord->>Coord: match topic -> handler (registry)
-  Coord->>Ch: join(topic, payload, socket)
-  Ch-->>Coord: JoinOk(reply, socket) / JoinError(reason)
-  Coord->>Coord: subscribe socket to topic (pubsub.subscribe)
-  Coord-->>Client: reply_json(ok/error)
+  Mist->>Wire: decode_text
+  Wire-->>RT: route_decoded(join)
+  RT->>RT: validate topic (length, reserved names, rate, cap)
+  RT->>App: update(model, Join(topic, payload, ref))
+  App-->>RT: Next(model, [AcceptJoin(ref, reply)]) / [RejectJoin(ref, reason)]
+  RT->>RT: subscribe socket to topic (on accept)
+  RT-->>Client: phx_reply (ok/error)
 ```
+
+A `Join` left unanswered by the update's effects is rejected automatically — beryl fails closed.
 
 ## Handle an inbound event
 
-After a successful join, every subsequent inbound frame for that topic is routed to the channel handler's `handle_in/3` callback. The handler returns one of `reply`, `noreply`, `push`, or `stop`, and the coordinator acts accordingly.
+After a successful join, every subsequent inbound frame for that topic arrives at `update` as a `Message` event. The effects list decides what goes back on the wire: a reply correlated to the client's ref, pushes, broadcasts, presence writes, or nothing at all.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Coord as coordinator
-  participant Ch as channel handler
-  Client->>Coord: text frame [.., topic, event, payload]
-  Coord->>Ch: handle_in(event, payload, socket)
-  Ch-->>Coord: reply / noreply / push / stop
-  Coord-->>Client: reply_json (when reply)
+  participant RT as runtime
+  participant App as your update
+  Client->>RT: text frame [.., topic, event, payload]
+  RT->>App: update(model, Message(topic, event, payload, ref))
+  App-->>RT: Next(model, effects)
+  RT-->>Client: apply effects in order (ReplyOk, Push, ...)
 ```
 
 ## Broadcast fan-out
 
-Broadcasting delivers a message to every socket subscribed to a topic. `broadcast/4` reaches all subscribers; `broadcast_from/5` excludes the originating socket. The pg-based PubSub layer delivers the message as an Erlang message to each subscriber's coordinator process, which then pushes it over the wire.
+Broadcasting delivers a message to every socket subscribed to a topic. The `Broadcast` effect (or `beryl.broadcast` from outside `update`) reaches all subscribers; `BroadcastFrom` / `beryl.broadcast_from` excludes the originating socket. When PubSub is configured, the pg-based layer forwards the broadcast to every other node's runtime, which fans out to its local subscribers.
 
 ```mermaid
 sequenceDiagram
-  participant Origin as origin handler/app
-  participant Coord as coordinator
+  participant Origin as origin update/app
+  participant RT as runtime
   participant PS as pubsub (pg)
   participant Subs as subscriber sockets
-  Origin->>Coord: broadcast(topic, event, payload)
-  Coord->>PS: broadcast / broadcast_from (exclude origin)
-  PS-->>Coord: deliver to each subscriber pid
-  Coord-->>Subs: push(topic, event, payload) via send fn
+  Origin->>RT: Broadcast(topic, event, payload)
+  RT-->>Subs: push via each subscriber's send fn
+  RT->>PS: broadcast_from (cluster fan-out)
+  PS-->>RT: deliver to each remote runtime
 ```
 
 ## Heartbeat and eviction
 
-Clients periodically send a `heartbeat` frame on the `"phoenix"` topic to signal liveness. The coordinator replies immediately and tracks the last-seen timestamp; a periodic timer evicts sockets that have not sent a heartbeat within the configured deadline.
+Clients periodically send a `heartbeat` frame on the `"phoenix"` topic to signal liveness. The runtime replies immediately and tracks the last-seen timestamp; a periodic timer evicts sockets that have not sent a heartbeat within the configured deadline. The app never sees heartbeat frames.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Coord as coordinator
-  Client->>Coord: [.., "phoenix", "heartbeat", {}]
-  Coord-->>Client: heartbeat_reply
-  Note over Coord: periodic timer checks last-seen
-  Coord->>Coord: evict sockets past deadline
+  participant RT as runtime
+  Client->>RT: [.., "phoenix", "heartbeat", {}]
+  RT-->>Client: heartbeat_reply
+  Note over RT: periodic timer checks last-seen
+  RT->>RT: evict sockets past deadline (Closed(HeartbeatTimeout) to app)
 ```
 
-## Disconnect and terminate
+## Disconnect and close
 
-When a client closes the WebSocket connection, Mist notifies the coordinator, which calls each joined channel handler's `terminate/2` callback and then cleans up all topic subscriptions and socket state.
+When a client closes the WebSocket connection, Mist notifies the runtime, which delivers a `Closed(topic, reason)` event to `update` for every joined topic and then cleans up all subscriptions and socket state.
 
 ```mermaid
 sequenceDiagram
   participant Client
   participant Mist as beryl_mist
-  participant Coord as coordinator
-  participant Ch as channel handler
+  participant RT as runtime
+  participant App as your update
   Client->>Mist: socket close
-  Mist->>Coord: socket closed(id)
-  Coord->>Ch: terminate(reason, socket)
-  Coord->>Coord: unsubscribe topics, drop socket state
+  Mist->>RT: socket_disconnected(id)
+  RT->>App: update(model, Closed(topic, reason)) per joined topic
+  RT->>RT: unsubscribe topics, drop socket state
 ```
 
 ## Concurrency note
 
-The coordinator is a single OTP actor processing its mailbox sequentially; broadcasts arrive as messages, so tests must select the exact message shape and drain queued messages (BEAM mailbox gotcha).
+The runtime is a single OTP actor processing its mailbox sequentially; broadcasts arrive as messages, so tests must select the exact message shape and drain queued messages (BEAM mailbox gotcha).
 
 ## Where this lives
 
-- `packages/beryl_mist/src/beryl_mist.gleam` — connect/close, frame routing
-- `src/beryl/coordinator.gleam` — `route_message`, `route_decoded`, `route_binary`, heartbeat timer
+- `packages/beryl_mist/src/beryl_mist.gleam` — connect/close, edge decoding, frame routing
+- `src/beryl/runtime.gleam` — event dispatch, effect application, heartbeat timer
 - `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam` — decode/encode frames
 - `src/beryl/pubsub.gleam` — fan-out
