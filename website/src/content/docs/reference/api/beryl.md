@@ -131,6 +131,10 @@ A typed handle returned when a channel is registered.
  matches the receiving channel's `info` type. The handle also identifies the
  exact registered channel used for a joined socket/topic pair.
 
+ The `assigns` and `info` parameters are phantom: they carry the registered
+ channel's types so `send_info` is type-checked, while the handle itself
+ stores only the coordinator subject and the registration id.
+
 ```gleam
 pub type RegisteredChannel(a, b)
 ```
