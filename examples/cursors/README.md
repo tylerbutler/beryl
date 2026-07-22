@@ -47,7 +47,7 @@ The Phoenix JS client in `priv/static/app.js` uses a relative `/socket` URL, so 
 
 | beryl Feature | How It's Used |
 |---|---|
-| **Channels** | `cursor:lobby` channel handles join/leave and cursor events |
+| **App dispatch** | `cursor:*` topics handle join/leave and cursor events |
 | **Topic patterns** | Wildcard `cursor:*` routing matches any cursor room |
 | **Presence (CRDT)** | Tracks connected users with username + color metadata |
 | **PubSub** | `broadcast_from` fans out cursor moves to all other clients |
@@ -64,7 +64,7 @@ Browser (vanilla JS + Phoenix client)
   │
 Server (Gleam)
   ├── Mist HTTP routing ── serves HTML + static files
-  ├── beryl channels ── cursor:* topic handler
+  ├── beryl app-side dispatch ── cursor:* topics (cursors/app)
   ├── beryl presence ── CRDT-backed user tracking
   └── beryl pubsub ── broadcast cursor positions
 ```
