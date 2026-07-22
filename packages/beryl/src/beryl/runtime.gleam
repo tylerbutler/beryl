@@ -1560,6 +1560,22 @@ fn apply_effects(
         pending,
         kicks,
       )
+      event.PushPresence(topic_name, event_name, encode) -> {
+        case presence_snapshot(state, socket_id, topic_name, encode) {
+          Ok(payload) ->
+            apply_push(state, socket_id, topic_name, event_name, payload)
+          Error(Nil) -> Nil
+        }
+        #(state, pending, kicks)
+      }
+      event.BroadcastPresence(topic_name, event_name, encode) -> {
+        case presence_snapshot(state, socket_id, topic_name, encode) {
+          Ok(payload) ->
+            broadcast_with_pubsub(state, topic_name, event_name, payload, None)
+          Error(Nil) -> Nil
+        }
+        #(state, pending, kicks)
+      }
       event.KickTopic(topic_name) ->
         case
           socket_subscribed(state, socket_id, topic_name)
@@ -1916,6 +1932,42 @@ fn apply_presence_untrack(
       state
     }
     _, Error(Nil) -> state
+  }
+}
+
+/// Read the topic's presence entries and run the app's encoder, both at
+/// effect-application time so earlier presence effects in the same list
+/// are already reflected. The encoder is app code and runs rescued: a
+/// crash drops the snapshot with an error log instead of taking down the
+/// runtime.
+fn presence_snapshot(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  encode: fn(List(presence.PresenceEntry)) -> Json,
+) -> Result(Json, Nil) {
+  case state.config.presence {
+    None -> {
+      state.logger
+      |> log.warn("Presence snapshot dropped: no presence handle configured", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      Error(Nil)
+    }
+    Some(p) ->
+      case internal.rescue(fn() { encode(presence.list(p, topic_name)) }) {
+        Ok(payload) -> Ok(payload)
+        Error(crash) -> {
+          state.logger
+          |> log.error("Presence snapshot failed", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+            #("crash", crash),
+          ])
+          Error(Nil)
+        }
+      }
   }
 }
 

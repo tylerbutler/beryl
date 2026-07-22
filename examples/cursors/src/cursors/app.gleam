@@ -28,7 +28,7 @@ pub type Ctx {
 
 /// Handle a join for a `cursor:*` topic. Returns `None` when rejected.
 pub fn join(
-  ctx: Ctx,
+  _ctx: Ctx,
   socket_id: String,
   topic: String,
   payload: Dynamic,
@@ -42,21 +42,18 @@ pub fn join(
       #("color", json.string(color)),
     ])
 
-  // Presence effects apply after this update returns, so the broadcast
-  // list is built from the current presence plus the joining user.
-  let users_json =
-    presence_list_json(ctx, topic, including: [#(socket_id, meta)], except: [])
-
   let reply =
     json.object([
       #("socket_id", json.string(socket_id)),
       #("username", json.string(username)),
       #("color", json.string(color)),
     ])
+  // BroadcastPresence encodes at apply time, after the PresenceTrack
+  // before it — so the list already includes the joining user.
   #(Some(Model(username: username, color: color)), [
     event.AcceptJoin(ref, Some(reply)),
     event.PresenceTrack(topic, username, meta),
-    event.Broadcast(topic, "presence_list", users_json),
+    event.BroadcastPresence(topic, "presence_list", encode_users),
   ])
 }
 
@@ -87,39 +84,23 @@ pub fn update(
 
 /// Handle the topic closing (leave, kick, crash, or disconnect).
 pub fn closed(
-  ctx: Ctx,
-  socket_id: String,
+  _ctx: Ctx,
+  _socket_id: String,
   topic: String,
   model: Model,
 ) -> List(Effect) {
-  // The untrack effect applies after this update returns, so the
-  // broadcast list is the current presence minus the leaving socket.
-  let users_json =
-    presence_list_json(ctx, topic, including: [], except: [socket_id])
+  // The snapshot encodes after the untrack before it, so the broadcast
+  // list already excludes the leaving user.
   [
     event.PresenceUntrack(topic, model.username),
-    event.Broadcast(topic, "presence_list", users_json),
+    event.BroadcastPresence(topic, "presence_list", encode_users),
   ]
 }
 
-/// Build the `presence_list` payload from the presence actor's current
-/// state, adjusted for effects in the same list that have not applied yet.
-fn presence_list_json(
-  ctx: Ctx,
-  topic: String,
-  including including: List(#(String, json.Json)),
-  except except: List(String),
-) -> json.Json {
-  let current =
-    presence.list(ctx.presence, topic)
-    |> list.filter(fn(entry) { !list.contains(except, entry.session_id) })
-    |> list.map(fn(entry) { #(entry.session_id, entry.meta) })
-  let additions =
-    list.filter(including, fn(added) {
-      let #(session_id, _meta) = added
-      !list.any(current, fn(entry) { entry.0 == session_id })
-    })
-  json.object(list.append(current, additions))
+/// Encode presence entries as the `presence_list` payload:
+/// `{session_id: meta}`.
+fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
+  json.object(list.map(entries, fn(entry) { #(entry.session_id, entry.meta) }))
 }
 
 /// Extract a number from a JSON payload as Json, defaulting to 0.0.

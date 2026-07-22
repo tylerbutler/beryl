@@ -14,6 +14,7 @@
 //// `Push` in the same list is guaranteed to arrive as the join
 //// acknowledgment first and the push second.
 
+import beryl/presence.{type PresenceEntry}
 import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
 import gleam/option.{type Option}
@@ -159,6 +160,27 @@ pub type Effect {
   /// broadcast the corresponding `presence_diff` leave. Remaining tracked
   /// keys are untracked automatically when their topic closes.
   PresenceUntrack(topic: String, key: String)
+  /// Push a presence snapshot for a topic to this socket. Unlike a payload
+  /// built inside `update` (which sees presence as it was *before* this
+  /// effects list), `encode` runs when the effect is applied — after any
+  /// earlier `PresenceTrack`/`PresenceUntrack` in the same list — so the
+  /// entries already reflect them. Requires a presence handle
+  /// (`beryl.with_presence_handle`); dropped with a warning otherwise.
+  /// Like `Push`, dropped when the topic is not joined at that point.
+  PushPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(PresenceEntry)) -> Json,
+  )
+  /// Broadcast a presence snapshot for a topic to all its subscribers,
+  /// with the same apply-time `encode` semantics as `PushPresence`.
+  /// Order it after the `PresenceTrack`/`PresenceUntrack` it should
+  /// reflect.
+  BroadcastPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(PresenceEntry)) -> Json,
+  )
   /// Close this socket's subscription to a topic. The topic receives a
   /// `Closed(topic, Shutdown)` event and the client a terminal frame.
   KickTopic(topic: String)
