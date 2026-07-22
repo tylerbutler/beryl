@@ -16,6 +16,7 @@
 ////    slot with `beryl.release_connection_slot`.
 
 import beryl.{type Channels}
+import beryl/coordinator
 import beryl/event.{type ConnectSeed}
 import beryl/internal
 import beryl/log
@@ -25,7 +26,7 @@ import beryl/wire/codec.{type Codec, type Inbound}
 import gleam/bool
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
-import gleam/option.{type Option}
+import gleam/option.{type Option, None}
 import gleam/result
 
 // --- Telemetry ---

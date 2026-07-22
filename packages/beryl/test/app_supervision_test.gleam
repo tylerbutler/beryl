@@ -288,3 +288,125 @@ fn to_bool(result: Result(a, b)) -> Bool {
     Error(_) -> False
   }
 }
+
+fn not_running(sockets: beryl.Sockets) -> Bool {
+  case beryl.app_runtime_pid(sockets) {
+    Ok(_) -> False
+    Error(Nil) -> True
+  }
+}
+
+// ── the embedded subtree dies with the application root ─────────────────────
+
+pub fn application_root_shutdown_tears_down_beryl_subtree_test() {
+  let assert Ok(#(sockets, beryl_spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(5),
+      init: accepting_init,
+      update: accepting_update,
+    )
+  let assert Ok(root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.start()
+  test_helpers.wait_until(
+    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    2000,
+    10,
+  )
+  let runtime = runtime_pid(sockets)
+  let limiter = limiter_pid(sockets)
+
+  // The application root goes down; the embedded Beryl subtree, linked under
+  // it, is torn down with it (unlink first so the test process survives).
+  process.unlink(root.pid)
+  process.kill(root.pid)
+
+  test_helpers.wait_until(fn() { !process.is_alive(runtime) }, 2000, 10)
+  process.is_alive(runtime) |> should.be_false
+  process.is_alive(limiter) |> should.be_false
+  beryl.app_runtime_pid(sockets) |> should.be_error
+}
+
+// ── a partial startup failure leaks no Beryl processes ──────────────────────
+
+pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
+  let assert Ok(#(sockets, beryl_spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(5),
+      init: accepting_init,
+      update: accepting_update,
+    )
+
+  // A sibling that always fails to start. The supervisor tears down the
+  // already-started Beryl subtree and exits, so the doomed startup is run in
+  // an unlinked child process to keep its failure signal off the test.
+  let failing =
+    supervision.worker(fn() -> Result(
+      actor.Started(process.Subject(Nil)),
+      actor.StartError,
+    ) {
+      Error(actor.InitFailed("intentional"))
+    })
+
+  process.spawn_unlinked(fn() {
+    let _ =
+      static_supervisor.new(static_supervisor.OneForOne)
+      |> static_supervisor.add(beryl_spec)
+      |> static_supervisor.add(failing)
+      |> static_supervisor.start()
+    Nil
+  })
+
+  // Whether or not the doomed supervisor reported an error, no Beryl runtime
+  // or limiter is left running.
+  test_helpers.wait_until(fn() { not_running(sockets) }, 3000, 20)
+  beryl.app_runtime_pid(sockets) |> should.be_error
+  beryl.app_limiter_pid(sockets) |> should.be_error
+}
+
+// ── stop waits for the runtime even with no limiter ─────────────────────────
+
+pub fn stop_without_limiter_waits_for_runtime_teardown_test() {
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: accepting_init,
+      update: accepting_update,
+    )
+
+  // No connection limit is configured, so there is no limiter in the subtree.
+  beryl.app_limiter_pid(sockets) |> should.be_error
+  let runtime = runtime_pid(sockets)
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+
+  // stop still waited for the runtime itself to terminate before returning.
+  process.is_alive(runtime) |> should.be_false
+}
+
+// ── stop leaves no registered name or live process behind ───────────────────
+
+pub fn stop_leaves_no_registered_name_or_process_test() {
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(3),
+      init: accepting_init,
+      update: accepting_update,
+    )
+  let runtime = runtime_pid(sockets)
+  let limiter = limiter_pid(sockets)
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+
+  // Both processes are gone and their registered names no longer resolve.
+  process.is_alive(runtime) |> should.be_false
+  process.is_alive(limiter) |> should.be_false
+  beryl.app_runtime_pid(sockets) |> should.be_error
+  beryl.app_limiter_pid(sockets) |> should.be_error
+  // The system is fully gone: a fresh connection cannot be admitted.
+  beryl.acquire_connection_slot(sockets, "1.2.3.4") |> should.be_error
+}

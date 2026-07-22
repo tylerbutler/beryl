@@ -1,5 +1,6 @@
 import beryl
 import beryl/channel
+import beryl/event
 import beryl/socket
 import beryl/supervisor
 import beryl/wire
@@ -514,6 +515,39 @@ pub fn on_connect_seeds_assigns_visible_at_join_test() {
   stop_supervisor(server_pid)
 }
 
+pub fn runtime_death_closes_the_connection_test() {
+  let serializer = json_serializer()
+  let assert Ok(channels) =
+    start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          event.Join(_, _, ref) ->
+            event.Next(model, [
+              event.AcceptJoin(
+                ref,
+                Some(json.object([#("joined", json.bool(True))])),
+              ),
+            ])
+          _ -> event.Next(model, [])
+        }
+      },
+    )
+  let #(port, server_pid) = start_mist_server(channels)
+
+  let client = connect_client(port)
+  let client = join_client(serializer, client)
+
+  let assert Ok(runtime) = beryl.app_runtime_pid(channels)
+  process.kill(runtime)
+
+  receive_text(client, 2000)
+  |> should.equal(Error(Nil))
+
+  stop_supervisor(server_pid)
+}
+
 /// Start a supervised channel system for tests.
 ///
 /// beryl exposes no public unsupervised start, so tests stand up a real
@@ -528,4 +562,17 @@ fn start_supervised(
     |> static_supervisor.start(),
   )
   supervisor.channels(supervised)
+}
+
+fn start_app(
+  config: beryl.Config,
+  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(beryl.Sockets, beryl.ConfigError) {
+  use #(sockets, spec) <- result.try(beryl.child_spec(config, init:, update:))
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  Ok(sockets)
 }

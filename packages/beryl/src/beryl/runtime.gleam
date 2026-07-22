@@ -136,6 +136,11 @@ type SocketState(model, msg) {
     /// Presence refs tracked via `PresenceTrack`:
     /// topic -> key -> #(ref, meta). Auto-untracked when the topic closes.
     presence_refs: Dict(String, Dict(String, #(String, Json))),
+    /// Message reply refs still awaiting a reply. A ref is added when its
+    /// `Message` is delivered, removed when answered (so a reply is
+    /// single-use), and pruned when its topic closes (so a stale ref stored
+    /// across a leave/rejoin is not replied to).
+    pending_reply_refs: Set(Ref),
     last_heartbeat: Int,
   )
 }
@@ -316,6 +321,7 @@ fn handle_socket_connected(
           subscribed_topics: set.new(),
           join_refs: dict.new(),
           presence_refs: dict.new(),
+          pending_reply_refs: set.new(),
           last_heartbeat: monotonic_time_ms(),
         )
       state.logger |> log.info("Socket connected", [#("socket_id", socket_id)])
@@ -1019,6 +1025,12 @@ fn handle_in_rate_limited(
             msg_ref: Some(r),
           )
         })
+      // Track the reply ref as outstanding so `apply_reply` can enforce
+      // single-use and drop replies to refs whose topic later closes.
+      let state = case message_ref {
+        Some(r) -> register_reply_ref(state, socket_id, r)
+        None -> state
+      }
       let outcome =
         update_once(
           state,
@@ -1359,6 +1371,9 @@ fn close_topic(
                 topic_name,
               ),
               join_refs: dict.delete(socket.join_refs, topic_name),
+              pending_reply_refs: set.filter(socket.pending_reply_refs, fn(ref) {
+                event.ref_topic(ref) != topic_name
+              }),
             )
           let state = store_socket(state, socket)
           let state = remove_channel_bucket(state, socket_id, topic_name)
@@ -1534,11 +1549,12 @@ fn apply_effects(
       event.RejectJoin(ref, reason) ->
         apply_reject_join(state, socket_id, ref, reason, pending, kicks)
       event.ReplyOk(ref, payload) -> {
-        apply_reply(state, socket_id, ref, codec.StatusOk, payload)
+        let state = apply_reply(state, socket_id, ref, codec.StatusOk, payload)
         #(state, pending, kicks)
       }
       event.ReplyError(ref, payload) -> {
-        apply_reply(state, socket_id, ref, codec.StatusError, payload)
+        let state =
+          apply_reply(state, socket_id, ref, codec.StatusError, payload)
         #(state, pending, kicks)
       }
       event.Push(topic_name, event_name, payload) -> {
@@ -1727,38 +1743,79 @@ fn subscribe_socket(
 }
 
 /// Send a reply for a stored `Ref`. Join refs must be answered with
-/// `AcceptJoin`/`RejectJoin`, so replies against them are dropped.
+/// `AcceptJoin`/`RejectJoin`, so replies against them are dropped. Message
+/// refs are single-use and only valid while their topic is open: a ref that
+/// was already answered, or whose topic has since closed (including across a
+/// leave/rejoin), is dropped rather than sent as a stale/duplicate reply.
 fn apply_reply(
   state: State(model, msg),
   socket_id: String,
   ref: Ref,
   status: codec.ReplyStatus,
   payload: Json,
-) -> Nil {
+) -> State(model, msg) {
   case event.ref_is_join(ref) {
-    True ->
+    True -> {
       state.logger
       |> log.warn("Reply ignored: join refs require AcceptJoin/RejectJoin", [
         #("socket_id", socket_id),
         #("topic", event.ref_topic(ref)),
       ])
+      state
+    }
     False ->
       case dict.get(state.sockets, socket_id) {
-        Error(Nil) -> Nil
-        Ok(socket) -> {
-          let frame =
-            codec.encode_reply(socket.codec)(
-              event.ref_join_ref(ref),
-              event.ref_msg_ref(ref),
-              event.ref_topic(ref),
-              status,
-              payload,
-            )
-          let _send_result =
-            send_frame_logged(state, socket, event.ref_topic(ref), frame)
-          Nil
-        }
+        Error(Nil) -> state
+        Ok(socket) ->
+          case set.contains(socket.pending_reply_refs, ref) {
+            False -> {
+              state.logger
+              |> log.warn("Reply ignored: unknown or already-answered ref", [
+                #("socket_id", socket_id),
+                #("topic", event.ref_topic(ref)),
+              ])
+              state
+            }
+            True -> {
+              let frame =
+                codec.encode_reply(socket.codec)(
+                  event.ref_join_ref(ref),
+                  event.ref_msg_ref(ref),
+                  event.ref_topic(ref),
+                  status,
+                  payload,
+                )
+              let _send_result =
+                send_frame_logged(state, socket, event.ref_topic(ref), frame)
+              store_socket(
+                state,
+                SocketState(
+                  ..socket,
+                  pending_reply_refs: set.delete(socket.pending_reply_refs, ref),
+                ),
+              )
+            }
+          }
       }
+  }
+}
+
+/// Record a message reply ref as outstanding for a socket.
+fn register_reply_ref(
+  state: State(model, msg),
+  socket_id: String,
+  ref: Ref,
+) -> State(model, msg) {
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket) ->
+      store_socket(
+        state,
+        SocketState(
+          ..socket,
+          pending_reply_refs: set.insert(socket.pending_reply_refs, ref),
+        ),
+      )
   }
 }
 

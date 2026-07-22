@@ -5,17 +5,20 @@
 //// the Mist transport uses to admit or reject WebSocket upgrades based on the
 //// real socket peer IP.
 
+import app_test_helpers as h
 import beryl
-import beryl/internal/unsupervised
+import beryl/event
 import beryl/wire
 import gleam/erlang/process
 import gleeunit/should
 
 fn start_with_limit(max_connections: Int) -> beryl.Channels {
   let assert Ok(channels) =
-    unsupervised.start(
+    h.start_app(
       beryl.config(wire.phoenix_codec())
-      |> beryl.with_max_connections_per_ip(max_connections: max_connections),
+        |> beryl.with_max_connections_per_ip(max_connections: max_connections),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model: Nil, _ev: event.Event(Nil)) { event.Next(model, []) },
     )
   channels
 }
@@ -32,7 +35,7 @@ pub fn zero_means_unlimited_test() {
   beryl.release_connection_slot(first)
   |> should.equal(Nil)
 
-  unsupervised.stop(channels)
+  let _ = beryl.stop(channels)
 }
 
 // Connections at or below the configured limit are admitted.
@@ -42,7 +45,7 @@ pub fn admits_connections_under_limit_test() {
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.1"))
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.1"))
 
-  unsupervised.stop(channels)
+  let _ = beryl.stop(channels)
 }
 
 // The connection that would exceed the limit is rejected.
@@ -53,7 +56,7 @@ pub fn rejects_connection_over_limit_test() {
   beryl.acquire_connection_slot(channels, "10.0.0.2")
   |> should.equal(Error(Nil))
 
-  unsupervised.stop(channels)
+  let _ = beryl.stop(channels)
 }
 
 // Releasing a slot frees capacity so a subsequent connection from that IP
@@ -70,7 +73,7 @@ pub fn releasing_slot_frees_capacity_test() {
   beryl.release_connection_slot(permit)
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.3"))
 
-  unsupervised.stop(channels)
+  let _ = beryl.stop(channels)
 }
 
 // The limit is tracked independently per IP.
@@ -86,7 +89,7 @@ pub fn limit_is_per_ip_test() {
   beryl.acquire_connection_slot(channels, "10.0.0.5")
   |> should.equal(Error(Nil))
 
-  unsupervised.stop(channels)
+  let _ = beryl.stop(channels)
 }
 
 // A slot is reclaimed when its holder process dies without releasing —
@@ -108,7 +111,7 @@ pub fn slot_reclaimed_when_holder_dies_without_release_test() {
   process.sleep(50)
 
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.7"))
-  unsupervised.stop(channels)
+  let _ = beryl.stop(channels)
 }
 
 // A permit obtained under a limit can be released explicitly.
@@ -118,5 +121,5 @@ pub fn permit_can_be_released_test() {
   let assert Ok(permit) = beryl.acquire_connection_slot(channels, "10.0.0.6")
   beryl.release_connection_slot(permit)
 
-  unsupervised.stop(channels)
+  let _ = beryl.stop(channels)
 }
