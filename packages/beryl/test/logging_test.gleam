@@ -305,7 +305,7 @@ pub fn start_warns_when_no_abuse_controls_configured_test() {
   receive_log(selector, "No abuse controls configured", 10)
   |> should.be_ok
 
-  beryl.stop(channels)
+  let _ = beryl.stop(channels)
   stop_capture()
 }
 
@@ -321,7 +321,7 @@ pub fn start_does_not_warn_when_a_limit_is_configured_test() {
   receive_log(selector, "No abuse controls configured", 2)
   |> should.be_error
 
-  beryl.stop(channels)
+  let _ = beryl.stop(channels)
   stop_capture()
 }
 

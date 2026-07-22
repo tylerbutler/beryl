@@ -1262,7 +1262,7 @@ pub fn stop_shuts_down_unsupervised_coordinator_test() {
   )
   let assert Ok(_) = process.receive(sent_messages, 500)
 
-  beryl.stop(channels)
+  let _ = beryl.stop(channels)
   let assert Ok(reason) = process.receive(terminated, 500)
   reason |> should.equal(channel.Shutdown)
   wait_until(fn() { !process.is_alive(coordinator_pid) }, 1000, 10)
