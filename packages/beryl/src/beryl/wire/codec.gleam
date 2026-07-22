@@ -40,7 +40,7 @@ pub type InboundKind {
 /// Normalised inbound message shape.
 ///
 /// `Inbound` is opaque: construct it with `inbound` and read it with the
-/// `inbound_*` accessors. Keeping the record hidden lets beryl add fields
+/// `inbound_*` accessors. Keeping the record hidden lets Beryl add fields
 /// (which default sensibly) without breaking every custom codec.
 pub opaque type Inbound {
   Inbound(
@@ -60,8 +60,7 @@ pub opaque type Inbound {
 /// - `ref`: optional per-message reference for reply correlation
 /// - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
 /// - `kind`: structural protocol event or user event
-/// - `payload`: message body as a `Dynamic` for the channel callback to
-///   decode
+/// - `payload`: message body as a `Dynamic` for the app to decode
 pub fn inbound(
   join_ref join_ref: Option(String),
   ref ref: Option(String),
@@ -92,7 +91,7 @@ pub fn inbound_kind(inbound: Inbound) -> InboundKind {
   inbound.kind
 }
 
-/// The inbound message's body, for the channel callback to decode.
+/// The inbound message's body, for the app to decode.
 pub fn inbound_payload(inbound: Inbound) -> Dynamic {
   inbound.payload
 }
@@ -108,11 +107,11 @@ pub type DecodeError {
   MissingField(name: String)
 }
 
-/// Status of a reply produced by a channel callback.
+/// Status of a reply produced by the app.
 pub type ReplyStatus {
-  /// The callback succeeded (`"ok"` in Phoenix framing).
+  /// The handler succeeded (`"ok"` in Phoenix framing).
   StatusOk
-  /// The callback failed (`"error"` in Phoenix framing).
+  /// The handler failed (`"error"` in Phoenix framing).
   StatusError
 }
 
@@ -197,10 +196,10 @@ pub fn with_binary_decoder(
   Codec(..codec, decode_binary: Some(decode_binary))
 }
 
-/// Attach a channel-close encoder to a codec.
+/// Attach a topic-close encoder to a codec.
 ///
 /// When set, the runtime emits this frame to a client whenever one of
-/// its channels terminates gracefully (leave, server shutdown, heartbeat
+/// its topics terminates gracefully (leave, server shutdown, heartbeat
 /// eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
 /// leave the joined state instead of waiting out push timeouts.
 pub fn with_close_encoder(
@@ -210,10 +209,10 @@ pub fn with_close_encoder(
   Codec(..codec, encode_close: Some(encode_close))
 }
 
-/// Attach a channel-error encoder to a codec.
+/// Attach a topic-error encoder to a codec.
 ///
 /// When set, the runtime emits this frame to a client whenever one of
-/// its channels terminates abnormally (crashed or stopped with an error):
+/// its topics terminates abnormally (crashed or stopped with an error):
 /// `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
 /// automatic rejoin.
 pub fn with_error_encoder(
@@ -223,14 +222,12 @@ pub fn with_error_encoder(
   Codec(..codec, encode_error: Some(encode_error))
 }
 
-// nolint: unused_exports -- package-internal codec accessor
 /// Accessor for the codec's text decoder.
 @internal
 pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
   codec.decode_text
 }
 
-// nolint: unused_exports -- package-internal codec accessor
 /// Accessor for the codec's optional binary decoder.
 @internal
 pub fn decode_binary(
@@ -239,7 +236,6 @@ pub fn decode_binary(
   codec.decode_binary
 }
 
-// nolint: unused_exports -- package-internal codec accessor
 /// Accessor for the codec's reply encoder.
 @internal
 pub fn encode_reply(
@@ -248,22 +244,19 @@ pub fn encode_reply(
   codec.encode_reply
 }
 
-// nolint: unused_exports -- package-internal codec accessor
 /// Accessor for the codec's push encoder.
 @internal
 pub fn encode_push(codec: Codec) -> fn(String, String, json.Json) -> Frame {
   codec.encode_push
 }
 
-// nolint: unused_exports -- package-internal codec accessor
 /// Accessor for the codec's heartbeat-reply encoder.
 @internal
 pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
   codec.encode_heartbeat_reply
 }
 
-// nolint: unused_exports -- package-internal codec accessor
-/// Accessor for the codec's optional channel-close encoder.
+/// Accessor for the codec's optional topic-close encoder.
 @internal
 pub fn encode_close(
   codec: Codec,
@@ -282,15 +275,13 @@ pub fn with_topicless_events(codec: Codec) -> Codec {
   Codec(..codec, topicless_events: True)
 }
 
-// nolint: unused_exports -- package-internal codec accessor
 /// Accessor for the codec's topicless-events flag.
 @internal
 pub fn topicless_events(codec: Codec) -> Bool {
   codec.topicless_events
 }
 
-// nolint: unused_exports -- package-internal codec accessor
-/// Accessor for the codec's optional channel-error encoder.
+/// Accessor for the codec's optional topic-error encoder.
 @internal
 pub fn encode_error(
   codec: Codec,
