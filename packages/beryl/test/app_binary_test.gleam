@@ -30,9 +30,9 @@ fn text_only_codec() -> codec.Codec {
   |> codec.with_error_encoder(wire.channel_error)
 }
 
-fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Channels {
+fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(text_only_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {

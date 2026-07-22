@@ -28,9 +28,9 @@ fn seq_loop(n: Int, acc: List(Int)) -> List(Int) {
   }
 }
 
-fn start_with_global_limit(max_connections: Int) -> beryl.Channels {
+fn start_with_global_limit(max_connections: Int) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections(max_connections: max_connections),
       init: fn(_info) { #(Nil, []) },
@@ -42,9 +42,9 @@ fn start_with_global_limit(max_connections: Int) -> beryl.Channels {
 fn start_with_both_limits(
   max_per_ip: Int,
   max_connections: Int,
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(max_connections: max_per_ip)
         |> beryl.with_max_connections(max_connections: max_connections),

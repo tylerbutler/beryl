@@ -18,7 +18,7 @@ pub fn main() {
   let ctx = docs_app.Ctx(store: store, secret: secret)
 
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: docs_app.standalone_init,
       update: fn(model, ev) { docs_app.standalone_update(ctx, model, ev) },

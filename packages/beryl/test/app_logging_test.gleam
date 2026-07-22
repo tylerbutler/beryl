@@ -1,5 +1,5 @@
 //// Logging contracts for app-side dispatch, observed through the palabres
-//// capture handler: `start_app` warns once when no abuse controls are
+//// capture handler: `start` warns once when no abuse controls are
 //// configured and stays quiet when a limit is set, and the runtime's inbound
 //// routing log records socket/topic/event metadata without ever logging the
 //// message payload by default.
@@ -82,11 +82,11 @@ fn receive_log(
   }
 }
 
-pub fn start_app_warns_when_no_abuse_controls_configured_test() {
+pub fn start_warns_when_no_abuse_controls_configured_test() {
   let selector = begin_capture()
 
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model: Nil, _ev: event.Event(Nil)) { Next(model, []) },
@@ -99,11 +99,11 @@ pub fn start_app_warns_when_no_abuse_controls_configured_test() {
   stop_capture()
 }
 
-pub fn start_app_does_not_warn_when_a_limit_is_configured_test() {
+pub fn start_does_not_warn_when_a_limit_is_configured_test() {
   let selector = begin_capture()
 
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_message_rate(per_second: 100, burst: 200),
       init: fn(_info) { #(Nil, []) },
@@ -121,7 +121,7 @@ pub fn inbound_routing_log_omits_payload_by_default_test() {
   let selector = begin_capture()
 
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_logging(beryl.logging_config(
           level: beryl.DebugLevel,

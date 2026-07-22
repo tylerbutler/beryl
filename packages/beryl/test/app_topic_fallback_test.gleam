@@ -21,9 +21,9 @@ pub fn main() {
 fn start_system(
   the_codec: codec.Codec,
   events: process.Subject(event.Event(Nil)),
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(the_codec),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {
@@ -38,7 +38,7 @@ fn start_system(
 }
 
 fn join_room(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   events: process.Subject(event.Event(Nil)),
   frames: process.Subject(String),
   topic_name: String,

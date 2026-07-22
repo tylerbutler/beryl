@@ -31,9 +31,9 @@ type Model {
 /// - "double": reply to the same ref twice in one effects list (single-use).
 /// - "stash": store the ref without replying (deferred reply).
 /// - `Info(ReplyStashed)`: reply with the stored ref later.
-fn start_system(senders: process.Subject(event.Sender(Msg))) -> beryl.Channels {
+fn start_system(senders: process.Subject(event.Sender(Msg))) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(info) {
         process.send(senders, info.self)
@@ -64,7 +64,7 @@ fn start_system(senders: process.Subject(event.Sender(Msg))) -> beryl.Channels {
   channels
 }
 
-fn start() -> #(beryl.Channels, process.Subject(event.Sender(Msg))) {
+fn start() -> #(beryl.Sockets, process.Subject(event.Sender(Msg))) {
   let senders = process.new_subject()
   #(start_system(senders), senders)
 }

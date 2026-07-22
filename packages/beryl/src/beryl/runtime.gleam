@@ -1,11 +1,11 @@
-//// Runtime actor for app-side dispatch systems started with `beryl.start_app`.
+//// Runtime actor for app-side dispatch systems started with `beryl.start`.
 ////
 //// One runtime actor serves every socket started through
-//// `beryl.start_app`. It is generic over the app's `model` and `msg`
+//// `beryl.start`. It is generic over the app's `model` and `msg`
 //// types: per-socket models live in the actor state, typed `Info`
 //// messages arrive through the actor's own mailbox, and no value is ever
 //// type-erased. Transports reach the runtime through monomorphic closures
-//// captured by `beryl.start_app`, so the frame-level transport SPI stays
+//// captured by `beryl.start`, so the frame-level transport SPI stays
 //// unparameterized.
 ////
 //// The runtime owns everything the coordinator owns under the
@@ -40,7 +40,7 @@ import gleam/result
 import gleam/set.{type Set}
 import gleam/string
 
-/// Configuration for the runtime actor. Built by `beryl.start_app` from a
+/// Configuration for the runtime actor. Built by `beryl.start` from a
 /// `beryl.Config`; the fields mirror the coordinator's configuration plus
 /// per-topic-pattern rate limits and the optional presence handle used by
 /// the presence effects.
@@ -175,7 +175,7 @@ type Outcome(model, msg) {
 
 /// Start the runtime actor registered under `name`.
 ///
-/// There is deliberately no unsupervised start: `beryl.start_app` runs
+/// There is deliberately no unsupervised start: `beryl.start` runs
 /// the runtime under a supervisor, and a crash restarts it with dispatch
 /// intact because the `init`/`update` closures live in the child
 /// specification. The registered name keeps transport and broadcast

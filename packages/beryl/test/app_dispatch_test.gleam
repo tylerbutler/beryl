@@ -1,4 +1,4 @@
-//// Core app-side dispatch tests (`beryl.start_app`): join accept/reject,
+//// Core app-side dispatch tests (`beryl.start`): join accept/reject,
 //// fail-closed unanswered joins, replies, typed `Info` via `Sender`,
 //// duplicate-join replacement, and `Closed` delivery on leave/disconnect.
 
@@ -25,15 +25,15 @@ pub type Msg {
   Note(String)
 }
 
-/// A start_app system that accepts `room:*`, rejects `secret:*`, ignores
+/// A start system that accepts `room:*`, rejects `secret:*`, ignores
 /// `limbo:*` (leaving the join unanswered), replies ok/error to "echo" and
 /// "fail", pushes on `Info`, and forwards every event to an observer.
 fn start_observed(
   events: process.Subject(event.Event(Msg)),
   senders: process.Subject(event.Sender(Msg)),
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(info) {
         process.send(senders, info.self)
@@ -80,7 +80,7 @@ fn start_observed(
 }
 
 fn start_system() -> #(
-  beryl.Channels,
+  beryl.Sockets,
   process.Subject(event.Event(Msg)),
   process.Subject(event.Sender(Msg)),
 ) {
@@ -260,6 +260,6 @@ pub fn heartbeat_gets_reply_test() {
   reply |> string.contains("hb-1") |> should.be_true
 }
 
-fn transport_disconnect(channels: beryl.Channels, socket_id: String) -> Nil {
+fn transport_disconnect(channels: beryl.Sockets, socket_id: String) -> Nil {
   transport.socket_disconnected(channels, socket_id)
 }

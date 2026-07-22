@@ -27,9 +27,9 @@ pub type Msg {
 fn start_system(
   events: process.Subject(event.Event(Msg)),
   senders: process.Subject(event.Sender(Msg)),
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(info) {
         process.send(senders, info.self)
@@ -51,7 +51,7 @@ fn start_system(
 }
 
 fn start() -> #(
-  beryl.Channels,
+  beryl.Sockets,
   process.Subject(event.Event(Msg)),
   process.Subject(event.Sender(Msg)),
 ) {
@@ -149,7 +149,7 @@ pub fn closed_crash_is_logged_and_close_still_completes_test() {
 
 pub fn init_crash_leaves_socket_unregistered_test() {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { panic as "init crash" },
       update: fn(model: Nil, _ev: event.Event(Msg)) { Next(model, []) },

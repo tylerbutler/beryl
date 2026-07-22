@@ -64,7 +64,7 @@ pub opaque type Message {
   ListGroups(reply: Subject(List(String)))
   BroadcastToGroup(
     group_name: String,
-    channels: beryl.Channels,
+    channels: beryl.Sockets,
     event: String,
     payload: json.Json,
   )
@@ -86,8 +86,8 @@ pub fn start() -> Result(Groups, GroupStartError) {
 }
 
 // nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
-/// Start the groups actor with a registered name. Package-internal: used by
-/// `beryl/supervisor`; end users get supervision via `supervisor.start`.
+/// Start the groups actor with a registered name, for embedding the groups
+/// actor under an application's own supervision tree.
 @internal
 pub fn start_named(
   name: process.Name(Message),
@@ -175,7 +175,7 @@ pub fn list_groups(groups: Groups) -> List(String) {
 /// If the group doesn't exist, this is a silent no-op (fire and forget).
 pub fn broadcast(
   groups: Groups,
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   group_name: String,
   event: String,
   payload: json.Json,
@@ -284,7 +284,7 @@ fn handle_message(
 
 fn broadcast_to_topics(
   topics: Set(String),
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   event: String,
   payload: json.Json,
 ) -> Nil {

@@ -17,9 +17,9 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Channels {
+fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {

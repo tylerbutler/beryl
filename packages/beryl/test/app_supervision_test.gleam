@@ -107,7 +107,7 @@ pub fn stop_shuts_down_only_beryl_subtree_test() {
 
 pub fn stop_waits_for_subtree_teardown_test() {
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
       init: accepting_init,
@@ -128,7 +128,7 @@ pub fn stop_waits_for_subtree_teardown_test() {
 
 pub fn limiter_survives_runtime_restart_test() {
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
       init: accepting_init,
@@ -165,7 +165,7 @@ pub fn limiter_survives_runtime_restart_test() {
 
 pub fn runtime_crash_closes_owned_connection_test() {
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: accepting_init,
       update: accepting_update,
@@ -220,7 +220,7 @@ fn crashing_update(model: Nil, ev: event.Event(Nil)) -> event.Next(Nil, Nil) {
 pub fn update_crash_runs_socket_close_callback_test() {
   let senders = process.new_subject()
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: capturing_init(senders),
       update: crashing_update,
@@ -252,7 +252,7 @@ pub fn update_crash_runs_socket_close_callback_test() {
 
 pub fn connection_owner_reports_alive_when_running_test() {
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: accepting_init,
       update: accepting_update,
@@ -369,7 +369,7 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
 
 pub fn stop_without_limiter_waits_for_runtime_teardown_test() {
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: accepting_init,
       update: accepting_update,
@@ -389,7 +389,7 @@ pub fn stop_without_limiter_waits_for_runtime_teardown_test() {
 
 pub fn stop_leaves_no_registered_name_or_process_test() {
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(3),
       init: accepting_init,

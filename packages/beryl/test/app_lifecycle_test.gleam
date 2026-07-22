@@ -1,5 +1,5 @@
 //// Core lifecycle contract for app-side dispatch systems (ADR 0002 phase 2,
-//// task 1): eager config validation shared by `start_app` and `child_spec`,
+//// task 1): eager config validation shared by `start` and `child_spec`,
 //// a stable non-generic handle usable before startup, name-backed pre-start
 //// admission/dispatch that degrades to no-ops rather than crashing, and
 //// idempotent `stop`.
@@ -71,10 +71,10 @@ pub fn validate_config_rejects_invalid_topic_pattern_test() {
   }
 }
 
-// ── start_app / child_spec config validation parity ────────────────────────
+// ── start / child_spec config validation parity ────────────────────────
 
-pub fn start_app_rejects_invalid_config_test() {
-  beryl.start_app(
+pub fn start_rejects_invalid_config_test() {
+  beryl.start(
     beryl.config(wire.phoenix_codec())
       |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 1),
     init: accepting_init,
@@ -147,7 +147,7 @@ pub fn child_spec_handle_is_usable_before_and_after_start_test() {
 
 pub fn stop_is_idempotent_test() {
   let assert Ok(sockets) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: accepting_init,
       update: accepting_update,

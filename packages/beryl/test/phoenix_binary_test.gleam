@@ -1,15 +1,10 @@
 //// Phoenix V2 binary framing tests: byte-exact spec vectors for the
-//// encoders/decoder, plus end-to-end dispatch through the coordinator.
+//// encoders/decoder. End-to-end binary dispatch through the app runtime is
+//// covered by `app_binary_codec_test`.
 
-import beryl
-import beryl/channel
-import beryl/coordinator
 import beryl/wire
 import beryl/wire/codec
-import gleam/dynamic
 import gleam/dynamic/decode
-import gleam/erlang/process
-import gleam/json
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
@@ -152,118 +147,4 @@ pub fn binary_encoders_reject_oversized_components_test() {
   |> should.be_error
   wire.binary_broadcast(topic: "t", event: long, payload: <<>>)
   |> should.be_error
-}
-
-// === End-to-end through the coordinator ===
-
-pub fn phoenix_binary_push_routes_to_handle_in_with_reply_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  let seen = process.new_subject()
-
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
-    |> channel.with_handle_in(fn(event, payload, socket) {
-      let assert Ok(bits) = channel.decode_payload(payload, decode.bit_array)
-      process.send(seen, #(event, bits))
-      channel.Reply(event: "ok", payload: json.object([]), socket: socket)
-    })
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-
-  let sent = process.new_subject()
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(text) {
-        process.send(sent, text)
-        Ok(Nil)
-      },
-      fn(_) { Ok(Nil) },
-      None,
-      dynamic.nil(),
-    ),
-  )
-  process.sleep(10)
-
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
-    "socket-1",
-    "[\"j1\",\"j1\",\"room:lobby\",\"phx_join\",{}]",
-  )
-  let assert Ok(_join_reply) = process.receive(sent, 500)
-
-  // Client binary push: routed to the joined channel, not fanned out raw.
-  coordinator.route_binary(beryl.coordinator_subject(channels), "socket-1", <<
-    0,
-    2,
-    2,
-    10,
-    6,
-    "j1":utf8,
-    "r9":utf8,
-    "room:lobby":utf8,
-    "put_op":utf8,
-    42,
-    43,
-  >>)
-
-  let assert Ok(#(event, bits)) = process.receive(seen, 500)
-  event |> should.equal("put_op")
-  bits |> should.equal(<<42, 43>>)
-
-  // The reply correlates with the binary push's ref and join_ref.
-  let assert Ok(reply) = process.receive(sent, 500)
-  reply |> string.contains("phx_reply") |> should.be_true
-  reply |> string.contains("r9") |> should.be_true
-  reply |> string.contains("j1") |> should.be_true
-}
-
-pub fn phoenix_malformed_binary_frame_is_dropped_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  let seen_binary = process.new_subject()
-
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
-    |> channel.with_handle_binary(fn(data, socket) {
-      process.send(seen_binary, data)
-      channel.NoReply(socket)
-    })
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-
-  let sent = process.new_subject()
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(text) {
-        process.send(sent, text)
-        Ok(Nil)
-      },
-      fn(_) { Ok(Nil) },
-      None,
-      dynamic.nil(),
-    ),
-  )
-  process.sleep(10)
-
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
-    "socket-1",
-    "[\"j1\",\"j1\",\"room:lobby\",\"phx_join\",{}]",
-  )
-  let assert Ok(_join_reply) = process.receive(sent, 500)
-
-  // Undecodable bytes are dropped for the Phoenix codec — they no longer
-  // fan out raw to handle_binary.
-  coordinator.route_binary(beryl.coordinator_subject(channels), "socket-1", <<
-    255,
-    1,
-    2,
-    3,
-  >>)
-  process.receive(seen_binary, 100) |> should.be_error
 }

@@ -1,14 +1,11 @@
 -module(beryl_ffi).
--export([identity/1, monotonic_time_ms/0, monotonic_time_ns/0,
+-export([monotonic_time_ms/0, monotonic_time_ns/0,
          string_starts_with/2, stop_supervisor/1, rescue/1]).
 
-%% Identity function for type erasure
-identity(X) -> X.
-
 %% Run a callback, converting any crash (error/exit/throw) into an
-%% {error, Description} result so a crashing channel callback cannot take
-%% down the shared coordinator actor. The description is depth-limited and
-%% truncated so client-triggered crashes cannot bloat log metadata.
+%% {error, Description} result so a crashing callback cannot take down the
+%% shared runtime actor. The description is depth-limited and truncated so
+%% client-triggered crashes cannot bloat log metadata.
 rescue(Fun) ->
     try
         {ok, Fun()}

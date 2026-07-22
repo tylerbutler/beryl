@@ -7,7 +7,7 @@
 ////   through, storing the returned model per topic.
 //// - A socket-wide `Standalone` model plus `standalone_init`/
 ////   `standalone_update` wrappers that drive the standalone cursors server
-////   through `beryl.start_app`, reusing the same per-topic surface.
+////   through `beryl.start`, reusing the same per-topic surface.
 
 import beryl/event.{type Effect, type Ref}
 import beryl/presence.{type Presence}
@@ -110,14 +110,14 @@ pub type Standalone {
   Standalone(socket_id: String, cursors: Dict(String, Model))
 }
 
-/// `init` for the standalone cursors `beryl.start_app` runtime.
+/// `init` for the standalone cursors `beryl.start` runtime.
 pub fn standalone_init(
   info: event.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
   #(Standalone(socket_id: info.socket_id, cursors: dict.new()), [])
 }
 
-/// `update` for the standalone cursors `beryl.start_app` runtime: route
+/// `update` for the standalone cursors `beryl.start` runtime: route
 /// each event to the embeddable `join`/`update`/`closed` surface, keyed by
 /// topic. Non-`cursor:*` joins are rejected (fail closed), mirroring the old
 /// `cursor:*` handler registration.

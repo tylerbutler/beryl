@@ -37,11 +37,9 @@ pub fn main() {
     |> beryl.with_presence_handle(presence_actor)
 
   let assert Ok(channels) =
-    beryl.start_app(
-      config,
-      init: chat_app.standalone_init,
-      update: fn(model, ev) { chat_app.standalone_update(ctx, model, ev) },
-    )
+    beryl.start(config, init: chat_app.standalone_init, update: fn(model, ev) {
+      chat_app.standalone_update(ctx, model, ev)
+    })
 
   io.println("💬 Chat Rooms Demo")
   io.println("   Open http://localhost:8001?token=beryl-demo")

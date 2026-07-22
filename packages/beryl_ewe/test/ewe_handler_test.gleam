@@ -62,12 +62,12 @@ fn stop_supervisor(pid: process.Pid) -> Nil
 
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
-fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
+fn start_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
   start_server_with_config(channels, ewe_transport.default_config("/socket"))
 }
 
 fn start_server_with_config(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   config: ewe_transport.TransportConfig,
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
@@ -89,8 +89,8 @@ fn start_server_with_config(
 }
 
 fn start_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: 1),
     )
@@ -98,16 +98,26 @@ fn start_limited_server() -> #(Int, process.Pid) {
 }
 
 fn start_frame_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_inbound_frame_bytes(max_bytes: 32),
     )
   start_server(channels)
 }
 
-fn start_channels() -> beryl.Channels {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+fn start_channels() -> beryl.Sockets {
+  start_app_system(beryl.config(wire.phoenix_codec()))
+}
+
+/// Start a minimal app-side dispatch system for transport-edge tests. The
+/// `update` never dispatches anything — these tests exercise upgrade, origin,
+/// connection-limit, frame-size, and flood-shedding behaviour, not routing.
+fn start_app_system(config: beryl.Config) -> beryl.Sockets {
+  let assert Ok(channels) =
+    beryl.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, _ev) {
+      event.Next(model, [])
+    })
   channels
 }
 
@@ -284,8 +294,8 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
 }
 
 pub fn handler_sheds_message_flood_at_the_edge_test() {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_message_rate(per_second: 1, burst: 2),
     )
@@ -294,7 +304,7 @@ pub fn handler_sheds_message_flood_at_the_edge_test() {
 
   // Flood heartbeats: only the burst allowance may produce replies. The
   // rest are shed by the connection process before reaching the
-  // coordinator.
+  // runtime.
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)
   { replies <= 2 } |> should.be_true
@@ -337,7 +347,7 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() {
 
 pub fn runtime_death_closes_the_connection_test() {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, ev) {
@@ -386,7 +396,7 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
   // Duplicate keys must be preserved — the runtime must not deduplicate them.
   let seeds = process.new_subject()
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(info: event.ConnectInfo(Nil)) {
         process.send(seeds, info.seed)

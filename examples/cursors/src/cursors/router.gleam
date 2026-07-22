@@ -8,7 +8,7 @@ import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
-    channels: beryl.Channels,
+    channels: beryl.Sockets,
     presence: presence.Presence,
     base_path: String,
   )

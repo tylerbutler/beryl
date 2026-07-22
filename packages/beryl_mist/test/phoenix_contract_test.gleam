@@ -1,7 +1,5 @@
 import beryl
-import beryl/channel
 import beryl/event
-import beryl/socket
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -202,49 +200,53 @@ fn assert_no_text_message(client: WebsocketClient) {
   |> should.equal(Error(Nil))
 }
 
-fn contract_channel(
-  channels: beryl.Channels,
-  terminated: process.Subject(channel.StopReason),
-) -> channel.Channel(Nil, info) {
-  channel.new(fn(_topic, _payload, client_socket) {
-    channel.JoinOk(
-      reply: Some(json.object([#("joined", json.bool(True))])),
-      socket: client_socket,
-    )
-  })
-  |> channel.with_handle_in(fn(event, payload, client_socket) {
-    case event {
-      "ping" ->
-        channel.Reply(
-          "ping",
-          json.object([#("pong", json.bool(True))]),
-          client_socket,
-        )
-      "push_me" ->
-        channel.Push(
-          "pushed",
-          json.object([#("from", json.string("server"))]),
-          client_socket,
-        )
-      "broadcast_from_me" -> {
-        beryl.broadcast_from(
-          channels,
-          socket.id(client_socket),
-          "room:lobby",
-          "broadcasted",
-          wire.dynamic_to_json(payload),
-        )
-        channel.NoReply(client_socket)
+/// The app-dispatch `update` that implements the same observable Phoenix
+/// contract the coordinator-era `contract_channel` did: join replies with
+/// `{joined: true}`, `ping` replies `{pong: true}`, `push_me` pushes a
+/// server message, `broadcast_from_me` broadcasts to everyone but the
+/// sender, and topic close reports its reason to `terminated`.
+fn contract_update(
+  terminated: process.Subject(event.StopReason),
+) -> fn(Nil, event.Event(Nil)) -> event.Next(Nil, Nil) {
+  fn(model, ev) {
+    case ev {
+      event.Join(_topic, _payload, ref) ->
+        event.Next(model, [
+          event.AcceptJoin(
+            ref,
+            Some(json.object([#("joined", json.bool(True))])),
+          ),
+        ])
+      event.Message(_topic, "ping", _payload, Some(ref)) ->
+        event.Next(model, [
+          event.ReplyOk(ref, json.object([#("pong", json.bool(True))])),
+        ])
+      event.Message(topic, "push_me", _payload, _ref) ->
+        event.Next(model, [
+          event.Push(
+            topic,
+            "pushed",
+            json.object([#("from", json.string("server"))]),
+          ),
+        ])
+      event.Message(topic, "broadcast_from_me", payload, _ref) ->
+        event.Next(model, [
+          event.BroadcastFrom(
+            topic,
+            "broadcasted",
+            wire.dynamic_to_json(payload),
+          ),
+        ])
+      event.Closed(_topic, reason) -> {
+        process.send(terminated, reason)
+        event.Next(model, [])
       }
-      _ -> channel.NoReply(client_socket)
+      _ -> event.Next(model, [])
     }
-  })
-  |> channel.with_terminate(fn(reason, _socket) {
-    process.send(terminated, reason)
-  })
+  }
 }
 
-fn start_mist_server(channels: beryl.Channels) -> #(Int, process.Pid) {
+fn start_mist_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let handler = fn(request) {
     mist_transport.upgrade(
@@ -297,10 +299,13 @@ fn join_client(serializer: Serializer, client: WebsocketClient) {
 
 pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let serializer = json_serializer()
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
-  let assert Ok(_) =
-    beryl.register(channels, "room:*", contract_channel(channels, terminated))
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: contract_update(terminated),
+    )
   let #(port, server_pid) = start_mist_server(channels)
 
   let client = connect_client(port)
@@ -398,7 +403,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let _ =
     assert_reply(serializer, leave, Some("join-ref"), "leave-1", "room:lobby")
   let assert Ok(reason) = process.receive(terminated, 200)
-  reason |> should.equal(channel.Normal)
+  reason |> should.equal(event.Normal)
 
   drain_text_messages(client)
   beryl.broadcast(
@@ -426,7 +431,7 @@ fn auth_query(req, name: String) -> Result(String, Nil) {
 }
 
 fn start_auth_server(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   config: mist_transport.TransportConfig,
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
@@ -450,7 +455,12 @@ fn start_auth_server(
 }
 
 pub fn on_connect_rejects_connection_without_token_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    beryl.start(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, _ev) { event.Next(model, []) },
+    )
   let config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
@@ -478,7 +488,7 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
   // app-dispatch system's `init`, without re-authenticating.
   let seeds = process.new_subject()
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(info: event.ConnectInfo(Nil)) {
         process.send(seeds, info.seed)
@@ -511,7 +521,7 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
 pub fn runtime_death_closes_the_connection_test() {
   let serializer = json_serializer()
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, ev) {

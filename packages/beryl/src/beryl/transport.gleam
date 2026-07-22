@@ -13,13 +13,12 @@
 //// 4. Announces disconnects with `socket_disconnected` and releases the
 ////    slot with `beryl.release_connection_slot`.
 
-import beryl.{type Channels}
+import beryl.{type Sockets}
 import beryl/event.{type ConnectSeed}
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
 import beryl/wire/codec.{type Codec, type Inbound}
-import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option}
 import gleam/result
@@ -33,7 +32,7 @@ import gleam/result
 /// metadata), delivered to the app's `init` as `ConnectInfo.seed`. Call
 /// `register_closer` immediately after this.
 pub fn socket_connected(
-  channels channels: Channels,
+  channels channels: Sockets,
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
@@ -44,10 +43,10 @@ pub fn socket_connected(
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Register a function that force-closes the socket's underlying connection
-/// so the coordinator can actively evict it (e.g. heartbeat timeout) instead
+/// so the runtime can actively evict it (e.g. heartbeat timeout) instead
 /// of leaving a zombie socket whose frames are silently dropped.
 pub fn register_closer(
-  channels channels: Channels,
+  channels channels: Sockets,
   socket_id socket_id: String,
   close close: fn() -> Nil,
 ) -> Nil {
@@ -57,7 +56,7 @@ pub fn register_closer(
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce that a socket's connection has closed.
 pub fn socket_disconnected(
-  channels channels: Channels,
+  channels channels: Sockets,
   socket_id socket_id: String,
 ) -> Nil {
   beryl.transport_socket_disconnected(channels, socket_id)
@@ -66,11 +65,11 @@ pub fn socket_disconnected(
 // --- Inbound routing ---
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Route a transport-decoded inbound message to the coordinator. Decode in
+/// Route a transport-decoded inbound message to the runtime. Decode in
 /// the connection process (see `active_codec`) so parse cost and malformed
-/// input never reach the shared coordinator.
+/// input never reach the shared runtime.
 pub fn route_decoded(
-  channels channels: Channels,
+  channels channels: Sockets,
   socket_id socket_id: String,
   message message: Inbound,
 ) -> Nil {
@@ -81,7 +80,7 @@ pub fn route_decoded(
 /// Route a raw binary frame, for codecs without a binary decoder (fans out
 /// to the socket's joined topics' `handle_binary`).
 pub fn route_binary(
-  channels channels: Channels,
+  channels channels: Sockets,
   socket_id socket_id: String,
   data data: BitArray,
 ) -> Nil {
@@ -93,7 +92,7 @@ pub fn route_binary(
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// The wire codec configured for these channels. Transports decode inbound
 /// frames with it in the connection process.
-pub fn active_codec(channels: Channels) -> Codec {
+pub fn active_codec(channels: Sockets) -> Codec {
   beryl.configured_codec(channels)
 }
 
@@ -101,7 +100,7 @@ pub fn active_codec(channels: Channels) -> Codec {
 
 /// A per-connection token bucket enforcing the configured message rate at
 /// the transport edge, so a flooding socket is shed before frames are
-/// decoded or enqueued on the coordinator.
+/// decoded or enqueued on the runtime.
 pub opaque type RateLimiter {
   RateLimiter(bucket: rate_limit.Bucket)
 }
@@ -109,7 +108,7 @@ pub opaque type RateLimiter {
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Create a fresh per-connection message limiter, `None` when no message
 /// rate is configured.
-pub fn new_message_limiter(channels: Channels) -> Option(RateLimiter) {
+pub fn new_message_limiter(channels: Sockets) -> Option(RateLimiter) {
   beryl.message_limits(channels)
   |> option.map(fn(config) { RateLimiter(rate_limit.new_bucket(config)) })
 }
@@ -160,14 +159,10 @@ pub type ConnectionOwner {
   /// The owning runtime is alive at this pid. Monitor it and close the
   /// connection when it goes down.
   OwnerAlive(pid: process.Pid)
-  /// This is an app-side dispatch system but its runtime is not currently
-  /// running (pre-start or a restart window). A new connection cannot be
-  /// owned, so the transport must refuse it rather than admit a dead socket.
+  /// The runtime is not currently running (pre-start or a restart window). A
+  /// new connection cannot be owned, so the transport must refuse it rather
+  /// than admit a dead socket.
   OwnerUnavailable
-  /// This system does not use runtime-monitored connection ownership (a
-  /// channel-module/coordinator system). The transport admits the connection
-  /// without installing an ownership monitor.
-  OwnerUnmonitored
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -175,11 +170,7 @@ pub type ConnectionOwner {
 /// connection process right after upgrade; on `OwnerAlive(pid)` monitor `pid`
 /// and close on its `Down`, and on `OwnerUnavailable` close the connection
 /// immediately.
-pub fn connection_owner(channels: Channels) -> ConnectionOwner {
-  use <- bool.guard(
-    when: !beryl.is_app_system(channels),
-    return: OwnerUnmonitored,
-  )
+pub fn connection_owner(channels: Sockets) -> ConnectionOwner {
   case beryl.app_runtime_pid(channels) {
     Ok(pid) -> OwnerAlive(pid)
     Error(Nil) -> OwnerUnavailable

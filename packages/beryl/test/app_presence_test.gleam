@@ -33,9 +33,9 @@ fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
 /// Joins track the socket under "user:1" and broadcast an apply-time
 /// snapshot; "untrack" untracks and re-broadcasts; "who" pushes a snapshot
 /// to the requesting socket only.
-fn start_system(p: presence.Presence) -> beryl.Channels {
+fn start_system(p: presence.Presence) -> beryl.Sockets {
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(p),
       init: fn(_info) { #(Nil, []) },
@@ -199,7 +199,7 @@ pub fn presence_effects_without_handle_are_dropped_test() {
   // No with_presence_handle: track and snapshot effects are dropped with
   // warnings and the join still succeeds.
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model: Nil, ev: event.Event(Nil)) {

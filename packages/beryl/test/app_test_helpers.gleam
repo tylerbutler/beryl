@@ -1,4 +1,4 @@
-//// Shared helpers for app-side dispatch (`beryl.start_app`) tests.
+//// Shared helpers for app-side dispatch (`beryl.start`) tests.
 ////
 //// Sockets are driven through the public transport SPI so the tests
 //// exercise the same path a real transport uses. Outbound frames are
@@ -15,7 +15,7 @@ import gleeunit/should
 /// Connect a socket, returning the subject that captures its outbound
 /// text frames.
 pub fn connect(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
 ) -> process.Subject(String) {
   connect_with_seed(channels, socket_id, event.empty_seed())
@@ -26,7 +26,7 @@ pub fn connect(
 /// `ConnectInfo.seed`), returning the subject that captures its outbound
 /// text frames.
 pub fn connect_with_seed(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   seed: event.ConnectSeed,
 ) -> process.Subject(String) {
@@ -47,14 +47,14 @@ pub fn connect_with_seed(
 
 /// Route a raw text frame the way a transport does: decode in the caller,
 /// then hand the decoded message to the runtime.
-pub fn route(channels: beryl.Channels, socket_id: String, raw: String) -> Nil {
+pub fn route(channels: beryl.Sockets, socket_id: String, raw: String) -> Nil {
   let assert Ok(msg) = codec.decode_text(transport.active_codec(channels))(raw)
   transport.route_decoded(channels, socket_id, msg)
 }
 
 /// Send a `phx_join` for a topic with the given join_ref/ref.
 pub fn join(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   topic_name: String,
   join_ref: String,
@@ -75,7 +75,7 @@ pub fn join(
 
 /// Send a user event on a topic with a reply ref.
 pub fn push(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   topic_name: String,
   event_name: String,

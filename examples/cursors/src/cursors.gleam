@@ -27,7 +27,7 @@ pub fn main() {
     |> beryl.with_presence_handle(presence_actor)
 
   let assert Ok(channels) =
-    beryl.start_app(
+    beryl.start(
       config,
       init: cursors_app.standalone_init,
       update: fn(model, ev) { cursors_app.standalone_update(ctx, model, ev) },
