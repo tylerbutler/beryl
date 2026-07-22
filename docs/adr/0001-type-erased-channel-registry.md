@@ -31,8 +31,13 @@ existentials, no type classes) cannot express.
 
 2. **App-side dispatch (fully Elm/Lustre).** Beryl delivers wire events to
    one app-written update function that routes topics itself. Fully
-   type-safe, but per-channel lifecycle, authorization, rate limiting, and
-   presence move into application code.
+   type-safe — even design 3's residual coercions (see Consequences)
+   disappear, since each socket has one `msg` type and `send_info` becomes
+   an ordinary typed send. Most infrastructure could stay library-side:
+   rate limiting, presence, pubsub, and connection limits key on topic
+   strings and wire data, not app types. The loss is the channel module as
+   the unit of composition — colocated callbacks, no hand-written union or
+   router, third-party channels without app-side wiring.
 
 3. **Type erasure behind a typed facade (current design).** The registry
    stores a homogeneous `List(ChannelHandler)`; typed values are erased at
@@ -50,6 +55,8 @@ an established Gleam/BEAM pattern: see [`gleam_otp`'s actor
 `unsafely_create_subject`](https://github.com/gleam-lang/erlang/blob/v1.3.0/src/gleam/erlang/process.gleam#L90),
 and [`mist`'s `Dynamic` request
 internals](https://github.com/rawhat/mist/blob/v6.0.3/src/mist/internal/http.gleam#L64).
+Design 2 is rejected on ergonomics, not soundness; a layered variant
+(typed core with channels as sugar on top) may merit a future ADR.
 
 Also make erasure closure-captured ("Option B"): a handler carries only
 `join`, which returns a `JoinedChannel` — closures capturing the typed
