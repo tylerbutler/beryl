@@ -83,7 +83,6 @@ fn admit(
     send: fn(_message) { Ok(Nil) },
     send_binary: fn(_data) { Ok(Nil) },
     codec: None,
-    assigns: Nil,
     seed: event.empty_seed(),
     close: close,
   )

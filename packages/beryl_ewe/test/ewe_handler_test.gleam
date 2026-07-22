@@ -95,7 +95,7 @@ fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
 
 fn start_server_with_config(
   channels: beryl.Channels,
-  config: ewe_transport.TransportConfig(assigns),
+  config: ewe_transport.TransportConfig,
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let http_fallback = fn(_request) {

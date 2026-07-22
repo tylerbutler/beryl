@@ -4,14 +4,14 @@ import gleeunit/should
 import mist.{type Connection}
 
 pub fn default_config_creates_with_path_test() {
-  let _config: mist_transport.TransportConfig(Nil) =
+  let _config: mist_transport.TransportConfig =
     mist_transport.default_config("/socket")
 
   should.be_true(True)
 }
 
 pub fn default_config_slash_ws_test() {
-  let _config: mist_transport.TransportConfig(Nil) =
+  let _config: mist_transport.TransportConfig =
     mist_transport.default_config("/ws")
 
   should.be_true(True)
@@ -19,29 +19,29 @@ pub fn default_config_slash_ws_test() {
 
 pub fn with_on_connect_sets_callback_test() {
   let callback = fn(_req: Request(Connection)) -> Result(
-    Nil,
+    List(#(String, String)),
     mist_transport.ConnectError,
   ) {
-    Ok(Nil)
+    Ok([])
   }
 
   let config =
     mist_transport.default_config("/socket")
     |> mist_transport.with_on_connect(callback)
 
-  let _typed_config: mist_transport.TransportConfig(Nil) = config
+  let _typed_config: mist_transport.TransportConfig = config
   should.be_true(True)
 }
 
 pub fn with_on_connect_replaces_callback_test() {
   let callback1 = fn(_req: Request(Connection)) -> Result(
-    Nil,
+    List(#(String, String)),
     mist_transport.ConnectError,
   ) {
-    Ok(Nil)
+    Ok([])
   }
   let callback2 = fn(_req: Request(Connection)) -> Result(
-    Nil,
+    List(#(String, String)),
     mist_transport.ConnectError,
   ) {
     Error(mist_transport.ConnectRejected)
@@ -52,24 +52,24 @@ pub fn with_on_connect_replaces_callback_test() {
     |> mist_transport.with_on_connect(callback1)
     |> mist_transport.with_on_connect(callback2)
 
-  let _typed_config: mist_transport.TransportConfig(Nil) = config
+  let _typed_config: mist_transport.TransportConfig = config
   should.be_true(True)
 }
 
-pub fn with_on_connect_seeding_assigns_sets_callback_test() {
-  // on_connect may return seeded socket-level assigns, not just Nil.
+pub fn with_on_connect_seeding_metadata_sets_callback_test() {
+  // on_connect may return ordered string metadata, not just an empty list.
   let callback = fn(_req: Request(Connection)) -> Result(
-    String,
+    List(#(String, String)),
     mist_transport.ConnectError,
   ) {
-    Ok("user-123")
+    Ok([#("user", "user-123")])
   }
 
   let config =
     mist_transport.default_config("/socket")
     |> mist_transport.with_on_connect(callback)
 
-  let _typed_config: mist_transport.TransportConfig(String) = config
+  let _typed_config: mist_transport.TransportConfig = config
   should.be_true(True)
 }
 
@@ -86,7 +86,7 @@ pub fn with_allowed_origins_sets_list_test() {
     mist_transport.default_config("/socket")
     |> mist_transport.with_allowed_origins(["https://app.example.com"])
 
-  let _typed_config: mist_transport.TransportConfig(Nil) = config
+  let _typed_config: mist_transport.TransportConfig = config
   should.be_true(True)
 }
 
@@ -95,7 +95,7 @@ pub fn with_allow_all_origins_is_exported_test() {
     mist_transport.default_config("/socket")
     |> mist_transport.with_allow_all_origins()
 
-  let _typed_config: mist_transport.TransportConfig(Nil) = config
+  let _typed_config: mist_transport.TransportConfig = config
   should.be_true(True)
 }
 

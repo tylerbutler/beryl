@@ -71,7 +71,6 @@ fn connect_binary(
       process.send(binary, data)
       Ok(Nil)
     },
-    assigns: Nil,
     seed: event.empty_seed(),
   )
   process.sleep(10)
