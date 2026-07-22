@@ -712,14 +712,18 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
   )
 }
 
-/// Channels system handle.
+/// Runtime system handle.
 ///
 /// This opaque handle is obtained from `supervisor.channels` and passed to
 /// registration, broadcast, bridge, group, and transport functions. App-side
-/// dispatch handles are obtained from the supervised child specification.
-/// Its internal actor protocol is intentionally hidden so beryl can evolve it
-/// without breaking application code.
-pub opaque type Channels {
+/// dispatch handles are returned with the child specification from
+/// [`child_spec`](#child_spec).
+///
+/// The handle is deliberately non-generic: an app-side dispatch system is
+/// generic over the application's `model`/`msg`, but those types are sealed
+/// inside the monomorphic closures captured at construction time, so they
+/// never appear in this handle or in any transport signature.
+pub opaque type Sockets {
   Channels(
     config: Config,
     connection_limiter: Option(connection_limit.ConnectionLimiter),
@@ -740,8 +744,17 @@ pub opaque type Channels {
   )
 }
 
-/// Monomorphic closures over a generic runtime actor, captured by the
-/// supervised child specification. This lets the frame-level transport SPI stay
+/// Transitional alias for the pre-cutover name of [`Sockets`](#Sockets).
+///
+/// The public handle is being renamed from `Channels` to `Sockets` as part
+/// of the ADR 0002 phase 2 cutover. This alias keeps the channel-module and
+/// transport call sites compiling while they are migrated; it is removed once
+/// the legacy channel-module API is deleted.
+pub type Channels =
+  Sockets
+
+/// Monomorphic closures over a generic runtime actor, captured by
+/// [`child_spec`](#child_spec). This lets the frame-level transport SPI stay
 /// unparameterized while the runtime holds typed per-socket models.
 type AppHandle {
   AppHandle(
@@ -757,7 +770,7 @@ type AppHandle {
     route_decoded: fn(String, codec.Inbound) -> Nil,
     route_binary: fn(String, BitArray) -> Nil,
     broadcast: fn(String, String, json.Json, Option(String)) -> Nil,
-    stop: fn() -> Nil,
+    stop: fn() -> Result(Nil, StopError),
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
@@ -890,6 +903,71 @@ pub fn channels_telemetry_enabled(channels: Channels) -> Bool {
   channels.config.telemetry
 }
 
+/// Why an eagerly validated `Config` was rejected before any process started.
+///
+/// [`child_spec`](#child_spec) validates the configuration before allocating
+/// names or starting the runtime.
+pub type ConfigError {
+  /// `heartbeat_timeout_ms` was below the minimum. The server derives its
+  /// staleness check interval as `heartbeat_timeout_ms / 2` (integer
+  /// division), so a timeout of 1 would round down to a check interval of 0 —
+  /// which disables heartbeat eviction entirely. The wrapped `Int` is the
+  /// smallest accepted timeout.
+  HeartbeatTimeoutTooLow(minimum: Int)
+  /// A per-topic-pattern rate limit used a pattern string that is not a valid
+  /// topic pattern. `pattern` is the offending pattern and `reason` describes
+  /// the problem.
+  InvalidTopicPattern(pattern: String, reason: String)
+}
+
+/// Errors when stopping a Beryl system with [`stop`](#stop).
+pub type StopError {
+  /// The handle referred to a system that was not running: it was never
+  /// started (for example, a `child_spec` handle whose supervisor was never
+  /// added to a running tree) or it has already been stopped. `stop` is safe
+  /// to call in these cases; it reports `NotRunning` rather than crashing.
+  NotRunning
+  /// The runtime did not acknowledge the stop request within the shutdown
+  /// window. The system may still be terminating.
+  StopTimeout
+}
+
+/// Eagerly validate a [`Config`](#Config) without starting anything.
+///
+/// This checks that `heartbeat_timeout_ms` is at least 2 and that every
+/// per-topic rate-limit pattern is valid.
+pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
+  use <- bool.guard(
+    when: config.heartbeat_timeout_ms < 2,
+    return: internal.result_error(HeartbeatTimeoutTooLow(2)),
+  )
+  validate_topic_patterns(config.topic_rates)
+}
+
+fn validate_topic_patterns(
+  rates: List(#(String, rate_limit.RateLimitConfig)),
+) -> Result(Nil, ConfigError) {
+  case rates {
+    [] -> Ok(Nil)
+    [#(pattern, _limits), ..rest] ->
+      case topic.validate_pattern(pattern) {
+        Ok(_) -> validate_topic_patterns(rest)
+        Error(error) ->
+          internal.result_error(InvalidTopicPattern(
+            pattern,
+            topic_error_reason(error),
+          ))
+      }
+  }
+}
+
+fn topic_error_reason(error: topic.TopicError) -> String {
+  case error {
+    topic.EmptyTopic -> "pattern cannot be empty"
+    topic.InvalidFormat(reason) -> reason
+  }
+}
+
 // nolint: unused_exports -- package-internal accessor for beryl/internal/unsupervised; hidden from public docs with @internal
 @internal
 pub fn channels_connection_limiter(
@@ -907,67 +985,173 @@ pub fn channels_registry(channels: Channels) -> Option(coordinator.Registry) {
   }
 }
 
-/// Build a supervised app-side dispatch system (ADR 0002).
+/// Stop a Beryl system.
 ///
-/// One entry point replaces channel modules and registration: the app
-/// supplies `init`, producing the per-socket model when a socket connects,
-/// and `update`, receiving every event for the socket and returning the
-/// next model plus a list of effects. The app routes topics itself by
-/// matching on the event's topic — see `beryl/event` for the event and
-/// effect types.
+/// App-side dispatch systems own a supervised runtime subtree which can be
+/// drained through this handle. Legacy channel systems are owned by the
+/// application's supervisor and return `Error(NotRunning)`.
+pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
+  case sockets {
+    Channels(..) -> internal.result_error(NotRunning)
+    // The app-side dispatch limiter is supervised inside the Beryl subtree,
+    // so it is not stopped directly here; it is torn down with the subtree.
+    AppChannels(app: app, ..) -> app.stop()
+  }
+}
+
+/// Build the app-side dispatch supervision child specification.
 ///
-/// Add the returned child specification to the application's OTP supervisor
-/// before using the handle.
+/// Add the returned specification to the application's own supervision tree.
+/// The configuration is validated eagerly, before the application's supervisor
+/// starts, rather than crashing a supervised child at init time.
+///
+/// The returned `Sockets` handle is name-backed and usable immediately, even
+/// before the supervision tree that owns the returned child specification is
+/// started. Before startup, during a runtime restart window, and after
+/// shutdown, fire-and-forget handle operations are no-ops and connection
+/// admission fails cleanly rather than panicking.
+///
+/// ## Example
+///
+/// ```gleam
+/// let assert Ok(#(sockets, spec)) =
+///   beryl.child_spec(beryl.config(wire.phoenix_codec()), init:, update:)
+///
+/// let assert Ok(_root) =
+///   static_supervisor.new(static_supervisor.OneForOne)
+///   |> static_supervisor.add(spec)
+///   |> static_supervisor.start()
+///
+/// // `sockets` is usable once the tree above is running.
+/// ```
 pub fn child_spec(
   config: Config,
   init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
   update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
 ) -> Result(
-  #(Channels, supervision.ChildSpecification(static_supervisor.Supervisor)),
-  Nil,
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
 ) {
-  use <- bool.guard(
-    when: config.heartbeat_timeout_ms < 2,
-    return: Error(Nil),
+  use subtree <- result.map(build_app_subtree(config, init, update))
+  #(subtree.handle, supervision.supervisor(subtree.start_supervisor))
+}
+
+/// A validated, name-allocated app-side dispatch subtree that has not been
+/// started yet.
+///
+/// `handle` is the stable, non-generic `Sockets` returned to callers before
+/// startup. `start_supervisor` starts the nested Beryl subtree; the generic
+/// `init`/`update` closures are captured inside it, so `AppSubtree` itself
+/// stays non-generic.
+type AppSubtree {
+  AppSubtree(
+    handle: Sockets,
+    start_supervisor: fn() ->
+      Result(actor.Started(static_supervisor.Supervisor), actor.StartError),
   )
+}
+
+/// Validate the config, allocate the runtime and optional limiter names once,
+/// and build the supervised subtree.
+///
+/// Names are allocated here so the returned `Sockets` handle is stable before
+/// the subtree starts: the runtime is reached through its registered name and
+/// the limiter through `connection_limit.from_name`, so the handle keeps
+/// working across supervised runtime restarts. There is no unsupervised app
+/// runtime — the runtime always runs under the nested Beryl supervisor, with
+/// the `init`/`update` closures captured in the child specification. A runtime
+/// crash therefore restarts dispatch automatically (per-socket state is
+/// dropped, matching coordinator restart semantics). The runtime child is
+/// `Transient` so a graceful `stop` is not resurrected.
+fn build_app_subtree(
+  config: Config,
+  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(AppSubtree, ConfigError) {
+  use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
-  let name = process.new_name("beryl_runtime")
-  let child =
+
+  let runtime_name = process.new_name("beryl_runtime")
+  let limiter_name = case
+    connection_limit.enabled(
+      config.max_connections_per_ip,
+      config.max_connections,
+    )
+  {
+    True -> Some(process.new_name("beryl_connection_limiter"))
+    False -> None
+  }
+
+  let handle =
+    AppChannels(
+      config: config,
+      connection_limiter: option_map(limiter_name, connection_limit.from_name),
+      app: app_handle(process.named_subject(runtime_name), config.pubsub),
+    )
+
+  AppSubtree(handle: handle, start_supervisor: fn() {
+    start_app_supervisor(config, runtime_name, limiter_name, init, update)
+  })
+}
+
+/// Start the nested Beryl subtree: a one-for-one supervisor owning the runtime
+/// as a transient child, with the optional connection limiter as a sibling.
+fn start_app_supervisor(
+  config: Config,
+  runtime_name: process.Name(runtime.Msg(msg)),
+  limiter_name: Option(process.Name(connection_limit.Message)),
+  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
+  let runtime_child =
     supervision.worker(fn() {
       runtime.start_named(
         to_runtime_config(config),
-        name: name,
+        name: runtime_name,
         pubsub: config.pubsub,
         init: init,
         update: update,
       )
-      |> result.map_error(fn(error) {
-        case error {
-          runtime.ActorStartFailed(error) -> error
-          runtime.InvalidHeartbeatTimeout ->
-            actor.InitFailed("invalid heartbeat timeout")
-        }
-      })
+      |> result.map_error(runtime_start_error)
     })
     |> supervision.restart(supervision.Transient)
 
-  let channels =
-    AppChannels(
-      config: config,
-      connection_limiter: connection_limit.start_optional(
-        config.max_connections_per_ip,
-        config.max_connections,
-      ),
-      app: app_handle(process.named_subject(name), config.pubsub),
-    )
-  let spec =
-    supervision.supervisor(fn() {
-      static_supervisor.new(static_supervisor.OneForOne)
-      |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
-      |> static_supervisor.add(child)
-      |> static_supervisor.start()
-    })
-  Ok(#(channels, spec))
+  let builder =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
+    |> static_supervisor.add(runtime_child)
+
+  let builder = case limiter_name {
+    Some(name) ->
+      builder
+      |> static_supervisor.add(
+        supervision.worker(fn() {
+          connection_limit.start_named(
+            config.max_connections_per_ip,
+            config.max_connections,
+            name,
+          )
+        }),
+      )
+    None -> builder
+  }
+
+  static_supervisor.start(builder)
+}
+
+fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
+  case error {
+    runtime.ActorStartFailed(error) -> error
+    runtime.InvalidHeartbeatTimeout ->
+      actor.InitFailed("invalid heartbeat timeout")
+  }
+}
+
+fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
+  case option {
+    Some(value) -> Some(transform(value))
+    None -> None
+  }
 }
 
 /// Build the monomorphic closure record over a generic runtime. This is
@@ -1032,16 +1216,18 @@ fn app_handle(
     },
     stop: fn() {
       // Drain sockets gracefully; the Transient child is not restarted
-      // after a normal stop. The internal supervisor remains as an inert
-      // shell linked to the process that called `start_app`, and exits
-      // with it.
+      // after a normal stop. `NotRunning` when the runtime is already down
+      // (pre-start, restart window, or a prior stop) keeps `stop`
+      // idempotent instead of crashing.
       case process.subject_owner(subject) {
-        Error(Nil) -> Nil
+        Error(Nil) -> internal.result_error(NotRunning)
         Ok(_) -> {
           let reply = process.new_subject()
           process.send(subject, runtime.Stop(reply))
-          let _stop_result = process.receive(reply, 5000)
-          Nil
+          case process.receive(reply, 5000) {
+            Ok(_) -> Ok(Nil)
+            Error(Nil) -> internal.result_error(StopTimeout)
+          }
         }
       }
     },

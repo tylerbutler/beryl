@@ -10,7 +10,23 @@ import beryl/event
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
+import gleam/otp/static_supervisor
+import gleam/result
 import gleeunit/should
+
+/// Build and start an app-side dispatch subtree for tests.
+pub fn start_app(
+  config: beryl.Config,
+  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(beryl.Sockets, beryl.ConfigError) {
+  use #(sockets, spec) <- result.map(beryl.child_spec(config, init:, update:))
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  Ok(sockets)
+}
 
 /// Connect a socket, returning the subject that captures its outbound
 /// text frames.
