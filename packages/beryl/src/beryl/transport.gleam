@@ -22,7 +22,6 @@ import beryl/rate_limit
 import beryl/telemetry
 import beryl/wire/codec.{type Codec, type Inbound}
 import gleam/bool
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -146,17 +145,15 @@ pub fn telemetry_frame_stop(
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce a newly connected socket. `send`/`send_binary` deliver outbound
-/// frames on this connection. `assigns` seeds connect-time socket assigns
-/// (type-erased internally) for channel-module systems; `seed` carries the
-/// upgrade request's connection data for app-dispatch systems (delivered to
-/// the app's `init` as `ConnectInfo.seed`). Call `register_closer`
-/// immediately after this.
+/// frames on this connection. `seed` carries the upgrade request's
+/// connection data (path, query, headers, and any `with_on_connect`
+/// metadata), delivered to the app's `init` as `ConnectInfo.seed`. Call
+/// `register_closer` immediately after this.
 pub fn socket_connected(
   channels channels: Channels,
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns assigns: assigns,
   seed seed: ConnectSeed,
 ) -> Nil {
   socket_connected_with_codec(
@@ -165,7 +162,6 @@ pub fn socket_connected(
     send: send,
     send_binary: send_binary,
     codec: None,
-    assigns: assigns,
     seed: seed,
   )
 }
@@ -181,7 +177,6 @@ pub fn socket_connected_with_codec(
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec codec: Option(Codec),
-  assigns assigns: assigns,
   seed seed: ConnectSeed,
 ) -> Nil {
   beryl.transport_socket_connected(
@@ -190,7 +185,6 @@ pub fn socket_connected_with_codec(
     send,
     send_binary,
     codec,
-    erase(assigns),
     seed,
   )
 }
@@ -313,10 +307,6 @@ pub fn log_warning(
   log.warn(logger.inner, message, metadata)
 }
 
-/// Type-erase connect-time assigns before handing them to the coordinator.
-@external(erlang, "beryl_ffi", "identity")
-fn erase(value: anything) -> Dynamic
-
 // --- Connection ownership ---
 
 /// The lifecycle relationship between a transport connection and the runtime
@@ -356,7 +346,6 @@ pub fn admit_socket(
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec codec: Option(Codec),
-  assigns assigns: assigns,
   seed seed: ConnectSeed,
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
@@ -379,7 +368,6 @@ pub fn admit_socket(
           send,
           send_binary,
           codec,
-          erase(assigns),
           seed,
           close,
         )

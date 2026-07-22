@@ -25,10 +25,7 @@ import gleam/result
 import gleam/string
 
 /// Configuration for the Ewe WebSocket transport
-///
-/// The `assigns` type parameter is the socket-level state produced by the
-/// `on_connect` hook. It defaults to `Nil` when no hook is configured.
-pub opaque type TransportConfig(assigns) {
+pub opaque type TransportConfig {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
     path: String,
@@ -37,11 +34,15 @@ pub opaque type TransportConfig(assigns) {
     ///
     /// Runs the Phoenix `UserSocket.connect/3` analogue: it authenticates the
     /// whole connection a single time and can reject it before any channel
-    /// join. Return `Ok(assigns)` to allow the connection and seed initial
-    /// socket assigns (visible to channels at join), or `Error(ConnectRejected)` to reject
-    /// with a 403 Forbidden response. When None, all connections are allowed
-    /// and assigns start empty (`Nil`).
-    on_connect: Option(fn(Request(Connection)) -> Result(assigns, ConnectError)),
+    /// join. Return `Ok(metadata)` to allow the connection and seed
+    /// `ConnectSeed.metadata` (an ordered list of string pairs, visible to
+    /// the app's `init` via `ConnectInfo.seed`; channel-module systems ignore
+    /// it), or `Error(ConnectRejected)` to reject with a 403 Forbidden
+    /// response. When `None`, all connections are allowed and metadata
+    /// starts empty (`[]`).
+    on_connect: Option(
+      fn(Request(Connection)) -> Result(List(#(String, String)), ConnectError),
+    ),
     /// Policy applied to the request `Origin` header before the WebSocket
     /// handshake. Defaults to [`SameOrigin`](#originpolicy).
     origin_policy: OriginPolicy,
@@ -97,30 +98,36 @@ pub type OriginPolicy {
 
 /// Create a default transport config with no connect hook.
 ///
-/// The resulting config seeds `Nil` assigns and applies the
+/// The resulting config seeds empty (`[]`) `ConnectSeed.metadata` and applies
 /// [`SameOrigin`](#originpolicy) origin policy, which rejects cross-site
 /// WebSocket upgrades before the handshake (CSWSH protection). Same-origin
 /// upgrades and non-browser clients (no `Origin` header) are admitted without
 /// configuration.
 ///
-/// Add `with_on_connect` to authenticate connections and/or seed initial
-/// assigns. Use `with_allowed_origins` to pin an explicit allow-list, or
+/// Add `with_on_connect` to authenticate connections and/or seed connect
+/// metadata. Use `with_allowed_origins` to pin an explicit allow-list, or
 /// `with_allow_all_origins` to opt out of origin checking entirely.
-pub fn default_config(path: String) -> TransportConfig(Nil) {
+pub fn default_config(path: String) -> TransportConfig {
   TransportConfig(path: path, on_connect: None, origin_policy: SameOrigin)
 }
 
 /// Set a socket-level connect/authentication callback on the transport config.
 ///
 /// The callback receives the HTTP request before the WebSocket upgrade and
-/// runs once per socket. Return `Ok(assigns)` to allow the connection and seed
-/// initial socket assigns that channels can read at join time, or
+/// runs once per socket. Return `Ok(metadata)` to allow the connection and
+/// seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
+/// an app-dispatch system's `init` via `ConnectInfo.seed` (see
+/// `ConnectInfo.init`); channel-module systems ignore it — or
 /// `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
 /// response before any channel join occurs.
+///
+/// Callback order and duplicate keys are preserved verbatim in
+/// `ConnectSeed.metadata`; this transport never logs metadata values.
 pub fn with_on_connect(
-  config: TransportConfig(a),
-  callback: fn(Request(Connection)) -> Result(assigns, ConnectError),
-) -> TransportConfig(assigns) {
+  config: TransportConfig,
+  callback: fn(Request(Connection)) ->
+    Result(List(#(String, String)), ConnectError),
+) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: Some(callback),
@@ -141,9 +148,9 @@ pub fn with_on_connect(
 /// that should be allowed (e.g. behind a reverse proxy that rewrites the
 /// `Host` header, where `SameOrigin` cannot see the public host).
 pub fn with_allowed_origins(
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   origins: List(String),
-) -> TransportConfig(assigns) {
+) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: config.on_connect,
@@ -159,9 +166,7 @@ pub fn with_allowed_origins(
 /// sessions) for authorization, or that authenticate every message
 /// independently. For cookie/session-authenticated apps, prefer the default
 /// `SameOrigin` policy or `with_allowed_origins`.
-pub fn with_allow_all_origins(
-  config: TransportConfig(assigns),
-) -> TransportConfig(assigns) {
+pub fn with_allow_all_origins(config: TransportConfig) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: config.on_connect,
@@ -242,7 +247,7 @@ type SendRequest {
 pub fn upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   next: fn() -> Response(ResponseBody),
 ) -> Response(ResponseBody) {
   // Check if path matches
@@ -257,7 +262,7 @@ pub fn upgrade(
 fn handle_matched_upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
 ) -> Response(ResponseBody) {
   let telemetry = transport.telemetry(channels, transport.Ewe)
   let started_at = transport.telemetry_start(telemetry)
@@ -391,7 +396,7 @@ fn forbidden() -> Response(ResponseBody) {
 fn run_connect_and_upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   connection_permit: beryl.ConnectionPermit,
   telemetry: transport.Telemetry,
   started_at: Int,
@@ -400,11 +405,11 @@ fn run_connect_and_upgrade(
   case config.on_connect {
     Some(callback) ->
       case callback(request) {
-        Ok(assigns) ->
+        Ok(metadata) ->
           do_upgrade(
             request,
             channels,
-            assigns,
+            metadata,
             Some(connection_permit),
             telemetry,
             started_at,
@@ -424,7 +429,7 @@ fn run_connect_and_upgrade(
       do_upgrade(
         request,
         channels,
-        Nil,
+        [],
         Some(connection_permit),
         telemetry,
         started_at,
@@ -474,7 +479,7 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// ```
 pub fn handler(
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   http_fallback: fn(Request(Connection)) -> Response(ResponseBody),
 ) -> fn(Request(Connection)) -> Response(ResponseBody) {
   fn(request) {
@@ -489,9 +494,10 @@ pub fn handler(
 /// Alternative: upgrade any request to WebSocket (caller handles path matching)
 ///
 /// Note: This function does not invoke the `on_connect` callback from
-/// `TransportConfig`. Sockets upgraded this way start with empty (`Nil`)
-/// assigns. If you need authentication or seeded assigns, either use `upgrade`
-/// with a full config or call your auth check before this function.
+/// `TransportConfig`. Sockets upgraded this way start with empty (`[]`)
+/// `ConnectSeed.metadata`. If you need authentication or seeded metadata,
+/// either use `upgrade` with a full config or call your auth check before
+/// this function.
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
@@ -500,7 +506,7 @@ pub fn upgrade_connection(
   do_upgrade(
     request,
     channels,
-    Nil,
+    [],
     None,
     telemetry,
     transport.telemetry_start(telemetry),
@@ -509,12 +515,19 @@ pub fn upgrade_connection(
 
 /// Assemble the connection seed delivered to an app-dispatch system's
 /// `init` (`ConnectInfo.seed`). Channel-module systems ignore it.
-fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
+///
+/// `metadata` is the ordered list of string pairs returned by the
+/// configured `on_connect` callback (empty when none is configured or it
+/// returns no metadata); order and duplicate keys are preserved verbatim.
+fn connect_seed(
+  request: Request(Connection),
+  metadata: List(#(String, String)),
+) -> event.ConnectSeed {
   event.ConnectSeed(
     path: request.path,
     query: request.get_query(request) |> result.unwrap([]),
     headers: request.headers,
-    metadata: [],
+    metadata: metadata,
   )
 }
 
@@ -522,14 +535,14 @@ fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
 fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
-  connect_assigns: assigns,
+  connect_metadata: List(#(String, String)),
   connection_permit: Option(beryl.ConnectionPermit),
   telemetry: transport.Telemetry,
   started_at: Int,
 ) -> Response(ResponseBody) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
   let active_codec = transport.active_codec(channels)
-  let seed = connect_seed(request)
+  let seed = connect_seed(request, connect_metadata)
   let response =
     ewe.upgrade_websocket(
       request,
@@ -538,7 +551,6 @@ fn do_upgrade(
           connection,
           base_selector,
           channels,
-          connect_assigns,
           seed,
           connection_permit,
           max_inbound_frame_bytes,
@@ -581,7 +593,6 @@ fn on_init(
   _connection: WebsocketConnection,
   base_selector: Selector(SendRequest),
   channels: Channels,
-  connect_assigns: assigns,
   seed: event.ConnectSeed,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
@@ -627,7 +638,6 @@ fn on_init(
           send: send_fn,
           send_binary: send_binary_fn,
           codec: None,
-          assigns: connect_assigns,
           seed: seed,
           close: fn() { process.send(send_subject, Close) },
         )
@@ -649,7 +659,6 @@ fn on_init(
           send: send_fn,
           send_binary: send_binary_fn,
           codec: None,
-          assigns: connect_assigns,
           seed: seed,
           close: fn() { process.send(send_subject, Close) },
         )

@@ -58,7 +58,7 @@ pub fn main() {
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
       case get_query_param(req, "token") {
-        Ok("beryl-demo") -> Ok(Nil)
+        Ok("beryl-demo") -> Ok([])
         _ -> Error(mist_transport.ConnectRejected)
       }
     })

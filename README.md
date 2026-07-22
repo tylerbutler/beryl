@@ -158,7 +158,7 @@ flowchart TD
 - **PubSub** — pg-based distributed publish/subscribe
 - **Actor bridge** — forward an external OTP actor's stream to a socket with `beryl/bridge`
 - **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
-- **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds initial assigns
+- **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds ordered connect metadata delivered to the app's `init` via `ConnectInfo.seed`
 - **Observability** — Opt-in stable telemetry events and local coordinator snapshots, with export owned by the host application
 
 ## Examples
