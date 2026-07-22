@@ -1,16 +1,22 @@
-//// Embeddable collaborative-document logic for app-side dispatch
-//// (ADR 0002).
+//// Collaborative-document logic for app-side dispatch.
 ////
-//// A topic-scoped `Model`/`join`/`update`/`closed` triple: a composing
-//// app (see the showcase example) routes `document:*:*` events here and
-//// stores the returned model per topic. Mirrors the behavior of
-//// `collab_docs/channel` on the channel-module API, including its
-//// channel-level tenant token auth.
+//// Two layers share one source of truth:
+////
+//// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
+////   composing app (see the showcase example) routes `document:*:*` events
+////   through, storing the returned model per topic.
+//// - A socket-wide `Standalone` model plus `standalone_init`/
+////   `standalone_update` wrappers that drive the standalone collab-docs
+////   server through `beryl.start_app`, reusing the same per-topic surface.
+////
+//// Join-level tenant-token auth is preserved: the join payload must carry a
+//// `token` HMAC-signed for the tenant whose document is being joined.
 
 import beryl/event.{type Effect, type Ref}
 import beryl/topic as beryl_topic
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
+import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/io
@@ -120,6 +126,78 @@ pub fn closed(
   _model: Model,
 ) -> List(Effect) {
   []
+}
+
+// --- Standalone app-side dispatch wrapper ---
+
+/// Socket-wide state for the standalone collab-docs server: one per-topic
+/// `Model` per joined `document:*:*` topic, keyed by topic.
+pub type Standalone {
+  Standalone(socket_id: String, docs: Dict(String, Model))
+}
+
+/// `init` for the standalone collab-docs `beryl.start_app` runtime.
+pub fn standalone_init(
+  info: event.ConnectInfo(Nil),
+) -> #(Standalone, List(Effect)) {
+  #(Standalone(socket_id: info.socket_id, docs: dict.new()), [])
+}
+
+/// `update` for the standalone collab-docs `beryl.start_app` runtime: route
+/// each event to the embeddable `join`/`update`/`closed` surface, keyed by
+/// topic. Non-`document:*` joins are rejected (fail closed), mirroring the
+/// old `document:*:*` handler registration.
+pub fn standalone_update(
+  ctx: Ctx,
+  model: Standalone,
+  ev: event.Event(Nil),
+) -> event.Next(Standalone, Nil) {
+  case ev {
+    event.Join(topic, payload, ref) ->
+      case topic {
+        "document:" <> _ -> {
+          let #(joined, effects) =
+            join(ctx, model.socket_id, topic, payload, ref)
+          case joined {
+            Some(sub) ->
+              event.Next(
+                Standalone(..model, docs: dict.insert(model.docs, topic, sub)),
+                effects,
+              )
+            None -> event.Next(model, effects)
+          }
+        }
+        _ ->
+          event.Next(model, [
+            event.RejectJoin(ref, error_payload("invalid_topic")),
+          ])
+      }
+
+    event.Message(topic, event_name, payload, ref) ->
+      case dict.get(model.docs, topic) {
+        Ok(sub) -> {
+          let #(sub, effects) =
+            update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
+          event.Next(
+            Standalone(..model, docs: dict.insert(model.docs, topic, sub)),
+            effects,
+          )
+        }
+        Error(Nil) -> event.Next(model, [])
+      }
+
+    event.Closed(topic, _reason) ->
+      case dict.get(model.docs, topic) {
+        Ok(sub) ->
+          event.Next(
+            Standalone(..model, docs: dict.delete(model.docs, topic)),
+            closed(ctx, model.socket_id, topic, sub),
+          )
+        Error(Nil) -> event.Next(model, [])
+      }
+
+    event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
+  }
 }
 
 fn sync_state(
