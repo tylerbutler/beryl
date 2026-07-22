@@ -65,6 +65,7 @@ import beryl/wire/codec
 import gleam/bool
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
+import gleam/erlang/reference.{type Reference}
 import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
@@ -872,9 +873,14 @@ pub fn register(
   pattern: String,
   handler: Channel(assigns, info),
 ) -> Result(RegisteredChannel(assigns, info), RegisterError) {
-  let handle_info = typed_handle_info(handler)
+  // Unique per registration: lets the erased callbacks below assert that a
+  // channel_assigns value they're handed back really was produced by their
+  // own JoinOk/NoReply/etc, instead of trusting the coordinator's dispatch
+  // unconditionally. See `create_socket_with_channel_assigns`.
+  let assigns_tag = reference.new()
+  let handle_info = typed_handle_info(assigns_tag, handler)
   // Convert typed Channel to type-erased ChannelHandler
-  let erased_handler = erase_channel_types(pattern, handler)
+  let erased_handler = erase_channel_types(assigns_tag, pattern, handler)
 
   let registration = case channels.registry {
     // Write to the crash-survivable registry, then sync the live
@@ -1057,7 +1063,14 @@ pub fn send_info(
 ///
 /// This is necessary because we need to store handlers for different
 /// channel types in the same registry.
+///
+/// `assigns_tag` is a reference unique to this registration (see
+/// `register`). Every erased result below stamps its assigns with it, and
+/// every read of previously-stored assigns checks the stamp first — so a
+/// coordinator dispatch bug that hands this handler's callbacks another
+/// channel's assigns fails loudly instead of silently coercing garbage.
 fn erase_channel_types(
+  assigns_tag: Reference,
   pattern_str: String,
   typed_channel: Channel(assigns, info),
 ) -> ChannelHandler {
@@ -1076,15 +1089,16 @@ fn erase_channel_types(
       ctx: coordinator.SocketContext,
     ) {
       // Create a typed socket seeded with any connect-time assigns from the
-      // transport's on_connect hook (Nil when none were seeded).
-      let typed_socket = create_socket_with_assigns(ctx)
+      // transport's on_connect hook (Nil when none were seeded). These
+      // predate any channel-specific assigns, so they carry no tag yet.
+      let typed_socket = create_socket_with_connect_assigns(ctx)
 
       // Call the typed join handler (unsafe coerce socket to expected type)
       case join(topic_name, payload, unsafe_coerce_socket(typed_socket)) {
         channel.JoinOk(reply, new_socket) -> {
           // Extract assigns and type-erase them
           let erased_assigns =
-            unsafe_coerce_to_dynamic(socket.get_assigns(new_socket))
+            tag_assigns(assigns_tag, socket.get_assigns(new_socket))
           coordinator.JoinOkErased(reply: reply, assigns: erased_assigns)
         }
         channel.JoinError(reason) -> {
@@ -1097,19 +1111,19 @@ fn erase_channel_types(
       payload: Dynamic,
       ctx: coordinator.SocketContext,
     ) {
-      let typed_socket = create_socket_with_assigns(ctx)
+      let typed_socket = create_socket_with_channel_assigns(assigns_tag, ctx)
 
       handle_in(event, payload, unsafe_coerce_socket(typed_socket))
-      |> erase_handle_result
+      |> erase_handle_result(assigns_tag, _)
     },
     handle_binary: fn(data: BitArray, ctx: coordinator.SocketContext) {
-      let typed_socket = create_socket_with_assigns(ctx)
+      let typed_socket = create_socket_with_channel_assigns(assigns_tag, ctx)
 
       handle_binary(data, unsafe_coerce_socket(typed_socket))
-      |> erase_handle_result
+      |> erase_handle_result(assigns_tag, _)
     },
     terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
-      let typed_socket = create_socket_with_assigns(ctx)
+      let typed_socket = create_socket_with_channel_assigns(assigns_tag, ctx)
       // Unsafe coerce socket to expected type
       terminate(reason, unsafe_coerce_socket(typed_socket))
     },
@@ -1117,15 +1131,16 @@ fn erase_channel_types(
 }
 
 fn typed_handle_info(
+  assigns_tag: Reference,
   typed_channel: Channel(assigns, info),
 ) -> fn(info, coordinator.SocketContext) -> coordinator.HandleResultErased {
   let handle_info = channel.handle_info_callback(typed_channel)
 
   fn(message: info, ctx: coordinator.SocketContext) {
-    let typed_socket = create_socket_with_assigns(ctx)
+    let typed_socket = create_socket_with_channel_assigns(assigns_tag, ctx)
 
     handle_info(message, unsafe_coerce_socket(typed_socket))
-    |> erase_handle_result
+    |> erase_handle_result(assigns_tag, _)
   }
 }
 
@@ -1146,10 +1161,32 @@ fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
   )
 }
 
-fn create_socket_with_assigns(
+/// Build the typed socket a join handler sees, seeded from the transport's
+/// connect-time assigns. These are untagged: they're written by the
+/// transport's on_connect hook, not by this channel's own erased callbacks,
+/// so there's nothing of this channel's to verify yet.
+fn create_socket_with_connect_assigns(
   ctx: coordinator.SocketContext,
 ) -> Socket(Dynamic) {
   socket.new(ctx.socket_id, ctx.assigns, transport_from_context(ctx))
+}
+
+/// Build the typed socket handle_in/handle_binary/handle_info/terminate see,
+/// from assigns this same registration previously tagged and stored via
+/// `tag_assigns`. Panics (caught by the coordinator's `internal.rescue` and
+/// reported as a crashed callback) if the stamped tag doesn't match this
+/// handler's own — that means the coordinator hasn't handed this handler its
+/// own channel's assigns, and coercing them further would be unsound.
+fn create_socket_with_channel_assigns(
+  assigns_tag: Reference,
+  ctx: coordinator.SocketContext,
+) -> Socket(Dynamic) {
+  let #(stored_tag, assigns) = untag_assigns(ctx.assigns)
+  case stored_tag == assigns_tag {
+    True -> socket.new(ctx.socket_id, assigns, transport_from_context(ctx))
+    False ->
+      panic as "beryl: channel_assigns tag mismatch — coordinator dispatched to the wrong channel handler"
+  }
 }
 
 fn result_to_transport_result(
@@ -1163,37 +1200,51 @@ fn result_to_transport_result(
 
 /// Convert a typed HandleResult to the type-erased coordinator variant
 fn erase_handle_result(
+  assigns_tag: Reference,
   result: channel.HandleResult(assigns),
 ) -> coordinator.HandleResultErased {
   case result {
     channel.NoReply(new_socket) ->
-      coordinator.NoReplyErased(
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
-      )
+      coordinator.NoReplyErased(assigns: tag_assigns(
+        assigns_tag,
+        socket.get_assigns(new_socket),
+      ))
     channel.Reply(event, payload, new_socket) ->
       coordinator.ReplyErased(
         event: event,
         payload: payload,
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+        assigns: tag_assigns(assigns_tag, socket.get_assigns(new_socket)),
       )
     channel.ReplyError(payload, new_socket) ->
       coordinator.ReplyErrorErased(
         payload: payload,
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+        assigns: tag_assigns(assigns_tag, socket.get_assigns(new_socket)),
       )
     channel.Push(event, payload, new_socket) ->
       coordinator.PushErased(
         event: event,
         payload: payload,
-        assigns: unsafe_coerce_to_dynamic(socket.get_assigns(new_socket)),
+        assigns: tag_assigns(assigns_tag, socket.get_assigns(new_socket)),
       )
     channel.Stop(reason) -> coordinator.StopErased(reason: reason)
   }
 }
 
+/// Stamp a channel's assigns with this registration's unique tag before
+/// erasing them to `Dynamic` for storage in the coordinator.
+fn tag_assigns(assigns_tag: Reference, value: a) -> Dynamic {
+  unsafe_coerce_to_dynamic(#(assigns_tag, value))
+}
+
 /// Unsafe coercion to Dynamic - only use for type erasure
 @external(erlang, "beryl_ffi", "identity")
 fn unsafe_coerce_to_dynamic(value: a) -> Dynamic
+
+/// Unsafe coercion from a `Dynamic` known (by construction) to hold a
+/// `#(Reference, assigns)` pair stamped by `tag_assigns` - only use for
+/// type erasure.
+@external(erlang, "beryl_ffi", "identity")
+fn untag_assigns(value: Dynamic) -> #(Reference, Dynamic)
 
 /// Unsafe coercion of socket types - only use for type erasure
 @external(erlang, "beryl_ffi", "identity")

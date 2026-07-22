@@ -175,10 +175,6 @@ export default defineConfig({
 							label: "Troubleshooting",
 							slug: "troubleshooting",
 						},
-						{
-							label: "Migration & Releases",
-							slug: "migration",
-						},
 					],
 				},
 			],
