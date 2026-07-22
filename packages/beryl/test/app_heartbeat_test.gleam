@@ -18,7 +18,7 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Channels {
+fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec())
@@ -36,7 +36,7 @@ fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Channels {
 }
 
 fn connect_with_closer(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   closed: process.Subject(Nil),
 ) -> process.Subject(String) {
@@ -112,7 +112,7 @@ pub fn active_socket_survives_while_stale_peer_is_evicted_test() {
 }
 
 fn send_heartbeats(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   frames: process.Subject(String),
   socket_id: String,
   remaining: Int,
@@ -128,7 +128,7 @@ fn send_heartbeats(
   }
 }
 
-fn runtime_pid(channels: beryl.Channels) -> process.Pid {
+fn runtime_pid(channels: beryl.Sockets) -> process.Pid {
   let assert Ok(pid) = beryl.app_runtime_pid(channels)
   pid
 }

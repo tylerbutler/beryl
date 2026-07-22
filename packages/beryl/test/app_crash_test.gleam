@@ -28,7 +28,7 @@ pub type Msg {
 fn start_system(
   events: process.Subject(event.Event(Msg)),
   senders: process.Subject(event.Sender(Msg)),
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -52,7 +52,7 @@ fn start_system(
 }
 
 fn start() -> #(
-  beryl.Channels,
+  beryl.Sockets,
   process.Subject(event.Event(Msg)),
   process.Subject(event.Sender(Msg)),
 ) {

@@ -24,7 +24,7 @@ pub fn main() {
 /// - "room:ack-then-push": [AcceptJoin, Push, Push] — ordered pushes
 /// - "room:push-first":    [Push, AcceptJoin] — push dropped (not joined yet)
 /// - "room:cast-first":    [Broadcast, AcceptJoin] — joiner excluded
-fn start_system() -> beryl.Channels {
+fn start_system() -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),

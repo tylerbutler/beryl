@@ -1,16 +1,11 @@
-//// Local coordinator statistics.
+//// Local runtime statistics.
 ////
-//// Snapshots are point-in-time values captured when the local coordinator
+//// Snapshots are point-in-time values captured when the local socket runtime
 //// services a request. They are intended for operational polling, not as an
 //// event stream. Poll no more frequently than roughly once per second so
-//// observation does not add meaningful coordinator load.
+//// observation does not add meaningful runtime load.
 
 import beryl
-import beryl/coordinator
-import beryl/internal
-import gleam/erlang/process
-
-const request_timeout_ms = 1000
 
 /// A point-in-time snapshot of local coordinator state.
 pub opaque type Snapshot {
@@ -23,78 +18,39 @@ pub opaque type Snapshot {
   )
 }
 
-/// Errors returned while requesting a coordinator snapshot.
+/// Errors returned while requesting a runtime snapshot.
 pub type SnapshotError {
-  /// The local coordinator is not currently running.
+  /// The local socket runtime is not currently running.
   CoordinatorUnavailable
-  /// The coordinator did not service the request within the bounded timeout.
+  /// The runtime did not service the request within the bounded timeout.
   RequestTimedOut
 }
 
-/// Request a point-in-time snapshot from the local coordinator.
+/// Request a point-in-time snapshot from the local runtime.
 ///
 /// The request waits for at most approximately one second. During a
-/// coordinator restart this returns `CoordinatorUnavailable` or
-/// `RequestTimedOut`; an overloaded coordinator returns `RequestTimedOut`.
+/// runtime restart this returns `CoordinatorUnavailable` or
+/// `RequestTimedOut`; an overloaded runtime returns `RequestTimedOut`.
 /// Neither condition panics. This API reports only the node represented by
 /// `channels`; aggregate multi-node statistics outside Beryl.
 ///
 /// Poll no more frequently than roughly once per second.
-pub fn snapshot(channels: beryl.Channels) -> Result(Snapshot, SnapshotError) {
-  let coordinator_subject = beryl.coordinator_subject(channels)
-  let completed = process.new_subject()
-  let _proxy =
-    process.spawn_unlinked(fn() {
-      process.send(completed, request_snapshot(coordinator_subject))
-    })
-  process.receive_forever(completed)
-}
-
-fn request_snapshot(
-  coordinator_subject: process.Subject(coordinator.Message),
-) -> Result(Snapshot, SnapshotError) {
-  case process.subject_owner(coordinator_subject) {
-    Error(Nil) -> Error(CoordinatorUnavailable)
-    Ok(owner) ->
-      case process.is_alive(owner) {
-        False -> Error(CoordinatorUnavailable)
-        True -> send_and_receive(coordinator_subject)
-      }
+pub fn snapshot(sockets: beryl.Sockets) -> Result(Snapshot, SnapshotError) {
+  case beryl.app_dispatch(sockets).stats() {
+    Error(False) -> Error(CoordinatorUnavailable)
+    Error(True) -> Error(RequestTimedOut)
+    Ok(#(connected, joined, topics, mailbox)) ->
+      Ok(Snapshot(
+        connected_sockets: connected,
+        joined_socket_topic_pairs: joined,
+        active_topics: topics,
+        registered_channel_handlers: 1,
+        coordinator_mailbox_length: mailbox,
+      ))
   }
 }
 
-fn send_and_receive(
-  coordinator_subject: process.Subject(coordinator.Message),
-) -> Result(Snapshot, SnapshotError) {
-  // The named coordinator can disappear after the owner check. Sending to an
-  // unregistered name raises on the BEAM, so rescue that unavoidable race and
-  // expose it as a typed unavailable result.
-  let reply = process.new_subject()
-  case
-    internal.rescue(fn() {
-      process.send(coordinator_subject, coordinator.GetStats(reply))
-    })
-  {
-    Error(_) -> Error(CoordinatorUnavailable)
-    Ok(Nil) ->
-      case process.receive(reply, request_timeout_ms) {
-        Error(Nil) -> Error(RequestTimedOut)
-        Ok(value) -> Ok(from_coordinator_snapshot(value))
-      }
-  }
-}
-
-fn from_coordinator_snapshot(value: coordinator.StatsSnapshot) -> Snapshot {
-  Snapshot(
-    connected_sockets: value.connected_sockets,
-    joined_socket_topic_pairs: value.joined_socket_topic_pairs,
-    active_topics: value.active_topics,
-    registered_channel_handlers: value.registered_channel_handlers,
-    coordinator_mailbox_length: value.coordinator_mailbox_length,
-  )
-}
-
-/// Return the number of sockets connected to the local coordinator.
+/// Return the number of sockets connected to the local runtime.
 pub fn connected_sockets(snapshot: Snapshot) -> Int {
   snapshot.connected_sockets
 }
@@ -111,12 +67,12 @@ pub fn active_topics(snapshot: Snapshot) -> Int {
   snapshot.active_topics
 }
 
-/// Return the number of channel handlers registered with the coordinator.
+/// Return the number of app dispatch handlers (one for a running app).
 pub fn registered_channel_handlers(snapshot: Snapshot) -> Int {
   snapshot.registered_channel_handlers
 }
 
-/// Return the coordinator mailbox length when it serviced the request.
+/// Return the runtime mailbox length when it serviced the request.
 pub fn coordinator_mailbox_length(snapshot: Snapshot) -> Int {
   snapshot.coordinator_mailbox_length
 }

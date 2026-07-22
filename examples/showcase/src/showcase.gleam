@@ -1,8 +1,8 @@
 //// Showcase: all three example channels on one socket, composed through
-//// app-side dispatch (ADR 0002).
+//// app-side dispatch.
 ////
-//// This is the acceptance-gate example for the supervised app-dispatch API:
-//// cursors, chatrooms, and collab_docs packages each export an embeddable
+//// This demonstrates composition with the `beryl.start` API: the cursors,
+//// chatrooms, and collab_docs packages each export an embeddable
 //// `Model`/`join`/`update`/`closed` triple (`<example>/app`), and this app
 //// owns the socket-wide model and router — one `Dict` of sub-models per
 //// topic namespace, routed by topic prefix, pruned on `Closed`.

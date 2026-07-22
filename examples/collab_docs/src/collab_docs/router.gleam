@@ -12,7 +12,7 @@ const demo_tenant = "demo"
 
 pub type Context {
   Context(
-    channels: beryl.Channels,
+    channels: beryl.Sockets,
     store: Store,
     secret: BitArray,
     base_path: String,

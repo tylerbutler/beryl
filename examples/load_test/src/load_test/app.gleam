@@ -1,47 +1,31 @@
 import beryl
 import beryl/presence
-import beryl/supervisor
 import beryl/wire
 import envoy
 import gleam/int
-import gleam/list
-import gleam/option.{Some}
 import gleam/otp/static_supervisor
 import gleam/result
 import gleam/string
 import load_test/channel
 
 pub type App {
-  App(channels: beryl.Channels)
+  App(channels: beryl.Sockets)
 }
 
 pub fn start() -> App {
-  let beryl_config = environment_config()
-  let base = supervisor.config(beryl_config)
-  let channels = supervisor.channels(base)
-  let presence_config =
-    presence.default_config("load-test")
-    |> presence.with_on_diff(fn(diff) {
-      presence.diff_topics(diff)
-      |> list.each(fn(topic) {
-        beryl.broadcast_presence_diff(channels, topic, diff)
-      })
-    })
-  let supervised = base |> supervisor.with_presence(presence_config)
+  let assert Ok(presence_actor) =
+    presence.start(presence.default_config("load-test"))
+  let assert Ok(#(channels, spec)) =
+    beryl.child_spec(
+      environment_config()
+        |> beryl.with_presence_handle(presence_actor),
+      init: channel.init,
+      update: channel.update,
+    )
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(supervised))
+    |> static_supervisor.add(spec)
     |> static_supervisor.start()
-  let channels = supervisor.channels(supervised)
-  let assert Some(presence_actor) = supervisor.presence(supervised)
-  let assert Ok(_) =
-    beryl.register(
-      channels,
-      "bench:*",
-      channel.benchmark(channels, presence_actor),
-    )
-  let assert Ok(_) =
-    beryl.register(channels, "guardrail:forbidden", channel.forbidden())
   App(channels:)
 }
 
