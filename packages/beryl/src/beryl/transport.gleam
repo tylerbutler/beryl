@@ -19,7 +19,9 @@ import beryl/internal
 import beryl/log
 import beryl/rate_limit
 import beryl/wire/codec.{type Codec, type Inbound}
+import gleam/bool
 import gleam/dynamic.{type Dynamic}
+import gleam/erlang/process
 import gleam/option.{type Option}
 import gleam/result
 
@@ -157,3 +159,43 @@ pub fn log_warning(
 /// Type-erase connect-time assigns before handing them to the coordinator.
 @external(erlang, "beryl_ffi", "identity")
 fn erase(value: anything) -> Dynamic
+
+// --- Connection ownership ---
+
+/// The lifecycle relationship between a transport connection and the runtime
+/// that owns it.
+///
+/// App-side dispatch systems own their connections through a supervised
+/// runtime. A transport should monitor the owning runtime and close the
+/// connection when it dies, so a runtime crash or restart never leaves a
+/// zombie connection whose frames are silently dropped by a runtime that no
+/// longer knows the socket.
+pub type ConnectionOwner {
+  /// The owning runtime is alive at this pid. Monitor it and close the
+  /// connection when it goes down.
+  OwnerAlive(pid: process.Pid)
+  /// This is an app-side dispatch system but its runtime is not currently
+  /// running (pre-start or a restart window). A new connection cannot be
+  /// owned, so the transport must refuse it rather than admit a dead socket.
+  OwnerUnavailable
+  /// This system does not use runtime-monitored connection ownership (a
+  /// channel-module/coordinator system). The transport admits the connection
+  /// without installing an ownership monitor.
+  OwnerUnmonitored
+}
+
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+/// Determine how a newly accepted connection is owned. Call this in the
+/// connection process right after upgrade; on `OwnerAlive(pid)` monitor `pid`
+/// and close on its `Down`, and on `OwnerUnavailable` close the connection
+/// immediately.
+pub fn connection_owner(channels: Channels) -> ConnectionOwner {
+  use <- bool.guard(
+    when: !beryl.is_app_system(channels),
+    return: OwnerUnmonitored,
+  )
+  case beryl.app_runtime_pid(channels) {
+    Ok(pid) -> OwnerAlive(pid)
+    Error(Nil) -> OwnerUnavailable
+  }
+}

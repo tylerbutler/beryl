@@ -1036,8 +1036,88 @@ pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
     }
     // The app-side dispatch limiter is supervised inside the Beryl subtree,
     // so it is not stopped directly here; it is torn down with the subtree.
-    AppChannels(app: app, ..) -> app.stop()
+    AppChannels(app: app, connection_limiter: connection_limiter, ..) ->
+      stop_app_subtree(app, connection_limiter)
   }
+}
+
+/// Gracefully stop only the nested Beryl subtree and wait for it to
+/// terminate.
+///
+/// The runtime is the subtree's significant transient child, so draining and
+/// stopping it (normal termination) auto-shuts down the subtree supervisor and
+/// its sibling limiter. To honour "wait for only the Beryl subtree to
+/// terminate", the runtime and the optional limiter processes are monitored
+/// before the drain and their `Down` messages are awaited afterwards; the
+/// application's parent supervisor and sibling children are never touched.
+///
+/// Idempotent: `Error(NotRunning)` when the runtime is already down (pre-start,
+/// a restart window, or a prior stop); `Error(StopTimeout)` if the runtime does
+/// not acknowledge the drain or the subtree does not terminate in time.
+fn stop_app_subtree(
+  app: AppHandle,
+  connection_limiter: Option(connection_limit.ConnectionLimiter),
+) -> Result(Nil, StopError) {
+  case app.runtime_owner() {
+    Error(Nil) -> internal.result_error(NotRunning)
+    Ok(runtime_pid) -> {
+      let runtime_monitor = process.monitor(runtime_pid)
+      let limiter_monitor =
+        option_map(
+          option.from_result(app_limiter_owner(connection_limiter)),
+          process.monitor,
+        )
+      // Drain sockets (deliver `Closed`, presence cleanup, close transports)
+      // and stop the runtime; this triggers the subtree auto-shutdown.
+      case app.stop() {
+        Error(error) -> {
+          drop_monitor(runtime_monitor)
+          case limiter_monitor {
+            Some(monitor) -> drop_monitor(monitor)
+            None -> Nil
+          }
+          Error(error)
+        }
+        Ok(Nil) -> {
+          let awaited =
+            await_down(runtime_monitor)
+            |> result.try(fn(_) {
+              case limiter_monitor {
+                Some(monitor) -> await_down(monitor)
+                None -> Ok(Nil)
+              }
+            })
+          case awaited {
+            Ok(Nil) -> Ok(Nil)
+            Error(Nil) -> internal.result_error(StopTimeout)
+          }
+        }
+      }
+    }
+  }
+}
+
+/// The pid of the app subtree's optional limiter, if it is running.
+fn app_limiter_owner(
+  connection_limiter: Option(connection_limit.ConnectionLimiter),
+) -> Result(process.Pid, Nil) {
+  case connection_limiter {
+    Some(limiter) -> connection_limit.pid(limiter)
+    None -> Error(Nil)
+  }
+}
+
+/// Wait for a monitored process's `Down` message, returning `Error(Nil)` on
+/// timeout so the caller can report `StopTimeout`.
+fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(_down) { Nil })
+  process.selector_receive(selector, 5000)
+}
+
+fn drop_monitor(monitor: process.Monitor) -> Nil {
+  process.demonitor_process(monitor)
 }
 
 /// Start an app-side dispatch system.
@@ -1088,7 +1168,18 @@ pub fn start_app(
   )
 
   case subtree.start_supervisor() {
-    Ok(_supervisor) -> Ok(subtree.handle)
+    Ok(supervisor) -> {
+      // Standalone ownership: detach the subtree supervisor from the caller's
+      // link set. `start` links the supervisor to whoever called `start_app`;
+      // once the runtime becomes a significant child with `auto_shutdown`, a
+      // graceful `stop` makes the subtree supervisor exit with reason
+      // `shutdown`, which would otherwise propagate down that link and take the
+      // caller with it. Unlinking keeps `stop` scoped to Beryl's own subtree.
+      // (Embedded `child_spec` trees are owned by the application's supervisor,
+      // which traps exits, so they need no such detachment.)
+      process.unlink(supervisor.pid)
+      Ok(subtree.handle)
+    }
     Error(error) ->
       internal.result_error(
         RuntimeStartFailed(beryl_error.from_actor_start_error(error)),
@@ -1132,7 +1223,16 @@ pub fn child_spec(
   ConfigError,
 ) {
   use subtree <- result.map(build_app_subtree(config, init, update))
-  #(subtree.handle, supervision.supervisor(subtree.start_supervisor))
+  // The subtree is a `Transient` child of the application's supervisor: a
+  // graceful `beryl.stop` auto-shuts the subtree down with reason `shutdown`,
+  // which a transient child treats as normal, so the parent does not restart
+  // Beryl. A genuine crash (subtree restart intensity exceeded) still gets
+  // restarted by the parent.
+  #(
+    subtree.handle,
+    supervision.supervisor(subtree.start_supervisor)
+      |> supervision.restart(supervision.Transient),
+  )
 }
 
 /// A validated, name-allocated app-side dispatch subtree that has not been
@@ -1215,10 +1315,16 @@ fn start_app_supervisor(
       |> result.map_error(runtime_start_error)
     })
     |> supervision.restart(supervision.Transient)
+    // The runtime is the subtree's significant child: a graceful stop (normal
+    // termination) auto-shuts down the whole Beryl subtree — including the
+    // sibling limiter — while an abnormal crash is restarted in place under
+    // the same name (dispatch resumes with fresh per-socket state).
+    |> supervision.significant(True)
 
   let builder =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
+    |> static_supervisor.auto_shutdown(static_supervisor.AnySignificant)
     |> static_supervisor.add(runtime_child)
 
   let builder = case limiter_name {
@@ -1353,6 +1459,30 @@ pub fn app_runtime_pid(channels: Channels) -> Result(process.Pid, Nil) {
   case channels {
     AppChannels(app: app, ..) -> app.runtime_owner()
     Channels(..) -> Error(Nil)
+  }
+}
+
+// nolint: unused_exports -- package-internal accessor for supervision tests and the transport SPI; hidden from public docs with @internal
+/// The pid of the app subtree's optional connection limiter, if running.
+@internal
+pub fn app_limiter_pid(channels: Channels) -> Result(process.Pid, Nil) {
+  case channels {
+    AppChannels(connection_limiter: connection_limiter, ..) ->
+      app_limiter_owner(connection_limiter)
+    Channels(..) -> Error(Nil)
+  }
+}
+
+// nolint: unused_exports -- transport SPI helper for connection ownership; hidden from public docs with @internal
+/// Whether this handle is an app-side dispatch system (`start_app`/`child_spec`)
+/// whose connections are owned by a supervised runtime. Transports use this to
+/// decide whether to monitor the runtime and to refuse connections while the
+/// runtime is unavailable.
+@internal
+pub fn is_app_system(channels: Channels) -> Bool {
+  case channels {
+    AppChannels(..) -> True
+    Channels(..) -> False
   }
 }
 

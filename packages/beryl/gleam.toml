@@ -11,6 +11,7 @@ internal_modules = [
   "beryl/internal",
   "beryl/log",
   "beryl/rate_limit",
+  "beryl/runtime",
 ]
 
 [dependencies]

@@ -235,6 +235,13 @@ pub fn from_name(name: process.Name(Message)) -> ConnectionLimiter {
   ConnectionLimiter(subject: process.named_subject(name))
 }
 
+/// The pid of the limiter process, if it is currently running. Used by the
+/// runtime subtree teardown to wait for the limiter to terminate.
+@internal
+pub fn pid(limiter: ConnectionLimiter) -> Result(Pid, Nil) {
+  process.subject_owner(limiter.subject)
+}
+
 /// Start a limiter only when at least one ceiling is positive.
 ///
 /// `max_per_ip` caps concurrent connections from a single peer; `max_total`
