@@ -17,7 +17,8 @@
 ////
 //// ```gleam
 //// let ps = pubsub.start(pubsub.default_config())
-//// pubsub.subscribe(ps, "room:lobby")
+////
+//// // Sending: broadcast to all subscribers of a topic
 //// pubsub.broadcast(ps, "room:lobby", "new_msg", "hello")
 ////
 //// // Receiving: create a `subscriber`, join topics, and fold its
@@ -199,6 +200,10 @@ pub opaque type Subscriber(payload) {
 /// `pubsub_tag`. Call it from the process that will receive broadcasts (its
 /// own actor initialiser or test process), then `join` topics and fold
 /// `selecting` into that process's `Selector`.
+///
+/// **Important:** A single process should create only one `Subscriber` for a
+/// given `payload` type. Multiple subscribers in the same process would share
+/// the same subject tag and cannot multiplex different payload types safely.
 pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
   Subscriber(
     scope: ps.scope,
@@ -228,8 +233,11 @@ pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
 ///
 /// Broadcasts arrive through the subscriber's typed `Subject`, so this is an
 /// ordinary `select_map` — the `payload` type is checked by the compiler and
-/// nothing is coerced. Fold it once; every joined topic is delivered through
-/// the same subject.
+/// nothing is coerced. Fold it once per subscriber; every joined topic is
+/// delivered through the same subject.
+///
+/// Each `Subscriber` should be created with one `payload` type per process,
+/// since the shared subject tag cannot safely multiplex different payload types.
 ///
 /// ```gleam
 /// let sub = pubsub.subscriber(ps)
