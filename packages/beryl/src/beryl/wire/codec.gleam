@@ -60,8 +60,7 @@ pub opaque type Inbound {
 /// - `ref`: optional per-message reference for reply correlation
 /// - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
 /// - `kind`: structural protocol event or user event
-/// - `payload`: message body as a `Dynamic` for the channel handler to
-///   decode
+/// - `payload`: message body as a `Dynamic` for the app to decode
 pub fn inbound(
   join_ref join_ref: Option(String),
   ref ref: Option(String),
@@ -92,7 +91,7 @@ pub fn inbound_kind(inbound: Inbound) -> InboundKind {
   inbound.kind
 }
 
-/// The inbound message's body, for the channel handler to decode.
+/// The inbound message's body, for the app to decode.
 pub fn inbound_payload(inbound: Inbound) -> Dynamic {
   inbound.payload
 }
@@ -108,7 +107,7 @@ pub type DecodeError {
   MissingField(name: String)
 }
 
-/// Status of a reply produced by a channel handler.
+/// Status of a reply produced by the app.
 pub type ReplyStatus {
   /// The handler succeeded (`"ok"` in Phoenix framing).
   StatusOk
@@ -197,10 +196,10 @@ pub fn with_binary_decoder(
   Codec(..codec, decode_binary: Some(decode_binary))
 }
 
-/// Attach a channel-close encoder to a codec.
+/// Attach a topic-close encoder to a codec.
 ///
 /// When set, the runtime emits this frame to a client whenever one of
-/// its channels terminates gracefully (leave, server shutdown, heartbeat
+/// its topics terminates gracefully (leave, server shutdown, heartbeat
 /// eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
 /// leave the joined state instead of waiting out push timeouts.
 pub fn with_close_encoder(
@@ -210,10 +209,10 @@ pub fn with_close_encoder(
   Codec(..codec, encode_close: Some(encode_close))
 }
 
-/// Attach a channel-error encoder to a codec.
+/// Attach a topic-error encoder to a codec.
 ///
 /// When set, the runtime emits this frame to a client whenever one of
-/// its channels terminates abnormally (crashed or stopped with an error):
+/// its topics terminates abnormally (crashed or stopped with an error):
 /// `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
 /// automatic rejoin.
 pub fn with_error_encoder(
@@ -257,7 +256,7 @@ pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
   codec.encode_heartbeat_reply
 }
 
-/// Accessor for the codec's optional channel-close encoder.
+/// Accessor for the codec's optional topic-close encoder.
 @internal
 pub fn encode_close(
   codec: Codec,
@@ -282,7 +281,7 @@ pub fn topicless_events(codec: Codec) -> Bool {
   codec.topicless_events
 }
 
-/// Accessor for the codec's optional channel-error encoder.
+/// Accessor for the codec's optional topic-error encoder.
 @internal
 pub fn encode_error(
   codec: Codec,

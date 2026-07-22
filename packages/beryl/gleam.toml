@@ -1,6 +1,6 @@
 name = "beryl"
 version = "0.0.1"
-description = "Type-safe real-time channels and presence for Gleam"
+description = "Type-safe app-side real-time sockets and presence for Gleam"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl" }
 gleam = ">= 1.13.0"

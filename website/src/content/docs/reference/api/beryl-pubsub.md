@@ -182,7 +182,7 @@ pub fn broadcast_from(
 ### `broadcast_from_socket`
 
 Broadcast a message to all subscribers except a process, preserving a socket
- ID that receiving channel coordinators should exclude locally.
+ ID that receiving runtimes should exclude locally.
 
 ```gleam
 pub fn broadcast_from_socket(

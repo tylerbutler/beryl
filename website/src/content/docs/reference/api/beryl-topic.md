@@ -1,14 +1,15 @@
 ---
 title: beryl/topic
-description: Topic - Pattern matching for channel routing
+description: Pattern matching for topic routing.
 ---
 
-Topic - Pattern matching for channel routing
+Pattern matching for topic routing.
 
  Topics are string identifiers that clients join (e.g., "room:lobby").
- Patterns define how topics are routed to channel handlers. Patterns can be
- exact, legacy trailing prefix wildcards, or segment-aware wildcards where
- "*" occupies a complete colon-delimited segment.
+ Patterns define how topics are routed to the app's `update` function.
+ Patterns can be exact, legacy trailing prefix wildcards, or
+ segment-aware wildcards where "*" occupies a complete colon-delimited
+ segment.
 
 ## Types
 

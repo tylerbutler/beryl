@@ -159,10 +159,11 @@ pub opaque type Config {
     channel_rate_max_keys_per_socket: Int,
     /// Maximum byte length for client-supplied topic strings (default: 256).
     /// Topics exceeding this limit are rejected with a `phx_reply` error before
-    /// reaching a channel handler.
+    /// reaching the app's `update` function.
     max_topic_length: Int,
     /// Maximum byte length for client-supplied event name strings (default: 64).
-    /// Events exceeding this limit are dropped before reaching a channel handler.
+    /// Events exceeding this limit are dropped before reaching the app's `update`
+    /// function.
     max_event_length: Int,
     /// Maximum inbound WebSocket frame size in bytes (default: 1 MiB).
     /// Frames exceeding this limit are closed before wire decoding.
@@ -422,8 +423,8 @@ pub fn with_max_topic_length(
 /// Configure the maximum allowed byte length for client-supplied event name
 /// strings.
 ///
-/// Event names longer than `max_length` bytes are dropped before reaching a
-/// channel handler. The default is 64.
+/// Event names longer than `max_length` bytes are dropped before reaching the
+/// app's `update` function. The default is 64.
 pub fn with_max_event_length(
   config: Config,
   max_length max_length: Int,

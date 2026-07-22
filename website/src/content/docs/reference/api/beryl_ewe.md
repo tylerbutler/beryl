@@ -9,7 +9,7 @@ Ewe WebSocket Transport - Direct Ewe integration for beryl
  and the beryl runtime using Ewe request and response types directly.
 
  It mirrors the `beryl_mist` package: the two transports expose the same
- config-builder and handler API, so an integrator can run beryl channels on
+ config-builder and handler API, so an integrator can run beryl sockets on
  either web server by choosing the matching transport package. Both consume
  only beryl's public `beryl/transport` SPI.
 
@@ -118,7 +118,7 @@ pub fn default_config(String) -> TransportConfig
 
 ### `handler`
 
-Build a combined request handler that serves both WebSocket channels and
+Build a combined request handler that serves both WebSocket upgrades and
  regular HTTP from a single Ewe listener.
 
  The returned function inspects each request and routes it:
@@ -131,7 +131,7 @@ Build a combined request handler that serves both WebSocket channels and
  by hand:
 
  ```gleam
- ewe_transport.handler(channels, ewe_transport.default_config("/socket"), http_handler)
+ ewe_transport.handler(sockets, ewe_transport.default_config("/socket"), http_handler)
  |> ewe.new
  |> ewe.listening(port: 8000)
  |> ewe.start
@@ -151,8 +151,8 @@ Upgrade a request to WebSocket if it matches the configured path
 
  Usage in your Ewe handler:
  ```gleam
- fn handle_request(req: Request(Connection), channels: Sockets) -> Response(ResponseBody) {
-   use <- ewe_transport.upgrade(req, channels, ewe_transport.default_config("/socket"))
+ fn handle_request(req: Request(Connection), sockets: Sockets) -> Response(ResponseBody) {
+   use <- ewe_transport.upgrade(req, sockets, ewe_transport.default_config("/socket"))
    // Fall through to regular HTTP routing
    case request.path_segments(req) {
      [] -> index_page()
@@ -183,7 +183,7 @@ Upgrade a request to WebSocket if it matches the configured path
  When `beryl.with_max_connections` is configured, this transport also
  enforces a node-wide ceiling on concurrent connections across all IPs,
  likewise returning `429` and rejecting the upgrade before allocating any
- long-lived channel/runtime state. The two limits compose: a connection
+ long-lived socket/runtime state. The two limits compose: a connection
  must be under both to be admitted. The node-wide ceiling bounds total
  resource use when a per-IP limit alone cannot (many distributed source
  addresses / IPv6 rotation). It is enforced per BEAM node, so across a
@@ -261,7 +261,7 @@ Set a socket-level connect/authentication callback on the transport config.
  runs once per socket. Return `Ok(metadata)` to allow the connection and
  seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
  the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
- reject the connection with a 403 Forbidden response before any channel
+ reject the connection with a 403 Forbidden response before any topic
  join occurs.
 
  Callback order and duplicate keys are preserved verbatim in

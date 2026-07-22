@@ -1,6 +1,6 @@
 name = "beryl_ewe"
 version = "0.0.1"
-description = "Ewe WebSocket transport for beryl real-time channels"
+description = "Ewe WebSocket transport for beryl real-time sockets"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl_ewe" }
 gleam = ">= 1.13.0"

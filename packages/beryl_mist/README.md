@@ -1,7 +1,7 @@
 # beryl_mist
 
 [Mist](https://hex.pm/packages/mist) WebSocket transport for
-[beryl](https://hex.pm/packages/beryl) real-time channels.
+[beryl](https://hex.pm/packages/beryl) real-time sockets.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
@@ -15,23 +15,43 @@ gleam add beryl beryl_mist
 
 ```gleam
 import beryl
+import beryl/event.{type ConnectInfo, AcceptJoin, Join, Next}
 import beryl/wire
 import beryl_mist as mist_transport
+import gleam/erlang/process
+import gleam/option.{None}
 import mist
 
+pub type Model {
+  Model
+}
+
+fn init(_info: ConnectInfo(msg)) -> #(Model, List(event.Effect)) {
+  #(Model, [])
+}
+
+fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
+  case ev {
+    Join("room:" <> _, _payload, ref) -> Next(model, [AcceptJoin(ref, None)])
+    _ -> Next(model, [])
+  }
+}
+
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  // register channels...
+  let assert Ok(sockets) =
+    beryl.start(beryl.config(wire.phoenix_codec()), init:, update:)
 
   let assert Ok(_) =
     mist_transport.handler(
-      channels,
+      sockets,
       mist_transport.default_config("/socket"),
-      http_fallback,
+      fn(_req) { panic as "not implemented" },
     )
     |> mist.new
     |> mist.port(8000)
     |> mist.start
+
+  process.sleep_forever()
 }
 ```
 

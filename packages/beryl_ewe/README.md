@@ -1,7 +1,7 @@
 # beryl_ewe
 
 [Ewe](https://hex.pm/packages/ewe) WebSocket transport for
-[beryl](https://hex.pm/packages/beryl) real-time channels.
+[beryl](https://hex.pm/packages/beryl) real-time sockets.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
@@ -15,22 +15,43 @@ gleam add beryl beryl_ewe
 
 ```gleam
 import beryl
+import beryl/event.{type ConnectInfo, AcceptJoin, Join, Next}
+import beryl/wire
 import beryl_ewe as ewe_transport
 import ewe
+import gleam/erlang/process
+import gleam/option.{None}
+
+pub type Model {
+  Model
+}
+
+fn init(_info: ConnectInfo(msg)) -> #(Model, List(event.Effect)) {
+  #(Model, [])
+}
+
+fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
+  case ev {
+    Join("room:" <> _, _payload, ref) -> Next(model, [AcceptJoin(ref, None)])
+    _ -> Next(model, [])
+  }
+}
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.default_config())
-  // register channels...
+  let assert Ok(sockets) =
+    beryl.start(beryl.config(wire.phoenix_codec()), init:, update:)
 
   let assert Ok(_) =
     ewe_transport.handler(
-      channels,
+      sockets,
       ewe_transport.default_config("/socket"),
-      http_fallback,
+      fn(_req) { panic as "not implemented" },
     )
     |> ewe.new
     |> ewe.listening(port: 8000)
     |> ewe.start
+
+  process.sleep_forever()
 }
 ```
 
@@ -42,7 +63,7 @@ limits at the edge.
 
 It mirrors the [`beryl_mist`](https://hex.pm/packages/beryl_mist) package: both
 transports expose the same config-builder and handler API, so you can run beryl
-channels on either web server by choosing the matching transport package.
+sockets on either web server by choosing the matching transport package.
 
 ## Documentation
 

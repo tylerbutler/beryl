@@ -125,7 +125,7 @@ A user-defined event; the wrapped `String` is the event name.
 
 ### `ReplyStatus`
 
-Status of a reply produced by a channel handler.
+Status of a reply produced by the app.
 
 ```gleam
 pub type ReplyStatus {
@@ -165,8 +165,7 @@ Construct a normalised inbound message.
  - `ref`: optional per-message reference for reply correlation
  - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
  - `kind`: structural protocol event or user event
- - `payload`: message body as a `Dynamic` for the channel handler to
-   decode
+ - `payload`: message body as a `Dynamic` for the app to decode
 
 ```gleam
 pub fn inbound(
@@ -196,7 +195,7 @@ pub fn inbound_kind(Inbound) -> InboundKind
 
 ### `inbound_payload`
 
-The inbound message's body, for the channel handler to decode.
+The inbound message's body, for the app to decode.
 
 ```gleam
 pub fn inbound_payload(Inbound) -> dynamic.Dynamic
@@ -258,10 +257,10 @@ pub fn with_binary_decoder(
 
 ### `with_close_encoder`
 
-Attach a channel-close encoder to a codec.
+Attach a topic-close encoder to a codec.
 
  When set, the runtime emits this frame to a client whenever one of
- its channels terminates gracefully (leave, server shutdown, heartbeat
+ its topics terminates gracefully (leave, server shutdown, heartbeat
  eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
  leave the joined state instead of waiting out push timeouts.
 
@@ -274,10 +273,10 @@ pub fn with_close_encoder(
 
 ### `with_error_encoder`
 
-Attach a channel-error encoder to a codec.
+Attach a topic-error encoder to a codec.
 
  When set, the runtime emits this frame to a client whenever one of
- its channels terminates abnormally (crashed or stopped with an error):
+ its topics terminates abnormally (crashed or stopped with an error):
  `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
  automatic rejoin.
 
