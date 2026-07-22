@@ -263,6 +263,9 @@ type State {
     config: CoordinatorConfig,
     /// Optional PubSub for distributed broadcasts
     pubsub: Option(PubSub(json.Json)),
+    /// Typed PubSub subscription owned by this coordinator actor, present
+    /// whenever `pubsub` is.
+    subscriber: Option(pubsub.Subscriber(json.Json)),
     /// Configured coordinator logger, cached for hot message paths.
     logger: Logger,
     /// The coordinator's own subject, used for scheduling timers
@@ -691,6 +694,7 @@ fn build_coordinator(
       topics: dict.new(),
       config: config,
       pubsub: ps,
+      subscriber: None,
       logger: internal.logger_with_config("beryl.coordinator", logging),
       self_subject: None,
       message_buckets: dict.new(),
@@ -699,25 +703,29 @@ fn build_coordinator(
     )
 
   actor.new_with_initialiser(5000, fn(subject) {
-    let state = State(..initial_state, self_subject: Some(subject))
+    let base = State(..initial_state, self_subject: Some(subject))
 
     // Schedule the first heartbeat check if configured
     schedule_heartbeat_check(subject, config)
 
-    let initialised = actor.initialised(state) |> actor.returning(subject)
-
     case ps {
-      Some(_) -> {
+      Some(pubsub_instance) -> {
+        let sub = pubsub.subscriber(pubsub_instance)
+        let state = State(..base, subscriber: Some(sub))
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> pubsub.selecting(RemoteBroadcast)
+          |> pubsub.selecting(sub, RemoteBroadcast)
 
-        initialised
+        actor.initialised(state)
+        |> actor.returning(subject)
         |> actor.selecting(selector)
         |> Ok
       }
-      None -> Ok(initialised)
+      None ->
+        actor.initialised(base)
+        |> actor.returning(subject)
+        |> Ok
     }
   })
   |> actor.on_message(handle_message)
@@ -795,9 +803,10 @@ fn handle_message(
       )
 
     RemoteBroadcast(pubsub_msg) ->
-      // The pg-delivered record is coerced without validation, so a
-      // malformed message (mixed-version cluster, stray tuple sent to the
-      // coordinator's pid) must not crash the coordinator.
+      // Delivered through the typed subscriber subject, but the payload's
+      // own shape is a frozen wire contract across nodes; a malformed frame
+      // (mixed-version cluster, stray tuple sent to the coordinator's pid)
+      // must not crash the coordinator.
       case
         internal.rescue(fn() { handle_remote_broadcast(state, pubsub_msg) })
       {
@@ -2508,8 +2517,8 @@ fn dispatch_join(
         existing_topic_subscribers
         |> set.insert(socket_id)
 
-      case state.pubsub, set.is_empty(existing_topic_subscribers) {
-        Some(ps), True -> pubsub.subscribe(ps, topic_name)
+      case state.subscriber, set.is_empty(existing_topic_subscribers) {
+        Some(sub), True -> pubsub.join(sub, topic_name)
         _, _ -> Nil
       }
 
@@ -3160,8 +3169,8 @@ fn do_terminate_channel(
     |> set.delete(socket_id)
   let new_topics = case set.is_empty(topic_subscribers) {
     True -> {
-      case state.pubsub {
-        Some(ps) -> pubsub.unsubscribe(ps, topic_name)
+      case state.subscriber {
+        Some(sub) -> pubsub.leave(sub, topic_name)
         None -> Nil
       }
       dict.delete(state.topics, topic_name)
