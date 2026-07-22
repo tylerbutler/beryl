@@ -17,10 +17,12 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket channel. |
 | [`beryl/channel`](/reference/api/beryl-channel/) | Channel - Topic-based message handlers |
 | [`beryl/error`](/reference/api/beryl-error/) | Shared Beryl-owned error helpers. |
+| [`beryl/event`](/reference/api/beryl-event/) | Types for building app-side dispatch systems with `beryl.start_app`. |
 | [`beryl/group`](/reference/api/beryl-group/) | Channel Groups - Named collections of topics for multi-topic broadcasting |
 | [`beryl/presence`](/reference/api/beryl-presence/) | Presence - Distributed presence tracking backed by a CRDT |
 | [`beryl/presence/wire`](/reference/api/beryl-presence-wire/) | Phoenix-compatible wire encoding for presence diffs. |
 | [`beryl/pubsub`](/reference/api/beryl-pubsub/) | PubSub - Distributed publish/subscribe using Erlang pg |
+| [`beryl/runtime`](/reference/api/beryl-runtime/) | Runtime actor for app-side dispatch systems started with `beryl.start_app`. |
 | [`beryl/socket`](/reference/api/beryl-socket/) | Socket - Connected client with typed state |
 | [`beryl/supervisor`](/reference/api/beryl-supervisor/) | OTP supervision tree for Beryl subsystems. |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Topic - Pattern matching for channel routing |

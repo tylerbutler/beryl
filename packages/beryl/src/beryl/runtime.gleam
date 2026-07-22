@@ -1,4 +1,4 @@
-//// Runtime - the app-side dispatch actor (ADR 0002).
+//// Runtime actor for app-side dispatch systems started with `beryl.start_app`.
 ////
 //// One runtime actor serves every socket started through
 //// `beryl.start_app`. It is generic over the app's `model` and `msg`

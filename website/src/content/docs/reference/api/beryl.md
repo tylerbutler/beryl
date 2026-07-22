@@ -60,10 +60,11 @@ Beryl - Type-safe real-time communication
 
 Channels system handle.
 
- This opaque handle is returned by `start` and passed to registration,
- broadcast, bridge, group, supervisor, and transport functions. Its internal
- actor protocol is intentionally hidden so Beryl can evolve coordinator
- internals without breaking application code.
+ This opaque handle is returned by `start` (channel-module systems) and
+ `start_app` (app-side dispatch systems) and passed to
+ broadcast, group, supervisor, and transport functions. Its internals are
+ intentionally hidden so Beryl can evolve them without breaking
+ application code.
 
 ```gleam
 pub type Channels
@@ -445,6 +446,54 @@ Start the channels system
 pub fn start(Config) -> Result(Channels, StartError)
 ```
 
+### `start_app`
+
+Start an app-side dispatch system.
+
+ One entry point replaces channel modules and registration: the app
+ supplies `init`, producing the per-socket model when a socket connects,
+ and `update`, receiving every event for the socket and returning the
+ next model plus a list of effects. The app routes topics itself by
+ matching on the event's topic — see `beryl/event` for the event and
+ effect types.
+
+ The returned `Channels` handle works with the same transports and
+ broadcast/group helpers as `start`, but `register`/`send_info` do not
+ apply: server-side messages are sent through the socket's typed
+ `Sender` (`event.notify`) instead.
+
+ ## Example
+
+ ```gleam
+ import beryl
+ import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+
+ pub fn main() {
+   let assert Ok(channels) =
+     beryl.start_app(
+       beryl.config(wire.phoenix_codec()),
+       init: fn(_info) { #(MyModel(joined: False), []) },
+       update: fn(model, ev) {
+         case ev {
+           Join("room:" <> _, _payload, ref) ->
+             Next(MyModel(joined: True), [AcceptJoin(ref, option.None)])
+           Message(topic, "new_msg", payload, _ref) ->
+             Next(model, [Broadcast(topic, "new_msg", relay(payload))])
+           _ -> Next(model, [])
+         }
+       },
+     )
+ }
+ ```
+
+```gleam
+pub fn start_app(
+  Config,
+  init: fn(event.ConnectInfo(a)) -> #(b, List(event.Effect)),
+  update: fn(b, event.Event(a)) -> event.Next(b, a)
+) -> Result(Channels, StartError)
+```
+
 ### `stop`
 
 Stop an unsupervised channels system.
@@ -637,8 +686,7 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
  balancer in front of Beryl and configure a WebSocket frame-size limit
  there (and a matching request/body size limit). Beryl's per-IP connection
  limit and per-socket message-rate limit do not mitigate this vector. See
- the "Security & deployment" section of the README and
- `docs/security/frame-buffering-followup.md` for details.
+ the README's "Security" section for deployment guidance.
 
  Values <= 0 disable the cap. The default is 1 MiB.
 
@@ -701,6 +749,19 @@ pub fn with_payload_preview_bytes(
 ) -> LoggingConfig
 ```
 
+### `with_presence_handle`
+
+Attach a presence handle for app-dispatch systems (`start_app`), used
+ by the `PresenceTrack`/`PresenceUntrack` effects. Without a handle
+ those effects are dropped with a warning.
+
+```gleam
+pub fn with_presence_handle(
+  Config,
+  presence: presence.Presence
+) -> Config
+```
+
 ### `with_pubsub`
 
 Add PubSub to a configuration for distributed broadcasts
@@ -709,5 +770,25 @@ Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(
   Config,
   pubsub.PubSub(json.Json)
+) -> Config
+```
+
+### `with_topic_rate`
+
+Configure a per-topic-pattern message rate limit for app-dispatch
+ systems (`start_app`).
+
+ Patterns use the same syntax as topic routing (`"room:*"`,
+ `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
+ added and the first matching pattern wins; topics matching no pattern
+ fall back to the global `with_channel_rate` limit. The limiter applies
+ only after a socket has joined the topic.
+
+```gleam
+pub fn with_topic_rate(
+  Config,
+  pattern: String,
+  per_second: Int,
+  burst: Int
 ) -> Config
 ```

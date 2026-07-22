@@ -123,8 +123,10 @@ pub fn route_decoded(
 ### `socket_connected`
 
 Announce a newly connected socket. `send`/`send_binary` deliver outbound
- frames on this connection; `assigns` seeds connect-time socket assigns
- (type-erased internally) that channels see at join. Call `register_closer`
+ frames on this connection. `assigns` seeds connect-time socket assigns
+ (type-erased internally) for channel-module systems; `seed` carries the
+ upgrade request's connection data for app-dispatch systems (delivered to
+ the app's `init` as `ConnectInfo.seed`). Call `register_closer`
  immediately after this.
 
 ```gleam
@@ -133,7 +135,8 @@ pub fn socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns: a
+  assigns: a,
+  seed: event.ConnectSeed
 ) -> Nil
 ```
 

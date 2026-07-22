@@ -266,10 +266,6 @@ Set the proxy limit to reject oversized frames at the edge, before they are
 buffered by the BEAM node. Beryl's in-process limit should be treated as
 defense-in-depth for per-message cost, not as a memory bound.
 
-The upstream work needed to enforce a size cap *before* buffering (in
-gramps/mist) is tracked in
-[`docs/security/frame-buffering-followup.md`](docs/security/frame-buffering-followup.md).
-
 ## Releases & changelog
 
 See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for

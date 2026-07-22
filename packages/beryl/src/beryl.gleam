@@ -490,8 +490,7 @@ pub fn with_max_event_length(
 /// balancer in front of Beryl and configure a WebSocket frame-size limit
 /// there (and a matching request/body size limit). Beryl's per-IP connection
 /// limit and per-socket message-rate limit do not mitigate this vector. See
-/// the "Security & deployment" section of the README and
-/// `docs/security/frame-buffering-followup.md` for details.
+/// the README's "Security" section for deployment guidance.
 ///
 /// Values <= 0 disable the cap. The default is 1 MiB.
 pub fn with_max_inbound_frame_bytes(
@@ -663,7 +662,7 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
 /// Channels system handle.
 ///
 /// This opaque handle is returned by `start` (channel-module systems) and
-/// `start_app` (app-side dispatch systems, ADR 0002) and passed to
+/// `start_app` (app-side dispatch systems) and passed to
 /// broadcast, group, supervisor, and transport functions. Its internals are
 /// intentionally hidden so Beryl can evolve them without breaking
 /// application code.
@@ -943,7 +942,7 @@ pub fn stop(channels: Channels) -> Nil {
   }
 }
 
-/// Start an app-side dispatch system (ADR 0002).
+/// Start an app-side dispatch system.
 ///
 /// One entry point replaces channel modules and registration: the app
 /// supplies `init`, producing the per-socket model when a socket connects,

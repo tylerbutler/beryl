@@ -1,4 +1,4 @@
-//// Embeddable cursor-channel logic for app-side dispatch (ADR 0002).
+//// Embeddable cursor-channel logic for app-side dispatch.
 ////
 //// A topic-scoped `Model`/`join`/`update`/`closed` triple: a composing
 //// app (see the showcase example) routes `cursor:*` events here and
