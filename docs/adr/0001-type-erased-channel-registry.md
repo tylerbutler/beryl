@@ -6,72 +6,45 @@ Accepted (2026-07-21)
 
 ## Context
 
-Beryl lets applications register many channels, each with its own `assigns`
-and `info` types (`Channel(assigns, info)`), under topic patterns resolved at
-runtime. The coordinator must hold all registered channels in one collection
-and dispatch wire events to whichever channel matches — a heterogeneous
-registry, which Gleam's type system (no existential types, no type classes)
-cannot express directly.
+Applications register many channels with distinct `assigns`/`info` types,
+resolved by topic at runtime. The coordinator must hold them in one
+collection — a heterogeneous registry Gleam (no existentials, no type
+classes) cannot express.
 
-Two designs were considered:
-
-1. **Application-level variant type (Elm/Lustre style).** Parameterize the
-   whole system by a single app-supplied type: `Channels(assigns, info)`,
-   with applications defining `type AppAssigns { ChatAssigns(..) RoomAssigns(..) }`.
-   Fully type-safe with zero coercion, but the parameters infect every public
-   type — including the transport SPI, so `beryl_mist`/`beryl_ewe` become
-   generic over types they never inspect. Every channel callback receives the
-   union type and must pattern-match away variants that cannot occur for that
-   channel, trading unsafe coercion for compiler-mandated dead code. Adding a
-   channel means editing a global type, breaking Phoenix-style open
-   registration of independent channels from independent modules.
+1. **Application-level variant type (Elm/Lustre style).** One app-supplied
+   union type parameterizes everything. Type-safe, but it infects
+   every public type (including the transport SPI), forces callbacks to
+   match impossible variants, and adding a channel edits a global type,
+   breaking open registration.
 
 2. **Type erasure behind a typed facade (current design).** The registry
-   stores a homogeneous `List(ChannelHandler)` of closures; typed values are
-   erased at registration and restored inside closures created by the same
-   `register` call. The public API stays fully typed
-   (`Channel(assigns, info)`, `RegisteredChannel(assigns, info)`,
-   `send_info`), and erasure never leaks out of `beryl.gleam`.
+   stores a homogeneous `List(ChannelHandler)`; typed values are erased at
+   registration and restored by closures from the same `register` call. The
+   public API stays fully typed; erasure never leaks from `beryl.gleam`.
 
 ## Decision
 
-Keep design 2: an open, heterogeneous registry with erasure confined to the
-`beryl.gleam` / `coordinator` boundary.
+Keep design 2. A Phoenix-shaped library is open-world — it cannot enumerate
+application channel types — and erased internals behind typed facades are
+an established Gleam/BEAM pattern: see [`gleam_otp`'s actor
+`erase`](https://github.com/gleam-lang/otp/blob/v1.2.0/src/gleam/otp/actor.gleam#L518-L519),
+[`gleam_erlang`'s
+`unsafely_create_subject`](https://github.com/gleam-lang/erlang/blob/v1.3.0/src/gleam/erlang/process.gleam#L90),
+and [`mist`'s `Dynamic` request
+internals](https://github.com/rawhat/mist/blob/v6.0.3/src/mist/internal/http.gleam#L64).
 
-A Phoenix-shaped channel library is inherently open-world — the library
-cannot enumerate application channel types, and channels must be addable
-without touching a shared type. Erased internals behind typed facades are
-also the established pattern for BEAM framework code in Gleam (`gleam_otp`
-actors, `mist` handlers, `process.Selector`); the community norm this
-satisfies is that unsafe coercion must never appear in the public API, not
-that it must never exist.
-
-Additionally, tighten the encoding so erasure is closure-captured rather than
-value-round-tripped ("Option B"):
-
-- A registered `ChannelHandler` carries only `join`. A successful join
-  returns a `JoinedChannel` instance — a record of closures that capture the
-  channel's current **typed** assigns. Each callback returns the *next*
-  instance, so assigns threading is compiler-checked inside `beryl.gleam`;
-  the coordinator stores instances (`Dict(String, JoinedChannel)`) and never
-  sees an erased assigns value.
-- This removes the identity-FFI coercions previously performed on every
-  callback (`unsafe_coerce_socket`, assigns → `Dynamic`).
+Also make erasure closure-captured ("Option B"): a handler carries only
+`join`; join returns a `JoinedChannel` — closures capturing the typed
+assigns, each callback returning the next instance — so the coordinator
+never sees erased assigns and per-callback identity-FFI coercions
+disappear.
 
 ## Consequences
 
 - Public API unchanged; the refactor is internal to `packages/beryl`.
-- Two narrow, documented coercions remain:
-  - **`info` messages**: `send_info` erases the message; the joined
-    instance's closure restores it. Sound because the coordinator dispatches
-    only when the joined channel's id equals the `RegisteredChannel` handle's
-    id, and both the handle and the instance derive from the same `register`
-    call.
-  - **Connect-time assigns**: transports seed socket assigns type-erased,
-    and join restores them to the channel's assigns type unchecked. This is a
-    pre-existing hole (a transport can seed a type no channel expects) and is
-    **not** fixed here; making it explicit (e.g. join receiving `Dynamic`
-    connect assigns plus a decoder) is a deliberate public-API change left to
-    a future ADR.
-- Wire payloads remain `Dynamic` by design: data from the network is
-  genuinely dynamic, and decoders are the idiomatic boundary.
+- Two documented coercions remain: `send_info` erases the message and the
+  joined closure restores it (sound — both come from one `register` call);
+  connect-time assigns are seeded erased and restored unchecked — a
+  pre-existing hole for a future ADR.
+- Wire payloads stay `Dynamic` by design; decoders are a well-established
+  boundary.
