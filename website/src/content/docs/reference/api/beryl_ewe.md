@@ -11,7 +11,7 @@ description: Ewe WebSocket Transport - Direct Ewe integration for beryl
 
 Ewe WebSocket Transport - Direct Ewe integration for beryl
 
- Bridges Ewe's native WebSocket handling to the beryl coordinator, using
+ Bridges Ewe's native WebSocket handling to the beryl runtime, using
  Ewe request and response types directly.
 
  It mirrors the `beryl_mist` package: the two transports expose the same
@@ -161,7 +161,7 @@ Upgrade a request to WebSocket if it matches the configured path
  ```gleam
  import beryl_ewe as ewe_transport
 
- fn handle_request(req: Request(Connection), channels: Channels) -> Response(ResponseBody) {
+ fn handle_request(req: Request(Connection), channels: Sockets) -> Response(ResponseBody) {
    use <- ewe_transport.upgrade(req, channels, ewe_transport.default_config("/socket"))
    // Fall through to regular HTTP routing
    case request.path_segments(req) {
@@ -193,7 +193,7 @@ Upgrade a request to WebSocket if it matches the configured path
  When `beryl.with_max_connections` is configured, this transport also
  enforces a node-wide ceiling on concurrent connections across all IPs,
  likewise returning `429` and rejecting the upgrade before allocating any
- long-lived channel/coordinator state. The two limits compose: a connection
+ long-lived channel/runtime state. The two limits compose: a connection
  must be under both to be admitted. The node-wide ceiling bounds total
  resource use when a per-IP limit alone cannot (many distributed source
  addresses / IPv6 rotation). It is enforced per BEAM node, so across a
@@ -270,10 +270,9 @@ Set a socket-level connect/authentication callback on the transport config.
  The callback receives the HTTP request before the WebSocket upgrade and
  runs once per socket. Return `Ok(metadata)` to allow the connection and
  seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
- an app-dispatch system's `init` via `ConnectInfo.seed` (see
- `ConnectInfo.init`); channel-module systems ignore it — or
- `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
- response before any channel join occurs.
+ the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
+ reject the connection with a 403 Forbidden response before any channel
+ join occurs.
 
  Callback order and duplicate keys are preserved verbatim in
  `ConnectSeed.metadata`; this transport never logs metadata values.
