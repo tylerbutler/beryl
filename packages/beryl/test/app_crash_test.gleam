@@ -29,7 +29,7 @@ fn start_system(
   senders: process.Subject(event.Sender(Msg)),
 ) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start_app(
+    h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(info) {
         process.send(senders, info.self)
@@ -149,7 +149,7 @@ pub fn closed_crash_is_logged_and_close_still_completes_test() {
 
 pub fn init_crash_leaves_socket_unregistered_test() {
   let assert Ok(channels) =
-    beryl.start_app(
+    h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { panic as "init crash" },
       update: fn(model: Nil, _ev: event.Event(Msg)) { Next(model, []) },

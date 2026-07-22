@@ -26,7 +26,7 @@ pub fn main() {
 /// - "room:cast-first":    [Broadcast, AcceptJoin] — joiner excluded
 fn start_system() -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start_app(
+    h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {

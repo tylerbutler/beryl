@@ -33,7 +33,7 @@ fn start_observed(
   senders: process.Subject(event.Sender(Msg)),
 ) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start_app(
+    h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(info) {
         process.send(senders, info.self)

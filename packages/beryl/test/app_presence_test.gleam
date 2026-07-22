@@ -26,7 +26,7 @@ pub fn main() {
 /// "untrack" untracks it explicitly.
 fn start_system(p: presence.Presence) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start_app(
+    h.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(p),
       init: fn(_info) { #(Nil, []) },
@@ -136,7 +136,7 @@ pub fn presence_track_without_handle_is_dropped_test() {
   // No with_presence_handle: the track effect is dropped with a warning
   // and the join still succeeds.
   let assert Ok(channels) =
-    beryl.start_app(
+    h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model: Nil, ev: event.Event(Nil)) {

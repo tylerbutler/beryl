@@ -32,7 +32,7 @@ fn text_only_codec() -> codec.Codec {
 
 fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start_app(
+    h.start_app(
       beryl.config(text_only_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {
