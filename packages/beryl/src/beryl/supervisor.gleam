@@ -1,33 +1,34 @@
-//// Supervisor - OTP supervision tree for beryl subsystems
+//// OTP supervision tree for Beryl subsystems.
 ////
-//// Starts all configured beryl subsystems (coordinator, presence, groups)
-//// under an OTP supervisor with a rest-for-one strategy. If the coordinator
-//// crashes, downstream subsystems (presence, groups) are also restarted to
-//// maintain state consistency — a fresh coordinator has no knowledge of
-//// existing subscriptions, so presence/groups tracking stale topic data
-//// would be inconsistent. PubSub is not supervised here; it is backed by
-//// Erlang's `pg` module which has its own lifecycle.
+//// This module does not start processes directly. It builds a supervisor child
+//// specification for the application's supervision tree, while stable named
+//// subjects let callers construct the subsystem handles before that tree starts.
 ////
 //// ## Example
 ////
 //// ```gleam
 //// import beryl
-//// import beryl/supervisor
 //// import beryl/presence
+//// import beryl/supervisor
 //// import beryl/wire
+//// import gleam/otp/static_supervisor
 ////
-//// let config =
+//// let beryl =
 ////   supervisor.config(beryl.config(wire.phoenix_codec()))
 ////   |> supervisor.with_presence(presence.default_config("node1"))
 ////   |> supervisor.with_groups()
-//// let assert Ok(supervised) = supervisor.start(config)
-//// // supervisor.channels(supervised), supervisor.presence(supervised),
-//// // supervisor.groups(supervised)
+////
+//// let assert Ok(_root) =
+////   static_supervisor.new(static_supervisor.OneForOne)
+////   |> static_supervisor.add(supervisor.start(beryl))
+////   |> static_supervisor.start()
+////
+//// let channels = supervisor.channels(beryl)
 //// ```
 
 import beryl
+import beryl/connection_limit
 import beryl/coordinator
-import beryl/error as beryl_error
 import beryl/group
 import beryl/internal
 import beryl/log
@@ -40,41 +41,47 @@ import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
 
-/// Configuration for starting all beryl subsystems under a supervisor.
+/// Configuration and stable handles for Beryl's supervised subsystems.
 ///
-/// Opaque: build it with [`config`](#config) and refine it with the
-/// `with_*` functions. This keeps the configuration extensible — new
-/// subsystem options can be added post-1.0 without breaking callers.
+/// Construct it with [`config`](#config), add optional subsystems with the
+/// `with_*` functions, add [`start`](#start) to the application's supervisor,
+/// then use [`channels`](#channels), [`presence`](#presence), and
+/// [`groups`](#groups) to access the named processes.
 pub opaque type SupervisedConfig {
   SupervisedConfig(
-    channels: beryl.Config,
-    presence: Option(presence.Config),
-    groups: Bool,
+    channels_config: beryl.Config,
+    registry_name: process.Name(coordinator.RegistryMsg),
+    coordinator_name: process.Name(coordinator.Message),
+    connection_limiter_name: Option(process.Name(connection_limit.Message)),
+    presence_config: Option(presence.Config),
+    presence_name: Option(process.Name(presence.Message)),
+    groups_name: Option(process.Name(group.Message)),
   )
 }
 
-/// Handle to all supervised beryl subsystems.
+/// Configure the Beryl supervision subtree.
 ///
-/// Opaque: read its fields with the accessor functions
-/// ([`channels`](#channels), [`presence`](#presence), [`groups`](#groups),
-/// [`supervisor_pid`](#supervisor_pid)). This lets the handle grow new
-/// fields post-1.0 without breaking readers.
-pub opaque type SupervisedChannels {
-  SupervisedChannels(
-    channels: beryl.Channels,
-    presence: Option(presence.Presence),
-    groups: Option(group.Groups),
-    supervisor_pid: process.Pid,
-  )
-}
-
-/// Start building a supervised configuration.
-///
-/// Requires the channels configuration (the coordinator is always started).
-/// Presence and groups are opt-in via [`with_presence`](#with_presence) and
-/// [`with_groups`](#with_groups); by default neither is started.
+/// The coordinator is always included. Presence and groups are opt-in via
+/// [`with_presence`](#with_presence) and [`with_groups`](#with_groups).
 pub fn config(channels: beryl.Config) -> SupervisedConfig {
-  SupervisedConfig(channels: channels, presence: None, groups: False)
+  let max_per_ip = beryl.config_max_connections_per_ip(channels)
+  let max_total = beryl.config_max_connections(channels)
+  let connection_limiter_name = case
+    connection_limit.enabled(max_per_ip, max_total)
+  {
+    True -> Some(process.new_name("beryl_connection_limiter"))
+    False -> None
+  }
+
+  SupervisedConfig(
+    channels_config: channels,
+    registry_name: process.new_name("beryl_registry"),
+    coordinator_name: process.new_name("beryl_coordinator"),
+    connection_limiter_name: connection_limiter_name,
+    presence_config: None,
+    presence_name: None,
+    groups_name: None,
+  )
 }
 
 /// Enable presence tracking with the given configuration.
@@ -82,134 +89,108 @@ pub fn with_presence(
   config: SupervisedConfig,
   presence: presence.Config,
 ) -> SupervisedConfig {
-  SupervisedConfig(..config, presence: Some(presence))
+  SupervisedConfig(
+    ..config,
+    presence_config: Some(presence),
+    presence_name: Some(process.new_name("beryl_presence")),
+  )
 }
 
-/// Enable the named channel groups subsystem.
+/// Enable named channel groups.
 pub fn with_groups(config: SupervisedConfig) -> SupervisedConfig {
-  SupervisedConfig(..config, groups: True)
+  case config.groups_name {
+    Some(_) -> config
+    None ->
+      SupervisedConfig(
+        ..config,
+        groups_name: Some(process.new_name("beryl_groups")),
+      )
+  }
 }
 
-/// The channels system handle (always present).
-pub fn channels(supervised: SupervisedChannels) -> beryl.Channels {
-  supervised.channels
+/// The channels handle for this supervised Beryl instance.
+///
+/// Add [`start`](#start) to a running application supervisor before using the
+/// handle.
+pub fn channels(config: SupervisedConfig) -> beryl.Channels {
+  beryl.channels_from_supervised_parts(
+    coordinator: process.named_subject(config.coordinator_name),
+    config: config.channels_config,
+    registry: coordinator.registry_from_name(config.registry_name),
+    connection_limiter: config.connection_limiter_name
+      |> option_map(connection_limit.from_name),
+  )
 }
 
 /// The presence handle, if presence was configured.
-pub fn presence(supervised: SupervisedChannels) -> Option(presence.Presence) {
-  supervised.presence
+pub fn presence(config: SupervisedConfig) -> Option(presence.Presence) {
+  config.presence_name
+  |> option_map(fn(name) { presence.from_subject(process.named_subject(name)) })
 }
 
 /// The groups handle, if groups were configured.
-pub fn groups(supervised: SupervisedChannels) -> Option(group.Groups) {
-  supervised.groups
+pub fn groups(config: SupervisedConfig) -> Option(group.Groups) {
+  config.groups_name
+  |> option_map(fn(name) { group.from_subject(process.named_subject(name)) })
 }
 
-/// The supervisor process PID (for lifecycle management).
-pub fn supervisor_pid(supervised: SupervisedChannels) -> process.Pid {
-  supervised.supervisor_pid
-}
-
-/// Errors when starting the supervised system
-pub type StartError {
-  /// The supervisor failed to start
-  SupervisorStartFailed(beryl_error.StartFailure)
-  /// `heartbeat_timeout_ms` must be at least 2 — the same validation as
-  /// `beryl.start` (the staleness check interval is derived as
-  /// `heartbeat_timeout_ms / 2`, so 1 would silently disable eviction).
-  InvalidHeartbeatTimeout
-}
-
-/// Start all configured beryl subsystems under an OTP supervisor
+/// Build Beryl's supervisor child specification.
 ///
-/// Uses a rest-for-one strategy: if the coordinator crashes, presence and
-/// groups are also restarted to maintain state consistency (a fresh coordinator
-/// has no knowledge of existing subscriptions or sockets).
-/// Child start order: coordinator -> presence (optional) -> groups (optional).
-///
-/// The existing `beryl.start()` function is preserved for unsupervised use.
+/// Add the returned specification to the application's supervision tree. The
+/// subtree isolates the connection limiter from a nested rest-for-one channel
+/// supervisor. A coordinator crash therefore restarts its dependent presence
+/// and groups processes while preserving registrations and live connection
+/// counts.
 pub fn start(
   config: SupervisedConfig,
-) -> Result(SupervisedChannels, StartError) {
-  // Validate heartbeat_timeout_ms before deriving check_interval, using the
-  // same bound as beryl.start so both entry points reject the same configs.
-  use <- bool.guard(
-    when: beryl.config_heartbeat_timeout_ms(config.channels) < 2,
-    return: Error(InvalidHeartbeatTimeout),
-  )
-  beryl.warn_if_unprotected(config.channels)
-  start_supervised(config)
+) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
+  supervision.supervisor(fn() { start_supervisor(config) })
 }
 
-fn start_supervised(
+fn start_supervisor(
   config: SupervisedConfig,
-) -> Result(SupervisedChannels, StartError) {
-  let logger = internal.logger("beryl.supervisor")
+) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
+  use <- bool.guard(
+    when: beryl.config_heartbeat_timeout_ms(config.channels_config) < 2,
+    return: Error(actor.InitFailed("invalid heartbeat timeout")),
+  )
+  beryl.warn_if_unprotected(config.channels_config)
 
-  // Create names for each subsystem up front. The supervisor starts children
-  // via callbacks, so we use named actors to retrieve subjects afterward.
-  // Names must be created before supervisor start (not dynamically in loops).
-  let registry_name = process.new_name("beryl_registry")
-  let coordinator_name = process.new_name("beryl_coordinator")
-
-  let presence_name = case config.presence {
-    Some(_) -> Some(process.new_name("beryl_presence"))
-    None -> None
-  }
-
-  let groups_name = case config.groups {
-    True -> Some(process.new_name("beryl_groups"))
-    False -> None
-  }
-
-  // Build coordinator config from channels config (same mapping and
-  // half-timeout check interval as beryl.start), pointing the coordinator
-  // at the supervised registry so restarts recover registrations.
-  let registry = coordinator.registry_from_name(registry_name)
-  let coord_config =
+  let registry = coordinator.registry_from_name(config.registry_name)
+  let coordinator_config =
     coordinator.CoordinatorConfig(
-      ..beryl.to_coordinator_config(config.channels),
+      ..beryl.to_coordinator_config(config.channels_config),
       registry: Some(registry),
     )
 
-  // Build the supervisor with rest-for-one strategy.
-  // If the coordinator crashes, presence and groups restart too to maintain
-  // consistency — a fresh coordinator reloads its handler registrations
-  // from the registry, which starts earlier and survives the restart.
-  let builder =
+  let channels_builder =
     static_supervisor.new(static_supervisor.RestForOne)
     |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
-
-  // The registry is the first child: with rest-for-one, a coordinator crash
-  // restarts everything after it but never the registry itself, so channel
-  // registrations survive.
-  let builder =
-    builder
     |> static_supervisor.add(
       supervision.worker(fn() {
-        coordinator.start_registry_named(registry_name)
+        coordinator.start_registry_named(config.registry_name)
       }),
     )
 
-  // The coordinator follows the registry
-  let builder =
-    builder
+  let channels_builder =
+    channels_builder
     |> static_supervisor.add(
       supervision.worker(fn() {
-        let started = case beryl.config_pubsub(config.channels) {
-          Some(ps) ->
+        let started = case beryl.config_pubsub(config.channels_config) {
+          Some(pubsub) ->
             coordinator.start_named_with_pubsub(
-              coord_config,
-              ps,
-              coordinator_name,
+              coordinator_config,
+              pubsub,
+              config.coordinator_name,
             )
-          None -> coordinator.start_named(coord_config, coordinator_name)
+          None ->
+            coordinator.start_named(coordinator_config, config.coordinator_name)
         }
 
         started
-        |> result.map_error(fn(err) {
-          case err {
-            coordinator.ActorStartFailed(e) -> e
+        |> result.map_error(fn(error) {
+          case error {
+            coordinator.ActorStartFailed(error) -> error
             coordinator.InvalidHeartbeatTimeout ->
               actor.InitFailed("invalid heartbeat timeout")
           }
@@ -217,129 +198,73 @@ fn start_supervised(
       }),
     )
 
-  // Optionally add presence
-  let builder = case config.presence, presence_name {
-    Some(pres_config), Some(name) ->
-      builder
+  let channels_builder = case config.presence_config, config.presence_name {
+    Some(presence_config), Some(name) ->
+      channels_builder
       |> static_supervisor.add(
-        supervision.worker(fn() { presence.start_named(pres_config, name) }),
+        supervision.worker(fn() { presence.start_named(presence_config, name) }),
       )
-    _, _ -> builder
+    _, _ -> channels_builder
   }
 
-  // Optionally add groups
-  let builder = case groups_name {
+  let channels_builder = case config.groups_name {
+    Some(name) ->
+      channels_builder
+      |> static_supervisor.add(
+        supervision.worker(fn() { group.start_named(name) }),
+      )
+    None -> channels_builder
+  }
+
+  let builder =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
+
+  let builder = case config.connection_limiter_name {
     Some(name) ->
       builder
       |> static_supervisor.add(
-        supervision.worker(fn() { group.start_named(name) }),
+        supervision.worker(fn() {
+          connection_limit.start_named(
+            beryl.config_max_connections_per_ip(config.channels_config),
+            beryl.config_max_connections(config.channels_config),
+            name,
+          )
+        }),
       )
     None -> builder
   }
 
-  // Start the supervisor — this starts all children
-  case static_supervisor.start(builder) {
-    Error(err) -> {
-      logger
+  case
+    builder
+    |> static_supervisor.add(static_supervisor.supervised(channels_builder))
+    |> static_supervisor.start()
+  {
+    Error(error) -> {
+      internal.logger("beryl.supervisor")
       |> log.error("Supervisor failed to start", [])
-      Error(SupervisorStartFailed(beryl_error.from_actor_start_error(err)))
+      Error(error)
     }
     Ok(started) -> {
-      let presence_enabled = case config.presence {
-        Some(_) -> "true"
-        None -> "false"
-      }
-      let groups_enabled = case config.groups {
-        True -> "true"
-        False -> "false"
-      }
-      logger
+      internal.logger("beryl.supervisor")
       |> log.info("Supervisor started", [
-        #("presence", presence_enabled),
-        #("groups", groups_enabled),
+        #("presence", case config.presence_config {
+          Some(_) -> "true"
+          None -> "false"
+        }),
+        #("groups", case config.groups_name {
+          Some(_) -> "true"
+          None -> "false"
+        }),
       ])
-
-      // Reconstruct handles from the named subjects.
-      // The supervisor has started all children and they registered with
-      // their names, so named_subject will route messages correctly.
-      let coord_subject = process.named_subject(coordinator_name)
-      let channels =
-        beryl.channels_from_coordinator(
-          coordinator: coord_subject,
-          config: config.channels,
-          registry: Some(registry),
-        )
-
-      let pres = case presence_name {
-        Some(name) -> Some(presence.from_subject(process.named_subject(name)))
-        None -> None
-      }
-
-      let grps = case groups_name {
-        Some(name) -> Some(group.from_subject(process.named_subject(name)))
-        None -> None
-      }
-
-      Ok(SupervisedChannels(
-        channels: channels,
-        presence: pres,
-        groups: grps,
-        supervisor_pid: started.pid,
-      ))
+      Ok(started)
     }
   }
 }
 
-/// Stop the supervisor and all its children
-///
-/// Cleanly shuts down the supervisor process, which terminates all child
-/// processes (coordinator, presence, groups) in reverse start order. After
-/// this call the `SupervisedChannels` handle should no longer be used.
-pub fn stop(supervised: SupervisedChannels) -> Nil {
-  internal.logger("beryl.supervisor") |> log.info("Supervisor stopping", [])
-  stop_supervisor(supervised.supervisor_pid)
+fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
+  case option {
+    Some(value) -> Some(transform(value))
+    None -> None
+  }
 }
-
-// nolint: unused_exports -- public embedding API for host static_supervisor trees; intended for downstream consumers
-/// Create a child specification for composing beryl into a larger supervision tree
-///
-/// Returns a supervisor-type child spec that starts the beryl supervision tree.
-/// This enables embedding beryl as a subtree in an application's top-level
-/// supervisor.
-///
-/// ## Example
-///
-/// ```gleam
-/// import beryl/supervisor
-/// import gleam/otp/static_supervisor
-///
-/// let beryl_config =
-///   supervisor.config(beryl.config(wire.phoenix_codec()))
-///   |> supervisor.with_groups()
-///
-/// static_supervisor.new(static_supervisor.OneForOne)
-/// |> static_supervisor.add(supervisor.child_spec(beryl_config))
-/// |> static_supervisor.start()
-/// ```
-pub fn child_spec(
-  config: SupervisedConfig,
-) -> supervision.ChildSpecification(SupervisedChannels) {
-  supervision.ChildSpecification(
-    start: fn() {
-      case start(config) {
-        Ok(supervised) ->
-          Ok(actor.Started(pid: supervised.supervisor_pid, data: supervised))
-        Error(SupervisorStartFailed(failure)) ->
-          Error(actor.InitFailed(beryl_error.describe_start_failure(failure)))
-        Error(InvalidHeartbeatTimeout) ->
-          Error(actor.InitFailed("invalid heartbeat timeout"))
-      }
-    },
-    restart: supervision.Permanent,
-    significant: False,
-    child_type: supervision.Supervisor,
-  )
-}
-
-@external(erlang, "beryl_ffi", "stop_supervisor")
-fn stop_supervisor(pid: process.Pid) -> Nil

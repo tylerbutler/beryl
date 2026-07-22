@@ -174,5 +174,5 @@ for the full trust-boundary and distribution-hardening reference.
   it, but extreme fan-out workloads may want multiple channels systems
   sharded by topic space.
 - If beryl is embedded in your own supervision tree via
-  `supervisor.child_spec`, restarts of the beryl subtree are bounded by a
+  `supervisor.start`, restarts of the beryl subtree are bounded by a
   rest-for-one strategy with an intensity of 3 restarts per 5 seconds.

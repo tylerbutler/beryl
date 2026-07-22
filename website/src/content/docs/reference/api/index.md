@@ -22,7 +22,7 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/presence/wire`](/reference/api/beryl-presence-wire/) | Phoenix-compatible wire encoding for presence diffs. |
 | [`beryl/pubsub`](/reference/api/beryl-pubsub/) | PubSub - Distributed publish/subscribe using Erlang pg |
 | [`beryl/socket`](/reference/api/beryl-socket/) | Socket - Connected client with typed state |
-| [`beryl/supervisor`](/reference/api/beryl-supervisor/) | Supervisor - OTP supervision tree for beryl subsystems |
+| [`beryl/supervisor`](/reference/api/beryl-supervisor/) | OTP supervision tree for Beryl subsystems. |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Topic - Pattern matching for channel routing |
 | [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |

@@ -287,7 +287,7 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
 
 // nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
 /// Start the presence actor with a registered name. Package-internal: used by
-/// `beryl/supervisor`; end users get supervision via `supervisor.child_spec`.
+/// `beryl/supervisor`; end users get supervision via `supervisor.start`.
 @internal
 pub fn start_named(
   config: Config,
