@@ -1,5 +1,6 @@
 import beryl
 import beryl/presence
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
 import cursors/cursor_channel
@@ -8,20 +9,29 @@ import envoy
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/option.{Some}
+import gleam/otp/static_supervisor
 import gleam/result
 import mist
 
 pub fn main() {
-  // Start beryl channels with rate limiting for cursor events
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_message_rate(per_second: 30, burst: 60)
+  // Configure beryl channels with rate limiting for cursor events, plus
+  // presence tracking, then add beryl's child specification to this
+  // application's own supervisor.
+  let beryl_config =
+    supervisor.config(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 30, burst: 60),
+    )
+    |> supervisor.with_presence(presence.default_config("node1"))
 
-  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
 
-  // Start presence tracking
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
+  let channels = supervisor.channels(beryl_config)
+  let assert Some(presence_actor) = supervisor.presence(beryl_config)
 
   // Register the cursor channel handler
   let handler = cursor_channel.new_handler(channels, presence_actor)

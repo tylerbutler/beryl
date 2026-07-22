@@ -1,6 +1,7 @@
 import beryl
 import beryl/group
 import beryl/presence
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/chat_channel
@@ -9,25 +10,34 @@ import gleam/erlang/process
 import gleam/http/request
 import gleam/io
 import gleam/list
+import gleam/option.{Some}
+import gleam/otp/static_supervisor
 import gleam/result
 import mist
 
 pub fn main() {
-  // Start beryl channels with rate limiting
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_message_rate(per_second: 30, burst: 60)
-    |> beryl.with_join_rate(per_second: 5, burst: 10)
-    |> beryl.with_channel_rate(per_second: 10, burst: 20)
+  // Configure beryl channels with rate limiting, presence, and groups, then
+  // add beryl's child specification to this application's own supervisor.
+  let beryl_config =
+    supervisor.config(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 30, burst: 60)
+      |> beryl.with_join_rate(per_second: 5, burst: 10)
+      |> beryl.with_channel_rate(per_second: 10, burst: 20),
+    )
+    |> supervisor.with_presence(presence.default_config("node1"))
+    |> supervisor.with_groups()
 
-  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
 
-  // Start presence tracking
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
+  let channels = supervisor.channels(beryl_config)
+  let assert Some(presence_actor) = supervisor.presence(beryl_config)
+  let assert Some(groups) = supervisor.groups(beryl_config)
 
-  // Start groups and create default room group
-  let assert Ok(groups) = group.start()
+  // Create default room group
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
   let assert Ok(_) = group.add(groups, "public", "room:random")

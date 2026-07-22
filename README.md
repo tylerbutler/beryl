@@ -28,12 +28,14 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 import beryl
 import beryl/channel.{type Channel, type HandleResult, type JoinResult}
 import beryl/socket.{type Socket}
+import beryl/supervisor
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None}
+import gleam/otp/static_supervisor
 import mist
 
 pub type RoomAssigns { RoomAssigns(username: String) }
@@ -56,7 +58,16 @@ fn new_channel() -> Channel(RoomAssigns, info) {
 }
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  // beryl doesn't start an unmanaged process; add its child specification to
+  // your own application supervisor.
+  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
+
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
+
+  let channels = supervisor.channels(beryl_config)
   let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
 
   let assert Ok(_) =

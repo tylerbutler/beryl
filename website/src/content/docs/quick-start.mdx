@@ -128,23 +128,37 @@ fn handle_in(
 
 ## 2. Start beryl and register the channel
 
-Wire everything together in your application entry point:
+beryl doesn't expose a way to start an unmanaged process — `beryl/supervisor`
+is how you start it, and it returns a child specification for your
+application's own OTP supervisor. Wire everything together in your
+application entry point:
 
 ```gleam
 // src/my_app.gleam
 import beryl
+import beryl/supervisor
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
+import gleam/otp/static_supervisor
 import mist
 import my_app/room_channel
 
 pub fn main() {
-  // Start the beryl channel system.
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  // Build the supervised config, then add its child specification to your
+  // application's root supervisor.
+  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
+
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
+
+  // Resolve the channels handle now that the supervisor is running.
+  let channels = supervisor.channels(beryl_config)
 
   // Register the room channel for all "room:*" topics.
   let assert Ok(_) =
@@ -187,6 +201,14 @@ fn handle_http(
 requests on `/socket/websocket`. When you create a Phoenix JS socket with
 `new Socket("/socket")`, the client appends `/websocket` automatically — so
 the paths line up.
+</Aside>
+
+<Aside type="note" title="Why a supervisor">
+Putting beryl under your application's supervision tree means a crash in the
+channel coordinator (a bad `join` callback, for example) restarts just that
+subtree instead of taking down your whole server. See the
+[Supervision guide](/guides/supervision/) for the restart strategy, adding
+presence and groups to the supervised config, and handling startup errors.
 </Aside>
 
 ## 3. Connect from the browser

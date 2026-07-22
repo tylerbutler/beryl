@@ -121,16 +121,19 @@ and you scale across nodes via pg, not by adding coordinator threads.
 
 ```mermaid
 flowchart TB
-  S["supervisor (rest-for-one)"]
-  S --> CO["coordinator"]
-  S --> PR["presence (optional)"]
-  S --> GR["groups (optional)"]
+  S["beryl supervisor (one-for-one)"]
+  S --> LI["connection limiter (optional)"]
+  S --> CH["channel supervisor (rest-for-one)"]
+  CH --> RE["registry"]
+  CH --> CO["coordinator"]
+  CH --> PR["presence (optional)"]
+  CH --> GR["groups (optional)"]
   CO -. "crash restarts downstream" .-> PR
   PR -. .-> GR
 ```
 
-- `rest-for-one`: coordinator crash restarts presence and groups
-- Embeddable via `beryl/supervisor.child_spec/1`
+- `rest-for-one`: coordinator crash restarts presence and groups (registry survives)
+- Embeddable via `beryl/supervisor.start/1`, which returns a child specification
 - Presence and groups are optional; omit from config if unused
 
 <!--
@@ -142,8 +145,8 @@ deliberate — presence and groups hold references and subscriptions that assume
 a live coordinator, so restarting them together avoids stale state pointing at
 a dead process. The reverse is not true: a presence crash does not take down
 the coordinator. Mention that the whole tree is embeddable via
-`child_spec/1`, so beryl drops into a user's existing supervision tree rather
-than demanding to be the top of the application.
+`supervisor.start/1`, so beryl drops into a user's existing supervision tree
+rather than demanding to be the top of the application.
 -->
 
 ---
