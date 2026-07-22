@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "New app-side dispatch API (ADR 0002): `beryl.start_app(config, init, update)` with `beryl/event` (`Event`/`Next`/`Effect`, typed `Sender`/`notify`, `ConnectInfo`), per-topic-pattern rate limits via `with_topic_rate`, single-use reply refs with duplicate-outstanding rejection, and the existing socket/channel/broadcast telemetry schema. The channel-module API is unchanged; both run side by side during the migration."
