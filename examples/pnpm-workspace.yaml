@@ -2,6 +2,7 @@ packages:
   - cursors
   - chatrooms
   - collab_docs
+  - showcase
 onlyBuiltDependencies:
   - esbuild
   - esbuild@0.27.7
