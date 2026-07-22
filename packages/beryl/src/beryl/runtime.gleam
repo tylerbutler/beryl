@@ -164,9 +164,17 @@ type Outcome(model, msg) {
   )
 }
 
-/// Start the runtime actor.
-pub fn start(
+/// Start the runtime actor registered under `name`.
+///
+/// There is deliberately no unsupervised start: `beryl.start_app` runs
+/// the runtime under a supervisor, and a crash restarts it with dispatch
+/// intact because the `init`/`update` closures live in the child
+/// specification. The registered name keeps transport and broadcast
+/// handles valid across restarts (per-socket state is dropped, matching
+/// coordinator restart semantics).
+pub fn start_named(
   config: Config,
+  name name: process.Name(Msg(msg)),
   pubsub ps: Option(PubSub(Json)),
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Event(msg)) -> Next(model, msg),
@@ -210,6 +218,7 @@ pub fn start(
     }
   })
   |> actor.on_message(handle_message)
+  |> actor.named(name)
   |> actor.start
   |> result.map_error(ActorStartFailed)
 }

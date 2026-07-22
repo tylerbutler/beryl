@@ -15,6 +15,7 @@ import gleam/option.{Some}
 import gleam/string
 import gleeunit
 import gleeunit/should
+import test_helpers
 
 pub fn main() {
   gleeunit.main()
@@ -217,6 +218,35 @@ pub fn duplicate_join_closes_previous_instance_first_test() {
   let rejoin_reply = h.recv(frames)
   rejoin_reply |> string.contains("phx_reply") |> should.be_true
   rejoin_reply |> string.contains("jr-2") |> should.be_true
+}
+
+pub fn runtime_is_supervised_and_restarts_with_dispatch_intact_test() {
+  let #(channels, _events, _senders) = start_system()
+  let frames = h.connect(channels, "s1")
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = h.recv(frames)
+
+  // Kill the runtime process outright: the internal supervisor must
+  // restart it with the app's init/update intact (socket state is
+  // dropped, matching coordinator restart semantics).
+  let assert Ok(old_pid) = beryl.app_runtime_pid(channels)
+  process.kill(old_pid)
+  test_helpers.wait_until(
+    fn() {
+      case beryl.app_runtime_pid(channels) {
+        Ok(new_pid) -> new_pid != old_pid
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  // A fresh socket joins and is served by the restarted runtime.
+  let frames2 = h.connect(channels, "s2")
+  h.join(channels, "s2", "room:b", "jr-2", "r-2")
+  let reply = h.recv(frames2)
+  reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
 pub fn heartbeat_gets_reply_test() {
