@@ -430,7 +430,7 @@ fn auth_query(req, name: String) -> Result(String, Nil) {
 
 fn start_auth_server(
   channels: beryl.Channels,
-  config: mist_transport.TransportConfig(a),
+  config: mist_transport.TransportConfig,
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let handler = fn(request) {
@@ -458,7 +458,7 @@ pub fn on_connect_rejects_connection_without_token_test() {
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
       case auth_query(req, "token") {
-        Ok("secret") -> Ok(Nil)
+        Ok("secret") -> Ok([])
         _ -> Error(mist_transport.ConnectRejected)
       }
     })
@@ -475,42 +475,38 @@ pub fn on_connect_rejects_connection_without_token_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn on_connect_seeds_assigns_visible_at_join_test() {
-  let serializer = json_serializer()
-  let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
-
-  // The channel's assigns is the connect-seeded user id; join echoes it back
-  // without re-authenticating.
-  let handler =
-    channel.new(fn(_topic, _payload, client_socket) {
-      let user_id = socket.get_assigns(client_socket)
-      channel.JoinOk(
-        reply: Some(json.object([#("user", json.string(user_id))])),
-        socket: client_socket,
-      )
-    })
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
+  // `with_on_connect` returns ordered string metadata (not arbitrary typed
+  // assigns); it lands verbatim in `ConnectInfo.seed.metadata` for an
+  // app-dispatch system's `init`, without re-authenticating.
+  let seeds = process.new_subject()
+  let assert Ok(channels) =
+    start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(info: event.ConnectInfo(Nil)) {
+        process.send(seeds, info.seed)
+        #(Nil, [])
+      },
+      update: fn(model, _ev) { event.Next(model, []) },
+    )
 
   let config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
       auth_query(req, "token")
+      |> result.map(fn(token) { [#("user", token), #("user", token)] })
       |> result.map_error(fn(_) { mist_transport.ConnectRejected })
     })
   let #(port, server_pid) = start_auth_server(channels, config)
 
   let assert Ok(client) =
     connect_websocket(port, "/socket/websocket?token=alice")
-  let assert Ok(client) =
-    send_text(
-      client,
-      serializer.join("join-ref", "join-1", "room:lobby", json.object([])),
-    )
-  let reply = latest_text_message(client)
-  let frame =
-    assert_reply(serializer, reply, Some("join-ref"), "join-1", "room:lobby")
-  let response = dynamic_field(frame.payload, "response")
-  assert_json_string(response, "user", "alice")
+  let assert Ok(seed) = process.receive(seeds, 1000)
+
+  // Order and duplicate keys are preserved verbatim, not deduplicated.
+  seed.metadata |> should.equal([#("user", "alice"), #("user", "alice")])
+  seed.path |> should.equal("/socket/websocket")
+
   close(client)
   stop_supervisor(server_pid)
 }
