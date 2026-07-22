@@ -1,81 +1,48 @@
+//// Broadcast semantics on the app runtime handle: `broadcast_from`
+//// exclusion (local and across PubSub), and Phoenix `presence_diff`
+//// broadcasts (local and across PubSub).
+
+import app_test_helpers as h
 import beryl
-import beryl/coordinator
+import beryl/event.{AcceptJoin, Join, Next}
 import beryl/presence
 import beryl/pubsub
-import beryl/topic
 import beryl/wire
-import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
-import gleam/option.{None}
+import gleam/option
 import gleam/string
 import gleeunit
 import gleeunit/should
-import test_helpers
 
 pub fn main() {
   gleeunit.main()
 }
 
-fn register_test_channel(channels: beryl.Channels) -> Nil {
-  let handler =
-    coordinator.ChannelHandler(
-      id: 0,
-      pattern: topic.parse_pattern("room:*"),
-      join: fn(_topic, _payload, _connect_assigns, _ctx) {
-        coordinator.JoinOkErased(
-          reply: None,
-          channel: test_helpers.noop_instance(),
-        )
+/// Start an app system that accepts every join.
+fn start_accepting_app(config: beryl.Config) -> beryl.Channels {
+  let assert Ok(channels) =
+    beryl.start_app(
+      config,
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
+          _ -> Next(model, [])
+        }
       },
     )
-
-  let reply = process.new_subject()
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.RegisterChannel("room:*", handler, reply),
-  )
-  let assert Ok(Ok(_)) = process.receive(reply, 500)
-  Nil
-}
-
-fn connect_socket(
-  channels: beryl.Channels,
-  socket_id: String,
-) -> process.Subject(String) {
-  let sent = process.new_subject()
-  let send = fn(message: String) -> Result(Nil, Nil) {
-    process.send(sent, message)
-    Ok(Nil)
-  }
-
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      socket_id,
-      send,
-      fn(_) { Ok(Nil) },
-      None,
-      dynamic.nil(),
-    ),
-  )
-  process.sleep(10)
-  sent
+  channels
 }
 
 fn join_topic(
   channels: beryl.Channels,
   socket_id: String,
   topic_name: String,
-  sent: process.Subject(String),
+  frames: process.Subject(String),
 ) -> Nil {
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
-    socket_id,
-    "[null,\"join-ref\",\"" <> topic_name <> "\",\"phx_join\",{}]",
-  )
-
-  let assert Ok(reply) = process.receive(sent, 500)
+  h.join(channels, socket_id, topic_name, "join-ref", "join-ref")
+  let reply = h.recv(frames)
   reply
   |> string.contains("phx_reply")
   |> should.be_true
@@ -104,11 +71,10 @@ fn presence_diff() -> presence.Diff {
 }
 
 pub fn broadcast_from_local_only_excludes_socket_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  register_test_channel(channels)
+  let channels = start_accepting_app(beryl.config(wire.phoenix_codec()))
 
-  let sender = connect_socket(channels, "sender-socket")
-  let other = connect_socket(channels, "other-socket")
+  let sender = h.connect(channels, "sender-socket")
+  let other = h.connect(channels, "other-socket")
   join_topic(channels, "sender-socket", "room:lobby", sender)
   join_topic(channels, "other-socket", "room:lobby", other)
   drain(sender)
@@ -129,18 +95,18 @@ pub fn broadcast_from_local_only_excludes_socket_test() {
 
   process.receive(sender, 100)
   |> should.be_error
+
+  beryl.stop(channels)
 }
 
-pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_coordinator_test() {
+pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_runtime_test() {
   let ps = pubsub.start(pubsub.config_with_scope("test_broadcast_from_pubsub"))
   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-  let assert Ok(origin_channels) = beryl.start(config)
-  let assert Ok(remote_channels) = beryl.start(config)
-  register_test_channel(origin_channels)
-  register_test_channel(remote_channels)
+  let origin_channels = start_accepting_app(config)
+  let remote_channels = start_accepting_app(config)
 
-  let remote_sender = connect_socket(remote_channels, "sender-socket")
-  let remote_other = connect_socket(remote_channels, "other-socket")
+  let remote_sender = h.connect(remote_channels, "sender-socket")
+  let remote_other = h.connect(remote_channels, "other-socket")
   join_topic(remote_channels, "sender-socket", "room:lobby", remote_sender)
   join_topic(remote_channels, "other-socket", "room:lobby", remote_other)
   drain(remote_sender)
@@ -161,13 +127,15 @@ pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_coordinator_test() {
 
   process.receive(remote_sender, 100)
   |> should.be_error
+
+  beryl.stop(origin_channels)
+  beryl.stop(remote_channels)
 }
 
 pub fn broadcast_presence_diff_local_delivers_phoenix_event_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  register_test_channel(channels)
+  let channels = start_accepting_app(beryl.config(wire.phoenix_codec()))
 
-  let socket = connect_socket(channels, "socket-1")
+  let socket = h.connect(channels, "socket-1")
   join_topic(channels, "socket-1", "room:lobby", socket)
   drain(socket)
 
@@ -183,13 +151,14 @@ pub fn broadcast_presence_diff_local_delivers_phoenix_event_test() {
   message
   |> string.contains("metas")
   |> should.be_true
+
+  beryl.stop(channels)
 }
 
 pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  register_test_channel(channels)
+  let channels = start_accepting_app(beryl.config(wire.phoenix_codec()))
 
-  let socket = connect_socket(channels, "socket-1")
+  let socket = h.connect(channels, "socket-1")
   join_topic(channels, "socket-1", "room:lobby", socket)
   drain(socket)
 
@@ -219,17 +188,17 @@ pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() {
   message
   |> string.contains("metas")
   |> should.be_true
+
+  beryl.stop(channels)
 }
 
-pub fn broadcast_presence_diff_with_pubsub_delivers_to_remote_coordinator_test() {
+pub fn broadcast_presence_diff_with_pubsub_delivers_to_remote_runtime_test() {
   let ps = pubsub.start(pubsub.config_with_scope("test_presence_diff_pubsub"))
   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-  let assert Ok(origin_channels) = beryl.start(config)
-  let assert Ok(remote_channels) = beryl.start(config)
-  register_test_channel(origin_channels)
-  register_test_channel(remote_channels)
+  let origin_channels = start_accepting_app(config)
+  let remote_channels = start_accepting_app(config)
 
-  let remote_socket = connect_socket(remote_channels, "socket-1")
+  let remote_socket = h.connect(remote_channels, "socket-1")
   join_topic(remote_channels, "socket-1", "room:lobby", remote_socket)
   drain(remote_socket)
 
@@ -245,4 +214,7 @@ pub fn broadcast_presence_diff_with_pubsub_delivers_to_remote_coordinator_test()
   message
   |> string.contains("metas")
   |> should.be_true
+
+  beryl.stop(origin_channels)
+  beryl.stop(remote_channels)
 }

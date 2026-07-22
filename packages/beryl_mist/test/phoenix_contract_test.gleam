@@ -1,6 +1,5 @@
 import beryl
-import beryl/channel
-import beryl/socket
+import beryl/event.{AcceptJoin, Closed, Join, Message, Next}
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -201,46 +200,48 @@ fn assert_no_text_message(client: WebsocketClient) {
   |> should.equal(Error(Nil))
 }
 
-fn contract_channel(
-  channels: beryl.Channels,
-  terminated: process.Subject(channel.StopReason),
-) -> channel.Channel(Nil, info) {
-  channel.new(fn(_topic, _payload, client_socket) {
-    channel.JoinOk(
-      reply: Some(json.object([#("joined", json.bool(True))])),
-      socket: client_socket,
+fn start_contract_app(
+  terminated: process.Subject(event.StopReason),
+) -> beryl.Channels {
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) ->
+            Next(model, [
+              AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
+            ])
+          Message(_topic, "ping", _payload, Some(ref)) ->
+            Next(model, [
+              event.ReplyOk(ref, json.object([#("pong", json.bool(True))])),
+            ])
+          Message(topic, "push_me", _payload, _ref) ->
+            Next(model, [
+              event.Push(
+                topic,
+                "pushed",
+                json.object([#("from", json.string("server"))]),
+              ),
+            ])
+          Message(topic, "broadcast_from_me", payload, _ref) ->
+            Next(model, [
+              event.BroadcastFrom(
+                topic,
+                "broadcasted",
+                wire.dynamic_to_json(payload),
+              ),
+            ])
+          Closed(_topic, reason) -> {
+            process.send(terminated, reason)
+            Next(model, [])
+          }
+          _ -> Next(model, [])
+        }
+      },
     )
-  })
-  |> channel.with_handle_in(fn(event, payload, client_socket) {
-    case event {
-      "ping" ->
-        channel.Reply(
-          "ping",
-          json.object([#("pong", json.bool(True))]),
-          client_socket,
-        )
-      "push_me" ->
-        channel.Push(
-          "pushed",
-          json.object([#("from", json.string("server"))]),
-          client_socket,
-        )
-      "broadcast_from_me" -> {
-        beryl.broadcast_from(
-          channels,
-          socket.id(client_socket),
-          "room:lobby",
-          "broadcasted",
-          wire.dynamic_to_json(payload),
-        )
-        channel.NoReply(client_socket)
-      }
-      _ -> channel.NoReply(client_socket)
-    }
-  })
-  |> channel.with_terminate(fn(reason, _socket) {
-    process.send(terminated, reason)
-  })
+  channels
 }
 
 fn start_mist_server(channels: beryl.Channels) -> #(Int, process.Pid) {
@@ -296,10 +297,8 @@ fn join_client(serializer: Serializer, client: WebsocketClient) {
 
 pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let serializer = json_serializer()
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
-  let assert Ok(_) =
-    beryl.register(channels, "room:*", contract_channel(channels, terminated))
+  let channels = start_contract_app(terminated)
   let #(port, server_pid) = start_mist_server(channels)
 
   let client = connect_client(port)
@@ -397,7 +396,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let _ =
     assert_reply(serializer, leave, Some("join-ref"), "leave-1", "room:lobby")
   let assert Ok(reason) = process.receive(terminated, 200)
-  reason |> should.equal(channel.Normal)
+  reason |> should.equal(event.Normal)
 
   drain_text_messages(client)
   beryl.broadcast(
@@ -426,7 +425,7 @@ fn auth_query(req, name: String) -> Result(String, Nil) {
 
 fn start_auth_server(
   channels: beryl.Channels,
-  config: mist_transport.TransportConfig(a),
+  config: mist_transport.TransportConfig,
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let handler = fn(request) {
@@ -449,7 +448,8 @@ fn start_auth_server(
 }
 
 pub fn on_connect_rejects_connection_without_token_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let terminated = process.new_subject()
+  let channels = start_contract_app(terminated)
   let config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
@@ -471,26 +471,41 @@ pub fn on_connect_rejects_connection_without_token_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn on_connect_seeds_assigns_visible_at_join_test() {
+pub fn connect_seed_query_visible_at_join_test() {
   let serializer = json_serializer()
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
 
-  // The channel's assigns is the connect-seeded user id; join echoes it back
-  // without re-authenticating.
-  let handler =
-    channel.new(fn(_topic, _payload, client_socket) {
-      let user_id = socket.get_assigns(client_socket)
-      channel.JoinOk(
-        reply: Some(json.object([#("user", json.string(user_id))])),
-        socket: client_socket,
-      )
-    })
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+  // The upgrade request's query reaches `init` via `ConnectInfo.seed`; the
+  // model carries the user id and join echoes it back without
+  // re-authenticating.
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(info: event.ConnectInfo(Nil)) {
+        let user_id =
+          list.find(info.seed.query, fn(pair) { pair.0 == "token" })
+          |> result.map(fn(pair) { pair.1 })
+          |> result.unwrap("anonymous")
+        #(user_id, [])
+      },
+      update: fn(user_id, ev) {
+        case ev {
+          Join(_, _, ref) ->
+            Next(user_id, [
+              AcceptJoin(
+                ref,
+                Some(json.object([#("user", json.string(user_id))])),
+              ),
+            ])
+          _ -> Next(user_id, [])
+        }
+      },
+    )
 
   let config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
       auth_query(req, "token")
+      |> result.map(fn(_) { Nil })
       |> result.map_error(fn(_) { mist_transport.ConnectRejected })
     })
   let #(port, server_pid) = start_auth_server(channels, config)

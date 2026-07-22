@@ -2,8 +2,8 @@
 ////
 //// A topic-scoped `Model`/`join`/`update`/`closed` triple: a composing
 //// app (see the showcase example) routes `cursor:*` events here and
-//// stores the returned model per topic. Mirrors the behavior of
-//// `cursors/cursor_channel` on the channel-module API.
+//// stores the returned model per topic. The standalone cursors example
+//// and the showcase both route into this module.
 
 import beryl/event.{type Effect, type Ref}
 import beryl/presence.{type Presence}

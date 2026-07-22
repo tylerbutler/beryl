@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Removed"
+body = "The channel-module API is gone (ADR 0002 phase 2): `beryl/channel`, `beryl/socket`, `beryl/coordinator`, `beryl/bridge`, `beryl/supervisor`, and `beryl.start`/`register`/`send_info` are removed along with all identity-FFI type erasure. `beryl.start_app` is the single entry point: apps route topics in `update` and receive server-side messages through the typed `Sender`. `StartError.CoordinatorStartFailed` is renamed to `RuntimeStartFailed`."

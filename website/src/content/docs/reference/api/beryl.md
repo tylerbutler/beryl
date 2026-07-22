@@ -11,8 +11,9 @@ Beryl - Type-safe real-time communication
 
  ## Features
 
- - **Channels** — Topic-based WebSocket messaging with pattern matching
-   (`beryl`, `beryl/channel`)
+ - **App-side dispatch** — One `start_app` entry point: the app supplies
+   `init`/`update` per socket and routes topics itself (`beryl`,
+   `beryl/event`)
  - **PubSub** — Distributed publish/subscribe via Erlang `pg`
    (`beryl/pubsub`)
  - **Presence** — Distributed presence tracking backed by a causal-context
@@ -24,33 +25,19 @@ Beryl - Type-safe real-time communication
 
  ```gleam
  import beryl
- import beryl/channel
- import beryl/pubsub
- import beryl/presence
- import beryl/group
+ import beryl/event
  import beryl/wire
 
  pub fn main() {
-   // Optional: start PubSub for distributed messaging
-   let ps = pubsub.start(pubsub.default_config())
+   let assert Ok(channels) =
+     beryl.start_app(
+       beryl.config(wire.phoenix_codec()),
+       init: fn(_info) { #(initial_model(), []) },
+       update: update,
+     )
 
-   // Start channels system (with or without PubSub)
-   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-   let assert Ok(channels) = beryl.start(config)
-
-   // Register a channel handler
-   let _ = beryl.register(channels, "room:*", room_channel.new())
-
-   // Start presence tracking
-   let assert Ok(p) = presence.start(presence.default_config("node1"))
-
-   // Start channel groups
-   let assert Ok(groups) = group.start()
-   let assert Ok(Nil) = group.create(groups, "team:eng")
-   let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
-
-   // Broadcast to all topics in a group
-   group.broadcast(groups, channels, "team:eng", "announce", payload)
+   // Broadcast from anywhere holding the handle
+   beryl.broadcast(channels, "room:lobby", "announce", payload)
  }
  ```
 
@@ -60,11 +47,11 @@ Beryl - Type-safe real-time communication
 
 Channels system handle.
 
- This opaque handle is returned by `start` (channel-module systems) and
- `start_app` (app-side dispatch systems) and passed to
- broadcast, group, supervisor, and transport functions. Its internals are
- intentionally hidden so Beryl can evolve them without breaking
- application code.
+ This opaque handle is returned by `start_app` and passed to broadcast,
+ group, and transport functions. The runtime actor is generic over the
+ app's `model`/`msg`; the handle reaches it through monomorphic closures
+ captured at start. Its internals are intentionally hidden so Beryl can
+ evolve them without breaking application code.
 
 ```gleam
 pub type Channels
@@ -124,60 +111,22 @@ pub type LogLevel {
 }
 ```
 
-### `RegisteredChannel`
-
-A typed handle returned when a channel is registered.
-
- Pass this handle to `send_info` so the compiler can prove that the message
- matches the receiving channel's `info` type. The handle also identifies the
- exact registered channel used for a joined socket/topic pair.
-
- The `assigns` and `info` parameters are phantom: they carry the registered
- channel's types so `send_info` is type-checked, while the handle itself
- stores only the coordinator subject and the registration id.
-
-```gleam
-pub type RegisteredChannel(a, b)
-```
-
-### `RegisterError`
-
-Errors when registering a channel handler.
-
-```gleam
-pub type RegisterError {
-  PatternAlreadyRegistered(String)
-  InvalidPattern(String)
-}
-```
-
-#### Constructors
-
-##### `PatternAlreadyRegistered(String)`
-
-A handler is already registered for this exact topic pattern.
-
-##### `InvalidPattern(String)`
-
-The topic pattern is invalid. Patterns must be non-empty and must not
- contain control characters (codepoints 0–31 or 127).
-
 ### `StartError`
 
 Errors when starting channels
 
 ```gleam
 pub type StartError {
-  CoordinatorStartFailed(error.StartFailure)
+  RuntimeStartFailed(error.StartFailure)
   InvalidHeartbeatTimeout
 }
 ```
 
 #### Constructors
 
-##### `CoordinatorStartFailed(error.StartFailure)`
+##### `RuntimeStartFailed(error.StartFailure)`
 
-The coordinator actor failed to start.
+The supervised runtime failed to start.
 
 ##### `InvalidHeartbeatTimeout`
 
@@ -339,53 +288,6 @@ Return the configured inbound frame size cap for transports.
 pub fn max_inbound_frame_bytes(Channels) -> Int
 ```
 
-### `register`
-
-Register a channel handler for a topic pattern
-
- Patterns can be exact matches like "room:lobby", legacy prefix wildcards
- like "room:*" which match any topic starting with "room:", or segment
- wildcards like "document:*:ops" where "*" matches one complete segment.
- The bare pattern "*" is a catch-all that matches every topic.
-
- Patterns are validated at registration: they must be non-empty and must
- not contain control characters (codepoints 0–31 or 127). Invalid patterns
- are rejected with `InvalidPattern`.
-
- Panics if the coordinator actor is unavailable or does not reply within
- 5 seconds (e.g. during a supervisor restart window after a crash).
-
- ## Example
-
- ```gleam
- // Create a typed channel
- let chat_channel = channel.new(fn(topic, payload, socket) {
-   // Handle join
-   channel.JoinOk(reply: None, socket: socket)
- })
- |> channel.with_handle_in(fn(event, payload, socket) {
-   // Handle incoming messages
-   channel.NoReply(socket)
- })
-
- // Register it with a legacy prefix wildcard
- let assert Ok(chat) = beryl.register(channels, "chat:*", chat_channel)
-
- // Exact topic
- let assert Ok(lobby) = beryl.register(channels, "room:lobby", lobby_channel)
-
- // Segment-aware wildcard
- let assert Ok(ops) = beryl.register(channels, "document:*:ops", ops_channel)
- ```
-
-```gleam
-pub fn register(
-  Channels,
-  String,
-  channel.Channel(a, b)
-) -> Result(RegisteredChannel(a, b), RegisterError)
-```
-
 ### `release_connection_slot`
 
 Release a per-IP connection slot acquired by a transport.
@@ -395,55 +297,6 @@ Release a per-IP connection slot acquired by a transport.
 
 ```gleam
 pub fn release_connection_slot(ConnectionPermit) -> Nil
-```
-
-### `send_info`
-
-Send a typed server-originated OTP message to a joined channel context.
-
- The `registered` handle carries the receiving channel's `info` type, so the
- compiler rejects messages for incompatible channels. The coordinator also
- verifies that the socket/topic pair was joined through that same registered
- channel before dispatching the callback. If the socket is not connected, the
- topic is not joined, or the registered channel does not match the joined
- channel, the message is ignored.
-
-```gleam
-pub fn send_info(
-  RegisteredChannel(a, b),
-  String,
-  String,
-  b
-) -> Nil
-```
-
-### `start`
-
-Start the channels system
-
- Call once at application startup. Returns a handle that can be passed
- to the WebSocket transport and used for broadcasting.
-
- Heartbeat eviction is configured via `heartbeat_timeout_ms` in the Config.
- The coordinator evicts any socket that has not sent a heartbeat within that
- window, checking for stale sockets at a server-derived interval of
- `heartbeat_timeout_ms / 2`. `heartbeat_interval_ms` is client-advisory only
- (see `with_heartbeat`) and does not schedule anything on the server.
-
- Returns `Error(InvalidHeartbeatTimeout)` if `heartbeat_timeout_ms` is less
- than 2.
-
- ## Example
-
- ```gleam
- pub fn main() {
-   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-   // Use channels...
- }
- ```
-
-```gleam
-pub fn start(Config) -> Result(Channels, StartError)
 ```
 
 ### `start_app`
@@ -496,13 +349,12 @@ pub fn start_app(
 
 ### `stop`
 
-Stop an unsupervised channels system.
+Stop a channels system started by `start_app`.
 
- This shuts down the coordinator actor started by `start` and any auxiliary
- limiter actors owned by the `Channels` handle. Joined channel handlers
- receive `channel.Shutdown` in their `terminate` callback before the
- coordinator exits. After this call the `Channels` handle should no longer be
- used.
+ Drains sockets gracefully and shuts down the supervised runtime plus any
+ auxiliary limiter actors owned by the `Channels` handle. Joined topics
+ receive a `Closed` event before the runtime exits. After this call the
+ `Channels` handle should no longer be used.
 
 ```gleam
 pub fn stop(Channels) -> Nil

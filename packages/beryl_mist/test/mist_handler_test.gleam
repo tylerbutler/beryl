@@ -4,12 +4,14 @@
 //// handler routes WebSocket upgrades versus plain HTTP requests.
 
 import beryl
+import beryl/event
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/response
 import gleam/int
+import gleam/option
 import gleam/string
 import gleeunit/should
 import mist
@@ -62,7 +64,7 @@ fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
 
 fn start_server_with_config(
   channels: beryl.Channels,
-  config: mist_transport.TransportConfig(assigns),
+  config: mist_transport.TransportConfig,
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let http_fallback = fn(_request) {
@@ -83,8 +85,8 @@ fn start_server_with_config(
 }
 
 fn start_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: 1),
     )
@@ -92,8 +94,8 @@ fn start_limited_server() -> #(Int, process.Pid) {
 }
 
 fn start_frame_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_inbound_frame_bytes(max_bytes: 32),
     )
@@ -101,7 +103,22 @@ fn start_frame_limited_server() -> #(Int, process.Pid) {
 }
 
 fn start_channels() -> beryl.Channels {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  start_app(beryl.config(wire.phoenix_codec()))
+}
+
+fn start_app(config: beryl.Config) -> beryl.Channels {
+  let assert Ok(channels) =
+    beryl.start_app(
+      config,
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          event.Join(_, _, ref) ->
+            event.Next(model, [event.AcceptJoin(ref, option.None)])
+          _ -> event.Next(model, [])
+        }
+      },
+    )
   channels
 }
 
@@ -278,8 +295,8 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
 }
 
 pub fn handler_sheds_message_flood_at_the_edge_test() {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_message_rate(per_second: 1, burst: 2),
     )

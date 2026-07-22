@@ -2,9 +2,9 @@
 ////
 //// A topic-scoped `Model`/`join`/`update`/`closed` triple: a composing
 //// app (see the showcase example) routes `room:*` events here and stores
-//// the returned model per topic. Mirrors the behavior of
-//// `chatrooms/chat_channel` on the channel-module API, including its
-//// wire-level replies (`msg_ack`, error payloads on an ok-status reply).
+//// the returned model per topic. The standalone chatrooms example and
+//// the showcase both route into this module. Wire-level replies:
+//// `msg_ack`, error payloads on an ok-status reply.
 
 import beryl/event.{type Effect, type Ref}
 import beryl/group.{type Groups}
@@ -219,9 +219,9 @@ fn system_message(text: String) -> json.Json {
   ])
 }
 
-/// Reply only when the client sent a ref (matching the channel-module
-/// behavior of dropping refless replies). The ok status with an error
-/// payload mirrors the previous wire behavior exactly.
+/// Reply only when the client sent a ref (refless replies are dropped).
+/// The ok status with an error payload is the wire behavior clients
+/// expect.
 fn reply_ok(ref: Option(Ref), reply_payload: json.Json) -> List(Effect) {
   case ref {
     Some(r) -> [event.ReplyOk(r, reply_payload)]

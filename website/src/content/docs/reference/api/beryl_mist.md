@@ -6,7 +6,7 @@ description: Mist WebSocket Transport - Direct Mist integration for beryl
 Mist WebSocket Transport - Direct Mist integration for beryl
 
  This module provides the bridge between Mist's native WebSocket handling
- and the beryl coordinator using Mist request and response types directly.
+ and the beryl runtime using Mist request and response types directly.
 
 ## Types
 
@@ -87,11 +87,12 @@ Allow every upgrade regardless of `Origin`. This is an explicit opt-out
 
 Configuration for the Mist WebSocket transport
 
- The `assigns` type parameter is the socket-level state produced by the
- `on_connect` hook. It defaults to `Nil` when no hook is configured.
+ The optional `on_connect` hook authenticates the connection before the
+ upgrade; connect-time request data reaches the app's `init` through the
+ `ConnectSeed` (`ConnectInfo.seed`).
 
 ```gleam
-pub type TransportConfig(a)
+pub type TransportConfig
 ```
 
 ## Functions
@@ -106,12 +107,12 @@ Create a default transport config with no connect hook.
  upgrades and non-browser clients (no `Origin` header) are admitted without
  configuration.
 
- Add `with_on_connect` to authenticate connections and/or seed initial
- assigns. Use `with_allowed_origins` to pin an explicit allow-list, or
+ Add `with_on_connect` to authenticate connections. Use
+ `with_allowed_origins` to pin an explicit allow-list, or
  `with_allow_all_origins` to opt out of origin checking entirely.
 
 ```gleam
-pub fn default_config(String) -> TransportConfig(Nil)
+pub fn default_config(String) -> TransportConfig
 ```
 
 ### `handler`
@@ -138,7 +139,7 @@ Build a combined request handler that serves both WebSocket channels and
 ```gleam
 pub fn handler(
   beryl.Channels,
-  TransportConfig(a),
+  TransportConfig,
   fn(request.Request(http.Connection)) -> response.Response(mist.ResponseData)
 ) -> fn(request.Request(http.Connection)) -> response.Response(mist.ResponseData)
 ```
@@ -181,7 +182,7 @@ Upgrade a request to WebSocket if it matches the configured path
  When `beryl.with_max_connections` is configured, this transport also
  enforces a node-wide ceiling on concurrent connections across all IPs,
  likewise returning `429` and rejecting the upgrade before allocating any
- long-lived channel/coordinator state. The two limits compose: a connection
+ long-lived channel/runtime state. The two limits compose: a connection
  must be under both to be admitted. The node-wide ceiling bounds total
  resource use when a per-IP limit alone cannot (many distributed source
  addresses / IPv6 rotation). It is enforced per BEAM node, so across a
@@ -192,7 +193,7 @@ Upgrade a request to WebSocket if it matches the configured path
 pub fn upgrade(
   request.Request(http.Connection),
   beryl.Channels,
-  TransportConfig(a),
+  TransportConfig,
   fn() -> response.Response(mist.ResponseData)
 ) -> response.Response(mist.ResponseData)
 ```
@@ -202,9 +203,8 @@ pub fn upgrade(
 Alternative: upgrade any request to WebSocket (caller handles path matching)
 
  Note: This function does not invoke the `on_connect` callback from
- `TransportConfig`. Sockets upgraded this way start with empty (`Nil`)
- assigns. If you need authentication or seeded assigns, either use `upgrade`
- with a full config or call your auth check before this function.
+ `TransportConfig`. If you need authentication, either use `upgrade` with
+ a full config or call your auth check before this function.
 
 ```gleam
 pub fn upgrade_connection(
@@ -225,7 +225,7 @@ Disable `Origin` checking, allowing WebSocket upgrades from any origin.
  `SameOrigin` policy or `with_allowed_origins`.
 
 ```gleam
-pub fn with_allow_all_origins(TransportConfig(a)) -> TransportConfig(a)
+pub fn with_allow_all_origins(TransportConfig) -> TransportConfig
 ```
 
 ### `with_allowed_origins`
@@ -245,9 +245,9 @@ Restrict WebSocket upgrades to requests whose `Origin` header exactly
 
 ```gleam
 pub fn with_allowed_origins(
-  TransportConfig(a),
+  TransportConfig,
   List(String)
-) -> TransportConfig(a)
+) -> TransportConfig
 ```
 
 ### `with_on_connect`
@@ -255,14 +255,14 @@ pub fn with_allowed_origins(
 Set a socket-level connect/authentication callback on the transport config.
 
  The callback receives the HTTP request before the WebSocket upgrade and
- runs once per socket. Return `Ok(assigns)` to allow the connection and seed
- initial socket assigns that channels can read at join time, or
- `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
- response before any channel join occurs.
+ runs once per socket. Return `Ok(Nil)` to allow the connection, or
+ `Error(ConnectRejected)` to reject it with a 403 Forbidden response
+ before any topic join occurs. Connect-time request data (path, query,
+ headers) reaches the app's `init` via `ConnectInfo.seed`.
 
 ```gleam
 pub fn with_on_connect(
-  TransportConfig(a),
-  fn(request.Request(http.Connection)) -> Result(b, ConnectError)
-) -> TransportConfig(b)
+  TransportConfig,
+  fn(request.Request(http.Connection)) -> Result(Nil, ConnectError)
+) -> TransportConfig
 ```

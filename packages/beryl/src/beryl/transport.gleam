@@ -19,7 +19,6 @@ import beryl/internal
 import beryl/log
 import beryl/rate_limit
 import beryl/wire/codec.{type Codec, type Inbound}
-import gleam/dynamic.{type Dynamic}
 import gleam/option.{type Option}
 import gleam/result
 
@@ -27,32 +26,22 @@ import gleam/result
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce a newly connected socket. `send`/`send_binary` deliver outbound
-/// frames on this connection. `assigns` seeds connect-time socket assigns
-/// (type-erased internally) for channel-module systems; `seed` carries the
-/// upgrade request's connection data for app-dispatch systems (delivered to
-/// the app's `init` as `ConnectInfo.seed`). Call `register_closer`
-/// immediately after this.
+/// frames on this connection. `seed` carries the upgrade request's
+/// connection data, delivered to the app's `init` as `ConnectInfo.seed`.
+/// Call `register_closer` immediately after this.
 pub fn socket_connected(
   channels channels: Channels,
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns assigns: assigns,
   seed seed: ConnectSeed,
 ) -> Nil {
-  beryl.transport_socket_connected(
-    channels,
-    socket_id,
-    send,
-    send_binary,
-    erase(assigns),
-    seed,
-  )
+  beryl.transport_socket_connected(channels, socket_id, send, send_binary, seed)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Register a function that force-closes the socket's underlying connection
-/// so the coordinator can actively evict it (e.g. heartbeat timeout) instead
+/// so the runtime can actively evict it (e.g. heartbeat timeout) instead
 /// of leaving a zombie socket whose frames are silently dropped.
 pub fn register_closer(
   channels channels: Channels,
@@ -74,9 +63,9 @@ pub fn socket_disconnected(
 // --- Inbound routing ---
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Route a transport-decoded inbound message to the coordinator. Decode in
+/// Route a transport-decoded inbound message to the runtime. Decode in
 /// the connection process (see `active_codec`) so parse cost and malformed
-/// input never reach the shared coordinator.
+/// input never reach the shared runtime actor.
 pub fn route_decoded(
   channels channels: Channels,
   socket_id socket_id: String,
@@ -109,7 +98,7 @@ pub fn active_codec(channels: Channels) -> Codec {
 
 /// A per-connection token bucket enforcing the configured message rate at
 /// the transport edge, so a flooding socket is shed before frames are
-/// decoded or enqueued on the coordinator.
+/// decoded or enqueued on the runtime.
 pub opaque type RateLimiter {
   RateLimiter(bucket: rate_limit.Bucket)
 }
@@ -153,7 +142,3 @@ pub fn log_warning(
 ) -> Nil {
   log.warn(logger.inner, message, metadata)
 }
-
-/// Type-erase connect-time assigns before handing them to the coordinator.
-@external(erlang, "beryl_ffi", "identity")
-fn erase(value: anything) -> Dynamic

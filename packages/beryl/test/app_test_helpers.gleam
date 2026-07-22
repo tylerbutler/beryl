@@ -27,7 +27,6 @@ pub fn connect(
       Ok(Nil)
     },
     send_binary: fn(_data) { Ok(Nil) },
-    assigns: Nil,
     seed: event.empty_seed(),
   )
   process.sleep(10)

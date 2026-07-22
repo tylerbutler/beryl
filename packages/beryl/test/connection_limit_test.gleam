@@ -6,13 +6,24 @@
 //// real socket peer IP.
 
 import beryl
+import beryl/event
 import beryl/wire
 import gleam/erlang/process
 import gleeunit/should
 
+fn start_trivial_app(
+  config: beryl.Config,
+) -> Result(beryl.Channels, beryl.StartError) {
+  beryl.start_app(
+    config,
+    init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+    update: fn(model, _ev) { event.Next(model, []) },
+  )
+}
+
 fn start_with_limit(max_connections: Int) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start(
+    start_trivial_app(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: max_connections),
     )

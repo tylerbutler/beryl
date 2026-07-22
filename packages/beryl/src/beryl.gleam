@@ -6,8 +6,9 @@
 ////
 //// ## Features
 ////
-//// - **Channels** — Topic-based WebSocket messaging with pattern matching
-////   (`beryl`, `beryl/channel`)
+//// - **App-side dispatch** — One `start_app` entry point: the app supplies
+////   `init`/`update` per socket and routes topics itself (`beryl`,
+////   `beryl/event`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
 //// - **Presence** — Distributed presence tracking backed by a causal-context
@@ -19,39 +20,23 @@
 ////
 //// ```gleam
 //// import beryl
-//// import beryl/channel
-//// import beryl/pubsub
-//// import beryl/presence
-//// import beryl/group
+//// import beryl/event
 //// import beryl/wire
 ////
 //// pub fn main() {
-////   // Optional: start PubSub for distributed messaging
-////   let ps = pubsub.start(pubsub.default_config())
+////   let assert Ok(channels) =
+////     beryl.start_app(
+////       beryl.config(wire.phoenix_codec()),
+////       init: fn(_info) { #(initial_model(), []) },
+////       update: update,
+////     )
 ////
-////   // Start channels system (with or without PubSub)
-////   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-////   let assert Ok(channels) = beryl.start(config)
-////
-////   // Register a channel handler
-////   let _ = beryl.register(channels, "room:*", room_channel.new())
-////
-////   // Start presence tracking
-////   let assert Ok(p) = presence.start(presence.default_config("node1"))
-////
-////   // Start channel groups
-////   let assert Ok(groups) = group.start()
-////   let assert Ok(Nil) = group.create(groups, "team:eng")
-////   let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
-////
-////   // Broadcast to all topics in a group
-////   group.broadcast(groups, channels, "team:eng", "announce", payload)
+////   // Broadcast from anywhere holding the handle
+////   beryl.broadcast(channels, "room:lobby", "announce", payload)
 //// }
 //// ```
 
-import beryl/channel.{type Channel}
 import beryl/connection_limit
-import beryl/coordinator
 import beryl/error as beryl_error
 import beryl/event
 import beryl/internal
@@ -61,11 +46,9 @@ import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
 import beryl/runtime
-import beryl/socket.{type Socket}
 import beryl/topic
 import beryl/wire/codec
 import gleam/bool
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
@@ -75,31 +58,6 @@ import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
-
-type ChannelHandler =
-  coordinator.ChannelHandler
-
-/// A typed handle returned when a channel is registered.
-///
-/// Pass this handle to `send_info` so the compiler can prove that the message
-/// matches the receiving channel's `info` type. The handle also identifies the
-/// exact registered channel used for a joined socket/topic pair.
-///
-/// The `assigns` and `info` parameters are phantom: they carry the registered
-/// channel's types so `send_info` is type-checked, while the handle itself
-/// stores only the coordinator subject and the registration id.
-pub opaque type RegisteredChannel(assigns, info) {
-  RegisteredChannel(coordinator: Subject(coordinator.Message), id: Int)
-}
-
-/// Errors when registering a channel handler.
-pub type RegisterError {
-  /// A handler is already registered for this exact topic pattern.
-  PatternAlreadyRegistered(String)
-  /// The topic pattern is invalid. Patterns must be non-empty and must not
-  /// contain control characters (codepoints 0–31 or 127).
-  InvalidPattern(String)
-}
 
 /// Logging verbosity for Beryl's internal loggers.
 ///
@@ -391,23 +349,6 @@ pub fn with_payload_preview_bytes(
   LoggingConfig(..logging, payload_preview_bytes: int.max(bytes, 0))
 }
 
-fn coordinator_log_level(level: LogLevel) -> coordinator.LogLevel {
-  case level {
-    DebugLevel -> coordinator.Debug
-    InfoLevel -> coordinator.Info
-    WarnLevel -> coordinator.Warn
-    ErrorLevel -> coordinator.Err
-  }
-}
-
-fn coordinator_logging(logging: LoggingConfig) -> coordinator.LoggingConfig {
-  coordinator.LoggingConfig(
-    level: coordinator_log_level(logging.level),
-    include_payloads: logging.include_payloads,
-    payload_preview_bytes: logging.payload_preview_bytes,
-  )
-}
-
 /// Configure per-socket message rate limiting
 pub fn with_message_rate(
   config: Config,
@@ -591,7 +532,7 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 /// Beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
-/// should be a visible one. Called by both `start` and `supervisor.start`.
+/// should be a visible one. Called by `start_app`.
 @internal
 pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
@@ -635,51 +576,14 @@ pub fn message_limits(
   optional_limits(channels.config.message_rate, channels.config.message_burst)
 }
 
-/// Build a coordinator config from a `Config`.
-/// Shared by `start` and the supervisor so the mapping lives in one place.
-@internal
-pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
-  // Server checks at half the timeout interval to detect stale sockets
-  // promptly. The client heartbeat_interval_ms is informational only.
-  let check_interval = config.heartbeat_timeout_ms / 2
-
-  coordinator.CoordinatorConfig(
-    codec: config.codec,
-    heartbeat_check_interval_ms: check_interval,
-    heartbeat_timeout_ms: config.heartbeat_timeout_ms,
-    message_limits: optional_limits(config.message_rate, config.message_burst),
-    join_limits: optional_limits(config.join_rate, config.join_burst),
-    channel_limits: optional_limits(config.channel_rate, config.channel_burst),
-    channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
-    max_topic_length: config.max_topic_length,
-    max_event_length: config.max_event_length,
-    max_joined_topics_per_socket: config.max_joined_topics_per_socket,
-    logging: coordinator_logging(config.logging),
-    registry: None,
-  )
-}
-
 /// Channels system handle.
 ///
-/// This opaque handle is returned by `start` (channel-module systems) and
-/// `start_app` (app-side dispatch systems) and passed to
-/// broadcast, group, supervisor, and transport functions. Its internals are
-/// intentionally hidden so Beryl can evolve them without breaking
-/// application code.
+/// This opaque handle is returned by `start_app` and passed to broadcast,
+/// group, and transport functions. The runtime actor is generic over the
+/// app's `model`/`msg`; the handle reaches it through monomorphic closures
+/// captured at start. Its internals are intentionally hidden so Beryl can
+/// evolve them without breaking application code.
 pub opaque type Channels {
-  Channels(
-    config: Config,
-    connection_limiter: Option(connection_limit.ConnectionLimiter),
-    coordinator: Subject(coordinator.Message),
-    pubsub: Option(PubSub(json.Json)),
-    /// Crash-survivable handler registry. When present, `register` writes
-    /// here and syncs the coordinator, so registrations survive coordinator
-    /// restarts.
-    registry: Option(coordinator.Registry),
-  )
-  /// An app-side dispatch system started by `start_app`. The runtime actor
-  /// is generic over the app's `model`/`msg`; this variant reaches it
-  /// through monomorphic closures captured at start.
   AppChannels(
     config: Config,
     connection_limiter: Option(connection_limit.ConnectionLimiter),
@@ -708,66 +612,6 @@ type AppHandle {
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
   )
-}
-
-// nolint: unused_exports -- package-internal constructor for supervised coordinators; hidden from public docs with @internal
-@internal
-pub fn channels_from_coordinator(
-  coordinator coordinator: Subject(coordinator.Message),
-  config config: Config,
-  registry registry: Option(coordinator.Registry),
-) -> Channels {
-  channels_from_parts(
-    coordinator: coordinator,
-    config: config,
-    registry: registry,
-    connection_limiter: connection_limit.start_optional(
-      config.max_connections_per_ip,
-      config.max_connections,
-    ),
-  )
-}
-
-@internal
-pub fn channels_from_supervised_parts(
-  coordinator coordinator: Subject(coordinator.Message),
-  config config: Config,
-  registry registry: coordinator.Registry,
-  connection_limiter connection_limiter: Option(
-    connection_limit.ConnectionLimiter,
-  ),
-) -> Channels {
-  channels_from_parts(
-    coordinator: coordinator,
-    config: config,
-    registry: Some(registry),
-    connection_limiter: connection_limiter,
-  )
-}
-
-fn channels_from_parts(
-  coordinator coordinator: Subject(coordinator.Message),
-  config config: Config,
-  registry registry: Option(coordinator.Registry),
-  connection_limiter connection_limiter: Option(
-    connection_limit.ConnectionLimiter,
-  ),
-) -> Channels {
-  Channels(
-    coordinator: coordinator,
-    config: config,
-    pubsub: config.pubsub,
-    connection_limiter: connection_limiter,
-    registry: registry,
-  )
-}
-
-// nolint: unused_exports -- package-internal accessor for transports/tests; hidden from public docs with @internal
-@internal
-pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
-  let assert Channels(coordinator: coordinator, ..) = channels
-    as "coordinator_subject requires a channel-module system (beryl.start)"
-  coordinator
 }
 
 @internal
@@ -830,8 +674,8 @@ pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
 
 /// Errors when starting channels
 pub type StartError {
-  /// The coordinator actor failed to start.
-  CoordinatorStartFailed(beryl_error.StartFailure)
+  /// The supervised runtime failed to start.
+  RuntimeStartFailed(beryl_error.StartFailure)
   /// `heartbeat_timeout_ms` must be at least 2. The server derives its staleness
   /// check interval as `heartbeat_timeout_ms / 2` (integer division), so a
   /// timeout of 1 would round down to a check interval of 0 — which disables
@@ -840,106 +684,17 @@ pub type StartError {
   InvalidHeartbeatTimeout
 }
 
-/// Start the channels system
+/// Stop a channels system started by `start_app`.
 ///
-/// Call once at application startup. Returns a handle that can be passed
-/// to the WebSocket transport and used for broadcasting.
-///
-/// Heartbeat eviction is configured via `heartbeat_timeout_ms` in the Config.
-/// The coordinator evicts any socket that has not sent a heartbeat within that
-/// window, checking for stale sockets at a server-derived interval of
-/// `heartbeat_timeout_ms / 2`. `heartbeat_interval_ms` is client-advisory only
-/// (see `with_heartbeat`) and does not schedule anything on the server.
-///
-/// Returns `Error(InvalidHeartbeatTimeout)` if `heartbeat_timeout_ms` is less
-/// than 2.
-///
-/// ## Example
-///
-/// ```gleam
-/// pub fn main() {
-///   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-///   // Use channels...
-/// }
-/// ```
-pub fn start(config: Config) -> Result(Channels, StartError) {
-  use <- bool.guard(
-    when: config.heartbeat_timeout_ms < 2,
-    return: internal.result_error(InvalidHeartbeatTimeout),
-  )
-  warn_if_unprotected(config)
-  // Registrations live in a registry that outlives the coordinator, so a
-  // supervised restart (or manual coordinator replacement) can re-seed
-  // them.
-  use registry <- result.try(
-    coordinator.start_registry()
-    |> result.map_error(fn(error) {
-      CoordinatorStartFailed(beryl_error.from_actor_start_error(error))
-    }),
-  )
-  let coord_config =
-    coordinator.CoordinatorConfig(
-      ..to_coordinator_config(config),
-      registry: Some(registry),
-    )
-
-  let coordinator_result = case config.pubsub {
-    Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
-    None -> coordinator.start_with_config(coord_config)
-  }
-
-  case coordinator_result {
-    Ok(coord) ->
-      Ok(channels_from_coordinator(
-        coordinator: coord,
-        config: config,
-        registry: Some(registry),
-      ))
-    error_result -> {
-      case
-        result.unwrap_error(
-          error_result,
-          or: coordinator.InvalidHeartbeatTimeout,
-        )
-      {
-        coordinator.ActorStartFailed(error) ->
-          internal.result_error(
-            CoordinatorStartFailed(beryl_error.from_actor_start_error(error)),
-          )
-        coordinator.InvalidHeartbeatTimeout ->
-          internal.result_error(InvalidHeartbeatTimeout)
-      }
-    }
-  }
-}
-
-/// Stop an unsupervised channels system.
-///
-/// This shuts down the coordinator actor started by `start` and any auxiliary
-/// limiter actors owned by the `Channels` handle. Joined channel handlers
-/// receive `channel.Shutdown` in their `terminate` callback before the
-/// coordinator exits. After this call the `Channels` handle should no longer be
-/// used.
+/// Drains sockets gracefully and shuts down the supervised runtime plus any
+/// auxiliary limiter actors owned by the `Channels` handle. Joined topics
+/// receive a `Closed` event before the runtime exits. After this call the
+/// `Channels` handle should no longer be used.
 pub fn stop(channels: Channels) -> Nil {
-  case channels {
-    Channels(
-      coordinator: coordinator_subject,
-      registry: registry,
-      connection_limiter: connection_limiter,
-      ..,
-    ) -> {
-      stop_coordinator(coordinator_subject)
-      connection_limit.stop_optional(connection_limiter)
-      case registry {
-        Some(registry) -> coordinator.stop_registry(registry)
-        None -> Nil
-      }
-    }
-    AppChannels(app: app, connection_limiter: connection_limiter, ..) -> {
-      app.stop()
-      connection_limit.stop_optional(connection_limiter)
-    }
-  }
+  let AppChannels(app: app, connection_limiter: connection_limiter, ..) =
+    channels
+  app.stop()
+  connection_limit.stop_optional(connection_limiter)
 }
 
 /// Start an app-side dispatch system.
@@ -1025,7 +780,7 @@ pub fn start_app(
   case supervisor_result {
     Error(error) ->
       internal.result_error(
-        CoordinatorStartFailed(beryl_error.from_actor_start_error(error)),
+        RuntimeStartFailed(beryl_error.from_actor_start_error(error)),
       )
     Ok(_supervisor) ->
       Ok(AppChannels(
@@ -1133,10 +888,8 @@ fn send_runtime(
 // nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
 @internal
 pub fn app_runtime_pid(channels: Channels) -> Result(process.Pid, Nil) {
-  case channels {
-    AppChannels(app: app, ..) -> app.runtime_owner()
-    Channels(..) -> Error(Nil)
-  }
+  let AppChannels(app: app, ..) = channels
+  app.runtime_owner()
 }
 
 fn to_runtime_config(config: Config) -> runtime.Config {
@@ -1175,9 +928,8 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Transport dispatch — branch between the coordinator (channel-module
-// systems) and the app runtime closures, so the frame-level SPI in
-// `beryl/transport` works unchanged with both `start` and `start_app`.
+// Transport dispatch — forward frame-level SPI calls from
+// `beryl/transport` into the app runtime closures.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
@@ -1187,18 +939,10 @@ pub fn transport_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns: Dynamic,
   seed: event.ConnectSeed,
 ) -> Nil {
-  case channels {
-    Channels(coordinator: coordinator_subject, ..) ->
-      process.send(
-        coordinator_subject,
-        coordinator.SocketConnected(socket_id, send, send_binary, None, assigns),
-      )
-    AppChannels(app: app, ..) ->
-      app.socket_connected(socket_id, send, send_binary, seed)
-  }
+  let AppChannels(app: app, ..) = channels
+  app.socket_connected(socket_id, send, send_binary, seed)
 }
 
 @internal
@@ -1207,14 +951,8 @@ pub fn transport_register_closer(
   socket_id: String,
   close: fn() -> Nil,
 ) -> Nil {
-  case channels {
-    Channels(coordinator: coordinator_subject, ..) ->
-      process.send(
-        coordinator_subject,
-        coordinator.RegisterCloser(socket_id, close),
-      )
-    AppChannels(app: app, ..) -> app.register_closer(socket_id, close)
-  }
+  let AppChannels(app: app, ..) = channels
+  app.register_closer(socket_id, close)
 }
 
 @internal
@@ -1222,14 +960,8 @@ pub fn transport_socket_disconnected(
   channels: Channels,
   socket_id: String,
 ) -> Nil {
-  case channels {
-    Channels(coordinator: coordinator_subject, ..) ->
-      process.send(
-        coordinator_subject,
-        coordinator.SocketDisconnected(socket_id),
-      )
-    AppChannels(app: app, ..) -> app.socket_disconnected(socket_id)
-  }
+  let AppChannels(app: app, ..) = channels
+  app.socket_disconnected(socket_id)
 }
 
 @internal
@@ -1238,11 +970,8 @@ pub fn transport_route_decoded(
   socket_id: String,
   message: codec.Inbound,
 ) -> Nil {
-  case channels {
-    Channels(coordinator: coordinator_subject, ..) ->
-      coordinator.route_decoded(coordinator_subject, socket_id, message)
-    AppChannels(app: app, ..) -> app.route_decoded(socket_id, message)
-  }
+  let AppChannels(app: app, ..) = channels
+  app.route_decoded(socket_id, message)
 }
 
 @internal
@@ -1251,112 +980,8 @@ pub fn transport_route_binary(
   socket_id: String,
   data: BitArray,
 ) -> Nil {
-  case channels {
-    Channels(coordinator: coordinator_subject, ..) ->
-      coordinator.route_binary(coordinator_subject, socket_id, data)
-    AppChannels(app: app, ..) -> app.route_binary(socket_id, data)
-  }
-}
-
-fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
-  let should_send = case process.subject_owner(coordinator) {
-    Ok(pid) -> process.is_alive(pid)
-    _ -> False
-  }
-
-  use <- bool.guard(when: !should_send, return: Nil)
-  let reply = process.new_subject()
-  process.send(coordinator, coordinator.Stop(reply))
-  let _stop_result = process.receive(reply, 5000)
-  Nil
-}
-
-/// Register a channel handler for a topic pattern
-///
-/// Patterns can be exact matches like "room:lobby", legacy prefix wildcards
-/// like "room:*" which match any topic starting with "room:", or segment
-/// wildcards like "document:*:ops" where "*" matches one complete segment.
-/// The bare pattern "*" is a catch-all that matches every topic.
-///
-/// Patterns are validated at registration: they must be non-empty and must
-/// not contain control characters (codepoints 0–31 or 127). Invalid patterns
-/// are rejected with `InvalidPattern`.
-///
-/// Panics if the coordinator actor is unavailable or does not reply within
-/// 5 seconds (e.g. during a supervisor restart window after a crash).
-///
-/// ## Example
-///
-/// ```gleam
-/// // Create a typed channel
-/// let chat_channel = channel.new(fn(topic, payload, socket) {
-///   // Handle join
-///   channel.JoinOk(reply: None, socket: socket)
-/// })
-/// |> channel.with_handle_in(fn(event, payload, socket) {
-///   // Handle incoming messages
-///   channel.NoReply(socket)
-/// })
-///
-/// // Register it with a legacy prefix wildcard
-/// let assert Ok(chat) = beryl.register(channels, "chat:*", chat_channel)
-///
-/// // Exact topic
-/// let assert Ok(lobby) = beryl.register(channels, "room:lobby", lobby_channel)
-///
-/// // Segment-aware wildcard
-/// let assert Ok(ops) = beryl.register(channels, "document:*:ops", ops_channel)
-/// ```
-pub fn register(
-  channels: Channels,
-  pattern: String,
-  handler: Channel(assigns, info),
-) -> Result(RegisteredChannel(assigns, info), RegisterError) {
-  let assert Channels(
-    coordinator: coordinator_subject,
-    registry: channels_registry,
-    ..,
-  ) = channels
-    as "beryl.register requires a channel-module system (beryl.start); app-dispatch systems (beryl.start_app) route topics in their update function"
-
-  // Convert typed Channel to type-erased ChannelHandler
-  let erased_handler = erase_channel_types(pattern, handler)
-
-  let registration = case channels_registry {
-    // Write to the crash-survivable registry, then sync the live
-    // coordinator so the handler is visible before this call returns.
-    Some(registry) -> {
-      use id <- result.try(coordinator.registry_put(
-        registry,
-        pattern,
-        erased_handler,
-      ))
-      let #(handlers, next_id) = coordinator.registry_snapshot(registry)
-      process.call(coordinator_subject, 5000, fn(reply) {
-        coordinator.SyncHandlers(handlers, next_id, reply)
-      })
-      Ok(id)
-    }
-    // No registry configured: register with the coordinator directly.
-    None ->
-      process.call(coordinator_subject, 5000, fn(reply) {
-        coordinator.RegisterChannel(pattern, erased_handler, reply)
-      })
-  }
-
-  registration
-  |> result.map(fn(id) {
-    RegisteredChannel(coordinator: coordinator_subject, id: id)
-  })
-  |> result.map_error(map_register_error)
-}
-
-fn map_register_error(error: coordinator.RegisterError) -> RegisterError {
-  case error {
-    coordinator.PatternAlreadyRegistered(pattern) ->
-      PatternAlreadyRegistered(pattern)
-    coordinator.InvalidPattern(pattern) -> InvalidPattern(pattern)
-  }
+  let AppChannels(app: app, ..) = channels
+  app.route_binary(socket_id, data)
 }
 
 /// Broadcast a message to all subscribers of a topic
@@ -1379,27 +1004,8 @@ pub fn broadcast(
   event: String,
   payload: json.Json,
 ) -> Nil {
-  case channels {
-    AppChannels(app: app, ..) -> app.broadcast(topic_name, event, payload, None)
-    Channels(coordinator: coordinator_subject, pubsub: ps, ..) -> {
-      // Local broadcast via coordinator
-      process.send(
-        coordinator_subject,
-        coordinator.Broadcast(topic_name, event, payload, None),
-      )
-      // Distributed broadcast via PubSub (if configured)
-      case ps, process.subject_owner(coordinator_subject) {
-        Some(ps), Ok(coordinator_pid) ->
-          pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
-        Some(_), _ ->
-          // Coordinator exited between send and pubsub forward — local
-          // message is already enqueued (dead-letters), skip the cluster
-          // fanout.
-          Nil
-        None, _ -> Nil
-      }
-    }
-  }
+  let AppChannels(app: app, ..) = channels
+  app.broadcast(topic_name, event, payload, None)
 }
 
 /// Broadcast a Phoenix-compatible `presence_diff` event for a topic.
@@ -1454,239 +1060,6 @@ pub fn broadcast_from(
   event: String,
   payload: json.Json,
 ) -> Nil {
-  case channels {
-    AppChannels(app: app, ..) ->
-      app.broadcast(topic_name, event, payload, Some(except_socket_id))
-    Channels(coordinator: coordinator_subject, pubsub: ps, ..) -> {
-      // Local broadcast via coordinator (excluding sender)
-      process.send(
-        coordinator_subject,
-        coordinator.Broadcast(
-          topic_name,
-          event,
-          payload,
-          Some(except_socket_id),
-        ),
-      )
-      // Distributed broadcast via PubSub (if configured)
-      case ps, process.subject_owner(coordinator_subject) {
-        Some(ps), Ok(coordinator_pid) ->
-          pubsub.broadcast_from_socket(
-            ps,
-            coordinator_pid,
-            except_socket_id,
-            topic_name,
-            event,
-            payload,
-          )
-        Some(_), _ -> Nil
-        None, _ -> Nil
-      }
-    }
-  }
+  let AppChannels(app: app, ..) = channels
+  app.broadcast(topic_name, event, payload, Some(except_socket_id))
 }
-
-/// Send a typed server-originated OTP message to a joined channel context.
-///
-/// The `registered` handle carries the receiving channel's `info` type, so the
-/// compiler rejects messages for incompatible channels. The coordinator also
-/// verifies that the socket/topic pair was joined through that same registered
-/// channel before dispatching the callback. If the socket is not connected, the
-/// topic is not joined, or the registered channel does not match the joined
-/// channel, the message is ignored.
-pub fn send_info(
-  registered: RegisteredChannel(assigns, info),
-  socket_id: String,
-  topic_name: String,
-  message: info,
-) -> Nil {
-  process.send(
-    registered.coordinator,
-    coordinator.HandleInfo(
-      socket_id,
-      topic_name,
-      registered.id,
-      erase_info(message),
-    ),
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Type erasure - Convert typed Channel to ChannelHandler
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Convert a typed Channel to a type-erased ChannelHandler
-///
-/// This is necessary because we need to store handlers for different
-/// channel types in the same registry. The erased handler carries only
-/// `join`: a successful join returns a `JoinedChannel` instance whose
-/// closures capture the channel's typed assigns (see `channel_instance`),
-/// so assigns never cross the coordinator boundary type-erased.
-fn erase_channel_types(
-  pattern_str: String,
-  typed_channel: Channel(assigns, info),
-) -> ChannelHandler {
-  let pattern = topic.parse_pattern(pattern_str)
-  let join = channel.join_callback(typed_channel)
-
-  coordinator.ChannelHandler(
-    id: 0,
-    pattern: pattern,
-    join: fn(
-      topic_name: String,
-      payload: Dynamic,
-      connect_assigns: Dynamic,
-      ctx: coordinator.SocketContext,
-    ) {
-      // Connect-time assigns are seeded type-erased by the transport's
-      // on_connect hook (Nil when none were seeded); restoring them to this
-      // channel's assigns type is unchecked (ADR 0001).
-      let seeded = restore_connect_assigns(connect_assigns)
-      case join(topic_name, payload, context_socket(ctx, seeded)) {
-        channel.JoinOk(reply, new_socket) ->
-          coordinator.JoinOkErased(
-            reply: reply,
-            channel: channel_instance(
-              typed_channel,
-              socket.get_assigns(new_socket),
-            ),
-          )
-        channel.JoinError(reason) -> coordinator.JoinErrorErased(reason: reason)
-      }
-    },
-  )
-}
-
-/// Build the erased instance for a joined channel, capturing the current
-/// typed assigns in its closures. Each callback returns the next instance
-/// via `erase_handle_result`, so assigns threading between callbacks is
-/// compiler-checked here instead of round-tripped through Dynamic.
-fn channel_instance(
-  typed_channel: Channel(assigns, info),
-  assigns: assigns,
-) -> coordinator.JoinedChannel {
-  coordinator.JoinedChannel(
-    handle_in: fn(
-      event: String,
-      payload: Dynamic,
-      ctx: coordinator.SocketContext,
-    ) {
-      channel.handle_in_callback(typed_channel)(
-        event,
-        payload,
-        context_socket(ctx, assigns),
-      )
-      |> erase_handle_result(typed_channel, _)
-    },
-    handle_binary: fn(data: BitArray, ctx: coordinator.SocketContext) {
-      channel.handle_binary_callback(typed_channel)(
-        data,
-        context_socket(ctx, assigns),
-      )
-      |> erase_handle_result(typed_channel, _)
-    },
-    handle_info: fn(message: Dynamic, ctx: coordinator.SocketContext) {
-      // Restore the info type erased by send_info. Sound because the
-      // coordinator dispatches only after matching the joined channel id
-      // against the RegisteredChannel handle the message was sent through,
-      // and both derive from the same register call.
-      channel.handle_info_callback(typed_channel)(
-        restore_info(message),
-        context_socket(ctx, assigns),
-      )
-      |> erase_handle_result(typed_channel, _)
-    },
-    terminate: fn(reason: channel.StopReason, ctx: coordinator.SocketContext) {
-      channel.terminate_callback(typed_channel)(
-        reason,
-        context_socket(ctx, assigns),
-      )
-    },
-  )
-}
-
-fn transport_from_context(ctx: coordinator.SocketContext) -> socket.Transport {
-  socket.new_transport(
-    send_text: fn(text) {
-      ctx.send(text)
-      |> result_to_transport_result()
-    },
-    send_binary: fn(data) {
-      ctx.send_binary(data)
-      |> result_to_transport_result()
-    },
-    close: fn() {
-      ctx.close()
-      Ok(Nil)
-    },
-  )
-}
-
-fn context_socket(
-  ctx: coordinator.SocketContext,
-  assigns: assigns,
-) -> Socket(assigns) {
-  socket.new(ctx.socket_id, assigns, transport_from_context(ctx))
-}
-
-fn result_to_transport_result(
-  result: Result(Nil, Nil),
-) -> Result(Nil, socket.TransportError) {
-  case result {
-    Ok(_) -> Ok(Nil)
-    _ -> internal.result_error(socket.SendFailed("Send failed"))
-  }
-}
-
-/// Convert a typed HandleResult to the type-erased coordinator variant,
-/// wrapping the updated assigns in the next channel instance.
-fn erase_handle_result(
-  typed_channel: Channel(assigns, info),
-  result: channel.HandleResult(assigns),
-) -> coordinator.HandleResultErased {
-  case result {
-    channel.NoReply(new_socket) ->
-      coordinator.NoReplyErased(next: next_instance(typed_channel, new_socket))
-    channel.Reply(event, payload, new_socket) ->
-      coordinator.ReplyErased(
-        event: event,
-        payload: payload,
-        next: next_instance(typed_channel, new_socket),
-      )
-    channel.ReplyError(payload, new_socket) ->
-      coordinator.ReplyErrorErased(
-        payload: payload,
-        next: next_instance(typed_channel, new_socket),
-      )
-    channel.Push(event, payload, new_socket) ->
-      coordinator.PushErased(
-        event: event,
-        payload: payload,
-        next: next_instance(typed_channel, new_socket),
-      )
-    channel.Stop(reason) -> coordinator.StopErased(reason: reason)
-  }
-}
-
-fn next_instance(
-  typed_channel: Channel(assigns, info),
-  new_socket: Socket(assigns),
-) -> coordinator.JoinedChannel {
-  channel_instance(typed_channel, socket.get_assigns(new_socket))
-}
-
-/// Erase a typed server message for transit through the coordinator.
-/// Paired with `restore_info`; sound via the registered-channel id check
-/// performed before dispatch (see ADR 0001).
-@external(erlang, "beryl_ffi", "identity")
-fn erase_info(message: info) -> Dynamic
-
-/// Restore a server message erased by `erase_info`.
-@external(erlang, "beryl_ffi", "identity")
-fn restore_info(message: Dynamic) -> info
-
-/// Restore transport-seeded connect assigns to the channel's assigns type.
-/// Unchecked: transports and channels must agree on the seeded type
-/// (ADR 0001).
-@external(erlang, "beryl_ffi", "identity")
-fn restore_connect_assigns(assigns: Dynamic) -> assigns

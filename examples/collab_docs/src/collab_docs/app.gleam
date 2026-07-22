@@ -2,9 +2,9 @@
 ////
 //// A topic-scoped `Model`/`join`/`update`/`closed` triple: a composing
 //// app (see the showcase example) routes `document:*:*` events here and
-//// stores the returned model per topic. Mirrors the behavior of
-//// `collab_docs/channel` on the channel-module API, including its
-//// channel-level tenant token auth.
+//// stores the returned model per topic. The standalone collab_docs
+//// example and the showcase both route into this module. Joins enforce
+//// tenant token auth.
 
 import beryl/event.{type Effect, type Ref}
 import beryl/topic as beryl_topic
@@ -148,8 +148,8 @@ fn sync_state(
   }
 }
 
-/// The channel-module API sent state errors as an ok-status reply with an
-/// error payload (and dropped them without a ref); mirror that.
+/// State errors go out as an ok-status reply with an error payload (and
+/// are dropped without a ref) — the wire behavior clients expect.
 fn reply_error(code: String, ref: Option(Ref)) -> List(Effect) {
   case ref {
     Some(r) -> [event.ReplyOk(r, error_payload(code))]

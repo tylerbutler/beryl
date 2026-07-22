@@ -1,6 +1,11 @@
+//// A custom binary codec driven through the app runtime: decoded binary
+//// frames become `Join`/`Message` events, replies and broadcasts are
+//// encoded back through the codec's binary frames, and codecs without a
+//// binary decoder fan raw frames out as `Binary` events.
+
 import beryl
-import beryl/channel
-import beryl/coordinator
+import beryl/event.{AcceptJoin, Binary, Join, Message, Next, ReplyOk}
+import beryl/transport
 import beryl/wire
 import beryl/wire/codec
 import gleam/bit_array
@@ -151,56 +156,67 @@ fn ref_to_string(ref: Option(String)) -> String {
   }
 }
 
-pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
+/// Connect a socket capturing both text and binary outbound frames.
+fn connect_binary(
+  channels: beryl.Channels,
+  socket_id: String,
+) -> #(process.Subject(String), process.Subject(BitArray)) {
   let sent_text = process.new_subject()
   let sent_binary = process.new_subject()
-  let assert Ok(channels) = beryl.start(beryl.config(binary_test_codec()))
-
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(text) {
-        process.send(sent_text, text)
-        Ok(Nil)
-      },
-      fn(data) {
-        process.send(sent_binary, data)
-        Ok(Nil)
-      },
-      None,
-      dynamic.nil(),
-    ),
+  transport.socket_connected(
+    channels: channels,
+    socket_id: socket_id,
+    send: fn(text) {
+      process.send(sent_text, text)
+      Ok(Nil)
+    },
+    send_binary: fn(data) {
+      process.send(sent_binary, data)
+      Ok(Nil)
+    },
+    seed: event.empty_seed(),
   )
+  process.sleep(10)
+  #(sent_text, sent_binary)
+}
 
+pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   let seen_payload = process.new_subject()
-  let handler =
-    channel.new(fn(_topic, payload, socket) {
-      let user_decoder = {
-        use user <- decode.field("user", decode.string)
-        decode.success(user)
-      }
-      let assert Ok(user) = channel.decode_payload(payload, user_decoder)
-      process.send(seen_payload, user)
-      channel.JoinOk(
-        reply: Some(json.object([#("joined", json.bool(True))])),
-        socket: socket,
-      )
-    })
-    |> channel.with_handle_in(fn(event, payload, socket) {
-      let body_decoder = {
-        use body <- decode.field("body", decode.string)
-        decode.success(body)
-      }
-      let assert Ok(body) = channel.decode_payload(payload, body_decoder)
-      process.send(seen_payload, event <> ":" <> body)
-      channel.Reply(event, json.object([#("ok", json.bool(True))]), socket)
-    })
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(binary_test_codec()),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_topic, payload, ref) -> {
+            let user_decoder = {
+              use user <- decode.field("user", decode.string)
+              decode.success(user)
+            }
+            let assert Ok(user) = decode.run(payload, user_decoder)
+            process.send(seen_payload, user)
+            Next(model, [
+              AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
+            ])
+          }
+          Message(_topic, event_name, payload, Some(ref)) -> {
+            let body_decoder = {
+              use body <- decode.field("body", decode.string)
+              decode.success(body)
+            }
+            let assert Ok(body) = decode.run(payload, body_decoder)
+            process.send(seen_payload, event_name <> ":" <> body)
+            Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
+          }
+          _ -> Next(model, [])
+        }
+      },
+    )
 
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+  let #(sent_text, sent_binary) = connect_binary(channels, "socket-1")
 
-  coordinator.route_binary(
-    beryl.coordinator_subject(channels),
+  transport.route_binary(
+    channels,
     "socket-1",
     bit_array.from_string("J|join-ref|join-1|room:lobby|{\"user\":\"alice\"}"),
   )
@@ -210,8 +226,8 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   bit_array.to_string(join_reply_bits)
   |> should.equal(Ok("R|join-1|room:lobby|ok|{\"joined\":true}"))
 
-  coordinator.route_binary(
-    beryl.coordinator_subject(channels),
+  transport.route_binary(
+    channels,
     "socket-1",
     bit_array.from_string("E|event-1|room:lobby|ping|{\"body\":\"hi\"}"),
   )
@@ -222,48 +238,39 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   |> should.equal(Ok("R|event-1|room:lobby|ok|{\"ok\":true}"))
 
   process.receive(sent_text, 50) |> should.be_error
+
+  beryl.stop(channels)
 }
 
 pub fn binary_codec_event_consumes_one_message_rate_token_test() {
-  let sent_binary = process.new_subject()
-  let config =
-    beryl.config(binary_test_codec())
-    |> beryl.with_message_rate(per_second: 100, burst: 2)
-  let assert Ok(channels) = beryl.start(config)
-
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(_) { Ok(Nil) },
-      fn(data) {
-        process.send(sent_binary, data)
-        Ok(Nil)
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(binary_test_codec())
+        |> beryl.with_message_rate(per_second: 100, burst: 2),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Message(_topic, event_name, _payload, Some(ref)) -> {
+            let _ = event_name
+            Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
+          }
+          _ -> Next(model, [])
+        }
       },
-      None,
-      dynamic.nil(),
-    ),
-  )
+    )
 
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
-    |> channel.with_handle_in(fn(event, _payload, socket) {
-      channel.Reply(event, json.object([#("ok", json.bool(True))]), socket)
-    })
+  let #(_sent_text, sent_binary) = connect_binary(channels, "socket-1")
 
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-
-  coordinator.route_binary(
-    beryl.coordinator_subject(channels),
+  transport.route_binary(
+    channels,
     "socket-1",
     bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
   )
   let assert Ok(_join_reply_bits) = process.receive(sent_binary, 500)
 
-  coordinator.route_binary(
-    beryl.coordinator_subject(channels),
+  transport.route_binary(
+    channels,
     "socket-1",
     bit_array.from_string("E|event-1|room:lobby|ping|{}"),
   )
@@ -271,47 +278,35 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
   bit_array.to_string(first_reply_bits)
   |> should.equal(Ok("R|event-1|room:lobby|ok|{\"ok\":true}"))
 
-  coordinator.route_binary(
-    beryl.coordinator_subject(channels),
+  transport.route_binary(
+    channels,
     "socket-1",
     bit_array.from_string("E|event-2|room:lobby|ping|{}"),
   )
   let assert Ok(second_reply_bits) = process.receive(sent_binary, 500)
   bit_array.to_string(second_reply_bits)
   |> should.equal(Ok("R|event-2|room:lobby|ok|{\"ok\":true}"))
+
+  beryl.stop(channels)
 }
 
 pub fn binary_codec_broadcast_uses_binary_send_test() {
-  let sent_text = process.new_subject()
-  let sent_binary = process.new_subject()
-  let assert Ok(channels) = beryl.start(beryl.config(binary_test_codec()))
-
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(text) {
-        process.send(sent_text, text)
-        Ok(Nil)
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(binary_test_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          _ -> Next(model, [])
+        }
       },
-      fn(data) {
-        process.send(sent_binary, data)
-        Ok(Nil)
-      },
-      None,
-      dynamic.nil(),
-    ),
-  )
+    )
 
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
+  let #(sent_text, sent_binary) = connect_binary(channels, "socket-1")
 
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-
-  coordinator.route_binary(
-    beryl.coordinator_subject(channels),
+  transport.route_binary(
+    channels,
     "socket-1",
     bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
   )
@@ -328,14 +323,15 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
   bit_array.to_string(broadcast_bits)
   |> should.equal(Ok("P|room:lobby|announcement|{\"body\":\"hello\"}"))
   process.receive(sent_text, 50) |> should.be_error
+
+  beryl.stop(channels)
 }
 
-pub fn codec_without_binary_decoder_preserves_raw_binary_handler_test() {
-  let sent_text = process.new_subject()
+pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() {
   let seen_binary = process.new_subject()
-  // A text-only codec (no binary decoder): raw binary frames fan out to
-  // handle_binary. The Phoenix codec now ships its own binary decoder, so
-  // this path applies only to custom codecs that opt out.
+  // A text-only codec (no binary decoder): raw binary frames fan out to the
+  // app as `Binary` events. The Phoenix codec now ships its own binary
+  // decoder, so this path applies only to custom codecs that opt out.
   let text_only =
     codec.new(
       decode_text: wire.decode_message,
@@ -343,46 +339,35 @@ pub fn codec_without_binary_decoder_preserves_raw_binary_handler_test() {
       encode_push: wire.push,
       encode_heartbeat_reply: wire.heartbeat_reply,
     )
-  let assert Ok(channels) = beryl.start(beryl.config(text_only))
-
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(text) {
-        process.send(sent_text, text)
-        Ok(Nil)
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(text_only),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Binary(_topic, data) -> {
+            process.send(seen_binary, data)
+            Next(model, [])
+          }
+          _ -> Next(model, [])
+        }
       },
-      fn(_) { Ok(Nil) },
-      None,
-      dynamic.nil(),
-    ),
-  )
+    )
 
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
-    |> channel.with_handle_binary(fn(data, socket) {
-      process.send(seen_binary, data)
-      channel.NoReply(socket)
-    })
+  let #(sent_text, _sent_binary) = connect_binary(channels, "socket-1")
 
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
-    "socket-1",
-    "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
-  )
+  let assert Ok(msg) =
+    codec.decode_text(transport.active_codec(channels))(
+      "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
+    )
+  transport.route_decoded(channels, "socket-1", msg)
   let assert Ok(_join_reply) = process.receive(sent_text, 500)
 
-  coordinator.route_binary(
-    beryl.coordinator_subject(channels),
-    "socket-1",
-    bit_array.from_string("raw"),
-  )
+  transport.route_binary(channels, "socket-1", bit_array.from_string("raw"))
 
   let assert Ok(raw_bits) = process.receive(seen_binary, 500)
   bit_array.to_string(raw_bits) |> should.equal(Ok("raw"))
+
+  beryl.stop(channels)
 }

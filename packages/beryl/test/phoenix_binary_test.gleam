@@ -1,12 +1,11 @@
 //// Phoenix V2 binary framing tests: byte-exact spec vectors for the
-//// encoders/decoder, plus end-to-end dispatch through the coordinator.
+//// encoders/decoder, plus end-to-end dispatch through the app runtime.
 
 import beryl
-import beryl/channel
-import beryl/coordinator
+import beryl/event.{AcceptJoin, Binary, Join, Message, Next, ReplyOk}
+import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
@@ -154,48 +153,62 @@ pub fn binary_encoders_reject_oversized_components_test() {
   |> should.be_error
 }
 
-// === End-to-end through the coordinator ===
+// === End-to-end through the app runtime ===
 
-pub fn phoenix_binary_push_routes_to_handle_in_with_reply_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  let seen = process.new_subject()
-
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
-    |> channel.with_handle_in(fn(event, payload, socket) {
-      let assert Ok(bits) = channel.decode_payload(payload, decode.bit_array)
-      process.send(seen, #(event, bits))
-      channel.Reply(event: "ok", payload: json.object([]), socket: socket)
-    })
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-
+/// Connect a socket capturing outbound text frames.
+fn connect(
+  channels: beryl.Channels,
+  socket_id: String,
+) -> process.Subject(String) {
   let sent = process.new_subject()
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(text) {
-        process.send(sent, text)
-        Ok(Nil)
-      },
-      fn(_) { Ok(Nil) },
-      None,
-      dynamic.nil(),
-    ),
+  transport.socket_connected(
+    channels: channels,
+    socket_id: socket_id,
+    send: fn(text) {
+      process.send(sent, text)
+      Ok(Nil)
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    seed: event.empty_seed(),
   )
   process.sleep(10)
+  sent
+}
 
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
+fn route_text(channels: beryl.Channels, socket_id: String, raw: String) -> Nil {
+  let assert Ok(msg) = codec.decode_text(transport.active_codec(channels))(raw)
+  transport.route_decoded(channels, socket_id, msg)
+}
+
+pub fn phoenix_binary_push_routes_as_message_with_reply_test() {
+  let seen = process.new_subject()
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Message(_topic, event_name, payload, Some(ref)) -> {
+            let assert Ok(bits) = decode.run(payload, decode.bit_array)
+            process.send(seen, #(event_name, bits))
+            Next(model, [ReplyOk(ref, json.object([]))])
+          }
+          _ -> Next(model, [])
+        }
+      },
+    )
+
+  let sent = connect(channels, "socket-1")
+  route_text(
+    channels,
     "socket-1",
     "[\"j1\",\"j1\",\"room:lobby\",\"phx_join\",{}]",
   )
   let assert Ok(_join_reply) = process.receive(sent, 500)
 
-  // Client binary push: routed to the joined channel, not fanned out raw.
-  coordinator.route_binary(beryl.coordinator_subject(channels), "socket-1", <<
+  // Client binary push: routed to the joined topic, not fanned out raw.
+  transport.route_binary(channels, "socket-1", <<
     0,
     2,
     2,
@@ -209,8 +222,8 @@ pub fn phoenix_binary_push_routes_to_handle_in_with_reply_test() {
     43,
   >>)
 
-  let assert Ok(#(event, bits)) = process.receive(seen, 500)
-  event |> should.equal("put_op")
+  let assert Ok(#(event_name, bits)) = process.receive(seen, 500)
+  event_name |> should.equal("put_op")
   bits |> should.equal(<<42, 43>>)
 
   // The reply correlates with the binary push's ref and join_ref.
@@ -218,52 +231,40 @@ pub fn phoenix_binary_push_routes_to_handle_in_with_reply_test() {
   reply |> string.contains("phx_reply") |> should.be_true
   reply |> string.contains("r9") |> should.be_true
   reply |> string.contains("j1") |> should.be_true
+
+  beryl.stop(channels)
 }
 
 pub fn phoenix_malformed_binary_frame_is_dropped_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
   let seen_binary = process.new_subject()
-
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
-    |> channel.with_handle_binary(fn(data, socket) {
-      process.send(seen_binary, data)
-      channel.NoReply(socket)
-    })
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-
-  let sent = process.new_subject()
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      "socket-1",
-      fn(text) {
-        process.send(sent, text)
-        Ok(Nil)
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Binary(_topic, data) -> {
+            process.send(seen_binary, data)
+            Next(model, [])
+          }
+          _ -> Next(model, [])
+        }
       },
-      fn(_) { Ok(Nil) },
-      None,
-      dynamic.nil(),
-    ),
-  )
-  process.sleep(10)
+    )
 
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
+  let sent = connect(channels, "socket-1")
+  route_text(
+    channels,
     "socket-1",
     "[\"j1\",\"j1\",\"room:lobby\",\"phx_join\",{}]",
   )
   let assert Ok(_join_reply) = process.receive(sent, 500)
 
   // Undecodable bytes are dropped for the Phoenix codec — they no longer
-  // fan out raw to handle_binary.
-  coordinator.route_binary(beryl.coordinator_subject(channels), "socket-1", <<
-    255,
-    1,
-    2,
-    3,
-  >>)
+  // fan out raw as Binary events.
+  transport.route_binary(channels, "socket-1", <<255, 1, 2, 3>>)
   process.receive(seen_binary, 100) |> should.be_error
+
+  beryl.stop(channels)
 }

@@ -1,7 +1,7 @@
 //// Ewe WebSocket Transport - Direct Ewe integration for beryl
 ////
 //// This module provides the bridge between Ewe's native WebSocket handling
-//// and the beryl coordinator using Ewe request and response types directly.
+//// and the beryl runtime using Ewe request and response types directly.
 ////
 //// It mirrors the `beryl_mist` package: the two transports expose the same
 //// config-builder and handler API, so an integrator can run beryl channels on
@@ -26,9 +26,10 @@ import gleam/string
 
 /// Configuration for the Ewe WebSocket transport
 ///
-/// The `assigns` type parameter is the socket-level state produced by the
-/// `on_connect` hook. It defaults to `Nil` when no hook is configured.
-pub opaque type TransportConfig(assigns) {
+/// The optional `on_connect` hook authenticates the connection before the
+/// upgrade; connect-time request data reaches the app's `init` through the
+/// `ConnectSeed` (`ConnectInfo.seed`).
+pub opaque type TransportConfig {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
     path: String,
@@ -36,12 +37,11 @@ pub opaque type TransportConfig(assigns) {
     /// before the WebSocket upgrade.
     ///
     /// Runs the Phoenix `UserSocket.connect/3` analogue: it authenticates the
-    /// whole connection a single time and can reject it before any channel
-    /// join. Return `Ok(assigns)` to allow the connection and seed initial
-    /// socket assigns (visible to channels at join), or `Error(ConnectRejected)` to reject
-    /// with a 403 Forbidden response. When None, all connections are allowed
-    /// and assigns start empty (`Nil`).
-    on_connect: Option(fn(Request(Connection)) -> Result(assigns, ConnectError)),
+    /// whole connection a single time and can reject it before any topic
+    /// join. Return `Ok(Nil)` to allow the connection, or
+    /// `Error(ConnectRejected)` to reject with a 403 Forbidden response.
+    /// When None, all connections are allowed.
+    on_connect: Option(fn(Request(Connection)) -> Result(Nil, ConnectError)),
     /// Policy applied to the request `Origin` header before the WebSocket
     /// handshake. Defaults to [`SameOrigin`](#OriginPolicy).
     origin_policy: OriginPolicy,
@@ -97,30 +97,30 @@ pub type OriginPolicy {
 
 /// Create a default transport config with no connect hook.
 ///
-/// The resulting config seeds `Nil` assigns and applies the
+/// The resulting config applies the
 /// [`SameOrigin`](#OriginPolicy) origin policy, which rejects cross-site
 /// WebSocket upgrades before the handshake (CSWSH protection). Same-origin
 /// upgrades and non-browser clients (no `Origin` header) are admitted without
 /// configuration.
 ///
-/// Add `with_on_connect` to authenticate connections and/or seed initial
-/// assigns. Use `with_allowed_origins` to pin an explicit allow-list, or
+/// Add `with_on_connect` to authenticate connections. Use
+/// `with_allowed_origins` to pin an explicit allow-list, or
 /// `with_allow_all_origins` to opt out of origin checking entirely.
-pub fn default_config(path: String) -> TransportConfig(Nil) {
+pub fn default_config(path: String) -> TransportConfig {
   TransportConfig(path: path, on_connect: None, origin_policy: SameOrigin)
 }
 
 /// Set a socket-level connect/authentication callback on the transport config.
 ///
 /// The callback receives the HTTP request before the WebSocket upgrade and
-/// runs once per socket. Return `Ok(assigns)` to allow the connection and seed
-/// initial socket assigns that channels can read at join time, or
-/// `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
-/// response before any channel join occurs.
+/// runs once per socket. Return `Ok(Nil)` to allow the connection, or
+/// `Error(ConnectRejected)` to reject it with a 403 Forbidden response
+/// before any topic join occurs. Connect-time request data (path, query,
+/// headers) reaches the app's `init` via `ConnectInfo.seed`.
 pub fn with_on_connect(
-  config: TransportConfig(a),
-  callback: fn(Request(Connection)) -> Result(assigns, ConnectError),
-) -> TransportConfig(assigns) {
+  config: TransportConfig,
+  callback: fn(Request(Connection)) -> Result(Nil, ConnectError),
+) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: Some(callback),
@@ -141,9 +141,9 @@ pub fn with_on_connect(
 /// that should be allowed (e.g. behind a reverse proxy that rewrites the
 /// `Host` header, where `SameOrigin` cannot see the public host).
 pub fn with_allowed_origins(
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   origins: List(String),
-) -> TransportConfig(assigns) {
+) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: config.on_connect,
@@ -159,9 +159,7 @@ pub fn with_allowed_origins(
 /// sessions) for authorization, or that authenticate every message
 /// independently. For cookie/session-authenticated apps, prefer the default
 /// `SameOrigin` policy or `with_allowed_origins`.
-pub fn with_allow_all_origins(
-  config: TransportConfig(assigns),
-) -> TransportConfig(assigns) {
+pub fn with_allow_all_origins(config: TransportConfig) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: config.on_connect,
@@ -178,11 +176,11 @@ type ConnectionState {
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
-    /// coordinator.
+    /// runtime.
     codec: codec.Codec,
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
-    /// so a flooding socket cannot fill the coordinator's mailbox.
+    /// so a flooding socket cannot fill the runtime's mailbox.
     message_limiter: Option(transport.RateLimiter),
   )
 }
@@ -230,7 +228,7 @@ type SendRequest {
 /// When `beryl.with_max_connections` is configured, this transport also
 /// enforces a node-wide ceiling on concurrent connections across all IPs,
 /// likewise returning `429` and rejecting the upgrade before allocating any
-/// long-lived channel/coordinator state. The two limits compose: a connection
+/// long-lived channel/runtime state. The two limits compose: a connection
 /// must be under both to be admitted. The node-wide ceiling bounds total
 /// resource use when a per-IP limit alone cannot (many distributed source
 /// addresses / IPv6 rotation). It is enforced per BEAM node, so across a
@@ -239,7 +237,7 @@ type SendRequest {
 pub fn upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   next: fn() -> Response(ResponseBody),
 ) -> Response(ResponseBody) {
   // Check if path matches
@@ -254,7 +252,7 @@ pub fn upgrade(
 fn handle_matched_upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
 ) -> Response(ResponseBody) {
   use <- bool.lazy_guard(
     when: !origin_allowed(request, config.origin_policy),
@@ -360,22 +358,21 @@ fn forbidden() -> Response(ResponseBody) {
 fn run_connect_and_upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   connection_permit: beryl.ConnectionPermit,
 ) -> Response(ResponseBody) {
   // Run on_connect callback if configured
   case config.on_connect {
     Some(callback) ->
       case callback(request) {
-        Ok(assigns) ->
-          do_upgrade(request, channels, assigns, Some(connection_permit))
+        Ok(Nil) -> do_upgrade(request, channels, Some(connection_permit))
         Error(ConnectRejected) -> {
           beryl.release_connection_slot(connection_permit)
           response.new(403)
           |> response.set_body(ewe.Empty)
         }
       }
-    None -> do_upgrade(request, channels, Nil, Some(connection_permit))
+    None -> do_upgrade(request, channels, Some(connection_permit))
   }
 }
 
@@ -419,7 +416,7 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// ```
 pub fn handler(
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   http_fallback: fn(Request(Connection)) -> Response(ResponseBody),
 ) -> fn(Request(Connection)) -> Response(ResponseBody) {
   fn(request) {
@@ -434,18 +431,17 @@ pub fn handler(
 /// Alternative: upgrade any request to WebSocket (caller handles path matching)
 ///
 /// Note: This function does not invoke the `on_connect` callback from
-/// `TransportConfig`. Sockets upgraded this way start with empty (`Nil`)
-/// assigns. If you need authentication or seeded assigns, either use `upgrade`
-/// with a full config or call your auth check before this function.
+/// `TransportConfig`. If you need authentication, either use `upgrade` with
+/// a full config or call your auth check before this function.
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
 ) -> Response(ResponseBody) {
-  do_upgrade(request, channels, Nil, None)
+  do_upgrade(request, channels, None)
 }
 
-/// Assemble the connection seed delivered to an app-dispatch system's
-/// `init` (`ConnectInfo.seed`). Channel-module systems ignore it.
+/// Assemble the connection seed delivered to the app's `init`
+/// (`ConnectInfo.seed`).
 fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
   event.ConnectSeed(
     path: request.path,
@@ -459,7 +455,6 @@ fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
 fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
-  connect_assigns: assigns,
   connection_permit: Option(beryl.ConnectionPermit),
 ) -> Response(ResponseBody) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
@@ -473,7 +468,6 @@ fn do_upgrade(
           connection,
           base_selector,
           channels,
-          connect_assigns,
           seed,
           connection_permit,
           max_inbound_frame_bytes,
@@ -503,7 +497,6 @@ fn on_init(
   _connection: WebsocketConnection,
   base_selector: Selector(SendRequest),
   channels: Channels,
-  connect_assigns: assigns,
   seed: event.ConnectSeed,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
@@ -519,11 +512,11 @@ fn on_init(
   // Generate unique socket ID
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
-  // Extend the selector Ewe provides so the coordinator can push outbound
+  // Extend the selector Ewe provides so the runtime can push outbound
   // frames to this connection's process as `ewe.User(SendRequest)` messages.
   let selector = process.select(base_selector, send_subject)
 
-  // Create send function that the coordinator can use
+  // Create send function that the runtime can use
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
     process.send(send_subject, SendText(text))
     Ok(Nil)
@@ -534,17 +527,16 @@ fn on_init(
     Ok(Nil)
   }
 
-  // Register with coordinator, seeding any connect-time assigns
+  // Register with the runtime, delivering the connect seed to `init`
   transport.socket_connected(
     channels: channels,
     socket_id: socket_id,
     send: send_fn,
     send_binary: send_binary_fn,
-    assigns: connect_assigns,
     seed: seed,
   )
 
-  // Let the coordinator actively close this connection (heartbeat eviction,
+  // Let the runtime actively close this connection (heartbeat eviction,
   // server-side disconnects) instead of leaving a zombie socket open.
   transport.register_closer(
     channels: channels,
@@ -567,7 +559,7 @@ fn on_init(
 
 /// Handle incoming WebSocket messages.
 ///
-/// Frames are routed to the coordinator for dispatch. Ewe does not deliver a
+/// Frames are routed to the runtime for dispatch. Ewe does not deliver a
 /// close message to the handler; cleanup happens in `on_close`.
 fn on_message(
   connection: WebsocketConnection,
@@ -610,7 +602,7 @@ fn on_message(
 
 /// Rate-check and decode a text frame in the connection process, so parse
 /// cost stays here and only valid, rate-admitted messages reach the shared
-/// coordinator.
+/// runtime.
 fn handle_inbound_text(
   state: ConnectionState,
   text: String,
@@ -638,7 +630,7 @@ fn handle_inbound_text(
 
 /// Rate-check and decode a binary frame in the connection process. Codecs
 /// without a binary decoder keep the raw `handle_binary` fan-out, routed
-/// through the coordinator.
+/// through the runtime.
 fn handle_inbound_binary(
   state: ConnectionState,
   data: BitArray,

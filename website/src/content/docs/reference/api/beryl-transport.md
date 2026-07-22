@@ -33,7 +33,7 @@ pub type Logger
 
 A per-connection token bucket enforcing the configured message rate at
  the transport edge, so a flooding socket is shed before frames are
- decoded or enqueued on the coordinator.
+ decoded or enqueued on the runtime.
 
 ```gleam
 pub type RateLimiter
@@ -82,7 +82,7 @@ pub fn new_message_limiter(beryl.Channels) -> option.Option(RateLimiter)
 ### `register_closer`
 
 Register a function that force-closes the socket's underlying connection
- so the coordinator can actively evict it (e.g. heartbeat timeout) instead
+ so the runtime can actively evict it (e.g. heartbeat timeout) instead
  of leaving a zombie socket whose frames are silently dropped.
 
 ```gleam
@@ -108,9 +108,9 @@ pub fn route_binary(
 
 ### `route_decoded`
 
-Route a transport-decoded inbound message to the coordinator. Decode in
+Route a transport-decoded inbound message to the runtime. Decode in
  the connection process (see `active_codec`) so parse cost and malformed
- input never reach the shared coordinator.
+ input never reach the shared runtime actor.
 
 ```gleam
 pub fn route_decoded(
@@ -123,11 +123,9 @@ pub fn route_decoded(
 ### `socket_connected`
 
 Announce a newly connected socket. `send`/`send_binary` deliver outbound
- frames on this connection. `assigns` seeds connect-time socket assigns
- (type-erased internally) for channel-module systems; `seed` carries the
- upgrade request's connection data for app-dispatch systems (delivered to
- the app's `init` as `ConnectInfo.seed`). Call `register_closer`
- immediately after this.
+ frames on this connection. `seed` carries the upgrade request's
+ connection data, delivered to the app's `init` as `ConnectInfo.seed`.
+ Call `register_closer` immediately after this.
 
 ```gleam
 pub fn socket_connected(
@@ -135,7 +133,6 @@ pub fn socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns: a,
   seed: event.ConnectSeed
 ) -> Nil
 ```

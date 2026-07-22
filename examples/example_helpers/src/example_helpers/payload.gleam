@@ -3,7 +3,6 @@
 //// because example UIs would rather render "Anonymous" than crash; real
 //// applications should validate and reject malformed payloads instead.
 
-import beryl/channel
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 
@@ -19,7 +18,7 @@ pub fn string_or(
     use value <- decode.field(field_name, decode.string)
     decode.success(value)
   }
-  case channel.decode_payload(payload, decoder) {
+  case decode.run(payload, decoder) {
     Ok(value) -> value
     Error(_) -> default
   }
