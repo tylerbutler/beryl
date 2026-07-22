@@ -632,6 +632,24 @@ fn on_init(
     close: fn() { process.send(send_subject, Close) },
   )
 
+  // Tie this connection's lifetime to the runtime that accepted it. If that
+  // runtime crashes or restarts, its registered closer is lost, so monitor it
+  // here and close the connection on its death rather than leaving a zombie
+  // socket whose frames a restarted runtime would silently drop. When the
+  // app runtime is momentarily unavailable (a restart window) the connection
+  // is refused so no orphaned socket is admitted.
+  let selector = case transport.connection_owner(channels) {
+    transport.OwnerAlive(runtime_pid) -> {
+      let monitor = process.monitor(runtime_pid)
+      process.select_specific_monitor(selector, monitor, fn(_down) { Close })
+    }
+    transport.OwnerUnavailable -> {
+      process.send(send_subject, Close)
+      selector
+    }
+    transport.OwnerUnmonitored -> selector
+  }
+
   let state =
     ConnectionState(
       socket_id: socket_id,
