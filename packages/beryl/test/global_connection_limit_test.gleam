@@ -8,6 +8,7 @@
 //// limit alone cannot enforce against distributed/rotating addresses.
 
 import beryl
+import beryl/event
 import beryl/wire
 import gleam/erlang/process
 import gleam/int
@@ -29,9 +30,11 @@ fn seq_loop(n: Int, acc: List(Int)) -> List(Int) {
 
 fn start_with_global_limit(max_connections: Int) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start(
+    beryl.start_app(
       beryl.config(wire.phoenix_codec())
-      |> beryl.with_max_connections(max_connections: max_connections),
+        |> beryl.with_max_connections(max_connections: max_connections),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model: Nil, _ev: event.Event(Nil)) { event.Next(model, []) },
     )
   channels
 }
@@ -41,10 +44,12 @@ fn start_with_both_limits(
   max_connections: Int,
 ) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start(
+    beryl.start_app(
       beryl.config(wire.phoenix_codec())
-      |> beryl.with_max_connections_per_ip(max_connections: max_per_ip)
-      |> beryl.with_max_connections(max_connections: max_connections),
+        |> beryl.with_max_connections_per_ip(max_connections: max_per_ip)
+        |> beryl.with_max_connections(max_connections: max_connections),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model: Nil, _ev: event.Event(Nil)) { event.Next(model, []) },
     )
   channels
 }

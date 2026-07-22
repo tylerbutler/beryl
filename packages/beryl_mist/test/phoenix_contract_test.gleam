@@ -507,3 +507,40 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
   close(client)
   stop_supervisor(server_pid)
 }
+
+pub fn runtime_death_closes_the_connection_test() {
+  let serializer = json_serializer()
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          event.Join(_, _, ref) ->
+            event.Next(model, [
+              event.AcceptJoin(
+                ref,
+                Some(json.object([#("joined", json.bool(True))])),
+              ),
+            ])
+          _ -> event.Next(model, [])
+        }
+      },
+    )
+  let #(port, server_pid) = start_mist_server(channels)
+
+  let client = connect_client(port)
+  let client = join_client(serializer, client)
+
+  // Kill the runtime that accepted the connection. The transport monitors the
+  // owning runtime and must close the connection instead of leaving a zombie
+  // whose frames are silently dropped by the restarted runtime.
+  let assert Ok(runtime) = beryl.app_runtime_pid(channels)
+  process.kill(runtime)
+
+  // The client observes the connection close (a close frame or TCP close).
+  receive_text(client, 2000)
+  |> should.equal(Error(Nil))
+
+  stop_supervisor(server_pid)
+}

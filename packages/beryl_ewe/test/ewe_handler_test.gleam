@@ -5,12 +5,15 @@
 //// server-agnostic raw-TCP WebSocket client FFI.
 
 import beryl
+import beryl/event
 import beryl/wire
 import beryl_ewe as ewe_transport
 import ewe
 import gleam/erlang/process
 import gleam/http/response
 import gleam/int
+import gleam/json
+import gleam/option
 import gleam/string
 import gleeunit/should
 
@@ -326,5 +329,41 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() {
   |> should.equal(Error(Nil))
 
   close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn runtime_death_closes_the_connection_test() {
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          event.Join(_, _, ref) ->
+            event.Next(model, [
+              event.AcceptJoin(
+                ref,
+                option.Some(json.object([#("joined", json.bool(True))])),
+              ),
+            ])
+          _ -> event.Next(model, [])
+        }
+      },
+    )
+  let #(port, server_pid) = start_server(channels)
+
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  let assert Ok(client) =
+    send_text(client, "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]")
+  let assert Ok(_join_reply) = receive_text(client, 1000)
+
+  // Kill the runtime that accepted the connection. The transport monitors the
+  // owning runtime and closes the connection rather than leaving a zombie.
+  let assert Ok(runtime) = beryl.app_runtime_pid(channels)
+  process.kill(runtime)
+
+  receive_text(client, 2000)
+  |> should.equal(Error(Nil))
+
   stop_supervisor(server_pid)
 }
