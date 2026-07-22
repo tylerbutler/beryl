@@ -14,6 +14,7 @@
 //// `Push` in the same list is guaranteed to arrive as the join
 //// acknowledgment first and the push second.
 
+import beryl/presence.{type PresenceEntry}
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/reference.{type Reference}
 import gleam/json.{type Json}
@@ -169,6 +170,22 @@ pub type Effect {
   Broadcast(topic: String, event: String, payload: Json)
   /// Broadcast to every subscriber of a topic except this socket.
   BroadcastFrom(topic: String, event: String, payload: Json)
+  /// Track this socket's presence under `key`.
+  PresenceTrack(topic: String, key: String, meta: Json)
+  /// Untrack the presence previously tracked under `key`.
+  PresenceUntrack(topic: String, key: String)
+  /// Push a presence snapshot encoded when this effect is applied.
+  PushPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(PresenceEntry)) -> Json,
+  )
+  /// Broadcast a presence snapshot encoded when this effect is applied.
+  BroadcastPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(PresenceEntry)) -> Json,
+  )
   /// Close this socket's subscription to a topic. The topic receives a
   /// `Closed(topic, Shutdown)` input and the client a terminal frame.
   KickTopic(topic: String)

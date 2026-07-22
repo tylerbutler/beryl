@@ -16,6 +16,8 @@
 
 import beryl/internal
 import beryl/log.{type Logger}
+import beryl/presence
+import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimitConfig}
 import beryl/socket.{
@@ -57,6 +59,7 @@ pub type Config {
     max_joined_topics_per_socket: Int,
     telemetry: Bool,
     logging: internal.LoggingConfig,
+    presence: Option(presence.Presence),
   )
 }
 
@@ -165,6 +168,8 @@ type SocketState(model, msg) {
     /// Per-topic join_ref from the accepted join, echoed in replies and
     /// terminal frames and used to drop stale-instance messages.
     join_refs: Dict(String, Option(String)),
+    /// Presence refs tracked through socket effects, grouped by topic and key.
+    presence_refs: Dict(String, Dict(String, #(String, Json))),
     /// Message reply refs still awaiting a reply. A ref is added when its
     /// `Message` is delivered, removed when answered (so a reply is
     /// single-use), and pruned when its topic closes (so a stale ref stored
@@ -489,6 +494,7 @@ fn register_socket(
           model: model,
           subscribed_topics: set.new(),
           join_refs: dict.new(),
+          presence_refs: dict.new(),
           pending_reply_refs: set.new(),
           last_heartbeat: monotonic_time_ms(),
           connected_at: telemetry_start(state),
@@ -1925,14 +1931,15 @@ fn close_topic(
               sock.Closed(topic: topic_name, reason: reason),
               ClosedSource,
             )
+          let state = untrack_topic_presence(out.state, socket_id, topic_name)
           send_terminal_frame(
-            out.state,
+            state,
             socket_id,
             topic_name,
             close_join_ref,
             reason,
           )
-          Outcome(out.state, out.kicks, out.stop)
+          Outcome(state, out.kicks, out.stop)
         }
       }
   }
@@ -2122,6 +2129,32 @@ fn apply_effects(
           payload,
           Some(socket_id),
         )
+        #(state, pending, kicks)
+      }
+      sock.PresenceTrack(topic_name, key, meta) -> #(
+        apply_presence_track(state, socket_id, topic_name, key, meta),
+        pending,
+        kicks,
+      )
+      sock.PresenceUntrack(topic_name, key) -> #(
+        apply_presence_untrack(state, socket_id, topic_name, key),
+        pending,
+        kicks,
+      )
+      sock.PushPresence(topic_name, event_name, encode) -> {
+        case presence_snapshot(state, socket_id, topic_name, encode) {
+          Ok(payload) ->
+            apply_push(state, socket_id, topic_name, event_name, payload)
+          Error(Nil) -> Nil
+        }
+        #(state, pending, kicks)
+      }
+      sock.BroadcastPresence(topic_name, event_name, encode) -> {
+        case presence_snapshot(state, socket_id, topic_name, encode) {
+          Ok(payload) ->
+            broadcast_with_pubsub(state, topic_name, event_name, payload, None)
+          Error(Nil) -> Nil
+        }
         #(state, pending, kicks)
       }
       sock.KickTopic(topic_name) ->
@@ -2378,6 +2411,270 @@ fn apply_push(
         }
       }
   }
+}
+
+// ── Presence effects ────────────────────────────────────────────────────────
+
+fn apply_presence_track(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  key: String,
+  meta: Json,
+) -> State(model, msg) {
+  case state.config.presence, dict.get(state.sockets, socket_id) {
+    None, _ -> {
+      state.logger
+      |> log.warn("PresenceTrack dropped: no presence handle configured", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      state
+    }
+    Some(_), Error(Nil) -> state
+    Some(p), Ok(socket) ->
+      track_socket_presence(state, socket, p, socket_id, topic_name, key, meta)
+  }
+}
+
+fn track_socket_presence(
+  state: State(model, msg),
+  socket: SocketState(model, msg),
+  presence_handle: presence.Presence,
+  socket_id: String,
+  topic_name: String,
+  key: String,
+  meta: Json,
+) -> State(model, msg) {
+  let topic_refs =
+    dict.get(socket.presence_refs, topic_name)
+    |> result.unwrap(dict.new())
+  let leaves = untrack_replaced_key(presence_handle, topic_refs, socket_id, key)
+  case
+    internal.rescue(fn() {
+      presence.track(presence_handle, topic_name, key, socket_id, meta)
+    })
+  {
+    Error(crash) -> {
+      state.logger
+      |> log.error("PresenceTrack failed", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+        #("crash", crash),
+      ])
+      state
+    }
+    Ok(ref) -> {
+      let socket =
+        SocketState(
+          ..socket,
+          presence_refs: dict.insert(
+            socket.presence_refs,
+            topic_name,
+            dict.insert(topic_refs, key, #(ref, meta)),
+          ),
+        )
+      let state = store_socket(state, socket)
+      broadcast_presence_diff(
+        state,
+        topic_name,
+        [presence.PresenceEntry(session_id: socket_id, key: key, meta: meta)],
+        leaves,
+      )
+      state
+    }
+  }
+}
+
+fn untrack_replaced_key(
+  presence_handle: presence.Presence,
+  topic_refs: Dict(String, #(String, Json)),
+  socket_id: String,
+  key: String,
+) -> List(presence.PresenceEntry) {
+  case dict.get(topic_refs, key) {
+    Ok(#(old_ref, old_meta)) -> {
+      let _untracked =
+        internal.rescue(fn() { presence.untrack(presence_handle, old_ref) })
+      [presence.PresenceEntry(session_id: socket_id, key: key, meta: old_meta)]
+    }
+    Error(Nil) -> []
+  }
+}
+
+fn apply_presence_untrack(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  key: String,
+) -> State(model, msg) {
+  case state.config.presence, dict.get(state.sockets, socket_id) {
+    Some(presence_handle), Ok(socket) ->
+      untrack_socket_key(
+        state,
+        socket,
+        presence_handle,
+        socket_id,
+        topic_name,
+        key,
+      )
+    None, Ok(_) -> {
+      state.logger
+      |> log.warn("PresenceUntrack dropped: no presence handle configured", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      state
+    }
+    _, Error(Nil) -> state
+  }
+}
+
+fn untrack_socket_key(
+  state: State(model, msg),
+  socket: SocketState(model, msg),
+  presence_handle: presence.Presence,
+  socket_id: String,
+  topic_name: String,
+  key: String,
+) -> State(model, msg) {
+  let topic_refs =
+    dict.get(socket.presence_refs, topic_name)
+    |> result.unwrap(dict.new())
+  case dict.get(topic_refs, key) {
+    Error(Nil) -> {
+      state.logger
+      |> log.debug("PresenceUntrack ignored: key not tracked", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      state
+    }
+    Ok(#(ref, meta)) -> {
+      let _untracked =
+        internal.rescue(fn() { presence.untrack(presence_handle, ref) })
+      let socket =
+        SocketState(
+          ..socket,
+          presence_refs: dict.insert(
+            socket.presence_refs,
+            topic_name,
+            dict.delete(topic_refs, key),
+          ),
+        )
+      let state = store_socket(state, socket)
+      broadcast_presence_diff(state, topic_name, [], [
+        presence.PresenceEntry(session_id: socket_id, key: key, meta: meta),
+      ])
+      state
+    }
+  }
+}
+
+fn presence_snapshot(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  encode: fn(List(presence.PresenceEntry)) -> Json,
+) -> Result(Json, Nil) {
+  case state.config.presence {
+    None -> {
+      state.logger
+      |> log.warn("Presence snapshot dropped: no presence handle configured", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+      ])
+      Error(Nil)
+    }
+    Some(presence_handle) ->
+      case
+        internal.rescue(fn() {
+          encode(presence.list(presence_handle, topic_name))
+        })
+      {
+        Ok(payload) -> Ok(payload)
+        Error(crash) -> {
+          state.logger
+          |> log.error("Presence snapshot failed", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+            #("crash", crash),
+          ])
+          Error(Nil)
+        }
+      }
+  }
+}
+
+fn untrack_topic_presence(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+) -> State(model, msg) {
+  case state.config.presence, dict.get(state.sockets, socket_id) {
+    Some(presence_handle), Ok(socket) ->
+      case dict.get(socket.presence_refs, topic_name) {
+        Error(Nil) -> state
+        Ok(topic_refs) ->
+          untrack_topic_keys(
+            state,
+            socket,
+            presence_handle,
+            socket_id,
+            topic_name,
+            topic_refs,
+          )
+      }
+    _, _ -> state
+  }
+}
+
+fn untrack_topic_keys(
+  state: State(model, msg),
+  socket: SocketState(model, msg),
+  presence_handle: presence.Presence,
+  socket_id: String,
+  topic_name: String,
+  topic_refs: Dict(String, #(String, Json)),
+) -> State(model, msg) {
+  let leaves =
+    dict.fold(topic_refs, [], fn(acc, key, entry) {
+      let #(ref, meta) = entry
+      let _untracked =
+        internal.rescue(fn() { presence.untrack(presence_handle, ref) })
+      [
+        presence.PresenceEntry(session_id: socket_id, key: key, meta: meta),
+        ..acc
+      ]
+    })
+  let socket =
+    SocketState(
+      ..socket,
+      presence_refs: dict.delete(socket.presence_refs, topic_name),
+    )
+  let state = store_socket(state, socket)
+  case leaves {
+    [] -> Nil
+    _ -> broadcast_presence_diff(state, topic_name, [], leaves)
+  }
+  state
+}
+
+fn broadcast_presence_diff(
+  state: State(model, msg),
+  topic_name: String,
+  joins: List(presence.PresenceEntry),
+  leaves: List(presence.PresenceEntry),
+) -> Nil {
+  let diff =
+    presence.diff(joins: [#(topic_name, joins)], leaves: [#(topic_name, leaves)])
+  broadcast_with_pubsub(
+    state,
+    topic_name,
+    "presence_diff",
+    presence_wire.encode_diff(diff, topic_name),
+    None,
+  )
 }
 
 // ── Broadcasts ──────────────────────────────────────────────────────────────

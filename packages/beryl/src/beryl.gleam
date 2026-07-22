@@ -170,6 +170,8 @@ pub opaque type Config {
     /// Ordered; the first matching pattern wins. `None` is an explicit
     /// unlimited override for that pattern.
     topic_rates: List(#(String, Option(rate_limit.RateLimitConfig))),
+    /// Presence handle used by presence effects.
+    presence: Option(presence.Presence),
   )
 }
 
@@ -217,6 +219,7 @@ pub fn config(codec: codec.Codec) -> Config {
     telemetry: False,
     logging: logging_config(level: InfoLevel, include_payloads: False),
     topic_rates: [],
+    presence: None,
   )
 }
 
@@ -247,6 +250,14 @@ pub fn with_topic_rate(
 /// Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(ps))
+}
+
+/// Attach the presence actor used by socket presence effects.
+pub fn with_presence_handle(
+  config: Config,
+  presence presence: presence.Presence,
+) -> Config {
+  Config(..config, presence: Some(presence))
 }
 
 /// Enable beryl's `:telemetry` events.
@@ -1124,6 +1135,7 @@ fn to_runtime_config(config: Config) -> runtime.Config {
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
     telemetry: config.telemetry,
     logging: internal_logging_config(config.logging),
+    presence: config.presence,
   )
 }
 
