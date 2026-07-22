@@ -2,8 +2,11 @@
 
 ## Status
 
-Proposed (2026-07-21). Supersedes [ADR 0001](0001-type-erased-channel-registry.md)
-if accepted.
+Accepted (2026-07-22). Supersedes
+[ADR 0001](0001-type-erased-channel-registry.md). Implemented in two
+phases: the dispatch core landed alongside the channel-module API
+(with the showcase example rewritten as the acceptance gate), then the
+channel-module API, registry, and identity-FFI erasure were removed.
 
 ## Context
 
