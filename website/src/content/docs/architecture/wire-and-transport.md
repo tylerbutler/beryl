@@ -2,43 +2,43 @@
 title: Wire & Transport
 ---
 
-The wire and transport layer sits between raw WebSocket frames and the coordinator. It is split into two concerns: a pluggable **codec** that translates bytes into structured messages, and the **Mist transport** that owns the socket lifecycle.
+The wire and transport layer sits between raw WebSocket frames and the runtime. It is split into two concerns: a pluggable **codec** that translates bytes into structured messages, and transport adapters that own the socket lifecycle.
 
 ## Codec abstraction
 
-A `Codec` is a plain data value that pairs a decoder with a set of encoders. The coordinator is framing-agnostic: it only ever sees `Inbound` values and emits `Frame` values; the codec performs every translation.
+A `Codec` is a plain data value that pairs a decoder with a set of encoders. The runtime is framing-agnostic: it receives `Inbound` values and writes `Frame` values; the codec performs every translation.
 
 ```
 packages/beryl/src/beryl/wire/codec.gleam
 ```
 
-The `Codec` type carries five fields:
+The `Codec` type carries five core fields:
 
 | Field | Purpose |
 |---|---|
 | `decode_text` | Parse a raw text frame into an `Inbound` |
-| `decode_binary` | Parse a binary frame into an `Inbound` (optional) |
-| `encode_reply` | Encode a channel reply back to the client |
+| `decode_binary` | Parse a raw binary frame into an `Inbound` (optional) |
+| `encode_reply` | Encode a reply frame back to the client |
 | `encode_push` | Encode a server-initiated push |
 | `encode_heartbeat_reply` | Encode the heartbeat acknowledgement |
 
-The built-in `phoenix_codec()` (from `packages/beryl/src/beryl/wire.gleam`) wires the Phoenix JSON framing into all five slots. `beryl.config/1` takes the codec as a required argument — there is no implicit default — so pass it explicitly:
+The built-in `phoenix_codec()` (from `packages/beryl/src/beryl/wire.gleam`) wires the Phoenix JSON framing into those slots. Applications that want Phoenix-compatible framing pass it explicitly to `beryl.config`:
 
 ```gleam
 beryl.config(wire.phoenix_codec())
 ```
 
-Custom codecs can be swapped in by constructing a `Codec` value directly, allowing alternative protocols without changing the coordinator or channel logic.
+Custom codecs can be swapped in by constructing a `Codec` value directly, allowing alternative protocols without changing the runtime or the transport SPI.
 
 ## Frame shapes
 
-Phoenix uses a JSON array for every message on the wire:
+Phoenix uses a JSON array for every text message on the wire:
 
 ```
 [join_ref, ref, topic, event, payload]
 ```
 
-The `join_ref` and `ref` fields are nullable strings used for reply correlation. `topic` is the subscription key (e.g. `"room:lobby"`). `event` names the protocol action or user event.
+The `join_ref` and `ref` fields are nullable strings used for reply correlation. `topic` is the subscription key (for example `"room:lobby"`). `event` names the protocol action or user event.
 
 ### Key functions in `beryl/wire`
 
@@ -46,52 +46,61 @@ The `join_ref` and `ref` fields are nullable strings used for reply correlation.
 
 **`encode(msg)`** — round-trips an `Inbound` back to a Phoenix wire JSON string.
 
-**`reply_json(join_ref, ref, topic, status, response)`** — produces a `phx_reply` frame. The `payload` field is `{"status": "ok"|"error", "response": <payload>}`.
+**`reply_json(join_ref, ref, topic, status, response)`** — produces a `phx_reply` frame. The payload is `{"status": "ok"|"error", "response": <payload>}`.
 
 **`push(topic, event, payload)`** — produces a server-initiated push. Server pushes carry `null` for both `join_ref` and `ref` because there is no client message to correlate against.
 
-**`heartbeat_reply(ref)`** — produces the heartbeat acknowledgement. The topic is always `"phoenix"`, the event is `"phx_reply"`, and the status is `"ok"` with an empty response object. The client sends heartbeats with topic `"phoenix"` / event `"heartbeat"`.
+**`heartbeat_reply(ref)`** — produces the heartbeat acknowledgement. The topic is always `"phoenix"`, the event is `"phx_reply"`, and the status is `"ok"` with an empty response object.
 
-## Mist transport
+## Transport SPI
 
-The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's native WebSocket handling to the beryl coordinator. It is responsible for:
+`packages/beryl/src/beryl/transport.gleam` is the contract between core Beryl and transport packages.
 
-1. **Generating a unique socket id** — `crypto.strong_random_bytes` produces a 16-byte random id encoded as base16.
-2. **Registering the send fn** — on connection init, the transport sends a `SocketConnected` message to the coordinator containing both a text send fn and a binary send fn.
-3. **Routing text frames** — `mist.Text` frames are forwarded to `coordinator.route_message`, which decodes them through the codec.
-4. **Routing binary frames** — `mist.Binary` frames are forwarded to `coordinator.route_binary`; the coordinator passes them through the codec's `decode_binary` when present, otherwise delivers the raw `BitArray` to `channel.handle_binary`.
-5. **Notifying on close** — `mist.Closed` and `mist.Shutdown` send `SocketDisconnected` to the coordinator so it can clean up subscriptions.
-6. **Rejecting disallowed origins** — when configured, `with_allowed_origins` checks the full `Origin` header before the WebSocket handshake and returns HTTP 403 for missing or non-matching origins.
+A transport:
 
-### Key functions
+1. admits or rejects the connection at the HTTP/WebSocket edge
+2. announces the socket with `socket_connected`
+3. registers a closer with `register_closer`
+4. decodes inbound text frames with `active_codec` and routes them with `route_decoded`
+5. routes raw binary frames with `route_binary` when needed
+6. reports closes with `socket_disconnected`
+7. checks `connection_owner`; on `OwnerAlive(pid)` it monitors `pid`, and on `OwnerUnavailable` it refuses the connection
 
-**`default_config(path)`** — creates a `TransportConfig(Nil)` with no connect hook. Accepts all connections and seeds `Nil` assigns.
+That ownership check is what makes runtime restarts safe: when the owning runtime dies, the connection process closes the WebSocket instead of leaving an orphaned socket behind.
 
-**`with_on_connect(config, callback)`** — attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(assigns)` to allow the connection, `Error(ConnectRejected)` to reject with 403.
+## Mist and Ewe transports
 
-**`with_allowed_origins(config, origins)`** — attaches an exact-match allow-list for browser `Origin` headers, such as `["https://app.example.com"]`. Use this when cookie-authenticated WebSockets need CSWSH protection.
+The Mist and Ewe packages expose the same surface, both implemented on top of `beryl/transport`.
 
-**`upgrade(request, channels, config, next)`** — checks whether the request path matches the configured socket path, runs the `on_connect` hook, and performs the WebSocket upgrade. Calls `next()` when the path does not match, enabling use as middleware.
+- `default_config(path)` creates a config for one WebSocket path, seeds empty `ConnectSeed.metadata` (`[]`), and applies `SameOrigin` by default.
+- `with_on_connect(config, callback)` attaches a socket-level auth/connect hook. The callback returns `Result(List(#(String, String)), ConnectError)`: `Ok(metadata)` allows the upgrade and appends those ordered string-pair values to `ConnectSeed.metadata`, while `Error(ConnectRejected)` returns HTTP 403.
+- `with_allowed_origins` and `with_allow_all_origins` change the origin policy.
+- `upgrade` performs path matching, origin checks, optional `on_connect`, connection-limit admission, and the actual WebSocket upgrade.
+- `handler` wraps `upgrade` into a complete request handler with an HTTP fallback.
+- `is_websocket_request` checks the `Upgrade: websocket` header.
 
-**`is_websocket_request(request)`** — checks the `Upgrade: websocket` header.
-
-**`handler(channels, config, http_fallback)`** — returns a combined request handler that routes WebSocket upgrade requests to `upgrade` and everything else to `http_fallback`. Removes boilerplate from application code.
+The request path, query params, headers, and `with_on_connect` metadata are merged into `ConnectSeed` and delivered to your app's `init` through `ConnectInfo.seed`.
 
 ## Diagram
 
 ```mermaid
 flowchart LR
-  FR["raw WS frame"] --> MI["beryl_mist"]
-  MI -->|text| CD["wire/codec"]
-  MI -->|binary, no codec| RB["raw binary handler"]
-  CD --> CO["coordinator"]
-  CO --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
+  FR["raw WS frame"] --> TR["beryl_mist / beryl_ewe"]
+  TR -->|text| CD["beryl/wire/codec"]
+  CD -->|Inbound| RT["runtime"]
+  TR -->|raw binary| RT
+  RT -->|reply / push frame| TR
+  TR --> CL["client"]
+  TR -. monitor connection_owner .-> RT
 ```
 
 ## Where this lives
 
 | Module | Path |
 |---|---|
+| Transport SPI | `packages/beryl/src/beryl/transport.gleam` |
 | Codec abstraction | `packages/beryl/src/beryl/wire/codec.gleam` |
 | Phoenix wire helpers | `packages/beryl/src/beryl/wire.gleam` |
+| Connect metadata types | `packages/beryl/src/beryl/event.gleam` |
 | Mist transport | `packages/beryl_mist/src/beryl_mist.gleam` |
+| Ewe transport | `packages/beryl_ewe/src/beryl_ewe.gleam` |

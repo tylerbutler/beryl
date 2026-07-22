@@ -35,14 +35,15 @@ the standard, correct BEAM model, and it has one blunt consequence:
 > to your cluster's distribution mesh is, for security purposes, part of your
 > application.
 
-Application- and channel-level authorization — `on_connect`, per-topic `join`
-checks, rate limits — protects you against untrusted **WebSocket clients**. It
+Application- and socket-level authorization — `on_connect`, per-topic join
+checks in the app's `update`, rate limits — protects you against untrusted
+**WebSocket clients**. It
 does **not** protect you against a hostile **distribution peer**. A malicious or
 compromised node that has joined your cluster can:
 
 - Publish arbitrary internal beryl PubSub messages, including to reserved
   `beryl:*` topics that clients are never allowed to reach. Those messages are
-  delivered to channel coordinators as trusted cluster input.
+  delivered to the runtime as trusted cluster input.
 - Inject or corrupt presence replication (sync) data, distorting who appears
   present across the cluster.
 - Cause unbounded fan-out work by broadcasting to high-cardinality topics.
@@ -120,8 +121,8 @@ It is important to keep two very different message sources distinct:
 |---|---|---|
 | Source | Remote browser / device over the WebSocket transport | A peer BEAM node in your cluster |
 | Trust | **Untrusted** — treat as adversarial input | **Fully trusted** — treated as internal state |
-| Validation | Origin checks, `on_connect` auth, per-topic `join` authorization, frame-size limits, topic/event length limits, reserved `phx_*` / `beryl:*` filtering, message/join rate limits | **None** — delivered directly to coordinators/presence as internal input |
-| Where enforced | Mist transport + coordinator (see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/production-hardening/)) | N/A — enforced by the cluster boundary itself |
+| Validation | Origin checks, `on_connect` auth, per-topic join authorization in `update`, frame-size limits, topic/event length limits, reserved `phx_*` / `beryl:*` filtering, message/join rate limits | **None** — delivered directly to the runtime/presence as internal input |
+| Where enforced | Mist/Ewe transport + runtime (see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/production-hardening/)) | N/A — enforced by the cluster boundary itself |
 
 The takeaway: beryl validates and rate-limits everything that arrives over a
 client WebSocket, but **internal PubSub and presence traffic between nodes is

@@ -10,30 +10,15 @@
 
 ## Install
 
-beryl is not yet published to Hex, so add it as a git dependency in your
-`gleam.toml`:
-
-```toml
-[dependencies]
-beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl_mist" }
+```sh
+gleam add beryl beryl_mist
 ```
-
-> [!IMPORTANT]
-> **This requires Gleam 1.18 or later.** beryl's packages live in
-> subdirectories of this repository, and the `path` field that points a git
-> dependency at a subdirectory was added in Gleam 1.18. There is no way to
-> depend on beryl from an earlier Gleam version.
-
-`gleam add` only handles Hex packages, so edit `gleam.toml` by hand and then run
-`gleam deps download`.
 
 `beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
 WebSocket transport. An [Ewe](https://hex.pm/packages/ewe) transport is also
-available as `beryl_ewe` (same git dependency with
-`path = "packages/beryl_ewe"`) and mirrors the `beryl_mist` API. All live in
-this repository (a [trellis](https://trellis.tylerbutler.com)-managed workspace
-under `packages/`).
+available as `beryl_ewe` (`gleam add beryl beryl_ewe`) and mirrors the
+`beryl_mist` API. All live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
+workspace under `packages/`).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -41,51 +26,43 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 
 ```gleam
 import beryl
-import beryl/channel.{type Channel}
-import beryl/socket
-import beryl/supervisor
-import beryl/wire
+import beryl/event.{type ConnectInfo, AcceptJoin, Join, Next}
 import beryl_mist as mist_transport
+import beryl/wire
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/option.{None}
-import gleam/otp/static_supervisor
 import mist
 
-pub type RoomAssigns { RoomAssigns(username: String) }
+pub type Model { Model(username: String) }
 
-fn new_channel() -> Channel(RoomAssigns, info) {
-  channel.new(fn(_topic, payload, socket) {
-    let username_decoder = {
-      use username <- decode.field("username", decode.string)
-      decode.success(username)
+fn init(info: ConnectInfo(msg)) -> #(Model, List(event.Effect)) {
+  #(Model(username: "anonymous"), [])
+}
+
+fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
+  case ev {
+    Join("room:" <> _, payload, ref) -> {
+      let username_decoder = {
+        use username <- decode.field("username", decode.string)
+        decode.success(username)
+      }
+      let username = case decode.run(payload, username_decoder) {
+        Ok(username) -> username
+        Error(_) -> model.username
+      }
+      Next(Model(username:), [AcceptJoin(ref, None)])
     }
-    let username = case channel.decode_payload(payload, username_decoder) {
-      Ok(username) -> username
-      Error(_) -> "anonymous"
-    }
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, RoomAssigns(username:)))
-  })
-  |> channel.with_handle_in(fn(_event, _payload, socket) {
-    channel.NoReply(socket)
-  })
+    _ -> Next(model, [])
+  }
 }
 
 pub fn main() {
-  // beryl has no unsupervised start; add its child specification to your own
-  // application supervisor so a coordinator crash restarts just that subtree.
-  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
-
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(beryl_config))
-    |> static_supervisor.start()
-
-  let channels = supervisor.channels(beryl_config)
-  let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
+  let assert Ok(sockets) =
+    beryl.start(beryl.config(wire.phoenix_codec()), init:, update:)
 
   let assert Ok(_) =
-    mist_transport.handler(channels, mist_transport.default_config("/socket/websocket"), fn(_req) {
+    mist_transport.handler(sockets, mist_transport.default_config("/socket/websocket"), fn(_req) {
       // your regular HTTP handler here
       panic as "not implemented"
     })
@@ -109,19 +86,15 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 ## Documentation
 
 - **Website & guides**: <https://beryl.tylerbutler.com>
-- **Generated API reference**: <https://beryl.tylerbutler.com/reference/api/>
-- **Observability guide**: <https://beryl.tylerbutler.com/guides/observability/>
-- **Load-testing guide**: [`load/README.md`](load/README.md)
-
-beryl is not on Hex yet, so there is no `hexdocs.pm` listing; the reference
-above is generated from the same Gleam docs metadata.
+- **Generated API docs**: <https://hexdocs.pm/beryl/>
 
 ## Ecosystem
 
-Beryl is the server-side channel runtime. It owns socket registration, channel
-handlers, broadcasts, presence, groups, pubsub, and transport integration.
-Beryl has its own pluggable wire codec, and its Phoenix codec is kept compatible
-with Roost and Aquamarine by shared conformance fixtures.
+Beryl is the server-side real-time runtime. It owns socket connections, wire
+dispatch to your app's `update` function, broadcasts, presence, groups, pubsub,
+and transport integration. Beryl has its own pluggable wire codec, and its
+Phoenix codec is kept compatible with Roost and Aquamarine by shared
+conformance fixtures.
 
 ```mermaid
 flowchart TD
@@ -152,24 +125,26 @@ flowchart TD
 
 ## Features
 
-- **Channels** — Topic-based pub/sub with typed callbacks and pattern matching (e.g. `room:*`, `document:*:*`)
+- **App-side dispatch** — one typed `init`/`update` pair per app; route topics
+  yourself by pattern matching (e.g. `room:*`, `document:*:*`) — no assigns, no
+  erasure, no registry
 - **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
-- **Groups** — Named channel groups for multi-topic broadcasting
-- **PubSub** — pg-based distributed publish/subscribe
+- **Groups** — Named topic groups for multi-topic broadcasting
+- **PubSub** — pg-based distributed publish/subscribe with a typed `Subscriber`
 - **Actor bridge** — forward an external OTP actor's stream to a socket with `beryl/bridge`
 - **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
 - **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds ordered connect metadata delivered to the app's `init` via `ConnectInfo.seed`
-- **Observability** — Opt-in stable telemetry events and local coordinator snapshots, with export owned by the host application
 
 ## Examples
 
-Three runnable demos are included in the `examples/` directory:
+Four runnable demos are included in the `examples/` directory:
 
 | Example | What it demonstrates |
 |---------|----------------------|
-| [`examples/cursors`](examples/cursors/) | Channels, topic wildcards, presence, `broadcast_from`, rate limiting |
-| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, `Reply`, `Push`, groups, validation, typing indicators |
+| [`examples/cursors`](examples/cursors/) | App-side dispatch, topic wildcards, presence, `BroadcastFrom`, rate limiting |
+| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection (`RejectJoin`), `ReplyOk`, `Push`, groups, validation, typing indicators |
 | [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
+| [`examples/showcase`](examples/showcase/) | End-to-end app-side dispatch showcase across every subsystem |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 
@@ -177,66 +152,41 @@ See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for
 
 A long-lived domain actor (for example a per-document session) often emits
 updates that need to be pushed to each joined socket. The `beryl/bridge` module
-removes the per-socket forwarder boilerplate: start a bridge in `join`, subscribe
-your actor to the bridge's `Subject`, and stop it in `terminate`. Each value the
-actor emits is translated and delivered to the channel's `handle_info` callback
-via `beryl.send_info`. Calling `bridge.stop` in `terminate` is required:
-channels are dispatched by a shared coordinator, so the forwarder's monitor
-only fires if the coordinator itself dies — it does not detect an individual
-channel ending.
+removes the per-socket forwarder boilerplate: start a bridge in `init` (or when
+a topic joins), subscribe your actor to the bridge's `Subject`, and stop it
+when the socket or topic closes. Each value the actor emits is translated and
+delivered to the app's `update` function as an `Info` event via
+`event.notify`. The forwarder also monitors the owning process, so it is
+cleaned up automatically if that process dies — no leaked processes.
 
 ```gleam
-import beryl.{type RegisteredChannel}
 import beryl/bridge.{type Bridge}
-import beryl/channel.{type Channel}
-import beryl/socket
-import gleam/json
-import gleam/option.{None}
-import my_app/doc
+import beryl/event.{type ConnectInfo}
 
 // Messages emitted by your domain actor.
 pub type DocEvent {
   Updated(version: Int)
 }
 
-pub type Assigns {
-  Assigns(bridge: Bridge(DocEvent))
+// Your app's server-side message type, delivered to `update` as `Info`.
+pub type Msg {
+  DocUpdated(version: Int)
 }
 
-// `registered_channel` is the handle returned by `beryl.register`.
-fn new_channel(
-  registered_channel: RegisteredChannel(Assigns, DocEvent),
-  doc_actor,
-) -> Channel(Assigns, DocEvent) {
-  channel.new(fn(topic, _payload, socket) {
-    // Forward every DocEvent emitted by the actor to this socket/topic.
-    let b =
-      bridge.start(
-        channel: registered_channel,
-        socket_id: socket.id(socket),
-        topic: topic,
-        with: fn(event) { event },
-      )
-    // Hand the bridge's subject to the domain actor as its subscriber.
-    doc.subscribe(doc_actor, bridge.subject(b))
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
-  })
-  // `handle_info` receives the typed `DocEvent` directly — no decode step.
-  |> channel.with_handle_info(fn(event, socket) {
-    case event {
-      Updated(version) ->
-        channel.Push(
-          "doc_updated",
-          json.object([#("version", json.int(version))]),
-          socket,
-        )
-    }
-  })
-  // Always stop the bridge on terminate for prompt, deterministic cleanup.
-  |> channel.with_terminate(fn(_reason, socket) {
-    bridge.stop(socket.get_assigns(socket).bridge)
-  })
+fn init(info: ConnectInfo(Msg)) {
+  // Forward each DocEvent to this socket as an `Info(Msg)` event.
+  let assert Ok(b) =
+    bridge.start(to: info.self, with: fn(e: DocEvent) {
+      let Updated(v) = e
+      DocUpdated(v)
+    })
+  // Subscribe the domain actor to the bridge's subject.
+  doc.subscribe(doc_actor, bridge.subject(b))
+  #(Model(bridge: b), [])
 }
+
+// Stop the bridge when the socket closes (e.g. from a `Closed` event).
+bridge.stop(model.bridge)
 ```
 
 ## Releases & changelog
@@ -269,31 +219,49 @@ see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/produc
 
 ### Required: an edge proxy frame-size limit
 
-`with_max_inbound_frame_bytes` is enforced **post-assembly** — the transport
-buffers and reassembles a complete frame before Beryl measures it. That bounds
-per-message processing cost but **not** transport memory: a hostile client can
-grow the receive buffer without limit on a single connection by declaring a huge
-payload length and streaming slowly, or by sending a long run of fragmented
-continuation frames. Neither `with_max_connections_per_ip` nor
-`with_message_rate` mitigates this — the buffer grows before any message reaches
-a channel.
+Beryl's `with_max_inbound_frame_bytes` limit is enforced **post-assembly** —
+the WebSocket transport (Mist/gramps) buffers and reassembles a complete frame
+*before* Beryl measures it and rejects oversized frames. This bounds
+per-message processing cost, but it does **not** bound transport memory.
 
-So in production you **must** put an edge proxy or load balancer in front of
-Beryl and set a maximum WebSocket frame/message size at or below your
-`with_max_inbound_frame_bytes` value, plus a matching body-size limit on the
-initial HTTP upgrade. Treat Beryl's in-process limit as defense-in-depth for
-per-message cost, not as a memory bound.
+A hostile client can therefore exhaust node memory with a single connection by
+either:
 
-Upstream work to cap size *before* buffering is tracked in
-[`docs/security/frame-buffering-followup.md`](docs/security/frame-buffering-followup.md).
+- declaring a huge payload length in a frame header and streaming the body
+  slowly, or
+- sending a long run of fragmented continuation frames that the transport
+  aggregates into one buffer.
+
+In both cases the transport's receive buffer grows unbounded *before* Beryl's
+frame-size check ever runs. **Beryl's per-IP connection limit
+(`with_max_connections_per_ip`) and per-socket message-rate limit
+(`with_message_rate`) do not mitigate this vector** — the buffer grows within a
+single admitted connection and before any message is emitted to a channel.
+
+To bound transport memory in production you **must** place an edge proxy or
+load balancer (e.g. nginx, HAProxy, Envoy, or your cloud LB) in front of Beryl
+and configure:
+
+- a **maximum WebSocket frame/message size** at or below your chosen
+  `with_max_inbound_frame_bytes` value, and
+- a matching **request/body size limit** for the initial HTTP upgrade.
+
+Set the proxy limit to reject oversized frames at the edge, before they are
+buffered by the BEAM node. Beryl's in-process limit should be treated as
+defense-in-depth for per-message cost, not as a memory bound.
+
+## Releases & changelog
+
+See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
+release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
+and the changelog is managed with [changie](https://changie.dev/).
 
 ## Development
 
 ### Prerequisites
 
 - [Erlang](https://www.erlang.org/) 27+
-- [Gleam](https://gleam.run/) 1.16+ (see `.tool-versions`; consuming beryl as a
-  dependency requires 1.18+)
+- [Gleam](https://gleam.run/) 1.13+
 - [just](https://github.com/casey/just) (task runner)
 
 Install tools via [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/):
