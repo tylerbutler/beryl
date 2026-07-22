@@ -10,10 +10,13 @@ import beryl/wire
 import beryl_ewe as ewe_transport
 import ewe
 import gleam/erlang/process
+import gleam/http/request
 import gleam/http/response
 import gleam/int
 import gleam/json
+import gleam/list
 import gleam/option
+import gleam/result
 import gleam/string
 import gleeunit/should
 
@@ -365,5 +368,49 @@ pub fn runtime_death_closes_the_connection_test() {
   receive_text(client, 2000)
   |> should.equal(Error(Nil))
 
+  stop_supervisor(server_pid)
+}
+
+// Socket-level connect/auth hook — on_connect metadata reaches init
+
+fn auth_query(req, name: String) -> Result(String, Nil) {
+  case request.get_query(req) {
+    Ok(params) -> list.key_find(params, name)
+    Error(_) -> Error(Nil)
+  }
+}
+
+pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
+  // `with_on_connect` returns ordered string metadata; it lands verbatim in
+  // `ConnectInfo.seed.metadata` for an app-dispatch system's `init`.
+  // Duplicate keys must be preserved — the runtime must not deduplicate them.
+  let seeds = process.new_subject()
+  let assert Ok(channels) =
+    beryl.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(info: event.ConnectInfo(Nil)) {
+        process.send(seeds, info.seed)
+        #(Nil, [])
+      },
+      update: fn(model, _ev) { event.Next(model, []) },
+    )
+
+  let config =
+    ewe_transport.default_config("/socket")
+    |> ewe_transport.with_on_connect(fn(req) {
+      auth_query(req, "token")
+      |> result.map(fn(token) { [#("user", token), #("user", token)] })
+      |> result.map_error(fn(_) { ewe_transport.ConnectRejected })
+    })
+  let #(port, server_pid) = start_server_with_config(channels, config)
+
+  let assert Ok(client) = connect_websocket(port, "/socket?token=alice")
+  let assert Ok(seed) = process.receive(seeds, 1000)
+
+  // Order and duplicate keys are preserved verbatim, not deduplicated.
+  seed.metadata |> should.equal([#("user", "alice"), #("user", "alice")])
+  seed.path |> should.equal("/socket")
+
+  close(client)
   stop_supervisor(server_pid)
 }
