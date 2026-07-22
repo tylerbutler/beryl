@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Changed"
-body = "Reworked the internal channel registry to a closure-captured encoding: joining now produces a JoinedChannel instance whose closures hold the channel's typed assigns, and each callback returns the next instance. Assigns no longer round-trip through Dynamic with unsafe coercion on every callback; the remaining erasure (send_info messages, connect-time assigns) is narrow and documented in ADR 0001. No public API changes."

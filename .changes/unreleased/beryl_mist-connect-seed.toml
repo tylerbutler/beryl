@@ -1,3 +1,0 @@
-project = "beryl_mist"
-kind = "Changed"
-body = "Pass the upgrade request's path, query, and headers to beryl as a `ConnectSeed`, so app-dispatch systems (`beryl.start_app`) receive request data in `init`."

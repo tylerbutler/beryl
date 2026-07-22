@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Changed"
-body = "Transport SPI: `transport.socket_connected` takes a new labeled `seed: ConnectSeed` argument carrying upgrade-request data (path, query, headers) for app-dispatch systems; channel-module systems ignore it."
