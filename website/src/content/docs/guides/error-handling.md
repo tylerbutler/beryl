@@ -1,132 +1,152 @@
 ---
 title: Error Handling
+description: Understand how joins, message replies, connection rejection, startup failures, and runtime shutdown are surfaced.
 ---
 
-This guide covers how beryl surfaces errors to your channel code and to connected clients, and how to handle them defensively.
+This guide covers how Beryl surfaces errors to your app logic and to connected clients.
 
 ## Rejected joins
 
-Return `JoinError` from your join callback to reject a client. The error payload is sent back as a `phx_reply` with `status: "error"`:
+Reject a pending join by returning `event.RejectJoin(ref, reason)` from `update`.
 
 ```gleam
-fn join(topic, payload, socket) -> JoinResult(MyAssigns) {
-  case authenticate(payload) {
-    Error(_) ->
-      channel.JoinError(
-        json.object([#("reason", json.string("unauthorized"))]),
+import beryl/event as event
+import gleam/json
+
+fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+  case ev {
+    event.Join(_topic_name, _payload, ref) ->
+      event.Next(
+        model,
+        [
+          event.RejectJoin(
+            ref,
+            json.object([
+              #("reason", json.string("unauthorized")),
+            ]),
+          ),
+        ],
       )
-    Ok(user) -> {
-      let assigns = MyAssigns(user_id: user.id)
-      channel.JoinOk(reply: None, socket: socket.set_assigns(socket, assigns))
-    }
+
+    _ -> event.Next(model, [])
   }
 }
 ```
 
-The client sees:
+The client sees a Phoenix `phx_reply` error frame:
+
 ```json
 ["1", "1", "room:lobby", "phx_reply", {"status": "error", "response": {"reason": "unauthorized"}}]
 ```
 
-The coordinator discards the socket's join record on rejection — the client remains connected but is not subscribed to the topic.
-
 ## Connection-level authentication rejection
 
-`on_connect` in the transport config rejects the WebSocket upgrade before any topic join occurs. Return `Error(mist_transport.ConnectRejected)` to send an HTTP 403 response:
+Reject the entire WebSocket upgrade from `with_on_connect`.
 
 ```gleam
 let config =
   mist_transport.default_config("/socket/websocket")
   |> mist_transport.with_on_connect(fn(req) {
     case extract_token(req) {
-      Ok(_) -> Ok(Nil)
-      Error(_) -> Error(mist_transport.ConnectRejected)  // → HTTP 403, connection refused
+      Ok(_token) -> Ok([])
+      Error(_) -> Error(mist_transport.ConnectRejected)
     }
   })
 ```
 
-The client never receives a WebSocket handshake and cannot send any messages.
+`Error(mist_transport.ConnectRejected)` returns HTTP 403 before the WebSocket handshake completes.
 
 ## Malformed wire messages
 
-beryl parses incoming frames as Phoenix protocol arrays `[join_ref, ref, topic, event, payload]`. Frames that cannot be decoded are dropped silently — no error is sent to the client. This is intentional: malformed frames are treated as protocol violations and do not warrant a reply.
+Beryl still speaks Phoenix array frames: `[join_ref, ref, topic, event, payload]`.
 
-If you need to surface decode errors in your own payload handling, decode the
-`Dynamic` payload with `channel.decode_payload` and return `ReplyError` from
-`handle_in`:
+Frames that cannot be decoded are dropped silently. If the frame was syntactically valid but the payload shape is wrong for your app, return your own explicit error reply from `update`.
 
 ```gleam
-fn handle_in(event, payload, socket) -> HandleResult(MyAssigns) {
-  case event {
-    "create_item" -> {
-      case channel.decode_payload(payload, item_decoder()) {
-        Ok(item) -> {
-          // process item
-          channel.Reply("ok", json.object([#("id", json.string(item.id))]), socket)
-        }
+import beryl/event as event
+import gleam/json
+
+fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+  case ev {
+    event.Message(_topic_name, "create_item", payload, Some(ref)) ->
+      case decode_item(payload) {
+        Ok(item) -> persist_item(model, item, ref)
         Error(_) ->
-          channel.ReplyError(
-            json.object([#("reason", json.string("invalid_payload"))]),
-            socket,
+          event.Next(
+            model,
+            [
+              event.ReplyError(
+                ref,
+                json.object([
+                  #("reason", json.string("invalid_payload")),
+                ]),
+              ),
+            ],
           )
       }
-    }
-    _ -> channel.NoReply(socket)
+
+    _ -> event.Next(model, [])
   }
 }
 ```
 
-`ReplyError` encodes `"status": "error"`, so the client's
-`push.receive("error", ...)` hook fires:
+## Unanswered joins fail closed
+
+Routing now lives entirely in your own `update`. If a `Join` falls through every branch and you return no `event.AcceptJoin` or `event.RejectJoin`, the runtime rejects it automatically at the end of the turn.
+
+The client-visible error payload is:
 
 ```json
-["1", "7", "room:lobby", "phx_reply", {"status": "error", "response": {"reason": "invalid_payload"}}]
+{"reason": "join not acknowledged"}
 ```
 
-:::caution[`Reply` cannot express failure]
-`Reply` always encodes `"status": "ok"`, and its `event` string is discarded —
-the frame is keyed by the original client ref, not by a name. So
-`channel.Reply("error", payload, socket)` does **not** produce an error reply:
-the client's `receive("ok", ...)` hook fires with your error payload, and
-`receive("error", ...)` never runs. Use `ReplyError` for failures and `Push`
-when you want to control the event name.
-:::
+This also applies when your join logic returns `event.Stop(...)` before answering the join.
 
-`ReplyError` needs a client ref to reply to. Returned from `handle_info` or
-`handle_binary`, where no ref exists, the reply is dropped and a warning is
-logged.
+## Heartbeat timeouts and topic closure
 
-## Unmatched topics
-
-If a client sends `phx_join` for a topic that does not match any registered pattern, the coordinator replies with a `phx_reply` carrying `status: "error"` and `response: {"reason": "no_channel_handler"}`. The join is rejected and the client remains connected but unsubscribed. Register handlers for all patterns you expect clients to join.
-
-## Heartbeat timeouts
-
-When a client goes silent beyond `heartbeat_timeout_ms`, the coordinator evicts the socket. All joined channels receive `terminate` with `HeartbeatTimeout`:
+When a socket goes silent past the configured heartbeat timeout, the runtime closes the connection. Every joined topic is delivered to your app as `event.Closed(topic, event.HeartbeatTimeout)`.
 
 ```gleam
-fn terminate(reason, socket) -> Nil {
-  case reason {
-    channel.HeartbeatTimeout -> {
-      // Clean up: remove from presence, release locks, etc.
-      Nil
-    }
-    _ -> Nil
+import beryl/event as event
+import gleam/list
+
+fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+  case ev {
+    event.Closed(topic_name, event.HeartbeatTimeout) ->
+      event.Next(
+        Model(
+          ..model,
+          joined_topics: list.filter(model.joined_topics, fn(topic) {
+            topic != topic_name
+          }),
+        ),
+        [],
+      )
+
+    _ -> event.Next(model, [])
   }
 }
 ```
 
-The client-visible effect is that the WebSocket connection is closed from the server side. Phoenix JS clients will attempt to reconnect automatically.
+## Runtime crashes inside your app logic
+
+Crash behavior depends on which event was being processed:
+
+- a crash while handling `event.Join` rejects that join with `{"reason": "join crashed"}`,
+- a crash while handling `event.Message` or `event.Binary` closes that topic,
+- a crash while handling `event.Info` closes the whole socket,
+- a crash while handling `event.Closed` is logged and teardown continues.
 
 ## Rate limiting
 
-When a client exceeds a configured rate limit, the offending message is **dropped**. No error is sent to the client. Rate limits are applied at three levels:
+When a client exceeds a configured rate limit, the offending message is **dropped**. No automatic error is sent back to the client.
 
 | Limit | Scope | Config function |
 |-------|-------|-----------------|
 | `message_rate` | Per socket, all topics | `beryl.with_message_rate` |
 | `join_rate` | Per socket, join attempts | `beryl.with_join_rate` |
-| `channel_rate` | Per socket+topic | `beryl.with_channel_rate` |
+| `channel_rate` | Per socket plus topic | `beryl.with_channel_rate` |
+| `topic_rate` | First matching topic pattern | `beryl.with_topic_rate` |
 
 ```gleam
 let config =
@@ -136,73 +156,67 @@ let config =
   |> beryl.with_channel_rate(per_second: 50, burst: 100)
 ```
 
-If you need to inform the client that it has been rate-limited, implement application-level tracking in `handle_in` and return an explicit error reply.
-
 ## Group errors
 
-Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(_, GroupError)`:
+Group operations return `Result(_, group.GroupError)` for logical failures such as `GroupAlreadyExists` or `GroupNotFound`.
+
+`group.broadcast` is fire-and-forget and silently does nothing when the named group does not exist.
+
+## Startup and shutdown errors
+
+`beryl.start` can fail with either eager config validation or a runtime startup failure.
 
 ```gleam
-case group.create(groups, name) {
-  Ok(Nil) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // idempotent: treat as success if desired
-  Error(group.GroupNotFound) -> Nil       // shouldn't happen for create
+import beryl/error as beryl_error
+import gleam/io
+
+case beryl.start(config, init: init, update: update) {
+  Ok(sockets) -> run(sockets)
+  Error(beryl.InvalidConfig(error)) -> handle_config_error(error)
+  Error(beryl.RuntimeStartFailed(failure)) ->
+    io.println(beryl_error.describe_start_failure(failure))
 }
 ```
 
-`group.broadcast` is fire-and-forget and never returns an error. If the group does not exist, the call is a no-op.
+`beryl.child_spec` fails only with `beryl.ConfigError`, because it validates before any child process starts.
 
-## Supervisor startup failures
+`beryl.stop(sockets)` returns:
 
-`supervisor.start` returns a `ChildSpecification`, so startup failures are reported when the application starts its root supervisor:
+- `Ok(Nil)` when the Beryl subtree stopped cleanly,
+- `Error(beryl.NotRunning)` when the handle was never started, is restarting, or was already stopped,
+- `Error(beryl.StopTimeout)` when shutdown took too long.
 
-```gleam
-case
-  static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(supervisor.start(config))
-  |> static_supervisor.start()
-{
-  Ok(root) -> run(root)
-  Error(error) -> handle_start_error(error)
-}
-```
+## Typed server-side messages after disconnect
 
-A `heartbeat_timeout_ms` value below 2 is reported as `actor.InitFailed("invalid heartbeat timeout")`. Other child startup failures use the corresponding `actor.StartError`.
-
-## send_info silent ignoring
-
-`beryl.send_info` delivers a message to a channel's `handle_info` callback. If the socket is not connected, the topic is not joined, or no handler matches the topic, the message is **silently ignored** — no error is returned:
+`event.notify(sender, message)` is safe to call from any process. If the socket has already disconnected, the message is ignored.
 
 ```gleam
-// This is always Nil — no error even if socket_id is unknown
-beryl.send_info(channels, socket_id, "room:lobby", my_message)
-```
+import beryl/event
 
-If delivery confirmation is important, implement a reply mechanism in `handle_info` that sends an acknowledgment back via `beryl.broadcast`.
+event.notify(sender, RefreshRequested)
+```
 
 ## Client-visible error shapes
 
-beryl uses the Phoenix wire protocol. Error responses take these shapes:
+Beryl still uses Phoenix-compatible wire frames.
 
 **Join rejected:**
 ```json
 ["1", "1", "room:lobby", "phx_reply", {"status": "error", "response": {}}]
 ```
 
-**Channel error push (server-initiated):**
+**Topic error push:**
 ```json
 [null, null, "room:lobby", "phx_error", {}]
 ```
 
-**Channel closed:**
+**Topic closed:**
 ```json
 [null, null, "room:lobby", "phx_close", {}]
 ```
 
-Phoenix client libraries handle `phx_error` and `phx_close` automatically — the channel is marked as errored or closed, and the client may attempt to rejoin.
-
 ## See also
 
-- [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for connection failures, missed messages, and auth issues
-- [WebSocket Transport guide](/guides/websocket/#authentication) — setting up `on_connect` for connection-level auth
-- [Supervision guide](/guides/supervision/) — crash recovery and production startup to prevent coordinator failures silencing all errors
+- [WebSocket Transport](/guides/websocket/#authentication) — connection rejection and origin policy
+- [Supervision](/guides/supervision/) — standalone vs embedded startup and what a restart actually resets
+- [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for failed joins, missed broadcasts, and auth problems

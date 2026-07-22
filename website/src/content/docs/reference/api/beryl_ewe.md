@@ -92,10 +92,6 @@ Allow every upgrade regardless of `Origin`. This is an explicit opt-out
 
 Configuration for the Ewe WebSocket transport
 
- The optional `on_connect` hook authenticates the connection before the
- upgrade; connect-time request data reaches the app's `init` through the
- `ConnectSeed` (`ConnectInfo.seed`).
-
 ```gleam
 pub type TransportConfig
 ```
@@ -106,14 +102,14 @@ pub type TransportConfig
 
 Create a default transport config with no connect hook.
 
- The resulting config applies the
- [`SameOrigin`](#OriginPolicy) origin policy, which rejects cross-site
+ The resulting config seeds empty (`[]`) `ConnectSeed.metadata` and applies
+ the [`SameOrigin`](#OriginPolicy) origin policy, which rejects cross-site
  WebSocket upgrades before the handshake (CSWSH protection). Same-origin
  upgrades and non-browser clients (no `Origin` header) are admitted without
  configuration.
 
- Add `with_on_connect` to authenticate connections. Use
- `with_allowed_origins` to pin an explicit allow-list, or
+ Add `with_on_connect` to authenticate connections and/or seed connect
+ metadata. Use `with_allowed_origins` to pin an explicit allow-list, or
  `with_allow_all_origins` to opt out of origin checking entirely.
 
 ```gleam
@@ -143,7 +139,7 @@ Build a combined request handler that serves both WebSocket channels and
 
 ```gleam
 pub fn handler(
-  beryl.Channels,
+  beryl.Sockets,
   TransportConfig,
   fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
 ) -> fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
@@ -155,7 +151,7 @@ Upgrade a request to WebSocket if it matches the configured path
 
  Usage in your Ewe handler:
  ```gleam
- fn handle_request(req: Request(Connection), channels: Channels) -> Response(ResponseBody) {
+ fn handle_request(req: Request(Connection), channels: Sockets) -> Response(ResponseBody) {
    use <- ewe_transport.upgrade(req, channels, ewe_transport.default_config("/socket"))
    // Fall through to regular HTTP routing
    case request.path_segments(req) {
@@ -197,7 +193,7 @@ Upgrade a request to WebSocket if it matches the configured path
 ```gleam
 pub fn upgrade(
   request.Request(http1.Connection),
-  beryl.Channels,
+  beryl.Sockets,
   TransportConfig,
   fn() -> response.Response(ewe.ResponseBody)
 ) -> response.Response(ewe.ResponseBody)
@@ -208,13 +204,15 @@ pub fn upgrade(
 Alternative: upgrade any request to WebSocket (caller handles path matching)
 
  Note: This function does not invoke the `on_connect` callback from
- `TransportConfig`. If you need authentication, either use `upgrade` with
- a full config or call your auth check before this function.
+ `TransportConfig`. Sockets upgraded this way start with empty (`[]`)
+ `ConnectSeed.metadata`. If you need authentication or seeded metadata,
+ either use `upgrade` with a full config or call your auth check before
+ this function.
 
 ```gleam
 pub fn upgrade_connection(
   request.Request(http1.Connection),
-  beryl.Channels
+  beryl.Sockets
 ) -> response.Response(ewe.ResponseBody)
 ```
 
@@ -260,14 +258,18 @@ pub fn with_allowed_origins(
 Set a socket-level connect/authentication callback on the transport config.
 
  The callback receives the HTTP request before the WebSocket upgrade and
- runs once per socket. Return `Ok(Nil)` to allow the connection, or
- `Error(ConnectRejected)` to reject it with a 403 Forbidden response
- before any topic join occurs. Connect-time request data (path, query,
- headers) reaches the app's `init` via `ConnectInfo.seed`.
+ runs once per socket. Return `Ok(metadata)` to allow the connection and
+ seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
+ the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
+ reject the connection with a 403 Forbidden response before any channel
+ join occurs.
+
+ Callback order and duplicate keys are preserved verbatim in
+ `ConnectSeed.metadata`; this transport never logs metadata values.
 
 ```gleam
 pub fn with_on_connect(
   TransportConfig,
-  fn(request.Request(http1.Connection)) -> Result(Nil, ConnectError)
+  fn(request.Request(http1.Connection)) -> Result(List(#(String, String)), ConnectError)
 ) -> TransportConfig
 ```

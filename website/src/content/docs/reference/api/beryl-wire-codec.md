@@ -11,18 +11,18 @@ description: Pluggable wire codec for beryl.
 
 Pluggable wire codec for beryl.
 
- A `Codec` plugs the coordinator into any over-the-wire framing. The
+ A `Codec` plugs the runtime into any over-the-wire framing. The
  canonical implementation is `beryl/wire.phoenix_codec()`, which ships
  the Phoenix array format (`[join_ref, ref, topic, event, payload]`).
 
  To run beryl over your own framing, build a `Codec` value and pass it
- to `beryl.config(codec)`. The coordinator decodes inbound text via
+ to `beryl.config(codec)`. The runtime decodes inbound text via
  `codec.decode_text`, optionally decodes inbound binary via
  `codec.decode_binary`, dispatches based on the structural `InboundKind`,
  and produces outbound text or binary frames via `codec.encode_*` helpers.
 
  All codecs must normalise inbound traffic to the `Inbound` shape so
- the coordinator can stay framing-agnostic.
+ the runtime can stay framing-agnostic.
 
 ## Types
 
@@ -31,7 +31,7 @@ Pluggable wire codec for beryl.
 A wire codec.
 
  `Codec` is opaque; build one with `new` (and, for binary support,
- `with_binary_decoder`). The coordinator reads the codec's behaviour
+ `with_binary_decoder`). The runtime reads the codec's behaviour
  through the `@internal` accessors below.
 
 ```gleam
@@ -155,7 +155,7 @@ The callback failed (`"error"` in Phoenix framing).
 ### `format_decode_error`
 
 Format a `DecodeError` as a human-readable string. Used by the
- coordinator's log messages and by `wire.format_decode_error`.
+ runtime's log messages and by `wire.format_decode_error`.
 
 ```gleam
 pub fn format_decode_error(DecodeError) -> String
@@ -235,8 +235,8 @@ Build a text-only wire codec.
  - `encode_heartbeat_reply`: encode a heartbeat reply for a given client `ref`.
 
  The resulting codec has no binary decoder; binary WebSocket frames are
- routed to `channel.handle_binary` as raw data. Add a binary decoder with
- `with_binary_decoder`.
+ delivered to the app's `update` as a raw `Binary` event. Add a binary
+ decoder with `with_binary_decoder`.
 
 ```gleam
 pub fn new(
@@ -252,8 +252,8 @@ pub fn new(
 Attach a binary decoder to a codec.
 
  When set, binary WebSocket frames are decoded into a normalised `Inbound`
- via `decode_binary` instead of being routed to `channel.handle_binary` as
- raw data.
+ via `decode_binary` instead of being delivered to the app's `update` as a
+ raw `Binary` event.
 
 ```gleam
 pub fn with_binary_decoder(
@@ -266,7 +266,7 @@ pub fn with_binary_decoder(
 
 Attach a channel-close encoder to a codec.
 
- When set, the coordinator emits this frame to a client whenever one of
+ When set, the runtime emits this frame to a client whenever one of
  its channels terminates gracefully (leave, server shutdown, heartbeat
  eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
  leave the joined state instead of waiting out push timeouts.
@@ -282,7 +282,7 @@ pub fn with_close_encoder(
 
 Attach a channel-error encoder to a codec.
 
- When set, the coordinator emits this frame to a client whenever one of
+ When set, the runtime emits this frame to a client whenever one of
  its channels terminates abnormally (crashed or stopped with an error):
  `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
  automatic rejoin.
