@@ -13,6 +13,7 @@ internal_modules = [
   "beryl/log",
   "beryl/rate_limit",
   "beryl/telemetry",
+  "beryl/runtime",
 ]
 
 [dependencies]
