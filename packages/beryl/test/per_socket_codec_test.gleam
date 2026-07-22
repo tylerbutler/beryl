@@ -96,6 +96,22 @@ pub fn socket_codec_overrides_configured_codec_test() {
   push |> string.starts_with("TAGGED-PUSH|room:lobby|echoed") |> should.be_true
 }
 
+// Runtime-cleanup replays must keep protocol replies on the socket's
+// negotiated codec rather than falling back to the app-wide codec.
+pub fn socket_codec_encodes_heartbeat_reply_test() {
+  let channels = start_sockets()
+  let sent = connect(channels, "tagged-heartbeat", option.Some(tagged_codec()))
+
+  route(
+    channels,
+    "tagged-heartbeat",
+    "[null,\"heartbeat-ref\",\"phoenix\",\"heartbeat\",{}]",
+  )
+
+  let assert Ok(reply) = process.receive(sent, 500)
+  reply |> should.equal("TAGGED-HB")
+}
+
 // A socket announced without a codec inherits the configured one.
 pub fn socket_without_codec_inherits_configured_codec_test() {
   let channels = start_sockets()

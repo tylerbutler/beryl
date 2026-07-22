@@ -17,13 +17,13 @@ import beryl/socket.{type Effect, type Ref}
 import beryl/topic as beryl_topic
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
+import example_helpers/payload
+import example_helpers/reply
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
 import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
-import gleam/result
 import gleam/string
 
 /// Maximum byte size of a `sync_state` payload's `state` field. Protects
@@ -63,7 +63,7 @@ pub fn join(
     Ok([tenant, document]) ->
       // Topic-level auth: the join payload must carry a `token`
       // HMAC-signed for the tenant whose document is being joined.
-      case extract_token(payload) {
+      case payload.string_field(payload, "token") {
         Error(_) -> #(None, [
           socket.RejectJoin(ref, error_payload("missing_token")),
         ])
@@ -208,7 +208,7 @@ fn sync_state(
   payload: Dynamic,
   ref: Option(Ref),
 ) -> #(Model, List(Effect)) {
-  case extract_state(payload) {
+  case payload.string_field(payload, "state") {
     Ok(state) ->
       case string.byte_size(state) > max_state_bytes {
         True -> #(model, reply_error("state_too_large", ref))
@@ -231,28 +231,7 @@ fn sync_state(
 /// The channel-module API sent state errors as an ok-status reply with an
 /// error payload (and dropped them without a ref); mirror that.
 fn reply_error(code: String, ref: Option(Ref)) -> List(Effect) {
-  case ref {
-    Some(r) -> [socket.ReplyOk(r, error_payload(code))]
-    None -> []
-  }
-}
-
-fn extract_token(payload: Dynamic) -> Result(String, Nil) {
-  let decoder = {
-    use token <- decode.field("token", decode.string)
-    decode.success(token)
-  }
-  decode.run(payload, decoder)
-  |> result.replace_error(Nil)
-}
-
-fn extract_state(payload: Dynamic) -> Result(String, Nil) {
-  let decoder = {
-    use state <- decode.field("state", decode.string)
-    decode.success(state)
-  }
-  decode.run(payload, decoder)
-  |> result.replace_error(Nil)
+  reply.ok(ref, error_payload(code))
 }
 
 fn error_payload(code: String) -> json.Json {

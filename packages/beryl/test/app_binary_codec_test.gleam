@@ -14,6 +14,7 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -180,7 +181,7 @@ fn decode_binary_frame(
 fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
   case string.split(raw, "|") {
     ["J", join_ref, ref, topic, payload_json] -> {
-      use payload <- result_try(decode_payload(payload_json))
+      use payload <- result.try(decode_payload(payload_json))
       Ok(codec.inbound(
         join_ref: Some(join_ref),
         ref: Some(ref),
@@ -190,7 +191,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
       ))
     }
     ["E", ref, topic, event, payload_json] -> {
-      use payload <- result_try(decode_payload(payload_json))
+      use payload <- result.try(decode_payload(payload_json))
       Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
@@ -207,16 +208,6 @@ fn decode_payload(payload_json: String) -> Result(Dynamic, codec.DecodeError) {
   case json.parse(from: payload_json, using: decode.dynamic) {
     Ok(payload) -> Ok(payload)
     Error(_) -> Error(codec.InvalidJson("Invalid payload JSON"))
-  }
-}
-
-fn result_try(
-  result: Result(a, codec.DecodeError),
-  next: fn(a) -> Result(b, codec.DecodeError),
-) -> Result(b, codec.DecodeError) {
-  case result {
-    Ok(value) -> next(value)
-    Error(error) -> Error(error)
   }
 }
 

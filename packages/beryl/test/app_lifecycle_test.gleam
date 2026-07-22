@@ -6,9 +6,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
-import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit
@@ -21,24 +19,6 @@ pub fn main() {
 
 // A control character (U+0001) that topic-pattern validation rejects.
 const control_char = "\u{0001}"
-
-/// A minimal app system that accepts every join. Used to exercise the
-/// lifecycle plumbing without any topic-specific behavior.
-fn accepting_init(
-  _info: socket.ConnectInfo(Nil),
-) -> #(Nil, List(socket.Effect)) {
-  #(Nil, [])
-}
-
-fn accepting_update(
-  model: Nil,
-  ev: socket.Input(Nil),
-) -> socket.Next(Nil, Nil) {
-  case ev {
-    Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-    _ -> Next(model, [])
-  }
-}
 
 // ── validate_config ─────────────────────────────────────────────────────────
 
@@ -82,8 +62,8 @@ pub fn start_rejects_invalid_config_test() {
   h.start_app(
     beryl.config(wire.phoenix_codec())
       |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 1),
-    init: accepting_init,
-    update: accepting_update,
+    init: h.accepting_init,
+    update: h.accepting_update,
   )
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
@@ -97,8 +77,8 @@ pub fn child_spec_rejects_invalid_config_test() {
           per_second: 5,
           burst: 10,
         ),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   case result {
@@ -113,8 +93,8 @@ pub fn child_spec_handle_is_usable_before_and_after_start_test() {
   let assert Ok(#(sockets, spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   // Before the owning supervisor starts, the runtime is not running: the
@@ -154,8 +134,8 @@ pub fn stop_is_idempotent_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
@@ -168,8 +148,8 @@ pub fn stop_before_start_returns_not_running_test() {
   let assert Ok(#(sockets, _spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   // The subtree was never started, so stop is a safe no-op.
@@ -181,8 +161,8 @@ pub fn child_spec_admission_fails_before_start_test() {
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(1),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   // The limiter is supervised inside the not-yet-started subtree, so

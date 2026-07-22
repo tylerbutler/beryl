@@ -304,7 +304,7 @@ pub fn broadcast_from_socket(
   })
 }
 
-// nolint: unused_exports -- public PubSub API surface alongside broadcast/broadcast_from; intended for downstream consumers
+// nolint: unused_exports -- public PubSub API intended for downstream consumers
 /// Broadcast a message to local subscribers only (current node)
 pub fn local_broadcast(
   ps: PubSub(payload),

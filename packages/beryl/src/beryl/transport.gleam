@@ -50,6 +50,7 @@ pub type Inbound =
 pub type DecodeError =
   codec.DecodeError
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Build connection metadata for a WebSocket upgrade.
 pub fn connect_seed(
   path path: String,
@@ -65,11 +66,13 @@ pub fn connect_seed(
   )
 }
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Decode an inbound text frame with a codec.
 pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
   codec.decode_text(codec)
 }
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Return the codec's optional binary decoder.
 pub fn decode_binary(
   codec: Codec,
@@ -77,11 +80,13 @@ pub fn decode_binary(
   codec.decode_binary(codec)
 }
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Format a wire decode failure for transport logging.
 pub fn format_decode_error(error: DecodeError) -> String {
   codec.format_decode_error(error)
 }
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Acquire a configured connection slot.
 pub fn acquire_connection_slot(
   sockets: Sockets,
@@ -90,16 +95,19 @@ pub fn acquire_connection_slot(
   beryl.acquire_connection_slot(sockets, ip)
 }
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Bind a connection slot to the current transport process.
 pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
   beryl.bind_connection_slot(permit)
 }
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Release a held connection slot.
 pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
   beryl.release_connection_slot(permit)
 }
 
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Return the configured maximum inbound frame size.
 pub fn max_inbound_frame_bytes(sockets: Sockets) -> Int {
   beryl.max_inbound_frame_bytes(sockets)
@@ -143,7 +151,7 @@ pub opaque type Telemetry {
   Telemetry(enabled: Bool, transport: telemetry.Transport)
 }
 
-// nolint: unused_exports -- transport SPI
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Create a telemetry context from the channels configuration.
 pub fn telemetry(
   channels: Sockets,
@@ -158,14 +166,14 @@ pub fn telemetry(
   )
 }
 
-// nolint: unused_exports -- transport SPI
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Start a timed transport operation. Returns a zero sentinel when disabled.
 pub fn telemetry_start(context: Telemetry) -> Int {
   use <- bool.guard(when: !context.enabled, return: 0)
   telemetry.start_time()
 }
 
-// nolint: unused_exports -- transport SPI
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Emit exactly one terminal matched-upgrade event.
 pub fn telemetry_upgrade_stop(
   context: Telemetry,
@@ -190,7 +198,7 @@ pub fn telemetry_upgrade_stop(
   )
 }
 
-// nolint: unused_exports -- transport SPI
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Emit exactly one terminal inbound-frame event.
 pub fn telemetry_frame_stop(
   context: Telemetry,
@@ -220,7 +228,6 @@ pub fn telemetry_frame_stop(
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce that a socket's connection has closed.
 pub fn socket_disconnected(
   sockets sockets: Sockets,
@@ -231,7 +238,6 @@ pub fn socket_disconnected(
 
 // --- Inbound routing ---
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Route a transport-decoded inbound message to the runtime. Decode in
 /// the connection process (see `active_codec`) so parse cost and malformed
 /// input never reach the shared runtime.
@@ -243,7 +249,6 @@ pub fn route_decoded(
   beryl.transport_route_decoded(sockets, socket_id, message)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Route a transport-decoded binary message while preserving its binary
 /// frame classification for runtime telemetry and rate accounting.
 ///
@@ -257,7 +262,6 @@ pub fn route_decoded_binary(
   beryl.transport_route_decoded_binary(sockets, socket_id, message)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Route a raw binary frame, for codecs without a binary decoder (fans out
 /// to the socket's joined topics as `Binary` events delivered to `update`).
 pub fn route_binary(
@@ -270,7 +274,6 @@ pub fn route_binary(
 
 // --- Configuration ---
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// The wire codec configured for these sockets. Transports decode inbound
 /// frames with it in the connection process.
 pub fn active_codec(sockets: Sockets) -> Codec {
@@ -286,7 +289,7 @@ pub opaque type RateLimiter {
   RateLimiter(bucket: rate_limit.Bucket)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Create a fresh per-connection message limiter, `None` when no message
 /// rate is configured.
 pub fn new_message_limiter(sockets: Sockets) -> Option(RateLimiter) {
@@ -294,7 +297,7 @@ pub fn new_message_limiter(sockets: Sockets) -> Option(RateLimiter) {
   |> option.map(fn(config) { RateLimiter(rate_limit.new_bucket(config)) })
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Take one token; returns the updated limiter and whether the frame is
 /// admitted. Transports drop the frame when `False`.
 pub fn take_token(limiter: RateLimiter) -> #(RateLimiter, Bool) {
@@ -310,13 +313,13 @@ pub opaque type Logger {
   Logger(inner: log.Logger)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Create a named transport logger (e.g. `"beryl.transport.mist"`).
 pub fn logger(name: String) -> Logger {
   Logger(internal.logger(name))
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Log a warning with structured metadata.
 pub fn log_warning(
   logger logger: Logger,
@@ -346,7 +349,6 @@ pub type ConnectionOwner {
   OwnerUnavailable
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Register a socket and its closer against the captured connection owner.
 ///
 /// For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
@@ -394,7 +396,6 @@ pub fn admit_socket(
   }
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Determine how a newly accepted connection is owned. Call this in the
 /// connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
 /// exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the

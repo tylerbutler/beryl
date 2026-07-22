@@ -2,7 +2,6 @@ import app_test_helpers as h
 import aquamarine
 import aquamarine/error as aquamarine_error
 import aquamarine/phoenix
-import aquamarine/transport
 import beryl
 import beryl/socket
 import beryl/wire
@@ -56,7 +55,6 @@ pub fn aquamarine_client_joins_real_beryl_server_test() {
 
   let assert Ok(channel) =
     aquamarine.connect(
-      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -145,7 +143,6 @@ pub fn aquamarine_client_sees_join_rejection_test() {
 
   let result =
     aquamarine.connect(
-      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -165,7 +162,6 @@ pub fn aquamarine_push_gets_server_reply_test() {
 
   let assert Ok(channel) =
     aquamarine.connect(
-      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -174,13 +170,14 @@ pub fn aquamarine_push_gets_server_reply_test() {
       codec: phoenix.codec(),
     )
 
-  aquamarine.push(
-    channel,
-    "say",
-    json.object([#("body", json.string("hello"))]),
-  )
+  let assert Ok(Nil) =
+    aquamarine.push(
+      channel,
+      "say",
+      json.object([#("body", json.string("hello"))]),
+    )
 
-  let assert Ok(incoming) = aquamarine.receive(channel, 1000)
+  let assert Ok(incoming) = aquamarine.receive(channel)
   incoming.event |> should.equal(phoenix.codec().reply_event)
   incoming.topic |> should.equal("test:echo")
   decode_body(incoming.payload) |> should.equal(Ok("hello"))
@@ -195,7 +192,6 @@ pub fn aquamarine_client_receives_server_broadcast_test() {
 
   let assert Ok(channel) =
     aquamarine.connect(
-      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -214,7 +210,7 @@ pub fn aquamarine_client_receives_server_broadcast_test() {
     json.object([#("n", json.int(42))]),
   )
 
-  let assert Ok(incoming) = aquamarine.receive(channel, 1000)
+  let assert Ok(incoming) = aquamarine.receive(channel)
   incoming.event |> should.equal("tick")
   incoming.topic |> should.equal("test:lobby")
   decode_n(incoming.payload) |> should.equal(Ok(42))
@@ -229,7 +225,6 @@ pub fn aquamarine_close_terminates_joined_channel_test() {
 
   let assert Ok(channel) =
     aquamarine.connect(
-      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -342,7 +337,8 @@ fn receive_terminated(
   topic: String,
 ) -> Result(socket.StopReason, Nil) {
   case process.receive(events, 500) {
-    Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic -> Ok(reason)
+    Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic ->
+      Ok(reason)
     _ -> Error(Nil)
   }
 }

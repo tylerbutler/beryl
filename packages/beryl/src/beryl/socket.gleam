@@ -43,7 +43,6 @@ type RefKind {
   MessageRef
 }
 
-// nolint: unused_exports -- package-internal constructors/accessors for the runtime; hidden from public docs with @internal
 @internal
 pub fn make_join_ref(
   topic topic: String,
@@ -205,7 +204,6 @@ pub opaque type Sender(msg) {
   Sender(send: fn(msg) -> Nil)
 }
 
-// nolint: unused_exports -- package-internal constructor for the runtime; hidden from public docs with @internal
 @internal
 pub fn make_sender(send: fn(msg) -> Nil) -> Sender(msg) {
   Sender(send)
