@@ -14,22 +14,23 @@
 ////    slot with `beryl.release_connection_slot`.
 
 import beryl.{type Channels}
-import beryl/coordinator
+import beryl/event.{type ConnectSeed}
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
 import beryl/wire/codec.{type Codec, type Inbound}
 import gleam/dynamic.{type Dynamic}
-import gleam/erlang/process
-import gleam/option.{type Option, None}
+import gleam/option.{type Option}
 import gleam/result
 
 // --- Socket lifecycle ---
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce a newly connected socket. `send`/`send_binary` deliver outbound
-/// frames on this connection; `assigns` seeds connect-time socket assigns
-/// (type-erased internally) that channels see at join. Call `register_closer`
+/// frames on this connection. `assigns` seeds connect-time socket assigns
+/// (type-erased internally) for channel-module systems; `seed` carries the
+/// upgrade request's connection data for app-dispatch systems (delivered to
+/// the app's `init` as `ConnectInfo.seed`). Call `register_closer`
 /// immediately after this.
 pub fn socket_connected(
   channels channels: Channels,
@@ -37,16 +38,15 @@ pub fn socket_connected(
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   assigns assigns: assigns,
+  seed seed: ConnectSeed,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      socket_id,
-      send,
-      send_binary,
-      None,
-      erase(assigns),
-    ),
+  beryl.transport_socket_connected(
+    channels,
+    socket_id,
+    send,
+    send_binary,
+    erase(assigns),
+    seed,
   )
 }
 
@@ -59,10 +59,7 @@ pub fn register_closer(
   socket_id socket_id: String,
   close close: fn() -> Nil,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.RegisterCloser(socket_id, close),
-  )
+  beryl.transport_register_closer(channels, socket_id, close)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -71,10 +68,7 @@ pub fn socket_disconnected(
   channels channels: Channels,
   socket_id socket_id: String,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketDisconnected(socket_id),
-  )
+  beryl.transport_socket_disconnected(channels, socket_id)
 }
 
 // --- Inbound routing ---
@@ -88,11 +82,7 @@ pub fn route_decoded(
   socket_id socket_id: String,
   message message: Inbound,
 ) -> Nil {
-  coordinator.route_decoded(
-    beryl.coordinator_subject(channels),
-    socket_id,
-    message,
-  )
+  beryl.transport_route_decoded(channels, socket_id, message)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -103,7 +93,7 @@ pub fn route_binary(
   socket_id socket_id: String,
   data data: BitArray,
 ) -> Nil {
-  coordinator.route_binary(beryl.coordinator_subject(channels), socket_id, data)
+  beryl.transport_route_binary(channels, socket_id, data)
 }
 
 // --- Configuration ---

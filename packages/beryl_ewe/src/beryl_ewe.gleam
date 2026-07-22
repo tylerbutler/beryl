@@ -9,6 +9,7 @@
 //// only beryl's public `beryl/transport` SPI.
 
 import beryl.{type Channels}
+import beryl/event
 import beryl/transport
 import beryl/wire/codec
 import ewe.{type Connection, type ResponseBody, type WebsocketConnection}
@@ -443,6 +444,17 @@ pub fn upgrade_connection(
   do_upgrade(request, channels, Nil, None)
 }
 
+/// Assemble the connection seed delivered to an app-dispatch system's
+/// `init` (`ConnectInfo.seed`). Channel-module systems ignore it.
+fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
+  event.ConnectSeed(
+    path: request.path,
+    query: request.get_query(request) |> result.unwrap([]),
+    headers: request.headers,
+    metadata: [],
+  )
+}
+
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
@@ -452,6 +464,7 @@ fn do_upgrade(
 ) -> Response(ResponseBody) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
   let active_codec = transport.active_codec(channels)
+  let seed = connect_seed(request)
   let response =
     ewe.upgrade_websocket(
       request,
@@ -461,6 +474,7 @@ fn do_upgrade(
           base_selector,
           channels,
           connect_assigns,
+          seed,
           connection_permit,
           max_inbound_frame_bytes,
           active_codec,
@@ -490,6 +504,7 @@ fn on_init(
   base_selector: Selector(SendRequest),
   channels: Channels,
   connect_assigns: assigns,
+  seed: event.ConnectSeed,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
   active_codec: codec.Codec,
@@ -526,6 +541,7 @@ fn on_init(
     send: send_fn,
     send_binary: send_binary_fn,
     assigns: connect_assigns,
+    seed: seed,
   )
 
   // Let the coordinator actively close this connection (heartbeat eviction,
