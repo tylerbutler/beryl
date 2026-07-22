@@ -230,7 +230,7 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 | PubSub | **Complete** | pg-backed, local + distributed broadcast |
 | Presence CRDT | **Complete** | Pure state module, property-based tested |
 | Presence actor | **Complete** | Actor wraps CRDT; periodic delta replication via PubSub |
-| Supervisor | **Complete** | Rest-for-one strategy, child_spec, validation |
+| Supervisor | **Complete** | One-for-one + nested rest-for-one strategy, child specification via `start`, validation |
 | Groups | **Complete** | Named topic collections with broadcast |
 | Mist transport | **Complete** | WebSocket upgrade + lifecycle management, no Wisp dependency |
 | Binary transport | **Complete** | Raw BitArray frames, opt-in via `with_handle_binary` |

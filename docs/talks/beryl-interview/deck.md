@@ -191,7 +191,7 @@ The diagram — explain rest-for-one concretely, top to bottom:
   their view of the world routed through it. Fresh, consistent state
   for all three — no half-alive system.
 
-beryl embeds into YOUR app's supervision tree via `child_spec`, so
+beryl embeds into YOUR app's supervision tree via `supervisor.start`, so
 channels recover alongside the rest of your application — same
 mechanism, one tree.
 
@@ -351,7 +351,7 @@ Walk it line by line — this is the whole server, not an excerpt:
    both jobs.
 4. `process.sleep_forever()` — keeps main alive for a demo. In a real
    app you'd skip this and put beryl under your OTP supervision tree
-   via `beryl/supervisor.child_spec` — there's a supervision guide.
+   via `beryl/supervisor.start` — there's a supervision guide.
 
 Caveat to say out loud so nobody copies it blindly: `let assert Ok(..)`
 is demo-grade "crash if startup fails" — which, per the supervision

@@ -1,6 +1,7 @@
 import beryl
 import beryl/group
 import beryl/presence
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/chat_channel
@@ -15,6 +16,8 @@ import envoy
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/option.{Some}
+import gleam/otp/static_supervisor
 import gleam/result
 import mist
 import showcase/router
@@ -22,21 +25,28 @@ import showcase/router
 pub fn main() {
   // Single beryl instance, rate-limited using cursors' tighter knobs
   // (cursors emits the most messages per second of the three examples).
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_message_rate(per_second: 30, burst: 60)
-    |> beryl.with_join_rate(per_second: 5, burst: 10)
-    |> beryl.with_channel_rate(per_second: 10, burst: 20)
-
-  let assert Ok(channels) = beryl.start(config)
-
   // Shared presence actor — each example's handler scopes presence to its
   // own topic namespace, so a single actor is safe.
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
+  let beryl_config =
+    supervisor.config(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 30, burst: 60)
+      |> beryl.with_join_rate(per_second: 5, burst: 10)
+      |> beryl.with_channel_rate(per_second: 10, burst: 20),
+    )
+    |> supervisor.with_presence(presence.default_config("node1"))
+    |> supervisor.with_groups()
+
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
+
+  let channels = supervisor.channels(beryl_config)
+  let assert Some(presence_actor) = supervisor.presence(beryl_config)
 
   // Chatrooms-specific state.
-  let assert Ok(groups) = group.start()
+  let assert Some(groups) = supervisor.groups(beryl_config)
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
   let assert Ok(_) = group.add(groups, "public", "room:random")

@@ -17,30 +17,42 @@
 ////
 //// ## Quick Start
 ////
+//// beryl doesn't start an unmanaged process — `beryl/supervisor` builds a
+//// child specification for your application's own OTP supervisor.
+////
 //// ```gleam
 //// import beryl
 //// import beryl/channel
-//// import beryl/pubsub
-//// import beryl/presence
 //// import beryl/group
+//// import beryl/presence
+//// import beryl/pubsub
+//// import beryl/supervisor
 //// import beryl/wire
+//// import gleam/option.{Some}
+//// import gleam/otp/static_supervisor
 ////
 //// pub fn main() {
 ////   // Optional: start PubSub for distributed messaging
 ////   let ps = pubsub.start(pubsub.default_config())
 ////
-////   // Start channels system (with or without PubSub)
-////   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-////   let assert Ok(channels) = beryl.start(config)
+////   // Configure channels (with presence and groups), then add beryl's
+////   // child specification to your application supervisor.
+////   let beryl_config =
+////     supervisor.config(beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps))
+////     |> supervisor.with_presence(presence.default_config("node1"))
+////     |> supervisor.with_groups()
+////
+////   let assert Ok(_root) =
+////     static_supervisor.new(static_supervisor.OneForOne)
+////     |> static_supervisor.add(supervisor.start(beryl_config))
+////     |> static_supervisor.start()
+////
+////   let channels = supervisor.channels(beryl_config)
+////   let assert Some(groups) = supervisor.groups(beryl_config)
 ////
 ////   // Register a channel handler
 ////   let _ = beryl.register(channels, "room:*", room_channel.new())
 ////
-////   // Start presence tracking
-////   let assert Ok(p) = presence.start(presence.default_config("node1"))
-////
-////   // Start channel groups
-////   let assert Ok(groups) = group.start()
 ////   let assert Ok(Nil) = group.create(groups, "team:eng")
 ////   let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
 ////

@@ -1,4 +1,5 @@
 import beryl
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
 import collab_docs/auth
@@ -7,12 +8,21 @@ import collab_docs/doc_store
 import collab_docs/router
 import gleam/erlang/process
 import gleam/io
+import gleam/otp/static_supervisor
 import mist
 
 pub fn main() {
   let secret = auth.new_secret()
   let assert Ok(store) = doc_store.start()
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+
+  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
+
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
+
+  let channels = supervisor.channels(beryl_config)
   let handler = channel.new_handler(channels, store, secret)
   let assert Ok(_) = beryl.register(channels, "document:*:*", handler)
 
