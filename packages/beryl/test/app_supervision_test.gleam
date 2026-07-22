@@ -232,7 +232,6 @@ pub fn update_crash_runs_socket_close_callback_test() {
     socket_id: "s1",
     send: fn(_message) { Ok(Nil) },
     send_binary: fn(_data) { Ok(Nil) },
-    assigns: Nil,
     seed: event.empty_seed(),
   )
   transport.register_closer(channels: sockets, socket_id: "s1", close: fn() {

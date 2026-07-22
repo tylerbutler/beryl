@@ -1534,14 +1534,23 @@ pub fn transport_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns: Dynamic,
   seed: event.ConnectSeed,
 ) -> Nil {
   case channels {
+    // Legacy channel-module systems have no public path for connect-time
+    // assigns (the transport SPI is monomorphic over `ConnectSeed`); seed
+    // `Nil` privately rather than let an arbitrary typed value cross the
+    // public SPI.
     Channels(coordinator: coordinator_subject, ..) ->
       process.send(
         coordinator_subject,
-        coordinator.SocketConnected(socket_id, send, send_binary, None, assigns),
+        coordinator.SocketConnected(
+          socket_id,
+          send,
+          send_binary,
+          None,
+          dynamic.nil(),
+        ),
       )
     AppChannels(app: app, ..) ->
       app.socket_connected(socket_id, send, send_binary, seed)

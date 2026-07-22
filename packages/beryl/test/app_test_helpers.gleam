@@ -18,6 +18,18 @@ pub fn connect(
   channels: beryl.Channels,
   socket_id: String,
 ) -> process.Subject(String) {
+  connect_with_seed(channels, socket_id, event.empty_seed())
+}
+
+/// Connect a socket with an explicit `ConnectSeed` (e.g. to assert that
+/// transport-provided metadata reaches the app's `init` via
+/// `ConnectInfo.seed`), returning the subject that captures its outbound
+/// text frames.
+pub fn connect_with_seed(
+  channels: beryl.Channels,
+  socket_id: String,
+  seed: event.ConnectSeed,
+) -> process.Subject(String) {
   let sent = process.new_subject()
   transport.socket_connected(
     channels: channels,
@@ -27,8 +39,7 @@ pub fn connect(
       Ok(Nil)
     },
     send_binary: fn(_data) { Ok(Nil) },
-    assigns: Nil,
-    seed: event.empty_seed(),
+    seed: seed,
   )
   process.sleep(10)
   sent
