@@ -39,6 +39,24 @@ fn connect(
   sent
 }
 
+fn notifying_instance(
+  handled: process.Subject(String),
+) -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
+    handle_in: fn(event, _payload, _ctx) {
+      process.send(handled, event)
+      coordinator.NoReplyErased(next: notifying_instance(handled))
+    },
+    handle_binary: fn(_data, _ctx) {
+      coordinator.NoReplyErased(next: notifying_instance(handled))
+    },
+    handle_info: fn(_message, _ctx) {
+      coordinator.NoReplyErased(next: notifying_instance(handled))
+    },
+    terminate: fn(_reason, _ctx) { Nil },
+  )
+}
+
 fn register_notifying_channel(
   coord: process.Subject(coordinator.Message),
   handled: process.Subject(String),
@@ -47,17 +65,12 @@ fn register_notifying_channel(
     coordinator.ChannelHandler(
       id: 0,
       pattern: topic.parse_pattern("*"),
-      join: fn(_topic, _payload, _ctx) {
-        coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
+      join: fn(_topic, _payload, _connect_assigns, _ctx) {
+        coordinator.JoinOkErased(
+          reply: None,
+          channel: notifying_instance(handled),
+        )
       },
-      handle_in: fn(event, _payload, ctx) {
-        process.send(handled, event)
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      handle_binary: fn(_data, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      terminate: fn(_reason, _ctx) { Nil },
     )
   let reply = process.new_subject()
   process.send(coord, coordinator.RegisterChannel("*", handler, reply))

@@ -359,6 +359,29 @@ pub fn start_named_validates_heartbeat_timeout_test() {
 }
 
 /// Helper: register a channel handler that sends terminate reason to a subject
+fn terminate_notifying_instance(
+  terminate_subject: process.Subject(channel.StopReason),
+) -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
+    handle_in: fn(_event, _payload, _ctx) {
+      coordinator.NoReplyErased(next: terminate_notifying_instance(
+        terminate_subject,
+      ))
+    },
+    handle_binary: fn(_data, _ctx) {
+      coordinator.NoReplyErased(next: terminate_notifying_instance(
+        terminate_subject,
+      ))
+    },
+    handle_info: fn(_message, _ctx) {
+      coordinator.NoReplyErased(next: terminate_notifying_instance(
+        terminate_subject,
+      ))
+    },
+    terminate: fn(reason, _ctx) { process.send(terminate_subject, reason) },
+  )
+}
+
 fn register_handler_with_terminate(
   coord: process.Subject(coordinator.Message),
   pattern: String,
@@ -368,16 +391,12 @@ fn register_handler_with_terminate(
     coordinator.ChannelHandler(
       id: 0,
       pattern: topic.parse_pattern(pattern),
-      join: fn(_topic, _payload, _ctx) {
-        coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
+      join: fn(_topic, _payload, _connect_assigns, _ctx) {
+        coordinator.JoinOkErased(
+          reply: None,
+          channel: terminate_notifying_instance(terminate_subject),
+        )
       },
-      handle_in: fn(_event, _payload, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      handle_binary: fn(_data, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      terminate: fn(reason, _ctx) { process.send(terminate_subject, reason) },
     )
 
   let reply_subject = process.new_subject()

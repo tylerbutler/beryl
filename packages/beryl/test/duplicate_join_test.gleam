@@ -19,6 +19,27 @@ pub fn main() {
   gleeunit.main()
 }
 
+fn replying_instance(
+  terminated: process.Subject(channel.StopReason),
+) -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
+    handle_in: fn(_event, _payload, _ctx) {
+      coordinator.ReplyErased(
+        event: "reply",
+        payload: json.object([]),
+        next: replying_instance(terminated),
+      )
+    },
+    handle_binary: fn(_data, _ctx) {
+      coordinator.NoReplyErased(next: replying_instance(terminated))
+    },
+    handle_info: fn(_message, _ctx) {
+      coordinator.NoReplyErased(next: replying_instance(terminated))
+    },
+    terminate: fn(reason, _ctx) { process.send(terminated, reason) },
+  )
+}
+
 fn register_channel(
   channels: beryl.Channels,
   terminated: process.Subject(channel.StopReason),
@@ -27,20 +48,12 @@ fn register_channel(
     coordinator.ChannelHandler(
       id: 0,
       pattern: topic.parse_pattern("room:*"),
-      join: fn(_topic, _payload, _ctx) {
-        coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
-      },
-      handle_in: fn(_event, _payload, ctx) {
-        coordinator.ReplyErased(
-          event: "reply",
-          payload: json.object([]),
-          assigns: ctx.assigns,
+      join: fn(_topic, _payload, _connect_assigns, _ctx) {
+        coordinator.JoinOkErased(
+          reply: None,
+          channel: replying_instance(terminated),
         )
       },
-      handle_binary: fn(_data, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      terminate: fn(reason, _ctx) { process.send(terminated, reason) },
     )
 
   let reply = process.new_subject()

@@ -27,15 +27,34 @@ import gleam/result
 import gleam/set.{type Set}
 import gleam/string
 
-/// Type-erased channel handler for storage
-/// The actual typed Channel is converted to this for the registry
+/// Type-erased channel handler template stored in the registry.
+///
+/// Only `join` lives on the template: a successful join returns a
+/// `JoinedChannel` instance whose closures capture the channel's typed
+/// assigns, and every later callback for that socket/topic runs on the
+/// stored instance. The third `join` argument is the connect-time assigns
+/// seeded (type-erased) by the transport's connect hook.
 pub type ChannelHandler {
   ChannelHandler(
     id: Int,
     pattern: TopicPattern,
-    join: fn(String, Dynamic, SocketContext) -> JoinResultErased,
+    join: fn(String, Dynamic, Dynamic, SocketContext) -> JoinResultErased,
+  )
+}
+
+/// A joined channel instance.
+///
+/// The closures capture the channel's current typed assigns, so the
+/// coordinator threads state between callbacks by storing the `next`
+/// instance each callback returns — no assigns value crosses this boundary
+/// type-erased. `handle_info` receives the erased server message sent via
+/// `beryl.send_info`; the id check in `HandleInfo` dispatch guarantees it
+/// was erased from this channel's info type.
+pub type JoinedChannel {
+  JoinedChannel(
     handle_in: fn(String, Dynamic, SocketContext) -> HandleResultErased,
     handle_binary: fn(BitArray, SocketContext) -> HandleResultErased,
+    handle_info: fn(Dynamic, SocketContext) -> HandleResultErased,
     terminate: fn(StopReason, SocketContext) -> Nil,
   )
 }
@@ -45,8 +64,6 @@ pub type SocketContext {
   SocketContext(
     socket_id: String,
     topic: String,
-    /// Current assigns for this socket/topic (type-erased)
-    assigns: Dynamic,
     /// Function to send text messages to this socket
     send: fn(String) -> Result(Nil, Nil),
     /// Function to send binary data to this socket
@@ -58,16 +75,17 @@ pub type SocketContext {
 
 /// Type-erased join result
 pub type JoinResultErased {
-  JoinOkErased(reply: Option(json.Json), assigns: Dynamic)
+  JoinOkErased(reply: Option(json.Json), channel: JoinedChannel)
   JoinErrorErased(reason: json.Json)
 }
 
-/// Type-erased handle result
+/// Type-erased handle result. Each non-terminal variant carries the next
+/// channel instance, with the updated assigns captured in its closures.
 pub type HandleResultErased {
-  NoReplyErased(assigns: Dynamic)
-  ReplyErased(event: String, payload: json.Json, assigns: Dynamic)
-  ReplyErrorErased(payload: json.Json, assigns: Dynamic)
-  PushErased(event: String, payload: json.Json, assigns: Dynamic)
+  NoReplyErased(next: JoinedChannel)
+  ReplyErased(event: String, payload: json.Json, next: JoinedChannel)
+  ReplyErrorErased(payload: json.Json, next: JoinedChannel)
+  PushErased(event: String, payload: json.Json, next: JoinedChannel)
   StopErased(reason: StopReason)
 }
 
@@ -259,8 +277,9 @@ type SocketInfo {
     codec: Codec,
     /// Topics this socket is subscribed to
     subscribed_topics: Set(String),
-    /// Per-topic assigns (topic -> Dynamic assigns)
-    channel_assigns: Dict(String, Dynamic),
+    /// Per-topic joined channel instance (topic -> instance). The instance's
+    /// closures capture the channel's current typed assigns.
+    channel_instances: Dict(String, JoinedChannel),
     /// Per-topic registered channel id (topic -> handler id)
     channel_ids: Dict(String, Int),
     /// Per-topic join_ref from the accepted `phx_join` (topic -> join_ref).
@@ -359,7 +378,10 @@ pub type Message {
     socket_id: String,
     topic: String,
     channel_id: Int,
-    handle_info: fn(SocketContext) -> HandleResultErased,
+    /// Server message erased from the registered channel's info type by
+    /// `beryl.send_info`. Dispatch verifies `channel_id` against the joined
+    /// instance before the instance's `handle_info` restores the type.
+    message: Dynamic,
   )
   /// Raw inbound text from the transport, decoded inside the actor using
   /// the configured codec.
@@ -670,8 +692,8 @@ fn handle_message(
 
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
 
-    HandleInfo(socket_id, topic_name, channel_id, callback) ->
-      handle_info(state, socket_id, topic_name, channel_id, callback)
+    HandleInfo(socket_id, topic_name, channel_id, info_message) ->
+      handle_info(state, socket_id, topic_name, channel_id, info_message)
 
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
@@ -771,14 +793,7 @@ fn add_handler(
     return: Error(PatternAlreadyRegistered(pattern_str)),
   )
   let registered_handler =
-    ChannelHandler(
-      id: next_id,
-      pattern: pattern,
-      join: handler.join,
-      handle_in: handler.handle_in,
-      handle_binary: handler.handle_binary,
-      terminate: handler.terminate,
-    )
+    ChannelHandler(id: next_id, pattern: pattern, join: handler.join)
   Ok(#(list.append(handlers, [registered_handler]), next_id + 1, next_id))
 }
 
@@ -798,7 +813,7 @@ fn handle_socket_connected(
       close: fn() { Nil },
       codec: option.unwrap(codec, state.config.codec),
       subscribed_topics: set.new(),
-      channel_assigns: dict.new(),
+      channel_instances: dict.new(),
       channel_ids: dict.new(),
       join_refs: dict.new(),
       connect_assigns: connect_assigns,
@@ -1406,7 +1421,7 @@ fn handle_info(
   socket_id: String,
   topic_name: String,
   channel_id: Int,
-  callback: fn(SocketContext) -> HandleResultErased,
+  info_message: Dynamic,
 ) -> actor.Next(State, Message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
@@ -1438,7 +1453,7 @@ fn handle_info(
             socket_id,
             topic_name,
             channel_id,
-            callback,
+            info_message,
           )
       }
     }
@@ -1732,20 +1747,20 @@ fn terminate_channel(
   }
 }
 
-/// Update assigns for a socket/topic
-fn update_assigns(
+/// Store the next channel instance for a socket/topic
+fn update_instance(
   state: State,
   socket_id: String,
   topic_name: String,
-  assigns: Dynamic,
+  instance: JoinedChannel,
 ) -> State {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket_info) -> {
-      let new_assigns =
-        dict.insert(socket_info.channel_assigns, topic_name, assigns)
+      let new_instances =
+        dict.insert(socket_info.channel_instances, topic_name, instance)
       let new_socket_info =
-        SocketInfo(..socket_info, channel_assigns: new_assigns)
+        SocketInfo(..socket_info, channel_instances: new_instances)
       let new_sockets = dict.insert(state.sockets, socket_id, new_socket_info)
       State(..state, sockets: new_sockets)
     }
@@ -2054,13 +2069,16 @@ fn dispatch_join(
     SocketContext(
       socket_id: socket_id,
       topic: topic_name,
-      assigns: socket_info.connect_assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
       close: socket_info.close,
     )
 
-  case internal.rescue(fn() { handler.join(topic_name, payload, ctx) }) {
+  case
+    internal.rescue(fn() {
+      handler.join(topic_name, payload, socket_info.connect_assigns, ctx)
+    })
+  {
     Error(crash) ->
       reject_crashed_join(state, socket_info, topic_name, join_ref, ref, crash)
     Ok(JoinErrorErased(reason)) -> {
@@ -2083,7 +2101,7 @@ fn dispatch_join(
         send_frame_logged(state, socket_info, topic_name, reply)
       actor.continue(state)
     }
-    Ok(JoinOkErased(reply_payload, assigns)) -> {
+    Ok(JoinOkErased(reply_payload, instance)) -> {
       logger
       |> log.debug("Join accepted", [
         #("socket_id", socket_id),
@@ -2092,8 +2110,8 @@ fn dispatch_join(
         #("join_ref", optional_string(join_ref)),
       ])
       let new_subscribed = set.insert(socket_info.subscribed_topics, topic_name)
-      let new_assigns =
-        dict.insert(socket_info.channel_assigns, topic_name, assigns)
+      let new_instances =
+        dict.insert(socket_info.channel_instances, topic_name, instance)
       let new_channel_ids =
         dict.insert(socket_info.channel_ids, topic_name, handler.id)
       let new_join_refs =
@@ -2102,7 +2120,7 @@ fn dispatch_join(
         SocketInfo(
           ..socket_info,
           subscribed_topics: new_subscribed,
-          channel_assigns: new_assigns,
+          channel_instances: new_instances,
           channel_ids: new_channel_ids,
           join_refs: new_join_refs,
         )
@@ -2193,7 +2211,7 @@ fn handle_callback_crash(
 fn dispatch_handle_in(
   state: State,
   socket_info: SocketInfo,
-  handler: ChannelHandler,
+  instance: JoinedChannel,
   socket_id: String,
   topic_name: String,
   event: String,
@@ -2208,21 +2226,16 @@ fn dispatch_handle_in(
     #("event", event),
     #("ref", optional_string(ref)),
   ])
-  let assigns =
-    dict.get(socket_info.channel_assigns, topic_name)
-    |> result.unwrap(dynamic.nil())
-
   let ctx =
     SocketContext(
       socket_id: socket_id,
       topic: topic_name,
-      assigns: assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
       close: socket_info.close,
     )
 
-  case internal.rescue(fn() { handler.handle_in(event, payload, ctx) }) {
+  case internal.rescue(fn() { instance.handle_in(event, payload, ctx) }) {
     Error(crash) ->
       actor.continue(handle_callback_crash(
         state,
@@ -2231,18 +2244,18 @@ fn dispatch_handle_in(
         "handle_in",
         crash,
       ))
-    Ok(NoReplyErased(new_assigns)) -> {
+    Ok(NoReplyErased(next_instance)) -> {
       logger
       |> log.debug("Channel callback returned no reply", [
         #("socket_id", socket_id),
         #("topic", topic_name),
         #("event", event),
       ])
-      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      let state = update_instance(state, socket_id, topic_name, next_instance)
       actor.continue(state)
     }
 
-    Ok(ReplyErased(_reply_event, reply_payload, new_assigns)) -> {
+    Ok(ReplyErased(_reply_event, reply_payload, next_instance)) -> {
       logger
       |> log.debug("Channel callback returned reply", [
         #("socket_id", socket_id),
@@ -2266,11 +2279,11 @@ fn dispatch_handle_in(
         }
         None -> Nil
       }
-      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      let state = update_instance(state, socket_id, topic_name, next_instance)
       actor.continue(state)
     }
 
-    Ok(ReplyErrorErased(reply_payload, new_assigns)) -> {
+    Ok(ReplyErrorErased(reply_payload, next_instance)) -> {
       logger
       |> log.debug("Channel callback returned error reply", [
         #("socket_id", socket_id),
@@ -2294,11 +2307,11 @@ fn dispatch_handle_in(
         }
         None -> Nil
       }
-      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      let state = update_instance(state, socket_id, topic_name, next_instance)
       actor.continue(state)
     }
 
-    Ok(PushErased(push_event, push_payload, new_assigns)) -> {
+    Ok(PushErased(push_event, push_payload, next_instance)) -> {
       logger
       |> log.debug("Channel callback returned push", [
         #("socket_id", socket_id),
@@ -2313,7 +2326,7 @@ fn dispatch_handle_in(
           push_payload,
         )
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
-      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      let state = update_instance(state, socket_id, topic_name, next_instance)
       actor.continue(state)
     }
 
@@ -2334,9 +2347,10 @@ fn dispatch_handle_in(
 fn dispatch_handle_info(
   state: State,
   socket_info: SocketInfo,
+  instance: JoinedChannel,
   socket_id: String,
   topic_name: String,
-  callback: fn(SocketContext) -> HandleResultErased,
+  info_message: Dynamic,
 ) -> actor.Next(State, Message) {
   let logger = coordinator_logger(state)
   logger
@@ -2344,21 +2358,16 @@ fn dispatch_handle_info(
     #("socket_id", socket_id),
     #("topic", topic_name),
   ])
-  let assigns =
-    dict.get(socket_info.channel_assigns, topic_name)
-    |> result.unwrap(dynamic.nil())
-
   let ctx =
     SocketContext(
       socket_id: socket_id,
       topic: topic_name,
-      assigns: assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
       close: socket_info.close,
     )
 
-  case internal.rescue(fn() { callback(ctx) }) {
+  case internal.rescue(fn() { instance.handle_info(info_message, ctx) }) {
     Error(crash) ->
       actor.continue(handle_callback_crash(
         state,
@@ -2367,19 +2376,19 @@ fn dispatch_handle_info(
         "handle_info",
         crash,
       ))
-    Ok(NoReplyErased(new_assigns)) -> {
+    Ok(NoReplyErased(next_instance)) -> {
       logger
       |> log.debug("Channel callback returned no reply", [
         #("socket_id", socket_id),
         #("topic", topic_name),
         #("callback", "handle_info"),
       ])
-      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      let state = update_instance(state, socket_id, topic_name, next_instance)
       actor.continue(state)
     }
 
-    Ok(ReplyErased(reply_event, reply_payload, new_assigns))
-    | Ok(PushErased(reply_event, reply_payload, new_assigns)) -> {
+    Ok(ReplyErased(reply_event, reply_payload, next_instance))
+    | Ok(PushErased(reply_event, reply_payload, next_instance)) -> {
       logger
       |> log.debug("Channel callback returned push", [
         #("socket_id", socket_id),
@@ -2396,11 +2405,11 @@ fn dispatch_handle_info(
           reply_payload,
         )
       let _send_result = send_frame_logged(state, socket_info, topic_name, msg)
-      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      let state = update_instance(state, socket_id, topic_name, next_instance)
       actor.continue(state)
     }
 
-    Ok(ReplyErrorErased(_payload, new_assigns)) -> {
+    Ok(ReplyErrorErased(_payload, next_instance)) -> {
       // Error replies require a client ref for correlation; handle_info is
       // server-originated so there is nothing to attach the error to.
       logger
@@ -2408,7 +2417,7 @@ fn dispatch_handle_info(
         #("socket_id", socket_id),
         #("topic", topic_name),
       ])
-      let state = update_assigns(state, socket_id, topic_name, new_assigns)
+      let state = update_instance(state, socket_id, topic_name, next_instance)
       actor.continue(state)
     }
 
@@ -2429,7 +2438,7 @@ fn dispatch_handle_info(
 fn dispatch_handle_binary(
   st: State,
   socket_info: SocketInfo,
-  handler: ChannelHandler,
+  instance: JoinedChannel,
   socket_id: String,
   topic_name: String,
   data: BitArray,
@@ -2440,33 +2449,28 @@ fn dispatch_handle_binary(
     #("socket_id", socket_id),
     #("topic", topic_name),
   ])
-  let assigns =
-    dict.get(socket_info.channel_assigns, topic_name)
-    |> result.unwrap(dynamic.nil())
-
   let ctx =
     SocketContext(
       socket_id: socket_id,
       topic: topic_name,
-      assigns: assigns,
       send: socket_info.send,
       send_binary: socket_info.send_binary,
       close: socket_info.close,
     )
 
-  case internal.rescue(fn() { handler.handle_binary(data, ctx) }) {
+  case internal.rescue(fn() { instance.handle_binary(data, ctx) }) {
     Error(crash) ->
       handle_callback_crash(st, socket_id, topic_name, "handle_binary", crash)
-    Ok(NoReplyErased(new_assigns)) -> {
+    Ok(NoReplyErased(next_instance)) -> {
       logger
       |> log.debug("Channel callback returned no reply", [
         #("socket_id", socket_id),
         #("topic", topic_name),
         #("callback", "handle_binary"),
       ])
-      update_assigns(st, socket_id, topic_name, new_assigns)
+      update_instance(st, socket_id, topic_name, next_instance)
     }
-    Ok(ReplyErased(reply_event, reply_payload, new_assigns)) -> {
+    Ok(ReplyErased(reply_event, reply_payload, next_instance)) -> {
       logger
       |> log.debug("Channel callback returned reply", [
         #("socket_id", socket_id),
@@ -2483,18 +2487,18 @@ fn dispatch_handle_binary(
           reply_payload,
         )
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
-      update_assigns(st, socket_id, topic_name, new_assigns)
+      update_instance(st, socket_id, topic_name, next_instance)
     }
-    Ok(ReplyErrorErased(_payload, new_assigns)) -> {
+    Ok(ReplyErrorErased(_payload, next_instance)) -> {
       // Raw binary frames carry no ref to correlate an error reply with.
       logger
       |> log.warn("Error reply dropped: no client ref in handle_binary", [
         #("socket_id", socket_id),
         #("topic", topic_name),
       ])
-      update_assigns(st, socket_id, topic_name, new_assigns)
+      update_instance(st, socket_id, topic_name, next_instance)
     }
-    Ok(PushErased(push_event, push_payload, new_assigns)) -> {
+    Ok(PushErased(push_event, push_payload, next_instance)) -> {
       logger
       |> log.debug("Channel callback returned push", [
         #("socket_id", socket_id),
@@ -2509,7 +2513,7 @@ fn dispatch_handle_binary(
           push_payload,
         )
       let _send_result = send_frame_logged(st, socket_info, topic_name, msg)
-      update_assigns(st, socket_id, topic_name, new_assigns)
+      update_instance(st, socket_id, topic_name, next_instance)
     }
     Ok(StopErased(reason)) -> {
       logger
@@ -2567,8 +2571,8 @@ fn do_terminate_channel(
   topic_name: String,
   reason: StopReason,
 ) -> State {
-  case find_joined_handler(state, socket_info, topic_name) {
-    Some(handler) -> {
+  case joined_instance(socket_info, topic_name) {
+    Some(instance) -> {
       let logger = coordinator_logger(state)
       logger
       |> log.debug("Channel terminated", [
@@ -2576,20 +2580,15 @@ fn do_terminate_channel(
         #("topic", topic_name),
         #("reason", stop_reason(reason)),
       ])
-      let assigns =
-        dict.get(socket_info.channel_assigns, topic_name)
-        |> result.unwrap(dynamic.nil())
-
       let ctx =
         SocketContext(
           socket_id: socket_id,
           topic: topic_name,
-          assigns: assigns,
           send: socket_info.send,
           send_binary: socket_info.send_binary,
           close: socket_info.close,
         )
-      case internal.rescue(fn() { handler.terminate(reason, ctx) }) {
+      case internal.rescue(fn() { instance.terminate(reason, ctx) }) {
         Ok(Nil) -> Nil
         Error(crash) ->
           logger
@@ -2608,14 +2607,14 @@ fn do_terminate_channel(
   let state = remove_channel_bucket(state, socket_id, topic_name)
 
   let new_subscribed = set.delete(socket_info.subscribed_topics, topic_name)
-  let new_assigns = dict.delete(socket_info.channel_assigns, topic_name)
+  let new_instances = dict.delete(socket_info.channel_instances, topic_name)
   let new_channel_ids = dict.delete(socket_info.channel_ids, topic_name)
   let new_join_refs = dict.delete(socket_info.join_refs, topic_name)
   let new_socket_info =
     SocketInfo(
       ..socket_info,
       subscribed_topics: new_subscribed,
-      channel_assigns: new_assigns,
+      channel_instances: new_instances,
       channel_ids: new_channel_ids,
       join_refs: new_join_refs,
     )
@@ -2649,7 +2648,7 @@ fn route_in_to_handler(
   payload: Dynamic,
   ref: Option(String),
 ) -> actor.Next(State, Message) {
-  case find_joined_handler(state, socket_info, topic_name) {
+  case joined_instance(socket_info, topic_name) {
     None -> {
       let logger = coordinator_logger(state)
       logger
@@ -2661,11 +2660,11 @@ fn route_in_to_handler(
       ])
       actor.continue(state)
     }
-    Some(handler) ->
+    Some(instance) ->
       dispatch_handle_in(
         state,
         socket_info,
-        handler,
+        instance,
         socket_id,
         topic_name,
         event,
@@ -2681,8 +2680,11 @@ fn route_info_to_registered_handler(
   socket_id: String,
   topic_name: String,
   channel_id: Int,
-  callback: fn(SocketContext) -> HandleResultErased,
+  info_message: Dynamic,
 ) -> actor.Next(State, Message) {
+  // The id check is what makes the info erasure sound: the message was
+  // erased from the info type of the RegisteredChannel with this id, and
+  // the joined instance restoring it derives from the same registration.
   case dict.get(socket_info.channel_ids, topic_name) {
     Error(Nil) -> {
       let logger = coordinator_logger(state)
@@ -2695,16 +2697,30 @@ fn route_info_to_registered_handler(
       actor.continue(state)
     }
     Ok(joined_channel_id) -> {
-      case joined_channel_id == channel_id {
-        True ->
+      case
+        joined_channel_id == channel_id,
+        joined_instance(socket_info, topic_name)
+      {
+        True, Some(instance) ->
           dispatch_handle_info(
             state,
             socket_info,
+            instance,
             socket_id,
             topic_name,
-            callback,
+            info_message,
           )
-        False -> {
+        True, None -> {
+          let logger = coordinator_logger(state)
+          logger
+          |> log.debug("Handle info ignored", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+            #("reason", "channel_instance_not_found"),
+          ])
+          actor.continue(state)
+        }
+        False, _ -> {
           let logger = coordinator_logger(state)
           logger
           |> log.debug("Handle info ignored", [
@@ -2719,23 +2735,13 @@ fn route_info_to_registered_handler(
   }
 }
 
-fn find_handler_by_id(
-  handlers: List(ChannelHandler),
-  handler_id: Int,
-) -> Option(ChannelHandler) {
-  list.find(handlers, fn(h) { h.id == handler_id })
-  |> option.from_result()
-}
-
-fn find_joined_handler(
-  state: State,
+/// The joined channel instance for a socket/topic, if the topic is joined.
+fn joined_instance(
   socket_info: SocketInfo,
   topic_name: String,
-) -> Option(ChannelHandler) {
-  case dict.get(socket_info.channel_ids, topic_name) {
-    Ok(handler_id) -> find_handler_by_id(state.handlers, handler_id)
-    Error(Nil) -> None
-  }
+) -> Option(JoinedChannel) {
+  dict.get(socket_info.channel_instances, topic_name)
+  |> option.from_result()
 }
 
 fn route_binary_to_handler(
@@ -2745,7 +2751,7 @@ fn route_binary_to_handler(
   topic_name: String,
   data: BitArray,
 ) -> State {
-  case find_joined_handler(st, socket_info, topic_name) {
+  case joined_instance(socket_info, topic_name) {
     None -> {
       let logger = coordinator_logger(st)
       logger
@@ -2756,11 +2762,11 @@ fn route_binary_to_handler(
       ])
       st
     }
-    Some(handler) ->
+    Some(instance) ->
       dispatch_handle_binary(
         st,
         socket_info,
-        handler,
+        instance,
         socket_id,
         topic_name,
         data,

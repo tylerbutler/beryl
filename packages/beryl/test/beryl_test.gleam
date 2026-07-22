@@ -857,6 +857,68 @@ pub fn connect_assigns_visible_in_channel_join_test() {
   join_reply |> string.contains("\"user\":\"alice\"") |> should.be_true
 }
 
+// Assigns updated by one callback must be visible to the next callback on
+// the same socket/topic: the coordinator threads channel state between
+// dispatches.
+pub fn assigns_threaded_across_handle_in_calls_test() {
+  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let sent_messages = process.new_subject()
+
+  process.send(
+    beryl.coordinator_subject(channels),
+    coordinator.SocketConnected(
+      "counter-socket",
+      fn(text) {
+        process.send(sent_messages, text)
+        Ok(Nil)
+      },
+      fn(_) { Ok(Nil) },
+      option.None,
+      dynamic.nil(),
+    ),
+  )
+
+  // Counter channel: assigns hold an Int incremented on every "incr".
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: option.None, socket: socket.set_assigns(socket, 0))
+    })
+    |> channel.with_handle_in(fn(_event, _payload, socket) {
+      let count = socket.get_assigns(socket) + 1
+      channel.Reply(
+        "count",
+        json.object([#("count", json.int(count))]),
+        socket.set_assigns(socket, count),
+      )
+    })
+
+  let assert Ok(_) = beryl.register(channels, "counter:*", handler)
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "counter-socket",
+    "[\"j1\",\"r1\",\"counter:1\",\"phx_join\",{}]",
+  )
+  let assert Ok(join_reply) = process.receive(sent_messages, 500)
+  join_reply |> string.contains("phx_reply") |> should.be_true
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "counter-socket",
+    "[\"j1\",\"r2\",\"counter:1\",\"incr\",{}]",
+  )
+  let assert Ok(first) = process.receive(sent_messages, 500)
+  first |> string.contains("\"count\":1") |> should.be_true
+
+  coordinator.route_message(
+    beryl.coordinator_subject(channels),
+    "counter-socket",
+    "[\"j1\",\"r3\",\"counter:1\",\"incr\",{}]",
+  )
+  let assert Ok(second) = process.receive(sent_messages, 500)
+  second |> string.contains("\"count\":2") |> should.be_true
+}
+
 // Wire protocol tests
 
 pub fn decode_valid_message_test() {

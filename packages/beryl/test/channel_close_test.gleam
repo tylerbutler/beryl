@@ -18,6 +18,26 @@ pub fn main() {
   gleeunit.main()
 }
 
+fn stopping_instance(
+  stop_reason: channel.StopReason,
+) -> coordinator.JoinedChannel {
+  coordinator.JoinedChannel(
+    handle_in: fn(event, _payload, _ctx) {
+      case event {
+        "stop" -> coordinator.StopErased(reason: stop_reason)
+        _ -> coordinator.NoReplyErased(next: stopping_instance(stop_reason))
+      }
+    },
+    handle_binary: fn(_data, _ctx) {
+      coordinator.NoReplyErased(next: stopping_instance(stop_reason))
+    },
+    handle_info: fn(_message, _ctx) {
+      coordinator.NoReplyErased(next: stopping_instance(stop_reason))
+    },
+    terminate: fn(_reason, _ctx) { Nil },
+  )
+}
+
 fn register_stopping_channel(
   channels: beryl.Channels,
   stop_reason: channel.StopReason,
@@ -26,19 +46,12 @@ fn register_stopping_channel(
     coordinator.ChannelHandler(
       id: 0,
       pattern: topic.parse_pattern("room:*"),
-      join: fn(_topic, _payload, _ctx) {
-        coordinator.JoinOkErased(reply: None, assigns: dynamic.nil())
+      join: fn(_topic, _payload, _connect_assigns, _ctx) {
+        coordinator.JoinOkErased(
+          reply: None,
+          channel: stopping_instance(stop_reason),
+        )
       },
-      handle_in: fn(event, _payload, ctx) {
-        case event {
-          "stop" -> coordinator.StopErased(reason: stop_reason)
-          _ -> coordinator.NoReplyErased(assigns: ctx.assigns)
-        }
-      },
-      handle_binary: fn(_data, ctx) {
-        coordinator.NoReplyErased(assigns: ctx.assigns)
-      },
-      terminate: fn(_reason, _ctx) { Nil },
     )
 
   let reply = process.new_subject()
