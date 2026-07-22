@@ -322,7 +322,8 @@ fn build_presence(
     case config.pubsub {
       Some(ps) -> {
         // Subscribe to the well-known sync topic for replication
-        pubsub.subscribe(ps, sync_topic)
+        let sub = pubsub.subscriber(ps)
+        pubsub.join(sub, sync_topic)
         let logger = internal.logger("beryl.presence")
         logger
         |> log.debug("Subscribed to PubSub sync topic", [
@@ -334,7 +335,7 @@ fn build_presence(
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> pubsub.selecting(RemoteSync)
+          |> pubsub.selecting(sub, RemoteSync)
 
         // Schedule the first broadcast tick if enabled
         schedule_broadcast_tick(subject, config.broadcast_interval_ms)
