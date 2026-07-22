@@ -6,8 +6,8 @@
 ////
 //// ## Features
 ////
-//// - **Channels** — Topic-based WebSocket messaging routed by your app's
-////   `update` function (`beryl`, `beryl/event`)
+//// - **Sockets** — App-side dispatch: topic-based WebSocket messaging
+////   routed by your `update` function (`beryl`, `beryl/event`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
 //// - **Presence** — Distributed presence tracking backed by a causal-context

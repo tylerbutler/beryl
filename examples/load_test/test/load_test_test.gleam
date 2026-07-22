@@ -44,7 +44,7 @@ fn connect(
 ) -> process.Subject(String) {
   let sent = process.new_subject()
   transport.admit_socket(
-    channels: sockets,
+    sockets: sockets,
     owner: transport.connection_owner(sockets),
     socket_id: socket_id,
     send: fn(message) {

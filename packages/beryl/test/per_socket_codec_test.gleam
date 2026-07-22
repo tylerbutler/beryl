@@ -59,7 +59,7 @@ fn connect(
 ) -> process.Subject(String) {
   let sent = process.new_subject()
   transport.admit_socket(
-    channels: channels,
+    sockets: channels,
     owner: transport.connection_owner(channels),
     socket_id: socket_id,
     send: fn(text) {
