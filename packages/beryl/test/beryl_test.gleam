@@ -3,6 +3,7 @@ import beryl
 import beryl/error as beryl_error
 import beryl/event
 import beryl/group
+import beryl/internal
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec
@@ -555,4 +556,27 @@ pub fn group_broadcast_is_fire_and_forget_test() {
   // Broadcasting to a missing group is a silent no-op
   group.broadcast(groups, channels, "missing", "announce", json.object([]))
   |> should.equal(Nil)
+}
+
+// ── Payload preview hardening ────────────────────────────────────────────────
+
+pub fn negative_payload_preview_bytes_clamps_to_zero_test() {
+  let logging =
+    beryl.logging_config(level: beryl.DebugLevel, include_payloads: True)
+    |> beryl.with_payload_preview_bytes(bytes: -5)
+
+  beryl.logging_payload_preview_bytes(logging) |> should.equal(0)
+}
+
+pub fn payload_preview_metadata_is_bounded_test() {
+  let config =
+    internal.LoggingConfig(
+      level: internal.Info,
+      include_payloads: True,
+      payload_preview_bytes: 5,
+    )
+  let long_text = "abcdefghij"
+
+  internal.preview_metadata("frame_preview", long_text, config)
+  |> should.equal([#("frame_preview", "abcde")])
 }

@@ -77,7 +77,7 @@ fn admit(
   close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
   transport.admit_socket(
-    channels: sockets,
+    sockets: sockets,
     owner: owner,
     socket_id: socket_id,
     send: fn(_message) { Ok(Nil) },
