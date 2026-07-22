@@ -81,9 +81,9 @@ package — mixing versions across the two is unsupported.
 :::caution[`v0.0` is behind these docs]
 `v0.0` is a preview tag, and the rest of this site documents `main`, which has
 moved on. The difference you are most likely to hit: `main` removed the
-unsupervised `beryl.start`, so `beryl/supervisor` is now the only way to start
-beryl, as the [Supervision guide](/guides/supervision/) describes. On `v0.0`,
-`beryl.start` still exists.
+unsupervised `beryl.start` path. Build Beryl with `beryl.child_spec` and add
+the returned specification to your application's OTP supervisor, as the
+[Supervision guide](/guides/supervision/) describes.
 
 Pin `ref = "main"` if you want the code these docs describe, accepting that it
 can break without warning.

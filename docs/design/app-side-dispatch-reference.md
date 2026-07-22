@@ -63,12 +63,6 @@ later `update` turn (for example, replying once an async lookup completes).
 ## Entry points
 
 ```gleam
-pub fn start(
-  config: Config,
-  init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Event(msg)) -> Next(model, msg),
-) -> Result(Sockets, StartError)
-
 pub fn child_spec(
   config: Config,
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
@@ -79,7 +73,7 @@ pub fn child_spec(
 )
 ```
 
-`Sockets` is opaque and non-generic: `start`/`child_spec` capture
+`Sockets` is opaque and non-generic: `child_spec` captures
 `model`/`msg` in closures, so transports keep receiving an unparameterized
 handle through the frame-level `beryl/transport` SPI — closure capture by a
 generic function, plain Gleam, no identity FFI. Per-topic-pattern abuse
@@ -108,7 +102,7 @@ runtime crash, and what `stop` does and does not tear down.
 | `Stop(reason)`                   | `Stop(reason)`                            |
 | assigns threading via `Socket`   | `model` threading via `Next`              |
 | `beryl.register(handler)`        | routing inside the app's `update`         |
-| `beryl.start(config)` + registry | `beryl.start(config, init:, update:)`     |
+| `beryl.child_spec(config)` + registry | `beryl.child_spec(config, init:, update:)`     |
 | `send_info(socket, msg)`         | `event.notify(sender, msg)`               |
 
 ## Single-channel app — no union, no router

@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: Build your first beryl socket app end-to-end — init/update, WebSocket transport, and a Phoenix JS client.
+description: Build your first beryl app end-to-end — init/update on the server, WebSocket transport, and a Phoenix JS client.
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -9,9 +9,9 @@ import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
 </Aside>
 
-This guide walks you through building a working real-time app from scratch:
-a Gleam server with app-side dispatch, wired to a Phoenix JS client running in
-the browser.
+This guide walks you through building a working real-time channel from scratch:
+a Gleam server that handles join and message events, wired to a Phoenix JS client
+running in the browser.
 
 The snippets here are abbreviated to keep things readable. For a fully
 runnable application with HTML, static assets, and end-to-end tests, see the
@@ -22,75 +22,104 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 - Gleam project targeting **Erlang** (`gleam new my_app`)
 - `gleam add beryl beryl_mist` adds beryl, the Mist WebSocket transport, and all their dependencies
 
-## 1. Define your socket app
+## 1. Define your app
 
-With beryl's current API, you start one socket runtime and provide two
-functions:
-
-- `init` runs once per connection and builds your per-socket `Model`
-- `update` receives every `Join`, `Message`, `Binary`, `Closed`, and `Info` event
+A beryl app is two functions. `init` builds a per-socket **model** when a
+client connects; `update` receives every **event** for that socket and
+returns the next model plus a list of **effects**.
 
 ```gleam
 // src/my_app/room_app.gleam
-import beryl/event
-import beryl/wire
+import beryl/event.{
+  type Event, type Next, AcceptJoin, Broadcast, Join, Message, Next,
+}
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
 import gleam/json
+import gleam/option.{Some}
 
-pub type Msg {
-  NoOp
-}
-
+/// Per-socket state — anything you want to remember about this connection.
 pub type Model {
-  Model(socket_id: String)
+  Model(username: String)
 }
 
-pub fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
-  #(Model(socket_id: info.socket_id), [])
+pub fn init(_info: event.ConnectInfo(Nil)) -> #(Model, List(event.Effect)) {
+  #(Model(username: "Anonymous"), [])
 }
 
-pub fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+pub fn update(model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
   case ev {
-    event.Join("room:" <> _, payload, ref) ->
-      event.Next(
-        model,
-        [event.AcceptJoin(ref, Some(wire.dynamic_to_json(payload)))],
-      )
+    // A client asked to join a "room:*" topic.
+    Join("room:" <> _, payload, ref) -> {
+      // Payloads arrive as `Dynamic`; decode the fields you need.
+      let username = string_field(payload, "username", or: "Anonymous")
 
-    event.Message(topic, "new_msg", payload, _ref) ->
-      event.Next(
-        model,
-        [event.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))],
-      )
-
-    event.Message(_, _, _, Some(ref)) ->
-      event.Next(
-        model,
-        [event.ReplyError(
+      // AcceptJoin answers the join; the reply is delivered to the client
+      // as phx_reply on the join ref.
+      Next(Model(username: username), [
+        AcceptJoin(
           ref,
-          json.object([#("error", json.string("unknown_event"))]),
-        )],
-      )
+          Some(json.object([#("username", json.string(username))])),
+        ),
+      ])
+    }
+    // Reject joins for topics you don't serve.
+    Join(_, _, ref) ->
+      Next(model, [
+        event.RejectJoin(
+          ref,
+          json.object([#("reason", json.string("unknown_topic"))]),
+        ),
+      ])
 
-    event.Binary(_, _)
-    | event.Closed(_, _)
-    | event.Info(_)
-    | event.Message(_, _, _, None) ->
-      event.Next(model, [])
+    // A client push on a joined topic.
+    Message(topic, "new_msg", payload, _ref) -> {
+      let text = string_field(payload, "text", or: "")
+      // Broadcast to every socket joined to this topic, including the
+      // sender.
+      Next(model, [
+        Broadcast(
+          topic,
+          "new_msg",
+          json.object([
+            #("username", json.string(model.username)),
+            #("text", json.string(text)),
+          ]),
+        ),
+      ])
+    }
+
+    _ -> Next(model, [])
+  }
+}
+
+fn string_field(payload: Dynamic, name: String, or default: String) -> String {
+  case
+    decode.run(payload, {
+      use value <- decode.field(name, decode.string)
+      decode.success(value)
+    })
+  {
+    Ok(value) -> value
+    Error(_) -> default
   }
 }
 ```
 
 <Aside type="note" title="Reply vs Push vs Broadcast">
-- **`event.ReplyOk` / `event.ReplyError`** — send `phx_reply` back to the calling client on the original ref.
-- **`event.Push`** — send a named event to this socket only, on a topic it already joined.
-- **`event.Broadcast`** — send a named event to every socket on the topic, including the sender.
-- **`event.Next(model, [])`** — continue with no outgoing frames.
+- **`ReplyOk(ref, payload)`** — sends a `phx_reply` back to the *calling*
+  client tied to the original message ref (available when the event's `ref`
+  is `Some`). Use it to acknowledge a specific push.
+- **`Push(topic, event, payload)`** — a server-initiated message to this
+  socket only.
+- **`Broadcast(topic, event, payload)`** — a named event to *all* sockets on
+  the topic, including the sender. Use `BroadcastFrom` to exclude the sender.
+- Returning no effects silently continues — nothing is sent to the caller.
 </Aside>
 
-## 2. Start beryl and wire the transport
+## 2. Start beryl and the transport
 
-Now start the socket runtime and pass the returned `beryl.Sockets` handle to the
-Mist transport:
+Wire everything together in your application entry point:
 
 ```gleam
 // src/my_app.gleam
@@ -101,22 +130,30 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
+import gleam/otp/static_supervisor
 import mist
 import my_app/room_app
 
 pub fn main() {
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_message_rate(per_second: 30, burst: 60)
+  // Start the beryl app-dispatch system.
+  let assert Ok(#(channels, spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      init: room_app.init,
+      update: room_app.update,
+    )
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
 
-  let assert Ok(sockets) =
-    beryl.start(config, init: room_app.init, update: room_app.update)
-
+  // Start the HTTP + WebSocket server.
   let assert Ok(_) =
     fn(req) {
+      // Upgrade WebSocket requests first; fall through to HTTP for everything else.
       mist_transport.upgrade(
         req,
-        sockets,
+        channels,
         mist_transport.default_config("/socket/websocket"),
         fn() { handle_http(req) },
       )
@@ -180,7 +217,7 @@ const channel = socket.channel("room:lobby", { username: "alice" });
 channel
   .join()
   .receive("ok", (resp) => {
-    // resp is the JSON payload you returned from AcceptJoin.
+    // resp is the AcceptJoin reply payload — { username: "alice" }
     console.log("Joined as", resp.username);
   })
   .receive("error", (resp) => {
@@ -198,60 +235,62 @@ channel.push("new_msg", { text: "Hello, world!" });
 
 ## 4. Acknowledging a specific push
 
-If you want the server to confirm an individual client push, match the message
-when a ref is present and return `event.ReplyOk`:
+If you want the server to confirm delivery of an individual push, return a
+`ReplyOk` effect for the message's ref. The client receives a `phx_reply`
+event tied to the original message ref:
 
 ```gleam
-event.Message(topic, "new_msg", payload, Some(ref)) ->
-  event.Next(
-    model,
-    [
-      event.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload)),
-      event.ReplyOk(
-        ref,
-        json.object([#("status", json.string("ok"))]),
-      ),
-    ],
-  )
+// Server side — acknowledge message delivery
+Message(topic, "new_msg", payload, Some(ref)) ->
+  Next(model, [
+    Broadcast(
+      topic,
+      "new_msg",
+      json.object([#("username", json.string(model.username))]),
+    ),
+    event.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
+  ])
 ```
 
 ```js
+// Client side — receive the acknowledgment
 channel
   .push("new_msg", { text: "Hello!" })
   .receive("ok", (resp) => {
-    // resp is the payload from ReplyOk — { status: "ok" }
+    // resp is the ReplyOk payload — { status: "ok" }
     console.log("Delivered", resp);
   });
 ```
 
+The `ref` is `Some` whenever the client expects a reply; a `Message` whose
+`ref` is `None` cannot be answered (there is nothing to correlate a reply
+with).
+
 ## 5. Rejecting a join
 
-Return `event.RejectJoin` when a topic should not be admitted:
+Return a `RejectJoin` effect to refuse a client:
 
 ```gleam
-event.Join(topic, _payload, ref) ->
-  case is_room_valid(topic) {
+Join("room:" <> room_id, _payload, ref) ->
+  case is_room_valid(room_id) {
     False ->
-      event.Next(
-        model,
-        [event.RejectJoin(
+      Next(model, [
+        event.RejectJoin(
           ref,
-          reason: json.object([#("reason", json.string("room_not_found"))]),
-        )],
-      )
-
-    True ->
-      event.Next(model, [event.AcceptJoin(ref, None)])
+          json.object([#("reason", json.string("Room not found"))]),
+        ),
+      ])
+    True -> // ... AcceptJoin as normal
   }
 ```
 
-A `Join` that reaches the end of the update turn unanswered is also rejected
-automatically, so joins fail closed by default.
+The client receives an `"error"` reply on its `.join()` call. A `Join` you
+leave unanswered is rejected automatically — beryl fails closed.
 
 ## Next steps
 
-- Explore the full [examples](/examples/)
-- Learn app-side routing in the [Dispatch guide](/guides/dispatch/)
+- Explore the full [examples](/examples/) — runnable demos with HTML frontends
+- Learn about [Channels](/guides/channels/) in depth — events, effects, and routing multiple topic namespaces
 - Add [Presence tracking](/guides/presence/) to see who's online
 - Set up [PubSub](/guides/pubsub/) for distributed messaging
 - Configure [WebSocket transport](/guides/websocket/) options including `on_connect` auth

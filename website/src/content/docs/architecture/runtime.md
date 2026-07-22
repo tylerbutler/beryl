@@ -1,104 +1,69 @@
 ---
-title: Runtime & Effect Interpreter
+title: Runtime & Supervision
 ---
 
-The runtime is the single OTP actor behind a Beryl app-side dispatch system. One runtime tracks every connected socket for a `Sockets` handle, delivers `Join`/`Message`/`Binary`/`Closed`/`Info` events to your app's `update`, and applies the returned `Effect` list itself.
+The runtime is the central OTP actor that owns all per-socket state. Every other part of the system — the transport layer, presence, groups, and PubSub — communicates with it by sending messages, while your application's `init`/`update` functions run inside it during event dispatch.
 
 ## Role
 
-A runtime owns the node-local state for one Beryl app instance:
+The runtime is the single source of truth for connected sockets, per-socket models, topic subscriptions, and heartbeat timestamps. It processes its mailbox sequentially, which gives it a consistent view of all concurrent activity without locks. No socket state lives outside the runtime; your `update` function runs inside it, and the model it returns is the state the next event sees.
 
-- connected sockets and their send/close functions
-- each socket's current app `model`
-- joined topics, join refs, and pending reply refs
-- heartbeat timestamps and rate-limit buckets
-- PubSub topic membership for local subscribers
-- presence refs created by `PresenceTrack`
+## What it tracks
 
-When a transport announces a new socket, the runtime calls your `init` once with `ConnectInfo`. After that, every decoded inbound frame becomes an `Event` delivered to `update`.
+The runtime maintains four categories of state:
 
-## Dispatch contract
+- **Per-socket models** — the app-defined `model` value produced by `init` and threaded through every `update` call for that socket.
+- **Socket tracking** — each connected socket's ID, its wire-send functions (text and binary), its closer, and the set of topics it has joined (including joins awaiting an `AcceptJoin`/`RejectJoin` answer).
+- **Topic → subscriber sets** — maps each active topic string to the set of socket IDs currently joined on it, used for broadcast fan-out.
+- **Heartbeat last-seen** — a monotonic timestamp per socket, updated on every received heartbeat frame; used by the periodic eviction check.
 
-`Join` events are fail-closed: your `update` must answer them with `AcceptJoin(ref, ...)` or `RejectJoin(ref, ...)` in the returned effects list. If a join finishes the turn unanswered, the runtime rejects it automatically.
+## Typed dispatch without erasure
 
-`Closed(topic, reason)` is the runtime's topic teardown signal. It is delivered on client leave, socket disconnect, heartbeat eviction, `KickTopic`, and graceful shutdown, so apps can clean up topic-scoped model state in one place.
+The runtime actor is generic over the app's `model` and `msg` types. `beryl.child_spec` captures those types in a record of monomorphic closures at start time, so the public `Channels` handle — and the frame-level transport SPI behind it — stays unparameterized while the runtime holds fully typed state. This is plain closure capture by a generic function: there are no unchecked casts, no `Dynamic` round-trips, and no identity FFI anywhere in the dispatch path.
 
-## Effect ordering
+Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `event.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
-Effects are applied strictly in list order inside one actor turn. Because the same actor both interprets the list and writes frames for that socket, list order is wire order.
+## Event dispatch
 
-That guarantee is load-bearing. For example, `AcceptJoin(ref, ...)` followed by `Push(topic, event, payload)` sends the join reply first and the push second.
+Inbound WebSocket frames follow a two-step path:
 
-## Supervision shapes
+1. **Decode at the edge** — the transport decodes raw frames in the connection process using the configured codec (see [Wire & Transport](/architecture/wire-and-transport)), so parse cost and malformed input never reach the shared runtime actor.
+2. **Route to update** — the decoded message is sent to the runtime, which turns it into an `Event` for the socket's `update` function:
+   - `phx_join` → validates the topic (length, control characters, reserved `beryl:` prefix, join rate, topic cap), then delivers `Join(topic, payload, ref)`. The join is held pending until the update's effects answer it; an unanswered join is rejected (fail closed).
+   - Any other event on a joined topic → `Message(topic, event, payload, ref)`.
+   - `heartbeat` → answered directly by the runtime; the app never sees it.
+   - `phx_leave` → acks the leave, then delivers `Closed(topic, Normal)`.
+   - Binary frames → decoded through the codec's binary decoder when present; otherwise delivered raw as `Binary(topic, data)` to each joined topic.
 
-`beryl.start` and `beryl.child_spec` build the same nested Beryl subtree. The only difference is who owns that subtree.
+Effects returned by `update` are applied in list order; an `AcceptJoin` is guaranteed to reach the wire before a `Push` later in the same list.
+
+## Crash containment
+
+Crashes in app callbacks are rescued rather than allowed to take down the shared runtime. The blast radius is scoped to what crashed: a crashing `Join` update rejects the join, a crashing `Message` update closes only that topic, and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging.
+
+## Heartbeat enforcement
+
+The runtime schedules a recurring self-check at `heartbeat_timeout_ms / 2`. On each check it compares the current monotonic time to each socket's `last_heartbeat` and evicts any socket past the timeout. Eviction delivers `Closed(topic, HeartbeatTimeout)` for each joined topic, invokes the transport's registered closer so the underlying connection is actually shut, and removes the socket from all state. `child_spec` rejects timeouts below 2 loudly, because integer division would otherwise round the check interval to zero and silently disable eviction.
+
+## Supervision
+
+`child_spec` has no unsupervised mode. The runtime always starts under an internal one-for-one supervisor with a **3 restarts / 5 seconds** tolerance:
 
 ```mermaid
-flowchart LR
-  subgraph Standalone["beryl.start"]
-    Caller["caller process"]
-    Sup1["Beryl subtree supervisor<br/>OneForOne · auto_shutdown(AnySignificant)"]
-    Rt1["runtime<br/>Transient · significant"]
-    Lim1["connection limiter<br/>optional sibling"]
-    Caller -->|starts, then unlinks| Sup1
-    Sup1 --> Rt1
-    Sup1 --> Lim1
-  end
-
-  subgraph Embedded["beryl.child_spec"]
-    AppSup["your app supervisor"]
-    Spec["returned ChildSpecification<br/>Transient"]
-    Sup2["Beryl subtree supervisor<br/>OneForOne · auto_shutdown(AnySignificant)"]
-    Rt2["runtime<br/>Transient · significant"]
-    Lim2["connection limiter<br/>optional sibling"]
-    AppSup --> Spec --> Sup2
-    Sup2 --> Rt2
-    Sup2 --> Lim2
-  end
+flowchart TB
+  APP["process that called child_spec"]
+  APP --- SUP["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
+  SUP --> RT["runtime actor (Transient)<br/>init/update captured in child spec"]
 ```
 
-In standalone mode, `start` explicitly unlinks the caller from the subtree supervisor after startup so the subtree's normal auto-shutdown does not propagate back into the caller process. In embedded mode, `child_spec` returns the subtree as an OTP child spec for your own supervisor to own.
+- The `init`/`update` closures live in the child specification, so a restart resumes dispatch immediately — there is no registration step to replay.
+- The runtime is registered under a stable name; the `Channels` handle keeps working across restarts, and sends during a restart window degrade to quiet no-ops.
+- A restart drops per-socket state (models, joined topics); clients rejoin exactly as they would after any server restart.
+- The child is `Transient`, so a graceful `beryl.stop` is final.
 
-## Owned vs borrowed processes
-
-| Beryl owns and stops | Your app owns and stops |
-|---|---|
-| runtime | `PubSub` started separately and attached with `beryl.with_pubsub` |
-| optional connection limiter | presence actor started separately and attached with `beryl.with_presence_handle` |
-| — | `beryl/group` actors started separately with `group.start` / `group.start_named` |
-
-The subtree supervisor exists only to supervise the runtime and optional limiter. PubSub, presence, and groups are borrowed application resources, not children of the Beryl subtree.
-
-## Crash and restart behavior
-
-There is no unsupervised runtime. Both entry points run the runtime as the subtree's `Transient` significant child under restart tolerance `3` in `5` seconds.
-
-On a runtime crash, the supervisor restarts a fresh runtime under the same registered name. The stable `Sockets` handle still points at that name, so new connections and future broadcasts work again after the restart window.
-
-What is lost on crash:
-
-- every joined socket's current `model`
-- topic membership and join refs
-- pending reply refs
-- heartbeat timestamps and rate-limit buckets
-- registered per-socket closer callbacks
-
-Existing WebSocket connections are not preserved across that restart. The transport connection process monitors the runtime pid via `beryl/transport.connection_owner` and closes the socket when the owning runtime goes down, rather than leaving a zombie connection attached to an empty replacement runtime.
-
-Before startup, during a restart window, or after shutdown, the name-backed `Sockets` handle degrades safely: fire-and-forget operations are quiet no-ops and connection admission is refused cleanly instead of crashing.
-
-## Stopping
-
-`beryl.stop(sockets)` drains the Beryl subtree only.
-
-- It delivers `Closed(..., Shutdown)` to every joined topic.
-- It cleans up tracked presence for closing topics and sockets.
-- It sends terminal frames and closes transport connections.
-- It waits for the runtime and optional limiter processes to go `Down` before returning.
-
-It does **not** stop your app's root supervisor, sibling children, PubSub instance, presence actor, or group actors. Calling `stop` again returns `Error(NotRunning)`. If the drain does not acknowledge within 5000 ms, it returns `Error(StopTimeout)`.
+PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which manages its own lifecycle. Presence and groups are independent actors started by the application (see the [Supervision guide](/guides/supervision/)).
 
 ## Where this lives
 
-- `packages/beryl/src/beryl.gleam` — public lifecycle and handle surface: `start`, `child_spec`, `stop`, `build_app_subtree`, `start_app_supervisor`, `app_handle`
-- `packages/beryl/src/beryl/runtime.gleam` — internal runtime actor: socket connect/disconnect, inbound dispatch, heartbeat checks, topic teardown, effect interpretation
+- `src/beryl/runtime.gleam` — the runtime actor: socket/model tracking, event dispatch, the effect interpreter, heartbeat timer, crash rescue.
+- `src/beryl.gleam` — `child_spec`, the supervised child specification, and the monomorphic closure record over the generic runtime.
