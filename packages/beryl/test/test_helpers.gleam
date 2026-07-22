@@ -3,27 +3,8 @@
 //// Provides polling utilities to replace fragile `process.sleep()` calls
 //// with deterministic condition-based waiting.
 
-import beryl/coordinator
 import gleam/erlang/process
 import gleeunit/should
-
-/// A stateless joined-channel instance whose callbacks all no-op and return
-/// the same instance, for coordinator-level tests that don't exercise
-/// channel state.
-pub fn noop_instance() -> coordinator.JoinedChannel {
-  coordinator.JoinedChannel(
-    handle_in: fn(_event, _payload, _ctx) {
-      coordinator.NoReplyErased(next: noop_instance())
-    },
-    handle_binary: fn(_data, _ctx) {
-      coordinator.NoReplyErased(next: noop_instance())
-    },
-    handle_info: fn(_message, _ctx) {
-      coordinator.NoReplyErased(next: noop_instance())
-    },
-    terminate: fn(_reason, _ctx) { Nil },
-  )
-}
 
 /// Poll a condition function until it returns True, or fail after timeout.
 ///

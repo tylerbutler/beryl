@@ -21,7 +21,7 @@ pub fn main() {
 fn start_system(
   config: beryl.Config,
   events: process.Subject(event.Event(Nil)),
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
       process.send(events, ev)
@@ -34,7 +34,7 @@ fn start_system(
 }
 
 fn join_ok(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   events: process.Subject(event.Event(Nil)),
   frames: process.Subject(String),
   socket_id: String,

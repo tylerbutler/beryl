@@ -131,7 +131,17 @@ pub type Msg(msg) {
   Broadcast(topic: String, event: String, payload: Json, except: Option(String))
   RemoteBroadcast(pubsub.Message(Json))
   CheckHeartbeats
+  GetStats(reply: Subject(StatsSnapshot))
   Stop(reply: Subject(Nil))
+}
+
+pub type StatsSnapshot {
+  StatsSnapshot(
+    connected_sockets: Int,
+    joined_socket_topic_pairs: Int,
+    active_topics: Int,
+    runtime_mailbox_length: Int,
+  )
 }
 
 /// Erlang monotonic time in milliseconds
@@ -421,6 +431,22 @@ fn handle_message(
         }
       }
     CheckHeartbeats -> handle_check_heartbeats(state)
+    GetStats(reply) -> {
+      process.send(
+        reply,
+        StatsSnapshot(
+          connected_sockets: dict.size(state.sockets),
+          joined_socket_topic_pairs: state.sockets
+            |> dict.values
+            |> list.fold(0, fn(total, socket) {
+              total + set.size(socket.subscribed_topics)
+            }),
+          active_topics: dict.size(state.topics),
+          runtime_mailbox_length: telemetry.mailbox_length(),
+        ),
+      )
+      actor.continue(state)
+    }
     Stop(reply) -> handle_stop(state, reply)
   }
 }
