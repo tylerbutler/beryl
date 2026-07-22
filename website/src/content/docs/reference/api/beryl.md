@@ -704,6 +704,6 @@ Add PubSub to a configuration for distributed broadcasts
 ```gleam
 pub fn with_pubsub(
   Config,
-  pubsub.PubSub
+  pubsub.PubSub(json.Json)
 ) -> Config
 ```

@@ -139,25 +139,20 @@ case group.create(groups, name) {
 
 ## Supervisor startup failures
 
-`supervisor.start` returns `Result(SupervisedChannels, supervisor.StartError)`:
+`supervisor.start` returns a `ChildSpecification`, so startup failures are reported when the application starts its root supervisor:
 
 ```gleam
-case supervisor.start(config) {
-  Ok(supervised) -> {
-    // proceed
-  }
-  Error(supervisor.InvalidHeartbeatTimeout) -> {
-    // Config error: heartbeat_timeout_ms must be >= 2
-    panic
-  }
-  Error(supervisor.SupervisorStartFailed(err)) -> {
-    // Internal actor startup failure — log and exit gracefully
-    panic
-  }
+case
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(supervisor.start(config))
+  |> static_supervisor.start()
+{
+  Ok(root) -> run(root)
+  Error(error) -> handle_start_error(error)
 }
 ```
 
-`InvalidHeartbeatTimeout` is always a configuration mistake. `SupervisorStartFailed` wraps a Beryl-owned startup failure; use `beryl/error.describe_start_failure` to format it for logs.
+A `heartbeat_timeout_ms` value below 2 is reported as `actor.InitFailed("invalid heartbeat timeout")`. Other child startup failures use the corresponding `actor.StartError`.
 
 ## send_info silent ignoring
 

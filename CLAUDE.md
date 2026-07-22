@@ -155,16 +155,18 @@ installed in CI via `.github/actions/install-trellis`.
 - **pr.yml**: PR title validation (commitlint), `trellis doctor`,
   `trellis changelog check`
 - **release.yml**: `trellis release pr` on push to main
-- **publish.yml**: on release-PR merge — `trellis publish --all-untagged`
-  then `trellis tag create --push --github-release`
+- **publish.yml**: on release-PR merge — `trellis tag create --push
+  --github-release` (Hex.pm publishing via `trellis publish` is temporarily
+  disabled)
 
 ### Release Flow
 1. Push commits with conventional commit messages
 2. Add changelog fragments with `just change <package> <kind> "<body>"`
 3. `trellis release pr` maintains a release PR (branch `release/pending`)
    with version bumps and CHANGELOGs
-4. Merge the release PR → packages publish to Hex in dependency order,
-   per-package tags (`beryl-v1.2.3`) and GitHub releases are created
+4. Merge the release PR → per-package tags (`beryl-v1.2.3`) and GitHub
+   releases are created (Hex.pm publishing is temporarily disabled — see
+   `.github/workflows/publish.yml`)
 
 ## Conventions
 

@@ -28,9 +28,7 @@ import gleam/bit_array
 import gleam/bool
 import gleam/crypto
 import gleam/dict.{type Dict}
-import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode as gdecode
-import gleam/erlang/atom
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
@@ -41,7 +39,6 @@ import gleam/result
 import gleam/set.{type Set}
 import gleam/string
 import lattice_presence/presence_state as state
-import lattice_presence/state_json
 
 /// Well-known PubSub topic for presence state replication
 const sync_topic = "beryl:presence:sync"
@@ -149,6 +146,18 @@ fn state_entries_to_presence_entries(
   |> dict.from_list
 }
 
+// nolint: unused_exports -- package-internal, hidden from public docs with @internal; test modules construct it directly to exercise the version guard
+/// The replication envelope carried over PubSub between presence replicas.
+///
+/// Sent as a native BEAM term (no JSON encoding), so `v` is presence's own
+/// version guard: a node that does not recognise `v` discards the message
+/// rather than risk interpreting a shape it wasn't built to read. Bump it if
+/// this envelope's fields ever need to change.
+@internal
+pub type SyncPayload {
+  SyncPayload(v: Int, sender: String, state: state.State)
+}
+
 /// Configuration for starting presence.
 ///
 /// Build configs with `default_config` and the `with_*` functions so Beryl can
@@ -156,7 +165,7 @@ fn state_entries_to_presence_entries(
 pub opaque type Config {
   Config(
     /// PubSub instance for cross-node replication
-    pubsub: Option(PubSub),
+    pubsub: Option(PubSub(SyncPayload)),
     /// This node's replica base name. Must identify at most one live node
     /// in the cluster. Each actor start derives a unique incarnation name
     /// from it (`base@suffix`), so restarting a node never reuses the
@@ -197,7 +206,7 @@ pub opaque type Message {
   )
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
-  RemoteSync(pubsub_msg: pubsub.Message)
+  RemoteSync(pubsub_msg: pubsub.Message(SyncPayload))
 }
 
 /// A tracked presence's location within the CRDT, keyed by tracking ref.
@@ -238,7 +247,7 @@ pub fn default_config(replica: String) -> Config {
 }
 
 /// Enable PubSub replication for presence.
-pub fn with_pubsub(config: Config, pubsub: PubSub) -> Config {
+pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
   Config(..config, pubsub: Some(pubsub))
 }
 
@@ -278,7 +287,7 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
 
 // nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
 /// Start the presence actor with a registered name. Package-internal: used by
-/// `beryl/supervisor`; end users get supervision via `supervisor.child_spec`.
+/// `beryl/supervisor`; end users get supervision via `supervisor.start`.
 @internal
 pub fn start_named(
   config: Config,
@@ -321,18 +330,11 @@ fn build_presence(
           #("replica", config.replica),
         ])
 
-        // Build selector: handle actor subject messages + PubSub record messages
-        // PubSub.Message on BEAM is {message, Topic, Event, Payload, From}
+        // Build selector: handle actor subject messages + PubSub sync messages
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> process.select_record(
-            atom.create("message"),
-            4,
-            fn(raw: Dynamic) -> Message {
-              RemoteSync(coerce_to_pubsub_message(raw))
-            },
-          )
+          |> pubsub.selecting(RemoteSync)
 
         // Schedule the first broadcast tick if enabled
         schedule_broadcast_tick(subject, config.broadcast_interval_ms)
@@ -363,16 +365,19 @@ fn build_presence(
 /// Broadcast the current CRDT state over PubSub when dirty, returning the
 /// updated actor state. Extracted from the `BroadcastTick` handler to keep
 /// that branch from nesting too deeply.
-fn maybe_broadcast_state(actor_state: ActorState, ps: PubSub) -> ActorState {
+fn maybe_broadcast_state(
+  actor_state: ActorState,
+  ps: PubSub(SyncPayload),
+) -> ActorState {
   use <- bool.guard(when: !actor_state.dirty, return: actor_state)
   let payload =
-    json.object([
-      #("v", json.int(1)),
+    SyncPayload(
+      v: 1,
       // The sender is the full incarnation name; receivers use its base to
       // prune state left behind by this node's previous incarnations.
-      #("sender", json.string(state.replica(actor_state.crdt))),
-      #("state", state_json.to_json(actor_state.crdt)),
-    ])
+      sender: state.replica(actor_state.crdt),
+      state: actor_state.crdt,
+    )
 
   pubsub.broadcast_from(ps, process.self(), sync_topic, sync_event, payload)
 
@@ -385,11 +390,6 @@ fn schedule_broadcast_tick(subject: Subject(Message), interval_ms: Int) -> Nil {
   let _timer = process.send_after(subject, interval_ms, BroadcastTick)
   Nil
 }
-
-/// Coerce a Dynamic value to pubsub.Message.
-/// Safe because we match on the `message` record tag via select_record.
-@external(erlang, "beryl_ffi", "identity")
-fn coerce_to_pubsub_message(value: Dynamic) -> pubsub.Message
 
 /// Generate a unique, opaque tracking ref for a presence.
 ///
@@ -648,10 +648,7 @@ fn handle_message(
       // Only process presence sync messages on the expected topic/event
       case pubsub_msg.topic == sync_topic && pubsub_msg.event == sync_event {
         False -> actor.continue(actor_state)
-        True -> {
-          let payload_str = json.to_string(pubsub_msg.payload)
-          handle_sync_payload(actor_state, payload_str)
-        }
+        True -> handle_sync_payload(actor_state, pubsub_msg.payload)
       }
     }
   }
@@ -730,96 +727,68 @@ fn maybe_invoke_on_diff(config: Config, diff: Diff) -> Nil {
   }
 }
 
-/// Parse the sync envelope and merge the remote state.
+/// Check the envelope version and merge the remote state.
 /// Self-delivery is already prevented by broadcast_from at the PubSub layer.
 fn handle_sync_payload(
   actor_state: ActorState,
-  payload_str: String,
+  payload: SyncPayload,
 ) -> actor.Next(ActorState, Message) {
-  case parse_sync_envelope(payload_str) {
-    Error(reason) -> {
-      let reason_str = case reason {
-        SyncDecodeFailed -> "JSON parse or decode failed"
-        UnknownEnvelopeVersion(version) ->
-          "Unknown envelope version: " <> int.to_string(version)
-      }
+  case payload.v {
+    1 -> merge_remote_sync(actor_state, payload.sender, payload.state)
+    version -> {
       let logger = internal.logger("beryl.presence")
       logger
-      |> log.warn("Failed to decode presence sync message", [
-        #("reason", reason_str),
-        #("payload_length", int.to_string(string.length(payload_str))),
+      |> log.warn(
+        "Ignored presence sync message with unknown envelope version",
+        [#("version", int.to_string(version))],
+      )
+      actor.continue(actor_state)
+    }
+  }
+}
+
+fn merge_remote_sync(
+  actor_state: ActorState,
+  sender: String,
+  remote_state: State,
+) -> actor.Next(ActorState, Message) {
+  // Merge, diff, on_diff, and prune all run inside a crash boundary. The
+  // remote state originates from another cluster node (possibly a mixed
+  // version, a compromised peer, or a malformed dynamic value coerced from
+  // the wire); an exception here must not terminate the shared presence
+  // actor. On failure we return the previous, unchanged `actor_state` so
+  // invalid sync input cannot partially mutate presence state.
+  let processed =
+    internal.rescue(fn() {
+      let #(new_crdt, state_diff) =
+        state.merge_with_diff(actor_state.crdt, remote_state)
+      let diff = wrap_state_diff(state_diff)
+      let changed = !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
+      maybe_invoke_on_diff(actor_state.config, diff)
+      // The merge may have (re)admitted state from dead incarnations —
+      // the sender's predecessors, or our own pre-restart self echoed back
+      // by a peer. Prune anything superseded by the two incarnations known
+      // to be live right now: the sender and ourselves.
+      let new_crdt =
+        prune_superseded(actor_state.config, new_crdt, [
+          sender,
+          state.replica(new_crdt),
+        ])
+      ActorState(
+        ..actor_state,
+        crdt: new_crdt,
+        dirty: actor_state.dirty || changed,
+      )
+    })
+  case processed {
+    Ok(next_state) -> actor.continue(next_state)
+    Error(crash) -> {
+      let logger = internal.logger("beryl.presence")
+      logger
+      |> log.error("Remote presence sync dropped: processing failed", [
+        #("crash", crash),
       ])
       actor.continue(actor_state)
     }
-    Ok(#(sender, remote_state)) -> {
-      // Merge, diff, on_diff, and prune all run inside a crash boundary. The
-      // remote state originates from another cluster node (possibly a mixed
-      // version, a compromised peer, or a malformed dynamic value); an
-      // exception here must not terminate the shared presence actor. On
-      // failure we return the previous, unchanged `actor_state` so invalid
-      // sync input cannot partially mutate presence state.
-      let processed =
-        internal.rescue(fn() {
-          let #(new_crdt, state_diff) =
-            state.merge_with_diff(actor_state.crdt, remote_state)
-          let diff = wrap_state_diff(state_diff)
-          let changed =
-            !{ dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) }
-          maybe_invoke_on_diff(actor_state.config, diff)
-          // The merge may have (re)admitted state from dead incarnations —
-          // the sender's predecessors, or our own pre-restart self echoed back
-          // by a peer. Prune anything superseded by the two incarnations known
-          // to be live right now: the sender and ourselves.
-          let new_crdt =
-            prune_superseded(actor_state.config, new_crdt, [
-              sender,
-              state.replica(new_crdt),
-            ])
-          ActorState(
-            ..actor_state,
-            crdt: new_crdt,
-            dirty: actor_state.dirty || changed,
-          )
-        })
-      case processed {
-        Ok(next_state) -> actor.continue(next_state)
-        Error(crash) -> {
-          let logger = internal.logger("beryl.presence")
-          logger
-          |> log.error("Remote presence sync dropped: processing failed", [
-            #("crash", crash),
-            #("payload_length", int.to_string(string.length(payload_str))),
-          ])
-          actor.continue(actor_state)
-        }
-      }
-    }
-  }
-}
-
-/// Errors produced when parsing a presence sync envelope.
-type SyncEnvelopeError {
-  /// The payload could not be parsed or decoded as a sync envelope.
-  SyncDecodeFailed
-  /// The envelope declared a version this node does not understand.
-  UnknownEnvelopeVersion(Int)
-}
-
-/// Parse the sync envelope JSON: {"v": 1, "sender": "...", "state": {...}}
-/// State is decoded directly as a nested object (not double-encoded string).
-/// Rejects envelopes with unknown version numbers.
-fn parse_sync_envelope(
-  payload_str: String,
-) -> Result(#(String, State), SyncEnvelopeError) {
-  let decoder = {
-    use v <- gdecode.field("v", gdecode.int)
-    use sender <- gdecode.field("sender", gdecode.string)
-    use remote_state <- gdecode.field("state", state_json.decoder())
-    gdecode.success(#(v, sender, remote_state))
-  }
-  case json.parse(payload_str, decoder) {
-    Error(_) -> Error(SyncDecodeFailed)
-    Ok(#(1, sender, remote_state)) -> Ok(#(sender, remote_state))
-    Ok(#(v, _, _)) -> Error(UnknownEnvelopeVersion(v))
   }
 }

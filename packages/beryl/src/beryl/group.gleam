@@ -87,7 +87,7 @@ pub fn start() -> Result(Groups, GroupStartError) {
 
 // nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
 /// Start the groups actor with a registered name. Package-internal: used by
-/// `beryl/supervisor`; end users get supervision via `supervisor.child_spec`.
+/// `beryl/supervisor`; end users get supervision via `supervisor.start`.
 @internal
 pub fn start_named(
   name: process.Name(Message),
