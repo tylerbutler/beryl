@@ -1,19 +1,24 @@
-//// Embeddable cursor-channel logic for app-side dispatch.
+//// Cursor-channel logic for app-side dispatch.
 ////
-//// A topic-scoped `Model`/`join`/`update`/`closed` triple: a composing
-//// app (see the showcase example) routes `cursor:*` events here and
-//// stores the returned model per topic. Mirrors the behavior of
-//// `cursors/cursor_channel` on the channel-module API.
+//// Two layers share one source of truth:
+////
+//// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
+////   composing app (see the showcase example) routes `cursor:*` events
+////   through, storing the returned model per topic.
+//// - A socket-wide `Standalone` model plus `standalone_init`/
+////   `standalone_update` wrappers that drive the standalone cursors server
+////   through `beryl.start_app`, reusing the same per-topic surface.
 
 import beryl/event.{type Effect, type Ref}
 import beryl/presence.{type Presence}
 import example_helpers/color
 import example_helpers/payload
+import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
-import gleam/option.{type Option, Some}
+import gleam/option.{type Option, None, Some}
 
 /// Per-topic state for one socket in a cursor room.
 pub type Model {
@@ -95,6 +100,84 @@ pub fn closed(
     event.PresenceUntrack(topic, model.username),
     event.BroadcastPresence(topic, "presence_list", encode_users),
   ]
+}
+
+// --- Standalone app-side dispatch wrapper ---
+
+/// Socket-wide state for the standalone cursors server: one per-topic
+/// `Model` per joined `cursor:*` topic, keyed by topic.
+pub type Standalone {
+  Standalone(socket_id: String, cursors: Dict(String, Model))
+}
+
+/// `init` for the standalone cursors `beryl.start_app` runtime.
+pub fn standalone_init(
+  info: event.ConnectInfo(Nil),
+) -> #(Standalone, List(Effect)) {
+  #(Standalone(socket_id: info.socket_id, cursors: dict.new()), [])
+}
+
+/// `update` for the standalone cursors `beryl.start_app` runtime: route
+/// each event to the embeddable `join`/`update`/`closed` surface, keyed by
+/// topic. Non-`cursor:*` joins are rejected (fail closed), mirroring the old
+/// `cursor:*` handler registration.
+pub fn standalone_update(
+  ctx: Ctx,
+  model: Standalone,
+  ev: event.Event(Nil),
+) -> event.Next(Standalone, Nil) {
+  case ev {
+    event.Join(topic, payload, ref) ->
+      case topic {
+        "cursor:" <> _ -> {
+          let #(joined, effects) =
+            join(ctx, model.socket_id, topic, payload, ref)
+          case joined {
+            Some(sub) ->
+              event.Next(
+                Standalone(
+                  ..model,
+                  cursors: dict.insert(model.cursors, topic, sub),
+                ),
+                effects,
+              )
+            None -> event.Next(model, effects)
+          }
+        }
+        _ ->
+          event.Next(model, [
+            event.RejectJoin(
+              ref,
+              json.object([#("reason", json.string("unknown_topic"))]),
+            ),
+          ])
+      }
+
+    event.Message(topic, event_name, payload, _ref) ->
+      case dict.get(model.cursors, topic) {
+        Ok(sub) -> {
+          let #(sub, effects) =
+            update(ctx, model.socket_id, topic, sub, event_name, payload)
+          event.Next(
+            Standalone(..model, cursors: dict.insert(model.cursors, topic, sub)),
+            effects,
+          )
+        }
+        Error(Nil) -> event.Next(model, [])
+      }
+
+    event.Closed(topic, _reason) ->
+      case dict.get(model.cursors, topic) {
+        Ok(sub) ->
+          event.Next(
+            Standalone(..model, cursors: dict.delete(model.cursors, topic)),
+            closed(ctx, model.socket_id, topic, sub),
+          )
+        Error(Nil) -> event.Next(model, [])
+      }
+
+    event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
+  }
 }
 
 /// Encode presence entries as the `presence_list` payload:

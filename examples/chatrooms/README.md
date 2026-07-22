@@ -31,10 +31,10 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 |---|---|---|
 | **Groups** | `beryl/group` | Rooms organized in "public" group |
 | **on_connect auth** | `beryl_mist` | Token query param validated before WS upgrade |
-| **JoinError** | `beryl/channel` | Room capacity check rejects when full |
-| **Reply** | `beryl/channel` | Message delivery confirmed with `msg_ack` |
-| **Push** | `beryl/channel` | System join/leave messages broadcast to room |
-| **error_with_code** | `beryl/channel` | Empty message validation returns code 422 |
+| **RejectJoin** | `beryl/event` | Room capacity check rejects when full |
+| **ReplyOk** | `beryl/event` | Message delivery confirmed on the client's ref |
+| **Broadcast** | `beryl/event` | System join/leave messages broadcast to room |
+| **error code** | `chatrooms/app` | Empty message validation returns code 422 |
 | **Topic helpers** | `beryl/topic` | Extract room name from `room:*` pattern |
 | **Presence typing** | `beryl/presence` | Typing indicators via presence meta updates |
 | **join_rate** | `beryl` | 5 joins/sec per socket |
@@ -49,7 +49,7 @@ Browser (vanilla JS + Phoenix client CDN)
 Gleam/BEAM server (port 8001)
   ├── Mist HTTP routing (static files, /api/rooms)
   ├── Mist WebSocket transport (on_connect auth)
-  ├── beryl channels (room:* handler)
+  ├── beryl app-side dispatch (room:* topics via chatrooms/app)
   ├── beryl groups ("public" → general, random, help)
   └── beryl presence (online users + typing indicators)
 ```

@@ -1,6 +1,6 @@
 //// Contract tests for the embeddable `collab_docs/app` logic (the app-side
-//// dispatch replacement for the `collab_docs/channel` module): document-key
-//// encoding and channel-level tenant-token join authorization.
+//// dispatch document handler): document-key encoding and join-level
+//// tenant-token authorization.
 
 import beryl/event
 import collab_docs/app
