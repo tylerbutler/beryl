@@ -2,7 +2,7 @@
 ////
 //// A `Bucket` is plain data refilled against the monotonic clock — there is
 //// no registry actor and no messaging. Callers own bucket storage (the
-//// coordinator keeps per-socket and per-channel buckets in its own state;
+//// runtime keeps per-socket and per-channel buckets in its own state;
 //// transports keep one per connection), so a check costs a dict update
 //// instead of a blocking cross-process call, cleanup is deleting the entry,
 //// and nothing leaks when a supervisor restarts the owner.

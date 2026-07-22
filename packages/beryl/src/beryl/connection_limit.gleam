@@ -5,7 +5,7 @@
 //// - a per-IP ceiling (`max_per_ip`), which throttles a single peer, and
 //// - a node-wide ceiling (`max_total`), which caps concurrent connections
 ////   across every IP so distributed/rotating source addresses cannot exhaust
-////   the node's process, socket, and coordinator budget.
+////   the node's process, socket, and runtime budget.
 ////
 //// Both are checked atomically inside `handle_message` on acquire, so
 //// concurrent opens cannot race past either ceiling. A single `Permit` tracks

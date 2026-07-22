@@ -28,7 +28,7 @@ pub type LoggingConfig {
 /// Configure the global palabres logger from a Beryl logging configuration.
 ///
 /// Palabres is a singleton configured once at startup; the level set here is
-/// global across every Beryl logger. Called when a coordinator starts.
+/// global across every Beryl logger. Called when a runtime starts.
 pub fn configure(config: LoggingConfig) -> Nil {
   options.defaults()
   |> options.level(to_palabres_level(config.level))
