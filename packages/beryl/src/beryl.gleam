@@ -83,6 +83,9 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 
 type ChannelHandler =
@@ -755,6 +758,9 @@ type AppHandle {
     route_binary: fn(String, BitArray) -> Nil,
     broadcast: fn(String, String, json.Json, Option(String)) -> Nil,
     stop: fn() -> Nil,
+    /// Current pid of the supervised runtime, if running (used by tests
+    /// and PubSub sender attribution).
+    runtime_owner: fn() -> Result(process.Pid, Nil),
   )
 }
 
@@ -901,42 +907,107 @@ pub fn channels_registry(channels: Channels) -> Option(coordinator.Registry) {
   }
 }
 
+/// Build a supervised app-side dispatch system (ADR 0002).
+///
+/// One entry point replaces channel modules and registration: the app
+/// supplies `init`, producing the per-socket model when a socket connects,
+/// and `update`, receiving every event for the socket and returning the
+/// next model plus a list of effects. The app routes topics itself by
+/// matching on the event's topic — see `beryl/event` for the event and
+/// effect types.
+///
+/// Add the returned child specification to the application's OTP supervisor
+/// before using the handle.
+pub fn child_spec(
+  config: Config,
+  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(
+  #(Channels, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  Nil,
+) {
+  use <- bool.guard(
+    when: config.heartbeat_timeout_ms < 2,
+    return: Error(Nil),
+  )
+  warn_if_unprotected(config)
+  let name = process.new_name("beryl_runtime")
+  let child =
+    supervision.worker(fn() {
+      runtime.start_named(
+        to_runtime_config(config),
+        name: name,
+        pubsub: config.pubsub,
+        init: init,
+        update: update,
+      )
+      |> result.map_error(fn(error) {
+        case error {
+          runtime.ActorStartFailed(error) -> error
+          runtime.InvalidHeartbeatTimeout ->
+            actor.InitFailed("invalid heartbeat timeout")
+        }
+      })
+    })
+    |> supervision.restart(supervision.Transient)
+
+  let channels =
+    AppChannels(
+      config: config,
+      connection_limiter: connection_limit.start_optional(
+        config.max_connections_per_ip,
+        config.max_connections,
+      ),
+      app: app_handle(process.named_subject(name), config.pubsub),
+    )
+  let spec =
+    supervision.supervisor(fn() {
+      static_supervisor.new(static_supervisor.OneForOne)
+      |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
+      |> static_supervisor.add(child)
+      |> static_supervisor.start()
+    })
+  Ok(#(channels, spec))
+}
+
 /// Build the monomorphic closure record over a generic runtime. This is
 /// plain closure capture by a generic function — the `model`/`msg` types
-/// are sealed in here and never appear in any public signature.
+/// are sealed in here and never appear in any public signature. The
+/// subject is name-backed, so the closures keep working across supervised
+/// runtime restarts; sends are owner-guarded so use during a restart
+/// window or after `stop` degrades to a no-op instead of a crash.
 fn app_handle(
   subject: Subject(runtime.Msg(msg)),
-  runtime_pid: process.Pid,
   ps: Option(PubSub(json.Json)),
 ) -> AppHandle {
   AppHandle(
     socket_connected: fn(socket_id, send, send_binary, codec, seed) {
-      process.send(
+      send_runtime(
         subject,
         runtime.SocketConnected(socket_id, send, send_binary, codec, seed),
       )
     },
     register_closer: fn(socket_id, close) {
-      process.send(subject, runtime.RegisterCloser(socket_id, close))
+      send_runtime(subject, runtime.RegisterCloser(socket_id, close))
     },
     socket_disconnected: fn(socket_id) {
-      process.send(subject, runtime.SocketDisconnected(socket_id))
+      send_runtime(subject, runtime.SocketDisconnected(socket_id))
     },
     route_decoded: fn(socket_id, msg) {
-      process.send(subject, runtime.RouteDecoded(socket_id, msg))
+      send_runtime(subject, runtime.RouteDecoded(socket_id, msg))
     },
     route_binary: fn(socket_id, data) {
-      process.send(subject, runtime.HandleBinary(socket_id, data))
+      send_runtime(subject, runtime.HandleBinary(socket_id, data))
     },
     broadcast: fn(topic_name, event_name, payload, except) {
       // Local fan-out via the runtime; distributed fan-out via PubSub with
       // the runtime's pid as sender so it does not echo back to itself.
-      process.send(
+      send_runtime(
         subject,
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
-      case ps, process.is_alive(runtime_pid) {
-        Some(ps), True ->
+      case ps, process.subject_owner(subject) {
+        Some(ps), Ok(runtime_pid) ->
           case except {
             None ->
               pubsub.broadcast_from(
@@ -960,13 +1031,43 @@ fn app_handle(
       }
     },
     stop: fn() {
-      use <- bool.guard(when: !process.is_alive(runtime_pid), return: Nil)
-      let reply = process.new_subject()
-      process.send(subject, runtime.Stop(reply))
-      let _stop_result = process.receive(reply, 5000)
-      Nil
+      // Drain sockets gracefully; the Transient child is not restarted
+      // after a normal stop. The internal supervisor remains as an inert
+      // shell linked to the process that called `start_app`, and exits
+      // with it.
+      case process.subject_owner(subject) {
+        Error(Nil) -> Nil
+        Ok(_) -> {
+          let reply = process.new_subject()
+          process.send(subject, runtime.Stop(reply))
+          let _stop_result = process.receive(reply, 5000)
+          Nil
+        }
+      }
     },
+    runtime_owner: fn() { process.subject_owner(subject) },
   )
+}
+
+/// Send to the runtime only while its name is registered, so handle use
+/// during a supervised restart window or after `stop` is a quiet no-op.
+fn send_runtime(
+  subject: Subject(runtime.Msg(msg)),
+  message: runtime.Msg(msg),
+) -> Nil {
+  case process.subject_owner(subject) {
+    Ok(_) -> process.send(subject, message)
+    Error(Nil) -> Nil
+  }
+}
+
+// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
+@internal
+pub fn app_runtime_pid(channels: Channels) -> Result(process.Pid, Nil) {
+  case channels {
+    AppChannels(app: app, ..) -> app.runtime_owner()
+    Channels(..) -> Error(Nil)
+  }
 }
 
 fn to_runtime_config(config: Config) -> runtime.Config {
