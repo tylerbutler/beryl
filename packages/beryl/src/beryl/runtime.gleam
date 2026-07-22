@@ -8,10 +8,9 @@
 //// captured by `beryl.start`, so the frame-level transport SPI stays
 //// unparameterized.
 ////
-//// The runtime owns everything the coordinator owns under the
-//// channel-module API — inbound decoding and validation, rate limiting,
-//// heartbeat eviction, topic subscriptions, broadcast fan-out — and adds
-//// the effect interpreter: each `update` returns a list of `Effect`s that
+//// The runtime owns inbound decoding and validation, rate limiting,
+//// heartbeat eviction, topic subscriptions, and broadcast fan-out. It
+//// also interprets effects: each `update` returns a list of `Effect`s that
 //// are applied strictly in order within a single actor turn, so effect
 //// list order is wire order.
 
@@ -41,9 +40,8 @@ import gleam/set.{type Set}
 import gleam/string
 
 /// Configuration for the runtime actor. Built by `beryl.start` from a
-/// `beryl.Config`; the fields mirror the coordinator's configuration plus
-/// per-topic-pattern rate limits and the optional presence handle used by
-/// the presence effects.
+/// `beryl.Config`; the fields cover per-topic-pattern rate limits and the
+/// optional presence handle used by the presence effects.
 pub type Config {
   Config(
     codec: Codec,
@@ -179,8 +177,7 @@ type Outcome(model, msg) {
 /// the runtime under a supervisor, and a crash restarts it with dispatch
 /// intact because the `init`/`update` closures live in the child
 /// specification. The registered name keeps transport and broadcast
-/// handles valid across restarts (per-socket state is dropped, matching
-/// coordinator restart semantics).
+/// handles valid across restarts (per-socket state is dropped on restart).
 pub fn start_named(
   config: Config,
   name name: process.Name(Msg(msg)),
@@ -1353,8 +1350,7 @@ fn drive(outcome: Outcome(model, msg), socket_id: String) -> State(model, msg) {
 /// `Closed` to the app, auto-untrack leftover presence, and send the
 /// terminal frame. Subscription state is removed *before* the `Closed`
 /// delivery, so pushes to the closing topic drop while broadcasts still
-/// reach the topic's remaining subscribers — the same frames the client
-/// set would see under the channel-module API.
+/// reach the topic's remaining subscribers.
 fn close_topic(
   state: State(model, msg),
   socket_id: String,

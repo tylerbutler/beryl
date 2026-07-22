@@ -32,7 +32,7 @@ pub fn connect_with_seed(
 ) -> process.Subject(String) {
   let sent = process.new_subject()
   transport.socket_connected(
-    channels: channels,
+    sockets: channels,
     socket_id: socket_id,
     send: fn(message) {
       process.send(sent, message)

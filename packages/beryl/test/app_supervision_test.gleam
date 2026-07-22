@@ -228,13 +228,13 @@ pub fn update_crash_runs_socket_close_callback_test() {
 
   let closed = process.new_subject()
   transport.socket_connected(
-    channels: sockets,
+    sockets: sockets,
     socket_id: "s1",
     send: fn(_message) { Ok(Nil) },
     send_binary: fn(_data) { Ok(Nil) },
     seed: event.empty_seed(),
   )
-  transport.register_closer(channels: sockets, socket_id: "s1", close: fn() {
+  transport.register_closer(sockets: sockets, socket_id: "s1", close: fn() {
     process.send(closed, Nil)
   })
   let assert Ok(sender) = process.receive(senders, 1000)

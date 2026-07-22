@@ -32,13 +32,13 @@ import gleam/result
 /// metadata), delivered to the app's `init` as `ConnectInfo.seed`. Call
 /// `register_closer` immediately after this.
 pub fn socket_connected(
-  channels channels: Sockets,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   seed seed: ConnectSeed,
 ) -> Nil {
-  beryl.transport_socket_connected(channels, socket_id, send, send_binary, seed)
+  beryl.transport_socket_connected(sockets, socket_id, send, send_binary, seed)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -46,20 +46,20 @@ pub fn socket_connected(
 /// so the runtime can actively evict it (e.g. heartbeat timeout) instead
 /// of leaving a zombie socket whose frames are silently dropped.
 pub fn register_closer(
-  channels channels: Sockets,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
   close close: fn() -> Nil,
 ) -> Nil {
-  beryl.transport_register_closer(channels, socket_id, close)
+  beryl.transport_register_closer(sockets, socket_id, close)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce that a socket's connection has closed.
 pub fn socket_disconnected(
-  channels channels: Sockets,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
 ) -> Nil {
-  beryl.transport_socket_disconnected(channels, socket_id)
+  beryl.transport_socket_disconnected(sockets, socket_id)
 }
 
 // --- Inbound routing ---
@@ -69,31 +69,31 @@ pub fn socket_disconnected(
 /// the connection process (see `active_codec`) so parse cost and malformed
 /// input never reach the shared runtime.
 pub fn route_decoded(
-  channels channels: Sockets,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
   message message: Inbound,
 ) -> Nil {
-  beryl.transport_route_decoded(channels, socket_id, message)
+  beryl.transport_route_decoded(sockets, socket_id, message)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Route a raw binary frame, for codecs without a binary decoder (fans out
 /// to the socket's joined topics' `handle_binary`).
 pub fn route_binary(
-  channels channels: Sockets,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
   data data: BitArray,
 ) -> Nil {
-  beryl.transport_route_binary(channels, socket_id, data)
+  beryl.transport_route_binary(sockets, socket_id, data)
 }
 
 // --- Configuration ---
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// The wire codec configured for these channels. Transports decode inbound
+/// The wire codec configured for these sockets. Transports decode inbound
 /// frames with it in the connection process.
-pub fn active_codec(channels: Sockets) -> Codec {
-  beryl.configured_codec(channels)
+pub fn active_codec(sockets: Sockets) -> Codec {
+  beryl.configured_codec(sockets)
 }
 
 // --- Per-connection message rate limiting ---
@@ -108,8 +108,8 @@ pub opaque type RateLimiter {
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Create a fresh per-connection message limiter, `None` when no message
 /// rate is configured.
-pub fn new_message_limiter(channels: Sockets) -> Option(RateLimiter) {
-  beryl.message_limits(channels)
+pub fn new_message_limiter(sockets: Sockets) -> Option(RateLimiter) {
+  beryl.message_limits(sockets)
   |> option.map(fn(config) { RateLimiter(rate_limit.new_bucket(config)) })
 }
 
@@ -170,8 +170,8 @@ pub type ConnectionOwner {
 /// connection process right after upgrade; on `OwnerAlive(pid)` monitor `pid`
 /// and close on its `Down`, and on `OwnerUnavailable` close the connection
 /// immediately.
-pub fn connection_owner(channels: Sockets) -> ConnectionOwner {
-  case beryl.app_runtime_pid(channels) {
+pub fn connection_owner(sockets: Sockets) -> ConnectionOwner {
+  case beryl.app_runtime_pid(sockets) {
     Ok(pid) -> OwnerAlive(pid)
     Error(Nil) -> OwnerUnavailable
   }

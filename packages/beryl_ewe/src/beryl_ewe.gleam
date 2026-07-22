@@ -36,10 +36,9 @@ pub opaque type TransportConfig {
     /// whole connection a single time and can reject it before any channel
     /// join. Return `Ok(metadata)` to allow the connection and seed
     /// `ConnectSeed.metadata` (an ordered list of string pairs, visible to
-    /// the app's `init` via `ConnectInfo.seed`; channel-module systems ignore
-    /// it), or `Error(ConnectRejected)` to reject with a 403 Forbidden
-    /// response. When `None`, all connections are allowed and metadata
-    /// starts empty (`[]`).
+    /// the app's `init` via `ConnectInfo.seed`), or `Error(ConnectRejected)`
+    /// to reject with a 403 Forbidden response. When `None`, all connections
+    /// are allowed and metadata starts empty (`[]`).
     on_connect: Option(
       fn(Request(Connection)) -> Result(List(#(String, String)), ConnectError),
     ),
@@ -116,10 +115,9 @@ pub fn default_config(path: String) -> TransportConfig {
 /// The callback receives the HTTP request before the WebSocket upgrade and
 /// runs once per socket. Return `Ok(metadata)` to allow the connection and
 /// seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
-/// an app-dispatch system's `init` via `ConnectInfo.seed` (see
-/// `ConnectInfo.init`); channel-module systems ignore it — or
-/// `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
-/// response before any channel join occurs.
+/// the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
+/// reject the connection with a 403 Forbidden response before any channel
+/// join occurs.
 ///
 /// Callback order and duplicate keys are preserved verbatim in
 /// `ConnectSeed.metadata`; this transport never logs metadata values.
@@ -548,7 +546,7 @@ fn on_init(
   // Register with runtime, seeding the connect seed (path/query/headers
   // plus any `with_on_connect` metadata).
   transport.socket_connected(
-    channels: channels,
+    sockets: channels,
     socket_id: socket_id,
     send: send_fn,
     send_binary: send_binary_fn,
@@ -558,7 +556,7 @@ fn on_init(
   // Let the runtime actively close this connection (heartbeat eviction,
   // server-side disconnects) instead of leaving a zombie socket open.
   transport.register_closer(
-    channels: channels,
+    sockets: channels,
     socket_id: socket_id,
     close: fn() { process.send(send_subject, Close) },
   )

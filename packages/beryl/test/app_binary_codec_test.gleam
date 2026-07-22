@@ -56,7 +56,7 @@ fn connect_binary(
   let text = process.new_subject()
   let binary = process.new_subject()
   transport.socket_connected(
-    channels: channels,
+    sockets: channels,
     socket_id: socket_id,
     send: fn(message) {
       process.send(text, message)

@@ -106,7 +106,7 @@ pub fn stop_tears_down_socket_and_calls_closer_test() {
   let channels = start_system(events)
   let frames = h.connect(channels, "s1")
   let closed = process.new_subject()
-  transport.register_closer(channels: channels, socket_id: "s1", close: fn() {
+  transport.register_closer(sockets: channels, socket_id: "s1", close: fn() {
     process.send(closed, Nil)
   })
   join_rooms(channels, events, frames, "s1", ["room:a", "room:b"])

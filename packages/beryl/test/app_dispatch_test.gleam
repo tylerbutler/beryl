@@ -227,8 +227,8 @@ pub fn runtime_is_supervised_and_restarts_with_dispatch_intact_test() {
   let _reply = h.recv(frames)
 
   // Kill the runtime process outright: the internal supervisor must
-  // restart it with the app's init/update intact (socket state is
-  // dropped, matching coordinator restart semantics).
+  // restart it with the app's init/update intact (per-socket state is
+  // dropped on restart).
   let assert Ok(old_pid) = beryl.app_runtime_pid(channels)
   process.kill(old_pid)
   test_helpers.wait_until(

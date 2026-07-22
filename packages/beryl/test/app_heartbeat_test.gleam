@@ -43,7 +43,7 @@ fn connect_with_closer(
 ) -> process.Subject(String) {
   let frames = h.connect(channels, socket_id)
   transport.register_closer(
-    channels: channels,
+    sockets: channels,
     socket_id: socket_id,
     close: fn() { process.send(closed, Nil) },
   )
