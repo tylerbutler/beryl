@@ -69,7 +69,7 @@ fn connect_with_seed_and_close(
   let sent = process.new_subject()
   let owner = transport.connection_owner(channels)
   transport.admit_socket(
-    channels: channels,
+    sockets: channels,
     owner: owner,
     socket_id: socket_id,
     send: fn(message) {

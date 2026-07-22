@@ -57,7 +57,7 @@ fn connect_binary(
   let text = process.new_subject()
   let binary = process.new_subject()
   transport.admit_socket(
-    channels: channels,
+    sockets: channels,
     owner: transport.connection_owner(channels),
     socket_id: socket_id,
     send: fn(message) {

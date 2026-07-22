@@ -157,7 +157,7 @@ pub fn init_crash_leaves_socket_unregistered_test() {
     )
   let frames = process.new_subject()
   transport.admit_socket(
-    channels: channels,
+    sockets: channels,
     owner: transport.connection_owner(channels),
     socket_id: "s1",
     send: fn(message) {
