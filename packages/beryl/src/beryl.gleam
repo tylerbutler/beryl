@@ -163,7 +163,7 @@ pub opaque type Config {
     /// Max concurrent connections node-wide across all IPs (0 = unlimited)
     max_connections: Int,
     /// Optional PubSub for distributed broadcasts across nodes
-    pubsub: Option(PubSub),
+    pubsub: Option(PubSub(json.Json)),
     /// Per-socket message rate limit (messages/sec, 0 = unlimited)
     message_rate: Int,
     /// Per-socket message burst capacity (0 = defaults to message_rate)
@@ -242,7 +242,7 @@ pub fn config(codec: codec.Codec) -> Config {
 }
 
 /// Add PubSub to a configuration for distributed broadcasts
-pub fn with_pubsub(config: Config, ps: PubSub) -> Config {
+pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(ps))
 }
 
@@ -489,7 +489,7 @@ pub fn config_max_connections(config: Config) -> Int {
 }
 
 @internal
-pub fn config_pubsub(config: Config) -> Option(PubSub) {
+pub fn config_pubsub(config: Config) -> Option(PubSub(json.Json)) {
   config.pubsub
 }
 
@@ -626,7 +626,7 @@ pub opaque type Channels {
   Channels(
     coordinator: Subject(coordinator.Message),
     config: Config,
-    pubsub: Option(PubSub),
+    pubsub: Option(PubSub(json.Json)),
     connection_limiter: Option(connection_limit.ConnectionLimiter),
     /// Crash-survivable handler registry. When present, `register` writes
     /// here and syncs the coordinator, so registrations survive coordinator

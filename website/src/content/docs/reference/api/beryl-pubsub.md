@@ -9,12 +9,29 @@ PubSub - Distributed publish/subscribe using Erlang pg
  module. Subscribers are tracked by process group, so messages are delivered
  to all nodes in the cluster automatically.
 
+ The payload is generic: `PubSub(payload)` and `Message(payload)` carry
+ whatever Gleam type a given instance is started with. A broadcast sends
+ that value as a native BEAM term — there is no encoding step, even across
+ nodes, since Erlang's own distribution protocol marshals arbitrary terms
+ for you. Reach for a `gleam/json` payload only when the data is also
+ destined for a JSON-speaking client (e.g. relayed on to a WebSocket
+ browser); payloads that never leave the cluster are cheaper and safer as
+ plain Gleam types.
+
  ## Quick Start
 
  ```gleam
  let ps = pubsub.start(pubsub.default_config())
  pubsub.subscribe(ps, "room:lobby")
- pubsub.broadcast(ps, "room:lobby", "new_msg", json.string("hello"))
+ pubsub.broadcast(ps, "room:lobby", "new_msg", "hello")
+
+ // Receiving: fold `pubsub.selecting` into an actor's own `Selector`.
+ // `RemoteBroadcast` here is the actor's own message constructor that
+ // wraps an incoming `pubsub.Message(payload)`.
+ let selector =
+   process.new_selector()
+   |> process.select(subject)
+   |> pubsub.selecting(RemoteBroadcast)
  ```
 
 ## Types
@@ -29,20 +46,24 @@ A PubSub message delivered to subscribers.
  ## Frozen wire contract
 
  `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
- the record tag and its four fields, in this order — is a frozen v1 wire
- contract, not just a source-level API. It will not change within 1.x:
- subscribers select it as a 4-field `message` record, and a rolling
- cluster upgrade must never mis-parse a frame from an older node. If the
- envelope ever needs new fields, they will arrive as a **new record tag**
- (a new variant), which old nodes' selectors simply do not match — never
- as a change to this record. The same applies to `PubSubFrom`.
+ the record tag and its four fields, in this order — is a frozen wire
+ contract, not just a source-level API, for any given `payload` type: a
+ rolling cluster upgrade must never mis-parse a frame from an older node
+ running the same payload type. The same applies to `PubSubFrom`.
+
+ Because payloads travel as native terms rather than a self-describing
+ format like JSON, evolving the *shape* of your own `payload` type is also
+ a wire change — version it yourself (e.g. an explicit `v` field) if it
+ needs to change across a rolling upgrade. Never construct or match on this
+ type directly from a raw process message; use `selecting`, which is the
+ one place that knows how to recover it safely.
 
 ```gleam
-pub type Message {
+pub type Message(a) {
   Message(
     topic: String,
     event: String,
-    payload: json.Json,
+    payload: a,
     from: PubSubFrom
   )
 }
@@ -53,10 +74,11 @@ pub type Message {
 A running PubSub instance.
 
  This handle is intentionally opaque so callers cannot forge pg scopes or
- depend on the runtime representation.
+ depend on the runtime representation. `payload` fixes the Gleam type
+ every `Message` broadcast through this instance carries.
 
 ```gleam
-pub type PubSub
+pub type PubSub(a)
 ```
 
 ### `PubSubConfig`
@@ -74,7 +96,7 @@ pub type PubSubConfig
 
 Identifies the sender of a broadcast.
 
- Part of the frozen v1 wire contract described on `Message`.
+ Part of the frozen wire contract described on `Message`.
 
 ```gleam
 pub type PubSubFrom {
@@ -112,10 +134,10 @@ Broadcast a message to all subscribers of a topic (all nodes)
 
 ```gleam
 pub fn broadcast(
-  PubSub,
+  PubSub(a),
   String,
   String,
-  json.Json
+  a
 ) -> Nil
 ```
 
@@ -125,11 +147,11 @@ Broadcast a message to all subscribers except those from a specific pid
 
 ```gleam
 pub fn broadcast_from(
-  PubSub,
+  PubSub(a),
   process.Pid,
   String,
   String,
-  json.Json
+  a
 ) -> Nil
 ```
 
@@ -140,12 +162,12 @@ Broadcast a message to all subscribers except a process, preserving a socket
 
 ```gleam
 pub fn broadcast_from_socket(
-  PubSub,
+  PubSub(a),
   process.Pid,
   String,
   String,
   String,
-  json.Json
+  a
 ) -> Nil
 ```
 
@@ -192,11 +214,36 @@ Broadcast a message to local subscribers only (current node)
 
 ```gleam
 pub fn local_broadcast(
-  PubSub,
+  PubSub(a),
   String,
   String,
-  json.Json
+  a
 ) -> Nil
+```
+
+### `selecting`
+
+Add PubSub message delivery to a `Selector`, alongside a process's own
+ subjects.
+
+ `pg` tracks bare `Pid`s, so PubSub messages arrive as a raw process
+ message rather than through a typed `Subject`. This function is the one
+ place that knows how to recover a `Message(payload)` from that raw shape,
+ so callers never need to build their own `select_record` matcher or reach
+ for an unsafe coercion themselves.
+
+ ```gleam
+ let selector =
+   process.new_selector()
+   |> process.select(subject)
+   |> pubsub.selecting(RemoteBroadcast)
+ ```
+
+```gleam
+pub fn selecting(
+  process.Selector(a),
+  fn(Message(b)) -> a
+) -> process.Selector(a)
 ```
 
 ### `start`
@@ -206,20 +253,24 @@ Start a PubSub instance
  This starts a pg scope. If the scope is already started (e.g., by another
  node or previous call), this is a no-op.
 
+ `payload` is fixed by how the returned value is used (or annotated) at the
+ call site — e.g. `pubsub.start(config) : PubSub(MySyncPayload)`.
+
 ```gleam
-pub fn start(PubSubConfig) -> PubSub
+pub fn start(PubSubConfig) -> PubSub(a)
 ```
 
 ### `subscribe`
 
 Subscribe the current process to a topic
 
- The calling process will receive `Message` values when broadcasts
- are sent to this topic.
+ The calling process will receive `Message(payload)` values when
+ broadcasts are sent to this topic. Add `selecting` to a `Selector` to
+ receive them.
 
 ```gleam
 pub fn subscribe(
-  PubSub,
+  PubSub(a),
   String
 ) -> Nil
 ```
@@ -230,7 +281,7 @@ Get the number of subscribers for a topic (all nodes)
 
 ```gleam
 pub fn subscriber_count(
-  PubSub,
+  PubSub(a),
   String
 ) -> Int
 ```
@@ -241,7 +292,7 @@ Get all subscribers for a topic (all nodes)
 
 ```gleam
 pub fn subscribers(
-  PubSub,
+  PubSub(a),
   String
 ) -> List(process.Pid)
 ```
@@ -252,7 +303,7 @@ Unsubscribe the current process from a topic
 
 ```gleam
 pub fn unsubscribe(
-  PubSub,
+  PubSub(a),
   String
 ) -> Nil
 ```

@@ -278,6 +278,6 @@ Enable PubSub replication for presence.
 ```gleam
 pub fn with_pubsub(
   Config,
-  pubsub.PubSub
+  pubsub.PubSub(SyncPayload)
 ) -> Config
 ```
