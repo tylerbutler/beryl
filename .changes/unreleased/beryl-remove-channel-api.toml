@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Removed"
-body = "Removed the channel-module API entirely: beryl/channel, beryl/socket, beryl/coordinator, and beryl/supervisor, along with RegisteredChannel, beryl.register, beryl.send_info, and the old single-argument beryl.start(config). Use app-side dispatch (beryl.start / beryl.child_spec with init and update) instead."

@@ -1,152 +1,122 @@
 ---
 title: Supervision
-description: Choose between standalone start and an embedded child specification, and understand what Beryl owns.
 ---
 
-Beryl now exposes two entry points for the same runtime subtree:
+Beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
+handle and a child specification that you add to your application's OTP
+supervisor. Your `init`/`update` functions are captured in that specification.
 
-- `beryl.start(config, init:, update:)` starts a **standalone** Beryl subtree and returns `Result(beryl.Sockets, beryl.StartError)`.
-- `beryl.child_spec(config, init:, update:)` validates the same config but returns `Result(#(beryl.Sockets, ChildSpecification(static_supervisor.Supervisor)), beryl.ConfigError)` so you can add that subtree to your own supervisor.
+## What child_spec supervises
 
-Both entry points build the same nested supervisor shape and run the same app-side dispatch runtime.
-
-## Standalone start
-
-Use `beryl.start` when your application wants a ready-to-use `beryl.Sockets` handle immediately and does not need to embed the subtree in a larger supervisor.
-
-```gleam
-import beryl
-import beryl/error as beryl_error
-import beryl/event as event
-import beryl/wire
-import gleam/io
-
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
-  #(Nil, [])
-}
-
-fn update(model: Nil, _event: event.Event(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
-}
-
-pub fn main() {
-  case beryl.start(beryl.config(wire.phoenix_codec()), init: init, update: update) {
-    Ok(sockets) -> run(sockets)
-    Error(beryl.InvalidConfig(error)) -> handle_config_error(error)
-    Error(beryl.RuntimeStartFailed(failure)) ->
-      io.println(beryl_error.describe_start_failure(failure))
-  }
-}
+```text
+beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
+`- runtime actor (Transient)
 ```
 
-`start` validates the config first, then starts a **detached** nested supervisor. The subtree is unlinked from the caller after startup, so a later graceful `beryl.stop(sockets)` shuts down Beryl without taking the caller down too.
+- The **runtime actor** holds every socket's model and dispatches events to
+  your `update` function. If it crashes, the supervisor restarts it with
+  dispatch intact — the `init`/`update` closures live in the child
+  specification, so no re-registration step exists or is needed.
+- The runtime is registered under a stable name, so the `Sockets` handle
+  (and every transport connection holding it) keeps working across
+  restarts. Sends that race a restart window degrade to quiet no-ops
+  instead of crashes.
+- The child is `Transient`: a graceful `beryl.stop` is final and is not
+  resurrected.
 
-## Embedded start with `child_spec`
+After **3 restarts in 5 seconds** the internal supervisor gives up and the
+failure propagates through your application's supervision tree.
 
-Use `beryl.child_spec` when your application already owns a root supervisor.
+## What a restart means for your app
+
+A runtime restart drops **per-socket state**: models, joined topics, and
+pending joins. Transports monitor the runtime that accepted each connection,
+so those WebSockets close and clients reconnect and rejoin normally.
+
+Crashes inside `update` itself do **not** restart the runtime. Beryl
+rescues callback crashes and contains the blast radius to the socket that
+triggered them:
+
+| Crash site | Effect |
+|------------|--------|
+| `init` | The connecting socket is not registered; others unaffected |
+| `update` on `Join` | The join is rejected; the socket survives |
+| `update` on `Message`/`Binary` | Only that topic is closed |
+| `update` on `Info` | The socket is torn down |
+| `update` on `Closed` | Logged; the close completes anyway |
+
+See the [Error Handling guide](/guides/error-handling/) for details.
+
+## Presence and groups
+
+`presence.start` and `group.start` return plain OTP actors linked to the
+calling process. Start them alongside `child_spec` from your long-lived
+application process:
 
 ```gleam
 import beryl
-import beryl/event as event
+import beryl/group
+import beryl/presence
 import beryl/wire
 import gleam/otp/static_supervisor
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
-  #(Nil, [])
-}
-
-fn update(model: Nil, _event: event.Event(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
-}
-
 pub fn main() {
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(presence_actor) =
+    presence.start(presence.default_config("node1"))
+  let assert Ok(groups) = group.start()
+
+  let assert Ok(#(channels, spec)) =
     beryl.child_spec(
-      beryl.config(wire.phoenix_codec()),
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(presence_actor),
       init: init,
       update: update,
     )
-
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
 
-  run(sockets)
+  // ... start the transport, run forever
 }
 ```
 
-`child_spec` can fail only with `beryl.ConfigError`, because validation happens before any process starts. The returned `sockets` handle is name-backed and stable even before the tree is running; before startup, during a restart window, and after shutdown, broadcasts degrade to no-ops and new connections are refused cleanly.
+Both also offer `start_named` variants that register the actor under a
+`process.Name` for callers integrating them into their own supervision
+arrangements.
 
-## The subtree Beryl starts
+:::note[PubSub is not supervised]
+`beryl/pubsub` is backed by Erlang's `pg` module, whose lifecycle is
+managed by the BEAM runtime. Configure it with `beryl.with_pubsub`.
+:::
 
-Both entry points build this nested supervisor:
+## Startup errors
 
-```text
-beryl subtree (one-for-one, auto_shutdown AnySignificant)
-|- runtime (Transient, significant)
-`- connection limiter (optional)
+`child_spec` validates its configuration before allocating the subtree:
+
+```gleam
+case beryl.child_spec(config, init: init, update: update) {
+  Ok(#(sockets, spec)) -> add_to_supervisor(sockets, spec)
+  Error(beryl.HeartbeatTimeoutTooLow(2)) ->
+    // heartbeat_timeout_ms below 2 would silently disable eviction
+    panic as "fix the heartbeat config"
+  Error(beryl.InvalidTopicPattern(pattern, reason)) ->
+    panic as pattern <> ": " <> reason
+}
 ```
 
-Important properties:
+## Stopping
 
-- the runtime child is **Transient**, so a graceful stop is not restarted,
-- the runtime child is **significant**, so a graceful runtime stop auto-shuts the whole Beryl subtree,
-- the subtree restart tolerance is **3 restarts in 5 seconds**,
-- the connection limiter exists only when `with_max_connections_per_ip` or `with_max_connections` is configured.
-
-See [Runtime & Effect Interpreter](/architecture/runtime/) for the internal event and effect flow.
-
-## What Beryl owns, and what it borrows
-
-Beryl owns only the subtree above:
-
-- the runtime, and
-- the optional connection limiter.
-
-Beryl **does not** start or stop these for you:
-
-- `beryl/pubsub` handles attached with `beryl.with_pubsub`
-- `beryl/presence` handles attached with `beryl.with_presence_handle`
-- `beryl/group` actors started with `group.start()`
-
-Those are borrowed dependencies. Start them in your own application code, pass their handles into `beryl.Config`, and stop or supervise them according to your own lifecycle needs.
-
-## What `beryl.stop` does
-
-`beryl.stop(sockets)` gracefully drains only the Beryl subtree:
-
-- each joined topic receives `event.Closed(topic, reason)`,
-- leftover tracked presence for those topics is cleaned up,
-- terminal frames are sent to clients,
-- transport connections are closed,
-- the runtime and its optional limiter are awaited.
-
-It does **not** stop your root supervisor, your PubSub instance, your presence actor, or your groups actor.
-
-The return type is `Result(Nil, beryl.StopError)`:
-
-- `Ok(Nil)` — the subtree stopped cleanly
-- `Error(beryl.NotRunning)` — the handle was never started, is mid-restart, or was already stopped
-- `Error(beryl.StopTimeout)` — the runtime did not acknowledge shutdown within 5000 ms
-
-## Crash and restart semantics
-
-A runtime crash is different from a graceful stop.
-
-After a crash:
-
-- the supervisor restarts the runtime under the same registered name,
-- the `beryl.Sockets` handle continues to work for **new** connections and broadcasts,
-- all in-memory per-socket state is gone: models, joined topics, and rate-limit buckets are rebuilt from scratch,
-- existing WebSocket connections close, because the transport monitors the runtime that accepted them and tears the socket down when that runtime dies.
-
-In other words: the handle is stable, but live socket state is not.
+`beryl.stop(channels)` drains sockets gracefully: every joined topic
+receives a `Closed` event, transport connections are closed, and the
+runtime exits without being restarted. Calling `stop` again — or using the
+handle after `stop` — is a quiet no-op.
 
 ## Production checklist
 
-- Pick `beryl.start` for a standalone subtree or `beryl.child_spec` for an application-owned supervision tree.
-- Start PubSub, presence, and groups separately before attaching their handles to Beryl config.
-- Treat runtime crashes as loss of all live socket state; design reconnect and rejoin flows accordingly.
-- Call `beryl.stop` only when you want to drain and stop the Beryl subtree itself.
-- Configure connection limits and rate limits before exposing the socket publicly.
+- Add the returned specification to your long-lived application supervisor.
+- Start presence and groups before `child_spec` so the config can carry the
+  presence handle.
+- Configure PubSub when running more than one BEAM node.
+- Configure rate limits to protect against runaway clients — see
+  [Production Hardening](/guides/production-hardening/).

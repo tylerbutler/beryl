@@ -973,7 +973,7 @@ fn build_app_subtree(
       supervisor_name,
       stop_runtime(process.named_subject(runtime_name), _),
       fn() {
-        start_app_supervisor(config, runtime_name, limiter_name, init, update)
+        child_spec_supervisor(config, runtime_name, limiter_name, init, update)
       },
     )
   })
@@ -981,7 +981,7 @@ fn build_app_subtree(
 
 /// Start the nested Beryl subtree: a one-for-one supervisor owning the runtime
 /// as a transient child, with the optional connection limiter as a sibling.
-fn start_app_supervisor(
+fn child_spec_supervisor(
   config: Config,
   runtime_name: process.Name(runtime.Msg(msg)),
   limiter_name: Option(process.Name(connection_limit.Message)),

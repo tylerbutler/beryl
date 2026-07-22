@@ -3,7 +3,7 @@ title: App-Side Dispatch
 description: Route joins, messages, binary frames, close events, and typed server messages in one update function.
 ---
 
-Beryl's current programming model is **app-side dispatch**: you start one runtime with `beryl.start` (or `beryl.child_spec`), build a per-socket model in `init`, and route every socket event in one `update` function.
+Beryl's current programming model is **app-side dispatch**: build one supervised runtime with `beryl.child_spec`, build a per-socket model in `init`, and route every socket event in one `update` function.
 
 There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `event.Event` values and returning `event.Next(model, effects)`.
 
@@ -13,13 +13,18 @@ There is no registry to populate and no per-topic module lifecycle to wire up. Y
 import beryl
 import beryl/event as event
 import beryl/wire
+import gleam/otp/static_supervisor
 
-let assert Ok(sockets) =
-  beryl.start(
+let assert Ok(#(sockets, spec)) =
+  beryl.child_spec(
     beryl.config(wire.phoenix_codec()),
     init: init,
     update: update,
   )
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(spec)
+  |> static_supervisor.start()
 ```
 
 - `init` runs once per socket connection and returns `#(model, List(event.Effect))`.

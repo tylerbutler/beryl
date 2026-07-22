@@ -20,6 +20,7 @@ import beryl/wire
 import beryl_mist as mist_transport
 import gleam/erlang/process
 import gleam/option.{None}
+import gleam/otp/static_supervisor
 import mist
 
 pub type Model {
@@ -38,8 +39,12 @@ fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
 }
 
 pub fn main() {
-  let assert Ok(sockets) =
-    beryl.start(beryl.config(wire.phoenix_codec()), init:, update:)
+  let assert Ok(#(sockets, spec)) =
+    beryl.child_spec(beryl.config(wire.phoenix_codec()), init:, update:)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
 
   let assert Ok(_) =
     mist_transport.handler(

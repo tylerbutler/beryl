@@ -1,18 +1,17 @@
 ---
 title: Presence
-description: Track per-topic presence with CRDT replication, diff callbacks, and runtime-applied presence effects.
 ---
 
-Beryl includes a presence system for tracking connected users and their metadata. It is backed by the `lattice_presence` CRDT, which automatically resolves conflicts across distributed Erlang nodes.
+beryl includes a presence system for tracking connected users and their metadata. It's backed by the `lattice_presence` CRDT (conflict-free replicated data type), which automatically resolves conflicts across distributed Erlang nodes.
 
 ## How it works
 
-Presence uses an **add-wins observed-remove set** with causal context. When a user joins or leaves, state is merged across nodes without leader election or consensus.
+Presence tracking uses an **add-wins observed-remove set** (AWORSet) with causal context. When a user joins or leaves, the state is merged across all nodes without coordination — no leader election or consensus required.
 
-The presence system still has two layers:
+The presence system has two layers:
 
-1. `beryl/presence` — an OTP actor wrapping the CRDT with optional PubSub replication
-2. `beryl/presence.Diff` — an opaque diff value for `with_on_diff` and `beryl.broadcast_presence_diff`
+1. **`beryl/presence`** — OTP actor wrapping the CRDT with PubSub replication
+2. **`beryl/presence.Diff`** — An opaque notification value for `on_diff`, with accessor helpers for changed topics, joins, and leaves
 
 ## Starting presence
 
@@ -32,51 +31,60 @@ let config =
 let assert Ok(p) = presence.start(config)
 ```
 
-## Tracking and untracking directly
+## Tracking presences
 
-The underlying presence API is still available when you need it directly.
+Track a user's presence when they join a channel:
 
 ```gleam
 import gleam/json
 
-let ref =
-  presence.track(
-    p,
-    "room:lobby",
-    "user:alice",
-    "socket-1",
-    json.object([
-      #("status", json.string("online")),
-      #("joined_at", json.int(1234567890)),
-    ]),
-  )
-
-presence.untrack(p, ref)
-presence.untrack_all(p, "socket-1")
+// Track a user in a topic
+let ref = presence.track(
+  p,
+  "room:lobby",   // topic
+  "user:alice",    // key (groups multiple connections)
+  socket_id,       // pid (unique per connection)
+  json.object([    // metadata
+    #("status", json.string("online")),
+    #("joined_at", json.int(1234567890)),
+  ]),
+)
 ```
 
-- the **key** groups multiple connections for one user,
-- the **session id** is usually the socket id,
-- `track` returns a server-generated ref that identifies one specific tracked presence.
+The **key** groups multiple connections from the same user. The **pid** uniquely identifies each connection (typically the socket ID).
 
-## Listing presence
+## Untracking
 
 ```gleam
-let entries = presence.list(p, "room:lobby")
-let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
+// Remove a specific presence, using the ref returned by `track`
+presence.untrack(p, ref)
+
+// Remove all presences for a session id / socket (e.g., on disconnect)
+presence.untrack_all(p, socket_id)
 ```
 
-`presence.list` returns full `PresenceEntry` values. `presence.get_by_key` narrows the query to one key.
+`track` returns a server-generated ref that identifies exactly the presence it
+created. Hold onto that ref if you need to remove one specific presence later
+with `untrack`. To clear every presence for a disconnecting socket, use
+`untrack_all` with the session id instead.
+
+## Listing presences
+
+```gleam
+// Get all presences in a topic
+let entries = presence.list(p, "room:lobby")
+// Returns: [PresenceEntry(session_id: "socket_1", key: "user:alice", meta: ...)]
+
+// Get presences for a specific key
+let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
+// Returns: [#("socket_1", meta), #("socket_2", meta)]
+```
 
 ## Diff callbacks
 
-Use `with_on_diff` when you want to react to local changes or remote merges immediately.
+Get notified immediately when presence state changes:
 
 ```gleam
-import gleam/list
-import gleam/io
-import gleam/string
-
 let config =
   presence.default_config("node1")
   |> presence.with_pubsub(ps)
@@ -84,36 +92,47 @@ let config =
   |> presence.with_on_diff(fn(diff) {
     diff
     |> presence.diff_topics
-    |> list.each(fn(topic_name) {
-      io.println("Topic changed: " <> topic_name)
-      io.println("Joins: " <> string.inspect(presence.diff_joins(diff, topic_name)))
-      io.println("Leaves: " <> string.inspect(presence.diff_leaves(diff, topic_name)))
+    |> list.each(fn(topic) {
+      io.println("Topic changed: " <> topic)
+      io.println("Joins: " <> string.inspect(presence.diff_joins(diff, topic)))
+      io.println("Leaves: " <> string.inspect(presence.diff_leaves(diff, topic)))
     })
   })
 ```
 
-## Broadcasting Phoenix-compatible diffs manually
+The `on_diff` callback fires whenever local tracking changes or remote merges produce non-empty changes, ensuring no diffs are lost during rapid state changes.
 
-`beryl.broadcast_presence_diff` is still public for applications that want the classic `on_diff` → manual broadcast pipeline.
+## Broadcasting Phoenix-compatible diffs
+
+Use `beryl.broadcast_presence_diff` to send a `presence_diff` event to sockets subscribed to the changed topic:
 
 ```gleam
 import beryl
-import gleam/list
 
 let config =
   presence.default_config("node1")
   |> presence.with_pubsub(ps)
   |> presence.with_broadcast_interval(1500)
   |> presence.with_on_diff(fn(diff) {
-    diff
-    |> presence.diff_topics
-    |> list.each(fn(topic_name) {
-      beryl.broadcast_presence_diff(sockets, topic_name, diff)
-    })
+    beryl.broadcast_presence_diff(channels, "room:lobby", diff)
   })
 ```
 
-The payload matches Phoenix Presence's `presence_diff` shape.
+`broadcast_presence_diff` broadcasts to a single topic. The `diff` passed to `on_diff` may span multiple topics; if you track presence across several topics, iterate over the affected topics:
+
+```gleam
+|> presence.with_on_diff(fn(diff) {
+  diff
+  |> presence.diff_topics
+  |> list.each(fn(topic) {
+    beryl.broadcast_presence_diff(channels, topic, diff)
+  })
+})
+```
+
+Passing the full diff on each iteration is safe: `broadcast_presence_diff` encodes only the named topic's entries from the diff, so unrelated topics are never included in a broadcast.
+
+The payload matches Phoenix Presence's shape, with joins and leaves grouped by presence key:
 
 ```json
 {
@@ -122,76 +141,50 @@ The payload matches Phoenix Presence's `presence_diff` shape.
 }
 ```
 
-For lower-level integrations, `beryl/presence/wire.encode_diff(diff, topic)` returns the JSON payload without broadcasting it.
+For lower-level integrations, `beryl/presence/wire.encode_diff(diff, topic)` returns the encoded JSON payload without broadcasting it. If channels are configured with PubSub, `broadcast_presence_diff` uses the same distributed delivery behavior as `beryl.broadcast`.
 
 ## Cross-node replication
 
 When PubSub is configured, the presence actor:
 
-1. periodically broadcasts its full CRDT state to `beryl:presence:sync`,
-2. receives remote state over PubSub,
-3. merges that state with the local CRDT,
-4. fires `with_on_diff` for non-empty local or merged changes.
+1. Periodically broadcasts its full CRDT state to the `beryl:presence:sync` topic
+2. Receives remote state from other nodes via PubSub
+3. Merges remote state using the AWORSet merge algorithm
+4. Fires `on_diff` for any changes from the merge
 
-Self-delivery is prevented by `pubsub.broadcast_from`, so a node does not process its own sync message.
+Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process their own sync messages.
 
-## Integrating presence with app-side dispatch
+The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
-In the current Beryl API, applications usually attach a presence handle to `beryl.Config` and let the runtime apply presence effects.
+## Integration with channels
+
+Inside `update`, prefer the presence **effects** over direct actor calls: they
+are applied in order with the rest of the effects list, and apply-time
+snapshots (`PushPresence`/`BroadcastPresence`) see the writes that precede
+them. Pass the presence handle to the config with
+`beryl.with_presence_handle`, then track on join and untrack on close:
 
 ```gleam
-import beryl
-import beryl/event as event
-import beryl/presence/wire as presence_wire
-import beryl/wire
-import gleam/json
+event.Join(topic, _payload, ref) ->
+  event.Next(model, [
+    event.AcceptJoin(ref, option.None),
+    event.PresenceTrack(topic, "user:" <> model.user_id, meta),
+    event.BroadcastPresence(topic, "presence_list", encode_users),
+  ])
 
-let assert Ok(p) = presence.start(presence.default_config("node1"))
-
-let config =
-  beryl.config(wire.phoenix_codec())
-  |> beryl.with_presence_handle(p)
-
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
-  case ev {
-    event.Join(topic_name, _payload, ref) ->
-      event.Next(
-        model,
-        [
-          event.AcceptJoin(ref, None),
-          event.PresenceTrack(
-            topic_name,
-            "user:" <> model.user_id,
-            json.object([#("status", json.string("online"))]),
-          ),
-          event.PushPresence(
-            topic_name,
-            "presence_state",
-            presence_wire.encode_state,
-          ),
-        ],
-      )
-
-    event.Closed(topic_name, _reason) ->
-      event.Next(
-        model,
-        [event.PresenceUntrack(topic_name, "user:" <> model.user_id)],
-      )
-
-    _ -> event.Next(model, [])
-  }
-}
+event.Closed(topic, _reason) ->
+  event.Next(model, [
+    event.PresenceUntrack(topic, "user:" <> model.user_id),
+    event.BroadcastPresence(topic, "presence_list", encode_users),
+  ])
 ```
 
-A few things to notice:
-
-- `beryl.with_presence_handle(p)` enables presence-aware effects.
-- `event.PresenceTrack` and `event.PresenceUntrack` are interpreted by the runtime.
-- `event.PushPresence` and `event.BroadcastPresence` read presence state **when the effect is applied**, so they already reflect earlier `PresenceTrack` / `PresenceUntrack` effects in the same list.
-- the runtime still auto-cleans any leftover tracked keys when a topic closes, so `PresenceUntrack` in `event.Closed` is explicit cleanup, not the only cleanup path.
+Presence entries left when a topic closes without an explicit untrack are
+cleaned up automatically. Direct calls (`presence.track`, `presence.list`,
+…) remain available for code outside `update`.
 
 ## Next steps
 
-- [PubSub](/guides/pubsub/) — required for cross-node replication
-- [App-Side Dispatch](/guides/dispatch/) — see where presence effects fit into your socket model and routing logic
-- [Troubleshooting](/troubleshooting/#presence-is-stale-or-incorrect) — diagnosing stale entries, missing diffs, and replication issues
+- [PubSub guide](/guides/pubsub/) — required for cross-node presence replication; configure PubSub before passing it to presence config
+- [Reference: Client compatibility](/reference/#client-compatibility) — Phoenix JS and other clients that can handle `presence_diff` events
+- [Troubleshooting](/troubleshooting/#presence-is-stale-or-incorrect) — diagnosing stale entries, missing diffs, and cross-node sync failures

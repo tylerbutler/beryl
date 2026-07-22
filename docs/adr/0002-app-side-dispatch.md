@@ -31,9 +31,8 @@ deferred).
 
 Replace the channel-module API entirely with app-side dispatch:
 
-- One entry point, `beryl.start(config, init, update) -> Result(Sockets,
-  StartError)` (and the embeddable `beryl.child_spec(config, init, update)
-  -> Result(#(Sockets, ChildSpecification(_)), ConfigError)`): the app
+- One supervised entry point, `beryl.child_spec(config, init, update)
+  -> Result(#(Sockets, ChildSpecification(_)), ConfigError)`: the app
   supplies `init: fn(ConnectInfo(msg)) -> #(model, List(Effect))` and
   `update: fn(model, Event(msg)) -> Next(model, msg)` per socket, and
   routes topics itself.
