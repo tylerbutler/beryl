@@ -45,7 +45,7 @@ flowchart TB
 | `beryl/wire` | Pluggable codec surface; ships `phoenix_codec()` for `[join_ref, ref, topic, event, payload]` framing | [Wire & Transport](/architecture/wire-and-transport) |
 | `beryl/wire/codec` | `Codec` type contract: `decode_text`, `decode_binary`, `encode_*` — lets you swap framing | [Wire & Transport](/architecture/wire-and-transport) |
 | `beryl_mist` | Mist WebSocket adapter: assigns socket IDs, registers send functions, routes frames to coordinator | [Wire & Transport](/architecture/wire-and-transport) |
-| `beryl/supervisor` | rest-for-one supervision tree (coordinator → presence → groups); embeddable via `child_spec/1` | [Coordinator](/architecture/coordinator) |
+| `beryl/supervisor` | one-for-one supervision tree isolating an optional connection limiter from a nested rest-for-one channel subtree (registry → coordinator → presence → groups); returns a child specification via `start/1` | [Coordinator](/architecture/coordinator) |
 | `beryl/group` | Named topic collections managed by an OTP actor; supports grouped broadcast | — |
 | `beryl/topic` | Topic pattern matching: exact strings, `"ns:*"` prefix wildcards, and segment wildcards (`"document:*:ops"`) | — |
 | `beryl/socket` | Opaque connected-client type with typed assigns; `id`, `get_assigns`, `set_assigns`, `map_assigns` | — |
@@ -60,10 +60,13 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  S["supervisor (rest-for-one)"]
-  S --> CO["coordinator"]
-  S --> PR["presence (optional)"]
-  S --> GR["groups (optional)"]
+  S["beryl supervisor (one-for-one)"]
+  S --> LI["connection limiter (optional)"]
+  S --> CH["channel supervisor (rest-for-one)"]
+  CH --> RE["registry"]
+  CH --> CO["coordinator"]
+  CH --> PR["presence (optional)"]
+  CH --> GR["groups (optional)"]
   CO -. "crash restarts downstream" .-> PR
   PR -. .-> GR
 ```

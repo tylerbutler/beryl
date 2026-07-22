@@ -15,12 +15,23 @@ gleam add beryl beryl_mist
 
 ```gleam
 import beryl
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
+import gleam/otp/static_supervisor
 import mist
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  // beryl doesn't start an unmanaged process; add its child specification to
+  // your own application supervisor.
+  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
+
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
+
+  let channels = supervisor.channels(beryl_config)
   // register channels...
 
   let assert Ok(_) =
