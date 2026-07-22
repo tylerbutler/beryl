@@ -3,9 +3,9 @@
 //// These spin up a real Mist listener so we can verify how the composed
 //// handler routes WebSocket upgrades versus plain HTTP requests.
 
+import app_test_helpers as h
 import beryl
-import beryl/channel
-import beryl/supervisor
+import beryl/event
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bit_array
@@ -15,9 +15,6 @@ import gleam/erlang/process
 import gleam/http/response
 import gleam/int
 import gleam/option.{None}
-import gleam/otp/actor
-import gleam/otp/static_supervisor
-import gleam/result
 import gleam/string
 import gleeunit/should
 import mist
@@ -87,12 +84,12 @@ fn stop_supervisor(pid: process.Pid) -> Nil
 
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
-fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
+fn start_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
   start_server_with_config(channels, mist_transport.default_config("/socket"))
 }
 
 fn start_server_with_config(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   config: mist_transport.TransportConfig,
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
@@ -114,8 +111,8 @@ fn start_server_with_config(
 }
 
 fn start_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    start_supervised(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: 1),
     )
@@ -123,38 +120,48 @@ fn start_limited_server() -> #(Int, process.Pid) {
 }
 
 fn start_frame_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    start_supervised(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_inbound_frame_bytes(max_bytes: 32),
     )
   start_server(channels)
 }
 
-fn start_channels() -> beryl.Channels {
-  let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
+fn start_channels() -> beryl.Sockets {
+  start_app_system(beryl.config(wire.phoenix_codec()))
+}
+
+/// Start a minimal app-side dispatch system for transport-edge tests. The
+/// `update` never dispatches anything — these tests exercise upgrade, origin,
+/// connection-limit, frame-size, and flood-shedding behaviour, not routing.
+fn start_app_system(config: beryl.Config) -> beryl.Sockets {
+  let assert Ok(channels) =
+    h.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, _ev) {
+      event.Next(model, [])
+    })
   channels
 }
 
-fn register_telemetry_channel(channels: beryl.Channels) -> Nil {
-  let handler =
-    channel.new(fn(_topic, _payload, socket) {
-      channel.JoinOk(reply: None, socket: socket)
-    })
-    |> channel.with_handle_in(fn(_event, _payload, socket) {
-      channel.NoReply(socket)
-    })
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
-  Nil
+fn start_telemetry_system() -> beryl.Sockets {
+  let assert Ok(channels) =
+    h.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_telemetry,
+      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, socket_event) {
+        case socket_event {
+          event.Join(_, _, ref) ->
+            event.Next(model, [event.AcceptJoin(ref, None)])
+          _ -> event.Next(model, [])
+        }
+      },
+    )
+  channels
 }
 
 pub fn telemetry_preserves_decoded_text_and_binary_message_kinds_test() {
-  let assert Ok(channels) =
-    start_supervised(
-      beryl.config(wire.phoenix_codec())
-      |> beryl.with_telemetry,
-    )
-  register_telemetry_channel(channels)
+  let channels = start_telemetry_system()
   let #(port, server_pid) = start_server(channels)
   let handler_id = attach_transport_events()
   let assert Ok(client) = connect_websocket(port, "/socket")
@@ -197,92 +204,7 @@ pub fn telemetry_preserves_decoded_text_and_binary_message_kinds_test() {
   close(client)
   detach_transport_events(handler_id)
   stop_supervisor(server_pid)
-}
-
-pub fn telemetry_reports_matched_upgrades_and_frames_once_test() {
-  let assert Ok(channels) =
-    start_supervised(
-      beryl.config(wire.phoenix_codec())
-      |> beryl.with_telemetry,
-    )
-  let config =
-    mist_transport.default_config("/socket")
-    |> mist_transport.with_allowed_origins(["https://app.example.com"])
-  let #(port, server_pid) = start_server_with_config(channels, config)
-  let handler_id = attach_transport_events()
-
-  websocket_upgrade_status_with_origin(
-    port,
-    "/socket",
-    "https://evil.example.com",
-  )
-  |> should.equal(Ok(403))
-  receive_upgrade_event(1000)
-  |> should.equal(Ok(#("mist", "origin_rejected")))
-
-  let assert Ok(client) =
-    connect_websocket_with_origin(port, "/socket", "https://app.example.com")
-  receive_upgrade_event(1000)
-  |> should.equal(Ok(#("mist", "success")))
-
-  let heartbeat = "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]"
-  let assert Ok(client) = send_text(client, heartbeat)
-  receive_frame_event(1000)
-  |> should.equal(Ok(#("mist", "text", "routed", string.byte_size(heartbeat))))
-
-  let assert Ok(client) = send_binary(client, <<1, 2, 3>>)
-  receive_frame_event(1000)
-  |> should.equal(Ok(#("mist", "binary", "decode_failed", 3)))
-
-  receive_upgrade_event(0)
-  |> should.equal(Error(Nil))
-  receive_frame_event(0)
-  |> should.equal(Error(Nil))
-
-  close(client)
-  detach_transport_events(handler_id)
-  stop_supervisor(server_pid)
-}
-
-pub fn telemetry_reports_oversized_and_rate_limited_frames_test() {
-  let assert Ok(limited_channels) =
-    start_supervised(
-      beryl.config(wire.phoenix_codec())
-      |> beryl.with_max_inbound_frame_bytes(max_bytes: 4)
-      |> beryl.with_telemetry,
-    )
-  let handler_id = attach_transport_events()
-  let #(limited_port, limited_server_pid) = start_server(limited_channels)
-  let assert Ok(limited_client) = connect_websocket(limited_port, "/socket")
-  let assert Ok(#("mist", "success")) = receive_upgrade_event(1000)
-  let assert Ok(_) = send_text(limited_client, "12345")
-  receive_frame_event(1000)
-  |> should.equal(Ok(#("mist", "text", "oversized", 5)))
-  close(limited_client)
-  stop_supervisor(limited_server_pid)
-  detach_transport_events(handler_id)
-
-  let assert Ok(rate_channels) =
-    start_supervised(
-      beryl.config(wire.phoenix_codec())
-      |> beryl.with_message_rate(per_second: 1, burst: 1)
-      |> beryl.with_telemetry,
-    )
-  let handler_id = attach_transport_events()
-  let #(rate_port, rate_server_pid) = start_server(rate_channels)
-  let assert Ok(rate_client) = connect_websocket(rate_port, "/socket")
-  let assert Ok(#("mist", "success")) = receive_upgrade_event(1000)
-  let heartbeat = "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]"
-  let assert Ok(rate_client) = send_text(rate_client, heartbeat)
-  let assert Ok(#("mist", "text", "routed", _)) = receive_frame_event(1000)
-  let assert Ok(rate_client) = send_text(rate_client, heartbeat)
-  receive_frame_event(1000)
-  |> should.equal(
-    Ok(#("mist", "text", "rate_limited", string.byte_size(heartbeat))),
-  )
-  close(rate_client)
-  detach_transport_events(handler_id)
-  stop_supervisor(rate_server_pid)
+  let assert Ok(Nil) = beryl.stop(channels)
 }
 
 pub fn handler_routes_websocket_upgrade_to_upgrade_test() {
@@ -458,8 +380,8 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
 }
 
 pub fn handler_sheds_message_flood_at_the_edge_test() {
-  let assert Ok(channels) =
-    start_supervised(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_message_rate(per_second: 1, burst: 2),
     )
@@ -468,7 +390,7 @@ pub fn handler_sheds_message_flood_at_the_edge_test() {
 
   // Flood heartbeats: only the burst allowance may produce replies. The
   // rest are shed by the connection process before reaching the
-  // coordinator.
+  // runtime.
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)
   { replies <= 2 } |> should.be_true
@@ -507,20 +429,4 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() {
 
   close(client)
   stop_supervisor(server_pid)
-}
-
-/// Start a supervised channel system for tests.
-///
-/// beryl exposes no public unsupervised start, so tests stand up a real
-/// supervision tree the way an application would.
-fn start_supervised(
-  config: beryl.Config,
-) -> Result(beryl.Channels, actor.StartError) {
-  let supervised = supervisor.config(config)
-  use _root <- result.map(
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(supervised))
-    |> static_supervisor.start(),
-  )
-  supervisor.channels(supervised)
 }

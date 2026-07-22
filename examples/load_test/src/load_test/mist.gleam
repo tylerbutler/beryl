@@ -7,7 +7,7 @@ import mist.{type Connection, type ResponseData}
 
 pub fn handle(
   request: Request(Connection),
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
 ) -> Response(ResponseData) {
   case request.path_segments(request) {
     ["health"] -> from_endpoint(http.health())

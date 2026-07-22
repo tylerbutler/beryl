@@ -12,7 +12,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleeunit/should
 
-fn start_with_limit(max_connections: Int) -> beryl.Channels {
+fn start_with_limit(max_connections: Int) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec())
@@ -35,7 +35,7 @@ pub fn zero_means_unlimited_test() {
   beryl.release_connection_slot(first)
   |> should.equal(Nil)
 
-  let _ = beryl.stop(channels)
+  beryl.stop(channels)
 }
 
 // Connections at or below the configured limit are admitted.
@@ -45,7 +45,7 @@ pub fn admits_connections_under_limit_test() {
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.1"))
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.1"))
 
-  let _ = beryl.stop(channels)
+  beryl.stop(channels)
 }
 
 // The connection that would exceed the limit is rejected.
@@ -56,7 +56,7 @@ pub fn rejects_connection_over_limit_test() {
   beryl.acquire_connection_slot(channels, "10.0.0.2")
   |> should.equal(Error(Nil))
 
-  let _ = beryl.stop(channels)
+  beryl.stop(channels)
 }
 
 // Releasing a slot frees capacity so a subsequent connection from that IP
@@ -73,7 +73,7 @@ pub fn releasing_slot_frees_capacity_test() {
   beryl.release_connection_slot(permit)
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.3"))
 
-  let _ = beryl.stop(channels)
+  beryl.stop(channels)
 }
 
 // The limit is tracked independently per IP.
@@ -89,7 +89,7 @@ pub fn limit_is_per_ip_test() {
   beryl.acquire_connection_slot(channels, "10.0.0.5")
   |> should.equal(Error(Nil))
 
-  let _ = beryl.stop(channels)
+  beryl.stop(channels)
 }
 
 // A slot is reclaimed when its holder process dies without releasing —
@@ -111,7 +111,7 @@ pub fn slot_reclaimed_when_holder_dies_without_release_test() {
   process.sleep(50)
 
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.7"))
-  let _ = beryl.stop(channels)
+  beryl.stop(channels)
 }
 
 // A permit obtained under a limit can be released explicitly.
@@ -121,5 +121,5 @@ pub fn permit_can_be_released_test() {
   let assert Ok(permit) = beryl.acquire_connection_slot(channels, "10.0.0.6")
   beryl.release_connection_slot(permit)
 
-  let _ = beryl.stop(channels)
+  beryl.stop(channels)
 }

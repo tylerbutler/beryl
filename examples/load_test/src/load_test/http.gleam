@@ -14,7 +14,7 @@ pub fn health() -> EndpointResult {
   )
 }
 
-pub fn stats(channels: beryl.Channels) -> EndpointResult {
+pub fn stats(channels: beryl.Sockets) -> EndpointResult {
   case stats.snapshot(channels) {
     Error(error) -> stats_error(error)
     Ok(beryl_snapshot) ->

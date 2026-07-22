@@ -1,96 +1,52 @@
-import beryl
-import beryl/channel.{type Channel, type HandleResult, type JoinResult}
-import beryl/presence.{type Presence}
-import beryl/socket.{type Socket}
+import beryl/event.{
+  type Effect, type Event, type Next, AcceptJoin, Broadcast, Join, Message,
+  PresenceTrack, PresenceUntrack, RejectJoin, ReplyError, ReplyOk,
+}
 import beryl/wire
-import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 
-pub type Assigns {
-  Assigns(
-    channels: beryl.Channels,
-    presence: Presence,
-    topic: String,
-    tracking_refs: Dict(String, String),
-  )
+pub fn init(_info) {
+  #(Nil, [])
 }
 
-pub fn benchmark(
-  channels: beryl.Channels,
-  presence: Presence,
-) -> Channel(Assigns, info) {
-  channel.new(fn(topic, _payload, socket) {
-    benchmark_join(channels, presence, topic, socket)
-  })
-  |> channel.with_handle_in(handle_in)
-  |> channel.with_terminate(terminate)
-}
-
-pub fn forbidden() -> Channel(Nil, info) {
-  channel.new(forbidden_join)
-}
-
-pub fn forbidden_join(
-  _topic: String,
-  _payload: Dynamic,
-  _socket: Socket(Nil),
-) -> JoinResult(Nil) {
-  channel.JoinError(
-    reason: json.object([#("reason", json.string("forbidden"))]),
-  )
-}
-
-pub fn benchmark_join(
-  channels: beryl.Channels,
-  presence: Presence,
-  topic: String,
-  socket: Socket(Assigns),
-) -> JoinResult(Assigns) {
-  let assigns = Assigns(channels:, presence:, topic:, tracking_refs: dict.new())
-  channel.JoinOk(reply: None, socket: socket.set_assigns(socket, assigns))
-}
-
-pub fn handle_in(
-  event: String,
-  payload: Dynamic,
-  socket: Socket(Assigns),
-) -> HandleResult(Assigns) {
-  let assigns = socket.get_assigns(socket)
-  case event {
-    "echo" -> echo_reply(payload, socket)
-    "broadcast" -> broadcast_reply("broadcast", payload, socket, assigns)
-    "broadcast_ack" ->
-      broadcast_reply("broadcast_ack", payload, socket, assigns)
-    "presence_track" -> track(payload, socket, assigns)
-    "presence_untrack" -> untrack(payload, socket, assigns)
-    _ ->
-      channel.ReplyError(
-        payload: json.object([#("reason", json.string("unknown_event"))]),
-        socket:,
-      )
+pub fn update(model: Nil, input: Event(msg)) -> Next(Nil, msg) {
+  case input {
+    Join("guardrail:forbidden", _, ref) ->
+      event.Next(model, [
+        RejectJoin(ref, json.object([#("reason", json.string("forbidden"))])),
+      ])
+    Join("bench:" <> _, _, ref) -> event.Next(model, [AcceptJoin(ref, None)])
+    Join(_, _, ref) ->
+      event.Next(model, [
+        RejectJoin(ref, json.object([#("reason", json.string("unmatched"))])),
+      ])
+    Message(topic, event_name, payload, ref) ->
+      event.Next(model, message_effects(topic, event_name, payload, ref))
+    _ -> event.Next(model, [])
   }
 }
 
-pub fn echo_reply(
+pub fn message_effects(
+  topic: String,
+  event_name: String,
   payload: Dynamic,
-  socket: Socket(assigns),
-) -> HandleResult(assigns) {
-  channel.Reply(event: "echo", payload: wire.dynamic_to_json(payload), socket:)
-}
-
-fn broadcast_reply(
-  event: String,
-  payload: Dynamic,
-  socket: Socket(Assigns),
-  assigns: Assigns,
-) -> HandleResult(Assigns) {
-  let outgoing = wire.dynamic_to_json(payload)
-  beryl.broadcast(assigns.channels, assigns.topic, event, outgoing)
-  channel.Reply(event:, payload: outgoing, socket:)
+  ref: Option(event.Ref),
+) -> List(Effect) {
+  case event_name {
+    "echo" -> reply_ok(ref, wire.dynamic_to_json(payload))
+    "broadcast" | "broadcast_ack" -> {
+      let outgoing = wire.dynamic_to_json(payload)
+      [Broadcast(topic, event_name, outgoing), ..reply_ok(ref, outgoing)]
+    }
+    "presence_track" -> track(topic, payload, ref)
+    "presence_untrack" -> untrack(topic, payload, ref)
+    _ ->
+      reply_error(ref, json.object([#("reason", json.string("unknown_event"))]))
+  }
 }
 
 fn key_and_meta(payload: Dynamic) -> Result(#(String, json.Json), Nil) {
@@ -104,7 +60,7 @@ fn key_and_meta(payload: Dynamic) -> Result(#(String, json.Json), Nil) {
     decode.success(#(key, meta))
   }
   use #(key, meta) <- result.try(
-    channel.decode_payload(payload, decoder) |> result.replace_error(Nil),
+    decode.run(payload, decoder) |> result.replace_error(Nil),
   )
   Ok(
     #(key, case meta {
@@ -115,78 +71,55 @@ fn key_and_meta(payload: Dynamic) -> Result(#(String, json.Json), Nil) {
 }
 
 fn track(
+  topic: String,
   payload: Dynamic,
-  socket: Socket(Assigns),
-  assigns: Assigns,
-) -> HandleResult(Assigns) {
+  ref: Option(event.Ref),
+) -> List(Effect) {
   case key_and_meta(payload) {
     Error(_) ->
-      channel.ReplyError(
-        payload: json.object([#("reason", json.string("invalid_presence"))]),
-        socket:,
+      reply_error(
+        ref,
+        json.object([#("reason", json.string("invalid_presence"))]),
       )
-    Ok(#(key, meta)) -> {
-      case dict.get(assigns.tracking_refs, key) {
-        Ok(old_ref) -> presence.untrack(assigns.presence, old_ref)
-        Error(_) -> Nil
-      }
-      let tracking_ref =
-        presence.track(
-          assigns.presence,
-          assigns.topic,
-          key,
-          socket.id(socket),
-          meta,
-        )
-      let updated =
-        Assigns(
-          ..assigns,
-          tracking_refs: dict.insert(assigns.tracking_refs, key, tracking_ref),
-        )
-      channel.Reply(
-        event: "presence_track",
-        payload: json.object([#("key", json.string(key))]),
-        socket: socket.set_assigns(socket, updated),
-      )
-    }
+    Ok(#(key, meta)) -> [
+      PresenceTrack(topic, key, meta),
+      ..reply_ok(ref, json.object([#("key", json.string(key))]))
+    ]
   }
 }
 
 fn untrack(
+  topic: String,
   payload: Dynamic,
-  socket: Socket(Assigns),
-  assigns: Assigns,
-) -> HandleResult(Assigns) {
+  ref: Option(event.Ref),
+) -> List(Effect) {
   let decoder = {
     use key <- decode.field("key", decode.string)
     decode.success(key)
   }
-  case channel.decode_payload(payload, decoder) {
+  case decode.run(payload, decoder) {
     Error(_) ->
-      channel.ReplyError(
-        payload: json.object([#("reason", json.string("invalid_presence"))]),
-        socket:,
+      reply_error(
+        ref,
+        json.object([#("reason", json.string("invalid_presence"))]),
       )
-    Ok(key) -> {
-      case dict.get(assigns.tracking_refs, key) {
-        Ok(tracking_ref) -> presence.untrack(assigns.presence, tracking_ref)
-        Error(_) -> Nil
-      }
-      let updated =
-        Assigns(
-          ..assigns,
-          tracking_refs: dict.delete(assigns.tracking_refs, key),
-        )
-      channel.Reply(
-        event: "presence_untrack",
-        payload: json.object([#("key", json.string(key))]),
-        socket: socket.set_assigns(socket, updated),
-      )
-    }
+    Ok(key) -> [
+      PresenceUntrack(topic, key),
+      ..reply_ok(ref, json.object([#("key", json.string(key))]))
+    ]
   }
 }
 
-fn terminate(_reason: channel.StopReason, socket: Socket(Assigns)) -> Nil {
-  let assigns = socket.get_assigns(socket)
-  presence.untrack_all(assigns.presence, socket.id(socket))
+fn reply_error(ref: Option(event.Ref), payload: json.Json) -> List(Effect) {
+  case ref {
+    Some(value) -> [ReplyError(value, payload)]
+    None -> []
+  }
+}
+
+fn reply_ok(ref: Option(event.Ref), payload: json.Json) -> List(Effect) {
+  case ref {
+    Some(value) -> [ReplyOk(value, payload)]
+    None -> []
+  }
 }

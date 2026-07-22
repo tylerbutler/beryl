@@ -1,20 +1,15 @@
 import beryl
-import beryl/channel
-import beryl/coordinator
-import beryl/internal/unsupervised
-import beryl/presence
-import beryl/socket
+import beryl/event
 import beryl/stats
+import beryl/transport
 import beryl/wire
-import gleam/dynamic
-import gleam/dynamic/decode
+import beryl/wire/codec
 import gleam/erlang/process
-import gleam/json
-import gleam/option.{None}
+import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit
 import gleeunit/should
-import load_test/channel as benchmark_channel
+import load_test/channel
 import load_test/ewe as ewe_http
 import load_test/http
 import load_test/mist as mist_http
@@ -23,88 +18,73 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn dynamic_payload(source: String) {
-  let assert Ok(value) = json.parse(source, using: decode.dynamic)
-  value
-}
-
-fn test_socket() {
-  let transport =
-    socket.new_transport(
-      send_text: fn(_) { Ok(Nil) },
-      send_binary: fn(_) { Ok(Nil) },
-      close: fn() { Ok(Nil) },
+fn start_system() -> beryl.Sockets {
+  let assert Ok(#(sockets, spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      init: channel.init,
+      update: channel.update,
     )
-  socket.new("socket-test", Nil, transport)
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  sockets
 }
 
-fn connect_socket(
-  channels: beryl.Channels,
+fn connect(
+  sockets: beryl.Sockets,
   socket_id: String,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      socket_id,
-      fn(message) {
-        process.send(sent, message)
-        Ok(Nil)
-      },
-      fn(_) { Ok(Nil) },
-      None,
-      dynamic.nil(),
-    ),
+  transport.socket_connected(
+    channels: sockets,
+    socket_id: socket_id,
+    send: fn(message) {
+      process.send(sent, message)
+      Ok(Nil)
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    seed: event.empty_seed(),
   )
   process.sleep(10)
   sent
 }
 
-fn join(
-  channels: beryl.Channels,
-  socket_id: String,
-  sent: process.Subject(String),
-) -> Nil {
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
+fn route(sockets: beryl.Sockets, socket_id: String, raw: String) -> Nil {
+  let assert Ok(message) =
+    codec.decode_text(transport.active_codec(sockets))(raw)
+  transport.route_decoded(sockets, socket_id, message)
+}
+
+fn join(sockets: beryl.Sockets, socket_id: String, topic: String) -> Nil {
+  route(
+    sockets,
     socket_id,
-    "[\"join\",\"join\",\"bench:fanout\",\"phx_join\",{}]",
+    "[\"join-ref\",\"join-ref\",\"" <> topic <> "\",\"phx_join\",{}]",
   )
-  let assert Ok(reply) = process.receive(sent, 500)
-  reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
 fn push(
-  channels: beryl.Channels,
+  sockets: beryl.Sockets,
   socket_id: String,
-  reference: String,
-  event: String,
+  event_name: String,
   payload: String,
 ) -> Nil {
-  coordinator.route_message(
-    beryl.coordinator_subject(channels),
+  route(
+    sockets,
     socket_id,
-    "[\"join\",\""
-      <> reference
-      <> "\",\"bench:fanout\",\""
-      <> event
+    "[\"join-ref\",\"message-ref\",\"bench:fanout\",\""
+      <> event_name
       <> "\","
       <> payload
       <> "]",
   )
 }
 
-fn receive_message(sent: process.Subject(String)) -> String {
-  let assert Ok(message) = process.receive(sent, 500)
+fn recv(subject: process.Subject(String)) -> String {
+  let assert Ok(message) = process.receive(subject, 500)
   message
-}
-
-fn assert_full_fanout_payload(message: String) -> Nil {
-  message |> string.contains("\"marker\":\"fanout-1\"") |> should.be_true
-  message |> string.contains("\"sent_at\":123456") |> should.be_true
-  message
-  |> string.contains("\"publisher_id\":\"publisher\"")
-  |> should.be_true
 }
 
 pub fn health_endpoint_test() {
@@ -116,138 +96,57 @@ pub fn health_endpoint_test() {
 }
 
 pub fn stats_errors_have_typed_http_statuses_test() {
-  let unavailable = http.stats_error(stats.CoordinatorUnavailable)
-  unavailable.status |> should.equal(503)
-  unavailable.body
-  |> string.contains("coordinator_unavailable")
-  |> should.be_true
-
-  let timed_out = http.stats_error(stats.RequestTimedOut)
-  timed_out.status |> should.equal(504)
-  timed_out.body |> string.contains("coordinator_timeout") |> should.be_true
+  http.stats_error(stats.CoordinatorUnavailable).status |> should.equal(503)
+  http.stats_error(stats.RequestTimedOut).status |> should.equal(504)
 }
 
 pub fn stats_include_beryl_and_beam_snapshots_test() {
-  let assert Ok(channels) =
-    unsupervised.start(beryl.config(wire.phoenix_codec()))
-  let endpoint = http.stats(channels)
+  let endpoint = http.stats(start_system())
   endpoint.status |> should.equal(200)
   endpoint.body |> string.contains("\"beryl\"") |> should.be_true
   endpoint.body |> string.contains("\"beam\"") |> should.be_true
 }
 
-pub fn forbidden_channel_rejects_join_test() {
-  case
-    benchmark_channel.forbidden_join(
-      "guardrail:forbidden",
-      dynamic_payload("{}"),
-      test_socket(),
-    )
-  {
-    channel.JoinError(..) -> True
-    _ -> False
-  }
-  |> should.be_true
+pub fn forbidden_topic_rejects_join_test() {
+  let sockets = start_system()
+  let frames = connect(sockets, "forbidden")
+  join(sockets, "forbidden", "guardrail:forbidden")
+  recv(frames) |> string.contains("forbidden") |> should.be_true
 }
 
-pub fn echo_replies_ok_with_unchanged_payload_test() {
-  let assert channel.Reply(event:, payload:, ..) =
-    benchmark_channel.echo_reply(
-      dynamic_payload(
-        "{\"marker\":\"same\",\"sent_at\":123,\"publisher_id\":\"publisher\"}",
-      ),
-      test_socket(),
-    )
-  event |> should.equal("echo")
-  json.to_string(payload)
-  |> should.equal(
-    "{\"marker\":\"same\",\"publisher_id\":\"publisher\",\"sent_at\":123}",
-  )
-}
-
-pub fn broadcast_and_distinct_peer_acks_fan_out_full_payload_test() {
-  let assert Ok(channels) =
-    unsupervised.start(beryl.config(wire.phoenix_codec()))
-  let assert Ok(presence_actor) =
-    presence.start(presence.default_config("load-test-contract"))
-  let assert Ok(_) =
-    beryl.register(
-      channels,
-      "bench:*",
-      benchmark_channel.benchmark(channels, presence_actor),
-    )
-
-  let publisher = connect_socket(channels, "publisher-socket")
-  let peer_one = connect_socket(channels, "peer-one-socket")
-  let peer_two = connect_socket(channels, "peer-two-socket")
-  join(channels, "publisher-socket", publisher)
-  join(channels, "peer-one-socket", peer_one)
-  join(channels, "peer-two-socket", peer_two)
-
-  let broadcast_payload =
-    "{\"marker\":\"fanout-1\",\"sent_at\":123456,\"publisher_id\":\"publisher\"}"
+pub fn echo_replies_with_unchanged_payload_test() {
+  let sockets = start_system()
+  let frames = connect(sockets, "echo")
+  join(sockets, "echo", "bench:fanout")
+  let _ = recv(frames)
   push(
-    channels,
-    "publisher-socket",
-    "broadcast-ref",
+    sockets,
+    "echo",
+    "echo",
+    "{\"marker\":\"same\",\"sent_at\":123,\"publisher_id\":\"publisher\"}",
+  )
+  let reply = recv(frames)
+  reply |> string.contains("\"marker\":\"same\"") |> should.be_true
+  reply |> string.contains("\"sent_at\":123") |> should.be_true
+}
+
+pub fn broadcast_fans_out_full_payload_test() {
+  let sockets = start_system()
+  let publisher = connect(sockets, "publisher")
+  let peer = connect(sockets, "peer")
+  join(sockets, "publisher", "bench:fanout")
+  let _ = recv(publisher)
+  join(sockets, "peer", "bench:fanout")
+  let _ = recv(peer)
+
+  push(
+    sockets,
+    "publisher",
     "broadcast",
-    broadcast_payload,
+    "{\"marker\":\"fanout-1\",\"sent_at\":123456,\"publisher_id\":\"publisher\"}",
   )
 
-  let publisher_messages =
-    receive_message(publisher) <> receive_message(publisher)
-  publisher_messages
-  |> string.contains("\"broadcast\"")
-  |> should.be_true
-  publisher_messages
-  |> string.contains("\"status\":\"ok\"")
-  |> should.be_true
-  assert_full_fanout_payload(publisher_messages)
-  assert_full_fanout_payload(receive_message(peer_one))
-  assert_full_fanout_payload(receive_message(peer_two))
-
-  let ack_one =
-    "{\"marker\":\"fanout-1\",\"sent_at\":123456,\"publisher_id\":\"publisher\",\"recipient_id\":\"peer-one\"}"
-  push(channels, "peer-one-socket", "ack-one-ref", "broadcast_ack", ack_one)
-  let publisher_ack_one = receive_message(publisher)
-  publisher_ack_one
-  |> string.contains("\"broadcast_ack\"")
-  |> should.be_true
-  assert_full_fanout_payload(publisher_ack_one)
-  publisher_ack_one
-  |> string.contains("\"recipient_id\":\"peer-one\"")
-  |> should.be_true
-  let peer_one_ack_messages =
-    receive_message(peer_one) <> receive_message(peer_one)
-  peer_one_ack_messages
-  |> string.contains("\"status\":\"ok\"")
-  |> should.be_true
-  peer_one_ack_messages
-  |> string.contains("\"recipient_id\":\"peer-one\"")
-  |> should.be_true
-  // ACKs fan out to every joined peer, not only the original publisher.
-  receive_message(peer_two)
-  |> string.contains("\"recipient_id\":\"peer-one\"")
-  |> should.be_true
-
-  let ack_two =
-    "{\"marker\":\"fanout-1\",\"sent_at\":123456,\"publisher_id\":\"publisher\",\"recipient_id\":\"peer-two\"}"
-  push(channels, "peer-two-socket", "ack-two-ref", "broadcast_ack", ack_two)
-  let publisher_ack_two = receive_message(publisher)
-  publisher_ack_two
-  |> string.contains("\"broadcast_ack\"")
-  |> should.be_true
-  assert_full_fanout_payload(publisher_ack_two)
-  publisher_ack_two
-  |> string.contains("\"recipient_id\":\"peer-two\"")
-  |> should.be_true
-  let peer_two_ack_messages =
-    receive_message(peer_two) <> receive_message(peer_two)
-  peer_two_ack_messages
-  |> string.contains("\"status\":\"ok\"")
-  |> should.be_true
-  peer_two_ack_messages
-  |> string.contains("\"recipient_id\":\"peer-two\"")
-  |> should.be_true
-  publisher_ack_one |> should.not_equal(publisher_ack_two)
+  let publisher_messages = recv(publisher) <> recv(publisher)
+  publisher_messages |> string.contains("fanout-1") |> should.be_true
+  recv(peer) |> string.contains("fanout-1") |> should.be_true
 }

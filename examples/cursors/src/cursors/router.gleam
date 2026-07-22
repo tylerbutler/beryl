@@ -6,7 +6,7 @@ import gleam/http/response.{type Response}
 import mist.{type Connection, type ResponseData}
 
 pub type Context {
-  Context(channels: beryl.Channels, base_path: String)
+  Context(channels: beryl.Sockets, base_path: String)
 }
 
 pub fn handle_request(

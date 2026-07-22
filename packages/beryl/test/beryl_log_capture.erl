@@ -26,7 +26,7 @@ stop() ->
 
 %% Logger handler callback. Only palabres reports are forwarded; everything else
 %% is ignored. The forwarded tuple matches the Gleam `CapturedLog` record shape
-%% so the test can coerce it directly via `beryl_ffi:identity/1`.
+%% so the test can decode it directly from the received message.
 log(#{msg := {report, [{palabres, Fields, Message, _At}]}},
     #{config := #{pid := Pid}}) ->
     Pid ! {captured_log, to_binary(Message), maps:from_list(simplify_fields(Fields))},

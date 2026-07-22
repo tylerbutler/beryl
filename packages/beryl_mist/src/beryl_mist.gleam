@@ -1,6 +1,6 @@
 //// Mist WebSocket Transport - Direct Mist integration for beryl
 ////
-//// Bridges Mist's native WebSocket handling to the beryl coordinator, using
+//// Bridges Mist's native WebSocket handling to the beryl runtime, using
 //// Mist request and response types directly.
 ////
 //// The `beryl_ewe` package mirrors it: the two transports expose the same
@@ -8,7 +8,7 @@
 //// either web server by choosing the matching transport package. Both consume
 //// only beryl's public `beryl/transport` SPI.
 
-import beryl/transport.{type Channels}
+import beryl/transport.{type Sockets}
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -176,17 +176,17 @@ pub fn with_allow_all_origins(config: TransportConfig) -> TransportConfig {
 type ConnectionState {
   ConnectionState(
     socket_id: String,
-    channels: Channels,
+    channels: Sockets,
     connection_permit: Option(transport.ConnectionPermit),
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
-    /// coordinator.
+    /// runtime.
     codec: transport.Codec,
     telemetry: transport.Telemetry,
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
-    /// so a flooding socket cannot fill the coordinator's mailbox.
+    /// so a flooding socket cannot fill the runtime's mailbox.
     message_limiter: Option(transport.RateLimiter),
   )
 }
@@ -204,7 +204,7 @@ type SendRequest {
 /// ```gleam
 /// import beryl_mist as mist_transport
 ///
-/// fn handle_request(req: Request(Connection), channels: Channels) -> Response(ResponseData) {
+/// fn handle_request(req: Request(Connection), channels: Sockets) -> Response(ResponseData) {
 ///   use <- mist_transport.upgrade(req, channels, mist_transport.default_config("/socket"))
 ///   // Fall through to regular HTTP routing
 ///   case request.path_segments(req) {
@@ -236,7 +236,7 @@ type SendRequest {
 /// When `beryl.with_max_connections` is configured, this transport also
 /// enforces a node-wide ceiling on concurrent connections across all IPs,
 /// likewise returning `429` and rejecting the upgrade before allocating any
-/// long-lived channel/coordinator state. The two limits compose: a connection
+/// long-lived channel/runtime state. The two limits compose: a connection
 /// must be under both to be admitted. The node-wide ceiling bounds total
 /// resource use when a per-IP limit alone cannot (many distributed source
 /// addresses / IPv6 rotation). It is enforced per BEAM node, so across a
@@ -244,7 +244,7 @@ type SendRequest {
 /// use the load balancer's own controls for a cluster-wide cap.
 pub fn upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
   next: fn() -> Response(ResponseData),
 ) -> Response(ResponseData) {
@@ -259,7 +259,7 @@ pub fn upgrade(
 
 fn handle_matched_upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
 ) -> Response(ResponseData) {
   let telemetry = transport.telemetry(channels, transport.Mist)
@@ -393,7 +393,7 @@ fn forbidden() -> Response(ResponseData) {
 
 fn run_connect_and_upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
   connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
@@ -476,7 +476,7 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// |> mist.start
 /// ```
 pub fn handler(
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
   http_fallback: fn(Request(Connection)) -> Response(ResponseData),
 ) -> fn(Request(Connection)) -> Response(ResponseData) {
@@ -498,7 +498,7 @@ pub fn handler(
 /// this function.
 pub fn upgrade_connection(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
 ) -> Response(ResponseData) {
   let telemetry = transport.telemetry(channels, transport.Mist)
   do_upgrade(
@@ -532,7 +532,7 @@ fn connect_seed(
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   connect_metadata: List(#(String, String)),
   connection_permit: Option(transport.ConnectionPermit),
   telemetry: transport.Telemetry,
@@ -590,7 +590,7 @@ fn do_upgrade(
 /// Initialize WebSocket connection
 fn on_init(
   _connection: WebsocketConnection,
-  channels: Channels,
+  channels: Sockets,
   seed: transport.ConnectSeed,
   connection_permit: Option(transport.ConnectionPermit),
   max_inbound_frame_bytes: Int,
@@ -611,7 +611,7 @@ fn on_init(
     process.new_selector()
     |> process.select(send_subject)
 
-  // Create send function that the coordinator can use
+  // Create send function that the runtime can use
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
     process.send(send_subject, SendText(text))
     Ok(Nil)
@@ -648,23 +648,6 @@ fn on_init(
       process.send(send_subject, Close)
       selector
     }
-    transport.OwnerUnmonitored -> {
-      case
-        transport.admit_socket(
-          channels: channels,
-          owner: owner,
-          socket_id: socket_id,
-          send: send_fn,
-          send_binary: send_binary_fn,
-          codec: None,
-          seed: seed,
-          close: fn() { process.send(send_subject, Close) },
-        )
-      {
-        Ok(Nil) -> selector
-        Error(Nil) -> selector
-      }
-    }
   }
 
   let state =
@@ -683,7 +666,7 @@ fn on_init(
 
 /// Handle incoming WebSocket messages.
 ///
-/// Frames are routed to the coordinator for dispatch.
+/// Frames are routed to the runtime for dispatch.
 fn on_message(
   state: ConnectionState,
   message: mist.WebsocketMessage(SendRequest),
@@ -742,7 +725,7 @@ fn on_message(
 
 /// Rate-check and decode a text frame in the connection process, so parse
 /// cost stays here and only valid, rate-admitted messages reach the shared
-/// coordinator.
+/// runtime.
 fn handle_inbound_text(
   state: ConnectionState,
   text: String,
@@ -795,7 +778,7 @@ fn handle_inbound_text(
 
 /// Rate-check and decode a binary frame in the connection process. Codecs
 /// without a binary decoder keep the raw `handle_binary` fan-out, routed
-/// through the coordinator.
+/// through the runtime.
 fn handle_inbound_binary(
   state: ConnectionState,
   data: BitArray,

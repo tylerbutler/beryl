@@ -1,4 +1,4 @@
-//// App-side dispatch types for the `beryl.start_app` socket API (ADR 0002).
+//// Types for building app-side dispatch systems with `beryl.start`.
 ////
 //// With app-side dispatch the application owns routing: beryl delivers
 //// every wire event for a socket to one `update` function, and the
