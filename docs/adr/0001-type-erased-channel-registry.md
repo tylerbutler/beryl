@@ -10,21 +10,25 @@ public API.
 
 ## Context
 
-Applications register many channels with distinct `assigns`/`info` types.
-Join requests carry client-chosen topic strings, so the coordinator selects
-a channel at runtime by matching the topic against every registered pattern
-(`State.handlers` in `coordinator.gleam`). That dispatch point sees channels
-of differing types — heterogeneity Gleam (no existentials, no type classes)
-cannot express.
+Beryl's unit of composition is the registered channel module, with dispatch
+inside the library (Phoenix's shape): applications register channels with
+distinct `assigns`/`info` types, and everything below follows from that
+design decision. Join requests carry client-chosen topic strings, so the
+coordinator selects a channel at runtime by matching the topic against
+every registered pattern (`State.handlers` in `coordinator.gleam`). That
+dispatch point sees channels of differing types — heterogeneity Gleam (no
+existentials, no type classes) cannot express.
 
-1. **Application-level variant type (Elm/Lustre style).** One app-supplied
-   union type parameterizes everything, so every public type — including
-   the transport SPI — gains the parameters. Lustre shows this is livable
-   when one author owns the whole message type, and nested wrapping
-   (`element.map`) spares callbacks from matching impossible variants. But
-   adding a channel still edits a shared type, ruling out registration of
-   independently authored channels. Even Lustre erases behind its typed
-   API ([vdom
+1. **Application-level variant type.** Keep library-side dispatch, but
+   have the app supply one union type that parameterizes every public
+   type, including the transport SPI. This borrows only half of the
+   Elm/Lustre architecture: Lustre is fully type-safe because the app
+   also owns dispatch — a parent model holds each child in a known field,
+   and `element.map` tags messages where they are constructed. With
+   dispatch inside beryl, the library can only hand each callback the
+   whole union, so every callback handles variants that "cannot" occur —
+   the unchecked cast reappears as app-visible boilerplate. Even Lustre
+   erases internally ([vdom
    `coerce`](https://github.com/lustre-labs/lustre/blob/v5.7.1/src/lustre/vdom/vnode.gleam#L195-L197))
    and crosses component boundaries with `Dynamic` plus decoders
    ([`on_attribute_change`](https://github.com/lustre-labs/lustre/blob/v5.7.1/src/lustre/component.gleam#L118-L138)).
@@ -33,7 +37,8 @@ cannot express.
    one app-written update function that routes topics itself. Fully
    type-safe — even design 3's residual coercions (see Consequences)
    disappear, since each socket has one `msg` type and `send_info` becomes
-   an ordinary typed send. Most infrastructure could stay library-side:
+   an ordinary typed send. The application takes over routing, channel
+   lifecycle, and authorization, but most infrastructure stays library-side:
    rate limiting, presence, pubsub, and connection limits key on topic
    strings and wire data, not app types. The loss is the channel module as
    the unit of composition — colocated callbacks, no hand-written union or
@@ -46,7 +51,7 @@ cannot express.
 
 ## Decision
 
-Keep design 2. Beryl compiles before the application's channel types
+Keep design 3. Beryl compiles before the application's channel types
 exist, so it can never write their union itself — only the application
 can, which is design 1's cost. Erased internals behind typed facades are
 an established Gleam/BEAM pattern: see [`gleam_otp`'s actor
@@ -59,10 +64,9 @@ Design 2 is rejected on ergonomics, not soundness; a layered variant
 (typed core with channels as sugar on top) may merit a future ADR.
 
 Also make erasure closure-captured ("Option B"): a handler carries only
-`join`; join returns a `JoinedChannel` — closures capturing the typed
+`join`, which returns a `JoinedChannel` — closures capturing the typed
 assigns, each callback returning the next instance — so the coordinator
-never sees erased assigns and per-callback identity-FFI coercions
-disappear.
+never sees erased assigns and needs no per-callback coercions.
 
 ## Consequences
 
