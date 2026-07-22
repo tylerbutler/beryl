@@ -8,8 +8,9 @@ page so they can be deployed together as one Railway service:
 - `/chat`     — chat rooms
 - `/docs`     — collaborative CRDT docs
 - `/healthz`  — health check
-- `/socket/websocket` — shared WebSocket endpoint (one `beryl.Channels`
-  registers handlers for `cursor:*`, `room:*`, and `document:*:*`)
+- `/socket/websocket` — shared WebSocket endpoint (one `beryl.Sockets` app
+  routes `cursor:*`, `room:*`, and `document:*:*` through a single `update`
+  function, composed from each example's embeddable `Model`/`update` triple)
 
 ## How it works
 

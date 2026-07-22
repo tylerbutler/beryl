@@ -2,112 +2,128 @@
 title: Message Lifecycle
 ---
 
-This page traces every significant step a message takes from the moment a WebSocket connection opens until it is pushed back to one or more clients. Each diagram corresponds to a distinct phase; together they give you a complete mental model of how beryl processes real-time traffic.
+This page traces how a WebSocket connection moves through Beryl's app-side dispatch runtime. The transport owns the HTTP/WebSocket edge, the runtime owns per-socket state, and your app's `update` decides what effects to apply.
 
 ## Connect and register
 
-When a client initiates a WebSocket upgrade, the Mist transport layer generates a unique socket id and hands the socket—along with its send function—to the coordinator for bookkeeping.
+After a successful upgrade, the transport generates a socket id, builds `ConnectSeed` from the request, announces the socket to the runtime, and registers a closer callback the runtime can use later for heartbeat eviction or server-initiated disconnects.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
-  participant Coord as coordinator
-  Client->>Mist: WebSocket upgrade
-  Mist->>Mist: generate socket id
-  Mist->>Coord: register socket + send fn
-  Coord-->>Mist: ack
+  participant Transport as beryl_mist / beryl_ewe
+  participant Runtime as runtime
+  participant App as app init
+  Client->>Transport: WebSocket upgrade request
+  Transport->>Transport: origin/auth checks + build ConnectSeed
+  Transport->>Transport: generate socket id
+  Transport->>Runtime: socket_connected(socket_id, send fns, seed)
+  Runtime->>App: init(ConnectInfo)
+  App-->>Runtime: #(model, init effects)
+  Runtime->>Runtime: store socket model + apply init effects
+  Transport->>Runtime: register_closer(socket_id, close)
 ```
 
 ## Join a topic
 
-A client joins a topic by sending a `phx_join` frame. The wire codec decodes the raw text frame, the coordinator looks up the matching channel handler in its registry, and the handler's `join/3` callback decides whether to accept or reject the connection.
+A client joins by sending a `phx_join` frame. The transport decodes the frame through the active codec and routes the decoded join into the runtime. The runtime delivers one `Join` event to `update`, and your app answers it with `AcceptJoin` or `RejectJoin`.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
+  participant Transport as beryl_mist / beryl_ewe
   participant Wire as wire/codec
-  participant Coord as coordinator
-  participant Ch as channel handler
-  Client->>Mist: text frame [join_ref, ref, topic, "phx_join", payload]
-  Mist->>Wire: decode_message
-  Wire-->>Coord: route_decoded(join)
-  Coord->>Coord: match topic -> handler (registry)
-  Coord->>Ch: join(topic, payload, socket)
-  Ch-->>Coord: JoinOk(reply, socket) / JoinError(reason)
-  Coord->>Coord: subscribe socket to topic (pubsub.subscribe)
-  Coord-->>Client: reply_json(ok/error)
+  participant Runtime as runtime
+  participant App as app update
+  Client->>Transport: text frame [join_ref, ref, topic, "phx_join", payload]
+  Transport->>Wire: decode_text
+  Wire-->>Transport: Inbound(Join)
+  Transport->>Runtime: route_decoded(socket_id, join)
+  Runtime->>App: update(model, Join(topic, payload, ref))
+  App-->>Runtime: Next(model, [AcceptJoin(ref, reply)]) or Next(model, [RejectJoin(ref, reason)])
+  Runtime->>Runtime: apply effect, store model, subscribe topic
+  Runtime-->>Client: phx_reply ok / error
 ```
 
-## Handle an inbound event
+If the join finishes the turn unanswered, the runtime rejects it automatically.
 
-After a successful join, every subsequent inbound frame for that topic is routed to the channel handler's `handle_in/3` callback. The handler returns one of `reply`, `noreply`, `push`, or `stop`, and the coordinator acts accordingly.
+## Handle an inbound event and broadcast
+
+Once a topic is joined, text events become `Message` values and binary frames become `Binary` values. Your app returns a new model plus effects such as `ReplyOk`, `Push`, `Broadcast`, or `BroadcastFrom`; the runtime applies them strictly in list order.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Coord as coordinator
-  participant Ch as channel handler
-  Client->>Coord: text frame [.., topic, event, payload]
-  Coord->>Ch: handle_in(event, payload, socket)
-  Ch-->>Coord: reply / noreply / push / stop
-  Coord-->>Client: reply_json (when reply)
+  participant Transport as beryl_mist / beryl_ewe
+  participant Wire as wire/codec
+  participant Runtime as runtime
+  participant App as app update
+  participant PS as pubsub
+  participant Remote as remote runtimes
+  Client->>Transport: text frame [join_ref, ref, topic, event, payload]
+  Transport->>Wire: decode_text
+  Wire-->>Transport: Inbound(Event)
+  Transport->>Runtime: route_decoded(socket_id, event)
+  Runtime->>App: update(model, Message(topic, event, payload, ref?))
+  App-->>Runtime: Next(model, [ReplyOk/Push/Broadcast/...])
+  Runtime->>Runtime: apply effects in list order
+  Runtime-->>Client: reply and/or push frames
+  Runtime->>PS: broadcast_from / broadcast_from_socket (when configured)
+  PS-->>Remote: remote broadcast delivery
 ```
 
-## Broadcast fan-out
-
-Broadcasting delivers a message to every socket subscribed to a topic. `broadcast/4` reaches all subscribers; `broadcast_from/5` excludes the originating socket. The pg-based PubSub layer delivers the message as an Erlang message to each subscriber's coordinator process, which then pushes it over the wire.
-
-```mermaid
-sequenceDiagram
-  participant Origin as origin handler/app
-  participant Coord as coordinator
-  participant PS as pubsub (pg)
-  participant Subs as subscriber sockets
-  Origin->>Coord: broadcast(topic, event, payload)
-  Coord->>PS: broadcast / broadcast_from (exclude origin)
-  PS-->>Coord: deliver to each subscriber pid
-  Coord-->>Subs: push(topic, event, payload) via send fn
-```
+Local fan-out happens inside the runtime before any PubSub forwarding. When PubSub is configured, remote runtimes receive the same broadcast and fan it out to their own local subscribers.
 
 ## Heartbeat and eviction
 
-Clients periodically send a `heartbeat` frame on the `"phoenix"` topic to signal liveness. The coordinator replies immediately and tracks the last-seen timestamp; a periodic timer evicts sockets that have not sent a heartbeat within the configured deadline.
+Clients still send heartbeat frames on the reserved `"phoenix"` topic. The runtime updates the socket's last-seen timestamp, replies immediately, and periodically evicts sockets that have gone stale.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Coord as coordinator
-  Client->>Coord: [.., "phoenix", "heartbeat", {}]
-  Coord-->>Client: heartbeat_reply
-  Note over Coord: periodic timer checks last-seen
-  Coord->>Coord: evict sockets past deadline
+  participant Transport as beryl_mist / beryl_ewe
+  participant Runtime as runtime
+  Client->>Transport: [.., "phoenix", "heartbeat", {}]
+  Transport->>Runtime: route_decoded(socket_id, heartbeat)
+  Runtime-->>Client: heartbeat reply
+  loop every heartbeat_timeout_ms / 2
+    Runtime->>Runtime: compare now to last_heartbeat
+    Runtime->>Runtime: tear down sockets past timeout
+  end
 ```
 
-## Disconnect and terminate
+## Disconnect and close topics
 
-When a client closes the WebSocket connection, Mist notifies the coordinator, which calls each joined channel handler's `terminate/2` callback and then cleans up all topic subscriptions and socket state.
+When a socket closes, the transport tells the runtime. The runtime then tears the socket down topic by topic, delivering `Closed(topic, reason)` to your app for each joined topic, cleaning up presence, sending terminal frames, and finally closing the transport connection if it is still open.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
-  participant Coord as coordinator
-  participant Ch as channel handler
-  Client->>Mist: socket close
-  Mist->>Coord: socket closed(id)
-  Coord->>Ch: terminate(reason, socket)
-  Coord->>Coord: unsubscribe topics, drop socket state
+  participant Transport as beryl_mist / beryl_ewe
+  participant Runtime as runtime
+  participant App as app update
+  Client->>Transport: socket close
+  Transport->>Runtime: socket_disconnected(socket_id)
+  loop each joined topic
+    Runtime->>App: update(model, Closed(topic, reason))
+    App-->>Runtime: Next(model, effects) or Stop(reason)
+    Runtime->>Runtime: auto-untrack leftover presence
+    Runtime-->>Client: terminal close/error frame
+  end
+  Runtime->>Transport: registered closer() when needed
+  Runtime->>Runtime: drop socket state and rate buckets
 ```
+
+The same `Closed` path is used for client leaves, heartbeat timeouts, `KickTopic`, and graceful `beryl.stop` shutdown.
 
 ## Concurrency note
 
-The coordinator is a single OTP actor processing its mailbox sequentially; broadcasts arrive as messages, so tests must select the exact message shape and drain queued messages (BEAM mailbox gotcha).
+The runtime is one OTP actor processing its mailbox sequentially. Broadcasts arrive as actor messages too, so effect order and test mailbox hygiene still matter.
 
 ## Where this lives
 
-- `packages/beryl_mist/src/beryl_mist.gleam` — connect/close, frame routing
-- `src/beryl/coordinator.gleam` — `route_message`, `route_decoded`, `route_binary`, heartbeat timer
-- `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam` — decode/encode frames
-- `src/beryl/pubsub.gleam` — fan-out
+- `packages/beryl/src/beryl/event.gleam` — `ConnectInfo`, `Event`, `Next`, `Effect`
+- `packages/beryl/src/beryl/runtime.gleam` — socket connect/disconnect, inbound dispatch, topic teardown, heartbeat timer, effect application
+- `packages/beryl/src/beryl/wire.gleam`, `packages/beryl/src/beryl/wire/codec.gleam` — frame decoding and encoding
+- `packages/beryl/src/beryl/pubsub.gleam` — local and distributed broadcast delivery
+- `packages/beryl_mist/src/beryl_mist.gleam`, `packages/beryl_ewe/src/beryl_ewe.gleam` — WebSocket edge adapters

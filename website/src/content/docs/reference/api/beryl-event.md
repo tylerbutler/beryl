@@ -1,9 +1,9 @@
 ---
 title: beryl/event
-description: Types for building app-side dispatch systems with `beryl.start_app`.
+description: Types for building app-side dispatch systems with `beryl.start`.
 ---
 
-Types for building app-side dispatch systems with `beryl.start_app`.
+Types for building app-side dispatch systems with `beryl.start`.
 
  With app-side dispatch the application owns routing: beryl delivers
  every wire event for a socket to one `update` function, and the

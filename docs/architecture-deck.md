@@ -17,49 +17,51 @@ Type-safe realtime channels & presence on the BEAM
 
 <!--
 Speaker notes:
-Opening frame. In one sentence: beryl gives you Phoenix-style realtime channels
-and presence, but as a Gleam library with full type safety, running natively on
-the Erlang VM. Set expectations for the deck — we'll go top-down: what it is,
-the module map, then the coordinator, and finally trace a message through its
-full lifecycle (connect, join, event, broadcast, heartbeat, terminate) before
-covering distribution, presence, and where to start contributing.
+Opening frame. In one sentence: beryl gives you Phoenix-compatible realtime
+messaging and presence, but as a Gleam library with full type safety, running
+natively on the Erlang VM. Set expectations for the deck — we'll go top-down:
+what it is, the module map, then the runtime (the effect interpreter at the
+center of everything), and finally trace a connection through its full
+lifecycle (connect, join, event, broadcast, heartbeat, close) before covering
+distribution, presence, and where to start contributing.
 -->
 
 ---
 
 ## What beryl is
 
-- Phoenix-style channel system on OTP actors and Erlang `pg`
-- Pluggable wire codec + WebSocket transport
-- Channels, presence, and groups as independent domain actors
-- Coordinator wires them together and enforces heartbeats
+- App-side dispatch on OTP actors and Erlang `pg`: one `init`/`update` pair per app
+- Pluggable wire codec + WebSocket transport (Mist, Ewe)
+- Presence and groups are independent, app-owned OTP actors
+- One runtime actor per app dispatches events and applies effects
 - PubSub is the only cross-node primitive
 
 ```mermaid
 flowchart TB
-  T["WebSocket Transport<br/>beryl_mist"]
+  T["WebSocket transports<br/>beryl_mist · beryl_ewe"]
   W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
-  subgraph Domain["Channel domain"]
-    C["Channels<br/>beryl/channel"]
-    P["Presence<br/>beryl/presence"]
-    G["Groups<br/>beryl/group"]
-  end
-  CO["Coordinator (OTP actor)<br/>beryl/coordinator"]
+  R["Runtime & effect interpreter<br/>beryl/runtime (internal)"]
+  E["App dispatch contract<br/>beryl/event"]
+  APP["your app's init/update"]
   PS["PubSub (Erlang pg)<br/>beryl/pubsub"]
-  T --> W --> Domain --> CO --> PS
+  T --> W --> R
+  R <--> E --> APP
+  R --> PS
 ```
 
 <!--
 Speaker notes:
 This is the 10,000-foot view. Read the diagram top to bottom as the path a
 message takes: a raw WebSocket frame enters at the transport, the wire codec
-turns bytes into typed messages, the channel domain (channels, presence,
-groups) holds the application-facing behavior, and the coordinator is the
-single actor that ties it all together. PubSub sits at the bottom because it
-is the *only* primitive that crosses node boundaries — everything above it is
-local to one node. The key takeaway: each box is an independent layer you can
-reason about (and test) on its own, and the coordinator is the seam where they
-meet.
+turns bytes into typed messages, and the runtime — one OTP actor per app —
+delivers those as typed `Event` values to the app's `update` function, then
+applies whatever `Effect` list `update` returns. There is no channel registry
+and no per-channel callback modules: one `update` function handles every
+topic your app cares about, and it routes by pattern-matching the topic
+string itself. PubSub sits at the bottom because it is the *only* primitive
+that crosses node boundaries — everything above it is local to one node. The
+key takeaway: each box is an independent layer you can reason about (and
+test) on its own, and the runtime is the seam where they meet.
 -->
 
 ---
@@ -68,82 +70,102 @@ meet.
 
 | Module | Responsibility |
 |---|---|
-| `beryl` | Public entry-point: `config/1`, `start/1`, `register/3`, `broadcast/4` |
-| `beryl/coordinator` | Central OTP actor: registry, socket tracking, routing, heartbeat |
-| `beryl/pubsub` | Distributed pub-sub via Erlang `pg` |
+| `beryl` | Public entry-point: `config`, `start`, `child_spec`, `stop`, `broadcast` |
+| `beryl/event` | App dispatch contract: `Event`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
+| `beryl/runtime` | Internal OTP actor: socket tracking, dispatch, effect interpretation, heartbeat |
+| `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` |
 | `beryl/presence` | Add-wins OR-set CRDT; track/untrack, cross-node diff broadcast |
 | `beryl/wire` | Pluggable codec; ships `phoenix_codec()` |
-| `beryl_mist` | Mist WebSocket adapter; assigns IDs, routes frames |
+| `beryl_mist` / `beryl_ewe` | WebSocket adapters; assign socket ids, route frames |
 | `beryl/group` | Named topic collections; supports grouped broadcast |
 | `beryl/topic` | Topic pattern matching: exact, `"ns:*"` prefix, and segment wildcards |
+| `beryl/bridge` | Forward an external actor's messages into one socket's `Info` events |
 
 <!--
 Speaker notes:
 This table is the "where does X live" cheat sheet. Two rows do most of the
-work: `beryl` is the public API a user calls, and `beryl/coordinator` is where
-runtime state and routing actually live. Everything else is a focused
-collaborator the coordinator delegates to — pubsub for fan-out, presence for
-membership, wire for framing, transport for the socket. Point out that `beryl/topic`
-is small but load-bearing: it decides which handler a topic string matches, so
-the prefix and wildcard rules here drive the routing you'll see in later slides.
+work: `beryl` is the public API a user calls, and `beryl/event` is the
+contract that shapes every app built on beryl — `Event` in, `Effect`s out.
+`beryl/runtime` is where that contract is actually executed; it's internal,
+not a module apps import directly, but it's the single most important piece
+to understand architecturally. Everything else is a focused collaborator the
+runtime delegates to — pubsub for fan-out, presence for membership (an
+app-owned actor the runtime just borrows a handle to), wire for framing,
+transport for the socket. Point out that `beryl/topic` is small but
+load-bearing: it's what your own `update` function uses to decide which
+topic prefix a `Join`/`Message` event belongs to.
 -->
 
 ---
 
-## Coordinator: the central actor
+## The runtime: effect interpreter at the center
 
-The coordinator is a **single OTP actor** that is the heart of beryl. It tracks:
+The runtime is a **single OTP actor** — one per `Sockets` handle. It tracks:
 
-- **Socket registry** — `socket_id → {assigns, send_fn, topics, last_heartbeat}`
-- **Handler registry** — `topic_pattern → channel_handler`
+- **Socket state** — `socket_id → {model, send_fn, joined topics, last_heartbeat}`
+- **App contract** — calls `init`/`update` and applies the returned `Effect`s
 - **PubSub subscriptions** — one pg group per joined topic
 - **Heartbeat timer** — evicts stale sockets on deadline
 
-All inbound frames, PubSub deliveries, and info messages pass through its mailbox sequentially. Because it is a single actor, no locks are needed for socket or topic state.
+All inbound frames, PubSub deliveries, and `Info` messages pass through its mailbox sequentially, and effects apply in strict list order within one turn.
 
 <!--
 Speaker notes:
-This is the most important conceptual slide. The coordinator owns four pieces
-of state, and the punchline is the last line: because one actor serializes
-every message through a single mailbox, we get consistency for free — no
-mutexes, no race conditions on the socket or topic tables. Call out each piece:
-the socket registry is per-connection state, the handler registry maps topic
-patterns to channel modules, the pg subscriptions are how we receive
-broadcasts, and the heartbeat timer is how we reclaim dead sockets. If someone
-asks "isn't a single actor a bottleneck?" — the actor only does cheap
-bookkeeping and routing; the heavy lifting (codec, channel callbacks) is fast,
-and you scale across nodes via pg, not by adding coordinator threads.
+This is the most important conceptual slide, and it replaces what used to be
+a "coordinator + channel registry" story with something simpler: there is no
+registry, because there's no per-topic handler to look up — one `update`
+function handles every event for every socket on this runtime. The runtime
+owns four pieces of state, and the punchline is the last line: because one
+actor serializes every message through a single mailbox, we get consistency
+for free — no mutexes, no race conditions on socket or topic state, and
+effect order equals wire order. Call out each piece: socket state now holds
+the app's own `model` (not a beryl-defined "assigns" record), the app
+contract is `init`/`update` plus the `Effect` list `update` returns, the pg
+subscriptions are how broadcasts arrive, and the heartbeat timer reclaims
+dead sockets. If someone asks "isn't a single actor a bottleneck?" — the
+actor only does cheap bookkeeping, dispatch, and effect application; you
+scale across nodes via pg, not by adding runtime threads.
 -->
 
 ---
 
-## Supervision tree
+## Supervision: standalone vs. embedded
 
 ```mermaid
-flowchart TB
-  S["supervisor (rest-for-one)"]
-  S --> CO["coordinator"]
-  S --> PR["presence (optional)"]
-  S --> GR["groups (optional)"]
-  CO -. "crash restarts downstream" .-> PR
-  PR -. .-> GR
+flowchart LR
+  subgraph Standalone["beryl.start"]
+    Caller["caller process"] -->|starts, unlinks| Sup1["Beryl subtree supervisor<br/>OneForOne"]
+    Sup1 --> Rt1["runtime<br/>Transient · significant"]
+    Sup1 --> Lim1["connection limiter (optional)"]
+  end
+  subgraph Embedded["beryl.child_spec"]
+    AppSup["your app supervisor"] --> Sup2["Beryl subtree supervisor<br/>OneForOne"]
+    Sup2 --> Rt2["runtime<br/>Transient · significant"]
+    Sup2 --> Lim2["connection limiter (optional)"]
+  end
 ```
 
-- `rest-for-one`: coordinator crash restarts presence and groups
-- Embeddable via `beryl/supervisor.child_spec/1`
-- Presence and groups are optional; omit from config if unused
+- Same subtree shape either way: runtime (significant, transient) + optional limiter
+- `start` unlinks the caller so the subtree's own shutdown can't kill it
+- `child_spec` hands the subtree to *your* supervisor instead
+- PubSub, presence, and groups are **borrowed** — never children of this subtree
 
 <!--
 Speaker notes:
-The strategy here is `rest-for-one`, and the diagram's dashed arrows show why
-it matters: children are started in order, and if an earlier child (the
-coordinator) crashes, every child started *after* it is restarted too. That is
-deliberate — presence and groups hold references and subscriptions that assume
-a live coordinator, so restarting them together avoids stale state pointing at
-a dead process. The reverse is not true: a presence crash does not take down
-the coordinator. Mention that the whole tree is embeddable via
-`child_spec/1`, so beryl drops into a user's existing supervision tree rather
-than demanding to be the top of the application.
+Two entry points, one subtree shape. `beryl.start` is for apps that just want
+a working system: it builds the OneForOne subtree (runtime as the
+significant, transient child, plus an optional connection limiter sibling),
+starts it, and then unlinks the caller from the supervisor pid — that
+unlinking matters because the subtree auto-shuts-down on a graceful `stop`,
+and without unlinking that exit would propagate up and kill the caller.
+`beryl.child_spec` is for apps that already have their own supervision tree:
+it validates and builds the identical subtree but hands back a
+`ChildSpecification` for the caller to `static_supervisor.add` themselves —
+no unlinking needed because a real OTP supervisor traps exits. Either way,
+the big change from the old design: presence, PubSub, and groups are NOT
+part of this tree anymore. They're started and owned by the application, and
+the runtime just borrows a handle. `beryl.stop` only tears down Beryl's own
+subtree — never your PubSub instance, presence actor, or group actors.
 -->
 
 ---
@@ -153,27 +175,29 @@ than demanding to be the top of the application.
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
-  participant Coord as coordinator
-  Client->>Mist: WebSocket upgrade
-  Mist->>Mist: generate socket id
-  Mist->>Coord: register socket + send fn
-  Coord-->>Mist: ack
+  participant Transport as beryl_mist / beryl_ewe
+  participant Runtime as runtime
+  participant App as app init
+  Client->>Transport: WebSocket upgrade
+  Transport->>Transport: generate socket id + build ConnectSeed
+  Transport->>Runtime: socket_connected(socket_id, send fns, seed)
+  Runtime->>App: init(ConnectInfo)
+  App-->>Runtime: #(model, init effects)
 ```
 
-The transport generates a 16-byte random ID (base16) and hands the socket and its send function to the coordinator for bookkeeping.
+The transport generates a 16-byte random id (base16) and hands the socket, its send functions, and connect metadata (`ConnectSeed`) to the runtime, which calls the app's `init`.
 
 <!--
 Speaker notes:
 This is the simplest of the lifecycle slides, so use it to establish the
 pattern the next slides reuse: a client action enters at the transport, the
-transport does the minimum (here, mint a socket id), and then it registers
-with the coordinator. The detail worth emphasizing is the *send function*:
-the transport hands the coordinator a closure that knows how to push bytes
-back to this specific client. That inversion is what lets the coordinator
-later fan out a broadcast to many sockets without knowing anything about
-WebSockets — it just calls each socket's send fn. No channel join has
-happened yet; this slide is purely "a connection now exists and is tracked."
+transport does the minimum (mint a socket id, assemble `ConnectSeed` from the
+request — path, query, headers, and any `on_connect` metadata), and then it
+registers with the runtime. The runtime calls the app's `init` with a
+`ConnectInfo` bundling the socket id, that seed, and a typed `Sender` for
+later server-initiated messages — and `init` returns the socket's starting
+`model` plus any effects to apply immediately. No join has happened yet;
+this slide is purely "a connection now exists, is tracked, and has a model."
 -->
 
 ---
@@ -183,34 +207,37 @@ happened yet; this slide is purely "a connection now exists and is tracked."
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
+  participant Transport as beryl_mist / beryl_ewe
   participant Wire as wire/codec
-  participant Coord as coordinator
-  participant Ch as channel handler
-  Client->>Mist: text frame [join_ref, ref, topic, "phx_join", payload]
-  Mist->>Wire: decode_message
-  Wire-->>Coord: route_decoded(join)
-  Coord->>Coord: match topic -> handler (registry)
-  Coord->>Ch: join(socket, payload)
-  Ch-->>Coord: Ok(assigns) / Error
-  Coord->>Coord: subscribe socket to topic (pubsub.subscribe)
-  Coord-->>Client: reply_json(ok/error)
+  participant Runtime as runtime
+  participant App as app update
+  Client->>Transport: text frame [join_ref, ref, topic, "phx_join", payload]
+  Transport->>Wire: decode_text
+  Wire-->>Transport: Inbound(Join)
+  Transport->>Runtime: route_decoded(socket_id, join)
+  Runtime->>App: update(model, Join(topic, payload, ref))
+  App-->>Runtime: Next(model, [AcceptJoin(ref, reply)]) or [RejectJoin(ref, reason)]
+  Runtime->>Runtime: apply effect, subscribe topic
+  Runtime-->>Client: phx_reply ok / error
 ```
 
 <!--
 Speaker notes:
 This slide has no prose on purpose — walk the sequence live. A join is the
-first Phoenix-protocol message: the client sends a `phx_join` frame carrying a
-`join_ref`, a `ref`, the target topic, and a payload. Trace each hop: the
-transport decodes nothing itself, it delegates to the wire codec, which turns
-the raw array into a typed decoded message. The coordinator then does the
-authorization step that makes beryl type-safe — it matches the topic string
-against the handler registry to find the channel module, and calls that
-module's `join` callback. The callback returns `Ok(assigns)` to admit the
-socket (and we subscribe it to the topic's pg group) or `Error` to reject it.
-Either way the client gets a `phx_reply`. The relevance: this is where
-application code first runs, and where subscription state is established —
-everything in the next slides assumes a successful join happened here.
+first Phoenix-protocol message: the client sends a `phx_join` frame carrying
+a `join_ref`, a `ref`, the target topic, and a payload. Trace each hop: the
+transport decodes nothing itself, it delegates to the wire codec, which
+turns the raw array into a typed decoded message and hands it to the
+runtime. The runtime delivers exactly one `Join` event to the app's
+`update` function — there's no registry lookup, because `update` handles
+every topic itself, typically by pattern-matching the topic string. The
+app answers with `AcceptJoin` (subscribing the socket to the topic's pg
+group and sending an ok reply) or `RejectJoin` (sending an error reply, no
+subscription). One rule worth emphasizing: if the join finishes the turn
+unanswered, the runtime rejects it automatically — fail closed by design.
+The relevance: this is where application code first runs, and where
+subscription state is established — everything in the next slides assumes
+a successful join happened here.
 -->
 
 ---
@@ -220,82 +247,91 @@ everything in the next slides assumes a successful join happened here.
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Coord as coordinator
-  participant Ch as channel handler
-  Client->>Coord: text frame [.., topic, event, payload]
-  Coord->>Ch: handle_in(event, payload, socket)
-  Ch-->>Coord: reply / noreply / push / stop
-  Coord-->>Client: reply_json (when reply)
+  participant Runtime as runtime
+  participant App as app update
+  Client->>Runtime: text frame [.., topic, event, payload]
+  Runtime->>App: update(model, Message(topic, event, payload, ref?))
+  App-->>Runtime: Next(model, [ReplyOk/Push/Broadcast/...])
+  Runtime->>Runtime: apply effects in list order
 ```
 
 ```mermaid
 sequenceDiagram
-  participant Origin as origin handler/app
-  participant Coord as coordinator
+  participant Origin as origin app/effect
+  participant Runtime as runtime
   participant PS as pubsub (pg)
   participant Subs as subscriber sockets
-  Origin->>Coord: broadcast(topic, event, payload)
-  Coord->>PS: broadcast / broadcast_from (exclude origin)
-  PS-->>Coord: deliver to each subscriber pid
-  Coord-->>Subs: push(topic, event, payload) via send fn
+  Origin->>Runtime: Broadcast / BroadcastFrom effect (or beryl.broadcast)
+  Runtime->>PS: broadcast / broadcast_from (exclude origin)
+  PS-->>Runtime: deliver to each subscriber pid
+  Runtime-->>Subs: push(topic, event, payload) via send fn
 ```
 
 <!--
 Speaker notes:
-Two diagrams, two distinct flows — contrast them. The top one is the *inbound*
-path: a client sends an event on an already-joined topic, the coordinator
-invokes the channel's `handle_in`, and the callback's return value drives what
-happens next. Name the four outcomes: `reply` (send a direct response to this
-caller), `noreply` (handled, stay silent), `push` (send an unsolicited message
-to this socket), and `stop` (leave the channel). The bottom diagram is the
-*fan-out* path and is the heart of why beryl exists: a broadcast goes from the
-origin into pubsub (pg), which delivers it to every subscriber pid across the
-cluster, and each coordinator pushes it to its local sockets via their send fns.
-The detail that earns a pause: `broadcast_from` excludes the originating socket
-so a sender doesn't receive an echo of its own message — that exclusion is
-load-bearing for correctness and easy to get wrong.
+Two diagrams, two distinct flows — contrast them. The top one is the
+*inbound* path: a client sends an event on an already-joined topic, the
+runtime delivers a `Message` event to `update`, and the returned `Effect`
+list drives what happens next. Name a few outcomes: `ReplyOk`/`ReplyError`
+(answer this specific message's ref), `Push` (send an unsolicited message to
+this socket), `Broadcast`/`BroadcastFrom` (fan out to a topic's
+subscribers), and `Stop` from `Next` (leave the socket entirely). Effects
+apply strictly in list order within one actor turn — list order is wire
+order, which matters when an `AcceptJoin` is followed by a `Push` in the
+same list. The bottom diagram is the *fan-out* path and is the heart of why
+beryl exists: a broadcast effect goes into pubsub (pg), which delivers it to
+every subscriber pid across the cluster, and each runtime pushes it to its
+local sockets via their send fns. The detail that earns a pause:
+`BroadcastFrom` excludes the originating socket so a sender doesn't receive
+an echo of its own message — that exclusion is load-bearing for correctness
+and easy to get wrong.
 -->
 
 ---
 
-## Heartbeat & terminate
+## Heartbeat & close
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Coord as coordinator
-  Client->>Coord: [.., "phoenix", "heartbeat", {}]
-  Coord-->>Client: heartbeat_reply
-  Note over Coord: periodic timer checks last-seen
-  Coord->>Coord: evict sockets past deadline
+  participant Runtime as runtime
+  Client->>Runtime: [.., "phoenix", "heartbeat", {}]
+  Runtime-->>Client: heartbeat_reply
+  Note over Runtime: periodic timer checks last-seen
+  Runtime->>Runtime: evict sockets past deadline
 ```
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
-  participant Coord as coordinator
-  participant Ch as channel handler
-  Client->>Mist: socket close
-  Mist->>Coord: socket closed(id)
-  Coord->>Ch: terminate(reason, socket)
-  Coord->>Coord: unsubscribe topics, drop socket state
+  participant Transport as beryl_mist / beryl_ewe
+  participant Runtime as runtime
+  participant App as app update
+  Client->>Transport: socket close
+  Transport->>Runtime: socket_disconnected(socket_id)
+  loop each joined topic
+    Runtime->>App: update(model, Closed(topic, reason))
+  end
+  Runtime->>Runtime: unsubscribe topics, drop socket state
 ```
 
 <!--
 Speaker notes:
-Both diagrams are about *liveness and cleanup* — how sockets leave, gracefully
-or not. The top flow is the heartbeat: Phoenix clients periodically send a
-`heartbeat` on the special "phoenix" topic, the coordinator replies, and it
-records a last-seen timestamp. A separate periodic timer sweeps the registry
-and evicts any socket whose last-seen is past the deadline — this is how we
-detect clients that vanished without a clean close (dropped network, killed
-tab). The bottom flow is the graceful path: the transport observes the socket
-closing and tells the coordinator, which calls each joined channel's
-`terminate` callback (so application code can clean up) and then unsubscribes
-the topics and drops the socket state. Relevance: both paths converge on the
-same invariant — no dead socket is left subscribed to a pg group, so
-broadcasts never try to push to a connection that's gone.
+Both diagrams are about *liveness and cleanup* — how sockets leave,
+gracefully or not. The top flow is the heartbeat: Phoenix clients
+periodically send a `heartbeat` on the special "phoenix" topic, the runtime
+replies, and it records a last-seen timestamp. A separate periodic timer
+sweeps tracked sockets and evicts any whose last-seen is past the
+deadline — this is how we detect clients that vanished without a clean
+close (dropped network, killed tab). The bottom flow is the graceful (and
+crash/kick/timeout) path: whenever a socket's connection ends for any
+reason, the runtime delivers a `Closed(topic, reason)` event to `update`
+for *every* joined topic — this single event replaces what used to be a
+`terminate` callback — so application code can clean up per-topic model
+state, and then the runtime unsubscribes and drops the socket. Relevance:
+both paths converge on the same invariant — no dead socket is left
+subscribed to a pg group, so broadcasts never try to push to a connection
+that's gone.
 -->
 
 ---
@@ -305,33 +341,37 @@ broadcasts never try to push to a connection that's gone.
 ```mermaid
 flowchart LR
   subgraph Node1
-    A[socket A] --- C1[coordinator]
+    A[socket A] --- R1[runtime]
   end
   subgraph Node2
-    B[socket B] --- C2[coordinator]
+    B[socket B] --- R2[runtime]
   end
-  C1 -- pg broadcast --> PG((pg group: topic))
-  C2 -- subscribe --> PG
-  PG -- deliver --> C2
+  R1 -- pg broadcast --> PG((pg group: topic))
+  R2 -- subscribe --> PG
+  PG -- deliver --> R2
 ```
 
-- Built on Erlang `pg` — cluster-aware out of the box
-- `broadcast_from` excludes the originating socket (load-bearing for correctness)
+- Built on Erlang `pg` via a typed `Subscriber(payload)` — cluster-aware out of the box
+- `broadcast_from`/`BroadcastFrom` excludes the originating socket (load-bearing for correctness)
 - Scoped by an Erlang atom; default scope is `beryl_pubsub`
 - No extra message-bus infrastructure required
 
 <!--
 Speaker notes:
-The diagram shows the payoff of building on Erlang `pg`: socket A on Node1 and
-socket B on Node2 are joined to the same logical topic, which is just a pg
-group spanning both nodes. When Node1 broadcasts, pg delivers to subscribers on
-every node — Node2's coordinator receives it and pushes to socket B. The
-relevance to emphasize: there is *no* external broker here. No Redis, no NATS,
-no separate message bus to deploy and operate — pg ships with the BEAM and is
-cluster-aware the moment your nodes are connected. Re-iterate the
-`broadcast_from` exclusion from the previous slide (it's why the origin socket
-doesn't echo), and mention the scope atom: groups are namespaced under an
-Erlang atom, default `beryl_pubsub`, so multiple beryl instances can coexist.
+The diagram shows the payoff of building on Erlang `pg`: socket A on Node1
+and socket B on Node2 are joined to the same logical topic, which is just a
+pg group spanning both nodes. When Node1 broadcasts, pg delivers to
+subscribers on every node — Node2's runtime receives it and pushes to
+socket B. The relevance to emphasize: there is *no* external broker here. No
+Redis, no NATS, no separate message bus to deploy and operate — pg ships
+with the BEAM and is cluster-aware the moment your nodes are connected.
+Mention that subscribing now goes through a typed `Subscriber(payload)`
+handle (`pubsub.subscriber` → `join`/`leave`), not a bare `subscribe`
+function — same pg mechanics, better typing. Re-iterate the exclusion
+semantics from the previous slide, and mention the scope atom: groups are
+namespaced under an Erlang atom, default `beryl_pubsub`, so multiple beryl
+instances can coexist. Never derive that scope from user input — atoms are
+never garbage collected.
 -->
 
 ---
@@ -340,37 +380,45 @@ Erlang atom, default `beryl_pubsub`, so multiple beryl instances can coexist.
 
 ```mermaid
 sequenceDiagram
-  participant App
+  participant App as app update
+  participant Runtime as runtime
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Pres: track(topic, key, pid, meta)
+  App->>Runtime: PresenceTrack / PresenceUntrack effect
+  Runtime->>Pres: track / untrack
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end
   Remote->>PS: its state
   PS-->>Pres: remote state
   Pres->>Pres: merge -> diff
-  Pres-->>App: on_diff(diff)
+  Pres-->>App: on_diff(diff) (optional)
 ```
 
 - Add-wins OR-set CRDT via `lattice_presence/presence_state`
-- Each node holds its own replica; merges converge without coordination
-- `on_diff` fires on every local change or remote merge with a non-empty diff
+- App-owned actor: started separately, attached with `beryl.with_presence_handle`
+- `PresenceTrack`/`PresenceUntrack`/`PushPresence`/`BroadcastPresence` effects drive it from `update`
 
 <!--
 Speaker notes:
-Presence answers "who is here right now" across the cluster, and the diagram
-shows how it stays consistent without a coordinator or a database. Each node
-runs a presence actor holding its own replica of an add-wins OR-set CRDT
-(from `lattice_presence`). When the app calls `track`, the local replica
-changes; on a timer the actor broadcasts its state over pubsub, and it merges
-the states it receives from remote replicas. Stress the CRDT property: merges
-are commutative and idempotent, so replicas *converge* regardless of message
-order or duplication — no locking, no leader, no conflict resolution code. The
-practical hook for users is `on_diff`: it fires with the set of joins/leaves
-whenever the merged view actually changes, which is what you wire your UI to.
-"Add-wins" means a concurrent track-and-untrack resolves in favor of present.
+Presence answers "who is here right now" across the cluster, and the
+diagram shows how it stays consistent without a central coordinator or a
+database. Each node runs a presence actor holding its own replica of an
+add-wins OR-set CRDT (from `lattice_presence`) — and that actor is started
+and supervised by the *application*, not by Beryl's own subtree; the app
+attaches it to `Config` with `beryl.with_presence_handle` and the runtime
+just borrows the handle. When the app's `update` returns a `PresenceTrack`
+effect (typically alongside `AcceptJoin`), the runtime updates the local
+replica; `PresenceUntrack` typically follows a `Closed` event. On a timer
+the actor broadcasts its state over pubsub and merges states it receives
+from remote replicas. Stress the CRDT property: merges are commutative and
+idempotent, so replicas *converge* regardless of message order or
+duplication — no locking, no leader, no conflict resolution code.
+`PushPresence`/`BroadcastPresence` effects read presence state at apply
+time — after any earlier `PresenceTrack`/`PresenceUntrack` in the same
+effects list — which is the modern equivalent of manually wiring `on_diff`
+to `beryl.broadcast_presence_diff` (still available for advanced cases).
 -->
 
 ---
@@ -379,38 +427,41 @@ whenever the merged view actually changes, which is what you wire your UI to.
 
 ```mermaid
 flowchart LR
-  FR["raw WS frame"] --> MI["beryl_mist"]
+  FR["raw WS frame"] --> MI["beryl_mist / beryl_ewe"]
   MI -->|text| CD["wire/codec"]
   MI -->|binary, no codec| RB["raw binary handler"]
-  CD --> CO["coordinator"]
-  CO --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
+  CD --> RT["runtime"]
+  RT --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
 ```
 
 - Phoenix wire format: `[join_ref, ref, topic, event, payload]`
-- `Codec` is a data value — swap framing without touching coordinator or channel logic
-- `phoenix_codec()` is the default; pass to `beryl.config/1`
-- Binary frames bypass the codec when no `decode_binary` is configured
+- `Codec` is a data value — swap framing without touching the runtime or your `update`
+- `phoenix_codec()` is the default; pass to `beryl.config`
+- Transports monitor the runtime pid and close the connection if it goes down
 
 <!--
 Speaker notes:
 This slide is about the seam that keeps beryl protocol-agnostic. Follow the
-diagram left to right: a raw frame hits the transport, which branches on frame
-type — text frames go through the wire codec into typed messages, while binary
-frames can take a raw-binary path when no binary decoder is configured. On the
-way out, the coordinator's replies and pushes are encoded by the same codec and
-handed to the socket's send fn. The big idea: the `Codec` is just a *data
-value*, not hardwired logic — so you can swap the framing (today it's the
-Phoenix `[join_ref, ref, topic, event, payload]` format) without touching the
-coordinator or any channel code. `phoenix_codec()` is the default you pass to
-`beryl.config/1`. This is what makes the system testable in layers and open to
-alternative wire protocols down the road.
+diagram left to right: a raw frame hits the transport (Mist or Ewe), which
+branches on frame type — text frames go through the wire codec into typed
+messages, while binary frames can take a raw-binary path when no binary
+decoder is configured. On the way out, the runtime's replies and pushes are
+encoded by the same codec and handed to the socket's send fn. The big idea:
+the `Codec` is just a *data value*, not hardwired logic — so you can swap
+the framing (today it's the Phoenix `[join_ref, ref, topic, event,
+payload]` format) without touching the runtime or any app code.
+`phoenix_codec()` is the default you pass to `beryl.config`. One new detail
+worth a beat: transports monitor the runtime's pid via
+`transport.connection_owner` and close the WebSocket connection if the
+runtime goes down (crash or restart) rather than leaving a zombie
+connection pointed at an empty, freshly restarted runtime.
 -->
 
 ---
 
 ## Concurrency note
 
-The coordinator is a **single OTP mailbox** — sequential processing with no locks needed.
+The runtime is a **single OTP mailbox** — sequential processing with no locks needed.
 
 - Broadcasts arrive as Erlang messages; tests must **select the exact message shape**
 - Stale queued messages can cause nondeterministic test failures
@@ -419,16 +470,17 @@ The coordinator is a **single OTP mailbox** — sequential processing with no lo
 
 <!--
 Speaker notes:
-This slide is half architecture, half hard-won testing advice. The architectural
-point restates the coordinator's superpower: one mailbox, sequential processing,
-no locks. But the practical consequence bites in tests — broadcasts and pushes
-arrive as ordinary Erlang messages in a process mailbox, so a test must select
-the *exact* message shape it expects. If you use a broad "any message" selector
-near a pubsub assertion, a stale message left over from an earlier action can be
-consumed by the wrong receive and cause a flaky, nondeterministic failure. The
-rule of thumb to repeat: drain the messages your test creates, and match
-specifically. This is the most common source of test flakiness in the codebase,
-so it's worth the slide.
+This slide is half architecture, half hard-won testing advice. The
+architectural point restates the runtime's superpower: one mailbox,
+sequential processing, no locks, and effect order equals wire order. But
+the practical consequence bites in tests — broadcasts and pushes arrive as
+ordinary Erlang messages in a process mailbox, so a test must select the
+*exact* message shape it expects. If you use a broad "any message" selector
+near a pubsub assertion, a stale message left over from an earlier action
+can be consumed by the wrong receive and cause a flaky, nondeterministic
+failure. The rule of thumb to repeat: drain the messages your test creates,
+and match specifically. This is the most common source of test flakiness in
+the codebase, so it's worth the slide.
 -->
 
 ---
@@ -437,26 +489,29 @@ so it's worth the slide.
 
 | Start here | Module | Purpose |
 |---|---|---|
-| 💡 Heart of beryl | `src/beryl/coordinator.gleam` | Actor, registry, message routing |
+| 💡 Public surface | `src/beryl.gleam` | `config`, `start`, `child_spec`, `stop`, broadcast helpers |
+| 🔌 Dispatch contract | `src/beryl/event.gleam` | `Event`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
+| ⚙️ Heart of beryl | `src/beryl/runtime.gleam` | Actor, dispatch, effect interpreter, heartbeat (internal) |
 | 📨 Message flow | `packages/beryl_mist/src/beryl_mist.gleam` | Connect → decode → route |
-| 🔌 Channel API | `src/beryl/channel.gleam` | `join`, `handle_in`, `terminate` callbacks |
-| 📡 Fan-out | `src/beryl/pubsub.gleam` | pg-based broadcast |
+| 📡 Fan-out | `src/beryl/pubsub.gleam` | pg-based broadcast, typed `Subscriber` |
 | 👥 Presence | `src/beryl/presence.gleam` | CRDT actor, track/untrack, diffs |
 | 🔤 Framing | `src/beryl/wire.gleam` | Phoenix codec, encode/decode |
 
-Start with `coordinator.gleam` — it is the single process that ties everything together.
+Start with `beryl.gleam` and `beryl/event.gleam` for the public contract, then read `runtime.gleam` — it is the single process that ties everything together.
 Architecture docs live at `/architecture/` in the website.
 
 <!--
 Speaker notes:
-Closing slide — make it actionable. The table is ordered by where a newcomer
-gets the most leverage. The single most important pointer is the first row:
-read `coordinator.gleam` first, because it's the one process that touches every
-other part, so understanding it gives you the map for everything else. From
-there, follow your interest — transport for the connection lifecycle, channel
-for the callback API you'll implement, pubsub for fan-out, presence for the
-CRDT, wire for framing. End by pointing people at the longer-form architecture
-docs on the website under `/architecture/`, which expand every topic in this
-deck with prose. Invite questions.
+Closing slide — make it actionable. The table is ordered by where a
+newcomer gets the most leverage. Start with the two public-facing files:
+`beryl.gleam` (the entry points you call) and `event.gleam` (the contract
+your `update` function implements) — together they're the whole public
+API surface for dispatch. Then read `runtime.gleam`, because it's the one
+process that touches every other part, so understanding it gives you the
+map for everything else, even though you never import it directly. From
+there, follow your interest — transport for the connection lifecycle,
+pubsub for fan-out, presence for the CRDT, wire for framing. End by
+pointing people at the longer-form architecture docs on the website under
+`/architecture/`, which expand every topic in this deck with prose,
+including the new `/architecture/runtime` page. Invite questions.
 -->
-

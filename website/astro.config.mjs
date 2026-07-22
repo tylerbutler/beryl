@@ -79,8 +79,8 @@ export default defineConfig({
 					label: "Guides",
 					items: [
 						{
-							label: "Channels",
-							slug: "guides/channels",
+							label: "App-Side Dispatch",
+							slug: "guides/dispatch",
 						},
 						{
 							label: "Presence",
@@ -151,8 +151,8 @@ export default defineConfig({
 							slug: "architecture/message-lifecycle",
 						},
 						{
-							label: "Coordinator & Supervision",
-							slug: "architecture/coordinator",
+							label: "Runtime & Effect Interpreter",
+							slug: "architecture/runtime",
 						},
 						{
 							label: "PubSub & Distribution",

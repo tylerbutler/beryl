@@ -26,41 +26,43 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 
 ```gleam
 import beryl
-import beryl/channel.{type Channel, type HandleResult, type JoinResult}
-import beryl/socket.{type Socket}
+import beryl/event.{type ConnectInfo, AcceptJoin, Join, Next}
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
 import gleam/erlang/process
-import gleam/json
 import gleam/option.{None}
 import mist
 
-pub type RoomAssigns { RoomAssigns(username: String) }
+pub type Model { Model(username: String) }
 
-fn new_channel() -> Channel(RoomAssigns, info) {
-  channel.new(fn(_topic, payload, socket) {
-    let username_decoder = {
-      use username <- decode.field("username", decode.string)
-      decode.success(username)
+fn init(info: ConnectInfo(msg)) -> #(Model, List(event.Effect)) {
+  #(Model(username: "anonymous"), [])
+}
+
+fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
+  case ev {
+    Join("room:" <> _, payload, ref) -> {
+      let username_decoder = {
+        use username <- decode.field("username", decode.string)
+        decode.success(username)
+      }
+      let username = case decode.run(payload, username_decoder) {
+        Ok(username) -> username
+        Error(_) -> model.username
+      }
+      Next(Model(username:), [AcceptJoin(ref, None)])
     }
-    let username = case channel.decode_payload(payload, username_decoder) {
-      Ok(username) -> username
-      Error(_) -> "anonymous"
-    }
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, RoomAssigns(username:)))
-  })
-  |> channel.with_handle_in(fn(_event, _payload, socket) {
-    channel.NoReply(socket)
-  })
+    _ -> Next(model, [])
+  }
 }
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
+  let assert Ok(sockets) =
+    beryl.start(beryl.config(wire.phoenix_codec()), init:, update:)
 
   let assert Ok(_) =
-    mist_transport.handler(channels, mist_transport.default_config("/socket/websocket"), fn(_req) {
+    mist_transport.handler(sockets, mist_transport.default_config("/socket/websocket"), fn(_req) {
       // your regular HTTP handler here
       panic as "not implemented"
     })
@@ -88,10 +90,11 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 
 ## Ecosystem
 
-Beryl is the server-side channel runtime. It owns socket registration, channel
-handlers, broadcasts, presence, groups, pubsub, and transport integration.
-Beryl has its own pluggable wire codec, and its Phoenix codec is kept compatible
-with Roost and Aquamarine by shared conformance fixtures.
+Beryl is the server-side real-time runtime. It owns socket connections, wire
+dispatch to your app's `update` function, broadcasts, presence, groups, pubsub,
+and transport integration. Beryl has its own pluggable wire codec, and its
+Phoenix codec is kept compatible with Roost and Aquamarine by shared
+conformance fixtures.
 
 ```mermaid
 flowchart TD
@@ -122,23 +125,26 @@ flowchart TD
 
 ## Features
 
-- **Channels** — Topic-based pub/sub with typed callbacks and pattern matching (e.g. `room:*`, `document:*:*`)
+- **App-side dispatch** — one typed `init`/`update` pair per app; route topics
+  yourself by pattern matching (e.g. `room:*`, `document:*:*`) — no assigns, no
+  erasure, no registry
 - **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
-- **Groups** — Named channel groups for multi-topic broadcasting
-- **PubSub** — pg-based distributed publish/subscribe
+- **Groups** — Named topic groups for multi-topic broadcasting
+- **PubSub** — pg-based distributed publish/subscribe with a typed `Subscriber`
 - **Actor bridge** — forward an external OTP actor's stream to a socket with `beryl/bridge`
 - **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
 - **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds ordered connect metadata delivered to the app's `init` via `ConnectInfo.seed`
 
 ## Examples
 
-Three runnable demos are included in the `examples/` directory:
+Four runnable demos are included in the `examples/` directory:
 
 | Example | What it demonstrates |
 |---------|----------------------|
-| [`examples/cursors`](examples/cursors/) | Channels, topic wildcards, presence, `broadcast_from`, rate limiting |
-| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, `Reply`, `Push`, groups, validation, typing indicators |
+| [`examples/cursors`](examples/cursors/) | App-side dispatch, topic wildcards, presence, `BroadcastFrom`, rate limiting |
+| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection (`RejectJoin`), `ReplyOk`, `Push`, groups, validation, typing indicators |
 | [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
+| [`examples/showcase`](examples/showcase/) | End-to-end app-side dispatch showcase across every subsystem |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 
@@ -146,63 +152,41 @@ See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for
 
 A long-lived domain actor (for example a per-document session) often emits
 updates that need to be pushed to each joined socket. The `beryl/bridge` module
-removes the per-socket forwarder boilerplate: start a bridge in `join`, subscribe
-your actor to the bridge's `Subject`, and stop it in `terminate`. Each value the
-actor emits is translated and delivered to the channel's `handle_info` callback
-via `beryl.send_info`. The forwarder also monitors the channel process, so it is
+removes the per-socket forwarder boilerplate: start a bridge in `init` (or when
+a topic joins), subscribe your actor to the bridge's `Subject`, and stop it
+when the socket or topic closes. Each value the actor emits is translated and
+delivered to the app's `update` function as an `Info` event via
+`event.notify`. The forwarder also monitors the owning process, so it is
 cleaned up automatically if that process dies — no leaked processes.
 
 ```gleam
-import beryl.{type RegisteredChannel}
 import beryl/bridge.{type Bridge}
-import beryl/channel.{type Channel}
-import beryl/socket
-import gleam/json
-import gleam/option.{None}
+import beryl/event.{type ConnectInfo}
 
 // Messages emitted by your domain actor.
 pub type DocEvent {
   Updated(version: Int)
 }
 
-pub type Assigns {
-  Assigns(bridge: Bridge(DocEvent))
+// Your app's server-side message type, delivered to `update` as `Info`.
+pub type Msg {
+  DocUpdated(version: Int)
 }
 
-// `registered_channel` is the handle returned by `beryl.register`.
-fn new_channel(
-  registered_channel: RegisteredChannel(Assigns, DocEvent),
-  doc_actor,
-) -> Channel(Assigns, DocEvent) {
-  channel.new(fn(topic, _payload, socket) {
-    // Forward every DocEvent emitted by the actor to this socket/topic.
-    let b =
-      bridge.start(
-        channel: registered_channel,
-        socket_id: socket.id(socket),
-        topic: topic,
-        with: fn(event) { event },
-      )
-    // Hand the bridge's subject to the domain actor as its subscriber.
-    doc.subscribe(doc_actor, bridge.subject(b))
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
-  })
-  // `handle_info` receives the typed `DocEvent` directly — no decode step.
-  |> channel.with_handle_info(fn(event, socket) {
-    case event {
-      Updated(version) ->
-        channel.Push(
-          "doc_updated",
-          json.object([#("version", json.int(version))]),
-          socket,
-        )
-    }
-  })
-  // Always stop the bridge on terminate for prompt, deterministic cleanup.
-  |> channel.with_terminate(fn(_reason, socket) {
-    bridge.stop(socket.get_assigns(socket).bridge)
-  })
+fn init(info: ConnectInfo(Msg)) {
+  // Forward each DocEvent to this socket as an `Info(Msg)` event.
+  let assert Ok(b) =
+    bridge.start(to: info.self, with: fn(e: DocEvent) {
+      let Updated(v) = e
+      DocUpdated(v)
+    })
+  // Subscribe the domain actor to the bridge's subject.
+  doc.subscribe(doc_actor, bridge.subject(b))
+  #(Model(bridge: b), [])
 }
+
+// Stop the bridge when the socket closes (e.g. from a `Closed` event).
+bridge.stop(model.bridge)
 ```
 
 ## Releases & changelog

@@ -78,7 +78,7 @@ pub fn route_decoded(
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Route a raw binary frame, for codecs without a binary decoder (fans out
-/// to the socket's joined topics' `handle_binary`).
+/// to the socket's joined topics as `Binary` events delivered to `update`).
 pub fn route_binary(
   sockets sockets: Sockets,
   socket_id socket_id: String,

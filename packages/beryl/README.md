@@ -7,12 +7,13 @@ Type-safe real-time channels and presence for Gleam on the BEAM.
 > releases, and quality should not be considered production-ready. We welcome
 > usage and feedback in the meantime!
 
-beryl is the core channels library: Phoenix-style channels with typed assigns,
-topic pattern matching, broadcasts, CRDT-backed presence tracking, pg-based
-PubSub for multi-node fan-out, and built-in abuse controls (rate limits,
-connection ceilings, heartbeat eviction).
+beryl is the core real-time library: app-side dispatch (one `init`/`update`
+pair per app, Phoenix-compatible wire protocol), topic pattern matching,
+broadcasts, CRDT-backed presence tracking, pg-based PubSub for multi-node
+fan-out, and built-in abuse controls (rate limits, connection ceilings,
+heartbeat eviction).
 
-To serve channels over WebSockets, pair it with a transport package such as
+To serve sockets over WebSockets, pair it with a transport package such as
 [`beryl_mist`](https://hex.pm/packages/beryl_mist):
 
 ```sh

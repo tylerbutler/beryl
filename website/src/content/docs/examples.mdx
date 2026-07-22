@@ -1,11 +1,11 @@
 ---
 title: Examples
-description: Three runnable beryl demos — collaborative cursors, multi-room chat, and CRDT documents.
+description: Four runnable beryl demos — showcase composition, cursors, chat rooms, and CRDT docs.
 ---
 
-import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-beryl ships three fully runnable example applications in the
+beryl ships four runnable example applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
 directory. They use a Gleam/BEAM backend with browser frontends that exercise
 different realtime collaboration patterns.
@@ -13,6 +13,45 @@ different realtime collaboration patterns.
 <Aside type="caution" title="Pre-1.0 Software">
 beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
 </Aside>
+
+## Showcase
+
+**Source**: [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
+
+One socket runtime, three topic families, and one top-level `update` function.
+This demo composes the cursors, chatrooms, and collab-docs apps into a single
+app-side dispatch system.
+
+```bash
+cd examples/showcase
+gleam run
+# Open http://localhost:8000
+```
+
+### What it demonstrates
+
+| beryl feature | How it's used |
+|---|---|
+| **App-side dispatch composition** | One socket-wide `update` routes `cursor:*`, `room:*`, and `document:*:*` topics |
+| **Per-topic models** | `Dict`s store each embedded app's model by topic, then prune on `Closed` |
+| **Per-pattern rate limits** | `with_topic_rate` gives cursors, chat, and docs different limits |
+| **Shared presence** | One presence actor is reused across the embedded apps that need it |
+| **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
+
+### Architecture
+
+```
+Browser (Phoenix JS clients across /cursors, /chat, /docs)
+  │  WebSocket (Phoenix wire protocol)
+Server (Gleam)
+  ├── Mist HTTP — serves the landing page and each example UI
+  ├── beryl app-side dispatch — one update routes cursor:*, room:*, document:*:*
+  ├── per-topic models — Dicts keyed by topic namespace
+  ├── beryl presence — shared across cursors and chat
+  └── groups + doc store — example-specific state
+```
+
+---
 
 ## Collaborative Cursors
 
@@ -31,11 +70,11 @@ gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **Channels** | `cursor:lobby` channel handles join/leave and cursor events |
-| **Topic wildcards** | Handler registered on `cursor:*` matches any cursor room |
-| **Presence (CRDT)** | Tracks connected users with username + color metadata |
-| **`broadcast_from`** | Fans out cursor moves to all *other* clients, excluding the sender |
-| **Rate limiting** | `beryl.with_message_rate` throttles high-frequency cursor events |
+| **App-side dispatch** | `standalone_update` routes every `cursor:*` join and message |
+| **Topic wildcards** | `cursor:*` matches any cursor room |
+| **Presence (CRDT)** | `PresenceTrack` + `BroadcastPresence` keep the `presence_list` current |
+| **`BroadcastFrom`** | Fans out cursor moves to all *other* clients, excluding the sender |
+| **Rate limiting** | `beryl.with_message_rate(per_second: 30, burst: 60)` throttles high-frequency cursor events |
 | **WebSocket transport** | `mist_transport.upgrade` handles Phoenix-compatible WebSocket requests |
 | **Phoenix JS client** | Frontend uses the official `phoenix` package over the standard wire protocol |
 
@@ -46,9 +85,9 @@ Browser (vanilla JS + Phoenix JS client)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves HTML + static files
-  ├── beryl channels — cursor:* topic handler
+  ├── beryl app-side dispatch — cursor:* routing in update
   ├── beryl presence — CRDT-backed user tracking
-  └── beryl pubsub — broadcast_from cursor positions
+  └── beryl BroadcastFrom — cursor position fan-out
 ```
 
 ---
@@ -73,15 +112,15 @@ slice of the beryl API:
 
 | beryl feature | How it's used |
 |---|---|
-| **`on_connect` auth** | Token query param validated before WebSocket upgrade is accepted |
-| **`JoinError`** | Rooms reject joins when full (20-user cap) or when room doesn't exist |
-| **`channel.Reply`** | Delivery of `new_msg` confirmed with a `msg_ack` `phx_reply` |
-| **`channel.error_with_code`** | Empty messages rejected with HTTP-style code 422 |
-| **Groups** | Three rooms (`general`, `random`, `help`) organised in a named group |
-| **Presence (typing indicators)** | Typing state stored in presence meta; updated on `typing`/`stop_typing` events |
-| **System messages** | "user joined" / "user left" broadcast via `beryl.broadcast` on join/terminate |
-| **Multiple topics** | Each room is a separate `room:*` topic sharing one registered channel handler |
-| **Rate limiting** | `with_join_rate` (5/sec) and `with_channel_rate` (10/sec/channel) |
+| **`on_connect` auth** | Token query param validated before the WebSocket upgrade is accepted |
+| **`RejectJoin`** | Rooms reject joins when full (20 users max) or when the room doesn't exist |
+| **`ReplyOk`** | Delivery of `new_msg` is confirmed on the client's push ref |
+| **Reply payload validation errors** | Empty messages return `{code: 422, error: ...}` on the same push ref |
+| **Groups** | Three rooms (`general`, `random`, `help`) are organized in a named group |
+| **Presence typing** | `PresenceTrack` updates typing metadata and `BroadcastFrom` fans out typing indicators |
+| **System messages** | Join/leave notices broadcast via `event.Broadcast` |
+| **Multiple topics** | One app-side `update` routes every `room:*` topic |
+| **Rate limiting** | `with_join_rate` (5/sec, burst 10) and `with_channel_rate` (10/sec, burst 20) |
 
 ### Architecture
 
@@ -91,7 +130,7 @@ Browser (vanilla JS + Phoenix JS client, token auth)
 Server (Gleam)
   ├── Mist HTTP — static files, /api/rooms
   ├── Mist WebSocket transport — on_connect validates token
-  ├── beryl channels — room:* handler
+  ├── beryl app-side dispatch — room:* routing in update
   ├── beryl groups — "public" group → general, random, help
   └── beryl presence — online users + typing indicators
 ```
@@ -104,7 +143,7 @@ Server (Gleam)
 | Client → Server | `typing` | Start typing indicator |
 | Client → Server | `stop_typing` | Stop typing indicator |
 | Server → Client | `new_msg` | Broadcast message `{text, username, color, type, timestamp}` |
-| Server → Client | `phx_reply` (push ref) | Reply to a client push — used for both delivery acknowledgment (`status: "ok"`) and validation errors (`status: "error", response: {code, error}`). Validation errors are returned via `channel.Reply` from `handle_in`, not pushed as a separate event. |
+| Server → Client | `phx_reply` (push ref) | Reply to a client push — used for both delivery acknowledgment (`status: "ok"`) and validation errors (`{code, error}` payloads) via `ReplyOk` |
 | Server → Client | `presence_list` | Updated online user list |
 | Server → Client | `typing` | Typing indicator update |
 
@@ -127,10 +166,11 @@ cd examples/collab_docs && gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **Segment wildcard topics** | Handler registered on `document:*:*` isolates each tenant/document pair |
-| **Client-side CRDT merge** | Browser state uses `lattice_core`, `lattice_maps`, and `lattice_registers` with `ORMap(MVRegister(String))` document blocks |
-| **Unordered realtime transport** | Beryl broadcasts document updates while the CRDT handles merge convergence |
-| **Late joiner cache** | Server returns cached merged state in the join reply for new clients |
+| **Segment wildcard topics** | `document:*:*` routes each tenant/document pair inside `update` |
+| **Join-level auth** | The join payload must carry an HMAC-signed tenant token |
+| **Unordered realtime transport** | `BroadcastFrom(topic, "doc_state", ...)` fans out document updates while the CRDT handles merge convergence |
+| **Late joiner cache** | The server returns cached merged state in the `AcceptJoin` reply |
+| **Validation replies** | Invalid topics reject with `RejectJoin`; invalid sync payloads reply on the push ref |
 | **Conflict resolution UI** | Concurrent edits to the same block render explicit conflict cards with all versions |
 
 ### Architecture
@@ -140,9 +180,9 @@ Browser (vanilla JS + Phoenix JS client + lattice CRDT packages)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves HTML + static files
-  ├── beryl channels — document:*:* handler
+  ├── beryl app-side dispatch — document:*:* routing in update
   ├── document cache — merged state for late joiners
-  └── beryl pubsub — fan-out of CRDT updates
+  └── beryl BroadcastFrom — fan-out of CRDT updates
 ```
 
 ---
@@ -151,9 +191,10 @@ Server (Gleam)
 
 | Starting point | Go here |
 |---|---|
+| I want the whole repo tour in one app | [examples/showcase](https://github.com/tylerbutler/beryl/tree/main/examples/showcase) |
 | I want a minimal working example right now | [Quick Start](/quick-start/) |
 | I want to see live presence + cursors | [examples/cursors](https://github.com/tylerbutler/beryl/tree/main/examples/cursors) |
 | I want auth, join validation, or groups | [examples/chatrooms](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms) |
 | I want collaborative documents or CRDT conflicts | [examples/collab_docs](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs) |
-| I want to understand the channel API | [Channels guide](/guides/channels/) |
+| I want to understand app-side dispatch | [Dispatch guide](/guides/dispatch/) |
 | I want to add presence to my app | [Presence guide](/guides/presence/) |

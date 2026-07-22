@@ -1,20 +1,23 @@
 ---
 title: Authentication
-description: Verify real tokens in on_connect, decode claims into assigns, and authorize joins.
+description: Verify tokens in on_connect, store verified claims in your model, and authorize topics in update.
 ---
 
-beryl authenticates a connection **once**, at the transport's `on_connect` hook,
-before any channel join. This guide shows a realistic token flow: read a token
-from the handshake, verify it into typed **claims**, seed those claims as the
-socket's initial assigns, and then authorize individual topic joins.
+Beryl authenticates a connection **once** at the transport's `with_on_connect` hook, before any topic join. That hook can reject the whole WebSocket upgrade or return connect metadata that becomes part of `event.ConnectInfo.seed.metadata`.
 
-For the mechanics of `with_on_connect` and rejection behavior, see the
-[WebSocket Transport guide](/guides/websocket#authentication). This page focuses
-on wiring *real* auth end to end.
+This guide shows a common flow:
+
+1. model your claims as a typed record,
+2. read a token from the handshake,
+3. verify it in `with_on_connect`,
+4. turn the returned metadata into typed model state in `init`,
+5. authorize each topic by matching on `event.Join` in `update`.
+
+For transport mechanics and origin policy, see [WebSocket Transport](/guides/websocket/#authentication).
 
 ## 1. Model your claims
 
-Decode the token into a typed record so channels never touch raw token strings:
+Keep authentication results in a typed record so the rest of your app never touches raw token strings.
 
 ```gleam
 pub type Claims {
@@ -22,25 +25,18 @@ pub type Claims {
 }
 ```
 
-`Claims` becomes the socket's `assigns` type, so give your channels the same
-`assigns` type parameter (commonly a record shared across every authenticated
-topic).
-
 ## 2. Read the token from the handshake
 
-Browsers cannot set custom headers on a WebSocket handshake, so the two common
-transports for a token are a **query parameter** (browser clients) or the
-**`Authorization` header** (server-to-server clients). Support whichever you
-need:
+Browsers usually send a token as a query parameter. Server-to-server clients often use an `Authorization` header.
 
 ```gleam
+import gleam/http/request
 import gleam/http/request.{type Request}
 import gleam/list
 import gleam/result
 import gleam/string
 import mist
 
-/// Prefer the Authorization: Bearer header, fall back to a ?token= query param.
 fn extract_token(req: Request(mist.Connection)) -> Result(String, Nil) {
   case bearer_header(req) {
     Ok(token) -> Ok(token)
@@ -58,68 +54,138 @@ fn bearer_header(req: Request(mist.Connection)) -> Result(String, Nil) {
 
 fn query_param(req: Request(mist.Connection), name: String) -> Result(String, Nil) {
   use params <- result.try(request.get_query(req))
-  list.find(params, fn(pair) { pair.0 == name })
-  |> result.map(fn(pair) { pair.1 })
+  list.key_find(params, name)
 }
 ```
 
-## 3. Verify the token in `on_connect`
+## 3. Verify once in `with_on_connect`
 
-`verify_token` is where you plug in your token library — for example a call to
-[`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature, or
-a JWT library to validate a signed token issued by your identity provider. It
-must validate the signature and expiry and return typed `Claims`. (The upstream
-sign-in flow that mints these tokens is a separate concern — an OAuth2 library
-such as [`vestibule`](https://vestibule.tylerbutler.com) handles social login
-and hands you an authenticated identity to build the token from.)
+`with_on_connect` returns `Result(List(#(String, String)), ConnectError)`.
+
+- `Ok(metadata)` allows the WebSocket upgrade and appends `metadata` to `ConnectSeed.metadata`.
+- `Error(mist_transport.ConnectRejected)` rejects the connection with HTTP 403 before any topic join.
 
 ```gleam
 import beryl_mist as mist_transport
+import gleam/string
 
 // let verify_token: fn(String) -> Result(Claims, Nil)
 
 let ws_config =
   mist_transport.default_config("/socket/websocket")
-  // Reject cross-site handshakes when auth relies on ambient credentials.
   |> mist_transport.with_allowed_origins(["https://app.example.com"])
   |> mist_transport.with_on_connect(fn(req) {
     case extract_token(req) {
       Ok(token) ->
         case verify_token(token) {
-          // Seed the verified claims as the socket's initial assigns.
-          Ok(claims) -> Ok(claims)
+          Ok(claims) ->
+            Ok([
+              #("user_id", claims.user_id),
+              #("username", claims.username),
+              #("roles", string.join(claims.roles, ",")),
+            ])
           Error(_) -> Error(mist_transport.ConnectRejected)
         }
+
       Error(_) -> Error(mist_transport.ConnectRejected)
     }
   })
 ```
 
-Returning `Error(mist_transport.ConnectRejected)` sends HTTP 403 before the
-upgrade, so an unauthenticated client never reaches a channel.
+This keeps the expensive signature and expiry check at connection time instead of repeating it for every topic join.
 
-## 4. Read claims at join and authorize the topic
+## 4. Build typed auth state in `init`
 
-Because the claims are already in the socket's assigns, channels authenticate
-for free and only need to decide **authorization** — is this user allowed on
-*this* topic?
+`init` receives `event.ConnectInfo(msg)`, including the transport-provided metadata.
 
 ```gleam
-import beryl/channel
-import beryl/socket.{type Socket}
-import gleam/option.{None}
+import beryl/event as event
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/result
+import gleam/string
 
-fn join(topic: String, _payload, socket: Socket(Claims)) {
-  let claims = socket.get_assigns(socket)
-  case authorized_for_topic(claims, topic) {
-    True -> channel.JoinOk(reply: None, socket:)
-    False -> channel.JoinError(reason: channel.error("forbidden"))
+pub type Msg {
+  NoOp
+}
+
+pub type Model {
+  Model(claims: Option(Claims))
+}
+
+fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
+  let claims =
+    case claims_from_metadata(info.seed.metadata) {
+      Ok(claims) -> Some(claims)
+      Error(_) -> None
+    }
+  #(Model(claims: claims), [])
+}
+
+fn claims_from_metadata(
+  metadata: List(#(String, String)),
+) -> Result(Claims, Nil) {
+  use user_id <- result.try(list.key_find(metadata, "user_id"))
+  use username <- result.try(list.key_find(metadata, "username"))
+  use roles <- result.try(list.key_find(metadata, "roles"))
+  Ok(Claims(user_id:, username:, roles: string.split(roles, ",")))
+}
+```
+
+`ConnectSeed.metadata` is just ordered string pairs. `init` is where you turn those values into your own typed model.
+
+## 5. Authorize each topic in `update`
+
+Once the model carries verified claims, topic authorization is just application logic.
+
+```gleam
+import beryl/event as event
+import gleam/json
+import gleam/list
+import gleam/option.{Some}
+import gleam/string
+
+fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+  case ev {
+    event.Join(topic_name, _payload, ref) ->
+      case model.claims {
+        Some(claims) ->
+          case authorized_for_topic(claims, topic_name) {
+            True -> event.Next(model, [event.AcceptJoin(ref, None)])
+            False ->
+              event.Next(
+                model,
+                [
+                  event.RejectJoin(
+                    ref,
+                    json.object([
+                      #("reason", json.string("forbidden")),
+                    ]),
+                  ),
+                ],
+              )
+          }
+
+        None ->
+          event.Next(
+            model,
+            [
+              event.RejectJoin(
+                ref,
+                json.object([
+                  #("reason", json.string("unauthenticated")),
+                ]),
+              ),
+            ],
+          )
+      }
+
+    _ -> event.Next(model, [])
   }
 }
 
-/// Example policy: "room:<user_id>:*" is private to that user.
-fn authorized_for_topic(claims: Claims, topic: String) -> Bool {
-  case string.split(topic, ":") {
+fn authorized_for_topic(claims: Claims, topic_name: String) -> Bool {
+  case string.split(topic_name, ":") {
     ["room", owner, ..] -> owner == claims.user_id || has_role(claims, "admin")
     _ -> True
   }
@@ -132,12 +198,6 @@ fn has_role(claims: Claims, role: String) -> Bool {
 
 ## Notes
 
-- **Verify once, trust everywhere.** Do the expensive signature/expiry check in
-  `on_connect`; channel `join` should only apply cheap authorization rules
-  against the already-verified claims.
-- **Cookie sessions need origin checks.** If you authenticate from a cookie
-  instead of a token, always pair it with `with_allowed_origins` to prevent
-  Cross-Site WebSocket Hijacking. See
-  [Origin validation and CSWSH](/guides/websocket#origin-validation-and-cswsh).
-- **Rejection shape.** For the client-visible error when a join or connection is
-  refused, see [Error Handling](/guides/error-handling#connection-level-authentication-rejection).
+- Verify signatures and expiry in `with_on_connect`; keep `update` focused on topic-specific authorization rules.
+- Pair cookie-based authentication with origin validation to prevent Cross-Site WebSocket Hijacking.
+- A refused connection becomes HTTP 403. A refused topic join becomes a `phx_reply` error payload. See [Error Handling](/guides/error-handling/#rejected-joins).

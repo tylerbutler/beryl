@@ -3,74 +3,93 @@ title: Architecture Overview
 description: How beryl is organized, the major modules, and where to make changes.
 ---
 
-beryl layers a Phoenix-style channel system on top of OTP actors and Erlang `pg`, with a pluggable wire codec and WebSocket transport.
-Channels, presence, and groups are independent domain actors wired together by the coordinator, which dispatches decoded wire messages and enforces heartbeats.
-PubSub is the only cross-node primitive; everything else is local to a node.
+Beryl is an app-side dispatch runtime for WebSocket topics on the BEAM. Transports turn frames into `beryl/event` values, one runtime actor per `Sockets` handle delivers those events to your app's `update`, and the same runtime applies the returned `Effect`s in order.
+
+PubSub is still the cluster-wide fan-out primitive. Presence and groups remain separate OTP actors that your app starts and supervises; the runtime borrows their handles when configured, but they are not children of the Beryl subtree.
 
 ## How to read these docs
 
 Each subsystem page covers one slice of the stack end-to-end and ends with a **"Where this lives"** pointer back to the relevant source files.
 
-- [Message Lifecycle](/architecture/message-lifecycle) — how a frame travels from WebSocket to channel handler and back
-- [Coordinator & Supervision](/architecture/coordinator) — OTP actor lifecycle, handler registry, and the supervision tree
+- [Message Lifecycle](/architecture/message-lifecycle) — how a connection moves from transport registration to `Join`/`Message`/`Closed` events and back to frames
+- [Runtime & Effect Interpreter](/architecture/runtime) — runtime ownership, effect ordering, supervision, crash behavior, and shutdown
 - [PubSub & Distribution](/architecture/pubsub-and-distribution) — Erlang `pg` groups, broadcast semantics, and cross-node delivery
 - [Presence](/architecture/presence) — CRDT-backed presence tracking, diffs, and replication
-- [Wire & Transport](/architecture/wire-and-transport) — codec contract, Phoenix framing, and the Mist WebSocket adapter
+- [Wire & Transport](/architecture/wire-and-transport) — codec contract, Phoenix framing, and the Mist/Ewe WebSocket adapters
 
 ## The layer stack
 
 ```mermaid
 flowchart TB
-  T["WebSocket Transport<br/>beryl_mist"]
-  W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
-  subgraph Domain["Channel domain"]
-    C["Channels<br/>beryl/channel"]
-    P["Presence<br/>beryl/presence"]
-    G["Groups<br/>beryl/group"]
-  end
-  CO["Coordinator (OTP actor)<br/>beryl/coordinator"]
-  PS["PubSub (Erlang pg)<br/>beryl/pubsub"]
-  T --> W --> Domain --> CO --> PS
+  T["WebSocket transports<br/>beryl_mist · beryl_ewe"]
+  SPI["Transport SPI<br/>beryl/transport"]
+  W["Wire protocol<br/>beryl/wire · beryl/wire/codec"]
+  R["Runtime & effect interpreter<br/>beryl/runtime (internal)"]
+  E["App dispatch contract<br/>beryl/event"]
+  APP["your app's init/update"]
+  PS["PubSub<br/>beryl/pubsub"]
+  PR["Presence handle (optional)<br/>beryl/presence"]
+  G["Groups actor (app-owned)<br/>beryl/group"]
+  B["Bridge helper<br/>beryl/bridge"]
+
+  T --> SPI --> W --> R
+  R <-->|ConnectInfo · Event · Effect| E
+  E --> APP
+  R --> PS
+  R -. uses handle .-> PR
+  G -. calls broadcast on Sockets .-> R
+  B -. sends Info messages through Sender .-> E
 ```
 
 ## Module map
 
 | Module | Responsibility | Page |
 |---|---|---|
-| `beryl` | Public entry-point: `config/1`, `start/1`, `register/3`, `broadcast/4`, `send_info/4` | — |
-| `beryl/coordinator` | Central OTP actor: handler registry, socket tracking, message routing, heartbeat enforcement | [Coordinator](/architecture/coordinator) |
-| `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; subscribe, broadcast, and broadcast_from | [PubSub & Distribution](/architecture/pubsub-and-distribution) |
-| `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, cross-node diff broadcast, `on_diff` callbacks | [Presence](/architecture/presence) |
-| `beryl/presence/wire` | Phoenix-compatible JSON encoding for presence diffs (`joins`/`leaves` maps) | [Presence](/architecture/presence) |
-| `beryl/wire` | Pluggable codec surface; ships `phoenix_codec()` for `[join_ref, ref, topic, event, payload]` framing | [Wire & Transport](/architecture/wire-and-transport) |
-| `beryl/wire/codec` | `Codec` type contract: `decode_text`, `decode_binary`, `encode_*` — lets you swap framing | [Wire & Transport](/architecture/wire-and-transport) |
-| `beryl_mist` | Mist WebSocket adapter: assigns socket IDs, registers send functions, routes frames to coordinator | [Wire & Transport](/architecture/wire-and-transport) |
-| `beryl/supervisor` | rest-for-one supervision tree (coordinator → presence → groups); embeddable via `child_spec/1` | [Coordinator](/architecture/coordinator) |
-| `beryl/group` | Named topic collections managed by an OTP actor; supports grouped broadcast | — |
-| `beryl/topic` | Topic pattern matching: exact strings, `"ns:*"` prefix wildcards, and segment wildcards (`"document:*:ops"`) | — |
-| `beryl/socket` | Opaque connected-client type with typed assigns; `id`, `get_assigns`, `set_assigns`, `map_assigns` | — |
-| `beryl/channel` | Builder API for user-defined message handlers parameterized by an `assigns` type | [Message Lifecycle](/architecture/message-lifecycle) |
-| `beryl/error` | Opaque `StartFailure` type that hides OTP's `actor.StartError` from public APIs | — |
-| `beryl/rate_limit` | Token-bucket rate limiter backed by an OTP registry actor; keyed by socket ID or topic | — |
-| `beryl/bridge` | Forwards an external OTP actor's message stream into a socket channel; avoids per-socket forwarder boilerplate | — |
-| `beryl/log` | Internal logging shim over `palabres`; thin named-logger surface, not public API | — |
-| `beryl/internal` | Shared internal utilities (logging config, configure helper); not public API | — |
+| `beryl` | Public entry-point: config builders, `start`, `child_spec`, `stop`, stable `Sockets` handle, broadcast helpers | [Runtime & Effect Interpreter](/architecture/runtime) |
+| `beryl/event` | App-side dispatch contract: `ConnectInfo`, `Event`, `Next`, `Effect`, `Sender` | [Message Lifecycle](/architecture/message-lifecycle) |
+| `beryl/runtime` | Internal OTP actor: per-socket models, topic membership, heartbeats, inbound dispatch, effect interpretation | [Runtime & Effect Interpreter](/architecture/runtime) |
+| `beryl/transport` | SPI used by transports to announce sockets, route decoded frames, and watch runtime ownership | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` API and sender exclusion | [PubSub & Distribution](/architecture/pubsub-and-distribution) |
+| `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack/list plus replication hooks | [Presence](/architecture/presence) |
+| `beryl/presence/wire` | Phoenix-compatible JSON encoding for `presence_diff` payloads | [Presence](/architecture/presence) |
+| `beryl/wire` | Phoenix framing helpers and `phoenix_codec()` | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl/wire/codec` | `Codec`, `Inbound`, and `Frame` contracts for pluggable framing | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl/bridge` | Forward an external actor's message stream into one socket's `Info` events | — |
+| `beryl/group` | App-owned named topic collections that broadcast through a `Sockets` handle | — |
+| `beryl/topic` | Topic and event-name validation plus wildcard pattern matching | — |
+| `beryl_mist` | Mist WebSocket adapter built on `beryl/transport` | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl_ewe` | Ewe WebSocket adapter built on `beryl/transport` | [Wire & Transport](/architecture/wire-and-transport) |
 
 ## Process & supervision at a glance
 
 ```mermaid
 flowchart TB
-  S["supervisor (rest-for-one)"]
-  S --> CO["coordinator"]
-  S --> PR["presence (optional)"]
-  S --> GR["groups (optional)"]
-  CO -. "crash restarts downstream" .-> PR
-  PR -. .-> GR
+  App["your app supervisor"]
+  PS["PubSub (optional, app-owned)"]
+  PR["Presence (optional, app-owned)"]
+  GR["Groups (optional, app-owned)"]
+  Spec["Beryl child spec<br/>(same subtree as start)"]
+  Sup["Beryl subtree supervisor<br/>OneForOne · auto_shutdown(AnySignificant)"]
+  RT["runtime<br/>Transient · significant"]
+  LI["connection limiter<br/>optional sibling"]
+
+  App --> PS
+  App --> PR
+  App --> GR
+  App -->|with child_spec| Spec --> Sup
+  Sup --> RT
+  Sup --> LI
+  RT -. borrows .-> PS
+  RT -. uses handle .-> PR
+  GR -. uses Sockets broadcast helpers .-> RT
 ```
+
+`beryl.start` builds the same subtree, starts it immediately, and unlinks the caller from the subtree supervisor after startup.
 
 ## Where things live
 
-All source files live under `src/beryl/`.
-The coordinator and supervisor are the entry points for understanding runtime behaviour — start with [Coordinator & Supervision](/architecture/coordinator).
-For how a message actually moves through the system, see [Message Lifecycle](/architecture/message-lifecycle).
-For cross-node concerns, see [PubSub & Distribution](/architecture/pubsub-and-distribution).
+Core library code lives under `packages/beryl/src/`. The WebSocket transports live in `packages/beryl_mist/src/` and `packages/beryl_ewe/src/`.
+
+Start with `packages/beryl/src/beryl.gleam` and `packages/beryl/src/beryl/event.gleam` for the public surface, then read [Runtime & Effect Interpreter](/architecture/runtime) for the runtime tree and lifecycle.
+
+For how a message actually moves through the system, see [Message Lifecycle](/architecture/message-lifecycle). For cross-node concerns, see [PubSub & Distribution](/architecture/pubsub-and-distribution).

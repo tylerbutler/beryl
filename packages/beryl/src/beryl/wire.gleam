@@ -3,7 +3,7 @@
 ////
 //// Phoenix uses a JSON array format: `[join_ref, ref, topic, event, payload]`.
 //// This module parses and emits that format, and exposes a `Codec` value
-//// that plugs the Phoenix framing into the coordinator.
+//// that plugs the Phoenix framing into the runtime.
 ////
 //// To use Phoenix framing (the historical default) construct beryl with:
 ////
@@ -34,8 +34,9 @@ const max_json_nesting_depth = 64
 ///
 /// Handles both the JSON array framing on text frames and the Phoenix V2
 /// binary framing on binary frames (see `decode_binary_message`). Binary
-/// push payloads reach `handle_in` as a `BitArray` wrapped in `Dynamic`;
-/// decode them with `gleam/dynamic/decode.bit_array`.
+/// push payloads reach the app's `update` as a `Binary` event (raw bytes as
+/// `BitArray` wrapped in `Dynamic` at the wire layer); decode with
+/// `gleam/dynamic/decode.bit_array` if needed.
 pub fn phoenix_codec() -> Codec {
   codec.new(
     decode_text: decode_message,
@@ -130,7 +131,8 @@ pub fn encode(msg: Inbound) -> String {
 /// `phx_join`/`phx_leave` are reserved event names on every topic, but
 /// `heartbeat` is only special on the reserved `"phoenix"` topic — an
 /// application is free to define its own `"heartbeat"` channel event, which
-/// must reach `handle_in` rather than refresh the socket's liveness timer.
+/// must reach the app's `update` as a `Message` event rather than refresh
+/// the socket's liveness timer.
 fn classify_phoenix_event(topic: String, event: String) -> InboundKind {
   case topic, event {
     _, "phx_join" -> Join
@@ -400,8 +402,9 @@ const expected_binary_message = "Expected Phoenix V2 binary push frame"
 
 /// Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
 ///
-/// The payload is delivered to `handle_in` as raw bytes (`BitArray` wrapped
-/// in `Dynamic`); decode it with `gleam/dynamic/decode.bit_array`. Zero-length
+/// The payload is delivered to the app's `update` as a `Binary` event
+/// (raw bytes as `BitArray` wrapped in `Dynamic` at the wire layer); decode
+/// it with `gleam/dynamic/decode.bit_array` if needed. Zero-length
 /// join_ref/ref components decode as `None`. Reserved protocol events are
 /// classified the same way as on the text framing.
 pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {

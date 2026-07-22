@@ -1,76 +1,90 @@
 ---
 title: PubSub
+description: Use typed pg-backed publish/subscribe directly, or attach it to Beryl for cluster-wide broadcasts.
 ---
 
-beryl's PubSub layer provides distributed publish/subscribe messaging built on Erlang's `pg` (process groups) module.
+Beryl's PubSub layer provides distributed publish/subscribe messaging on top of Erlang's `pg` module.
 
 ## Starting PubSub
 
 ```gleam
 import beryl/pubsub
 
-// Default scope ("beryl_pubsub")
 let ps = pubsub.start(pubsub.default_config())
-
-// Custom scope (isolates process groups)
-let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
+let isolated = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 ```
 
-The scope maps to a `pg` scope atom. Different scopes are completely isolated from each other.
+The scope becomes an Erlang atom, so it must be a **static, bounded deployment value** — never unbounded user input.
 
-:::danger[The scope must be a static, bounded deployment value]
-The scope name is converted to an Erlang atom. Atoms are never
-garbage-collected; exhausting the BEAM atom table crashes the VM. The scope
-must be a static, bounded deployment or configuration value — never raw
-user-derived, per-request, per-tenant, database-derived, or otherwise
-unbounded high-cardinality runtime input. A deployment-controlled value is
-acceptable only when validated or selected from a fixed bounded set.
-:::
+## Subscribing with `Subscriber(payload)`
 
-## Subscribing
-
-The calling process receives `pubsub.Message` values when broadcasts are sent to the topic:
+Subscription is now explicit and typed:
 
 ```gleam
-// Subscribe the current process
-pubsub.subscribe(ps, "room:lobby")
+import beryl/pubsub
 
-// Unsubscribe
-pubsub.unsubscribe(ps, "room:lobby")
+let sub = pubsub.subscriber(ps)
+pubsub.join(sub, "room:lobby")
+pubsub.join(sub, "room:alerts")
+
+pubsub.leave(sub, "room:alerts")
 ```
 
-## Messages
+A `Subscriber(payload)` belongs to the process that created it. Create it in the actor or test process that will receive the broadcasts.
 
-Subscribers receive `Message` records:
+## Receiving messages with `selecting`
+
+`pubsub.selecting` folds the subscriber's typed subject into your own selector.
 
 ```gleam
-pub type Message {
-  Message(
-    topic: String,
-    event: String,
-    payload: json.Json,
-    from: PubSubFrom,
-  )
+import beryl/pubsub
+import gleam/erlang/process
+
+pub type Msg {
+  Remote(pubsub.Message(String))
+}
+
+let ps = pubsub.start(pubsub.default_config())
+let sub = pubsub.subscriber(ps)
+pubsub.join(sub, "room:lobby")
+
+let selector =
+  process.new_selector()
+  |> pubsub.selecting(sub, Remote)
+
+case process.selector_receive(selector, 5000) {
+  Ok(Remote(pubsub.Message(topic:, event:, payload:, from:))) ->
+    handle_pubsub_message(topic, event, payload, from)
+  Error(Nil) -> timeout()
+}
+```
+
+This is the intended API. Do not match raw BEAM mailbox messages yourself.
+
+## Message shape
+
+```gleam
+pub type Message(payload) {
+  Message(topic: String, event: String, payload: payload, from: PubSubFrom)
 }
 
 pub type PubSubFrom {
-  System                    // Broadcast with no sender
-  FromPid(Pid)              // Broadcast from a specific process
-  FromSocket(Pid, String)   // Broadcast from a process, excluding a socket ID
+  System
+  FromPid(Pid)
+  FromSocket(Pid, String)
 }
 ```
 
-`FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving coordinators use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
+`FromSocket` preserves an excluded socket id for cluster-wide "broadcast to everyone except this socket" behavior.
 
 ## Broadcasting
 
 ```gleam
+import gleam/erlang/process
 import gleam/json
 
-// Broadcast to all subscribers (all nodes)
 pubsub.broadcast(ps, "room:lobby", "new_message", json.string("hello"))
 
-// Broadcast to all except the sender process
 pubsub.broadcast_from(
   ps,
   process.self(),
@@ -79,54 +93,63 @@ pubsub.broadcast_from(
   json.string("hello"),
 )
 
-// Broadcast to all except a specific socket ID (clustered "broadcast except this socket")
 pubsub.broadcast_from_socket(
   ps,
-  process.self(),   // sending coordinator process
-  socket_id,        // socket ID to exclude on receiving coordinators
+  process.self(),
+  socket_id,
   "room:lobby",
   "new_message",
   json.string("hello"),
 )
 
-// Broadcast to local node only
 pubsub.local_broadcast(ps, "room:lobby", "new_message", json.string("hello"))
 ```
 
-Use `broadcast_from_socket` when you need to broadcast to all subscribers across a cluster while excluding one specific socket — even if that socket's coordinator is on a different node. `beryl.broadcast_from` calls this internally.
+Use `broadcast_from_socket` when you need cluster-wide "everyone except this socket" semantics. `beryl.broadcast_from` uses this internally.
 
 ## Querying subscribers
 
 ```gleam
-// All subscribers across all nodes
 let pids = pubsub.subscribers(ps, "room:lobby")
-
-// Count subscribers
 let count = pubsub.subscriber_count(ps, "room:lobby")
 ```
 
 ## Distributed operation
 
-Because PubSub is built on `pg`, it automatically works across connected Erlang nodes. When nodes join a cluster, their process groups are merged and messages are delivered to subscribers on all nodes — no configuration required.
+Because PubSub is built on `pg`, it automatically spans connected Erlang nodes. Joined process groups are shared across the cluster, and broadcasts reach subscribers on every node.
 
-## Integration with beryl channels
+## Using PubSub with Beryl
 
-The channel system uses PubSub internally for distributed broadcasts when configured:
+Start PubSub separately, then attach it to the Beryl config you pass to `start` or `child_spec`.
 
 ```gleam
 import beryl
+import beryl/event as event
 import beryl/wire
+import gleam/json
+
+fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+  #(Nil, [])
+}
+
+fn update(model: Nil, _event: event.Event(Nil)) -> event.Next(Nil, Nil) {
+  event.Next(model, [])
+}
 
 let ps = pubsub.start(pubsub.default_config())
-let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-let assert Ok(channels) = beryl.start(config)
+let config =
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_pubsub(ps)
 
-// beryl.broadcast() now sends to all nodes automatically
-beryl.broadcast(channels, "room:lobby", "event", payload)
+let assert Ok(sockets) = beryl.start(config, init: init, update: update)
+
+beryl.broadcast(sockets, "room:lobby", "notice", json.object([]))
 ```
+
+When PubSub is configured, `beryl.broadcast`, `beryl.broadcast_from`, and `beryl.broadcast_presence_diff` distribute their work across the cluster automatically.
 
 ## Next steps
 
-- [Supervision guide](/guides/supervision/) — supervised startup and multi-node deployment checklist
-- [Architecture overview](/architecture/overview/) — how PubSub fits into the beryl layer diagram
-- [Troubleshooting](/troubleshooting/#pubsub-cluster-issues) — diagnosing cluster broadcast failures and diverging presence state
+- [Presence](/guides/presence/) — presence replication is built on PubSub
+- [Supervision](/guides/supervision/) — PubSub handles are application-owned, not part of the Beryl subtree
+- [Architecture overview](/architecture/overview/) — where PubSub fits in the system
