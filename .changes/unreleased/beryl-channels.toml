@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "Initial release: type-safe Phoenix-style real-time channels for Gleam on the BEAM. Channel join/message/info/terminate callbacks with typed assigns and typed server-originated messages (send_info and the beryl/bridge actor forwarder), segment-aware topic pattern matching with wildcards, broadcasts including broadcast_from sender exclusion, Phoenix-compatible error/close reply semantics, named channel groups, and OTP supervision via beryl/supervisor."

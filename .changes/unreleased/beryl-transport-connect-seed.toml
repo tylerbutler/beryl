@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Changed"
+body = "Transport SPI: transport.socket_connected now takes a labeled seed: ConnectSeed argument carrying the upgrade request's path, query, headers, and any on_connect metadata, delivered to the app's init via ConnectInfo.seed."
