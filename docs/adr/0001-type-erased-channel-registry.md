@@ -6,16 +6,24 @@ Accepted (2026-07-21)
 
 ## Context
 
-Applications register many channels with distinct `assigns`/`info` types,
-resolved by topic at runtime. The coordinator must hold them in one
-collection — a heterogeneous registry Gleam (no existentials, no type
-classes) cannot express.
+Applications register many channels with distinct `assigns`/`info` types.
+Join requests carry client-chosen topic strings, so the coordinator selects
+a channel at runtime by matching the topic against every registered pattern
+(`State.handlers` in `coordinator.gleam`). That dispatch point sees channels
+of differing types — heterogeneity Gleam (no existentials, no type classes)
+cannot express.
 
 1. **Application-level variant type (Elm/Lustre style).** One app-supplied
-   union type parameterizes everything. Type-safe, but it infects
-   every public type (including the transport SPI), forces callbacks to
-   match impossible variants, and adding a channel edits a global type,
-   breaking open registration.
+   union type parameterizes everything, so every public type — including
+   the transport SPI — gains the parameters. Lustre shows this is livable
+   when one author owns the whole message type, and nested wrapping
+   (`element.map`) spares callbacks from matching impossible variants. But
+   adding a channel still edits a shared type, ruling out registration of
+   independently authored channels. Even Lustre erases behind its typed
+   API ([vdom
+   `coerce`](https://github.com/lustre-labs/lustre/blob/v5.7.1/src/lustre/vdom/vnode.gleam#L195-L197))
+   and crosses component boundaries with `Dynamic` plus decoders
+   ([`on_attribute_change`](https://github.com/lustre-labs/lustre/blob/v5.7.1/src/lustre/component.gleam#L118-L138)).
 
 2. **Type erasure behind a typed facade (current design).** The registry
    stores a homogeneous `List(ChannelHandler)`; typed values are erased at
@@ -24,8 +32,9 @@ classes) cannot express.
 
 ## Decision
 
-Keep design 2. A Phoenix-shaped library is open-world — it cannot enumerate
-application channel types — and erased internals behind typed facades are
+Keep design 2. Beryl compiles before the application's channel types
+exist, so it can never write their union itself — only the application
+can, which is design 1's cost. Erased internals behind typed facades are
 an established Gleam/BEAM pattern: see [`gleam_otp`'s actor
 `erase`](https://github.com/gleam-lang/otp/blob/v1.2.0/src/gleam/otp/actor.gleam#L518-L519),
 [`gleam_erlang`'s
