@@ -145,6 +145,10 @@ type State(model, msg) {
     topics: Dict(String, Set(String)),
     config: Config,
     pubsub: Option(PubSub(Json)),
+    /// Typed PubSub subscription owned by this runtime actor, present
+    /// whenever `pubsub` is. Joins/leaves topics and folds broadcast
+    /// delivery into the actor's selector.
+    subscriber: Option(pubsub.Subscriber(Json)),
     logger: Logger,
     self_subject: Option(Subject(Msg(msg))),
     init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
@@ -290,6 +294,7 @@ pub fn start_named(
       topics: dict.new(),
       config: config,
       pubsub: ps,
+      subscriber: None,
       logger: internal.logger_with_config("beryl.runtime", config.logging),
       self_subject: None,
       init: init,
@@ -300,20 +305,25 @@ pub fn start_named(
     )
 
   actor.new_with_initialiser(5000, fn(subject) {
-    let state = State(..initial_state, self_subject: Some(subject))
+    let base = State(..initial_state, self_subject: Some(subject))
     schedule_heartbeat_check(subject, config)
-    let initialised = actor.initialised(state) |> actor.returning(subject)
     case ps {
-      Some(_) -> {
+      Some(pubsub_instance) -> {
+        let sub = pubsub.subscriber(pubsub_instance)
+        let state = State(..base, subscriber: Some(sub))
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> pubsub.selecting(RemoteBroadcast)
-        initialised
+          |> pubsub.selecting(sub, RemoteBroadcast)
+        actor.initialised(state)
+        |> actor.returning(subject)
         |> actor.selecting(selector)
         |> Ok
       }
-      None -> Ok(initialised)
+      None ->
+        actor.initialised(base)
+        |> actor.returning(subject)
+        |> Ok
     }
   })
   |> actor.on_message(handle_message)
@@ -395,8 +405,9 @@ fn handle_message(
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
-      // The pg-delivered record is coerced without validation, so a
-      // malformed message must not crash the runtime.
+      // Delivered through the typed subscriber subject, but the payload's
+      // own shape is a frozen wire contract across nodes; a malformed frame
+      // from a mismatched peer must not crash the runtime.
       case
         internal.rescue(fn() { handle_remote_broadcast(state, pubsub_msg) })
       {
@@ -1954,8 +1965,8 @@ fn remove_topic_subscriber(
     |> set.delete(socket_id)
   case set.is_empty(subscribers) {
     True -> {
-      case state.pubsub {
-        Some(ps) -> pubsub.unsubscribe(ps, topic_name)
+      case state.subscriber {
+        Some(sub) -> pubsub.leave(sub, topic_name)
         None -> Nil
       }
       State(..state, topics: dict.delete(state.topics, topic_name))
@@ -2268,8 +2279,8 @@ fn subscribe_socket(
       let existing =
         dict.get(state.topics, p.topic)
         |> result.unwrap(set.new())
-      case state.pubsub, set.is_empty(existing) {
-        Some(ps), True -> pubsub.subscribe(ps, p.topic)
+      case state.subscriber, set.is_empty(existing) {
+        Some(sub), True -> pubsub.join(sub, p.topic)
         _, _ -> Nil
       }
       State(
