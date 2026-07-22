@@ -9,7 +9,7 @@
 ////   `standalone_update` wrappers that drive the standalone chatrooms
 ////   server through `beryl.start`, reusing the same per-topic surface.
 ////
-//// Wire behavior matches the original channel handler, including its
+//// Wire behavior matches the original per-topic handler, including its
 //// replies (an ok-status reply carrying an error payload).
 
 import beryl/event.{type Effect, type Ref}

@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Beryl** is a type-safe real-time channels and presence library for Gleam, targeting the Erlang (BEAM) runtime. It provides the building blocks for applications that need WebSocket-based bidirectional communication, distributed presence tracking, and topic-based publish/subscribe — all with Gleam's compile-time type safety guarantees.
+**Beryl** is a type-safe app-side real-time sockets and presence library for Gleam, targeting the Erlang (BEAM) runtime. It provides the building blocks for applications that need WebSocket-based bidirectional communication, distributed presence tracking, and topic-based publish/subscribe — all with Gleam's compile-time type safety guarantees.
 
 Beryl draws architectural inspiration from Phoenix Channels (including wire-protocol compatibility) while being designed from the ground up as a standalone library that can integrate with any BEAM-based HTTP framework.
 
@@ -13,14 +13,14 @@ Building real-time features on the BEAM typically means either:
 1. **Using Phoenix Channels directly** — tightly coupled to the Phoenix framework and written in Elixir, unavailable to Gleam applications.
 2. **Rolling your own** — reimplementing channel multiplexing, presence tracking, and distributed pub/sub from scratch on top of raw WebSockets and OTP primitives.
 
-Gleam's ecosystem lacks a dedicated real-time communication library. Developers building Gleam web applications (e.g. with Wisp) have no idiomatic way to add WebSocket channels, track online users, or broadcast events across a cluster.
+Gleam's ecosystem lacks a dedicated real-time communication library. Developers building Gleam web applications (e.g. with Wisp) have no idiomatic way to add real-time WebSocket sockets, track online users, or broadcast events across a cluster.
 
 ## Goals
 
 1. **Type-safe app dispatch** — Every socket routes through one app-supplied `update` function parameterized by the app's own `model` type, catching misuse at compile time rather than runtime.
 2. **Phoenix wire protocol compatibility** — Reuse the proven `[join_ref, ref, topic, event, payload]` JSON format so existing client libraries (phoenix.js, etc.) work without modification.
 3. **Distributed by default** — Pub/sub and presence should work across BEAM cluster nodes out of the box via Erlang's `pg` module.
-4. **Minimal, composable API** — Each subsystem (channels, presence, groups, pub/sub) should be independently usable and opt-in.
+4. **Minimal, composable API** — Each subsystem (sockets, presence, groups, pub/sub) should be independently usable and opt-in.
 5. **Framework agnostic** — Dispatch, presence, and PubSub logic stay separate from HTTP routing. The built-in WebSocket transport integrates directly with Mist.
 
 ## Non-Goals
