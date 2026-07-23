@@ -60,6 +60,21 @@ pub fn lobby_messages_are_ignored_test() {
   effects |> should.equal([])
 }
 
+pub fn lobby_message_with_no_lobby_is_a_noop_test() {
+  let model =
+    app.Standalone(socket_id: "socket-1", rooms: dict.new(), lobby: None)
+
+  let assert event.Next(next_model, effects) =
+    app.standalone_update(
+      context(),
+      model,
+      event.Message("lobby", "refresh", empty_payload(), None),
+    )
+
+  next_model |> should.equal(model)
+  effects |> should.equal([])
+}
+
 pub fn standalone_routes_lobby_join_test() {
   let #(model, _) = app.standalone_init(connect_info())
   let next =

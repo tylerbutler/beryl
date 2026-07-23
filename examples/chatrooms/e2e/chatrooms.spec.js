@@ -241,6 +241,7 @@ test.describe("Chat Rooms Demo", () => {
       const page2 = await context2.newPage();
       let raceMode = false;
       let delayedRequestSeen = false;
+      let delayedRequestFulfilled = false;
 
       await page1.route("**/api/rooms", async (route) => {
         if (!raceMode) {
@@ -257,6 +258,7 @@ test.describe("Chat Rooms Demo", () => {
               { topic: "room:help", name: "help", users: 0 },
             ]),
           });
+          delayedRequestFulfilled = true;
         } else {
           await route.fulfill({
             status: 200,
@@ -287,7 +289,9 @@ test.describe("Chat Rooms Demo", () => {
         await expect(
           page1.locator('.room-count[data-room-count="random"]')
         ).toHaveText("1", { timeout: 10_000 });
-        await page1.waitForTimeout(350);
+        // Wait for the delayed stale response to actually be delivered before
+        // asserting it did not overwrite the newer counts.
+        await expect.poll(() => delayedRequestFulfilled, { timeout: 5_000 }).toBe(true);
         await expect(
           page1.locator('.room-count[data-room-count="general"]')
         ).toHaveText("1");
