@@ -198,6 +198,84 @@ test.describe("Collaborative Cursors Demo", () => {
     });
   });
 
+  test.describe("Collaborative reactions", () => {
+    test("sends the selected reaction with normalized coordinates", async ({
+      page,
+    }) => {
+      const sentFrames = [];
+      page.on("websocket", (ws) => {
+        ws.on("framesent", (frame) => {
+          try {
+            const data = JSON.parse(frame.payload);
+            if (Array.isArray(data) && data[3] === "reaction") {
+              sentFrames.push(data);
+            }
+          } catch {
+            // ignore non-JSON frames
+          }
+        });
+      });
+
+      await gotoWithUsername(page, "Reactor");
+      await expect(page.locator("#user-list li")).toHaveCount(1, {
+        timeout: 10_000,
+      });
+
+      const canvas = page.locator("#canvas");
+      const box = await canvas.boundingBox();
+      await canvas.click({
+        position: { x: box.width * 0.25, y: box.height * 0.75 },
+      });
+      await expect.poll(() => sentFrames.length).toBeGreaterThan(0);
+
+      const payload = sentFrames[0][4];
+      expect(payload.reaction).toBe("👍");
+      expect(payload.x).toBeCloseTo(0.25, 2);
+      expect(payload.y).toBeCloseTo(0.75, 2);
+    });
+
+    test("broadcasts a reaction to another user at the same relative point", async ({
+      browser,
+    }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+
+      try {
+        await gotoWithUsername(page1, "Sender");
+        await expect(page1.locator("#user-list li")).toHaveCount(1, {
+          timeout: 10_000,
+        });
+        await gotoWithUsername(page2, "Watcher");
+        await expect(page1.locator("#user-list li")).toHaveCount(2, {
+          timeout: 10_000,
+        });
+
+        await page1.getByRole("button", { name: "Party popper" }).click();
+        const senderCanvas = page1.locator("#canvas");
+        const senderBox = await senderCanvas.boundingBox();
+        await senderCanvas.click({
+          position: { x: senderBox.width * 0.4, y: senderBox.height * 0.6 },
+        });
+
+        const remote = page2.locator("#canvas .reaction-burst");
+        await expect(remote).toHaveText("🎉", { timeout: 5_000 });
+
+        const watcherBox = await page2.locator("#canvas").boundingBox();
+        const position = await remote.evaluate((el) => ({
+          left: Number.parseFloat(el.style.left),
+          top: Number.parseFloat(el.style.top),
+        }));
+        expect(position.left).toBeCloseTo(watcherBox.width * 0.4, 0);
+        expect(position.top).toBeCloseTo(watcherBox.height * 0.6, 0);
+      } finally {
+        await context1.close();
+        await context2.close();
+      }
+    });
+  });
+
   test.describe("Static assets", () => {
     test("loads the stylesheet", async ({ page }) => {
       const response = await page.goto("/static/style.css");

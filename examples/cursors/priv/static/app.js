@@ -61,6 +61,25 @@
     cursor.el.style.transform = `translate(${x}px, ${y}px)`;
   });
 
+  // --- Handle remote reactions ---
+  channel.on("reaction", (payload) => {
+    const { reaction, x, y } = payload;
+    if (
+      !["👍", "❤️", "😂", "🎉", "🔥"].includes(reaction) ||
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      x < 0 ||
+      x > 1 ||
+      y < 0 ||
+      y > 1
+    ) {
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    spawnReaction(reaction, x * rect.width, y * rect.height);
+  });
+
   // --- DOM references and reaction state ---
   const canvas = document.getElementById("canvas");
   const reactionToolbar = document.getElementById("reaction-toolbar");
@@ -91,11 +110,14 @@
     if (!selectedReaction || event.target.closest("#reaction-toolbar")) return;
 
     const rect = canvas.getBoundingClientRect();
-    spawnReaction(
-      selectedReaction,
-      event.clientX - rect.left,
-      event.clientY - rect.top
-    );
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    spawnReaction(selectedReaction, x, y);
+    channel.push("reaction", {
+      reaction: selectedReaction,
+      x: x / rect.width,
+      y: y / rect.height,
+    });
   });
 
   function spawnReaction(reaction, x, y) {
