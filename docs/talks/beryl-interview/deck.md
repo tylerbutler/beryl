@@ -165,6 +165,7 @@ to the strangest and best idea in Erlang."
 
 ```
 supervisor
+ ├─ registry         ← channel registrations live here, above the churn
  ├─ coordinator      ← crash here restarts everything below
  ├─ presence
  └─ groups
@@ -185,15 +186,25 @@ WILL push back:
 
 The diagram — explain rest-for-one concretely, top to bottom:
 - Children start in order; each depends on the ones above it.
-- If GROUPS crashes: only groups restarts. Presence and coordinator
-  never notice.
+- If GROUPS crashes: only groups restarts. Presence, coordinator, and
+  registry never notice.
 - If the COORDINATOR crashes: presence and groups restart too, because
-  their view of the world routed through it. Fresh, consistent state
-  for all three — no half-alive system.
+  their view of the world routed through it. Fresh, consistent state —
+  no half-alive system.
+- The REGISTRY sits ABOVE the coordinator — this is the deliberate bit.
+  Channel registrations live there, so a coordinator crash restarts the
+  routing machinery but PRESERVES every registered handler; nobody has
+  to re-register. State that must survive a restart goes above the
+  thing that crashes.
 
-beryl embeds into YOUR app's supervision tree via `supervisor.start`, so
-channels recover alongside the rest of your application — same
-mechanism, one tree.
+(Full picture, if asked: the rest-for-one tree is nested under a small
+one-for-one root that also isolates the connection limiter, so live
+connection counts survive coordinator crashes too. Same principle.)
+
+beryl embeds into YOUR app's supervision tree: `supervisor.start`
+returns a child SPECIFICATION you add to your own supervisor — beryl
+never starts processes behind your back, and channels recover alongside
+the rest of your application. Same mechanism, one tree.
 
 LIKELY QUESTION: "What about in-flight state when it restarts?" —
 honest answer: node-local ephemeral state is rebuilt (clients rejoin,
@@ -222,7 +233,10 @@ mesh just by knowing each other's names and sharing a secret cookie.
 - That is... pub/sub. The thing slide 3 deployed Redis for. It's in
   Erlang's standard library — it's the same machinery WhatsApp scaled on.
 
-beryl's PubSub module is a thin, typed wrapper over pg — and here's the
+beryl's PubSub module is a thin, typed wrapper over pg — generic over
+its payload type, so broadcasts carry native Gleam values with no
+encoding step, even across nodes (Erlang distribution marshals the
+terms; the compiler tracks the type end-to-end). And here's the
 architectural sentence to say slowly: "PubSub is the ONLY cross-node
 primitive in beryl. Channels, presence actors, rate limiters — all
 node-local. Scaling out means starting more nodes and letting pg carry
@@ -350,8 +364,13 @@ Walk it line by line — this is the whole server, not an excerpt:
    request falls through to `http_fallback`. One server, one port,
    both jobs.
 4. `process.sleep_forever()` — keeps main alive for a demo. In a real
-   app you'd skip this and put beryl under your OTP supervision tree
-   via `beryl/supervisor.start` — there's a supervision guide.
+   app you'd skip this and put beryl under your OTP supervision tree:
+   `beryl/supervisor.start` returns a child spec you add to your own
+   supervisor — there's a supervision guide. NOTE: the docs and every
+   example in the repo (including the cursors demo coming up) use the
+   supervised form — say so, so nobody thinks the repo drifted from
+   the slide. This slide uses `beryl.start` because it's the shortest
+   complete server.
 
 Caveat to say out loud so nobody copies it blindly: `let assert Ok(..)`
 is demo-grade "crash if startup fails" — which, per the supervision
@@ -613,15 +632,17 @@ an open TCP invitation. So beryl ships abuse controls in the box AND
 documents exactly where they stop. I think the second half is the more
 interesting part."
 
-BUILT IN (config on the transport, name the real APIs):
-- `with_max_connections_per_ip` — per-IP connection caps, plus a
-  node-wide total connection ceiling (recent addition) so one node
-  can't be socket-flooded past its capacity.
+BUILT IN (name the real APIs — the caps and rate limits are options on
+the core `beryl.Config`; only the origin policy lives on the transport
+config):
+- `with_max_connections_per_ip` — per-IP connection caps, plus
+  `with_max_connections`, a node-wide total connection ceiling (recent
+  addition) so one node can't be socket-flooded past its capacity.
 - `with_message_rate` — token-bucket rate limiting per socket; that's
   what tamed the cursor firehose in the demo.
-- Origin checking defaults to SAME-ORIGIN — browsers happily open
-  cross-site WebSockets, so this closes cross-site hijacking by
-  default rather than by remembering to configure it.
+- Origin checking (transport config) defaults to SAME-ORIGIN — browsers
+  happily open cross-site WebSockets, so this closes cross-site
+  hijacking by default rather than by remembering to configure it.
 
 STILL ON YOU — two boundaries, stated plainly:
 1. Frame-size limits are enforced POST-ASSEMBLY: the transport buffers
@@ -649,11 +670,9 @@ these boundaries are written down instead of hand-waved.
 
 ## Earde
 
-### Earde is a community platform that combines the immediacy of live communication with the permanence and discoverability of forums.
+### Earde is the community network for open source communities.
 
-Technical communities can chat in real time and turn the valuable parts of a conversation into durable, searchable discussions instead of losing them in the scroll.
-
-They can also decide if their knowledge must be indexed by search engines or kept private.
+It lets maintainers connect a project through GitHub and give it a verified community home, or connect it to a broader existing community or ecosystem. Each community combines Discord-like live interaction with the structure, searchability, and long-term memory of traditional forums.
 
 https://earde.com/
 
@@ -703,10 +722,6 @@ in the browser is a perfectly good day-one setup.
 <!-- _class: lead -->
 
 ## Try it, argue with me about it
-
-`gleam add beryl beryl_mist`
-
-(`beryl_ewe` coming soon!)
 
 **Docs** — [beryl.tylerbutler.com](https://beryl.tylerbutler.com)
 **Discuss** — [earde.com/c/beryl/s/general](https://earde.com/c/beryl/s/general)
