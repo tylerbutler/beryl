@@ -34,6 +34,11 @@ pub type Model {
   Model(username: String, color: String, room_name: String)
 }
 
+/// Per-socket state for the application-wide lobby topic.
+pub type Lobby {
+  Lobby
+}
+
 /// Dependencies the chat logic reads: the room group for join validation
 /// and the presence handle for reads (writes go through effects).
 pub type Ctx {
@@ -181,17 +186,41 @@ pub fn closed(
 
 // --- Standalone app-side dispatch wrapper ---
 
+/// Accept the application-wide `lobby` topic.
+pub fn lobby_join(ref: Ref) -> #(Lobby, List(Effect)) {
+  #(Lobby, [event.AcceptJoin(ref, None)])
+}
+
+/// The lobby is read-only; client events produce no effects.
+pub fn lobby_update(
+  model: Lobby,
+  _event_name: String,
+  _payload: Dynamic,
+  _ref: Option(Ref),
+) -> #(Lobby, List(Effect)) {
+  #(model, [])
+}
+
+/// Closing the lobby requires no external cleanup.
+pub fn lobby_closed(_model: Lobby) -> List(Effect) {
+  []
+}
+
 /// Socket-wide state for the standalone chatrooms server: one per-topic
 /// `Model` per joined `room:*` topic, keyed by topic.
 pub type Standalone {
-  Standalone(socket_id: String, rooms: Dict(String, Model))
+  Standalone(
+    socket_id: String,
+    rooms: Dict(String, Model),
+    lobby: Option(Lobby),
+  )
 }
 
 /// `init` for the standalone chatrooms `beryl.start` runtime.
 pub fn standalone_init(
   info: event.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, rooms: dict.new()), [])
+  #(Standalone(socket_id: info.socket_id, rooms: dict.new(), lobby: None), [])
 }
 
 /// `update` for the standalone chatrooms `beryl.start` runtime: route
@@ -206,6 +235,10 @@ pub fn standalone_update(
   case ev {
     event.Join(topic, payload, ref) ->
       case topic {
+        "lobby" -> {
+          let #(lobby, effects) = lobby_join(ref)
+          event.Next(Standalone(..model, lobby: Some(lobby)), effects)
+        }
         "room:" <> _ -> {
           let #(joined, effects) =
             join(ctx, model.socket_id, topic, payload, ref)
@@ -228,26 +261,55 @@ pub fn standalone_update(
       }
 
     event.Message(topic, event_name, payload, ref) ->
-      case dict.get(model.rooms, topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
-          event.Next(
-            Standalone(..model, rooms: dict.insert(model.rooms, topic, sub)),
-            effects,
-          )
-        }
-        Error(Nil) -> event.Next(model, [])
+      case topic {
+        "lobby" ->
+          case model.lobby {
+            Some(lobby) -> {
+              let #(lobby, effects) =
+                lobby_update(lobby, event_name, payload, ref)
+              event.Next(Standalone(..model, lobby: Some(lobby)), effects)
+            }
+            None -> event.Next(model, [])
+          }
+        _ ->
+          case dict.get(model.rooms, topic) {
+            Ok(sub) -> {
+              let #(sub, effects) =
+                update(
+                  ctx,
+                  model.socket_id,
+                  topic,
+                  sub,
+                  event_name,
+                  payload,
+                  ref,
+                )
+              event.Next(
+                Standalone(..model, rooms: dict.insert(model.rooms, topic, sub)),
+                effects,
+              )
+            }
+            Error(Nil) -> event.Next(model, [])
+          }
       }
 
     event.Closed(topic, _reason) ->
-      case dict.get(model.rooms, topic) {
-        Ok(sub) ->
-          event.Next(
-            Standalone(..model, rooms: dict.delete(model.rooms, topic)),
-            closed(ctx, model.socket_id, topic, sub),
-          )
-        Error(Nil) -> event.Next(model, [])
+      case topic {
+        "lobby" ->
+          case model.lobby {
+            Some(lobby) ->
+              event.Next(Standalone(..model, lobby: None), lobby_closed(lobby))
+            None -> event.Next(model, [])
+          }
+        _ ->
+          case dict.get(model.rooms, topic) {
+            Ok(sub) ->
+              event.Next(
+                Standalone(..model, rooms: dict.delete(model.rooms, topic)),
+                closed(ctx, model.socket_id, topic, sub),
+              )
+            Error(Nil) -> event.Next(model, [])
+          }
       }
 
     event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
