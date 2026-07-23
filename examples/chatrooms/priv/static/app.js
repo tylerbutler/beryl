@@ -303,6 +303,9 @@
   }
 
   lobbyChannel = socket.channel("lobby", {});
+  lobbyChannel.on("rooms_changed", () => {
+    refreshRoomCounts();
+  });
   lobbyChannel.join()
     .receive("ok", () => {
       lobbyJoined = true;

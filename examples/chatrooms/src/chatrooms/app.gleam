@@ -102,6 +102,7 @@ pub fn join(
             [
               event.AcceptJoin(ref, Some(reply)),
               event.PresenceTrack(topic, username, meta),
+              event.Broadcast("lobby", "rooms_changed", room_changed(room_name)),
               event.Broadcast(topic, "new_msg", sys_payload),
               event.BroadcastPresence(topic, "presence_list", encode_users),
             ],
@@ -179,6 +180,7 @@ pub fn closed(
   // list already excludes the leaving user.
   [
     event.PresenceUntrack(topic, model.username),
+    event.Broadcast("lobby", "rooms_changed", room_changed(model.room_name)),
     event.Broadcast(topic, "new_msg", sys_payload),
     event.BroadcastPresence(topic, "presence_list", encode_users),
   ]
@@ -361,6 +363,10 @@ fn system_message(text: String) -> json.Json {
     #("type", json.string("system")),
     #("timestamp", json.int(timestamp_ms())),
   ])
+}
+
+fn room_changed(room_name: String) -> json.Json {
+  json.object([#("room", json.string(room_name))])
 }
 
 /// Reply only when the client sent a ref (matching the channel-module
