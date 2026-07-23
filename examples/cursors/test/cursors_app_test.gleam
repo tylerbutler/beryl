@@ -4,12 +4,7 @@ import cursors/app
 import gleam/dynamic
 import gleam/json
 import gleam/list
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 fn context() -> app.Ctx {
   let assert Ok(handle) =
