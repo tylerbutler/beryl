@@ -80,9 +80,15 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
     |> list.map(fn(name) {
       "<li class=\"room-item\" data-room=\""
       <> name
-      <> "\"><span class=\"room-hash\">#</span> "
+      <> "\"><span class=\"room-hash\">#</span>"
+      <> "<span class=\"room-name\">"
       <> name
-      <> "</li>"
+      <> "</span>"
+      <> "<span class=\"room-count\" data-room-count=\""
+      <> name
+      <> "\" aria-label=\"User count unavailable for "
+      <> name
+      <> "\">–</span></li>"
     })
     |> string.join("")
 

@@ -7,7 +7,7 @@ async function gotoWithUsername(page, username, path = "/?token=beryl-demo") {
   await page.goto(path);
 }
 
-// Helper: wait for Phoenix channel join reply
+// Helper: wait for Phoenix channel join reply for a room topic
 async function waitForJoinReply(page) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
@@ -18,7 +18,12 @@ async function waitForJoinReply(page) {
       ws.on("framereceived", (frame) => {
         try {
           const data = JSON.parse(frame.payload);
-          if (Array.isArray(data) && data[3] === "phx_reply") {
+          if (
+            Array.isArray(data) &&
+            data[3] === "phx_reply" &&
+            typeof data[2] === "string" &&
+            data[2].startsWith("room:")
+          ) {
             clearTimeout(timeout);
             resolve(data);
           }
@@ -85,6 +90,48 @@ test.describe("Chat Rooms Demo", () => {
         "https://github.com/tylerbutler/beryl"
       );
     });
+  });
+
+  test.describe("Lobby channel", () => {
+    test("joins lobby and a room on the same socket", async ({ page }) => {
+      const joinedTopics = [];
+      page.on("websocket", (ws) => {
+        ws.on("framesent", (frame) => {
+          try {
+            const data = JSON.parse(frame.payload);
+            if (Array.isArray(data) && data[3] === "phx_join") {
+              joinedTopics.push(data[2]);
+            }
+          } catch {
+            // ignore non-JSON frames
+          }
+        });
+      });
+
+      await gotoWithUsername(page, "LobbyUser");
+
+      await expect.poll(() => joinedTopics).toContain("lobby");
+      await expect.poll(() => joinedTopics.some((topic) =>
+        topic.startsWith("room:")
+      )).toBe(true);
+    });
+
+    test("renders a count badge for every room", async ({ page }) => {
+      await gotoWithUsername(page, "CountUser");
+
+      const badges = page.locator(".room-count");
+      await expect(badges).toHaveCount(3);
+      await expect(
+        page.locator('.room-count[data-room-count="general"]')
+      ).toHaveText("1", { timeout: 10_000 });
+      await expect(
+        page.locator('.room-count[data-room-count="random"]')
+      ).toHaveText("0");
+      await expect(
+        page.locator('.room-count[data-room-count="help"]')
+      ).toHaveText("0");
+    });
+
   });
 
   test.describe("Static assets", () => {
