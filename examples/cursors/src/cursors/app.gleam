@@ -16,6 +16,7 @@ import example_helpers/payload
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -30,6 +31,8 @@ pub type Model {
 pub type Ctx {
   Ctx(presence: Presence)
 }
+
+const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
 /// Handle a join for a `cursor:*` topic. Returns `None` when rejected.
 pub fn join(
@@ -83,6 +86,21 @@ pub fn update(
         ])
       #(model, [event.BroadcastFrom(topic, "cursor_move", move_payload)])
     }
+    "reaction" ->
+      case decode_reaction(payload) {
+        Some(#(reaction, x, y)) -> {
+          let reaction_payload =
+            json.object([
+              #("reaction", json.string(reaction)),
+              #("x", json.float(x)),
+              #("y", json.float(y)),
+            ])
+          #(model, [
+            event.BroadcastFrom(topic, "reaction", reaction_payload),
+          ])
+        }
+        None -> #(model, [])
+      }
     _ -> #(model, [])
   }
 }
@@ -184,6 +202,55 @@ pub fn standalone_update(
 /// `{session_id: meta}`.
 fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
   json.object(list.map(entries, fn(entry) { #(entry.session_id, entry.meta) }))
+}
+
+fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {
+  let reaction_decoder = {
+    use reaction <- decode.field("reaction", decode.string)
+    decode.success(reaction)
+  }
+
+  case
+    decode.run(payload, reaction_decoder),
+    decode_number(payload, "x"),
+    decode_number(payload, "y")
+  {
+    Ok(reaction), Ok(x), Ok(y) -> {
+      let valid =
+        list.contains(supported_reactions, reaction)
+        && coordinate_in_range(x)
+        && coordinate_in_range(y)
+      case valid {
+        True -> Some(#(reaction, x, y))
+        False -> None
+      }
+    }
+    _, _, _ -> None
+  }
+}
+
+fn decode_number(payload: Dynamic, field_name: String) -> Result(Float, Nil) {
+  let float_decoder = {
+    use value <- decode.field(field_name, decode.float)
+    decode.success(value)
+  }
+  case decode.run(payload, float_decoder) {
+    Ok(value) -> Ok(value)
+    Error(_) -> {
+      let int_decoder = {
+        use value <- decode.field(field_name, decode.int)
+        decode.success(value)
+      }
+      case decode.run(payload, int_decoder) {
+        Ok(value) -> Ok(int.to_float(value))
+        Error(_) -> Error(Nil)
+      }
+    }
+  }
+}
+
+fn coordinate_in_range(value: Float) -> Bool {
+  value >=. 0.0 && value <=. 1.0
 }
 
 /// Extract a number from a JSON payload as Json, defaulting to 0.0.
