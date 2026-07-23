@@ -65,7 +65,7 @@ Gleam/BEAM server (port 8001)
 
 ```bash
 npm install           # First time only
-npx playwright test   # 35 e2e tests
+npx playwright test   # 42 e2e tests
 ```
 
 ## API
