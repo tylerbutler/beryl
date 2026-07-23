@@ -112,3 +112,54 @@ pub fn unrelated_topic_is_rejected_test() {
   json.to_string(reason)
   |> should.equal("{\"reason\":\"unknown_topic\"}")
 }
+
+pub fn accepted_room_join_invalidates_lobby_after_presence_track_test() {
+  let #(joined, effects) =
+    app.join(
+      context(),
+      "socket-1",
+      "room:general",
+      dynamic.properties([
+        #(dynamic.string("username"), dynamic.string("Alice")),
+      ]),
+      room_ref("room:general"),
+    )
+
+  joined |> should.be_some
+  let assert [
+    event.AcceptJoin(_, _),
+    event.PresenceTrack("room:general", "Alice", _),
+    event.Broadcast("lobby", "rooms_changed", changed),
+    event.Broadcast("room:general", "new_msg", _),
+    event.BroadcastPresence("room:general", "presence_list", _),
+  ] = effects
+  json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
+}
+
+pub fn rejected_room_join_does_not_invalidate_lobby_test() {
+  let #(joined, effects) =
+    app.join(
+      context(),
+      "socket-1",
+      "room:missing",
+      empty_payload(),
+      room_ref("room:missing"),
+    )
+
+  joined |> should.be_none
+  let assert [event.RejectJoin(_, _)] = effects
+}
+
+pub fn room_close_invalidates_lobby_after_presence_untrack_test() {
+  let model =
+    app.Model(username: "Alice", color: "#abcdef", room_name: "general")
+  let effects = app.closed(context(), "socket-1", "room:general", model)
+
+  let assert [
+    event.PresenceUntrack("room:general", "Alice"),
+    event.Broadcast("lobby", "rooms_changed", changed),
+    event.Broadcast("room:general", "new_msg", _),
+    event.BroadcastPresence("room:general", "presence_list", _),
+  ] = effects
+  json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
+}

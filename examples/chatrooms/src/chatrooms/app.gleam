@@ -95,6 +95,7 @@ pub fn join(
             Some(Model(username: username, color: color, room_name: room_name)),
             [
               event.AcceptJoin(ref, Some(reply)),
+              event.Broadcast("lobby", "rooms_changed", room_changed(room_name)),
               event.Broadcast(topic, "new_msg", sys_payload),
             ],
           )
@@ -171,7 +172,10 @@ pub fn closed(
 ) -> List(Effect) {
   session_presence.untrack(ctx.presence, topic, socket_id)
   let sys_payload = system_message(model.username <> " left the room")
-  [event.Broadcast(topic, "new_msg", sys_payload)]
+  [
+    event.Broadcast("lobby", "rooms_changed", room_changed(model.room_name)),
+    event.Broadcast(topic, "new_msg", sys_payload),
+  ]
 }
 
 // --- Standalone app-side dispatch wrapper ---
@@ -348,6 +352,10 @@ fn system_message(text: String) -> json.Json {
     #("type", json.string("system")),
     #("timestamp", json.int(timestamp_ms())),
   ])
+}
+
+fn room_changed(room_name: String) -> json.Json {
+  json.object([#("room", json.string(room_name))])
 }
 
 /// Reply only when the client sent a ref (matching the channel-module

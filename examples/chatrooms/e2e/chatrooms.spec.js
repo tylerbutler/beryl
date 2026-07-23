@@ -134,6 +134,170 @@ test.describe("Chat Rooms Demo", () => {
 
   });
 
+  test.describe("Live lobby updates", () => {
+    test("updates room counts when another user joins and leaves", async ({
+      browser,
+    }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+
+      try {
+        await gotoWithUsername(page1, "Observer");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+
+        await gotoWithUsername(page2, "Joiner");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("2", { timeout: 10_000 });
+
+        await context2.close();
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+      } finally {
+        await context1.close();
+        await context2.close().catch(() => {});
+      }
+    });
+
+    test("keeps lobby joined while switching rooms", async ({ page }) => {
+      const leaves = [];
+      page.on("websocket", (ws) => {
+        ws.on("framesent", (frame) => {
+          try {
+            const data = JSON.parse(frame.payload);
+            if (Array.isArray(data) && data[3] === "phx_leave") {
+              leaves.push(data[2]);
+            }
+          } catch {
+            // ignore non-JSON frames
+          }
+        });
+      });
+
+      await gotoWithUsername(page, "Switcher");
+      await expect(
+        page.locator('.room-count[data-room-count="general"]')
+      ).toHaveText("1", { timeout: 10_000 });
+
+      await page.locator('.room-item[data-room="random"]').click();
+      await expect(page.locator(".room-item.active")).toContainText("random");
+      await expect(
+        page.locator('.room-count[data-room-count="general"]')
+      ).toHaveText("0", { timeout: 10_000 });
+      await expect(
+        page.locator('.room-count[data-room-count="random"]')
+      ).toHaveText("1", { timeout: 10_000 });
+
+      expect(leaves).toContain("room:general");
+      expect(leaves).not.toContain("lobby");
+    });
+
+    test("keeps the last counts when a live refresh fails", async ({
+      browser,
+    }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+      let failRefreshes = false;
+      let failedRequests = 0;
+
+      await page1.route("**/api/rooms", async (route) => {
+        if (failRefreshes) {
+          failedRequests += 1;
+          await route.fulfill({ status: 503, body: "unavailable" });
+        } else {
+          await route.continue();
+        }
+      });
+
+      try {
+        await gotoWithUsername(page1, "FailureObserver");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+
+        failRefreshes = true;
+        await gotoWithUsername(page2, "FailureJoiner");
+        await expect.poll(() => failedRequests).toBeGreaterThan(0);
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1");
+      } finally {
+        await context1.close();
+        await context2.close();
+      }
+    });
+
+    test("ignores a stale overlapping live refresh", async ({ browser }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+      let raceMode = false;
+      let delayedRequestSeen = false;
+
+      await page1.route("**/api/rooms", async (route) => {
+        if (!raceMode) {
+          await route.continue();
+        } else if (!delayedRequestSeen) {
+          delayedRequestSeen = true;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([
+              { topic: "room:general", name: "general", users: 9 },
+              { topic: "room:random", name: "random", users: 0 },
+              { topic: "room:help", name: "help", users: 0 },
+            ]),
+          });
+        } else {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([
+              { topic: "room:general", name: "general", users: 1 },
+              { topic: "room:random", name: "random", users: 1 },
+              { topic: "room:help", name: "help", users: 0 },
+            ]),
+          });
+        }
+      });
+
+      try {
+        await gotoWithUsername(page1, "RaceObserver");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+
+        raceMode = true;
+        await gotoWithUsername(page2, "RaceJoiner");
+        await expect.poll(() => delayedRequestSeen).toBe(true);
+        await page2.locator('.room-item[data-room="random"]').click();
+
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+        await expect(
+          page1.locator('.room-count[data-room-count="random"]')
+        ).toHaveText("1", { timeout: 10_000 });
+        await page1.waitForTimeout(350);
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1");
+      } finally {
+        await context1.close();
+        await context2.close();
+      }
+    });
+  });
+
   test.describe("Static assets", () => {
     test("loads the stylesheet", async ({ page }) => {
       const response = await page.goto("/static/style.css");
