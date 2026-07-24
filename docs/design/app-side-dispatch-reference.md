@@ -89,6 +89,11 @@ what `stop` does and does not tear down.
 
 ## Mapping from the deleted channel-module API
 
+The old API mirrored Phoenix Channels, so the website's
+[Coming from Phoenix](/guides/coming-from-phoenix/) guide gives the same
+mapping in user-facing form, with side-by-side code and the Phoenix-specific
+concepts (assigns, `socket_ref`, Presence, `Endpoint.broadcast`).
+
 | Old (`beryl/channel`, deleted)   | App-side dispatch                        |
 | --------------------------------- | ----------------------------------------- |
 | `join` callback                  | `Join` event + `AcceptJoin`/`RejectJoin`  |
