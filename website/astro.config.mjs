@@ -83,6 +83,10 @@ export default defineConfig({
 							slug: "guides/channels",
 						},
 						{
+							label: "Coming from Phoenix",
+							slug: "guides/coming-from-phoenix",
+						},
+						{
 							label: "Presence",
 							slug: "guides/presence",
 						},
