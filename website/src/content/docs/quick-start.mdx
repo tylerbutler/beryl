@@ -31,7 +31,7 @@ returns the next model plus a list of **effects**.
 ```gleam
 // src/my_app/room_app.gleam
 import beryl/event.{
-  type Event, type Next, AcceptJoin, Broadcast, Join, Message, Next,
+  type Input, type Next, AcceptJoin, Broadcast, Join, Message, Next,
 }
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
@@ -47,7 +47,7 @@ pub fn init(_info: event.ConnectInfo(Nil)) -> #(Model, List(event.Effect)) {
   #(Model(username: "Anonymous"), [])
 }
 
-pub fn update(model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
+pub fn update(model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
   case ev {
     // A client asked to join a "room:*" topic.
     Join("room:" <> _, payload, ref) -> {

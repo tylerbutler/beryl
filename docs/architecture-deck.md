@@ -54,7 +54,7 @@ Speaker notes:
 This is the 10,000-foot view. Read the diagram top to bottom as the path a
 message takes: a raw WebSocket frame enters at the transport, the wire codec
 turns bytes into typed messages, and the runtime — one OTP actor per app —
-delivers those as typed `Event` values to the app's `update` function, then
+delivers those as typed `Input` values to the app's `update` function, then
 applies whatever `Effect` list `update` returns. There is no channel registry
 and no per-channel callback modules: one `update` function handles every
 topic your app cares about, and it routes by pattern-matching the topic
@@ -71,7 +71,7 @@ test) on its own, and the runtime is the seam where they meet.
 | Module | Responsibility |
 |---|---|
 | `beryl` | Public entry-point: `config`, `child_spec`, `stop`, `broadcast` |
-| `beryl/event` | App dispatch contract: `Event`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
+| `beryl/event` | App dispatch contract: `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
 | `beryl/runtime` | Internal OTP actor: socket tracking, dispatch, effect interpretation, heartbeat |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` |
 | `beryl/presence` | Add-wins OR-set CRDT; track/untrack, dirty full-state replication |
@@ -85,7 +85,7 @@ test) on its own, and the runtime is the seam where they meet.
 Speaker notes:
 This table is the "where does X live" cheat sheet. Two rows do most of the
 work: `beryl` is the public API a user calls, and `beryl/event` is the
-contract that shapes every app built on beryl — `Event` in, `Effect`s out.
+contract that shapes every app built on beryl — `Input` in, `Effect`s out.
 `beryl/runtime` is where that contract is actually executed; it's internal,
 not a module apps import directly, but it's the single most important piece
 to understand architecturally. Everything else is a focused collaborator the
@@ -481,7 +481,7 @@ the codebase, so it's worth the slide.
 | Start here | Module | Purpose |
 |---|---|---|
 | 💡 Public surface | `src/beryl.gleam` | `config`, `child_spec`, `stop`, broadcast helpers |
-| 🔌 Dispatch contract | `src/beryl/event.gleam` | `Event`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
+| 🔌 Dispatch contract | `src/beryl/event.gleam` | `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
 | ⚙️ Heart of beryl | `src/beryl/runtime.gleam` | Actor, dispatch, effect interpreter, heartbeat (internal) |
 | 📨 Message flow | `packages/beryl_mist/src/beryl_mist.gleam` | Connect → decode → route |
 | 📡 Fan-out | `src/beryl/pubsub.gleam` | pg-based broadcast, typed `Subscriber` |

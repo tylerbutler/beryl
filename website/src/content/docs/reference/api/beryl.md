@@ -353,7 +353,7 @@ Build the app-side dispatch supervision child specification.
 pub fn child_spec(
   Config,
   init: fn(event.ConnectInfo(a)) -> #(b, List(event.Effect)),
-  update: fn(b, event.Event(a)) -> event.Next(b, a)
+  update: fn(b, event.Input(a)) -> event.Next(b, a)
 ) -> Result(#(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ConfigError)
 ```
 

@@ -89,7 +89,7 @@ pub fn start_warns_when_no_abuse_controls_configured_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, _ev: event.Event(Nil)) { Next(model, []) },
+      update: fn(model: Nil, _ev: event.Input(Nil)) { Next(model, []) },
     )
 
   receive_log(selector, "No abuse controls configured", 10)
@@ -107,7 +107,7 @@ pub fn start_does_not_warn_when_a_limit_is_configured_test() {
       beryl.config(wire.phoenix_codec())
         |> beryl.with_message_rate(per_second: 100, burst: 200),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, _ev: event.Event(Nil)) { Next(model, []) },
+      update: fn(model: Nil, _ev: event.Input(Nil)) { Next(model, []) },
     )
 
   receive_log(selector, "No abuse controls configured", 2)

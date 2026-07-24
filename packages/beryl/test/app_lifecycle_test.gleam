@@ -28,7 +28,7 @@ fn accepting_init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
   #(Nil, [])
 }
 
-fn accepting_update(model: Nil, ev: event.Event(Nil)) -> event.Next(Nil, Nil) {
+fn accepting_update(model: Nil, ev: event.Input(Nil)) -> event.Next(Nil, Nil) {
   case ev {
     Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
     _ -> Next(model, [])

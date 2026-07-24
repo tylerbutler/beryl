@@ -26,7 +26,7 @@ pub type Msg {
 /// crashes the update; `Info(Boom)` crashes; `Closed` for topics under
 /// `room:closed-crash` crashes.
 fn start_system(
-  events: process.Subject(event.Event(Msg)),
+  events: process.Subject(event.Input(Msg)),
   senders: process.Subject(event.Sender(Msg)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
@@ -53,7 +53,7 @@ fn start_system(
 
 fn start() -> #(
   beryl.Sockets,
-  process.Subject(event.Event(Msg)),
+  process.Subject(event.Input(Msg)),
   process.Subject(event.Sender(Msg)),
 ) {
   let events = process.new_subject()
@@ -153,7 +153,7 @@ pub fn init_crash_leaves_socket_unregistered_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { panic as "init crash" },
-      update: fn(model: Nil, _ev: event.Event(Msg)) { Next(model, []) },
+      update: fn(model: Nil, _ev: event.Input(Msg)) { Next(model, []) },
     )
   let frames = process.new_subject()
   transport.admit_socket(

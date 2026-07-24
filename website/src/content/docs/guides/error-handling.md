@@ -9,7 +9,7 @@ This guide covers how beryl surfaces errors to your app and to connected clients
 Return a `RejectJoin` effect to reject a client. The error payload is sent back as a `phx_reply` with `status: "error"`:
 
 ```gleam
-fn update(model: Model, ev: Event(Msg)) -> Next(Model, Msg) {
+fn update(model: Model, ev: Input(Msg)) -> Next(Model, Msg) {
   case ev {
     event.Join(topic, payload, ref) ->
       case authenticate(payload) {

@@ -15,7 +15,7 @@
 //// list order is wire order.
 
 import beryl/event.{
-  type ConnectInfo, type ConnectSeed, type Effect, type Event, type Next,
+  type ConnectInfo, type ConnectSeed, type Effect, type Input, type Next,
   type Ref, type StopReason,
 }
 import beryl/internal
@@ -152,7 +152,7 @@ type State(model, msg) {
     logger: Logger,
     self_subject: Option(Subject(Msg(msg))),
     init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-    update: fn(model, Event(msg)) -> Next(model, msg),
+    update: fn(model, Input(msg)) -> Next(model, msg),
     message_buckets: Dict(String, rate_limit.Bucket),
     join_buckets: Dict(String, rate_limit.Bucket),
     channel_buckets: Dict(String, Dict(String, rate_limit.Bucket)),
@@ -280,7 +280,7 @@ pub fn start_named(
   name name: process.Name(Msg(msg)),
   pubsub ps: Option(PubSub(Json)),
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Event(msg)) -> Next(model, msg),
+  update update: fn(model, Input(msg)) -> Next(model, msg),
 ) -> Result(actor.Started(Subject(Msg(msg))), StartError) {
   use <- bool.guard(
     when: config.heartbeat_check_interval_ms > 0
@@ -1604,7 +1604,7 @@ fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
 fn update_once(
   state: State(model, msg),
   socket_id: String,
-  ev: Event(msg),
+  ev: Input(msg),
   source: Source,
 ) -> Outcome(model, msg) {
   case dict.get(state.sockets, socket_id) {

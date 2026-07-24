@@ -10,7 +10,7 @@ for the authoritative signatures and doc comments, and the
 
 ```gleam
 /// Everything the runtime delivers to the app's `update` function.
-pub type Event(msg) {
+pub type Input(msg) {
   /// A client asked to join a topic. Answer with `AcceptJoin` or
   /// `RejectJoin`; a `Join` left unanswered by the end of the update turn
   /// is rejected automatically (fail closed).
@@ -65,7 +65,7 @@ accept or reject a later join, even when the later join uses the same topic.
 pub fn child_spec(
   config: Config,
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Event(msg)) -> Next(model, msg),
+  update update: fn(model, Input(msg)) -> Next(model, msg),
 ) -> Result(
   #(Sockets, ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -109,7 +109,7 @@ what `stop` does and does not tear down.
 type Model { Model(user: String, joined: Bool) }
 // msg = whatever the app sends itself; no wrapper needed.
 
-fn update(model: Model, event: beryl.Event(Msg)) -> beryl.Next(Model, Msg) {
+fn update(model: Model, event: beryl.Input(Msg)) -> beryl.Next(Model, Msg) {
   case event {
     beryl.Join("room:" <> _, _payload, ref) ->
       beryl.Next(Model(..model, joined: True), [beryl.AcceptJoin(ref, None)])
@@ -126,7 +126,7 @@ fn update(model: Model, event: beryl.Event(Msg)) -> beryl.Next(Model, Msg) {
 type Model { Model(chats: Dict(String, chat.Model), admin: admin.Model) }
 type Msg  { ChatMsg(topic: String, msg: chat.Msg)  AdminMsg(admin.Msg) }
 
-fn update(model: Model, event: beryl.Event(Msg)) -> beryl.Next(Model, Msg) {
+fn update(model: Model, event: beryl.Input(Msg)) -> beryl.Next(Model, Msg) {
   case event {
     beryl.Join("chat:" <> id, payload, ref) ->
       // delegate to chat.join, store its model in the dict

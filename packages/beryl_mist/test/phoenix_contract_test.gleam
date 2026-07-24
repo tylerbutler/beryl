@@ -208,7 +208,7 @@ fn assert_no_text_message(client: WebsocketClient) {
 /// sender, and topic close reports its reason to `terminated`.
 fn contract_update(
   terminated: process.Subject(event.StopReason),
-) -> fn(Nil, event.Event(Nil)) -> event.Next(Nil, Nil) {
+) -> fn(Nil, event.Input(Nil)) -> event.Next(Nil, Nil) {
   fn(model, ev) {
     case ev {
       event.Join(_topic, _payload, ref) ->

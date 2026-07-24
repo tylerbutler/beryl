@@ -19,7 +19,7 @@ import gleeunit/should
 pub fn start_app(
   config: beryl.Config,
   init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
 ) -> Result(beryl.Sockets, beryl.ConfigError) {
   use #(sockets, spec) <- result.try(beryl.child_spec(config, init:, update:))
   let assert Ok(_) =
@@ -149,8 +149,8 @@ pub fn recv_none(frames: process.Subject(String)) -> Nil {
 
 /// Receive the next observed event, failing after 500ms.
 pub fn next_event(
-  events: process.Subject(event.Event(msg)),
-) -> event.Event(msg) {
+  events: process.Subject(event.Input(msg)),
+) -> event.Input(msg) {
   let assert Ok(ev) = process.receive(events, 500)
   ev
 }

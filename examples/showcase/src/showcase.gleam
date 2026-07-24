@@ -8,7 +8,7 @@
 //// topic namespace, routed by topic prefix, pruned on `Closed`.
 
 import beryl
-import beryl/event.{type Event, type Next}
+import beryl/event.{type Input, type Next}
 import beryl/group
 import beryl/wire
 import beryl_mist as mist_transport
@@ -162,7 +162,7 @@ pub fn main() {
 /// The socket-wide router: dispatch every event to the embedded app that
 /// owns its topic namespace, threading that app's sub-model through the
 /// per-namespace `Dict`.
-fn update(ctx: Ctx, model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
+fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
   case ev {
     event.Join(topic, payload, ref) ->
       case topic {
