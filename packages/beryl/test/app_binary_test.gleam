@@ -5,7 +5,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Binary, Join, Next}
+import beryl/socket.{AcceptJoin, Binary, Join, Next}
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
@@ -30,7 +30,7 @@ fn text_only_codec() -> codec.Codec {
   |> codec.with_error_encoder(wire.channel_error)
 }
 
-fn start_system(events: process.Subject(event.Input(Nil))) -> beryl.Sockets {
+fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(text_only_codec()),

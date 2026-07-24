@@ -4,7 +4,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{
+import beryl/socket.{
   type Ref, AcceptJoin, Closed, Info, Join, Message, Next, RejectJoin,
   ReplyError, ReplyOk,
 }
@@ -110,8 +110,8 @@ fn start_join_race(mode: JoinRaceMode) -> beryl.Sockets {
 /// `limbo:*` (leaving the join unanswered), replies ok/error to "echo" and
 /// "fail", pushes on `Info`, and forwards every event to an observer.
 fn start_observed(
-  events: process.Subject(event.Input(Msg)),
-  senders: process.Subject(event.Sender(Msg)),
+  events: process.Subject(socket.Input(Msg)),
+  senders: process.Subject(socket.Sender(Msg)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
@@ -145,7 +145,7 @@ fn start_observed(
             ])
           Info(Note(text)) ->
             Next(model, [
-              event.Push(
+              socket.Push(
                 "room:a",
                 "note",
                 json.object([
@@ -162,8 +162,8 @@ fn start_observed(
 
 fn start_system() -> #(
   beryl.Sockets,
-  process.Subject(event.Input(Msg)),
-  process.Subject(event.Sender(Msg)),
+  process.Subject(socket.Input(Msg)),
+  process.Subject(socket.Sender(Msg)),
 ) {
   let events = process.new_subject()
   let senders = process.new_subject()
@@ -234,7 +234,7 @@ pub fn sender_delivers_typed_info_test() {
   h.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _join_reply = h.recv(frames)
 
-  event.notify(sender, Note("hello"))
+  socket.notify(sender, Note("hello"))
 
   // The observer sees the typed Info event...
   let assert Join(_, _, _) = h.next_event(events)
@@ -261,7 +261,7 @@ pub fn leave_acks_then_closes_and_delivers_closed_test() {
   let close_frame = h.recv(frames)
   close_frame |> string.contains("phx_close") |> should.be_true
 
-  let assert Closed("room:a", event.Normal) = h.next_event(events)
+  let assert Closed("room:a", socket.Normal) = h.next_event(events)
 }
 
 pub fn disconnect_delivers_closed_for_every_topic_test() {
@@ -277,8 +277,8 @@ pub fn disconnect_delivers_closed_for_every_topic_test() {
   transport_disconnect(channels, "s1")
 
   // Closed for both topics, in sorted topic order.
-  let assert Closed("room:a", event.Normal) = h.next_event(events)
-  let assert Closed("room:b", event.Normal) = h.next_event(events)
+  let assert Closed("room:a", socket.Normal) = h.next_event(events)
+  let assert Closed("room:b", socket.Normal) = h.next_event(events)
 }
 
 pub fn duplicate_join_closes_previous_instance_first_test() {
@@ -292,7 +292,7 @@ pub fn duplicate_join_closes_previous_instance_first_test() {
 
   // Old instance closes (Closed delivered, phx_close sent), then the new
   // join is delivered and accepted.
-  let assert Closed("room:a", event.Normal) = h.next_event(events)
+  let assert Closed("room:a", socket.Normal) = h.next_event(events)
   let assert Join("room:a", _, _) = h.next_event(events)
   let close_frame = h.recv(frames)
   close_frame |> string.contains("phx_close") |> should.be_true

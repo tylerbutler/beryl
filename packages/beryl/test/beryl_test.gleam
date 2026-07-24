@@ -1,7 +1,7 @@
 import app_test_helpers as h
 import beryl
 import beryl/error as beryl_error
-import beryl/event
+import beryl/socket
 import beryl/group
 import beryl/internal
 import beryl/topic
@@ -543,7 +543,7 @@ pub fn group_broadcast_is_fire_and_forget_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, _ev) { event.Next(model, []) },
+      update: fn(model, _ev) { socket.Next(model, []) },
     )
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")

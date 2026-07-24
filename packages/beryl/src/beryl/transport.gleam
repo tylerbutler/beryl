@@ -15,7 +15,7 @@
 ////    slot with `release_connection_slot`.
 
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
@@ -36,7 +36,7 @@ pub type ConnectionPermit =
 
 /// Connection metadata delivered to the app's `init`.
 pub type ConnectSeed =
-  event.ConnectSeed
+  socket.ConnectSeed
 
 /// Wire codec used by a transport connection.
 pub type Codec =
@@ -57,7 +57,7 @@ pub fn connect_seed(
   headers headers: List(#(String, String)),
   metadata metadata: List(#(String, String)),
 ) -> ConnectSeed {
-  event.ConnectSeed(
+  socket.ConnectSeed(
     path: path,
     query: query,
     headers: headers,

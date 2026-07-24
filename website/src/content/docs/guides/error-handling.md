@@ -11,18 +11,18 @@ Return a `RejectJoin` effect to reject a client. The error payload is sent back 
 ```gleam
 fn update(model: Model, ev: Input(Msg)) -> Next(Model, Msg) {
   case ev {
-    event.Join(topic, payload, ref) ->
+    socket.Join(topic, payload, ref) ->
       case authenticate(payload) {
         Error(_) ->
-          event.Next(model, [
-            event.RejectJoin(
+          socket.Next(model, [
+            socket.RejectJoin(
               ref,
               json.object([#("reason", json.string("unauthorized"))]),
             ),
           ])
         Ok(user) ->
-          event.Next(store_user(model, topic, user), [
-            event.AcceptJoin(ref, option.None),
+          socket.Next(store_user(model, topic, user), [
+            socket.AcceptJoin(ref, option.None),
           ])
       }
     // ...
@@ -65,16 +65,16 @@ beryl parses incoming frames as Phoenix protocol arrays `[join_ref, ref, topic, 
 If you need to surface decode errors in your own payload handling, decode the `Dynamic` payload with `gleam/dynamic/decode` and return an explicit `ReplyOk` or `ReplyError`:
 
 ```gleam
-event.Message(_topic, "create_item", payload, option.Some(ref)) ->
+socket.Message(_topic, "create_item", payload, option.Some(ref)) ->
   case decode.run(payload, item_decoder()) {
     Ok(item) ->
       // process item
-      event.Next(model, [
-        event.ReplyOk(ref, json.object([#("id", json.string(item.id))])),
+      socket.Next(model, [
+        socket.ReplyOk(ref, json.object([#("id", json.string(item.id))])),
       ])
     Error(_) ->
-      event.Next(model, [
-        event.ReplyError(
+      socket.Next(model, [
+        socket.ReplyError(
           ref,
           json.object([#("reason", json.string("invalid_payload"))]),
         ),
@@ -97,15 +97,15 @@ Messages pushed to a topic the socket never joined get an automatic error reply 
 When a client goes silent beyond `heartbeat_timeout_ms`, the runtime evicts the socket. Every joined topic receives a `Closed` event with `HeartbeatTimeout`:
 
 ```gleam
-event.Closed(topic, reason) -> {
+socket.Closed(topic, reason) -> {
   case reason {
-    event.HeartbeatTimeout -> {
+    socket.HeartbeatTimeout -> {
       // Clean up: remove from presence, release locks, etc.
       Nil
     }
     _ -> Nil
   }
-  event.Next(prune(model, topic), [])
+  socket.Next(prune(model, topic), [])
 }
 ```
 
@@ -178,11 +178,11 @@ case beryl.child_spec(config, init: init, update: update) {
 
 ## Sender delivery is best-effort
 
-`event.notify` delivers a typed message to a socket's `update` as an `Info` event. If the socket has disconnected, the message is **silently dropped** — no error is returned:
+`socket.notify` delivers a typed message to a socket's `update` as an `Info` event. If the socket has disconnected, the message is **silently dropped** — no error is returned:
 
 ```gleam
 // This is always Nil — no error even if the socket is gone
-event.notify(sender, MyMessage)
+socket.notify(sender, MyMessage)
 ```
 
 If delivery confirmation is important, have the `Info` arm of `update` acknowledge back to the sending process.

@@ -167,19 +167,19 @@ shared socket runtime's `init` or `update`.
 Instead, send a command to an application-owned worker/actor from `update`.
 That worker performs `presence.track` or `presence.untrack`, then publishes
 the resulting `presence_diff`/snapshot with `beryl.broadcast` (or sends a
-typed message back with `event.notify`):
+typed message back with `socket.notify`):
 
 ```gleam
-event.Join(topic, _payload, ref) ->
+socket.Join(topic, _payload, ref) ->
   {
     process.send(presence_worker, Track(topic, model.user_id, meta))
-    event.Next(model, [event.AcceptJoin(ref, option.None)])
+    socket.Next(model, [socket.AcceptJoin(ref, option.None)])
   }
 
-event.Closed(topic, _reason) ->
+socket.Closed(topic, _reason) ->
   {
     process.send(presence_worker, Untrack(topic, model.presence_ref))
-    event.Next(model, [])
+    socket.Next(model, [])
   }
 ```
 

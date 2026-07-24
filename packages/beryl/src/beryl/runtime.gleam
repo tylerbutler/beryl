@@ -14,10 +14,10 @@
 //// are applied strictly in order within a single actor turn, so effect
 //// list order is wire order.
 
-import beryl/event.{
+import beryl/socket.{
   type ConnectInfo, type ConnectSeed, type Effect, type Input, type Next,
   type Ref, type StopReason,
-}
+} as sock
 import beryl/internal
 import beryl/log.{type Logger}
 import beryl/pubsub.{type PubSub}
@@ -261,10 +261,10 @@ fn disconnect_reason_telemetry(
   reason: StopReason,
 ) -> telemetry.DisconnectReason {
   case reason {
-    event.Normal -> telemetry.NormalDisconnect
-    event.Shutdown -> telemetry.ShutdownDisconnect
-    event.HeartbeatTimeout -> telemetry.HeartbeatTimeout
-    event.Errored(_) -> telemetry.CallbackDisconnect
+    sock.Normal -> telemetry.NormalDisconnect
+    sock.Shutdown -> telemetry.ShutdownDisconnect
+    sock.HeartbeatTimeout -> telemetry.HeartbeatTimeout
+    sock.Errored(_) -> telemetry.CallbackDisconnect
   }
 }
 
@@ -482,7 +482,7 @@ fn register_socket(
     False,
   ))
   let sender = make_socket_sender(state, socket_id)
-  let info = event.ConnectInfo(socket_id: socket_id, seed: seed, self: sender)
+  let info = sock.ConnectInfo(socket_id: socket_id, seed: seed, self: sender)
   let init = state.init
   case internal.rescue(fn() { init(info) }) {
     Error(crash) -> {
@@ -530,13 +530,13 @@ fn register_socket(
 fn make_socket_sender(
   state: State(model, msg),
   socket_id: String,
-) -> event.Sender(msg) {
+) -> sock.Sender(msg) {
   case state.self_subject {
     Some(subject) ->
-      event.make_sender(fn(message) {
+      sock.make_sender(fn(message) {
         process.send(subject, AppInfo(socket_id, message))
       })
-    None -> event.make_sender(fn(_message) { Nil })
+    None -> sock.make_sender(fn(_message) { Nil })
   }
 }
 
@@ -550,7 +550,7 @@ fn handle_socket_disconnected(
     Error(Nil) -> [#("socket_id", socket_id)]
   }
   state.logger |> log.info("Socket disconnected", metadata)
-  actor.continue(teardown_socket(state, socket_id, event.Normal))
+  actor.continue(teardown_socket(state, socket_id, sock.Normal))
 }
 
 fn handle_stop(
@@ -563,7 +563,7 @@ fn handle_stop(
   ])
   dict.keys(state.sockets)
   |> list.fold(state, fn(st, socket_id) {
-    teardown_socket(st, socket_id, event.Shutdown)
+    teardown_socket(st, socket_id, sock.Shutdown)
   })
   process.send(reply, Nil)
   actor.stop()
@@ -635,7 +635,7 @@ fn handle_check_heartbeats(
   })
   let state =
     list.fold(stale_socket_ids, state, fn(st, socket_id) {
-      teardown_socket(st, socket_id, event.HeartbeatTimeout)
+      teardown_socket(st, socket_id, sock.HeartbeatTimeout)
     })
   case state.self_subject {
     Some(subject) -> schedule_heartbeat_check(subject, state.config)
@@ -987,7 +987,7 @@ fn handle_join_inner(
           let state = case set.contains(socket.subscribed_topics, topic_name) {
             True ->
               drive(
-                close_topic(state, socket_id, topic_name, event.Normal),
+                close_topic(state, socket_id, topic_name, sock.Normal),
                 socket_id,
               )
             False -> state
@@ -1031,9 +1031,9 @@ fn deliver_join(
     #("join_ref", optional_string(join_ref)),
   ])
   let pending_ref =
-    event.make_join_ref(topic: topic_name, join_ref: join_ref, msg_ref: ref)
+    sock.make_join_ref(topic: topic_name, join_ref: join_ref, msg_ref: ref)
   let join_event =
-    event.Join(topic: topic_name, payload: payload, ref: pending_ref)
+    sock.Join(topic: topic_name, payload: payload, ref: pending_ref)
   let outcome =
     update_once(
       state,
@@ -1095,7 +1095,7 @@ fn handle_leave(
   }
 
   actor.continue(drive(
-    close_topic(state, socket_id, topic_name, event.Normal),
+    close_topic(state, socket_id, topic_name, sock.Normal),
     socket_id,
   ))
 }
@@ -1325,7 +1325,7 @@ fn handle_in_rate_limited(
       ])
       let message_ref =
         option.map(ref, fn(r) {
-          event.make_message_ref(
+          sock.make_message_ref(
             topic: topic_name,
             join_ref: joined_ref(socket, topic_name),
             msg_ref: Some(r),
@@ -1348,8 +1348,8 @@ fn handle_in_rate_limited(
                 state,
                 socket_id,
                 topic_name,
-                event.ref_join_ref(message_ref),
-                event.ref_msg_ref(message_ref),
+                sock.ref_join_ref(message_ref),
+                sock.ref_msg_ref(message_ref),
                 json.object([#("reason", json.string("duplicate_ref"))]),
               )
               emit_message_stop(
@@ -1410,7 +1410,7 @@ fn deliver_client_message(
     update_once(
       state,
       socket_id,
-      event.Message(
+      sock.Message(
         topic: topic_name,
         event: event_name,
         payload: payload,
@@ -1533,7 +1533,7 @@ fn fan_out_binary(
             update_once(
               state,
               socket_id,
-              event.Binary(topic: topic_name, data: data),
+              sock.Binary(topic: topic_name, data: data),
               MessageSource(topic_name, telemetry.BinaryMessage, started_at),
             ),
             socket_id,
@@ -1573,7 +1573,7 @@ fn handle_app_info(
         update_once(
           state,
           socket_id,
-          event.Info(message),
+          sock.Info(message),
           InfoSource(started_at),
         ),
         socket_id,
@@ -1588,11 +1588,11 @@ fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
     [] -> telemetry.NoReply
     [effect, ..rest] ->
       case effect {
-        event.ReplyOk(_, _) -> telemetry.Reply
-        event.ReplyError(_, _) -> telemetry.ReplyError
-        event.Push(_, _, _)
-        | event.Broadcast(_, _, _)
-        | event.BroadcastFrom(_, _, _) -> telemetry.Push
+        sock.ReplyOk(_, _) -> telemetry.Reply
+        sock.ReplyError(_, _) -> telemetry.ReplyError
+        sock.Push(_, _, _)
+        | sock.Broadcast(_, _, _)
+        | sock.BroadcastFrom(_, _, _) -> telemetry.Push
         _ -> effects_callback_result(rest)
       }
   }
@@ -1637,7 +1637,7 @@ fn update_once(
       let model = socket.model
       case internal.rescue(fn() { update(model, ev) }) {
         Error(crash) -> handle_update_crash(state, socket_id, source, crash)
-        Ok(event.Stop(reason)) -> {
+        Ok(sock.Stop(reason)) -> {
           state.logger
           |> log.debug("Update stopped socket", [
             #("socket_id", socket_id),
@@ -1669,7 +1669,7 @@ fn update_once(
           }
           Outcome(state, [], Some(reason))
         }
-        Ok(event.Next(new_model, effects)) -> {
+        Ok(sock.Next(new_model, effects)) -> {
           let state = store_model(state, socket_id, new_model)
           let pending = case source {
             JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
@@ -1778,7 +1778,7 @@ fn handle_update_crash(
         telemetry.MessageCallbackFailed,
         telemetry.CallbackFailed,
       )
-      close_topic(state, socket_id, topic_name, event.Errored(crash))
+      close_topic(state, socket_id, topic_name, sock.Errored(crash))
     }
     InfoSource(started_at) -> {
       state.logger
@@ -1793,7 +1793,7 @@ fn handle_update_crash(
         telemetry.MessageCallbackFailed,
         telemetry.CallbackFailed,
       )
-      Outcome(teardown_socket(state, socket_id, event.Errored(crash)), [], None)
+      Outcome(teardown_socket(state, socket_id, sock.Errored(crash)), [], None)
     }
     ClosedSource -> {
       state.logger
@@ -1848,7 +1848,7 @@ fn drive(outcome: Outcome(model, msg), socket_id: String) -> State(model, msg) {
                   outcome.state,
                   socket_id,
                   topic_name,
-                  event.Shutdown,
+                  sock.Shutdown,
                 )
               Outcome(
                 closed.state,
@@ -1896,7 +1896,7 @@ fn close_topic(
               ),
               join_refs: dict.delete(socket.join_refs, topic_name),
               pending_reply_refs: set.filter(socket.pending_reply_refs, fn(ref) {
-                event.ref_topic(ref) != topic_name
+                sock.ref_topic(ref) != topic_name
               }),
             )
           let state = store_socket(state, socket)
@@ -1907,7 +1907,7 @@ fn close_topic(
             update_once(
               state,
               socket_id,
-              event.Closed(topic: topic_name, reason: reason),
+              sock.Closed(topic: topic_name, reason: reason),
               ClosedSource,
             )
           send_terminal_frame(
@@ -1961,8 +1961,8 @@ fn send_terminal_frame(
     Error(Nil) -> Nil
     Ok(socket) -> {
       let encoder = case reason {
-        event.Errored(_) -> codec.encode_error(socket.codec)
-        event.Normal | event.Shutdown | event.HeartbeatTimeout ->
+        sock.Errored(_) -> codec.encode_error(socket.codec)
+        sock.Normal | sock.Shutdown | sock.HeartbeatTimeout ->
           codec.encode_close(socket.codec)
       }
       case encoder {
@@ -2078,28 +2078,28 @@ fn apply_effects(
   list.fold(effects, #(state, pending, []), fn(acc, effect) {
     let #(state, pending, kicks) = acc
     case effect {
-      event.AcceptJoin(ref, reply) ->
+      sock.AcceptJoin(ref, reply) ->
         apply_accept_join(state, socket_id, ref, reply, pending, kicks)
-      event.RejectJoin(ref, reason) ->
+      sock.RejectJoin(ref, reason) ->
         apply_reject_join(state, socket_id, ref, reason, pending, kicks)
-      event.ReplyOk(ref, payload) -> {
+      sock.ReplyOk(ref, payload) -> {
         let state = apply_reply(state, socket_id, ref, codec.StatusOk, payload)
         #(state, pending, kicks)
       }
-      event.ReplyError(ref, payload) -> {
+      sock.ReplyError(ref, payload) -> {
         let state =
           apply_reply(state, socket_id, ref, codec.StatusError, payload)
         #(state, pending, kicks)
       }
-      event.Push(topic_name, event_name, payload) -> {
+      sock.Push(topic_name, event_name, payload) -> {
         apply_push(state, socket_id, topic_name, event_name, payload)
         #(state, pending, kicks)
       }
-      event.Broadcast(topic_name, event_name, payload) -> {
+      sock.Broadcast(topic_name, event_name, payload) -> {
         broadcast_with_pubsub(state, topic_name, event_name, payload, None)
         #(state, pending, kicks)
       }
-      event.BroadcastFrom(topic_name, event_name, payload) -> {
+      sock.BroadcastFrom(topic_name, event_name, payload) -> {
         broadcast_with_pubsub(
           state,
           topic_name,
@@ -2109,7 +2109,7 @@ fn apply_effects(
         )
         #(state, pending, kicks)
       }
-      event.KickTopic(topic_name) ->
+      sock.KickTopic(topic_name) ->
         case
           socket_subscribed(state, socket_id, topic_name)
           && !list.contains(kicks, topic_name)
@@ -2138,7 +2138,7 @@ fn apply_accept_join(
 ) -> #(State(model, msg), Option(Pending), List(String)) {
   case pending {
     Some(p) ->
-      case event.ref_is_join(ref) && event.refs_match(ref, p.ref) {
+      case sock.ref_is_join(ref) && sock.refs_match(ref, p.ref) {
         True -> {
           let state = subscribe_socket(state, socket_id, p)
           case dict.get(state.sockets, socket_id) {
@@ -2187,7 +2187,7 @@ fn apply_reject_join(
 ) -> #(State(model, msg), Option(Pending), List(String)) {
   case pending {
     Some(p) ->
-      case event.ref_is_join(ref) && event.refs_match(ref, p.ref) {
+      case sock.ref_is_join(ref) && sock.refs_match(ref, p.ref) {
         True -> {
           state.logger
           |> log.debug("Join rejected", [
@@ -2225,7 +2225,7 @@ fn warn_unmatched_join_answer(
   state.logger
   |> log.warn(effect_name <> " ignored: no matching pending join", [
     #("socket_id", socket_id),
-    #("topic", event.ref_topic(ref)),
+    #("topic", sock.ref_topic(ref)),
   ])
 }
 
@@ -2278,12 +2278,12 @@ fn apply_reply(
   status: codec.ReplyStatus,
   payload: Json,
 ) -> State(model, msg) {
-  case event.ref_is_join(ref) {
+  case sock.ref_is_join(ref) {
     True -> {
       state.logger
       |> log.warn("Reply ignored: join refs require AcceptJoin/RejectJoin", [
         #("socket_id", socket_id),
-        #("topic", event.ref_topic(ref)),
+        #("topic", sock.ref_topic(ref)),
       ])
       state
     }
@@ -2296,21 +2296,21 @@ fn apply_reply(
               state.logger
               |> log.warn("Reply ignored: unknown or already-answered ref", [
                 #("socket_id", socket_id),
-                #("topic", event.ref_topic(ref)),
+                #("topic", sock.ref_topic(ref)),
               ])
               state
             }
             True -> {
               let frame =
                 codec.encode_reply(socket.codec)(
-                  event.ref_join_ref(ref),
-                  event.ref_msg_ref(ref),
-                  event.ref_topic(ref),
+                  sock.ref_join_ref(ref),
+                  sock.ref_msg_ref(ref),
+                  sock.ref_topic(ref),
                   status,
                   payload,
                 )
               let _send_result =
-                send_frame_logged(state, socket, event.ref_topic(ref), frame)
+                send_frame_logged(state, socket, sock.ref_topic(ref), frame)
               store_socket(
                 state,
                 SocketState(
@@ -2735,10 +2735,10 @@ fn send_frame_logged(
 
 fn stop_reason_string(reason: StopReason) -> String {
   case reason {
-    event.Normal -> "normal"
-    event.Shutdown -> "shutdown"
-    event.HeartbeatTimeout -> "heartbeat_timeout"
-    event.Errored(message) -> message
+    sock.Normal -> "normal"
+    sock.Shutdown -> "shutdown"
+    sock.HeartbeatTimeout -> "heartbeat_timeout"
+    sock.Errored(message) -> message
   }
 }
 

@@ -6,7 +6,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Closed, Join, Next}
+import beryl/socket.{AcceptJoin, Closed, Join, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
@@ -18,7 +18,7 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_system(events: process.Subject(event.Input(Nil))) -> beryl.Sockets {
+fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec())
@@ -54,7 +54,7 @@ pub fn heartbeat_timeout_evicts_stale_socket_and_runs_closer_test() {
 
   // No heartbeats arrive: the periodic check evicts the socket. Every joined
   // topic is closed with HeartbeatTimeout and a terminal frame is sent.
-  let assert Ok(Closed("room:a", event.HeartbeatTimeout)) =
+  let assert Ok(Closed("room:a", socket.HeartbeatTimeout)) =
     process.receive(events, 2000)
   let close_frame = h.recv(frames)
   close_frame |> string.contains("phx_close") |> should.be_true
@@ -71,7 +71,7 @@ pub fn evicted_socket_is_removed_and_ignores_further_input_test() {
   h.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _reply = h.recv(frames)
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
-  let assert Ok(Closed("room:a", event.HeartbeatTimeout)) =
+  let assert Ok(Closed("room:a", socket.HeartbeatTimeout)) =
     process.receive(events, 2000)
   let _close_frame = h.recv(frames)
 

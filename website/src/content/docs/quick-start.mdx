@@ -30,7 +30,7 @@ returns the next model plus a list of **effects**.
 
 ```gleam
 // src/my_app/room_app.gleam
-import beryl/event.{
+import beryl/socket.{
   type Input, type Next, AcceptJoin, Broadcast, Join, Message, Next,
 }
 import gleam/dynamic.{type Dynamic}
@@ -43,7 +43,7 @@ pub type Model {
   Model(username: String)
 }
 
-pub fn init(_info: event.ConnectInfo(Nil)) -> #(Model, List(event.Effect)) {
+pub fn init(_info: socket.ConnectInfo(Nil)) -> #(Model, List(socket.Effect)) {
   #(Model(username: "Anonymous"), [])
 }
 
@@ -66,7 +66,7 @@ pub fn update(model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
     // Reject joins for topics you don't serve.
     Join(_, _, ref) ->
       Next(model, [
-        event.RejectJoin(
+        socket.RejectJoin(
           ref,
           json.object([#("reason", json.string("unknown_topic"))]),
         ),
@@ -248,7 +248,7 @@ Message(topic, "new_msg", payload, Some(ref)) ->
       "new_msg",
       json.object([#("username", json.string(model.username))]),
     ),
-    event.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
+    socket.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
   ])
 ```
 
@@ -275,7 +275,7 @@ Join("room:" <> room_id, _payload, ref) ->
   case is_room_valid(room_id) {
     False ->
       Next(model, [
-        event.RejectJoin(
+        socket.RejectJoin(
           ref,
           json.object([#("reason", json.string("Room not found"))]),
         ),

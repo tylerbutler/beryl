@@ -4,7 +4,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/presence
 import beryl/wire
 import gleam/json

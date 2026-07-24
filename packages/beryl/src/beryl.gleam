@@ -7,7 +7,7 @@
 //// ## Features
 ////
 //// - **Sockets** — App-side dispatch: topic-based WebSocket messaging
-////   routed by your `update` function (`beryl`, `beryl/event`)
+////   routed by your `update` function (`beryl`, `beryl/socket`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
 //// - **Presence** — Distributed presence tracking backed by a causal-context
@@ -19,7 +19,7 @@
 ////
 //// ```gleam
 //// import beryl
-//// import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+//// import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
 //// import beryl/pubsub
 //// import beryl/wire
 //// import gleam/option
@@ -58,7 +58,7 @@
 
 import beryl/app_supervisor
 import beryl/connection_limit
-import beryl/event
+import beryl/socket
 import beryl/internal
 import beryl/log
 import beryl/presence.{type Diff}
@@ -622,7 +622,7 @@ pub type AppHandle {
       fn(String) -> Result(Nil, Nil),
       fn(BitArray) -> Result(Nil, Nil),
       Option(codec.Codec),
-      event.ConnectSeed,
+      socket.ConnectSeed,
       fn() -> Nil,
     ) -> Bool,
     socket_disconnected: fn(String) -> Nil,
@@ -893,8 +893,8 @@ fn drop_monitor(monitor: process.Monitor) -> Nil {
 /// ```
 pub fn child_spec(
   config: Config,
-  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -941,8 +941,8 @@ type AppSubtree {
 /// resurrected.
 fn build_app_subtree(
   config: Config,
-  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -987,8 +987,8 @@ fn child_spec_supervisor(
   config: Config,
   runtime_name: process.Name(runtime.Msg(msg)),
   limiter_name: Option(process.Name(connection_limit.Message)),
-  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
   let runtime_child =
     supervision.worker(fn() {
@@ -1285,7 +1285,7 @@ pub fn transport_admit_socket(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   socket_codec: Option(codec.Codec),
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
   close: fn() -> Nil,
 ) -> Bool {
   case owner {

@@ -32,9 +32,9 @@ pub type Model {
 }
 
 // The compiler ensures update receives your Model and returns the next one
-fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   // model.user_id and model.room_id are guaranteed to exist
-  event.Next(model, [])
+  socket.Next(model, [])
 }
 ```
 

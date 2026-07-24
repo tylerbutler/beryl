@@ -13,7 +13,7 @@
 //// Wire behavior preserves the established room contract, including its
 //// replies (an ok-status reply carrying an error payload).
 
-import beryl/event.{type Effect, type Ref}
+import beryl/socket.{type Effect, type Ref}
 import beryl/group.{type Groups}
 import example_helpers/color
 import example_helpers/payload
@@ -65,12 +65,12 @@ pub fn join(
 
   case room_exists {
     False -> #(None, [
-      event.RejectJoin(ref, error("Room not found: " <> room_name)),
+      socket.RejectJoin(ref, error("Room not found: " <> room_name)),
     ])
     True -> {
       case session_presence.count(ctx.presence, topic) >= max_room_users {
         True -> #(None, [
-          event.RejectJoin(
+          socket.RejectJoin(
             ref,
             error_with_code(
               403,
@@ -94,9 +94,9 @@ pub fn join(
           #(
             Some(Model(username: username, color: color, room_name: room_name)),
             [
-              event.AcceptJoin(ref, Some(reply)),
-              event.Broadcast("lobby", "rooms_changed", room_changed(room_name)),
-              event.Broadcast(topic, "new_msg", sys_payload),
+              socket.AcceptJoin(ref, Some(reply)),
+              socket.Broadcast("lobby", "rooms_changed", room_changed(room_name)),
+              socket.Broadcast(topic, "new_msg", sys_payload),
             ],
           )
         }
@@ -136,7 +136,7 @@ pub fn update(
           #(
             model,
             list.append(
-              [event.Broadcast(topic, "new_msg", msg_payload)],
+              [socket.Broadcast(topic, "new_msg", msg_payload)],
               reply_ok(
                 ref,
                 json.object([
@@ -173,8 +173,8 @@ pub fn closed(
   session_presence.untrack(ctx.presence, topic, socket_id)
   let sys_payload = system_message(model.username <> " left the room")
   [
-    event.Broadcast("lobby", "rooms_changed", room_changed(model.room_name)),
-    event.Broadcast(topic, "new_msg", sys_payload),
+    socket.Broadcast("lobby", "rooms_changed", room_changed(model.room_name)),
+    socket.Broadcast(topic, "new_msg", sys_payload),
   ]
 }
 
@@ -182,7 +182,7 @@ pub fn closed(
 
 /// Accept the application-wide `lobby` topic.
 pub fn lobby_join(ref: Ref) -> #(Lobby, List(Effect)) {
-  #(Lobby, [event.AcceptJoin(ref, None)])
+  #(Lobby, [socket.AcceptJoin(ref, None)])
 }
 
 /// The lobby is read-only; client events produce no effects.
@@ -212,7 +212,7 @@ pub type Standalone {
 
 /// `init` for the standalone chatrooms app-dispatch runtime.
 pub fn standalone_init(
-  info: event.ConnectInfo(Nil),
+  info: socket.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
   #(Standalone(socket_id: info.socket_id, rooms: dict.new(), lobby: None), [])
 }
@@ -223,46 +223,46 @@ pub fn standalone_init(
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,
-  ev: event.Input(Nil),
-) -> event.Next(Standalone, Nil) {
+  ev: socket.Input(Nil),
+) -> socket.Next(Standalone, Nil) {
   case ev {
-    event.Join(topic, payload, ref) ->
+    socket.Join(topic, payload, ref) ->
       case topic {
         "lobby" -> {
           let #(lobby, effects) = lobby_join(ref)
-          event.Next(Standalone(..model, lobby: Some(lobby)), effects)
+          socket.Next(Standalone(..model, lobby: Some(lobby)), effects)
         }
         "room:" <> _ -> {
           let #(joined, effects) =
             join(ctx, model.socket_id, topic, payload, ref)
           case joined {
             Some(sub) ->
-              event.Next(
+              socket.Next(
                 Standalone(..model, rooms: dict.insert(model.rooms, topic, sub)),
                 effects,
               )
-            None -> event.Next(model, effects)
+            None -> socket.Next(model, effects)
           }
         }
         _ ->
-          event.Next(model, [
-            event.RejectJoin(
+          socket.Next(model, [
+            socket.RejectJoin(
               ref,
               json.object([#("reason", json.string("unknown_topic"))]),
             ),
           ])
       }
 
-    event.Message(topic, event_name, payload, ref) ->
+    socket.Message(topic, event_name, payload, ref) ->
       case topic {
         "lobby" ->
           case model.lobby {
             Some(lobby) -> {
               let #(lobby, effects) =
                 lobby_update(lobby, event_name, payload, ref)
-              event.Next(Standalone(..model, lobby: Some(lobby)), effects)
+              socket.Next(Standalone(..model, lobby: Some(lobby)), effects)
             }
-            None -> event.Next(model, [])
+            None -> socket.Next(model, [])
           }
         _ ->
           case dict.get(model.rooms, topic) {
@@ -277,35 +277,35 @@ pub fn standalone_update(
                   payload,
                   ref,
                 )
-              event.Next(
+              socket.Next(
                 Standalone(..model, rooms: dict.insert(model.rooms, topic, sub)),
                 effects,
               )
             }
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
       }
 
-    event.Closed(topic, _reason) ->
+    socket.Closed(topic, _reason) ->
       case topic {
         "lobby" ->
           case model.lobby {
             Some(lobby) ->
-              event.Next(Standalone(..model, lobby: None), lobby_closed(lobby))
-            None -> event.Next(model, [])
+              socket.Next(Standalone(..model, lobby: None), lobby_closed(lobby))
+            None -> socket.Next(model, [])
           }
         _ ->
           case dict.get(model.rooms, topic) {
             Ok(sub) ->
-              event.Next(
+              socket.Next(
                 Standalone(..model, rooms: dict.delete(model.rooms, topic)),
                 closed(ctx, model.socket_id, topic, sub),
               )
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
       }
 
-    event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
+    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
   }
 }
 
@@ -330,7 +330,7 @@ fn typing_effects(
       #("socket_id", json.string(socket_id)),
       #("typing", json.bool(typing)),
     ])
-  [event.BroadcastFrom(topic, "typing", typing_payload)]
+  [socket.BroadcastFrom(topic, "typing", typing_payload)]
 }
 
 fn presence_meta(
@@ -362,7 +362,7 @@ fn room_changed(room_name: String) -> json.Json {
 /// payload mirrors the previous wire behavior exactly.
 fn reply_ok(ref: Option(Ref), reply_payload: json.Json) -> List(Effect) {
   case ref {
-    Some(r) -> [event.ReplyOk(r, reply_payload)]
+    Some(r) -> [socket.ReplyOk(r, reply_payload)]
     None -> []
   }
 }

@@ -2,7 +2,7 @@
 
 Final API and design record for the app-side dispatch model accepted in
 [ADR 0002](../adr/0002-app-side-dispatch.md). This document reflects the
-shipped `beryl`/`beryl/event` API — see `beryl.gleam` and `beryl/event.gleam`
+shipped `beryl`/`beryl/socket` API — see `beryl.gleam` and `beryl/socket.gleam`
 for the authoritative signatures and doc comments, and the
 [generated API reference](/reference/api/) for the full public surface.
 
@@ -25,7 +25,7 @@ pub type Input(msg) {
   /// Delivered on every exit path.
   Closed(topic: String, reason: StopReason)
   /// A typed server-side message, sent via the socket's `Sender(msg)`
-  /// (see `ConnectInfo.self` and `event.notify`). An ordinary typed send —
+  /// (see `ConnectInfo.self` and `socket.notify`). An ordinary typed send —
   /// no erasure involved.
   Info(msg)
 }
@@ -101,7 +101,7 @@ what `stop` does and does not tear down.
 | assigns threading via `Socket`   | `model` threading via `Next`              |
 | `beryl.register(handler)`        | routing inside the app's `update`         |
 | `beryl.child_spec(config)` + registry | `beryl.child_spec(config, init:, update:)`     |
-| `send_info(socket, msg)`         | `event.notify(sender, msg)`               |
+| `send_info(socket, msg)`         | `socket.notify(sender, msg)`               |
 
 ## Single-channel app — no union, no router
 

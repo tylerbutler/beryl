@@ -6,7 +6,7 @@
 //// forward every event to an observer subject to make delivery visible.
 
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
@@ -18,8 +18,8 @@ import gleeunit/should
 /// Build and start an app-side dispatch subtree for tests.
 pub fn start_app(
   config: beryl.Config,
-  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(beryl.Sockets, beryl.ConfigError) {
   use #(sockets, spec) <- result.try(beryl.child_spec(config, init:, update:))
   let assert Ok(_) =
@@ -35,7 +35,7 @@ pub fn connect(
   channels: beryl.Sockets,
   socket_id: String,
 ) -> process.Subject(String) {
-  connect_with_seed_and_close(channels, socket_id, event.empty_seed(), fn() {
+  connect_with_seed_and_close(channels, socket_id, socket.empty_seed(), fn() {
     Nil
   })
 }
@@ -45,7 +45,7 @@ pub fn connect_with_close(
   socket_id: String,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
-  connect_with_seed_and_close(channels, socket_id, event.empty_seed(), close)
+  connect_with_seed_and_close(channels, socket_id, socket.empty_seed(), close)
 }
 
 /// Connect a socket with an explicit `ConnectSeed` (e.g. to assert that
@@ -55,7 +55,7 @@ pub fn connect_with_close(
 pub fn connect_with_seed(
   channels: beryl.Sockets,
   socket_id: String,
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
 ) -> process.Subject(String) {
   connect_with_seed_and_close(channels, socket_id, seed, fn() { Nil })
 }
@@ -63,7 +63,7 @@ pub fn connect_with_seed(
 fn connect_with_seed_and_close(
   channels: beryl.Sockets,
   socket_id: String,
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
@@ -149,8 +149,8 @@ pub fn recv_none(frames: process.Subject(String)) -> Nil {
 
 /// Receive the next observed event, failing after 500ms.
 pub fn next_event(
-  events: process.Subject(event.Input(msg)),
-) -> event.Input(msg) {
+  events: process.Subject(socket.Input(msg)),
+) -> socket.Input(msg) {
   let assert Ok(ev) = process.receive(events, 500)
   ev
 }

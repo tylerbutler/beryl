@@ -1,5 +1,5 @@
 ---
-title: beryl/event
+title: beryl/socket
 description: Types for building app-side dispatch systems with `beryl.child_spec`.
 ---
 

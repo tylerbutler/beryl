@@ -8,7 +8,7 @@
 //// topic namespace, routed by topic prefix, pruned on `Closed`.
 
 import beryl
-import beryl/event.{type Input, type Next}
+import beryl/socket.{type Input, type Next}
 import beryl/group
 import beryl/wire
 import beryl_mist as mist_transport
@@ -84,7 +84,7 @@ pub fn main() {
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
       config,
-      init: fn(info: event.ConnectInfo(Nil)) {
+      init: fn(info: socket.ConnectInfo(Nil)) {
         #(
           Model(
             socket_id: info.socket_id,
@@ -164,46 +164,46 @@ pub fn main() {
 /// per-namespace `Dict`.
 fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
   case ev {
-    event.Join(topic, payload, ref) ->
+    socket.Join(topic, payload, ref) ->
       case topic {
         "lobby" -> {
           let #(lobby, effects) = chat_app.lobby_join(ref)
-          event.Next(Model(..model, lobby: Some(lobby)), effects)
+          socket.Next(Model(..model, lobby: Some(lobby)), effects)
         }
         "cursor:" <> _ -> {
           let #(joined, effects) =
             cursors_app.join(ctx.cursors, model.socket_id, topic, payload, ref)
-          event.Next(store_cursor(model, topic, joined), effects)
+          socket.Next(store_cursor(model, topic, joined), effects)
         }
         "room:" <> _ -> {
           let #(joined, effects) =
             chat_app.join(ctx.rooms, model.socket_id, topic, payload, ref)
-          event.Next(store_room(model, topic, joined), effects)
+          socket.Next(store_room(model, topic, joined), effects)
         }
         "document:" <> _ -> {
           let #(joined, effects) =
             docs_app.join(ctx.docs, model.socket_id, topic, payload, ref)
-          event.Next(store_doc(model, topic, joined), effects)
+          socket.Next(store_doc(model, topic, joined), effects)
         }
         _ ->
-          event.Next(model, [
-            event.RejectJoin(
+          socket.Next(model, [
+            socket.RejectJoin(
               ref,
               json.object([#("reason", json.string("unknown_topic"))]),
             ),
           ])
       }
 
-    event.Message(topic, event_name, payload, ref) ->
+    socket.Message(topic, event_name, payload, ref) ->
       case topic {
         "lobby" ->
           case model.lobby {
             Some(lobby) -> {
               let #(lobby, effects) =
                 chat_app.lobby_update(lobby, event_name, payload, ref)
-              event.Next(Model(..model, lobby: Some(lobby)), effects)
+              socket.Next(Model(..model, lobby: Some(lobby)), effects)
             }
-            None -> event.Next(model, [])
+            None -> socket.Next(model, [])
           }
         "cursor:" <> _ ->
           case dict.get(model.cursors, topic) {
@@ -217,9 +217,9 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
                   event_name,
                   payload,
                 )
-              event.Next(store_cursor(model, topic, Some(sub)), effects)
+              socket.Next(store_cursor(model, topic, Some(sub)), effects)
             }
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
         "room:" <> _ ->
           case dict.get(model.rooms, topic) {
@@ -234,9 +234,9 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
                   payload,
                   ref,
                 )
-              event.Next(store_room(model, topic, Some(sub)), effects)
+              socket.Next(store_room(model, topic, Some(sub)), effects)
             }
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
         "document:" <> _ ->
           case dict.get(model.docs, topic) {
@@ -251,55 +251,55 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
                   payload,
                   ref,
                 )
-              event.Next(store_doc(model, topic, Some(sub)), effects)
+              socket.Next(store_doc(model, topic, Some(sub)), effects)
             }
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
-        _ -> event.Next(model, [])
+        _ -> socket.Next(model, [])
       }
 
-    event.Closed(topic, _reason) ->
+    socket.Closed(topic, _reason) ->
       case topic {
         "lobby" ->
           case model.lobby {
             Some(lobby) ->
-              event.Next(
+              socket.Next(
                 Model(..model, lobby: None),
                 chat_app.lobby_closed(lobby),
               )
-            None -> event.Next(model, [])
+            None -> socket.Next(model, [])
           }
         "cursor:" <> _ ->
           case dict.get(model.cursors, topic) {
             Ok(sub) ->
-              event.Next(
+              socket.Next(
                 Model(..model, cursors: dict.delete(model.cursors, topic)),
                 cursors_app.closed(ctx.cursors, model.socket_id, topic, sub),
               )
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
         "room:" <> _ ->
           case dict.get(model.rooms, topic) {
             Ok(sub) ->
-              event.Next(
+              socket.Next(
                 Model(..model, rooms: dict.delete(model.rooms, topic)),
                 chat_app.closed(ctx.rooms, model.socket_id, topic, sub),
               )
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
         "document:" <> _ ->
           case dict.get(model.docs, topic) {
             Ok(sub) ->
-              event.Next(
+              socket.Next(
                 Model(..model, docs: dict.delete(model.docs, topic)),
                 docs_app.closed(ctx.docs, model.socket_id, topic, sub),
               )
-            Error(Nil) -> event.Next(model, [])
+            Error(Nil) -> socket.Next(model, [])
           }
-        _ -> event.Next(model, [])
+        _ -> socket.Next(model, [])
       }
 
-    event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
+    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
   }
 }
 

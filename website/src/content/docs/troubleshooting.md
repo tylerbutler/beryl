@@ -37,8 +37,8 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 1. **Does your `update` answer the join?** Every `Join` event must be answered with an `AcceptJoin` or `RejectJoin` effect. An unanswered join is rejected automatically (fail closed) — check the server logs for `Join not acknowledged by update; rejecting`, and confirm your topic match arms cover the topic the client is joining:
    ```gleam
    // "room:" <> _ matches "room:lobby", "room:42", etc.
-   event.Join("room:" <> _, payload, ref) ->
-     event.Next(model, [event.AcceptJoin(ref, option.None)])
+   socket.Join("room:" <> _, payload, ref) ->
+     socket.Next(model, [socket.AcceptJoin(ref, option.None)])
    ```
 
 2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` after its child spec is started:
@@ -118,10 +118,10 @@ let logging =
 1. **Untrack on `Closed`.** Send a nonblocking cleanup command to an
    application-owned presence worker from the `Closed` arm:
    ```gleam
-   event.Closed(topic, _reason) ->
+   socket.Closed(topic, _reason) ->
      {
        process.send(presence_worker, Untrack(topic, model.presence_ref))
-       event.Next(model, [])
+       socket.Next(model, [])
      }
    ```
    The application owns every ref returned by `presence.track` and must
