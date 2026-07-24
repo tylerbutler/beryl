@@ -26,12 +26,12 @@
 ////
 //// pub fn main() {
 ////   // Optional: start PubSub for distributed messaging
-////   let ps = pubsub.start(pubsub.default_config())
+////   let bus = pubsub.start(pubsub.default_config())
 ////
 ////   // Start the system (with or without PubSub). The app supplies `init`
 ////   // (the per-socket model) and `update` (which routes every event by
 ////   // matching on its topic).
-////   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
+////   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(bus)
 ////   let assert Ok(sockets) =
 ////     beryl.start(
 ////       config,
@@ -261,8 +261,8 @@ pub fn with_presence_handle(
 }
 
 /// Add PubSub to a configuration for distributed broadcasts
-pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
-  Config(..config, pubsub: Some(ps))
+pub fn with_pubsub(config: Config, pubsub: PubSub(json.Json)) -> Config {
+  Config(..config, pubsub: Some(pubsub))
 }
 
 /// Configure heartbeat timing.
@@ -1107,7 +1107,7 @@ fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
 /// window or after `stop` degrades to a no-op instead of a crash.
 fn app_handle(
   subject: Subject(runtime.Msg(msg)),
-  ps: Option(PubSub(json.Json)),
+  bus: Option(PubSub(json.Json)),
 ) -> AppHandle {
   AppHandle(
     socket_connected: fn(socket_id, send, send_binary, seed) {
@@ -1135,12 +1135,12 @@ fn app_handle(
         subject,
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
-      case ps, process.subject_owner(subject) {
-        Some(ps), Ok(runtime_pid) ->
+      case bus, process.subject_owner(subject) {
+        Some(bus), Ok(runtime_pid) ->
           case except {
             None ->
               pubsub.broadcast_from(
-                ps,
+                bus,
                 runtime_pid,
                 topic_name,
                 event_name,
@@ -1148,7 +1148,7 @@ fn app_handle(
               )
             Some(socket_id) ->
               pubsub.broadcast_from_socket(
-                ps,
+                bus,
                 runtime_pid,
                 socket_id,
                 topic_name,
@@ -1233,7 +1233,7 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
       DebugLevel -> internal.Debug
       InfoLevel -> internal.Info
       WarnLevel -> internal.Warn
-      ErrorLevel -> internal.Err
+      ErrorLevel -> internal.ErrorLevel
     },
     include_payloads: logging.include_payloads,
     payload_preview_bytes: logging.payload_preview_bytes,

@@ -112,7 +112,11 @@ fn validate_inbound_depth(msg: Inbound) -> Result(Inbound, DecodeError) {
 pub fn encode(msg: Inbound) -> String {
   let join_ref_json = option_to_json(codec.inbound_join_ref(msg))
   let ref_json = option_to_json(codec.inbound_ref(msg))
-  let payload_json = dynamic_to_json(codec.inbound_payload(msg))
+  // Inbound payloads come from decoded JSON, so conversion only fails for
+  // hand-built messages carrying non-JSON terms; encode those as null.
+  let payload_json =
+    dynamic_to_json(codec.inbound_payload(msg))
+    |> result.unwrap(json.null())
   let event = phoenix_event_name(codec.inbound_kind(msg))
 
   json.to_string(
@@ -152,9 +156,11 @@ fn phoenix_event_name(kind: InboundKind) -> String {
 }
 
 /// Convert a `Dynamic` (decoded from JSON) back into `json.Json`.
-pub fn dynamic_to_json(value: Dynamic) -> json.Json {
+///
+/// Errors when the value has no JSON representation (e.g. a raw binary) or
+/// nests deeper than the wire protocol's depth limit.
+pub fn dynamic_to_json(value: Dynamic) -> Result(json.Json, Nil) {
   dynamic_to_json_limited(value, max_json_nesting_depth)
-  |> result.unwrap(json.null())
 }
 
 fn dynamic_to_json_limited(

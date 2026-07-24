@@ -1189,7 +1189,7 @@ fn update_once(
           state.logger
           |> log.debug("Update stopped socket", [
             #("socket_id", socket_id),
-            #("reason", stop_reason_string(reason)),
+            #("reason", stop_reason_to_string(reason)),
           ])
           // A join answered with Stop is still unanswered on the wire:
           // fail it closed before the teardown frames.
@@ -1362,7 +1362,7 @@ fn close_topic(
           |> log.debug("Topic closed", [
             #("socket_id", socket_id),
             #("topic", topic_name),
-            #("reason", stop_reason_string(reason)),
+            #("reason", stop_reason_to_string(reason)),
           ])
           let close_join_ref = joined_ref(socket, topic_name)
           let socket =
@@ -1475,7 +1475,10 @@ fn teardown_socket(
       |> log.debug(
         "Socket teardown",
         list.append(
-          [#("socket_id", socket_id), #("reason", stop_reason_string(reason))],
+          [
+            #("socket_id", socket_id),
+            #("reason", stop_reason_to_string(reason)),
+          ],
           joined_topics_metadata(socket),
         ),
       )
@@ -2424,7 +2427,7 @@ fn send_frame_logged(
   send_result
 }
 
-fn stop_reason_string(reason: StopReason) -> String {
+fn stop_reason_to_string(reason: StopReason) -> String {
   case reason {
     sock.Normal -> "normal"
     sock.Shutdown -> "shutdown"

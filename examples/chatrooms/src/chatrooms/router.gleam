@@ -21,23 +21,23 @@ pub type Context {
 
 pub fn handle_request(
   req: Request(Connection),
-  ctx: Context,
+  context: Context,
 ) -> Response(ResponseData) {
-  use <- static.serve_static(
+  use <- static.serve_app_static(
     req,
-    under: ctx.base_path <> "/static",
-    from: static.priv_static("chatrooms"),
+    under: context.base_path <> "/static",
+    app: "chatrooms",
   )
 
-  case static.match_prefix(req, ctx.base_path) {
-    Ok([]) -> index_page(ctx)
-    Ok(["api", "rooms"]) -> rooms_api(ctx)
+  case static.match_prefix(req, context.base_path) {
+    Ok([]) -> index_page(context)
+    Ok(["api", "rooms"]) -> rooms_api(context)
     _ -> static.not_found()
   }
 }
 
-fn rooms_api(ctx: Context) -> Response(ResponseData) {
-  let rooms = case group.topics(ctx.groups, "public") {
+fn rooms_api(context: Context) -> Response(ResponseData) {
+  let rooms = case group.topics(context.groups, "public") {
     Ok(topics) ->
       topics
       |> set.to_list
@@ -46,7 +46,7 @@ fn rooms_api(ctx: Context) -> Response(ResponseData) {
           [_, name] -> name
           _ -> topic
         }
-        let user_count = list.length(presence.list(ctx.presence, topic))
+        let user_count = list.length(presence.list(context.presence, topic))
         json.object([
           #("topic", json.string(topic)),
           #("name", json.string(room_name)),
@@ -60,9 +60,9 @@ fn rooms_api(ctx: Context) -> Response(ResponseData) {
   static.json_response(body)
 }
 
-fn index_page(ctx: Context) -> Response(ResponseData) {
+fn index_page(context: Context) -> Response(ResponseData) {
   // Build room list for initial render
-  let rooms = case group.topics(ctx.groups, "public") {
+  let rooms = case group.topics(context.groups, "public") {
     Ok(topics) ->
       topics
       |> set.to_list
@@ -98,7 +98,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
   <meta charset=\"UTF-8\">
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
   <title>Chat Rooms — beryl demo</title>
-  <link rel=\"stylesheet\" href=\"" <> ctx.base_path <> "/static/style.css\">
+  <link rel=\"stylesheet\" href=\"" <> context.base_path <> "/static/style.css\">
 </head>
 <body>
   <div id=\"app\">
@@ -126,7 +126,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
     </aside>
   </div>
   <script src=\"https://unpkg.com/phoenix@1.7.20/priv/static/phoenix.js\" integrity=\"sha384-9Rsr2KoQMtWNQakugNsDiGsZ/5eQnJHeBhiocJMdHvnyN8ifwcytSTzPpb1xydYk\" crossorigin=\"anonymous\"></script>
-  <script src=\"" <> ctx.base_path <> "/static/app.js\"></script>
+  <script src=\"" <> context.base_path <> "/static/app.js\"></script>
 </body>
 </html>"
 

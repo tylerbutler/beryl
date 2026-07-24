@@ -2,6 +2,7 @@
 
 import gleam/erlang/process
 import gleam/otp/actor
+import gleam/string
 
 /// A stable description of an internal Beryl actor startup failure.
 ///
@@ -39,6 +40,7 @@ fn exit_reason(reason: process.ExitReason) -> String {
   case reason {
     process.Normal -> "normal"
     process.Killed -> "killed"
-    process.Abnormal(_) -> "abnormal"
+    // nolint: string_inspect -- abnormal exit reasons are arbitrary BEAM terms with no concrete type to serialize
+    process.Abnormal(detail) -> "abnormal: " <> string.inspect(detail)
   }
 }

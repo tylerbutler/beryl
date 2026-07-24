@@ -39,11 +39,11 @@ pub fn join_with_valid_tenant_token_is_accepted_test() {
   let assert Ok(store) = doc_store.start()
   let secret = auth.new_secret()
   let token = auth.sign_tenant("demo", secret)
-  let ctx = app.Ctx(store: store, secret: secret)
+  let context = app.Context(store: store, secret: secret)
 
   let payload = payload_from_json("{\"token\":\"" <> token <> "\"}")
   let #(model, effects) =
-    app.join(ctx, "s1", "document:demo:readme", payload, document_ref())
+    app.join(context, "s1", "document:demo:readme", payload, document_ref())
 
   model |> should.be_some
   case effects {
@@ -55,11 +55,11 @@ pub fn join_with_valid_tenant_token_is_accepted_test() {
 pub fn join_without_token_is_rejected_test() {
   let assert Ok(store) = doc_store.start()
   let secret = auth.new_secret()
-  let ctx = app.Ctx(store: store, secret: secret)
+  let context = app.Context(store: store, secret: secret)
 
   let #(model, effects) =
     app.join(
-      ctx,
+      context,
       "s1",
       "document:demo:readme",
       payload_from_json("{}"),
@@ -78,11 +78,11 @@ pub fn join_with_token_for_other_tenant_is_rejected_test() {
   let secret = auth.new_secret()
   // A token signed for a different tenant must not authorize this document.
   let token = auth.sign_tenant("someone-else", secret)
-  let ctx = app.Ctx(store: store, secret: secret)
+  let context = app.Context(store: store, secret: secret)
 
   let payload = payload_from_json("{\"token\":\"" <> token <> "\"}")
   let #(model, effects) =
-    app.join(ctx, "s1", "document:demo:readme", payload, document_ref())
+    app.join(context, "s1", "document:demo:readme", payload, document_ref())
 
   model |> should.be_none
   case effects {

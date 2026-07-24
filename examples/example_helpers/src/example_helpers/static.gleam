@@ -98,20 +98,20 @@ pub fn match_prefix(
   req: Request(Connection),
   prefix: String,
 ) -> Result(List(String), Nil) {
-  let segs = request.path_segments(req)
-  let prefix_segs =
+  let segments = request.path_segments(req)
+  let prefix_segments =
     prefix
     |> drop_leading_slashes
     |> string.split("/")
-    |> list.filter(fn(s) { s != "" })
-  strip_prefix(segs, prefix_segs)
+    |> list.filter(fn(segment) { segment != "" })
+  strip_prefix(segments, prefix_segments)
 }
 
 fn strip_prefix(
-  segs: List(String),
+  segments: List(String),
   prefix: List(String),
 ) -> Result(List(String), Nil) {
-  case prefix, segs {
+  case prefix, segments {
     [], rest -> Ok(rest)
     [p, ..ps], [s, ..ss] if p == s -> strip_prefix(ss, ps)
     _, _ -> Error(Nil)
@@ -131,9 +131,25 @@ pub fn mime_type_for(path: String) -> String {
   }
 }
 
-/// Resolve `<priv>/static` for an OTP application. Crashes if the application
-/// isn't loaded — examples always have their own priv tree at runtime.
-pub fn priv_static(app_name: String) -> String {
-  let assert Ok(priv) = application.priv_directory(app_name)
-  priv <> "/static"
+/// Resolve `<priv>/static` for an OTP application. Errors if the application
+/// isn't loaded.
+pub fn priv_static(app_name: String) -> Result(String, Nil) {
+  application.priv_directory(app_name)
+  |> result.map(fn(priv) { priv <> "/static" })
+}
+
+/// Serve an application's `priv/static` files under the URL prefix `prefix`.
+/// Falls through to `handler` for non-GET requests, for paths that don't
+/// match, and when the application's priv directory is unavailable.
+pub fn serve_app_static(
+  req: Request(Connection),
+  under prefix: String,
+  app app_name: String,
+  next handler: fn() -> Response(ResponseData),
+) -> Response(ResponseData) {
+  case priv_static(app_name) {
+    Ok(directory) ->
+      serve_static(req, under: prefix, from: directory, next: handler)
+    Error(Nil) -> handler()
+  }
 }

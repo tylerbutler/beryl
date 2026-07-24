@@ -16,23 +16,23 @@
 //// ## Quick Start
 ////
 //// ```gleam
-//// let ps = pubsub.start(pubsub.default_config())
+//// let bus = pubsub.start(pubsub.default_config())
 ////
 //// // Sending: broadcast to all subscribers of a topic
-//// pubsub.broadcast(ps, "room:lobby", "new_msg", "hello")
+//// pubsub.broadcast(bus, "room:lobby", "new_msg", "hello")
 ////
 //// // Receiving: create a `subscriber`, join topics, and fold its
 //// // `selecting` into an actor's own `Selector`. `RemoteBroadcast` here is
 //// // the actor's own message constructor that wraps a `pubsub.Message`.
-//// let sub = pubsub.subscriber(ps)
-//// pubsub.join(sub, "room:lobby")
+//// let subscription = pubsub.subscriber(bus)
+//// pubsub.join(subscription, "room:lobby")
 //// let selector =
 ////   process.new_selector()
 ////   |> process.select(subject)
-////   |> pubsub.selecting(sub, RemoteBroadcast)
+////   |> pubsub.selecting(subscription, RemoteBroadcast)
 //// ```
 
-import gleam/dynamic.{type Dynamic}
+import gleam/erlang/atom.{type Atom}
 import gleam/erlang/process.{type Pid, type Selector, type Subject}
 import gleam/list
 
@@ -80,8 +80,8 @@ pub type PubSubFrom {
 /// scope representation can evolve without exposing record fields.
 pub opaque type PubSubConfig {
   PubSubConfig(
-    /// The pg scope name (atom). Different scopes are isolated.
-    scope: Dynamic,
+    /// The pg scope name. Different scopes are isolated.
+    scope: Atom,
   )
 }
 
@@ -91,35 +91,32 @@ pub opaque type PubSubConfig {
 /// depend on the runtime representation. `payload` fixes the Gleam type
 /// every `Message` broadcast through this instance carries.
 pub opaque type PubSub(payload) {
-  PubSub(scope: Dynamic)
+  PubSub(scope: Atom)
 }
 
 // ── FFI declarations ────────────────────────────────────────────────────────
 
 @external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
-fn ffi_start_pg_scope(scope: Dynamic) -> Dynamic
+fn ffi_start_pg_scope(scope: Atom) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "join_group")
-fn ffi_join_group(scope: Dynamic, group: String, pid: Pid) -> Dynamic
+fn ffi_join_group(scope: Atom, group: String, pid: Pid) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "leave_group")
-fn ffi_leave_group(scope: Dynamic, group: String, pid: Pid) -> Dynamic
+fn ffi_leave_group(scope: Atom, group: String, pid: Pid) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "get_members")
-fn ffi_get_members(scope: Dynamic, group: String) -> List(Pid)
+fn ffi_get_members(scope: Atom, group: String) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "get_local_members")
-fn ffi_get_local_members(scope: Dynamic, group: String) -> List(Pid)
-
-@external(erlang, "erlang", "binary_to_atom")
-fn binary_to_atom(name: String) -> Dynamic
+fn ffi_get_local_members(scope: Atom, group: String) -> List(Pid)
 
 /// The single, statically-known subject tag every PubSub broadcast is
 /// delivered under. Shared by every PubSub instance regardless of scope or
 /// payload type, so it never grows the atom table beyond this one entry, and
 /// identical on every node so cross-node sends and receives agree.
-fn pubsub_tag() -> Dynamic {
-  binary_to_atom("beryl_pubsub_message")
+fn pubsub_tag() -> Atom {
+  atom.create("beryl_pubsub_message")
 }
 
 /// Deliver a message to a subscriber pid through a typed `Subject`.
@@ -128,20 +125,23 @@ fn pubsub_tag() -> Dynamic {
 /// `pubsub_tag`, then sends with the ordinary typed `process.send`. This is
 /// the send counterpart of `selecting`: both sides agree on the tag and the
 /// `payload` type, so no value is ever coerced.
-fn deliver(pid: Pid, msg: Message(payload)) -> Nil {
-  process.send(process.unsafely_create_subject(pid, pubsub_tag()), msg)
+fn deliver(pid: Pid, message: Message(payload)) -> Nil {
+  process.send(
+    process.unsafely_create_subject(pid, atom.to_dynamic(pubsub_tag())),
+    message,
+  )
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /// Create a default PubSub configuration with scope `beryl_pubsub`
 pub fn default_config() -> PubSubConfig {
-  PubSubConfig(scope: binary_to_atom("beryl_pubsub"))
+  PubSubConfig(scope: atom.create("beryl_pubsub"))
 }
 
 /// Create a PubSub configuration with a custom scope name
 ///
-/// The scope name is converted to an Erlang atom via `binary_to_atom`.
+/// The scope name is converted to an Erlang atom.
 /// Atoms are never garbage-collected, so the scope name must be a
 /// **static, bounded deployment or configuration value** — never raw
 /// user-derived, per-request, per-tenant, database-derived, or otherwise
@@ -162,7 +162,7 @@ pub fn default_config() -> PubSubConfig {
 /// // pubsub.config_with_scope(database_row.name)
 /// ```
 pub fn config_with_scope(name: String) -> PubSubConfig {
-  PubSubConfig(scope: binary_to_atom(name))
+  PubSubConfig(scope: atom.create(name))
 }
 
 /// Start a PubSub instance
@@ -173,9 +173,7 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 /// `payload` is fixed by how the returned value is used (or annotated) at the
 /// call site — e.g. `pubsub.start(config) : PubSub(MySyncPayload)`.
 pub fn start(config: PubSubConfig) -> PubSub(payload) {
-  // pg:start returns {ok, Pid} or {error, {already_started, Pid}}
-  // Both are success cases for us
-  let _start_result = ffi_start_pg_scope(config.scope)
+  ffi_start_pg_scope(config.scope)
   PubSub(scope: config.scope)
 }
 
@@ -191,7 +189,7 @@ pub fn start(config: PubSubConfig) -> PubSub(payload) {
 /// Create it in the process that will receive (e.g. an actor's initialiser),
 /// since a `Subject` only delivers to its owner.
 pub opaque type Subscriber(payload) {
-  Subscriber(scope: Dynamic, subject: Subject(Message(payload)))
+  Subscriber(scope: Atom, subject: Subject(Message(payload)), owner: Pid)
 }
 
 /// Create a subscription handle owned by the current process.
@@ -204,10 +202,15 @@ pub opaque type Subscriber(payload) {
 /// **Important:** A single process should create only one `Subscriber` for a
 /// given `payload` type. Multiple subscribers in the same process would share
 /// the same subject tag and cannot multiplex different payload types safely.
-pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
+pub fn subscriber(pubsub: PubSub(payload)) -> Subscriber(payload) {
+  let owner = process.self()
   Subscriber(
-    scope: ps.scope,
-    subject: process.unsafely_create_subject(process.self(), pubsub_tag()),
+    scope: pubsub.scope,
+    subject: process.unsafely_create_subject(
+      owner,
+      atom.to_dynamic(pubsub_tag()),
+    ),
+    owner: owner,
   )
 }
 
@@ -215,17 +218,13 @@ pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
 ///
 /// A subscriber may join many topics; they all deliver through its one
 /// subject. Joining is idempotent per topic.
-pub fn join(sub: Subscriber(payload), topic: String) -> Nil {
-  let assert Ok(pid) = process.subject_owner(sub.subject)
-  let _join_result = ffi_join_group(sub.scope, topic, pid)
-  Nil
+pub fn join(subscriber: Subscriber(payload), topic: String) -> Nil {
+  ffi_join_group(subscriber.scope, topic, subscriber.owner)
 }
 
 /// Leave a topic previously joined with `join`.
-pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
-  let assert Ok(pid) = process.subject_owner(sub.subject)
-  let _leave_result = ffi_leave_group(sub.scope, topic, pid)
-  Nil
+pub fn leave(subscriber: Subscriber(payload), topic: String) -> Nil {
+  ffi_leave_group(subscriber.scope, topic, subscriber.owner)
 }
 
 /// Add a subscriber's PubSub message delivery to a `Selector`, alongside a
@@ -240,48 +239,49 @@ pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
 /// since the shared subject tag cannot safely multiplex different payload types.
 ///
 /// ```gleam
-/// let sub = pubsub.subscriber(ps)
-/// pubsub.join(sub, "room:lobby")
+/// let subscription = pubsub.subscriber(bus)
+/// pubsub.join(subscription, "room:lobby")
 /// let selector =
 ///   process.new_selector()
 ///   |> process.select(subject)
-///   |> pubsub.selecting(sub, RemoteBroadcast)
+///   |> pubsub.selecting(subscription, RemoteBroadcast)
 /// ```
 pub fn selecting(
   selector: Selector(message),
-  sub: Subscriber(payload),
+  subscriber: Subscriber(payload),
   transform: fn(Message(payload)) -> message,
 ) -> Selector(message) {
-  process.select_map(selector, sub.subject, transform)
+  process.select_map(selector, subscriber.subject, transform)
 }
 
 /// Broadcast a message to all subscribers of a topic (all nodes)
 pub fn broadcast(
-  ps: PubSub(payload),
+  pubsub: PubSub(payload),
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg = Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) { deliver(pid, msg) })
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_members(pubsub.scope, topic)
+  list.each(members, fn(pid) { deliver(pid, message) })
 }
 
 /// Broadcast a message to all subscribers except those from a specific pid
 pub fn broadcast_from(
-  ps: PubSub(payload),
+  pubsub: PubSub(payload),
   from: Pid,
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg =
+  let message =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
-  let members = ffi_get_members(ps.scope, topic)
+  let members = ffi_get_members(pubsub.scope, topic)
   list.each(members, fn(pid) {
     case pid == from {
       True -> Nil
-      False -> deliver(pid, msg)
+      False -> deliver(pid, message)
     }
   })
 }
@@ -289,25 +289,25 @@ pub fn broadcast_from(
 /// Broadcast a message to all subscribers except a process, preserving a socket
 /// ID that receiving runtimes should exclude locally.
 pub fn broadcast_from_socket(
-  ps: PubSub(payload),
+  pubsub: PubSub(payload),
   from: Pid,
   except_socket_id: String,
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg =
+  let message =
     Message(
       topic: topic,
       event: event,
       payload: payload,
       from: FromSocket(from, except_socket_id),
     )
-  let members = ffi_get_members(ps.scope, topic)
+  let members = ffi_get_members(pubsub.scope, topic)
   list.each(members, fn(pid) {
     case pid == from {
       True -> Nil
-      False -> deliver(pid, msg)
+      False -> deliver(pid, message)
     }
   })
 }
@@ -315,22 +315,23 @@ pub fn broadcast_from_socket(
 // nolint: unused_exports -- public PubSub API surface alongside broadcast/broadcast_from; intended for downstream consumers
 /// Broadcast a message to local subscribers only (current node)
 pub fn local_broadcast(
-  ps: PubSub(payload),
+  pubsub: PubSub(payload),
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg = Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_local_members(ps.scope, topic)
-  list.each(members, fn(pid) { deliver(pid, msg) })
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_local_members(pubsub.scope, topic)
+  list.each(members, fn(pid) { deliver(pid, message) })
 }
 
 /// Get all subscribers for a topic (all nodes)
-pub fn subscribers(ps: PubSub(payload), topic: String) -> List(Pid) {
-  ffi_get_members(ps.scope, topic)
+pub fn subscribers(pubsub: PubSub(payload), topic: String) -> List(Pid) {
+  ffi_get_members(pubsub.scope, topic)
 }
 
 /// Get the number of subscribers for a topic (all nodes)
-pub fn subscriber_count(ps: PubSub(payload), topic: String) -> Int {
-  list.length(ffi_get_members(ps.scope, topic))
+pub fn subscriber_count(pubsub: PubSub(payload), topic: String) -> Int {
+  list.length(ffi_get_members(pubsub.scope, topic))
 }

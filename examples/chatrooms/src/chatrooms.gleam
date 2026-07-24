@@ -25,7 +25,7 @@ pub fn main() {
   let assert Ok(_) = group.add(groups, "public", "room:help")
 
   // Dependencies the chat logic reads (presence writes flow through effects).
-  let ctx = chat_app.Ctx(presence: presence_actor, groups: groups)
+  let context = chat_app.Context(presence: presence_actor, groups: groups)
 
   // Rate limiting matches the previous channel-module deployment; the
   // presence handle is required for the app's presence effects to apply.
@@ -38,7 +38,7 @@ pub fn main() {
 
   let assert Ok(channels) =
     beryl.start(config, init: chat_app.standalone_init, update: fn(model, ev) {
-      chat_app.standalone_update(ctx, model, ev)
+      chat_app.standalone_update(context, model, ev)
     })
 
   io.println("💬 Chat Rooms Demo")
@@ -48,7 +48,7 @@ pub fn main() {
   // Start the HTTP server. A pre-upgrade token gate rejects connections
   // without the demo token before the WebSocket handshake; accepted
   // connections carry no extra metadata (`Ok([])`).
-  let ctx_router =
+  let router_context =
     router.Context(channels:, presence: presence_actor, groups:, base_path: "")
   let ws_config =
     mist_transport.default_config("/socket/websocket")
@@ -62,7 +62,7 @@ pub fn main() {
   let assert Ok(_) =
     fn(req) {
       mist_transport.upgrade(req, channels, ws_config, fn() {
-        router.handle_request(req, ctx_router)
+        router.handle_request(req, router_context)
       })
     }
     |> mist.new
@@ -72,7 +72,10 @@ pub fn main() {
   process.sleep_forever()
 }
 
-fn get_query_param(req, name: String) -> Result(String, Nil) {
+fn get_query_param(
+  req: request.Request(mist.Connection),
+  name: String,
+) -> Result(String, Nil) {
   case request.get_query(req) {
     Ok(params) ->
       list.find(params, fn(pair) { pair.0 == name })

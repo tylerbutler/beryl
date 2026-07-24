@@ -15,19 +15,6 @@ import gleam/int
 import gleam/list
 import gleeunit/should
 
-// Build the list [1, 2, ..., n] without depending on a specific stdlib
-// `list.range` availability.
-fn seq(n: Int) -> List(Int) {
-  seq_loop(n, [])
-}
-
-fn seq_loop(n: Int, acc: List(Int)) -> List(Int) {
-  case n <= 0 {
-    True -> acc
-    False -> seq_loop(n - 1, [n, ..acc])
-  }
-}
-
 fn start_with_global_limit(max_connections: Int) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(
@@ -180,8 +167,7 @@ pub fn concurrent_opens_do_not_exceed_global_ceiling_test() {
   let channels = start_with_global_limit(ceiling)
 
   let results = process.new_subject()
-  seq(attempts)
-  |> list.each(fn(i) {
+  int.range(from: 1, to: attempts + 1, with: Nil, run: fn(_, i) {
     process.spawn_unlinked(fn() {
       // Each attempt uses a unique IP so per-IP tracking cannot be what caps
       // the total — only the node-wide ceiling can.
@@ -203,8 +189,7 @@ pub fn concurrent_opens_do_not_exceed_global_ceiling_test() {
   })
 
   let successes =
-    seq(attempts)
-    |> list.fold(0, fn(acc, _) {
+    int.range(from: 1, to: attempts + 1, with: 0, run: fn(acc, _) {
       case process.receive(results, 1000) {
         Ok(True) -> acc + 1
         Ok(False) -> acc

@@ -8,13 +8,13 @@ import gleam/json
 import gleam/option.{None, Some}
 import gleeunit/should
 
-fn context() -> app.Ctx {
+fn context() -> app.Context {
   let assert Ok(presence_handle) =
     presence.start(presence.default_config("chatrooms-lobby-test"))
   let assert Ok(groups) = group.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
-  app.Ctx(presence: presence_handle, groups: groups)
+  app.Context(presence: presence_handle, groups: groups)
 }
 
 fn lobby_ref() -> socket.Ref {

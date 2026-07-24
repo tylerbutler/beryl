@@ -81,7 +81,13 @@ fn put_block(map: ORMap, id: String, block_json: String) -> ORMap {
         register
         |> mv_register.set(block_json)
         |> crdt.CrdtMvRegister
-      other -> other
+      crdt.CrdtGCounter(_) as other
+      | crdt.CrdtPnCounter(_) as other
+      | crdt.CrdtLwwRegister(_) as other
+      | crdt.CrdtGSet(_) as other
+      | crdt.CrdtTwoPSet(_) as other
+      | crdt.CrdtOrSet(_) as other
+      | crdt.CrdtVersionVector(_) as other -> other
     }
   })
 }

@@ -6,6 +6,7 @@ import beryl/socket
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
+import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http/response
@@ -301,7 +302,7 @@ fn echo_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
   }
 }
 
-fn decode_body(payload) -> Result(String, Nil) {
+fn decode_body(payload: dynamic.Dynamic) -> Result(String, Nil) {
   let decoder = {
     use body <- decode.subfield(["response", "body"], decode.string)
     decode.success(body)
@@ -311,7 +312,7 @@ fn decode_body(payload) -> Result(String, Nil) {
   |> result.map_error(fn(_) { Nil })
 }
 
-fn decode_n(payload) -> Result(Int, Nil) {
+fn decode_n(payload: dynamic.Dynamic) -> Result(Int, Nil) {
   let decoder = {
     use n <- decode.field("n", decode.int)
     decode.success(n)

@@ -126,21 +126,14 @@ fn decode_json_frame(raw: String) -> Result(Frame, Nil) {
   }
 
   json.parse(from: raw, using: decoder)
-  |> result_nil
-}
-
-fn result_nil(result: Result(a, b)) -> Result(a, Nil) {
-  case result {
-    Ok(value) -> Ok(value)
-    Error(_) -> Error(Nil)
-  }
+  |> result.replace_error(Nil)
 }
 
 fn assert_json_string(
   payload: dynamic.Dynamic,
   field: String,
   expected: String,
-) {
+) -> Nil {
   let decoder = {
     use actual <- decode.field(field, decode.string)
     decode.success(actual)
@@ -149,7 +142,11 @@ fn assert_json_string(
   actual |> should.equal(expected)
 }
 
-fn assert_json_bool(payload: dynamic.Dynamic, field: String, expected: Bool) {
+fn assert_json_bool(
+  payload: dynamic.Dynamic,
+  field: String,
+  expected: Bool,
+) -> Nil {
   let decoder = {
     use actual <- decode.field(field, decode.bool)
     decode.success(actual)
@@ -188,14 +185,14 @@ fn latest_text_message(client: WebsocketClient) -> String {
   message
 }
 
-fn drain_text_messages(client: WebsocketClient) {
+fn drain_text_messages(client: WebsocketClient) -> Nil {
   case receive_text(client, 10) {
     Ok(_) -> drain_text_messages(client)
     Error(_) -> Nil
   }
 }
 
-fn assert_no_text_message(client: WebsocketClient) {
+fn assert_no_text_message(client: WebsocketClient) -> Nil {
   receive_text(client, 50)
   |> should.equal(Error(Nil))
 }
@@ -234,7 +231,7 @@ fn contract_update(
           socket.BroadcastFrom(
             topic,
             "broadcasted",
-            wire.dynamic_to_json(payload),
+            wire.dynamic_to_json(payload) |> result.unwrap(json.null()),
           ),
         ])
       socket.Closed(_topic, reason) -> {
@@ -272,12 +269,15 @@ fn start_mist_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
   #(port, server.pid)
 }
 
-fn connect_client(port: Int) {
+fn connect_client(port: Int) -> WebsocketClient {
   let assert Ok(client) = connect_websocket(port, "/socket/websocket")
   client
 }
 
-fn join_client(serializer: Serializer, client: WebsocketClient) {
+fn join_client(
+  serializer: Serializer,
+  client: WebsocketClient,
+) -> WebsocketClient {
   let assert Ok(client) =
     send_text(
       client,
@@ -421,7 +421,10 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
 
 // Socket-level connect/auth hook (on_connect) — issue #93
 
-fn auth_query(req, name: String) -> Result(String, Nil) {
+fn auth_query(
+  req: request.Request(mist.Connection),
+  name: String,
+) -> Result(String, Nil) {
   case request.get_query(req) {
     Ok(params) ->
       list.find(params, fn(pair) { pair.0 == name })

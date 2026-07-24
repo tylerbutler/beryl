@@ -21,36 +21,42 @@ fn test_pubsub(name: String) -> pubsub.PubSub(presence.SyncPayload) {
 }
 
 fn test_config(
-  ps: pubsub.PubSub(presence.SyncPayload),
+  bus: pubsub.PubSub(presence.SyncPayload),
   replica: String,
   interval_ms: Int,
 ) -> presence.Config {
   presence.default_config(replica)
-  |> presence.with_pubsub(ps)
+  |> presence.with_pubsub(bus)
   |> presence.with_broadcast_interval(interval_ms)
 }
 
 // ── BroadcastTick sends state via PubSub ────────────────────────────
 
 pub fn broadcast_tick_sends_state_test() {
-  let ps = test_pubsub("bcast_tick")
+  let bus = test_pubsub("bcast_tick")
 
   // Start presence with a short broadcast interval
-  let config = test_config(ps, "node1", 50)
-  let assert Ok(p) = presence.start(config)
+  let config = test_config(bus, "node1", 50)
+  let assert Ok(replica) = presence.start(config)
 
   // Track an entry
   let _ =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.string("meta"))
+    presence.track(
+      replica,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.string("meta"),
+    )
 
   // Subscribe to the sync topic to observe broadcasts
-  let sub = pubsub.subscriber(ps)
-  pubsub.join(sub, "beryl:presence:sync")
+  let subscription = pubsub.subscriber(bus)
+  pubsub.join(subscription, "beryl:presence:sync")
 
   // Poll until a PubSub message arrives from the broadcast tick
   let selector =
     process.new_selector()
-    |> pubsub.selecting(sub, fn(_msg) { True })
+    |> pubsub.selecting(subscription, fn(_msg) { True })
 
   test_helpers.wait_until(
     fn() {
@@ -64,7 +70,7 @@ pub fn broadcast_tick_sends_state_test() {
   )
 
   // Clean up: leave to avoid polluting other tests
-  pubsub.leave(sub, "beryl:presence:sync")
+  pubsub.leave(subscription, "beryl:presence:sync")
 
   // Drain any remaining messages from the mailbox
   drain_mailbox()
@@ -73,31 +79,33 @@ pub fn broadcast_tick_sends_state_test() {
 // ── Two presence actors converge via PubSub ─────────────────────────
 
 pub fn two_replicas_converge_via_pubsub_test() {
-  let ps = test_pubsub("converge_2")
+  let bus = test_pubsub("converge_2")
 
-  let config1 = test_config(ps, "node1", 50)
-  let config2 = test_config(ps, "node2", 50)
+  let config1 = test_config(bus, "node1", 50)
+  let config2 = test_config(bus, "node2", 50)
 
-  let assert Ok(p1) = presence.start(config1)
-  let assert Ok(p2) = presence.start(config2)
+  let assert Ok(replica_one) = presence.start(config1)
+  let assert Ok(replica_two) = presence.start(config2)
 
-  let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
-  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
+  let _ =
+    presence.track(replica_one, "room:lobby", "user:1", "socket-1", json.null())
+  let _ =
+    presence.track(replica_two, "room:lobby", "user:2", "socket-2", json.null())
 
   // Wait for broadcast ticks to fire and replicate
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p1, "room:lobby")) == 2 },
+    fn() { list.length(presence.list(replica_one, "room:lobby")) == 2 },
     2000,
     20,
   )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 2 },
+    fn() { list.length(presence.list(replica_two, "room:lobby")) == 2 },
     2000,
     20,
   )
 
-  let entries1 = presence.list(p1, "room:lobby")
-  let entries2 = presence.list(p2, "room:lobby")
+  let entries1 = presence.list(replica_one, "room:lobby")
+  let entries2 = presence.list(replica_two, "room:lobby")
 
   list.length(entries1) |> should.equal(2)
   list.length(entries2) |> should.equal(2)
@@ -106,12 +114,13 @@ pub fn two_replicas_converge_via_pubsub_test() {
 // ── Self-broadcasts are ignored ─────────────────────────────────────
 
 pub fn self_broadcast_ignored_test() {
-  let ps = test_pubsub("self_bcast")
+  let bus = test_pubsub("self_bcast")
 
-  let config = test_config(ps, "node1", 50)
-  let assert Ok(p) = presence.start(config)
+  let config = test_config(bus, "node1", 50)
+  let assert Ok(replica) = presence.start(config)
 
-  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ =
+    presence.track(replica, "room:lobby", "user:1", "socket-1", json.null())
 
   // Wait for several broadcast ticks to ensure self-broadcast doesn't duplicate.
   // This is a negative test (verifying something does NOT happen), so a sleep
@@ -119,38 +128,39 @@ pub fn self_broadcast_ignored_test() {
   process.sleep(200)
 
   // Should still only have 1 entry (self-broadcast doesn't duplicate)
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence.list(replica, "room:lobby")
   list.length(entries) |> should.equal(1)
 }
 
 // ── Receiving remote state triggers merge ───────────────────────────
 
 pub fn remote_state_triggers_merge_via_pubsub_test() {
-  let ps = test_pubsub("remote_merge")
+  let bus = test_pubsub("remote_merge")
 
   // Node1 with broadcasting disabled (manual control)
   let config1 =
     presence.default_config("node1")
-    |> presence.with_pubsub(ps)
+    |> presence.with_pubsub(bus)
     |> presence.with_broadcast_interval(0)
-  let assert Ok(p1) = presence.start(config1)
+  let assert Ok(replica_one) = presence.start(config1)
 
   // Node2 with broadcasting enabled
-  let config2 = test_config(ps, "node2", 50)
-  let assert Ok(p2) = presence.start(config2)
+  let config2 = test_config(bus, "node2", 50)
+  let assert Ok(replica_two) = presence.start(config2)
 
   // Track on node2
-  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
+  let _ =
+    presence.track(replica_two, "room:lobby", "user:2", "socket-2", json.null())
 
   // Wait for node2's broadcast to reach node1
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p1, "room:lobby")) == 1 },
+    fn() { list.length(presence.list(replica_one, "room:lobby")) == 1 },
     2000,
     20,
   )
 
   // Node1 should now see node2's entry via PubSub replication
-  let entries = presence.list(p1, "room:lobby")
+  let entries = presence.list(replica_one, "room:lobby")
   list.length(entries) |> should.equal(1)
 
   let assert [entry] = entries
@@ -160,40 +170,49 @@ pub fn remote_state_triggers_merge_via_pubsub_test() {
 // ── Multi-replica convergence ───────────────────────────────────────
 
 pub fn three_replicas_converge_test() {
-  let ps = test_pubsub("converge_3")
+  let bus = test_pubsub("converge_3")
 
-  let config1 = test_config(ps, "node1", 50)
-  let config2 = test_config(ps, "node2", 50)
-  let config3 = test_config(ps, "node3", 50)
+  let config1 = test_config(bus, "node1", 50)
+  let config2 = test_config(bus, "node2", 50)
+  let config3 = test_config(bus, "node3", 50)
 
-  let assert Ok(p1) = presence.start(config1)
-  let assert Ok(p2) = presence.start(config2)
-  let assert Ok(p3) = presence.start(config3)
+  let assert Ok(replica_one) = presence.start(config1)
+  let assert Ok(replica_two) = presence.start(config2)
+  let assert Ok(replica_three) = presence.start(config3)
 
-  let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
-  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
-  let _ = presence.track(p3, "room:lobby", "user:3", "socket-3", json.null())
+  let _ =
+    presence.track(replica_one, "room:lobby", "user:1", "socket-1", json.null())
+  let _ =
+    presence.track(replica_two, "room:lobby", "user:2", "socket-2", json.null())
+  let _ =
+    presence.track(
+      replica_three,
+      "room:lobby",
+      "user:3",
+      "socket-3",
+      json.null(),
+    )
 
   // Wait for convergence (all replicas see all 3 entries)
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p1, "room:lobby")) == 3 },
+    fn() { list.length(presence.list(replica_one, "room:lobby")) == 3 },
     2000,
     20,
   )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 3 },
+    fn() { list.length(presence.list(replica_two, "room:lobby")) == 3 },
     2000,
     20,
   )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p3, "room:lobby")) == 3 },
+    fn() { list.length(presence.list(replica_three, "room:lobby")) == 3 },
     2000,
     20,
   )
 
-  let entries1 = presence.list(p1, "room:lobby")
-  let entries2 = presence.list(p2, "room:lobby")
-  let entries3 = presence.list(p3, "room:lobby")
+  let entries1 = presence.list(replica_one, "room:lobby")
+  let entries2 = presence.list(replica_two, "room:lobby")
+  let entries3 = presence.list(replica_three, "room:lobby")
 
   list.length(entries1) |> should.equal(3)
   list.length(entries2) |> should.equal(3)
@@ -204,47 +223,49 @@ pub fn three_replicas_converge_test() {
 
 pub fn presence_without_pubsub_still_works_test() {
   let config = presence.default_config("standalone")
-  let assert Ok(p) = presence.start(config)
+  let assert Ok(replica) = presence.start(config)
 
-  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ =
+    presence.track(replica, "room:lobby", "user:1", "socket-1", json.null())
 
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence.list(replica, "room:lobby")
   list.length(entries) |> should.equal(1)
 }
 
 // ── Untrack propagation via PubSub ───────────────────────────────────
 
 pub fn untrack_propagates_via_pubsub_test() {
-  let ps = test_pubsub("untrack_prop")
+  let bus = test_pubsub("untrack_prop")
 
-  let config1 = test_config(ps, "node1", 50)
-  let config2 = test_config(ps, "node2", 50)
+  let config1 = test_config(bus, "node1", 50)
+  let config2 = test_config(bus, "node2", 50)
 
-  let assert Ok(p1) = presence.start(config1)
-  let assert Ok(p2) = presence.start(config2)
+  let assert Ok(replica_one) = presence.start(config1)
+  let assert Ok(replica_two) = presence.start(config2)
 
   // Track on node1
-  let ref = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
+  let ref =
+    presence.track(replica_one, "room:lobby", "user:1", "socket-1", json.null())
 
   // Wait for convergence -- both should see the entry
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    fn() { list.length(presence.list(replica_two, "room:lobby")) == 1 },
     2000,
     20,
   )
 
   // Untrack on node1
-  presence.untrack(p1, ref)
+  presence.untrack(replica_one, ref)
 
   // Wait for the untrack to propagate via next broadcast tick
   test_helpers.wait_until(
-    fn() { presence.list(p2, "room:lobby") == [] },
+    fn() { presence.list(replica_two, "room:lobby") == [] },
     2000,
     20,
   )
 
   // Node2 should see the removal
-  list.length(presence.list(p2, "room:lobby")) |> should.equal(0)
+  list.length(presence.list(replica_two, "room:lobby")) |> should.equal(0)
 }
 
 // ── Resilience: malformed sync messages ──────────────────────────────
@@ -258,19 +279,19 @@ pub fn untrack_propagates_via_pubsub_test() {
 // rather than attempting to interpret.
 
 pub fn survives_unknown_envelope_version_test() {
-  let ps = test_pubsub("malform_version")
+  let bus = test_pubsub("malform_version")
   let config =
     presence.default_config("node1")
-    |> presence.with_pubsub(ps)
-  let assert Ok(p) = presence.start(config)
+    |> presence.with_pubsub(bus)
+  let assert Ok(replica) = presence.start(config)
 
   // Track an entry to prove the actor is alive
-  let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  let _ = presence.track(replica, "room:lobby", "user:1", "s1", json.null())
+  list.length(presence.list(replica, "room:lobby")) |> should.equal(1)
 
   // Send a sync envelope with a version this node does not understand
   pubsub.broadcast(
-    ps,
+    bus,
     "beryl:presence:sync",
     "presence_sync",
     presence.SyncPayload(
@@ -284,8 +305,8 @@ pub fn survives_unknown_envelope_version_test() {
   process.sleep(50)
 
   // Track another entry and verify the actor is still alive
-  let _ = presence.track(p, "room:lobby", "user:2", "s2", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(2)
+  let _ = presence.track(replica, "room:lobby", "user:2", "s2", json.null())
+  list.length(presence.list(replica, "room:lobby")) |> should.equal(2)
 }
 
 // ── Resilience: exception raised inside the merge/processing path ─────
@@ -296,45 +317,63 @@ pub fn survives_unknown_envelope_version_test() {
 /// exception must be contained: the shared presence actor stays alive and its
 /// state is not partially mutated by the poisoned sync.
 pub fn survives_exception_in_processing_path_test() {
-  let ps = test_pubsub("processing_crash")
+  let bus = test_pubsub("processing_crash")
 
   // Node1's on_diff panics whenever a diff touches "room:poison". Diffs for
   // any other topic pass through untouched, so local tracking still works.
   let config1 =
     presence.default_config("node1")
-    |> presence.with_pubsub(ps)
+    |> presence.with_pubsub(bus)
     |> presence.with_on_diff(fn(diff) {
       case presence.diff_joins(diff, "room:poison") {
         [] -> Nil
         _ -> panic as "poisoned diff"
       }
     })
-  let assert Ok(p1) = presence.start(config1)
+  let assert Ok(replica_one) = presence.start(config1)
 
   // Prove the actor is alive and record its state before the poisoned sync.
   let _ =
-    presence.track(p1, "room:lobby", "user:safe", "socket-safe", json.null())
-  list.length(presence.list(p1, "room:lobby")) |> should.equal(1)
+    presence.track(
+      replica_one,
+      "room:lobby",
+      "user:safe",
+      "socket-safe",
+      json.null(),
+    )
+  list.length(presence.list(replica_one, "room:lobby")) |> should.equal(1)
 
   // Node2 broadcasts a *valid* sync that decodes cleanly but produces a diff
   // touching "room:poison", tripping node1's panicking callback inside the
   // merge/processing path.
-  let config2 = test_config(ps, "node2", 50)
-  let assert Ok(p2) = presence.start(config2)
+  let config2 = test_config(bus, "node2", 50)
+  let assert Ok(replica_two) = presence.start(config2)
   let _ =
-    presence.track(p2, "room:poison", "user:boom", "socket-boom", json.null())
+    presence.track(
+      replica_two,
+      "room:poison",
+      "user:boom",
+      "socket-boom",
+      json.null(),
+    )
 
   // Give node1 time to receive and reject several broadcasts of the poison.
   process.sleep(200)
 
   // The actor is still alive: a fresh local track succeeds.
   let _ =
-    presence.track(p1, "room:lobby", "user:safe2", "socket-safe2", json.null())
-  list.length(presence.list(p1, "room:lobby")) |> should.equal(2)
+    presence.track(
+      replica_one,
+      "room:lobby",
+      "user:safe2",
+      "socket-safe2",
+      json.null(),
+    )
+  list.length(presence.list(replica_one, "room:lobby")) |> should.equal(2)
 
   // State was not partially mutated: the poisoned sync never merged, so
   // "room:poison" remains empty on node1.
-  presence.list(p1, "room:poison") |> should.equal([])
+  presence.list(replica_one, "room:poison") |> should.equal([])
 }
 
 // ── Helper to drain stray messages ──────────────────────────────────
@@ -353,8 +392,8 @@ fn drain_mailbox() -> Nil {
 // ── Restart safety: incarnation-unique replicas ───────────────────────
 
 /// Kill a presence actor's process, simulating a crash without cleanup.
-fn kill_presence(p: presence.Presence) -> Nil {
-  let assert Ok(pid) = process.subject_owner(presence.subject(p))
+fn kill_presence(replica: presence.Presence) -> Nil {
+  let assert Ok(pid) = process.subject_owner(presence.subject(replica))
   // The actor is linked to this (test) process; unlink before killing so
   // the exit signal does not take the test runner down with it.
   process.unlink(pid)
@@ -365,60 +404,86 @@ fn kill_presence(p: presence.Presence) -> Nil {
 }
 
 pub fn restarted_node_presences_replicate_to_peers_test() {
-  let ps = test_pubsub("restart_join")
-  let assert Ok(p1) = presence.start(test_config(ps, "node1", 30))
-  let assert Ok(p2) = presence.start(test_config(ps, "node2", 30))
+  let bus = test_pubsub("restart_join")
+  let assert Ok(replica_one) = presence.start(test_config(bus, "node1", 30))
+  let assert Ok(replica_two) = presence.start(test_config(bus, "node2", 30))
 
   // Seed replication both ways so node2's context covers node1's clocks.
   let _ =
-    presence.track(p1, "room:lobby", "user:old", "socket-old", json.null())
+    presence.track(
+      replica_one,
+      "room:lobby",
+      "user:old",
+      "socket-old",
+      json.null(),
+    )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    fn() { list.length(presence.list(replica_two, "room:lobby")) == 1 },
     2000,
     10,
   )
 
   // Crash node1 and restart it under the same configured base name.
-  kill_presence(p1)
-  let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
+  kill_presence(replica_one)
+  let assert Ok(replica_one_restarted) =
+    presence.start(test_config(bus, "node1", 30))
 
   // A presence tracked by the restarted incarnation must become visible on
   // node2. Without incarnation-unique replicas, node2's causal context
   // already covered the reused clocks and silently dropped this join.
   let _ =
-    presence.track(p1b, "room:lobby", "user:new", "socket-new", json.null())
+    presence.track(
+      replica_one_restarted,
+      "room:lobby",
+      "user:new",
+      "socket-new",
+      json.null(),
+    )
   test_helpers.wait_until(
     fn() {
-      presence.list(p2, "room:lobby")
+      presence.list(replica_two, "room:lobby")
       |> list.any(fn(entry) { entry.key == "user:new" })
     },
     2000,
     10,
   )
-  presence.list(p2, "room:lobby")
+  presence.list(replica_two, "room:lobby")
   |> list.any(fn(entry) { entry.key == "user:new" })
   |> should.be_true
 }
 
 pub fn restart_prunes_previous_incarnations_ghosts_test() {
-  let ps = test_pubsub("restart_ghosts")
-  let assert Ok(p1) = presence.start(test_config(ps, "node1", 30))
-  let assert Ok(p2) = presence.start(test_config(ps, "node2", 30))
+  let bus = test_pubsub("restart_ghosts")
+  let assert Ok(replica_one) = presence.start(test_config(bus, "node1", 30))
+  let assert Ok(replica_two) = presence.start(test_config(bus, "node2", 30))
 
   // node1 tracks a presence whose session dies with the node.
   let _ =
-    presence.track(p1, "room:lobby", "user:ghost", "socket-dead", json.null())
+    presence.track(
+      replica_one,
+      "room:lobby",
+      "user:ghost",
+      "socket-dead",
+      json.null(),
+    )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    fn() { list.length(presence.list(replica_two, "room:lobby")) == 1 },
     2000,
     10,
   )
 
-  kill_presence(p1)
-  let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
+  kill_presence(replica_one)
+  let assert Ok(replica_one_restarted) =
+    presence.start(test_config(bus, "node1", 30))
   // Give the new incarnation something to gossip so peers observe it.
   let _ =
-    presence.track(p1b, "room:lobby", "user:live", "socket-live", json.null())
+    presence.track(
+      replica_one_restarted,
+      "room:lobby",
+      "user:live",
+      "socket-live",
+      json.null(),
+    )
 
   // The dead incarnation's entry disappears from the peer once it observes
   // the new incarnation, and it must not resurrect into the restarted node
@@ -426,18 +491,20 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() {
   test_helpers.wait_until(
     fn() {
       let on_p2 =
-        presence.list(p2, "room:lobby") |> list.map(fn(entry) { entry.key })
+        presence.list(replica_two, "room:lobby")
+        |> list.map(fn(entry) { entry.key })
       let on_p1b =
-        presence.list(p1b, "room:lobby") |> list.map(fn(entry) { entry.key })
+        presence.list(replica_one_restarted, "room:lobby")
+        |> list.map(fn(entry) { entry.key })
       on_p2 == ["user:live"] && on_p1b == ["user:live"]
     },
     3000,
     10,
   )
-  presence.list(p2, "room:lobby")
+  presence.list(replica_two, "room:lobby")
   |> list.map(fn(entry) { entry.key })
   |> should.equal(["user:live"])
-  presence.list(p1b, "room:lobby")
+  presence.list(replica_one_restarted, "room:lobby")
   |> list.map(fn(entry) { entry.key })
   |> should.equal(["user:live"])
 }

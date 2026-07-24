@@ -39,8 +39,8 @@ pub type Model {
 
 /// Dependencies the document logic needs: the doc store and the shared
 /// HMAC secret for tenant token verification.
-pub type Ctx {
-  Ctx(store: Store, secret: BitArray)
+pub type Context {
+  Context(store: Store, secret: BitArray)
 }
 
 /// Build a collision-resistant key for a tenant/document pair.
@@ -51,7 +51,7 @@ pub fn build_document_key(tenant: String, document: String) -> String {
 
 /// Handle a join for a `document:*:*` topic. Returns `None` when rejected.
 pub fn join(
-  ctx: Ctx,
+  context: Context,
   _socket_id: String,
   topic_name: String,
   payload: Dynamic,
@@ -67,13 +67,15 @@ pub fn join(
           socket.RejectJoin(ref, error_payload("missing_token")),
         ])
         Ok(token) ->
-          case auth.verify_tenant(token, tenant, ctx.secret) {
+          case auth.verify_tenant(token, tenant, context.secret) {
             Error(_) -> #(None, [
               socket.RejectJoin(ref, error_payload("unauthorized")),
             ])
             Ok(Nil) -> {
               let document_key = build_document_key(tenant, document)
-              let state = case doc_store.get_state(ctx.store, document_key) {
+              let state = case
+                doc_store.get_state(context.store, document_key)
+              {
                 Ok(encoded) -> json.string(encoded)
                 Error(doc_store.NotFound) -> json.null()
                 Error(doc_store.Timeout) -> {
@@ -103,7 +105,7 @@ pub fn join(
 
 /// Handle a client message on a joined document topic.
 pub fn update(
-  ctx: Ctx,
+  context: Context,
   _socket_id: String,
   topic_name: String,
   model: Model,
@@ -112,7 +114,7 @@ pub fn update(
   ref: Option(Ref),
 ) -> #(Model, List(Effect)) {
   case event_name {
-    "sync_state" -> sync_state(ctx, topic_name, model, payload, ref)
+    "sync_state" -> sync_state(context, topic_name, model, payload, ref)
     _ -> #(model, reply_error("unknown_event", ref))
   }
 }
@@ -120,7 +122,7 @@ pub fn update(
 /// Handle the topic closing. Documents keep no per-socket server state
 /// beyond the model itself, so there is nothing to clean up.
 pub fn closed(
-  _ctx: Ctx,
+  _context: Context,
   _socket_id: String,
   _topic_name: String,
   _model: Model,
@@ -148,7 +150,7 @@ pub fn standalone_init(
 /// topic. Non-`document:*` joins are rejected (fail closed), mirroring the
 /// old `document:*:*` handler registration.
 pub fn standalone_update(
-  ctx: Ctx,
+  context: Context,
   model: Standalone,
   ev: socket.Input(Nil),
 ) -> socket.Next(Standalone, Nil) {
@@ -157,7 +159,7 @@ pub fn standalone_update(
       case topic {
         "document:" <> _ -> {
           let #(joined, effects) =
-            join(ctx, model.socket_id, topic, payload, ref)
+            join(context, model.socket_id, topic, payload, ref)
           case joined {
             Some(sub) ->
               socket.Next(
@@ -177,7 +179,15 @@ pub fn standalone_update(
       case dict.get(model.docs, topic) {
         Ok(sub) -> {
           let #(sub, effects) =
-            update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
+            update(
+              context,
+              model.socket_id,
+              topic,
+              sub,
+              event_name,
+              payload,
+              ref,
+            )
           socket.Next(
             Standalone(..model, docs: dict.insert(model.docs, topic, sub)),
             effects,
@@ -191,7 +201,7 @@ pub fn standalone_update(
         Ok(sub) ->
           socket.Next(
             Standalone(..model, docs: dict.delete(model.docs, topic)),
-            closed(ctx, model.socket_id, topic, sub),
+            closed(context, model.socket_id, topic, sub),
           )
         Error(Nil) -> socket.Next(model, [])
       }
@@ -201,7 +211,7 @@ pub fn standalone_update(
 }
 
 fn sync_state(
-  ctx: Ctx,
+  context: Context,
   topic_name: String,
   model: Model,
   payload: Dynamic,
@@ -212,7 +222,7 @@ fn sync_state(
       case string.byte_size(state) > max_state_bytes {
         True -> #(model, reply_error("state_too_large", ref))
         False -> {
-          doc_store.merge_state(ctx.store, model.document_key, state)
+          doc_store.merge_state(context.store, model.document_key, state)
           #(model, [
             socket.BroadcastFrom(
               topic_name,

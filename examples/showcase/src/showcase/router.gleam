@@ -21,17 +21,17 @@ pub type Context {
 
 pub fn handle_request(
   req: Request(Connection),
-  ctx: Context,
+  context: Context,
 ) -> Response(ResponseData) {
   case request.path_segments(req) {
     [] -> landing_page()
     ["healthz"] -> healthz()
-    ["cursors", ..] -> cursors_router.handle_request(req, ctx.cursors)
-    ["chat", ..] -> chatrooms_router.handle_request(req, ctx.chatrooms)
+    ["cursors", ..] -> cursors_router.handle_request(req, context.cursors)
+    ["chat", ..] -> chatrooms_router.handle_request(req, context.chatrooms)
     // TODO: re-enable the collab_docs demo. The handler is still
     // registered in showcase.main so reinstating the route + landing
     // card is a one-line change.
-    // ["docs", ..] -> collab_docs_router.handle_request(req, ctx.collab_docs)
+    // ["docs", ..] -> collab_docs_router.handle_request(req, context.collab_docs)
     _ -> static.not_found()
   }
 }

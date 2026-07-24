@@ -44,8 +44,12 @@ type Model {
 }
 
 /// Dependencies for the three embedded apps.
-type Ctx {
-  Ctx(cursors: cursors_app.Ctx, rooms: chat_app.Ctx, docs: docs_app.Ctx)
+type Context {
+  Context(
+    cursors: cursors_app.Context,
+    rooms: chat_app.Context,
+    docs: docs_app.Context,
+  )
 }
 
 pub fn main() {
@@ -65,11 +69,11 @@ pub fn main() {
   let docs_secret = docs_auth.new_secret()
   let assert Ok(docs_store) = doc_store.start()
 
-  let ctx =
-    Ctx(
-      cursors: cursors_app.Ctx(presence: presence_actor),
-      rooms: chat_app.Ctx(presence: presence_actor, groups: groups),
-      docs: docs_app.Ctx(store: docs_store, secret: docs_secret),
+  let context =
+    Context(
+      cursors: cursors_app.Context(presence: presence_actor),
+      rooms: chat_app.Context(presence: presence_actor, groups: groups),
+      docs: docs_app.Context(store: docs_store, secret: docs_secret),
     )
 
   // Per-topic-pattern rate limits replace the old single global
@@ -97,35 +101,35 @@ pub fn main() {
           [],
         )
       },
-      update: fn(model, ev) { update(ctx, model, ev) },
+      update: fn(model, ev) { update(context, model, ev) },
     )
 
   // Build per-example contexts pinned to their URL prefix.
-  let cursors_ctx =
+  let cursors_context =
     cursors_router.Context(
       channels:,
       presence: presence_actor,
       base_path: "/cursors",
     )
-  let chatrooms_ctx =
+  let chatrooms_context =
     chatrooms_router.Context(
       channels:,
       presence: presence_actor,
       groups:,
       base_path: "/chat",
     )
-  let collab_docs_ctx =
+  let collab_docs_context =
     collab_docs_router.Context(
       channels:,
       store: docs_store,
       secret: docs_secret,
       base_path: "/docs",
     )
-  let showcase_ctx =
+  let showcase_context =
     router.Context(
-      cursors: cursors_ctx,
-      chatrooms: chatrooms_ctx,
-      collab_docs: collab_docs_ctx,
+      cursors: cursors_context,
+      chatrooms: chatrooms_context,
+      collab_docs: collab_docs_context,
     )
 
   let port =
@@ -149,7 +153,7 @@ pub fn main() {
         req,
         channels,
         mist_transport.default_config("/socket/websocket"),
-        fn() { router.handle_request(req, showcase_ctx) },
+        fn() { router.handle_request(req, showcase_context) },
       )
     }
     |> mist.new
@@ -163,23 +167,29 @@ pub fn main() {
 /// The socket-wide router: dispatch every event to the embedded app that
 /// owns its topic namespace, threading that app's sub-model through the
 /// per-namespace `Dict`.
-fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
+fn update(context: Context, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
   case ev {
     socket.Join(topic, payload, ref) ->
       case topic {
         "cursor:" <> _ -> {
           let #(joined, effects) =
-            cursors_app.join(ctx.cursors, model.socket_id, topic, payload, ref)
+            cursors_app.join(
+              context.cursors,
+              model.socket_id,
+              topic,
+              payload,
+              ref,
+            )
           socket.Next(store_cursor(model, topic, joined), effects)
         }
         "room:" <> _ -> {
           let #(joined, effects) =
-            chat_app.join(ctx.rooms, model.socket_id, topic, payload, ref)
+            chat_app.join(context.rooms, model.socket_id, topic, payload, ref)
           socket.Next(store_room(model, topic, joined), effects)
         }
         "document:" <> _ -> {
           let #(joined, effects) =
-            docs_app.join(ctx.docs, model.socket_id, topic, payload, ref)
+            docs_app.join(context.docs, model.socket_id, topic, payload, ref)
           socket.Next(store_doc(model, topic, joined), effects)
         }
         _ ->
@@ -198,7 +208,7 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
             Ok(sub) -> {
               let #(sub, effects) =
                 cursors_app.update(
-                  ctx.cursors,
+                  context.cursors,
                   model.socket_id,
                   topic,
                   sub,
@@ -214,7 +224,7 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
             Ok(sub) -> {
               let #(sub, effects) =
                 chat_app.update(
-                  ctx.rooms,
+                  context.rooms,
                   model.socket_id,
                   topic,
                   sub,
@@ -231,7 +241,7 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
             Ok(sub) -> {
               let #(sub, effects) =
                 docs_app.update(
-                  ctx.docs,
+                  context.docs,
                   model.socket_id,
                   topic,
                   sub,
@@ -253,7 +263,7 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
             Ok(sub) ->
               socket.Next(
                 Model(..model, cursors: dict.delete(model.cursors, topic)),
-                cursors_app.closed(ctx.cursors, model.socket_id, topic, sub),
+                cursors_app.closed(context.cursors, model.socket_id, topic, sub),
               )
             Error(Nil) -> socket.Next(model, [])
           }
@@ -262,7 +272,7 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
             Ok(sub) ->
               socket.Next(
                 Model(..model, rooms: dict.delete(model.rooms, topic)),
-                chat_app.closed(ctx.rooms, model.socket_id, topic, sub),
+                chat_app.closed(context.rooms, model.socket_id, topic, sub),
               )
             Error(Nil) -> socket.Next(model, [])
           }
@@ -271,7 +281,7 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
             Ok(sub) ->
               socket.Next(
                 Model(..model, docs: dict.delete(model.docs, topic)),
-                docs_app.closed(ctx.docs, model.socket_id, topic, sub),
+                docs_app.closed(context.docs, model.socket_id, topic, sub),
               )
             Error(Nil) -> socket.Next(model, [])
           }

@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Changed"
+body = "Aligned the API with the Gleam conventions guide. `wire.dynamic_to_json` now returns `Result(Json, Nil)` instead of silently encoding unconvertible values as `null`. PubSub's pg scope is typed as `Atom` end to end and `pubsub.join`/`pubsub.leave` no longer contain assertions. `socket.StopReason` is documented as a closed set: match it exhaustively; new reasons are a breaking change. Internal cleanups: `internal.LogLevel`'s error variant is `ErrorLevel`, presence tracks `session_id` (not `pid`) naming throughout, and dead `connection_limit` start helpers were removed."

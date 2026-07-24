@@ -6,10 +6,10 @@ import gleam/json
 import gleam/list
 import gleeunit/should
 
-fn context() -> app.Ctx {
+fn context() -> app.Context {
   let assert Ok(handle) =
     presence.start(presence.default_config("cursors-reaction-test"))
-  app.Ctx(presence: handle)
+  app.Context(presence: handle)
 }
 
 fn model() -> app.Model {

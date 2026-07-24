@@ -17,7 +17,7 @@ pub fn main() {
   let assert Ok(presence_actor) = presence.start(presence_config)
 
   // Dependencies the cursor logic reads (presence writes flow through effects).
-  let ctx = cursors_app.Ctx(presence: presence_actor)
+  let context = cursors_app.Context(presence: presence_actor)
 
   // Rate limiting for cursor events; the presence handle is required for
   // the app's presence effects to apply.
@@ -30,7 +30,9 @@ pub fn main() {
     beryl.start(
       config,
       init: cursors_app.standalone_init,
-      update: fn(model, ev) { cursors_app.standalone_update(ctx, model, ev) },
+      update: fn(model, ev) {
+        cursors_app.standalone_update(context, model, ev)
+      },
     )
 
   // Honor $PORT (Railway/PaaS) and $HOST/$BIND_ADDRESS; fall back to local defaults.
@@ -47,7 +49,7 @@ pub fn main() {
   io.println("")
 
   // Start the HTTP server.
-  let ctx_router =
+  let router_context =
     router.Context(channels:, presence: presence_actor, base_path: "")
 
   let assert Ok(_) =
@@ -56,7 +58,7 @@ pub fn main() {
         req,
         channels,
         mist_transport.default_config("/socket/websocket"),
-        fn() { router.handle_request(req, ctx_router) },
+        fn() { router.handle_request(req, router_context) },
       )
     }
     |> mist.new

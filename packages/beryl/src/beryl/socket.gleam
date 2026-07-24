@@ -81,8 +81,9 @@ pub fn ref_msg_ref(ref: Ref) -> Option(String) {
 
 /// Why a socket or topic is stopping.
 ///
-/// Delivered in `Closed` inputs and accepted by `Stop`. Match with a
-/// catch-all (`_`) arm: new stop reasons may be added in minor releases.
+/// Delivered in `Closed` inputs and accepted by `Stop`. This is a closed
+/// set: match it exhaustively. Adding a new stop reason is a breaking
+/// change and will be released as such.
 pub type StopReason {
   /// Normal shutdown (client left or disconnected cleanly).
   Normal

@@ -15,20 +15,20 @@ pub fn main() {
 
   // Dependencies the document logic needs: the doc store and the shared
   // HMAC secret for join-level tenant token verification.
-  let ctx = docs_app.Ctx(store: store, secret: secret)
+  let context = docs_app.Context(store: store, secret: secret)
 
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: docs_app.standalone_init,
-      update: fn(model, ev) { docs_app.standalone_update(ctx, model, ev) },
+      update: fn(model, ev) { docs_app.standalone_update(context, model, ev) },
     )
 
   io.println("📝 Collaborative CRDT Docs Demo")
   io.println("   Open http://localhost:8002")
   io.println("")
 
-  let ctx_router = router.Context(channels:, store:, secret:, base_path: "")
+  let router_context = router.Context(channels:, store:, secret:, base_path: "")
 
   let assert Ok(_) =
     fn(req) {
@@ -36,7 +36,7 @@ pub fn main() {
         req,
         channels,
         mist_transport.default_config("/socket/websocket"),
-        fn() { router.handle_request(req, ctx_router) },
+        fn() { router.handle_request(req, router_context) },
       )
     }
     |> mist.new

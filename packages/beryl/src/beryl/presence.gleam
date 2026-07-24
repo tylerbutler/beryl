@@ -138,8 +138,8 @@ fn state_entries_to_presence_entries(
     #(
       topic,
       list.map(topic_entries, fn(topic_entry) {
-        let #(key, pid, meta) = topic_entry
-        PresenceEntry(session_id: pid, key: key, meta: meta)
+        let #(key, session_id, meta) = topic_entry
+        PresenceEntry(session_id: session_id, key: key, meta: meta)
       }),
     )
   })
@@ -192,12 +192,12 @@ pub opaque type Message {
   Track(
     topic: String,
     key: String,
-    pid: String,
+    session_id: String,
     meta: json.Json,
     reply: Subject(String),
   )
   Untrack(ref: String, reply: Subject(Nil))
-  UntrackAll(pid: String, reply: Subject(Nil))
+  UntrackAll(session_id: String, reply: Subject(Nil))
   List(topic: String, reply: Subject(List(PresenceEntry)))
   GetByKey(
     topic: String,
@@ -466,7 +466,11 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
     fields
     |> dict.delete("phx_ref")
     |> dict.to_list
-    |> list.map(fn(field) { #(field.0, wire.dynamic_to_json(field.1)) })
+    // Meta fields come from decoded JSON, so conversion only fails for
+    // non-JSON terms smuggled into a meta object; store those as null.
+    |> list.map(fn(field) {
+      #(field.0, wire.dynamic_to_json(field.1) |> result.unwrap(json.null()))
+    })
     |> list.append([#("phx_ref", json.string(ref))])
     |> json.object
   })
@@ -541,26 +545,26 @@ fn handle_message(
 ) -> actor.Next(ActorState, Message) {
   let logger = internal.logger("beryl.presence")
   case message {
-    Track(topic, key, pid, meta, reply) -> {
+    Track(topic, key, session_id, meta, reply) -> {
       let ref = generate_ref()
       let meta = meta_with_phx_ref(meta, ref)
-      let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
+      let new_crdt = state.join(actor_state.crdt, session_id, topic, key, meta)
       maybe_invoke_on_diff(
         actor_state.config,
-        single_join_diff(topic, key, pid, meta),
+        single_join_diff(topic, key, session_id, meta),
       )
       logger
       |> log.debug("Presence tracked", [
         #("topic", topic),
         #("key", key),
-        #("pid", pid),
+        #("session_id", session_id),
         #("ref", ref),
       ])
       let new_refs =
         dict.insert(
           actor_state.refs,
           ref,
-          TrackedPresence(topic: topic, key: key, session_id: pid),
+          TrackedPresence(topic: topic, key: key, session_id: session_id),
         )
       process.send(reply, ref)
       actor.continue(
@@ -583,7 +587,7 @@ fn handle_message(
           |> log.debug("Presence untracked", [
             #("topic", topic),
             #("key", key),
-            #("pid", session_id),
+            #("session_id", session_id),
             #("ref", ref),
           ])
           process.send(reply, Nil)
@@ -599,15 +603,15 @@ fn handle_message(
       }
     }
 
-    UntrackAll(pid, reply) -> {
-      let diff = leave_all_diff(actor_state.crdt, pid)
-      let new_crdt = state.leave_by_pid(actor_state.crdt, pid)
+    UntrackAll(session_id, reply) -> {
+      let diff = leave_all_diff(actor_state.crdt, session_id)
+      let new_crdt = state.leave_by_pid(actor_state.crdt, session_id)
       maybe_invoke_on_diff(actor_state.config, diff)
       // Drop any refs that pointed at the removed session so they cannot leak
       // or later leave presences they no longer own.
       let new_refs =
         dict.filter(actor_state.refs, fn(_ref, tracked) {
-          tracked.session_id != pid
+          tracked.session_id != session_id
         })
       process.send(reply, Nil)
       actor.continue(
@@ -658,13 +662,13 @@ fn handle_message(
 fn single_join_diff(
   topic: String,
   key: String,
-  pid: String,
+  session_id: String,
   meta: json.Json,
 ) -> Diff {
   Diff(
     joins: dict.from_list([
       #(topic, [
-        PresenceEntry(session_id: pid, key: key, meta: meta),
+        PresenceEntry(session_id: session_id, key: key, meta: meta),
       ]),
     ]),
     leaves: dict.new(),
@@ -675,11 +679,11 @@ fn leave_diff(
   crdt: state.State,
   topic: String,
   key: String,
-  pid: String,
+  session_id: String,
 ) -> Diff {
   let leaves =
     state.get_by_key(crdt, topic, key)
-    |> list.filter(fn(entry) { entry.0 == pid })
+    |> list.filter(fn(entry) { entry.0 == session_id })
     |> list.map(fn(entry) {
       PresenceEntry(session_id: entry.0, key: key, meta: entry.1)
     })
@@ -687,17 +691,17 @@ fn leave_diff(
   Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
 }
 
-fn leave_all_diff(crdt: State, pid: String) -> Diff {
+fn leave_all_diff(crdt: State, session_id: String) -> Diff {
   let leaves =
     state.online_list(crdt)
-    |> list.filter(fn(entry) { entry.0 == pid })
+    |> list.filter(fn(entry) { entry.0 == session_id })
     |> list.fold(dict.new(), fn(grouped, entry) {
       let #(_, topic, key, meta) = entry
       let existing =
         dict.get(grouped, topic)
         |> result.unwrap([])
       dict.insert(grouped, topic, [
-        PresenceEntry(session_id: pid, key: key, meta: meta),
+        PresenceEntry(session_id: session_id, key: key, meta: meta),
         ..existing
       ])
     })

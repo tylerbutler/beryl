@@ -41,13 +41,13 @@ pub type Lobby {
 
 /// Dependencies the chat logic reads: the room group for join validation
 /// and the presence handle for reads (writes go through effects).
-pub type Ctx {
-  Ctx(presence: Presence, groups: Groups)
+pub type Context {
+  Context(presence: Presence, groups: Groups)
 }
 
 /// Handle a join for a `room:*` topic. Returns `None` when rejected.
 pub fn join(
-  ctx: Ctx,
+  context: Context,
   socket_id: String,
   topic: String,
   payload: Dynamic,
@@ -59,7 +59,7 @@ pub fn join(
   }
 
   // Validate the room exists (must be in the "public" group).
-  let room_exists = case group.topics(ctx.groups, "public") {
+  let room_exists = case group.topics(context.groups, "public") {
     Ok(topics) -> set.contains(topics, topic)
     Error(_) -> False
   }
@@ -69,7 +69,7 @@ pub fn join(
       socket.RejectJoin(ref, error("Room not found: " <> room_name)),
     ])
     True -> {
-      let current_users = presence.list(ctx.presence, topic)
+      let current_users = presence.list(context.presence, topic)
       case list.length(current_users) >= max_room_users {
         True -> #(None, [
           socket.RejectJoin(
@@ -85,7 +85,7 @@ pub fn join(
           let color = color.pastel_for(socket_id)
           let meta = presence_meta(username, color, typing: False)
 
-          let sys_payload = system_message(username <> " joined the room")
+          let system_payload = system_message(username <> " joined the room")
 
           let reply =
             json.object([
@@ -107,7 +107,7 @@ pub fn join(
                 "rooms_changed",
                 room_changed(room_name),
               ),
-              socket.Broadcast(topic, "new_msg", sys_payload),
+              socket.Broadcast(topic, "new_msg", system_payload),
               socket.BroadcastPresence(topic, "presence_list", encode_users),
             ],
           )
@@ -119,7 +119,7 @@ pub fn join(
 
 /// Handle a client message on a joined `room:*` topic.
 pub fn update(
-  _ctx: Ctx,
+  _context: Context,
   socket_id: String,
   topic: String,
   model: Model,
@@ -136,7 +136,7 @@ pub fn update(
           reply_ok(ref, error_with_code(422, "Message cannot be empty")),
         )
         trimmed -> {
-          let msg_payload =
+          let message_payload =
             json.object([
               #("text", json.string(trimmed)),
               #("username", json.string(model.username)),
@@ -148,7 +148,7 @@ pub fn update(
           #(
             model,
             list.append(
-              [socket.Broadcast(topic, "new_msg", msg_payload)],
+              [socket.Broadcast(topic, "new_msg", message_payload)],
               reply_ok(
                 ref,
                 json.object([
@@ -174,18 +174,18 @@ pub fn update(
 
 /// Handle the topic closing (leave, kick, crash, or disconnect).
 pub fn closed(
-  _ctx: Ctx,
+  _context: Context,
   _socket_id: String,
   topic: String,
   model: Model,
 ) -> List(Effect) {
-  let sys_payload = system_message(model.username <> " left the room")
+  let system_payload = system_message(model.username <> " left the room")
   // The snapshot encodes after the untrack before it, so the broadcast
   // list already excludes the leaving user.
   [
     socket.PresenceUntrack(topic, model.username),
     socket.Broadcast("lobby", "rooms_changed", room_changed(model.room_name)),
-    socket.Broadcast(topic, "new_msg", sys_payload),
+    socket.Broadcast(topic, "new_msg", system_payload),
     socket.BroadcastPresence(topic, "presence_list", encode_users),
   ]
 }
@@ -234,7 +234,7 @@ pub fn standalone_init(
 /// topic. Non-`room:*` joins are rejected (fail closed), mirroring the old
 /// `room:*` handler registration.
 pub fn standalone_update(
-  ctx: Ctx,
+  context: Context,
   model: Standalone,
   ev: socket.Input(Nil),
 ) -> socket.Next(Standalone, Nil) {
@@ -247,7 +247,7 @@ pub fn standalone_update(
         }
         "room:" <> _ -> {
           let #(joined, effects) =
-            join(ctx, model.socket_id, topic, payload, ref)
+            join(context, model.socket_id, topic, payload, ref)
           case joined {
             Some(sub) ->
               socket.Next(
@@ -282,7 +282,7 @@ pub fn standalone_update(
             Ok(sub) -> {
               let #(sub, effects) =
                 update(
-                  ctx,
+                  context,
                   model.socket_id,
                   topic,
                   sub,
@@ -312,7 +312,7 @@ pub fn standalone_update(
             Ok(sub) ->
               socket.Next(
                 Standalone(..model, rooms: dict.delete(model.rooms, topic)),
-                closed(ctx, model.socket_id, topic, sub),
+                closed(context, model.socket_id, topic, sub),
               )
             Error(Nil) -> socket.Next(model, [])
           }

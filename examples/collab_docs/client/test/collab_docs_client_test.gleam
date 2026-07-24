@@ -105,9 +105,9 @@ pub fn edit_block_with_mismatched_id_is_ignored_test() {
 }
 
 pub fn merge_json_returns_invalid_state_for_invalid_json_test() {
-  client.new_document("a")
-  |> client.merge_json("not json")
-  |> should.equal(Error("invalid_state"))
+  let assert Error(client.InvalidState(_)) =
+    client.new_document("a")
+    |> client.merge_json("not json")
 }
 
 pub fn remove_block_removes_existing_block_test() {
@@ -143,8 +143,7 @@ pub fn from_json_restores_state_with_requested_replica_test() {
 }
 
 pub fn from_json_returns_invalid_state_for_invalid_json_test() {
-  client.from_json("a", "not json")
-  |> should.equal(Error("invalid_state"))
+  let assert Error(client.InvalidState(_)) = client.from_json("a", "not json")
 }
 
 pub fn blocks_json_renders_sorted_blocks_test() {

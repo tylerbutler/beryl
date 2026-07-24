@@ -28,15 +28,15 @@ pub type Model {
 
 /// Dependencies the cursor logic reads (presence is written through
 /// effects; the handle is only needed for reads like `presence.list`).
-pub type Ctx {
-  Ctx(presence: Presence)
+pub type Context {
+  Context(presence: Presence)
 }
 
 const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
 /// Handle a join for a `cursor:*` topic. Returns `None` when rejected.
 pub fn join(
-  _ctx: Ctx,
+  _context: Context,
   socket_id: String,
   topic: String,
   payload: Dynamic,
@@ -67,7 +67,7 @@ pub fn join(
 
 /// Handle a client message on a joined `cursor:*` topic.
 pub fn update(
-  _ctx: Ctx,
+  _context: Context,
   socket_id: String,
   topic: String,
   model: Model,
@@ -107,7 +107,7 @@ pub fn update(
 
 /// Handle the topic closing (leave, kick, crash, or disconnect).
 pub fn closed(
-  _ctx: Ctx,
+  _context: Context,
   _socket_id: String,
   topic: String,
   model: Model,
@@ -140,7 +140,7 @@ pub fn standalone_init(
 /// topic. Non-`cursor:*` joins are rejected (fail closed), mirroring the old
 /// `cursor:*` handler registration.
 pub fn standalone_update(
-  ctx: Ctx,
+  context: Context,
   model: Standalone,
   ev: socket.Input(Nil),
 ) -> socket.Next(Standalone, Nil) {
@@ -149,7 +149,7 @@ pub fn standalone_update(
       case topic {
         "cursor:" <> _ -> {
           let #(joined, effects) =
-            join(ctx, model.socket_id, topic, payload, ref)
+            join(context, model.socket_id, topic, payload, ref)
           case joined {
             Some(sub) ->
               socket.Next(
@@ -175,7 +175,7 @@ pub fn standalone_update(
       case dict.get(model.cursors, topic) {
         Ok(sub) -> {
           let #(sub, effects) =
-            update(ctx, model.socket_id, topic, sub, event_name, payload)
+            update(context, model.socket_id, topic, sub, event_name, payload)
           socket.Next(
             Standalone(..model, cursors: dict.insert(model.cursors, topic, sub)),
             effects,
@@ -189,7 +189,7 @@ pub fn standalone_update(
         Ok(sub) ->
           socket.Next(
             Standalone(..model, cursors: dict.delete(model.cursors, topic)),
-            closed(ctx, model.socket_id, topic, sub),
+            closed(context, model.socket_id, topic, sub),
           )
         Error(Nil) -> socket.Next(model, [])
       }

@@ -3,7 +3,7 @@ import beryl/socket
 import gleam/erlang/process
 import gleam/string
 import gleeunit/should
-import test_helpers.{wait_until}
+import test_helpers
 
 /// Build a test `Sender` that forwards every notified value to a subject the
 /// test can receive on, standing in for a socket's real `update` delivery.
@@ -42,7 +42,7 @@ pub fn bridge_stop_tears_down_forwarder_test() {
 
   bridge.stop(b)
 
-  wait_until(fn() { !process.is_alive(pid) }, 1000, 10)
+  test_helpers.wait_until(fn() { !process.is_alive(pid) }, 1000, 10)
   process.is_alive(pid) |> should.be_false
 }
 
@@ -63,6 +63,6 @@ pub fn bridge_cleans_up_when_owner_dies_test() {
 
   let assert Ok(forwarder) = process.receive(pid_back, 1000)
 
-  wait_until(fn() { !process.is_alive(forwarder) }, 1000, 10)
+  test_helpers.wait_until(fn() { !process.is_alive(forwarder) }, 1000, 10)
   process.is_alive(forwarder) |> should.be_false
 }

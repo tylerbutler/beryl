@@ -16,19 +16,19 @@ pub type Context {
 
 pub fn handle_request(
   req: Request(Connection),
-  ctx: Context,
+  context: Context,
 ) -> Response(ResponseData) {
   case request.path_segments(req) {
     ["healthz"] -> healthz()
     _ -> {
-      use <- static.serve_static(
+      use <- static.serve_app_static(
         req,
-        under: ctx.base_path <> "/static",
-        from: static.priv_static("cursors"),
+        under: context.base_path <> "/static",
+        app: "cursors",
       )
 
-      case static.match_prefix(req, ctx.base_path) {
-        Ok([]) -> index_page(ctx)
+      case static.match_prefix(req, context.base_path) {
+        Ok([]) -> index_page(context)
         _ -> static.not_found()
       }
     }
@@ -41,8 +41,8 @@ fn healthz() -> Response(ResponseData) {
   |> response.set_body(mist.Bytes(bytes_tree.from_string("ok")))
 }
 
-fn index_page(ctx: Context) -> Response(ResponseData) {
-  let base = ctx.base_path
+fn index_page(context: Context) -> Response(ResponseData) {
+  let base = context.base_path
   let html = "<!DOCTYPE html>
 <html lang=\"en\">
 <head>
