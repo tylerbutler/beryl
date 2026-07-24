@@ -100,6 +100,6 @@ sequenceDiagram
 | File | Role |
 |---|---|
 | `packages/beryl/src/beryl.gleam` | `with_presence_handle` attaches a borrowed presence actor to the runtime config |
-| `packages/beryl/src/beryl/event.gleam` | Presence-related effects: `PresenceTrack`, `PresenceUntrack`, `PushPresence`, `BroadcastPresence` |
+| `packages/beryl/src/beryl/socket.gleam` | Presence-related effects: `PresenceTrack`, `PresenceUntrack`, `PushPresence`, `BroadcastPresence` |
 | `packages/beryl/src/beryl/presence.gleam` | OTP actor, public API, CRDT wiring, PubSub subscription and broadcast |
 | `packages/beryl/src/beryl/presence/wire.gleam` | Wire helpers for encoding and decoding presence diffs over the channel protocol |

@@ -118,7 +118,7 @@ slice of the beryl API:
 | **Reply payload validation errors** | Empty messages return `{code: 422, error: ...}` on the same push ref |
 | **Groups** | Three rooms (`general`, `random`, `help`) are organized in a named group |
 | **Presence typing** | `PresenceTrack` updates typing metadata and `BroadcastFrom` fans out typing indicators |
-| **System messages** | Join/leave notices broadcast via `event.Broadcast` |
+| **System messages** | Join/leave notices broadcast via `socket.Broadcast` |
 | **Multiple topics** | One app-side `update` routes every `room:*` topic |
 | **Rate limiting** | `with_join_rate` (5/sec, burst 10) and `with_channel_rate` (10/sec, burst 20) |
 

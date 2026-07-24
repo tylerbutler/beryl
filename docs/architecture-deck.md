@@ -41,7 +41,7 @@ flowchart TB
   T["WebSocket transports<br/>beryl_mist · beryl_ewe"]
   W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
   R["Runtime & effect interpreter<br/>beryl/runtime (internal)"]
-  E["App dispatch contract<br/>beryl/event"]
+  E["App dispatch contract<br/>beryl/socket"]
   APP["your app's init/update"]
   PS["PubSub (Erlang pg)<br/>beryl/pubsub"]
   T --> W --> R
@@ -71,7 +71,7 @@ test) on its own, and the runtime is the seam where they meet.
 | Module | Responsibility |
 |---|---|
 | `beryl` | Public entry-point: `config`, `start`, `child_spec`, `stop`, `broadcast` |
-| `beryl/event` | App dispatch contract: `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
+| `beryl/socket` | App dispatch contract: `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
 | `beryl/runtime` | Internal OTP actor: socket tracking, dispatch, effect interpretation, heartbeat |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` |
 | `beryl/presence` | Add-wins OR-set CRDT; track/untrack, cross-node diff broadcast |
@@ -84,7 +84,7 @@ test) on its own, and the runtime is the seam where they meet.
 <!--
 Speaker notes:
 This table is the "where does X live" cheat sheet. Two rows do most of the
-work: `beryl` is the public API a user calls, and `beryl/event` is the
+work: `beryl` is the public API a user calls, and `beryl/socket` is the
 contract that shapes every app built on beryl — `Input` in, `Effect`s out.
 `beryl/runtime` is where that contract is actually executed; it's internal,
 not a module apps import directly, but it's the single most important piece
@@ -490,21 +490,21 @@ the codebase, so it's worth the slide.
 | Start here | Module | Purpose |
 |---|---|---|
 | 💡 Public surface | `src/beryl.gleam` | `config`, `start`, `child_spec`, `stop`, broadcast helpers |
-| 🔌 Dispatch contract | `src/beryl/event.gleam` | `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
+| 🔌 Dispatch contract | `src/beryl/socket.gleam` | `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
 | ⚙️ Heart of beryl | `src/beryl/runtime.gleam` | Actor, dispatch, effect interpreter, heartbeat (internal) |
 | 📨 Message flow | `packages/beryl_mist/src/beryl_mist.gleam` | Connect → decode → route |
 | 📡 Fan-out | `src/beryl/pubsub.gleam` | pg-based broadcast, typed `Subscriber` |
 | 👥 Presence | `src/beryl/presence.gleam` | CRDT actor, track/untrack, diffs |
 | 🔤 Framing | `src/beryl/wire.gleam` | Phoenix codec, encode/decode |
 
-Start with `beryl.gleam` and `beryl/event.gleam` for the public contract, then read `runtime.gleam` — it is the single process that ties everything together.
+Start with `beryl.gleam` and `beryl/socket.gleam` for the public contract, then read `runtime.gleam` — it is the single process that ties everything together.
 Architecture docs live at `/architecture/` in the website.
 
 <!--
 Speaker notes:
 Closing slide — make it actionable. The table is ordered by where a
 newcomer gets the most leverage. Start with the two public-facing files:
-`beryl.gleam` (the entry points you call) and `event.gleam` (the contract
+`beryl.gleam` (the entry points you call) and `socket.gleam` (the contract
 your `update` function implements) — together they're the whole public
 API surface for dispatch. Then read `runtime.gleam`, because it's the one
 process that touches every other part, so understanding it gives you the

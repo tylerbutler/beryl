@@ -3,7 +3,7 @@ title: Authentication
 description: Verify tokens in on_connect, store verified claims in your model, and authorize topics in update.
 ---
 
-Beryl authenticates a connection **once** at the transport's `with_on_connect` hook, before any topic join. That hook can reject the whole WebSocket upgrade or return connect metadata that becomes part of `event.ConnectInfo.seed.metadata`.
+Beryl authenticates a connection **once** at the transport's `with_on_connect` hook, before any topic join. That hook can reject the whole WebSocket upgrade or return connect metadata that becomes part of `socket.ConnectInfo.seed.metadata`.
 
 This guide shows a common flow:
 
@@ -11,7 +11,7 @@ This guide shows a common flow:
 2. read a token from the handshake,
 3. verify it in `with_on_connect`,
 4. turn the returned metadata into typed model state in `init`,
-5. authorize each topic by matching on `event.Join` in `update`.
+5. authorize each topic by matching on `socket.Join` in `update`.
 
 For transport mechanics and origin policy, see [WebSocket Transport](/guides/websocket/#authentication).
 
@@ -96,10 +96,10 @@ This keeps the expensive signature and expiry check at connection time instead o
 
 ## 4. Build typed auth state in `init`
 
-`init` receives `event.ConnectInfo(msg)`, including the transport-provided metadata.
+`init` receives `socket.ConnectInfo(msg)`, including the transport-provided metadata.
 
 ```gleam
-import beryl/event as event
+import beryl/socket
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -113,7 +113,7 @@ pub type Model {
   Model(claims: Option(Claims))
 }
 
-fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
+fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   let claims =
     case claims_from_metadata(info.seed.metadata) {
       Ok(claims) -> Some(claims)
@@ -139,24 +139,24 @@ fn claims_from_metadata(
 Once the model carries verified claims, topic authorization is just application logic.
 
 ```gleam
-import beryl/event as event
+import beryl/socket
 import gleam/json
 import gleam/list
 import gleam/option.{Some}
 import gleam/string
 
-fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
-    event.Join(topic_name, _payload, ref) ->
+    socket.Join(topic_name, _payload, ref) ->
       case model.claims {
         Some(claims) ->
           case authorized_for_topic(claims, topic_name) {
-            True -> event.Next(model, [event.AcceptJoin(ref, None)])
+            True -> socket.Next(model, [socket.AcceptJoin(ref, None)])
             False ->
-              event.Next(
+              socket.Next(
                 model,
                 [
-                  event.RejectJoin(
+                  socket.RejectJoin(
                     ref,
                     json.object([
                       #("reason", json.string("forbidden")),
@@ -167,10 +167,10 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
           }
 
         None ->
-          event.Next(
+          socket.Next(
             model,
             [
-              event.RejectJoin(
+              socket.RejectJoin(
                 ref,
                 json.object([
                   #("reason", json.string("unauthenticated")),
@@ -180,7 +180,7 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
           )
       }
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 

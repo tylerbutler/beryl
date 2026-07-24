@@ -1,5 +1,5 @@
-import beryl/event
 import beryl/presence
+import beryl/socket
 import cursors/app
 import gleam/dynamic
 import gleam/json
@@ -41,7 +41,7 @@ pub fn supported_reactions_broadcast_test() {
         reaction_payload(reaction, dynamic.float(0.25), dynamic.float(0.75)),
       )
 
-    let assert [event.BroadcastFrom("cursor:lobby", "reaction", payload)] =
+    let assert [socket.BroadcastFrom("cursor:lobby", "reaction", payload)] =
       effects
     json.to_string(payload)
     |> should.equal(
@@ -61,7 +61,7 @@ pub fn integer_boundary_coordinates_broadcast_test() {
       reaction_payload("👍", dynamic.int(0), dynamic.int(1)),
     )
 
-  let assert [event.BroadcastFrom("cursor:lobby", "reaction", payload)] =
+  let assert [socket.BroadcastFrom("cursor:lobby", "reaction", payload)] =
     effects
   json.to_string(payload)
   |> should.equal("{\"reaction\":\"👍\",\"x\":0.0,\"y\":1.0}")
@@ -112,7 +112,7 @@ pub fn cursor_move_behavior_is_unchanged_test() {
       payload,
     )
 
-  let assert [event.BroadcastFrom("cursor:lobby", "cursor_move", broadcast)] =
+  let assert [socket.BroadcastFrom("cursor:lobby", "cursor_move", broadcast)] =
     effects
   json.to_string(broadcast)
   |> should.equal(

@@ -4,7 +4,7 @@
 //// handler routes WebSocket upgrades versus plain HTTP requests.
 
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -111,7 +111,7 @@ fn start_channels() -> beryl.Sockets {
 fn start_app_system(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, _ev) {
-      event.Next(model, [])
+      socket.Next(model, [])
     })
   channels
 }

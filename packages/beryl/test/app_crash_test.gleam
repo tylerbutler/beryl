@@ -5,7 +5,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Closed, Info, Join, Message, Next}
+import beryl/socket.{AcceptJoin, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
@@ -25,8 +25,8 @@ pub type Msg {
 /// crashes the update; `Info(Boom)` crashes; `Closed` for topics under
 /// `room:closed-crash` crashes.
 fn start_system(
-  events: process.Subject(event.Input(Msg)),
-  senders: process.Subject(event.Sender(Msg)),
+  events: process.Subject(socket.Input(Msg)),
+  senders: process.Subject(socket.Sender(Msg)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(
@@ -52,8 +52,8 @@ fn start_system(
 
 fn start() -> #(
   beryl.Sockets,
-  process.Subject(event.Input(Msg)),
-  process.Subject(event.Sender(Msg)),
+  process.Subject(socket.Input(Msg)),
+  process.Subject(socket.Sender(Msg)),
 ) {
   let events = process.new_subject()
   let senders = process.new_subject()
@@ -89,7 +89,7 @@ pub fn message_crash_closes_only_that_topic_test() {
 
   // The crashed topic gets Closed(Errored) and a phx_error frame...
   let assert Message("room:a", "boom", _, _) = h.next_event(events)
-  let assert Closed("room:a", event.Errored(_)) = h.next_event(events)
+  let assert Closed("room:a", socket.Errored(_)) = h.next_event(events)
   let error_frame = h.recv(frames)
   error_frame |> string.contains("phx_error") |> should.be_true
 
@@ -106,12 +106,12 @@ pub fn info_crash_tears_down_socket_test() {
   let _reply = h.recv(frames)
   let assert Join(_, _, _) = h.next_event(events)
 
-  event.notify(sender, Boom)
+  socket.notify(sender, Boom)
 
   // Info crash: the topic is closed with an error frame and the socket is
   // gone — further joins are ignored entirely.
   let assert Info(Boom) = h.next_event(events)
-  let assert Closed("room:a", event.Errored(_)) = h.next_event(events)
+  let assert Closed("room:a", socket.Errored(_)) = h.next_event(events)
   let error_frame = h.recv(frames)
   error_frame |> string.contains("phx_error") |> should.be_true
 
@@ -152,7 +152,7 @@ pub fn init_crash_leaves_socket_unregistered_test() {
     beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { panic as "init crash" },
-      update: fn(model: Nil, _ev: event.Input(Msg)) { Next(model, []) },
+      update: fn(model: Nil, _ev: socket.Input(Msg)) { Next(model, []) },
     )
   let frames = h.connect(channels, "s1")
 

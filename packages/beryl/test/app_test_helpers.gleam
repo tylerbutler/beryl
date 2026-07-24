@@ -6,7 +6,7 @@
 //// forward every event to an observer subject to make delivery visible.
 
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
@@ -18,7 +18,7 @@ pub fn connect(
   channels: beryl.Sockets,
   socket_id: String,
 ) -> process.Subject(String) {
-  connect_with_seed(channels, socket_id, event.empty_seed())
+  connect_with_seed(channels, socket_id, socket.empty_seed())
 }
 
 /// Connect a socket with an explicit `ConnectSeed` (e.g. to assert that
@@ -28,7 +28,7 @@ pub fn connect(
 pub fn connect_with_seed(
   channels: beryl.Sockets,
   socket_id: String,
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
   transport.socket_connected(
@@ -109,8 +109,8 @@ pub fn recv_none(frames: process.Subject(String)) -> Nil {
 
 /// Receive the next observed event, failing after 500ms.
 pub fn next_event(
-  events: process.Subject(event.Input(msg)),
-) -> event.Input(msg) {
+  events: process.Subject(socket.Input(msg)),
+) -> socket.Input(msg) {
   let assert Ok(ev) = process.receive(events, 500)
   ev
 }

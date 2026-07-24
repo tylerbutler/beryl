@@ -10,7 +10,7 @@ Bridge - Forward an external OTP actor's message stream to a socket via
  session) that emits updates which need to be pushed to a connected
  socket. Wiring this up by hand requires per-socket boilerplate: spawn a
  forwarder process holding a `Subject`, subscribe it to the domain actor,
- translate each message and call `event.notify`, then tear the process
+ translate each message and call `socket.notify`, then tear the process
  down when the socket closes.
 
  `bridge` packages that plumbing into a single helper. Start a bridge in
@@ -27,7 +27,7 @@ Bridge - Forward an external OTP actor's message stream to a socket via
 
  ```gleam
  import beryl/bridge.{type Bridge}
- import beryl/event.{type ConnectInfo}
+ import beryl/socket.{type ConnectInfo}
 
  // Messages emitted by your domain actor.
  pub type DocEvent {
@@ -107,7 +107,7 @@ Start a bridge that forwards values from an external `Subject` to a
  The returned `Bridge` owns a freshly spawned forwarder process. Pass
  `subject(bridge)` to the external/domain actor so it delivers its stream
  to the forwarder; each received value is mapped with `transform` and
- delivered via `event.notify(sender, transform(value))`.
+ delivered via `socket.notify(sender, transform(value))`.
 
  Use `transform` to translate the domain message into your app's
  server-side `msg` type (the `Info` payload). If no translation is needed,
@@ -120,7 +120,7 @@ Start a bridge that forwards values from an external `Subject` to a
 
 ```gleam
 pub fn start(
-  to: event.Sender(a),
+  to: socket.Sender(a),
   with: fn(b) -> a
 ) -> Result(Bridge(b), StartError)
 ```

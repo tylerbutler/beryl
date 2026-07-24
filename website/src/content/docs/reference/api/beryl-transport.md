@@ -176,7 +176,7 @@ pub fn socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  seed: event.ConnectSeed
+  seed: socket.ConnectSeed
 ) -> Nil
 ```
 

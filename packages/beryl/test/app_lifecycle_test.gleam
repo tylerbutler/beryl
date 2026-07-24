@@ -6,7 +6,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/option.{None}
 import gleam/otp/static_supervisor
@@ -24,11 +24,16 @@ const control_char = "\u{0001}"
 
 /// A minimal app system that accepts every join. Used to exercise the
 /// lifecycle plumbing without any topic-specific behavior.
-fn accepting_init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+fn accepting_init(
+  _info: socket.ConnectInfo(Nil),
+) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn accepting_update(model: Nil, ev: event.Input(Nil)) -> event.Next(Nil, Nil) {
+fn accepting_update(
+  model: Nil,
+  ev: socket.Input(Nil),
+) -> socket.Next(Nil, Nil) {
   case ev {
     Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
     _ -> Next(model, [])

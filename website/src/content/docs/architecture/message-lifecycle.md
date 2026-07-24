@@ -122,7 +122,7 @@ The runtime is one OTP actor processing its mailbox sequentially. Broadcasts arr
 
 ## Where this lives
 
-- `packages/beryl/src/beryl/event.gleam` — `ConnectInfo`, `Input`, `Next`, `Effect`
+- `packages/beryl/src/beryl/socket.gleam` — `ConnectInfo`, `Input`, `Next`, `Effect`
 - `packages/beryl/src/beryl/runtime.gleam` — socket connect/disconnect, inbound dispatch, topic teardown, heartbeat timer, effect application
 - `packages/beryl/src/beryl/wire.gleam`, `packages/beryl/src/beryl/wire/codec.gleam` — frame decoding and encoding
 - `packages/beryl/src/beryl/pubsub.gleam` — local and distributed broadcast delivery

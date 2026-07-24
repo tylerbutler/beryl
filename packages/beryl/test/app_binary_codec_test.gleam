@@ -4,7 +4,7 @@
 //// per binary event, and encodes broadcasts through the binary send path.
 
 import beryl
-import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next, ReplyOk}
+import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next, ReplyOk}
 import beryl/transport
 import beryl/wire/codec
 import gleam/bit_array
@@ -66,7 +66,7 @@ fn connect_binary(
       process.send(binary, data)
       Ok(Nil)
     },
-    seed: event.empty_seed(),
+    seed: socket.empty_seed(),
   )
   process.sleep(10)
   #(text, binary)

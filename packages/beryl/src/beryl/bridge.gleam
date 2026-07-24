@@ -5,7 +5,7 @@
 //// session) that emits updates which need to be pushed to a connected
 //// socket. Wiring this up by hand requires per-socket boilerplate: spawn a
 //// forwarder process holding a `Subject`, subscribe it to the domain actor,
-//// translate each message and call `event.notify`, then tear the process
+//// translate each message and call `socket.notify`, then tear the process
 //// down when the socket closes.
 ////
 //// `bridge` packages that plumbing into a single helper. Start a bridge in
@@ -22,7 +22,7 @@
 ////
 //// ```gleam
 //// import beryl/bridge.{type Bridge}
-//// import beryl/event.{type ConnectInfo}
+//// import beryl/socket.{type ConnectInfo}
 ////
 //// // Messages emitted by your domain actor.
 //// pub type DocEvent {
@@ -50,7 +50,7 @@
 //// bridge.stop(model.bridge)
 //// ```
 
-import beryl/event.{type Sender}
+import beryl/socket.{type Sender}
 import gleam/erlang/process.{type Pid, type Subject}
 
 /// How long `start` waits for the forwarder process to report its subjects
@@ -92,7 +92,7 @@ type Event(message) {
 /// The returned `Bridge` owns a freshly spawned forwarder process. Pass
 /// `subject(bridge)` to the external/domain actor so it delivers its stream
 /// to the forwarder; each received value is mapped with `transform` and
-/// delivered via `event.notify(sender, transform(value))`.
+/// delivered via `socket.notify(sender, transform(value))`.
 ///
 /// Use `transform` to translate the domain message into your app's
 /// server-side `msg` type (the `Info` payload). If no translation is needed,
@@ -141,7 +141,7 @@ fn forward_loop(
 ) -> Nil {
   case process.selector_receive_forever(selector) {
     Forward(value) -> {
-      event.notify(sender, transform(value))
+      socket.notify(sender, transform(value))
       forward_loop(selector, sender, transform)
     }
     // `stop` was called, or the owning process went down — exit normally so

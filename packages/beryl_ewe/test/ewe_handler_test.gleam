@@ -5,7 +5,7 @@
 //// server-agnostic raw-TCP WebSocket client FFI.
 
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/wire
 import beryl_ewe as ewe_transport
 import ewe
@@ -116,7 +116,7 @@ fn start_channels() -> beryl.Sockets {
 fn start_app_system(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, _ev) {
-      event.Next(model, [])
+      socket.Next(model, [])
     })
   channels
 }
@@ -349,17 +349,17 @@ pub fn runtime_death_closes_the_connection_test() {
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, ev) {
         case ev {
-          event.Join(_, _, ref) ->
-            event.Next(model, [
-              event.AcceptJoin(
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [
+              socket.AcceptJoin(
                 ref,
                 option.Some(json.object([#("joined", json.bool(True))])),
               ),
             ])
-          _ -> event.Next(model, [])
+          _ -> socket.Next(model, [])
         }
       },
     )
@@ -398,11 +398,11 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
-      init: fn(info: event.ConnectInfo(Nil)) {
+      init: fn(info: socket.ConnectInfo(Nil)) {
         process.send(seeds, info.seed)
         #(Nil, [])
       },
-      update: fn(model, _ev) { event.Next(model, []) },
+      update: fn(model, _ev) { socket.Next(model, []) },
     )
 
   let config =

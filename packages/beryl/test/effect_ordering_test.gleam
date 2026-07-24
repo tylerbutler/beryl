@@ -6,7 +6,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{
+import beryl/socket.{
   AcceptJoin, Broadcast, BroadcastFrom, Join, Message, Next, Push,
 }
 import beryl/wire

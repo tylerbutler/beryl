@@ -101,16 +101,16 @@ Groups are **independent** of the Beryl runtime subtree. Start them separately, 
 
 ```gleam
 import beryl
-import beryl/event as event
+import beryl/socket
 import beryl/group
 import beryl/wire
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+fn init(_info: socket.ConnectInfo(Nil)) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn update(model: Nil, _event: event.Input(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
+fn update(model: Nil, _event: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+  socket.Next(model, [])
 }
 
 let assert Ok(groups) = group.start()

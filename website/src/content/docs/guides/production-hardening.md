@@ -52,7 +52,7 @@ Per-socket limits are keyed by connection, so a client that hits a limit can rec
 
 - `with_allowed_origins` (or the default same-origin policy) rejects unexpected browser origins before the WebSocket handshake.
 - `with_on_connect` authenticates the socket once, before upgrade.
-- Authorize each topic by matching on `event.Join` in `update` and returning `event.RejectJoin` when the caller is not allowed.
+- Authorize each topic by matching on `socket.Join` in `update` and returning `socket.RejectJoin` when the caller is not allowed.
 
 ## Erlang cluster security boundary
 

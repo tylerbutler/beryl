@@ -141,7 +141,7 @@ In the current Beryl API, applications usually attach a presence handle to `bery
 
 ```gleam
 import beryl
-import beryl/event as event
+import beryl/socket
 import beryl/presence/wire as presence_wire
 import beryl/wire
 import gleam/json
@@ -152,19 +152,19 @@ let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_presence_handle(p)
 
-fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
-    event.Join(topic_name, _payload, ref) ->
-      event.Next(
+    socket.Join(topic_name, _payload, ref) ->
+      socket.Next(
         model,
         [
-          event.AcceptJoin(ref, None),
-          event.PresenceTrack(
+          socket.AcceptJoin(ref, None),
+          socket.PresenceTrack(
             topic_name,
             "user:" <> model.user_id,
             json.object([#("status", json.string("online"))]),
           ),
-          event.PushPresence(
+          socket.PushPresence(
             topic_name,
             "presence_state",
             presence_wire.encode_state,
@@ -172,13 +172,13 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
         ],
       )
 
-    event.Closed(topic_name, _reason) ->
-      event.Next(
+    socket.Closed(topic_name, _reason) ->
+      socket.Next(
         model,
-        [event.PresenceUntrack(topic_name, "user:" <> model.user_id)],
+        [socket.PresenceUntrack(topic_name, "user:" <> model.user_id)],
       )
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
@@ -186,9 +186,9 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
 A few things to notice:
 
 - `beryl.with_presence_handle(p)` enables presence-aware effects.
-- `event.PresenceTrack` and `event.PresenceUntrack` are interpreted by the runtime.
-- `event.PushPresence` and `event.BroadcastPresence` read presence state **when the effect is applied**, so they already reflect earlier `PresenceTrack` / `PresenceUntrack` effects in the same list.
-- the runtime still auto-cleans any leftover tracked keys when a topic closes, so `PresenceUntrack` in `event.Closed` is explicit cleanup, not the only cleanup path.
+- `socket.PresenceTrack` and `socket.PresenceUntrack` are interpreted by the runtime.
+- `socket.PushPresence` and `socket.BroadcastPresence` read presence state **when the effect is applied**, so they already reflect earlier `PresenceTrack` / `PresenceUntrack` effects in the same list.
+- the runtime still auto-cleans any leftover tracked keys when a topic closes, so `PresenceUntrack` in `socket.Closed` is explicit cleanup, not the only cleanup path.
 
 ## Next steps
 

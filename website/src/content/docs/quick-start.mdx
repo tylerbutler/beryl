@@ -32,7 +32,7 @@ functions:
 
 ```gleam
 // src/my_app/room_app.gleam
-import beryl/event
+import beryl/socket
 import beryl/wire
 import gleam/json
 
@@ -44,47 +44,47 @@ pub type Model {
   Model(socket_id: String)
 }
 
-pub fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
+pub fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   #(Model(socket_id: info.socket_id), [])
 }
 
-pub fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
+pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
-    event.Join("room:" <> _, payload, ref) ->
-      event.Next(
+    socket.Join("room:" <> _, payload, ref) ->
+      socket.Next(
         model,
-        [event.AcceptJoin(ref, Some(wire.dynamic_to_json(payload)))],
+        [socket.AcceptJoin(ref, Some(wire.dynamic_to_json(payload)))],
       )
 
-    event.Message(topic, "new_msg", payload, _ref) ->
-      event.Next(
+    socket.Message(topic, "new_msg", payload, _ref) ->
+      socket.Next(
         model,
-        [event.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))],
+        [socket.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))],
       )
 
-    event.Message(_, _, _, Some(ref)) ->
-      event.Next(
+    socket.Message(_, _, _, Some(ref)) ->
+      socket.Next(
         model,
-        [event.ReplyError(
+        [socket.ReplyError(
           ref,
           json.object([#("error", json.string("unknown_event"))]),
         )],
       )
 
-    event.Binary(_, _)
-    | event.Closed(_, _)
-    | event.Info(_)
-    | event.Message(_, _, _, None) ->
-      event.Next(model, [])
+    socket.Binary(_, _)
+    | socket.Closed(_, _)
+    | socket.Info(_)
+    | socket.Message(_, _, _, None) ->
+      socket.Next(model, [])
   }
 }
 ```
 
 <Aside type="note" title="Reply vs Push vs Broadcast">
-- **`event.ReplyOk` / `event.ReplyError`** — send `phx_reply` back to the calling client on the original ref.
-- **`event.Push`** — send a named event to this socket only, on a topic it already joined.
-- **`event.Broadcast`** — send a named event to every socket on the topic, including the sender.
-- **`event.Next(model, [])`** — continue with no outgoing frames.
+- **`socket.ReplyOk` / `socket.ReplyError`** — send `phx_reply` back to the calling client on the original ref.
+- **`socket.Push`** — send a named event to this socket only, on a topic it already joined.
+- **`socket.Broadcast`** — send a named event to every socket on the topic, including the sender.
+- **`socket.Next(model, [])`** — continue with no outgoing frames.
 </Aside>
 
 ## 2. Start beryl and wire the transport
@@ -199,15 +199,15 @@ channel.push("new_msg", { text: "Hello, world!" });
 ## 4. Acknowledging a specific push
 
 If you want the server to confirm an individual client push, match the message
-when a ref is present and return `event.ReplyOk`:
+when a ref is present and return `socket.ReplyOk`:
 
 ```gleam
-event.Message(topic, "new_msg", payload, Some(ref)) ->
-  event.Next(
+socket.Message(topic, "new_msg", payload, Some(ref)) ->
+  socket.Next(
     model,
     [
-      event.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload)),
-      event.ReplyOk(
+      socket.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload)),
+      socket.ReplyOk(
         ref,
         json.object([#("status", json.string("ok"))]),
       ),
@@ -226,22 +226,22 @@ channel
 
 ## 5. Rejecting a join
 
-Return `event.RejectJoin` when a topic should not be admitted:
+Return `socket.RejectJoin` when a topic should not be admitted:
 
 ```gleam
-event.Join(topic, _payload, ref) ->
+socket.Join(topic, _payload, ref) ->
   case is_room_valid(topic) {
     False ->
-      event.Next(
+      socket.Next(
         model,
-        [event.RejectJoin(
+        [socket.RejectJoin(
           ref,
           reason: json.object([#("reason", json.string("room_not_found"))]),
         )],
       )
 
     True ->
-      event.Next(model, [event.AcceptJoin(ref, None)])
+      socket.Next(model, [socket.AcceptJoin(ref, None)])
   }
 ```
 

@@ -101,6 +101,6 @@ flowchart LR
 | Transport SPI | `packages/beryl/src/beryl/transport.gleam` |
 | Codec abstraction | `packages/beryl/src/beryl/wire/codec.gleam` |
 | Phoenix wire helpers | `packages/beryl/src/beryl/wire.gleam` |
-| Connect metadata types | `packages/beryl/src/beryl/event.gleam` |
+| Connect metadata types | `packages/beryl/src/beryl/socket.gleam` |
 | Mist transport | `packages/beryl_mist/src/beryl_mist.gleam` |
 | Ewe transport | `packages/beryl_ewe/src/beryl_ewe.gleam` |

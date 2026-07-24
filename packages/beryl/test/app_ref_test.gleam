@@ -7,7 +7,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{type Ref, AcceptJoin, Info, Join, Message, Next, ReplyOk}
+import beryl/socket.{type Ref, AcceptJoin, Info, Join, Message, Next, ReplyOk}
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
@@ -31,7 +31,7 @@ type Model {
 /// - "double": reply to the same ref twice in one effects list (single-use).
 /// - "stash": store the ref without replying (deferred reply).
 /// - `Info(ReplyStashed)`: reply with the stored ref later.
-fn start_system(senders: process.Subject(event.Sender(Msg))) -> beryl.Sockets {
+fn start_system(senders: process.Subject(socket.Sender(Msg))) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
@@ -64,7 +64,7 @@ fn start_system(senders: process.Subject(event.Sender(Msg))) -> beryl.Sockets {
   channels
 }
 
-fn start() -> #(beryl.Sockets, process.Subject(event.Sender(Msg))) {
+fn start() -> #(beryl.Sockets, process.Subject(socket.Sender(Msg))) {
   let senders = process.new_subject()
   #(start_system(senders), senders)
 }
@@ -98,7 +98,7 @@ pub fn deferred_reply_from_info_is_delivered_test() {
   h.recv_none(frames)
 
   // A later turn answers the stored ref — still valid.
-  event.notify(sender, ReplyStashed)
+  socket.notify(sender, ReplyStashed)
   let reply = h.recv(frames)
   reply |> string.contains("phx_reply") |> should.be_true
   reply |> string.contains("r-2") |> should.be_true
@@ -122,7 +122,7 @@ pub fn reply_after_topic_close_is_dropped_test() {
 
   // The stored ref is stale now that its topic closed: the late reply is
   // dropped rather than sent.
-  event.notify(sender, ReplyStashed)
+  socket.notify(sender, ReplyStashed)
   h.recv_none(frames)
 }
 
@@ -146,6 +146,6 @@ pub fn reply_after_rejoin_is_dropped_test() {
   // The socket is joined again, but the ref stashed under the previous
   // instance is stale: replying with it is dropped, not delivered against
   // the new join.
-  event.notify(sender, ReplyStashed)
+  socket.notify(sender, ReplyStashed)
   h.recv_none(frames)
 }

@@ -7,19 +7,19 @@ This guide covers how Beryl surfaces errors to your app logic and to connected c
 
 ## Rejected joins
 
-Reject a pending join by returning `event.RejectJoin(ref, reason)` from `update`.
+Reject a pending join by returning `socket.RejectJoin(ref, reason)` from `update`.
 
 ```gleam
-import beryl/event as event
+import beryl/socket
 import gleam/json
 
-fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
-    event.Join(_topic_name, _payload, ref) ->
-      event.Next(
+    socket.Join(_topic_name, _payload, ref) ->
+      socket.Next(
         model,
         [
-          event.RejectJoin(
+          socket.RejectJoin(
             ref,
             json.object([
               #("reason", json.string("unauthorized")),
@@ -28,7 +28,7 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
         ],
       )
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
@@ -63,19 +63,19 @@ Beryl still speaks Phoenix array frames: `[join_ref, ref, topic, event, payload]
 Frames that cannot be decoded are dropped silently. If the frame was syntactically valid but the payload shape is wrong for your app, return your own explicit error reply from `update`.
 
 ```gleam
-import beryl/event as event
+import beryl/socket
 import gleam/json
 
-fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
-    event.Message(_topic_name, "create_item", payload, Some(ref)) ->
+    socket.Message(_topic_name, "create_item", payload, Some(ref)) ->
       case decode_item(payload) {
         Ok(item) -> persist_item(model, item, ref)
         Error(_) ->
-          event.Next(
+          socket.Next(
             model,
             [
-              event.ReplyError(
+              socket.ReplyError(
                 ref,
                 json.object([
                   #("reason", json.string("invalid_payload")),
@@ -85,14 +85,14 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
           )
       }
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
 
 ## Unanswered joins fail closed
 
-Routing now lives entirely in your own `update`. If a `Join` falls through every branch and you return no `event.AcceptJoin` or `event.RejectJoin`, the runtime rejects it automatically at the end of the turn.
+Routing now lives entirely in your own `update`. If a `Join` falls through every branch and you return no `socket.AcceptJoin` or `socket.RejectJoin`, the runtime rejects it automatically at the end of the turn.
 
 The client-visible error payload is:
 
@@ -100,20 +100,20 @@ The client-visible error payload is:
 {"reason": "join not acknowledged"}
 ```
 
-This also applies when your join logic returns `event.Stop(...)` before answering the join.
+This also applies when your join logic returns `socket.Stop(...)` before answering the join.
 
 ## Heartbeat timeouts and topic closure
 
-When a socket goes silent past the configured heartbeat timeout, the runtime closes the connection. Every joined topic is delivered to your app as `event.Closed(topic, event.HeartbeatTimeout)`.
+When a socket goes silent past the configured heartbeat timeout, the runtime closes the connection. Every joined topic is delivered to your app as `socket.Closed(topic, socket.HeartbeatTimeout)`.
 
 ```gleam
-import beryl/event as event
+import beryl/socket
 import gleam/list
 
-fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
-    event.Closed(topic_name, event.HeartbeatTimeout) ->
-      event.Next(
+    socket.Closed(topic_name, socket.HeartbeatTimeout) ->
+      socket.Next(
         Model(
           ..model,
           joined_topics: list.filter(model.joined_topics, fn(topic) {
@@ -123,7 +123,7 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
         [],
       )
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
@@ -132,10 +132,10 @@ fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
 
 Crash behavior depends on which event was being processed:
 
-- a crash while handling `event.Join` rejects that join with `{"reason": "join crashed"}`,
-- a crash while handling `event.Message` or `event.Binary` closes that topic,
-- a crash while handling `event.Info` closes the whole socket,
-- a crash while handling `event.Closed` is logged and teardown continues.
+- a crash while handling `socket.Join` rejects that join with `{"reason": "join crashed"}`,
+- a crash while handling `socket.Message` or `socket.Binary` closes that topic,
+- a crash while handling `socket.Info` closes the whole socket,
+- a crash while handling `socket.Closed` is logged and teardown continues.
 
 ## Rate limiting
 
@@ -188,12 +188,12 @@ case beryl.start(config, init: init, update: update) {
 
 ## Typed server-side messages after disconnect
 
-`event.notify(sender, message)` is safe to call from any process. If the socket has already disconnected, the message is ignored.
+`socket.notify(sender, message)` is safe to call from any process. If the socket has already disconnected, the message is ignored.
 
 ```gleam
-import beryl/event
+import beryl/socket
 
-event.notify(sender, RefreshRequested)
+socket.notify(sender, RefreshRequested)
 ```
 
 ## Client-visible error shapes

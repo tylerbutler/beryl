@@ -17,16 +17,16 @@ Use `beryl.start` when your application wants a ready-to-use `beryl.Sockets` han
 ```gleam
 import beryl
 import beryl/error as beryl_error
-import beryl/event as event
+import beryl/socket
 import beryl/wire
 import gleam/io
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+fn init(_info: socket.ConnectInfo(Nil)) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn update(model: Nil, _event: event.Input(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
+fn update(model: Nil, _event: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+  socket.Next(model, [])
 }
 
 pub fn main() {
@@ -47,16 +47,16 @@ Use `beryl.child_spec` when your application already owns a root supervisor.
 
 ```gleam
 import beryl
-import beryl/event as event
+import beryl/socket
 import beryl/wire
 import gleam/otp/static_supervisor
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+fn init(_info: socket.ConnectInfo(Nil)) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn update(model: Nil, _event: event.Input(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
+fn update(model: Nil, _event: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+  socket.Next(model, [])
 }
 
 pub fn main() {
@@ -116,7 +116,7 @@ Those are borrowed dependencies. Start them in your own application code, pass t
 
 `beryl.stop(sockets)` gracefully drains only the Beryl subtree:
 
-- each joined topic receives `event.Closed(topic, reason)`,
+- each joined topic receives `socket.Closed(topic, reason)`,
 - leftover tracked presence for those topics is cleaned up,
 - terminal frames are sent to clients,
 - transport connections are closed,

@@ -9,7 +9,7 @@
 //// only beryl's public `beryl/transport` SPI.
 
 import beryl.{type Sockets}
-import beryl/event
+import beryl/socket
 import beryl/transport
 import beryl/wire/codec
 import ewe.{type Connection, type ResponseBody, type WebsocketConnection}
@@ -458,8 +458,8 @@ pub fn upgrade_connection(
 fn connect_seed(
   request: Request(Connection),
   metadata: List(#(String, String)),
-) -> event.ConnectSeed {
-  event.ConnectSeed(
+) -> socket.ConnectSeed {
+  socket.ConnectSeed(
     path: request.path,
     query: request.get_query(request) |> result.unwrap([]),
     headers: request.headers,
@@ -514,7 +514,7 @@ fn on_init(
   _connection: WebsocketConnection,
   base_selector: Selector(SendRequest),
   channels: Sockets,
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
   active_codec: codec.Codec,

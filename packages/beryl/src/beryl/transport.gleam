@@ -14,10 +14,10 @@
 ////    slot with `beryl.release_connection_slot`.
 
 import beryl.{type Sockets}
-import beryl/event.{type ConnectSeed}
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
+import beryl/socket.{type ConnectSeed}
 import beryl/wire/codec.{type Codec, type Inbound}
 import gleam/erlang/process
 import gleam/option.{type Option}

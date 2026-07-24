@@ -2,7 +2,7 @@
 //// dispatch document handler): document-key encoding and join-level
 //// tenant-token authorization.
 
-import beryl/event
+import beryl/socket
 import collab_docs/app
 import collab_docs/auth
 import collab_docs/doc_store
@@ -12,8 +12,8 @@ import gleam/json
 import gleam/option.{Some}
 import gleeunit/should
 
-fn document_ref() -> event.Ref {
-  event.make_join_ref(
+fn document_ref() -> socket.Ref {
+  socket.make_join_ref(
     topic: "document:demo:readme",
     join_ref: Some("jr"),
     msg_ref: Some("r"),
@@ -47,7 +47,7 @@ pub fn join_with_valid_tenant_token_is_accepted_test() {
 
   model |> should.be_some
   case effects {
-    [event.AcceptJoin(_, _)] -> Nil
+    [socket.AcceptJoin(_, _)] -> Nil
     _ -> should.fail()
   }
 }
@@ -68,7 +68,7 @@ pub fn join_without_token_is_rejected_test() {
 
   model |> should.be_none
   case effects {
-    [event.RejectJoin(_, _)] -> Nil
+    [socket.RejectJoin(_, _)] -> Nil
     _ -> should.fail()
   }
 }
@@ -86,7 +86,7 @@ pub fn join_with_token_for_other_tenant_is_rejected_test() {
 
   model |> should.be_none
   case effects {
-    [event.RejectJoin(_, _)] -> Nil
+    [socket.RejectJoin(_, _)] -> Nil
     _ -> should.fail()
   }
 }

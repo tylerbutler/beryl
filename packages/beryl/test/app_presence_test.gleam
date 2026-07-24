@@ -6,11 +6,11 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{
+import beryl/presence
+import beryl/socket.{
   AcceptJoin, BroadcastPresence, Join, Message, Next, PresenceTrack,
   PresenceUntrack, PushPresence,
 }
-import beryl/presence
 import beryl/wire
 import gleam/json
 import gleam/list
@@ -202,7 +202,7 @@ pub fn presence_effects_without_handle_are_dropped_test() {
     beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, ev: event.Input(Nil)) {
+      update: fn(model: Nil, ev: socket.Input(Nil)) {
         case ev {
           Join(topic, _payload, ref) ->
             Next(model, [

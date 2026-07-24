@@ -34,16 +34,16 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 **Checks:**
 
-1. **Does your `update` function match this topic and answer the join?** There is no registry anymore. A `Join` must return `event.AcceptJoin(ref, ...)` or `event.RejectJoin(ref, ...)` in the same `update` turn:
+1. **Does your `update` function match this topic and answer the join?** There is no registry anymore. A `Join` must return `socket.AcceptJoin(ref, ...)` or `socket.RejectJoin(ref, ...)` in the same `update` turn:
    ```gleam
    case ev {
-     event.Join("room:" <> _, _payload, ref) ->
-       event.Next(model, [event.AcceptJoin(ref, None)])
+     socket.Join("room:" <> _, _payload, ref) ->
+       socket.Next(model, [socket.AcceptJoin(ref, None)])
      _ ->
-       event.Next(model, [])
+       socket.Next(model, [])
    }
    ```
-   If a `Join` falls through to `event.Next(model, [])`, beryl rejects it automatically (fail closed).
+   If a `Join` falls through to `socket.Next(model, [])`, beryl rejects it automatically (fail closed).
 
 2. **Is the same `beryl.Sockets` handle passed to the transport?** `mist_transport.upgrade` or `mist_transport.handler` must receive the exact `sockets` value returned by `beryl.start` or `beryl.child_spec`.
 
@@ -55,13 +55,13 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 ## Messages sent from the client are not received
 
-**Symptoms:** Your `update` function never sees the expected `event.Message(...)`; no reply or push received.
+**Symptoms:** Your `update` function never sees the expected `socket.Message(...)`; no reply or push received.
 
 **Checks:**
 
-1. **Did the client successfully join?** `event.Message` is only delivered after a successful `phx_join`. If join was rejected, no further topic messages are delivered.
+1. **Did the client successfully join?** `socket.Message` is only delivered after a successful `phx_join`. If join was rejected, no further topic messages are delivered.
 
-2. **Does your `update` branch match both topic and event name?** `event.Message(topic, event_name, payload, ref)` carries the raw topic and event string. Verify the branch you expect actually matches.
+2. **Does your `update` branch match both topic and event name?** `socket.Message(topic, event_name, payload, ref)` carries the raw topic and event string. Verify the branch you expect actually matches.
 
 3. **Rate limits dropping messages.** If `with_message_rate`, `with_channel_rate`, or `with_topic_rate` is configured and the client sends faster than the limit, excess messages are dropped before your application logic sees them.
 
@@ -126,7 +126,7 @@ let logging =
 
 4. **Cross-node sync.** If running multiple nodes, each node must use the same PubSub instance and each presence actor needs a unique replica ID. Without PubSub, nodes have independent presence state.
 
-5. **Clean up your own app model on `Closed`.** Presence entries tracked through effects are auto-untracked when a topic or socket closes, but any extra topic-local state you keep in your `Model` still needs to be pruned from your `event.Closed(topic, reason)` branch.
+5. **Clean up your own app model on `Closed`.** Presence entries tracked through effects are auto-untracked when a topic or socket closes, but any extra topic-local state you keep in your `Model` still needs to be pruned from your `socket.Closed(topic, reason)` branch.
 
 ---
 
@@ -138,7 +138,7 @@ let logging =
 
 1. **`on_connect` bug.** Add logging to your `with_on_connect` callback to confirm tokens are being extracted correctly from headers or query parameters.
 
-2. **Token validation error.** Make sure failed validation returns `Error(mist_transport.ConnectRejected)` (for connect-level auth) or a controlled `event.RejectJoin` (for join-level auth), not a panic.
+2. **Token validation error.** Make sure failed validation returns `Error(mist_transport.ConnectRejected)` (for connect-level auth) or a controlled `socket.RejectJoin` (for join-level auth), not a panic.
 
 3. **`update` returns `RejectJoin` for every `Join`.** Log the incoming topic and decode the join payload you expect. Join payloads arrive as `gleam/dynamic.Dynamic`, so shape mismatches are easy to miss without explicit decoding.
 

@@ -124,16 +124,16 @@ Start PubSub separately, then attach it to the Beryl config you pass to `start` 
 
 ```gleam
 import beryl
-import beryl/event as event
+import beryl/socket
 import beryl/wire
 import gleam/json
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+fn init(_info: socket.ConnectInfo(Nil)) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn update(model: Nil, _event: event.Input(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
+fn update(model: Nil, _event: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+  socket.Next(model, [])
 }
 
 let ps = pubsub.start(pubsub.default_config())

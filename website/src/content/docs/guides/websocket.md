@@ -11,7 +11,7 @@ Start a `beryl.Sockets` system, then hand that handle to the Mist transport.
 
 ```gleam
 import beryl
-import beryl/event as event
+import beryl/socket
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/bytes_tree
@@ -20,12 +20,12 @@ import gleam/http/response as response
 import gleam/http/response.{type Response}
 import mist
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+fn init(_info: socket.ConnectInfo(Nil)) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn update(model: Nil, _event: event.Input(Nil)) -> event.Next(Nil, Nil) {
-  event.Next(model, [])
+fn update(model: Nil, _event: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+  socket.Next(model, [])
 }
 
 pub fn main() {
@@ -52,7 +52,7 @@ fn http_handler(_req: Request(mist.Connection)) -> Response(mist.ResponseData) {
 }
 ```
 
-The transport upgrades matching WebSocket requests, assembles `event.ConnectInfo`, and forwards frames into your `init` / `update` app. For the routing model itself, see [App-Side Dispatch](/guides/dispatch/).
+The transport upgrades matching WebSocket requests, assembles `socket.ConnectInfo`, and forwards frames into your `init` / `update` app. For the routing model itself, see [App-Side Dispatch](/guides/dispatch/).
 
 :::tip[Phoenix JS clients]
 Phoenix JS connects to `/socket/websocket` by default when you write `new Socket("/socket", ...)`, so set the Mist transport path to match.
@@ -97,7 +97,7 @@ The default policy is `SameOrigin`. Use `with_allow_all_origins` only when you i
 `with_on_connect` returns `List(#(String, String))`, not application model state. Those key-value pairs become `ConnectSeed.metadata`, and `init` decides how to turn them into your typed socket model.
 
 ```gleam
-import beryl/event as event
+import beryl/socket
 import gleam/list
 import gleam/result
 
@@ -105,7 +105,7 @@ pub type Model {
   Model(user_id: String)
 }
 
-fn init(info: event.ConnectInfo(Nil)) -> #(Model, List(event.Effect)) {
+fn init(info: socket.ConnectInfo(Nil)) -> #(Model, List(socket.Effect)) {
   let user_id =
     list.key_find(info.seed.metadata, "user_id")
     |> result.unwrap("anonymous")
@@ -152,8 +152,8 @@ Applications can pass a custom codec to `beryl.config(codec)` if they want a dif
 3. `with_on_connect` runs, optionally rejecting with HTTP 403 or seeding metadata,
 4. the transport creates a socket id and calls your `init`,
 5. clients send `phx_join` and message frames,
-6. the runtime delivers `event.Join`, `event.Message`, `event.Binary`, `event.Info`, and `event.Closed` into your `update`,
-7. when a topic or socket ends, the runtime delivers `event.Closed` for every joined topic and the transport closes the connection.
+6. the runtime delivers `socket.Join`, `socket.Message`, `socket.Binary`, `socket.Info`, and `socket.Closed` into your `update`,
+7. when a topic or socket ends, the runtime delivers `socket.Closed` for every joined topic and the transport closes the connection.
 
 If the runtime crashes or restarts, the Mist transport notices and closes the affected connections instead of leaving zombie sockets open.
 

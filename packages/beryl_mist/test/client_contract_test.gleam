@@ -2,7 +2,7 @@ import aquamarine
 import aquamarine/error as aquamarine_error
 import aquamarine/phoenix
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -31,7 +31,7 @@ type TestServer {
 
 type TestEvent {
   Joined(String)
-  Terminated(String, event.StopReason)
+  Terminated(String, socket.StopReason)
 }
 
 @external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
@@ -69,12 +69,12 @@ pub fn aquamarine_client_joins_real_beryl_server_test() {
 }
 
 fn start_test_server(
-  update: fn(Nil, event.Input(Nil)) -> event.Next(Nil, Nil),
+  update: fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil),
 ) -> Result(TestServer, Nil) {
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: update,
     )
   let port_subject = process.new_subject()
@@ -116,23 +116,23 @@ fn stop_test_server(server: TestServer) -> Nil {
 /// reporting join/close through the `events` observer.
 fn lobby_update(
   events: process.Subject(TestEvent),
-) -> fn(Nil, event.Input(Nil)) -> event.Next(Nil, Nil) {
+) -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
   fn(model, ev) {
     case ev {
-      event.Join(topic, _payload, ref) -> {
+      socket.Join(topic, _payload, ref) -> {
         process.send(events, Joined(topic))
-        event.Next(model, [
-          event.AcceptJoin(
+        socket.Next(model, [
+          socket.AcceptJoin(
             ref,
             Some(json.object([#("welcome", json.bool(True))])),
           ),
         ])
       }
-      event.Closed(topic, reason) -> {
+      socket.Closed(topic, reason) -> {
         process.send(events, Terminated(topic, reason))
-        event.Next(model, [])
+        socket.Next(model, [])
       }
-      _ -> event.Next(model, [])
+      _ -> socket.Next(model, [])
     }
   }
 }
@@ -235,7 +235,7 @@ pub fn aquamarine_close_terminates_joined_channel_test() {
   let assert Ok(Nil) = receive_joined(events, "test:lobby")
   let assert Ok(Nil) = aquamarine.close(channel)
   let assert Ok(reason) = receive_terminated(events, "test:lobby")
-  reason |> should.equal(event.Normal)
+  reason |> should.equal(socket.Normal)
 
   stop_test_server(server)
 }
@@ -263,37 +263,40 @@ pub fn gluegun_raw_malformed_frame_gets_error_reply_test() {
 }
 
 /// A `test:rejected` behaviour: reject every join with status `error`.
-fn rejected_update() -> fn(Nil, event.Input(Nil)) -> event.Next(Nil, Nil) {
+fn rejected_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
   fn(model, ev) {
     case ev {
-      event.Join(_topic, _payload, ref) ->
-        event.Next(model, [
-          event.RejectJoin(ref, json.object([#("reason", json.string("nope"))])),
+      socket.Join(_topic, _payload, ref) ->
+        socket.Next(model, [
+          socket.RejectJoin(
+            ref,
+            json.object([#("reason", json.string("nope"))]),
+          ),
         ])
-      _ -> event.Next(model, [])
+      _ -> socket.Next(model, [])
     }
   }
 }
 
 /// A `test:echo` behaviour: accept joins and reply to any client message
 /// with `{body: <body>}` echoed from the request payload.
-fn echo_update() -> fn(Nil, event.Input(Nil)) -> event.Next(Nil, Nil) {
+fn echo_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
   fn(model, ev) {
     case ev {
-      event.Join(_topic, _payload, ref) ->
-        event.Next(model, [event.AcceptJoin(ref, Some(json.object([])))])
-      event.Message(_topic, _name, payload, Some(ref)) -> {
+      socket.Join(_topic, _payload, ref) ->
+        socket.Next(model, [socket.AcceptJoin(ref, Some(json.object([])))])
+      socket.Message(_topic, _name, payload, Some(ref)) -> {
         let body =
           decode.run(payload, {
             use body <- decode.field("body", decode.string)
             decode.success(body)
           })
           |> result.unwrap("")
-        event.Next(model, [
-          event.ReplyOk(ref, json.object([#("body", json.string(body))])),
+        socket.Next(model, [
+          socket.ReplyOk(ref, json.object([#("body", json.string(body))])),
         ])
       }
-      _ -> event.Next(model, [])
+      _ -> socket.Next(model, [])
     }
   }
 }
@@ -331,7 +334,7 @@ fn receive_joined(
 fn receive_terminated(
   events: process.Subject(TestEvent),
   topic: String,
-) -> Result(event.StopReason, Nil) {
+) -> Result(socket.StopReason, Nil) {
   case process.receive(events, 500) {
     Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic ->
       Ok(reason)

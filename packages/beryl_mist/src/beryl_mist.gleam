@@ -4,7 +4,7 @@
 //// and the beryl runtime using Mist request and response types directly.
 
 import beryl.{type Sockets}
-import beryl/event
+import beryl/socket
 import beryl/transport
 import beryl/wire/codec
 import gleam/bit_array
@@ -455,8 +455,8 @@ pub fn upgrade_connection(
 fn connect_seed(
   request: Request(Connection),
   metadata: List(#(String, String)),
-) -> event.ConnectSeed {
-  event.ConnectSeed(
+) -> socket.ConnectSeed {
+  socket.ConnectSeed(
     path: request.path,
     query: request.get_query(request) |> result.unwrap([]),
     headers: request.headers,
@@ -511,7 +511,7 @@ fn do_upgrade(
 fn on_init(
   _connection: WebsocketConnection,
   channels: Sockets,
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
   active_codec: codec.Codec,

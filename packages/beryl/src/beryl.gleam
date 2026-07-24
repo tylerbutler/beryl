@@ -7,7 +7,7 @@
 //// ## Features
 ////
 //// - **Sockets** — App-side dispatch: topic-based WebSocket messaging
-////   routed by your `update` function (`beryl`, `beryl/event`)
+////   routed by your `update` function (`beryl`, `beryl/socket`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
 //// - **Presence** — Distributed presence tracking backed by a causal-context
@@ -19,7 +19,7 @@
 ////
 //// ```gleam
 //// import beryl
-//// import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+//// import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
 //// import beryl/pubsub
 //// import beryl/wire
 //// import gleam/option
@@ -54,7 +54,6 @@
 
 import beryl/connection_limit
 import beryl/error as beryl_error
-import beryl/event
 import beryl/internal
 import beryl/log
 import beryl/presence.{type Diff}
@@ -62,6 +61,7 @@ import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
 import beryl/runtime
+import beryl/socket
 import beryl/topic
 import beryl/wire/codec
 import gleam/bool
@@ -620,7 +620,7 @@ type AppHandle {
       String,
       fn(String) -> Result(Nil, Nil),
       fn(BitArray) -> Result(Nil, Nil),
-      event.ConnectSeed,
+      socket.ConnectSeed,
     ) -> Nil,
     register_closer: fn(String, fn() -> Nil) -> Nil,
     socket_disconnected: fn(String) -> Nil,
@@ -874,17 +874,17 @@ fn drop_monitor(monitor: process.Monitor) -> Nil {
 /// the per-socket model when a socket connects, and `update`, receiving every
 /// event for the socket and returning the next model plus a list of effects.
 /// The app routes topics itself by matching on the event's topic — see
-/// `beryl/event` for the event and effect types.
+/// `beryl/socket` for the event and effect types.
 ///
 /// The returned `Sockets` handle works with the WebSocket transports and the
 /// broadcast/group helpers. Server-side messages to a joined socket are sent
-/// through the socket's typed `Sender` (`event.notify`).
+/// through the socket's typed `Sender` (`socket.notify`).
 ///
 /// ## Example
 ///
 /// ```gleam
 /// import beryl
-/// import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+/// import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
 ///
 /// pub fn main() {
 ///   let assert Ok(sockets) =
@@ -905,8 +905,8 @@ fn drop_monitor(monitor: process.Monitor) -> Nil {
 /// ```
 pub fn start(
   config: Config,
-  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(Sockets, StartError) {
   use subtree <- result.try(
     build_app_subtree(config, init, update)
@@ -962,8 +962,8 @@ pub fn start(
 /// ```
 pub fn child_spec(
   config: Config,
-  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -1011,8 +1011,8 @@ type AppSubtree {
 /// resurrected.
 fn build_app_subtree(
   config: Config,
-  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -1046,8 +1046,8 @@ fn start_app_supervisor(
   config: Config,
   runtime_name: process.Name(runtime.Msg(msg)),
   limiter_name: Option(process.Name(connection_limit.Message)),
-  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
   let runtime_child =
     supervision.worker(fn() {
@@ -1252,7 +1252,7 @@ pub fn transport_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
 ) -> Nil {
   channels.app.socket_connected(socket_id, send, send_binary, seed)
 }

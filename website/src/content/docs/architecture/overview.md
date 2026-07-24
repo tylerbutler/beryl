@@ -3,7 +3,7 @@ title: Architecture Overview
 description: How beryl is organized, the major modules, and where to make changes.
 ---
 
-Beryl is an app-side dispatch runtime for WebSocket topics on the BEAM. Transports turn frames into `beryl/event` values, one runtime actor per `Sockets` handle delivers those events to your app's `update`, and the same runtime applies the returned `Effect`s in order.
+Beryl is an app-side dispatch runtime for WebSocket topics on the BEAM. Transports turn frames into `beryl/socket` values, one runtime actor per `Sockets` handle delivers those events to your app's `update`, and the same runtime applies the returned `Effect`s in order.
 
 PubSub is still the cluster-wide fan-out primitive. Presence and groups remain separate OTP actors that your app starts and supervises; the runtime borrows their handles when configured, but they are not children of the Beryl subtree.
 
@@ -25,7 +25,7 @@ flowchart TB
   SPI["Transport SPI<br/>beryl/transport"]
   W["Wire protocol<br/>beryl/wire · beryl/wire/codec"]
   R["Runtime & effect interpreter<br/>beryl/runtime (internal)"]
-  E["App dispatch contract<br/>beryl/event"]
+  E["App dispatch contract<br/>beryl/socket"]
   APP["your app's init/update"]
   PS["PubSub<br/>beryl/pubsub"]
   PR["Presence handle (optional)<br/>beryl/presence"]
@@ -46,7 +46,7 @@ flowchart TB
 | Module | Responsibility | Page |
 |---|---|---|
 | `beryl` | Public entry-point: config builders, `start`, `child_spec`, `stop`, stable `Sockets` handle, broadcast helpers | [Runtime & Effect Interpreter](/architecture/runtime) |
-| `beryl/event` | App-side dispatch contract: `ConnectInfo`, `Input`, `Next`, `Effect`, `Sender` | [Message Lifecycle](/architecture/message-lifecycle) |
+| `beryl/socket` | App-side dispatch contract: `ConnectInfo`, `Input`, `Next`, `Effect`, `Sender` | [Message Lifecycle](/architecture/message-lifecycle) |
 | `beryl/runtime` | Internal OTP actor: per-socket models, topic membership, heartbeats, inbound dispatch, effect interpretation | [Runtime & Effect Interpreter](/architecture/runtime) |
 | `beryl/transport` | SPI used by transports to announce sockets, route decoded frames, and watch runtime ownership | [Wire & Transport](/architecture/wire-and-transport) |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` API and sender exclusion | [PubSub & Distribution](/architecture/pubsub-and-distribution) |
@@ -90,6 +90,6 @@ flowchart TB
 
 Core library code lives under `packages/beryl/src/`. The WebSocket transports live in `packages/beryl_mist/src/` and `packages/beryl_ewe/src/`.
 
-Start with `packages/beryl/src/beryl.gleam` and `packages/beryl/src/beryl/event.gleam` for the public surface, then read [Runtime & Effect Interpreter](/architecture/runtime) for the runtime tree and lifecycle.
+Start with `packages/beryl/src/beryl.gleam` and `packages/beryl/src/beryl/socket.gleam` for the public surface, then read [Runtime & Effect Interpreter](/architecture/runtime) for the runtime tree and lifecycle.
 
 For how a message actually moves through the system, see [Message Lifecycle](/architecture/message-lifecycle). For cross-node concerns, see [PubSub & Distribution](/architecture/pubsub-and-distribution).

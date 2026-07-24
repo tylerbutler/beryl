@@ -6,7 +6,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Message, Next}
+import beryl/socket.{AcceptJoin, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/int
@@ -21,7 +21,7 @@ pub fn main() {
 
 fn start_system(
   config: beryl.Config,
-  events: process.Subject(event.Input(Nil)),
+  events: process.Subject(socket.Input(Nil)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
@@ -36,7 +36,7 @@ fn start_system(
 
 fn join_ok(
   channels: beryl.Sockets,
-  events: process.Subject(event.Input(Nil)),
+  events: process.Subject(socket.Input(Nil)),
   frames: process.Subject(String),
   socket_id: String,
   topic_name: String,
@@ -167,7 +167,7 @@ pub fn channel_bucket_cap_recovers_after_leave_test() {
   // Leaving room:a frees its bucket, so room:c can now allocate one.
   h.route(channels, "s1", "[\"jr-a\",\"r-leave\",\"room:a\",\"phx_leave\",{}]")
   let _leave_reply = h.recv(frames)
-  let assert Ok(event.Closed("room:a", _)) = process.receive(events, 500)
+  let assert Ok(socket.Closed("room:a", _)) = process.receive(events, 500)
   let _close_frame = h.recv(frames)
 
   h.push(channels, "s1", "room:c", "m", "r-c")

@@ -12,7 +12,7 @@ Beryl - Type-safe real-time communication
  ## Features
 
  - **Sockets** — App-side dispatch: topic-based WebSocket messaging
-   routed by your `update` function (`beryl`, `beryl/event`)
+   routed by your `update` function (`beryl`, `beryl/socket`)
  - **PubSub** — Distributed publish/subscribe via Erlang `pg`
    (`beryl/pubsub`)
  - **Presence** — Distributed presence tracking backed by a causal-context
@@ -24,7 +24,7 @@ Beryl - Type-safe real-time communication
 
  ```gleam
  import beryl
- import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+ import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
  import beryl/pubsub
  import beryl/wire
  import gleam/option
@@ -368,8 +368,8 @@ Build the app-side dispatch supervision child specification.
 ```gleam
 pub fn child_spec(
   Config,
-  init: fn(event.ConnectInfo(a)) -> #(b, List(event.Effect)),
-  update: fn(b, event.Input(a)) -> event.Next(b, a)
+  init: fn(socket.ConnectInfo(a)) -> #(b, List(socket.Effect)),
+  update: fn(b, socket.Input(a)) -> socket.Next(b, a)
 ) -> Result(#(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ConfigError)
 ```
 
@@ -427,17 +427,17 @@ Start an app-side dispatch system.
  the per-socket model when a socket connects, and `update`, receiving every
  event for the socket and returning the next model plus a list of effects.
  The app routes topics itself by matching on the event's topic — see
- `beryl/event` for the event and effect types.
+ `beryl/socket` for the event and effect types.
 
  The returned `Sockets` handle works with the WebSocket transports and the
  broadcast/group helpers. Server-side messages to a joined socket are sent
- through the socket's typed `Sender` (`event.notify`).
+ through the socket's typed `Sender` (`socket.notify`).
 
  ## Example
 
  ```gleam
  import beryl
- import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+ import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
 
  pub fn main() {
    let assert Ok(sockets) =
@@ -460,8 +460,8 @@ Start an app-side dispatch system.
 ```gleam
 pub fn start(
   Config,
-  init: fn(event.ConnectInfo(a)) -> #(b, List(event.Effect)),
-  update: fn(b, event.Input(a)) -> event.Next(b, a)
+  init: fn(socket.ConnectInfo(a)) -> #(b, List(socket.Effect)),
+  update: fn(b, socket.Input(a)) -> socket.Next(b, a)
 ) -> Result(Sockets, StartError)
 ```
 

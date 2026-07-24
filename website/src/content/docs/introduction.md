@@ -30,29 +30,29 @@ Your socket app owns one `Model` type and one `update` function. The Gleam
 compiler keeps every branch honest:
 
 ```gleam
-import beryl/event
+import beryl/socket
 import gleam/json
 
 pub type Model {
   Model(user_id: String, room_id: String)
 }
 
-fn update(model: Model, ev: event.Input(Nil)) -> event.Next(Model, Nil) {
+fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model, Nil) {
   case ev {
-    event.Join("room:" <> room_id, _payload, ref) ->
-      event.Next(Model(..model, room_id: room_id), [event.AcceptJoin(ref, None)])
+    socket.Join("room:" <> room_id, _payload, ref) ->
+      socket.Next(Model(..model, room_id: room_id), [socket.AcceptJoin(ref, None)])
 
-    event.Message(topic, "typing", _payload, _ref) ->
-      event.Next(
+    socket.Message(topic, "typing", _payload, _ref) ->
+      socket.Next(
         model,
-        [event.BroadcastFrom(
+        [socket.BroadcastFrom(
           topic,
           "typing",
           json.object([#("user_id", json.string(model.user_id))]),
         )],
       )
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
