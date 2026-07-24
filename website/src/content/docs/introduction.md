@@ -81,7 +81,9 @@ brokers or databases required.
 
 beryl uses the same JSON array wire format as Phoenix channels
 (`[join_ref, ref, topic, event, payload]`), making it compatible with existing
-Phoenix client libraries.
+Phoenix client libraries. If you know Phoenix Channels, the
+[Coming from Phoenix](/guides/coming-from-phoenix/) guide maps channel
+modules, callbacks, and assigns onto beryl's model.
 
 ## Next steps
 

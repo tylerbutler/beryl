@@ -309,6 +309,7 @@ The same rule matters for presence and replies:
 
 ## Next steps
 
+- [Coming from Phoenix](/guides/coming-from-phoenix/) — map channel modules, callbacks, and assigns onto this model
 - [WebSocket Transport](/guides/websocket/) — connect browsers and seed `ConnectInfo.seed.metadata`
 - [Presence](/guides/presence/) — use `PresenceTrack`, `PresenceUntrack`, and snapshot effects
 - [Runtime & Effect Interpreter](/architecture/runtime/) — runtime behavior, effect ordering, and teardown details
