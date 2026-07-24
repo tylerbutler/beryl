@@ -19,7 +19,7 @@ channel process per joined topic, and it calls your callbacks
 In beryl, **your app owns the router**. There is no registry and no channel
 module: you pass one `init` and one `update` function to `beryl.start`, and
 every event for a socket — joins, messages, closes, server-side messages,
-across all of its topics — arrives at that `update` as an `event.Event(msg)`
+across all of its topics — arrives at that `update` as an `event.Input(msg)`
 value. You route topics yourself with pattern matching, and per-socket state
 lives in one `model` you return from each `update`.
 
@@ -104,7 +104,7 @@ fn init(_info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
   #(Model(room_id: ""), [])
 }
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   case ev {
     event.Join("room:" <> room_id, _payload, ref) ->
       event.Next(Model(room_id: room_id), [

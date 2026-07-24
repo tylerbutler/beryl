@@ -5,7 +5,7 @@ description: Route joins, messages, binary frames, close events, and typed serve
 
 Beryl's current programming model is **app-side dispatch**: you start one runtime with `beryl.start` (or `beryl.child_spec`), build a per-socket model in `init`, and route every socket event in one `update` function.
 
-There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `event.Event` values and returning `event.Next(model, effects)`.
+There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `event.Input` values and returning `event.Next(model, effects)`.
 
 ## The two app entry points
 
@@ -23,11 +23,11 @@ let assert Ok(sockets) =
 ```
 
 - `init` runs once per socket connection and returns `#(model, List(event.Effect))`.
-- `update` receives every `event.Event(msg)` for that socket and returns either:
+- `update` receives every `event.Input(msg)` for that socket and returns either:
   - `event.Next(model, effects)` to continue, or
   - `event.Stop(reason)` to close the whole socket.
 
-`event.Event(msg)` is the whole contract:
+`event.Input(msg)` is the whole contract:
 
 - `event.Join(topic, payload, ref)`
 - `event.Message(topic, event, payload, ref)`
@@ -86,7 +86,7 @@ fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
   #(Model(joined_topics: [], self: info.self), [])
 }
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   let room_pattern = topic.parse_pattern("room:*")
 
   case ev {
@@ -201,7 +201,7 @@ pub type Msg {
   AdminMsg(admin.Msg)
 }
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   let chat_pattern = topic.parse_pattern("chat:*")
   let admin_pattern = topic.parse_pattern("admin")
 

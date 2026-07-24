@@ -152,7 +152,7 @@ let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_presence_handle(p)
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   case ev {
     event.Join(topic_name, _payload, ref) ->
       event.Next(

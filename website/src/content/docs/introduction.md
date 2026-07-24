@@ -37,7 +37,7 @@ pub type Model {
   Model(user_id: String, room_id: String)
 }
 
-fn update(model: Model, ev: event.Event(Nil)) -> event.Next(Model, Nil) {
+fn update(model: Model, ev: event.Input(Nil)) -> event.Next(Model, Nil) {
   case ev {
     event.Join("room:" <> room_id, _payload, ref) ->
       event.Next(Model(..model, room_id: room_id), [event.AcceptJoin(ref, None)])

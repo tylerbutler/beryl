@@ -109,8 +109,8 @@ pub fn recv_none(frames: process.Subject(String)) -> Nil {
 
 /// Receive the next observed event, failing after 500ms.
 pub fn next_event(
-  events: process.Subject(event.Event(msg)),
-) -> event.Event(msg) {
+  events: process.Subject(event.Input(msg)),
+) -> event.Input(msg) {
   let assert Ok(ev) = process.receive(events, 500)
   ev
 }

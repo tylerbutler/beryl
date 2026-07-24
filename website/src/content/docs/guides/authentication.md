@@ -145,7 +145,7 @@ import gleam/list
 import gleam/option.{Some}
 import gleam/string
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   case ev {
     event.Join(topic_name, _payload, ref) ->
       case model.claims {

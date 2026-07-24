@@ -22,10 +22,10 @@ import gleam/option.{type Option}
 /// A reply correlation handle.
 ///
 /// Carried by `Join` and (when the client requested a reply) `Message`
-/// events. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
+/// inputs. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
 /// effects. `Ref` is an ordinary value: it may be stored in the model and
 /// used from a later `update` turn (for example, replying from an `Info`
-/// event once an async lookup completes).
+/// input once an async lookup completes).
 pub opaque type Ref {
   Ref(
     kind: RefKind,
@@ -81,7 +81,7 @@ pub fn ref_msg_ref(ref: Ref) -> Option(String) {
 
 /// Why a socket or topic is stopping.
 ///
-/// Delivered in `Closed` events and accepted by `Stop`. Match with a
+/// Delivered in `Closed` inputs and accepted by `Stop`. Match with a
 /// catch-all (`_`) arm: new stop reasons may be added in minor releases.
 pub type StopReason {
   /// Normal shutdown (client left or disconnected cleanly).
@@ -97,7 +97,7 @@ pub type StopReason {
 }
 
 /// Everything the runtime delivers to the app's `update` function.
-pub type Event(msg) {
+pub type Input(msg) {
   /// A client asked to join a topic. Answer with `AcceptJoin` or
   /// `RejectJoin` in the returned effects; a `Join` left unanswered by the
   /// end of the update turn is rejected automatically (fail closed).
@@ -110,7 +110,7 @@ pub type Event(msg) {
   Binary(topic: String, data: BitArray)
   /// A joined topic ended (client leave, kick, crash, or socket close).
   /// Delivered on every exit path — use it to prune per-topic state from
-  /// the model. Frames pushed to the closing topic from this event are
+  /// the model. Frames pushed to the closing topic from this input are
   /// dropped; broadcasts still reach the topic's remaining subscribers.
   Closed(topic: String, reason: StopReason)
   /// A typed server-side message, sent via the socket's `Sender` (see
@@ -123,7 +123,7 @@ pub type Event(msg) {
 pub type Next(model, msg) {
   /// Continue with the given model, applying the effects in order.
   Next(model: model, effects: List(Effect))
-  /// Tear down the socket: every joined topic receives a `Closed` event,
+  /// Tear down the socket: every joined topic receives a `Closed` input,
   /// terminal frames are sent, and the transport connection is closed.
   Stop(reason: StopReason)
 }
@@ -133,7 +133,7 @@ pub type Next(model, msg) {
 pub type Effect {
   /// Accept a pending join. Subscribes the socket to the topic and sends
   /// the join acknowledgment (with an optional reply payload). Only valid
-  /// while the `Join` event's ref is pending.
+  /// while the `Join` input's ref is pending.
   AcceptJoin(ref: Ref, reply: Option(Json))
   /// Reject a pending join with an error payload.
   RejectJoin(ref: Ref, reason: Json)
@@ -182,7 +182,7 @@ pub type Effect {
     encode: fn(List(PresenceEntry)) -> Json,
   )
   /// Close this socket's subscription to a topic. The topic receives a
-  /// `Closed(topic, Shutdown)` event and the client a terminal frame.
+  /// `Closed(topic, Shutdown)` input and the client a terminal frame.
   KickTopic(topic: String)
 }
 
@@ -211,7 +211,7 @@ pub fn empty_seed() -> ConnectSeed {
 ///
 /// Obtained from `ConnectInfo.self` in `init`. Any process may call
 /// `notify` with it; the message is delivered to the socket's `update` as
-/// an `Info` event. This is an ordinary typed send — no erasure involved.
+/// an `Info` input. This is an ordinary typed send — no erasure involved.
 pub opaque type Sender(msg) {
   Sender(send: fn(msg) -> Nil)
 }

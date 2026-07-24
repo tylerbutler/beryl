@@ -142,7 +142,7 @@ pub fn standalone_init(
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,
-  ev: event.Event(Nil),
+  ev: event.Input(Nil),
 ) -> event.Next(Standalone, Nil) {
   case ev {
     event.Join(topic, payload, ref) ->

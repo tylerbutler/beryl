@@ -202,7 +202,7 @@ pub fn presence_effects_without_handle_are_dropped_test() {
     beryl.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, ev: event.Event(Nil)) {
+      update: fn(model: Nil, ev: event.Input(Nil)) {
         case ev {
           Join(topic, _payload, ref) ->
             Next(model, [

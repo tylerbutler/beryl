@@ -109,7 +109,7 @@ fn init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
   #(Nil, [])
 }
 
-fn update(model: Nil, _event: event.Event(Nil)) -> event.Next(Nil, Nil) {
+fn update(model: Nil, _event: event.Input(Nil)) -> event.Next(Nil, Nil) {
   event.Next(model, [])
 }
 

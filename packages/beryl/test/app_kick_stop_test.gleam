@@ -20,7 +20,7 @@ pub fn main() {
 
 /// Joins accepted for all topics. "kick_b" kicks room:b; a Closed for
 /// room:b kicks room:c (a kick chain); "stop" stops the socket.
-fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
+fn start_system(events: process.Subject(event.Input(Nil))) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
@@ -42,7 +42,7 @@ fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
 
 fn join_rooms(
   channels: beryl.Sockets,
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(event.Input(Nil)),
   frames: process.Subject(String),
   socket_id: String,
   topics: List(String),

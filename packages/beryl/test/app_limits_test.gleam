@@ -21,7 +21,7 @@ pub fn main() {
 
 fn start_with(
   config: beryl.Config,
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(event.Input(Nil)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     beryl.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {

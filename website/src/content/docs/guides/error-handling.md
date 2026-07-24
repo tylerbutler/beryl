@@ -13,7 +13,7 @@ Reject a pending join by returning `event.RejectJoin(ref, reason)` from `update`
 import beryl/event as event
 import gleam/json
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   case ev {
     event.Join(_topic_name, _payload, ref) ->
       event.Next(
@@ -66,7 +66,7 @@ Frames that cannot be decoded are dropped silently. If the frame was syntactical
 import beryl/event as event
 import gleam/json
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   case ev {
     event.Message(_topic_name, "create_item", payload, Some(ref)) ->
       case decode_item(payload) {
@@ -110,7 +110,7 @@ When a socket goes silent past the configured heartbeat timeout, the runtime clo
 import beryl/event as event
 import gleam/list
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   case ev {
     event.Closed(topic_name, event.HeartbeatTimeout) ->
       event.Next(

@@ -17,7 +17,7 @@ fn start_with_limit(max_connections: Int) -> beryl.Sockets {
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(max_connections: max_connections),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, _ev: event.Event(Nil)) { event.Next(model, []) },
+      update: fn(model: Nil, _ev: event.Input(Nil)) { event.Next(model, []) },
     )
   channels
 }

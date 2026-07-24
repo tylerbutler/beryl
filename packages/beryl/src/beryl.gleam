@@ -906,7 +906,7 @@ fn drop_monitor(monitor: process.Monitor) -> Nil {
 pub fn start(
   config: Config,
   init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
 ) -> Result(Sockets, StartError) {
   use subtree <- result.try(
     build_app_subtree(config, init, update)
@@ -963,7 +963,7 @@ pub fn start(
 pub fn child_spec(
   config: Config,
   init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -1012,7 +1012,7 @@ type AppSubtree {
 fn build_app_subtree(
   config: Config,
   init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  update: fn(model, event.Input(msg)) -> event.Next(model, msg),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -1047,7 +1047,7 @@ fn start_app_supervisor(
   runtime_name: process.Name(runtime.Msg(msg)),
   limiter_name: Option(process.Name(connection_limit.Message)),
   init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  update: fn(model, event.Input(msg)) -> event.Next(model, msg),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
   let runtime_child =
     supervision.worker(fn() {

@@ -48,7 +48,7 @@ pub fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
   #(Model(socket_id: info.socket_id), [])
 }
 
-pub fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+pub fn update(model: Model, ev: event.Input(Msg)) -> event.Next(Model, Msg) {
   case ev {
     event.Join("room:" <> _, payload, ref) ->
       event.Next(

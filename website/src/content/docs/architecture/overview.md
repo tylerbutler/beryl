@@ -46,7 +46,7 @@ flowchart TB
 | Module | Responsibility | Page |
 |---|---|---|
 | `beryl` | Public entry-point: config builders, `start`, `child_spec`, `stop`, stable `Sockets` handle, broadcast helpers | [Runtime & Effect Interpreter](/architecture/runtime) |
-| `beryl/event` | App-side dispatch contract: `ConnectInfo`, `Event`, `Next`, `Effect`, `Sender` | [Message Lifecycle](/architecture/message-lifecycle) |
+| `beryl/event` | App-side dispatch contract: `ConnectInfo`, `Input`, `Next`, `Effect`, `Sender` | [Message Lifecycle](/architecture/message-lifecycle) |
 | `beryl/runtime` | Internal OTP actor: per-socket models, topic membership, heartbeats, inbound dispatch, effect interpretation | [Runtime & Effect Interpreter](/architecture/runtime) |
 | `beryl/transport` | SPI used by transports to announce sockets, route decoded frames, and watch runtime ownership | [Wire & Transport](/architecture/wire-and-transport) |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` API and sender exclusion | [PubSub & Distribution](/architecture/pubsub-and-distribution) |

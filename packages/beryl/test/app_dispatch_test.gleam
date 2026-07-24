@@ -29,7 +29,7 @@ pub type Msg {
 /// `limbo:*` (leaving the join unanswered), replies ok/error to "echo" and
 /// "fail", pushes on `Info`, and forwards every event to an observer.
 fn start_observed(
-  events: process.Subject(event.Event(Msg)),
+  events: process.Subject(event.Input(Msg)),
   senders: process.Subject(event.Sender(Msg)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
@@ -81,7 +81,7 @@ fn start_observed(
 
 fn start_system() -> #(
   beryl.Sockets,
-  process.Subject(event.Event(Msg)),
+  process.Subject(event.Input(Msg)),
   process.Subject(event.Sender(Msg)),
 ) {
   let events = process.new_subject()

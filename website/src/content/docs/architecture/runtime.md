@@ -15,7 +15,7 @@ A runtime owns the node-local state for one Beryl app instance:
 - PubSub topic membership for local subscribers
 - presence refs created by `PresenceTrack`
 
-When a transport announces a new socket, the runtime calls your `init` once with `ConnectInfo`. After that, every decoded inbound frame becomes an `Event` delivered to `update`.
+When a transport announces a new socket, the runtime calls your `init` once with `ConnectInfo`. After that, every decoded inbound frame becomes an `Input` delivered to `update`.
 
 ## Dispatch contract
 
