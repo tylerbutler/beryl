@@ -132,7 +132,7 @@ When started with `wire.phoenix_codec()`, beryl uses the standard Phoenix wire f
 | Phoenix Swift / Kotlin clients | Community Phoenix clients; wire-compatible |
 | Plain WebSocket | Use the JSON array format directly; no reconnect logic |
 
-The WebSocket upgrade path is caller-provided — there is no default. Pass the path when constructing your transport config with `mist_transport.default_config(path)`. The Phoenix JS client appends `/websocket` to the socket endpoint, so if you configure the client with `"/socket"`, mount your handler at `"/socket/websocket"`. See the [WebSocket Transport guide](/guides/websocket) for details.
+The WebSocket upgrade path is caller-provided — there is no default. Pass the path when constructing your transport config with `beryl/transport/server.default_config(path)`. The Phoenix JS client appends `/websocket` to the socket endpoint, so if you configure the client with `"/socket"`, mount your handler at `"/socket/websocket"`. See the [WebSocket Transport guide](/guides/websocket) for details.
 
 ---
 

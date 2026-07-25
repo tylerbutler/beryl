@@ -17,6 +17,7 @@ gleam add beryl beryl_ewe
 import beryl
 import beryl/socket.{type ConnectInfo, AcceptJoin, Join, Next}
 import beryl/wire
+import beryl/transport/server
 import beryl_ewe as ewe_transport
 import ewe
 import gleam/erlang/process
@@ -49,7 +50,7 @@ pub fn main() {
   let assert Ok(_) =
     ewe_transport.handler(
       sockets,
-      ewe_transport.default_config("/socket"),
+      server.default_config("/socket"),
       fn(_req) { panic as "not implemented" },
     )
     |> ewe.new

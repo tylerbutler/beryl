@@ -343,7 +343,7 @@ pub fn main() {
   let assert Ok(_) =
     mist_transport.handler(
       sockets,
-      mist_transport.default_config("/socket/websocket"),
+      server.default_config("/socket/websocket"),
       http_fallback,
     )
     |> mist.new

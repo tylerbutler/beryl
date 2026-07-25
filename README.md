@@ -27,6 +27,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 ```gleam
 import beryl
 import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
+import beryl/transport/server
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
@@ -74,7 +75,7 @@ pub fn main() {
     |> static_supervisor.start()
 
   let assert Ok(_) =
-    mist_transport.handler(channels, mist_transport.default_config("/socket/websocket"), fn(_req) {
+    mist_transport.handler(channels, server.default_config("/socket/websocket"), fn(_req) {
       // your regular HTTP handler here
       panic as "not implemented"
     })

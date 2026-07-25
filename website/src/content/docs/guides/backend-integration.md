@@ -24,6 +24,7 @@ Run the endpoint on the same Mist listener as the WebSocket transport. Guard it 
 
 ```gleam
 import beryl
+import beryl/transport/server
 import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/http.{Post}
@@ -35,7 +36,7 @@ import mist
 fn handle_request(
   req: Request(mist.Connection),
   sockets: beryl.Sockets,
-  ws_config: mist_transport.TransportConfig,
+  ws_config: server.TransportConfig(mist.Connection),
 ) -> Response(mist.ResponseData) {
   use <- mist_transport.upgrade(req, sockets, ws_config)
 

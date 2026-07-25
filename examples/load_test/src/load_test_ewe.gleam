@@ -1,3 +1,4 @@
+import beryl/transport/server
 import beryl_ewe
 import ewe
 import gleam/erlang/process
@@ -9,11 +10,9 @@ pub fn main() {
   let app.App(channels:) = app.start()
   let interface = app.bind_address()
   let assert Ok(_) =
-    beryl_ewe.handler(
-      channels,
-      beryl_ewe.default_config("/socket"),
-      fn(request) { http.handle(request, channels) },
-    )
+    beryl_ewe.handler(channels, server.default_config("/socket"), fn(request) {
+      http.handle(request, channels)
+    })
     |> ewe.new
     |> ewe.listening(port: app.port())
     |> ewe.bind(interface:)
