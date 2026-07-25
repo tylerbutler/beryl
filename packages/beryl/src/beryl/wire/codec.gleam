@@ -222,12 +222,14 @@ pub fn with_error_encoder(
   Codec(..codec, encode_error: Some(encode_error))
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's text decoder.
 @internal
 pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
   codec.decode_text
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's optional binary decoder.
 @internal
 pub fn decode_binary(
@@ -236,6 +238,7 @@ pub fn decode_binary(
   codec.decode_binary
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's reply encoder.
 @internal
 pub fn encode_reply(
@@ -244,18 +247,21 @@ pub fn encode_reply(
   codec.encode_reply
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's push encoder.
 @internal
 pub fn encode_push(codec: Codec) -> fn(String, String, json.Json) -> Frame {
   codec.encode_push
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's heartbeat-reply encoder.
 @internal
 pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
   codec.encode_heartbeat_reply
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's optional topic-close encoder.
 @internal
 pub fn encode_close(
@@ -275,12 +281,14 @@ pub fn with_topicless_events(codec: Codec) -> Codec {
   Codec(..codec, topicless_events: True)
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's topicless-events flag.
 @internal
 pub fn topicless_events(codec: Codec) -> Bool {
   codec.topicless_events
 }
 
+// nolint: unused_exports -- package-internal accessor for the runtime and transport modules; hidden from public docs with @internal
 /// Accessor for the codec's optional topic-error encoder.
 @internal
 pub fn encode_error(

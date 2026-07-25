@@ -50,6 +50,7 @@ pub fn make_join_ref(
   Ref(kind: JoinRef, topic: topic, join_ref: join_ref, msg_ref: msg_ref)
 }
 
+// nolint: unused_exports -- package-internal constructors/accessors for the runtime; hidden from public docs with @internal
 @internal
 pub fn make_message_ref(
   topic topic: String,
@@ -59,21 +60,25 @@ pub fn make_message_ref(
   Ref(kind: MessageRef, topic: topic, join_ref: join_ref, msg_ref: msg_ref)
 }
 
+// nolint: unused_exports -- package-internal constructors/accessors for the runtime; hidden from public docs with @internal
 @internal
 pub fn ref_is_join(ref: Ref) -> Bool {
   ref.kind == JoinRef
 }
 
+// nolint: unused_exports -- package-internal constructors/accessors for the runtime; hidden from public docs with @internal
 @internal
 pub fn ref_topic(ref: Ref) -> String {
   ref.topic
 }
 
+// nolint: unused_exports -- package-internal constructors/accessors for the runtime; hidden from public docs with @internal
 @internal
 pub fn ref_join_ref(ref: Ref) -> Option(String) {
   ref.join_ref
 }
 
+// nolint: unused_exports -- package-internal constructors/accessors for the runtime; hidden from public docs with @internal
 @internal
 pub fn ref_msg_ref(ref: Ref) -> Option(String) {
   ref.msg_ref

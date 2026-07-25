@@ -464,56 +464,67 @@ pub fn config_heartbeat_interval_ms(config: Config) -> Int {
   config.heartbeat_interval_ms
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_heartbeat_timeout_ms(config: Config) -> Int {
   config.heartbeat_timeout_ms
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_max_connections_per_ip(config: Config) -> Int {
   config.max_connections_per_ip
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_join_rate(config: Config) -> Int {
   config.join_rate
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_join_burst(config: Config) -> Int {
   config.join_burst
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_channel_rate(config: Config) -> Int {
   config.channel_rate
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_channel_burst(config: Config) -> Int {
   config.channel_burst
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_channel_rate_max_keys_per_socket(config: Config) -> Int {
   config.channel_rate_max_keys_per_socket
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_max_topic_length(config: Config) -> Int {
   config.max_topic_length
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_max_event_length(config: Config) -> Int {
   config.max_event_length
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_max_inbound_frame_bytes(config: Config) -> Int {
   config.max_inbound_frame_bytes
 }
 
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
   config.max_joined_topics_per_socket
@@ -780,29 +791,45 @@ fn stop_app_subtree(
       // and stop the runtime; this triggers the subtree auto-shutdown.
       case app.stop() {
         Error(error) -> {
-          drop_monitor(runtime_monitor)
-          case limiter_monitor {
-            Some(monitor) -> drop_monitor(monitor)
-            None -> Nil
-          }
+          drop_subtree_monitors(runtime_monitor, limiter_monitor)
           Error(error)
         }
-        Ok(Nil) -> {
-          let awaited =
-            await_down(runtime_monitor)
-            |> result.try(fn(_) {
-              case limiter_monitor {
-                Some(monitor) -> await_down(monitor)
-                None -> Ok(Nil)
-              }
-            })
-          case awaited {
-            Ok(Nil) -> Ok(Nil)
-            Error(Nil) -> internal.result_error(StopTimeout)
-          }
-        }
+        Ok(Nil) -> await_subtree_down(runtime_monitor, limiter_monitor)
       }
     }
+  }
+}
+
+/// Release the subtree monitors taken before a drain that failed, so the
+/// caller's mailbox does not collect their later `Down` messages.
+fn drop_subtree_monitors(
+  runtime_monitor: process.Monitor,
+  limiter_monitor: Option(process.Monitor),
+) -> Nil {
+  drop_monitor(runtime_monitor)
+  case limiter_monitor {
+    Some(monitor) -> drop_monitor(monitor)
+    None -> Nil
+  }
+}
+
+/// Wait for the runtime and, when one is supervised, the sibling limiter to
+/// terminate. `Error(StopTimeout)` when either is still alive at the deadline.
+fn await_subtree_down(
+  runtime_monitor: process.Monitor,
+  limiter_monitor: Option(process.Monitor),
+) -> Result(Nil, StopError) {
+  let awaited =
+    await_down(runtime_monitor)
+    |> result.try(fn(_) {
+      case limiter_monitor {
+        Some(monitor) -> await_down(monitor)
+        None -> Ok(Nil)
+      }
+    })
+  case awaited {
+    Ok(Nil) -> Ok(Nil)
+    Error(Nil) -> internal.result_error(StopTimeout)
   }
 }
 
@@ -1207,6 +1234,7 @@ pub fn transport_socket_connected(
   channels.app.socket_connected(socket_id, send, send_binary, seed)
 }
 
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
 @internal
 pub fn transport_register_closer(
   channels: Sockets,
@@ -1216,6 +1244,7 @@ pub fn transport_register_closer(
   channels.app.register_closer(socket_id, close)
 }
 
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
 @internal
 pub fn transport_socket_disconnected(
   channels: Sockets,
@@ -1224,6 +1253,7 @@ pub fn transport_socket_disconnected(
   channels.app.socket_disconnected(socket_id)
 }
 
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
 @internal
 pub fn transport_route_decoded(
   channels: Sockets,
@@ -1233,6 +1263,7 @@ pub fn transport_route_decoded(
   channels.app.route_decoded(socket_id, message)
 }
 
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
 @internal
 pub fn transport_route_binary(
   channels: Sockets,
@@ -1267,6 +1298,7 @@ pub fn broadcast(
   channels.app.broadcast(topic_name, event, payload, None)
 }
 
+// nolint: unused_exports -- public broadcast API surface; intended for downstream consumers
 /// Broadcast a Phoenix-compatible `presence_diff` event for a topic.
 ///
 /// This encodes the topic's joins and leaves as:
@@ -1293,6 +1325,7 @@ pub fn broadcast_presence_diff(
   )
 }
 
+// nolint: unused_exports -- public broadcast API surface; intended for downstream consumers
 /// Broadcast a message to all subscribers except one socket
 ///
 /// Useful for broadcasting a message to everyone except the sender.

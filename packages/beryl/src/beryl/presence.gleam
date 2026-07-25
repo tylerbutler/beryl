@@ -263,7 +263,6 @@ pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
 
-// nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
 @internal
 pub fn from_subject(subject: Subject(Message)) -> Presence {
   Presence(subject: subject)
@@ -285,7 +284,6 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
   })
 }
 
-// nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
 /// Start the presence actor with a registered name, for embedding the
 /// presence actor under an application's own supervision tree.
 @internal
@@ -570,7 +568,7 @@ fn handle_message(
 
     Untrack(ref, reply) -> {
       case dict.get(actor_state.refs, ref) {
-        Error(_) -> {
+        Error(Nil) -> {
           // Unknown or already-removed ref: nothing to do.
           process.send(reply, Nil)
           actor.continue(actor_state)
