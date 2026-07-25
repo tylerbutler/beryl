@@ -83,7 +83,7 @@ What is lost on crash:
 - heartbeat timestamps and rate-limit buckets
 - registered per-socket closer callbacks
 
-Existing WebSocket connections are not preserved across that restart. The transport connection process monitors the runtime pid via `beryl/transport.connection_owner` and closes the socket when the owning runtime goes down, rather than leaving a zombie connection attached to an empty replacement runtime.
+Existing WebSocket connections are not preserved across that restart. The transport connection process monitors the runtime pid via `beryl/transport.runtime_pid` and closes the socket when the owning runtime goes down, rather than leaving a zombie connection attached to an empty replacement runtime.
 
 Before startup, during a restart window, or after shutdown, the name-backed `Sockets` handle degrades safely: fire-and-forget operations are quiet no-ops and connection admission is refused cleanly instead of crashing.
 

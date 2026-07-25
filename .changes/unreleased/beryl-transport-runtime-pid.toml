@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Changed"
+body = "beryl/transport.connection_owner is now runtime_pid and returns Result(Pid, Nil) directly; the ConnectionOwner type with its OwnerAlive/OwnerUnavailable variants is removed. Transports that matched on OwnerAlive(pid)/OwnerUnavailable now match on Ok(pid)/Error(Nil)."

@@ -256,42 +256,6 @@ pub fn sanitize_for_log_test() {
   |> should.equal("")
 }
 
-// Config tests
-
-pub fn default_config_test() {
-  let config = beryl.config(wire.phoenix_codec())
-
-  beryl.config_heartbeat_interval_ms(config)
-  |> should.equal(30_000)
-
-  beryl.config_heartbeat_timeout_ms(config)
-  |> should.equal(60_000)
-
-  beryl.config_max_connections_per_ip(config)
-  |> should.equal(0)
-}
-
-pub fn with_heartbeat_sets_interval_and_timeout_test() {
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_heartbeat(interval_ms: 5000, timeout_ms: 10_000)
-
-  beryl.config_heartbeat_interval_ms(config)
-  |> should.equal(5000)
-
-  beryl.config_heartbeat_timeout_ms(config)
-  |> should.equal(10_000)
-}
-
-pub fn with_max_connections_per_ip_sets_limit_test() {
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_max_connections_per_ip(max_connections: 5)
-
-  beryl.config_max_connections_per_ip(config)
-  |> should.equal(5)
-}
-
 // Wire protocol tests
 
 pub fn decode_valid_message_test() {
@@ -437,94 +401,11 @@ pub fn format_decode_error_missing_field_test() {
 }
 
 // Public config builder and topic helper coverage
-
-pub fn with_join_rate_sets_fields_test() {
-  let cfg =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_join_rate(per_second: 5, burst: 10)
-
-  beryl.config_join_rate(cfg) |> should.equal(5)
-  beryl.config_join_burst(cfg) |> should.equal(10)
-}
-
-pub fn with_channel_rate_sets_fields_test() {
-  let cfg =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_channel_rate(per_second: 7, burst: 14)
-
-  beryl.config_channel_rate(cfg) |> should.equal(7)
-  beryl.config_channel_burst(cfg) |> should.equal(14)
-}
-
-pub fn channel_rate_max_keys_defaults_to_1000_test() {
-  let cfg = beryl.config(wire.phoenix_codec())
-
-  beryl.config_channel_rate_max_keys_per_socket(cfg) |> should.equal(1000)
-}
-
-pub fn with_channel_rate_max_keys_per_socket_sets_field_test() {
-  let cfg =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_channel_rate_max_keys_per_socket(max_keys: 42)
-
-  beryl.config_channel_rate_max_keys_per_socket(cfg) |> should.equal(42)
-}
-
-pub fn default_max_topic_length_is_256_test() {
-  let cfg = beryl.config(wire.phoenix_codec())
-
-  beryl.config_max_topic_length(cfg) |> should.equal(256)
-}
-
-pub fn with_max_topic_length_sets_field_test() {
-  let cfg =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_max_topic_length(max_length: 128)
-
-  beryl.config_max_topic_length(cfg) |> should.equal(128)
-}
-
-pub fn default_max_event_length_is_64_test() {
-  let cfg = beryl.config(wire.phoenix_codec())
-
-  beryl.config_max_event_length(cfg) |> should.equal(64)
-}
-
-pub fn with_max_event_length_sets_field_test() {
-  let cfg =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_max_event_length(max_length: 32)
-
-  beryl.config_max_event_length(cfg) |> should.equal(32)
-}
-
-pub fn default_max_inbound_frame_bytes_is_1mb_test() {
-  let cfg = beryl.config(wire.phoenix_codec())
-
-  beryl.config_max_inbound_frame_bytes(cfg) |> should.equal(1_048_576)
-}
-
-pub fn with_max_inbound_frame_bytes_sets_field_test() {
-  let cfg =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_max_inbound_frame_bytes(max_bytes: 4096)
-
-  beryl.config_max_inbound_frame_bytes(cfg) |> should.equal(4096)
-}
-
-pub fn default_max_joined_topics_per_socket_is_1000_test() {
-  let cfg = beryl.config(wire.phoenix_codec())
-
-  beryl.config_max_joined_topics_per_socket(cfg) |> should.equal(1000)
-}
-
-pub fn with_max_joined_topics_per_socket_sets_field_test() {
-  let cfg =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_max_joined_topics_per_socket(max_topics: 12)
-
-  beryl.config_max_joined_topics_per_socket(cfg) |> should.equal(12)
-}
+//
+// The `with_*` builders are covered behaviorally where their limits are
+// enforced (app_abuse_test, app_limits_test, app_heartbeat_test,
+// topic_policy_test, connection_limit_test, and the transport handler tests),
+// not by asserting that a setter stored its argument.
 
 pub fn start_failure_description_is_public_test() {
   let describe = beryl_error.describe_start_failure

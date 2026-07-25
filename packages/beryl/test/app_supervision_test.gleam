@@ -161,8 +161,8 @@ pub fn runtime_crash_closes_owned_connection_test() {
   // accepted it (via the transport SPI) and closes when that runtime dies.
   let _conn =
     process.spawn(fn() {
-      case transport.connection_owner(sockets) {
-        transport.OwnerAlive(pid) -> {
+      case transport.runtime_pid(sockets) {
+        Ok(pid) -> {
           let mon = process.monitor(pid)
           let selector =
             process.new_selector()
@@ -234,7 +234,7 @@ pub fn update_crash_runs_socket_close_callback_test() {
 
 // ── transport connection ownership status ───────────────────────────────────
 
-pub fn connection_owner_reports_alive_when_running_test() {
+pub fn runtime_pid_reports_alive_when_running_test() {
   let assert Ok(sockets) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
@@ -242,15 +242,12 @@ pub fn connection_owner_reports_alive_when_running_test() {
       update: h.accepting_update,
     )
 
-  case transport.connection_owner(sockets) {
-    transport.OwnerAlive(pid) -> pid |> should.equal(h.runtime_pid(sockets))
-    _ -> should.fail()
-  }
+  transport.runtime_pid(sockets) |> should.equal(Ok(h.runtime_pid(sockets)))
 
   let assert Ok(_) = beryl.stop(sockets)
 }
 
-pub fn connection_owner_unavailable_before_start_test() {
+pub fn runtime_pid_unavailable_before_start_test() {
   let assert Ok(#(sockets, _spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
@@ -260,8 +257,7 @@ pub fn connection_owner_unavailable_before_start_test() {
 
   // The runtime is not running yet: a new connection cannot be owned, so the
   // transport must refuse it rather than admit a dead socket.
-  transport.connection_owner(sockets)
-  |> should.equal(transport.OwnerUnavailable)
+  transport.runtime_pid(sockets) |> should.be_error
 }
 
 fn to_bool(result: Result(a, b)) -> Bool {

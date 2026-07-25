@@ -20,37 +20,6 @@ Transport SPI — the contract between beryl core and WebSocket transport
 
 ## Types
 
-### `ConnectionOwner`
-
-The lifecycle relationship between a transport connection and the runtime
- that owns it.
-
- App-side dispatch systems own their connections through a supervised
- runtime. A transport should monitor the owning runtime and close the
- connection when it dies, so a runtime crash or restart never leaves a
- zombie connection whose frames are silently dropped by a runtime that no
- longer knows the socket.
-
-```gleam
-pub type ConnectionOwner {
-  OwnerAlive(pid: process.Pid)
-  OwnerUnavailable
-}
-```
-
-#### Constructors
-
-##### `OwnerAlive(pid: process.Pid)`
-
-The owning runtime is alive at this pid. Monitor it and close the
- connection when it goes down.
-
-##### `OwnerUnavailable`
-
-The runtime is not currently running (pre-start or a restart window). A
- new connection cannot be owned, so the transport must refuse it rather
- than admit a dead socket.
-
 ### `Logger`
 
 A named logger for transport diagnostics, routed through beryl's
@@ -128,17 +97,6 @@ Bind an acquired connection slot to the calling process.
 
 ```gleam
 pub fn bind_connection_slot(permit: beryl.ConnectionPermit) -> Nil
-```
-
-### `connection_owner`
-
-Determine how a newly accepted connection is owned. Call this in the
- connection process right after upgrade; on `OwnerAlive(pid)` monitor `pid`
- and close on its `Down`, and on `OwnerUnavailable` close the connection
- immediately.
-
-```gleam
-pub fn connection_owner(beryl.Sockets) -> ConnectionOwner
 ```
 
 ### `log_warning`
@@ -229,6 +187,22 @@ pub fn route_decoded(
   socket_id: String,
   message: codec.Inbound
 ) -> Nil
+```
+
+### `runtime_pid`
+
+The pid of the runtime that owns a transport's connections, or
+ `Error(Nil)` when it is not currently running (pre-start or a restart
+ window).
+
+ Call this in the connection process right after upgrade. On `Ok(pid)`,
+ monitor `pid` and close the connection on its `Down`, so a runtime crash
+ or restart never leaves a zombie connection whose frames are silently
+ dropped by a runtime that no longer knows the socket. On `Error(Nil)` the
+ connection cannot be owned — refuse it rather than admit a dead socket.
+
+```gleam
+pub fn runtime_pid(beryl.Sockets) -> Result(process.Pid, Nil)
 ```
 
 ### `socket_connected`

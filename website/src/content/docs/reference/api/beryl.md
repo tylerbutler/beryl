@@ -609,25 +609,7 @@ pub fn with_max_event_length(
 
 ### `with_max_inbound_frame_bytes`
 
-Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- The limit is enforced **post-assembly**: the transport (Mist/gramps)
- buffers and assembles a complete frame first, and only then does Beryl
- measure it and close the connection if it exceeds `max_bytes`. This bounds
- per-message processing cost (decode, routing, rate-limit accounting), but
- it does **not** by itself bound transport memory. A hostile client can
- declare a huge payload and stream it slowly, or send many fragmented
- continuation frames, and the transport's receive buffer grows before this
- check ever runs — so this setting alone does not stop a single connection
- from exhausting node memory.
-
- For a true transport memory bound you **must** place an edge proxy or load
- balancer in front of Beryl and configure a WebSocket frame-size limit
- there (and a matching request/body size limit). Beryl's per-IP connection
- limit and per-socket message-rate limit do not mitigate this vector. See
- the README's "Security" section for deployment guidance.
-
- Values <= 0 disable the cap. The default is 1 MiB.
 
 ```gleam
 pub fn with_max_inbound_frame_bytes(

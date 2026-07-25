@@ -434,12 +434,12 @@ pub fn init_connection(
   // Tie this connection's lifetime to the runtime that accepted it. If that
   // runtime crashes or restarts, its registered closer is lost, so monitor it
   // here and close the connection on its death.
-  let selector = case transport.connection_owner(sockets) {
-    transport.OwnerAlive(runtime_pid) -> {
+  let selector = case transport.runtime_pid(sockets) {
+    Ok(runtime_pid) -> {
       let monitor = process.monitor(runtime_pid)
       process.select_specific_monitor(selector, monitor, fn(_down) { Close })
     }
-    transport.OwnerUnavailable -> {
+    Error(Nil) -> {
       process.send(send_subject, Close)
       selector
     }

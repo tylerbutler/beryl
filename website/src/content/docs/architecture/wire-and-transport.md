@@ -64,7 +64,7 @@ A transport:
 4. decodes inbound text frames with `active_codec` and routes them with `route_decoded`
 5. routes raw binary frames with `route_binary` when needed
 6. reports closes with `socket_disconnected`
-7. checks `connection_owner`; on `OwnerAlive(pid)` it monitors `pid`, and on `OwnerUnavailable` it refuses the connection
+7. checks `runtime_pid`; on `Ok(pid)` it monitors `pid`, and on `Error(Nil)` it refuses the connection
 
 That ownership check is what makes runtime restarts safe: when the owning runtime dies, the connection process closes the WebSocket instead of leaving an orphaned socket behind.
 
@@ -91,7 +91,7 @@ flowchart LR
   TR -->|raw binary| RT
   RT -->|reply / push frame| TR
   TR --> CL["client"]
-  TR -. monitor connection_owner .-> RT
+  TR -. monitor runtime_pid .-> RT
 ```
 
 ## Where this lives

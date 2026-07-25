@@ -190,31 +190,15 @@ pub fn log_warning(
 
 // --- Connection ownership ---
 
-/// The lifecycle relationship between a transport connection and the runtime
-/// that owns it.
+/// The pid of the runtime that owns a transport's connections, or
+/// `Error(Nil)` when it is not currently running (pre-start or a restart
+/// window).
 ///
-/// App-side dispatch systems own their connections through a supervised
-/// runtime. A transport should monitor the owning runtime and close the
-/// connection when it dies, so a runtime crash or restart never leaves a
-/// zombie connection whose frames are silently dropped by a runtime that no
-/// longer knows the socket.
-pub type ConnectionOwner {
-  /// The owning runtime is alive at this pid. Monitor it and close the
-  /// connection when it goes down.
-  OwnerAlive(pid: process.Pid)
-  /// The runtime is not currently running (pre-start or a restart window). A
-  /// new connection cannot be owned, so the transport must refuse it rather
-  /// than admit a dead socket.
-  OwnerUnavailable
-}
-
-/// Determine how a newly accepted connection is owned. Call this in the
-/// connection process right after upgrade; on `OwnerAlive(pid)` monitor `pid`
-/// and close on its `Down`, and on `OwnerUnavailable` close the connection
-/// immediately.
-pub fn connection_owner(sockets: Sockets) -> ConnectionOwner {
-  case beryl.app_runtime_pid(sockets) {
-    Ok(pid) -> OwnerAlive(pid)
-    Error(Nil) -> OwnerUnavailable
-  }
+/// Call this in the connection process right after upgrade. On `Ok(pid)`,
+/// monitor `pid` and close the connection on its `Down`, so a runtime crash
+/// or restart never leaves a zombie connection whose frames are silently
+/// dropped by a runtime that no longer knows the socket. On `Error(Nil)` the
+/// connection cannot be owned — refuse it rather than admit a dead socket.
+pub fn runtime_pid(sockets: Sockets) -> Result(process.Pid, Nil) {
+  beryl.app_runtime_pid(sockets)
 }

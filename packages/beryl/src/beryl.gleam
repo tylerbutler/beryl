@@ -441,6 +441,8 @@ pub fn with_max_event_length(
 /// the README's "Security" section for deployment guidance.
 ///
 /// Values <= 0 disable the cap. The default is 1 MiB.
+// nolint: unused_exports -- enforced and covered in the transport packages (see beryl_mist/beryl_ewe handler tests)
+
 pub fn with_max_inbound_frame_bytes(
   config: Config,
   max_bytes max_bytes: Int,
@@ -456,78 +458,6 @@ pub fn with_max_joined_topics_per_socket(
   max_topics max_topics: Int,
 ) -> Config {
   Config(..config, max_joined_topics_per_socket: max_topics)
-}
-
-// nolint: unused_exports -- package-internal accessors for tests; hidden from public docs with @internal
-@internal
-pub fn config_heartbeat_interval_ms(config: Config) -> Int {
-  config.heartbeat_interval_ms
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_heartbeat_timeout_ms(config: Config) -> Int {
-  config.heartbeat_timeout_ms
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_max_connections_per_ip(config: Config) -> Int {
-  config.max_connections_per_ip
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_join_rate(config: Config) -> Int {
-  config.join_rate
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_join_burst(config: Config) -> Int {
-  config.join_burst
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_channel_rate(config: Config) -> Int {
-  config.channel_rate
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_channel_burst(config: Config) -> Int {
-  config.channel_burst
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_channel_rate_max_keys_per_socket(config: Config) -> Int {
-  config.channel_rate_max_keys_per_socket
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_max_topic_length(config: Config) -> Int {
-  config.max_topic_length
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_max_event_length(config: Config) -> Int {
-  config.max_event_length
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_max_inbound_frame_bytes(config: Config) -> Int {
-  config.max_inbound_frame_bytes
-}
-
-// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
-@internal
-pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
-  config.max_joined_topics_per_socket
 }
 
 /// Warn when a channels system starts with every abuse control disabled.
@@ -718,24 +648,13 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(HeartbeatTimeoutTooLow(2)),
   )
-  validate_topic_patterns(config.topic_rates)
-}
-
-fn validate_topic_patterns(
-  rates: List(#(String, rate_limit.RateLimitConfig)),
-) -> Result(Nil, ConfigError) {
-  case rates {
-    [] -> Ok(Nil)
-    [#(pattern, _limits), ..rest] ->
-      case topic.validate_pattern(pattern) {
-        Ok(_) -> validate_topic_patterns(rest)
-        Error(error) ->
-          internal.result_error(InvalidTopicPattern(
-            pattern,
-            topic_error_reason(error),
-          ))
-      }
-  }
+  list.try_each(config.topic_rates, fn(entry) {
+    let #(pattern, _limits) = entry
+    topic.validate_pattern(pattern)
+    |> result.map_error(fn(error) {
+      InvalidTopicPattern(pattern, topic_error_reason(error))
+    })
+  })
 }
 
 fn topic_error_reason(error: topic.TopicError) -> String {
@@ -806,9 +725,9 @@ fn drop_subtree_monitors(
   runtime_monitor: process.Monitor,
   limiter_monitor: Option(process.Monitor),
 ) -> Nil {
-  drop_monitor(runtime_monitor)
+  process.demonitor_process(runtime_monitor)
   case limiter_monitor {
-    Some(monitor) -> drop_monitor(monitor)
+    Some(monitor) -> process.demonitor_process(monitor)
     None -> Nil
   }
 }
@@ -850,10 +769,6 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
     process.new_selector()
     |> process.select_specific_monitor(monitor, fn(_down) { Nil })
   process.selector_receive(selector, 5000)
-}
-
-fn drop_monitor(monitor: process.Monitor) -> Nil {
-  process.demonitor_process(monitor)
 }
 
 /// Start an app-side dispatch system.
