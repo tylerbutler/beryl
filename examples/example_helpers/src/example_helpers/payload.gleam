@@ -6,6 +6,7 @@
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/int
+import gleam/json.{type Json}
 import gleam/result
 
 /// Read a string-valued field from a payload. Errors if the field is
@@ -47,4 +48,21 @@ pub fn float_field(payload: Dynamic, field_name: String) -> Result(Float, Nil) {
   }
   decode.run(payload, decoder)
   |> result.replace_error(Nil)
+}
+
+/// Read a number-valued field from a payload and re-encode it as JSON,
+/// falling back to `0.0` when it is missing or not a number. Ints stay ints
+/// and floats stay floats on the wire, so relaying a value does not change
+/// its JSON type.
+pub fn json_number_or_zero(payload: Dynamic, field_name: String) -> Json {
+  let number =
+    decode.one_of(decode.float |> decode.map(json.float), or: [
+      decode.int |> decode.map(json.int),
+    ])
+  let decoder = {
+    use value <- decode.field(field_name, number)
+    decode.success(value)
+  }
+  decode.run(payload, decoder)
+  |> result.unwrap(json.float(0.0))
 }

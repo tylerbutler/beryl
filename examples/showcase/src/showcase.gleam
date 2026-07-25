@@ -23,12 +23,11 @@ import collab_docs/router as collab_docs_router
 import cursors/app as cursors_app
 import cursors/router as cursors_router
 import envoy
+import example_helpers/router as topic_router
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
 import gleam/io
-import gleam/json
-import gleam/option.{None, Some}
 import gleam/result
 import mist
 import showcase/router
@@ -161,157 +160,30 @@ pub fn main() {
   process.sleep_forever()
 }
 
-/// The socket-wide router: dispatch every event to the embedded app that
-/// owns its topic namespace, threading that app's sub-model through the
-/// per-namespace `Dict`.
+/// The socket-wide router: register each embedded app's topic namespace,
+/// projecting this app's `Model` onto the `Dict` that namespace owns. The
+/// dispatch itself lives in `example_helpers/router`, shared with each
+/// example's standalone server.
 fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
-  case ev {
-    socket.Join(topic, payload, ref) ->
-      case topic {
-        "cursor:" <> _ -> {
-          let #(joined, effects) =
-            cursors_app.join(ctx.cursors, model.socket_id, topic, payload, ref)
-          socket.Next(store_cursor(model, topic, joined), effects)
-        }
-        "room:" <> _ -> {
-          let #(joined, effects) =
-            chat_app.join(ctx.rooms, model.socket_id, topic, payload, ref)
-          socket.Next(store_room(model, topic, joined), effects)
-        }
-        "document:" <> _ -> {
-          let #(joined, effects) =
-            docs_app.join(ctx.docs, model.socket_id, topic, payload, ref)
-          socket.Next(store_doc(model, topic, joined), effects)
-        }
-        _ ->
-          socket.Next(model, [
-            socket.RejectJoin(
-              ref,
-              json.object([#("reason", json.string("unknown_topic"))]),
-            ),
-          ])
-      }
-
-    socket.Message(topic, event_name, payload, ref) ->
-      case topic {
-        "cursor:" <> _ ->
-          case dict.get(model.cursors, topic) {
-            Ok(sub) -> {
-              let #(sub, effects) =
-                cursors_app.update(
-                  ctx.cursors,
-                  model.socket_id,
-                  topic,
-                  sub,
-                  event_name,
-                  payload,
-                )
-              socket.Next(store_cursor(model, topic, Some(sub)), effects)
-            }
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "room:" <> _ ->
-          case dict.get(model.rooms, topic) {
-            Ok(sub) -> {
-              let #(sub, effects) =
-                chat_app.update(
-                  ctx.rooms,
-                  model.socket_id,
-                  topic,
-                  sub,
-                  event_name,
-                  payload,
-                  ref,
-                )
-              socket.Next(store_room(model, topic, Some(sub)), effects)
-            }
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "document:" <> _ ->
-          case dict.get(model.docs, topic) {
-            Ok(sub) -> {
-              let #(sub, effects) =
-                docs_app.update(
-                  ctx.docs,
-                  model.socket_id,
-                  topic,
-                  sub,
-                  event_name,
-                  payload,
-                  ref,
-                )
-              socket.Next(store_doc(model, topic, Some(sub)), effects)
-            }
-            Error(Nil) -> socket.Next(model, [])
-          }
-        _ -> socket.Next(model, [])
-      }
-
-    socket.Closed(topic, _reason) ->
-      case topic {
-        "cursor:" <> _ ->
-          case dict.get(model.cursors, topic) {
-            Ok(sub) ->
-              socket.Next(
-                Model(..model, cursors: dict.delete(model.cursors, topic)),
-                cursors_app.closed(ctx.cursors, model.socket_id, topic, sub),
-              )
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "room:" <> _ ->
-          case dict.get(model.rooms, topic) {
-            Ok(sub) ->
-              socket.Next(
-                Model(..model, rooms: dict.delete(model.rooms, topic)),
-                chat_app.closed(ctx.rooms, model.socket_id, topic, sub),
-              )
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "document:" <> _ ->
-          case dict.get(model.docs, topic) {
-            Ok(sub) ->
-              socket.Next(
-                Model(..model, docs: dict.delete(model.docs, topic)),
-                docs_app.closed(ctx.docs, model.socket_id, topic, sub),
-              )
-            Error(Nil) -> socket.Next(model, [])
-          }
-        _ -> socket.Next(model, [])
-      }
-
-    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
-  }
-}
-
-fn store_cursor(
-  model: Model,
-  topic: String,
-  sub: option.Option(cursors_app.Model),
-) -> Model {
-  case sub {
-    Some(sub) -> Model(..model, cursors: dict.insert(model.cursors, topic, sub))
-    None -> model
-  }
-}
-
-fn store_room(
-  model: Model,
-  topic: String,
-  sub: option.Option(chat_app.Model),
-) -> Model {
-  case sub {
-    Some(sub) -> Model(..model, rooms: dict.insert(model.rooms, topic, sub))
-    None -> model
-  }
-}
-
-fn store_doc(
-  model: Model,
-  topic: String,
-  sub: option.Option(docs_app.Model),
-) -> Model {
-  case sub {
-    Some(sub) -> Model(..model, docs: dict.insert(model.docs, topic, sub))
-    None -> model
-  }
+  let namespaces = [
+    cursors_app.namespace(
+      ctx.cursors,
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.cursors },
+      put: fn(model: Model, cursors) { Model(..model, cursors: cursors) },
+    ),
+    chat_app.namespace(
+      ctx.rooms,
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.rooms },
+      put: fn(model: Model, rooms) { Model(..model, rooms: rooms) },
+    ),
+    docs_app.namespace(
+      ctx.docs,
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.docs },
+      put: fn(model: Model, docs) { Model(..model, docs: docs) },
+    ),
+  ]
+  topic_router.route(namespaces, topic_router.unknown_topic(), model, ev)
 }
