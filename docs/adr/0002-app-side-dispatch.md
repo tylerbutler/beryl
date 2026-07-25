@@ -49,8 +49,10 @@ Replace the channel-module API entirely with app-side dispatch:
   (`beryl/event.notify`), obtained from `ConnectInfo.self` — an ordinary
   typed send, no erasure.
 
-Final API, current-to-new mapping, and the resolution of every open
-question below: [socket API reference](../design/app-side-dispatch-reference.md).
+The shipped API is documented in the
+[App-Side Dispatch guide](https://beryl.tylerbutler.com/guides/dispatch/) and
+the generated [API reference](https://beryl.tylerbutler.com/reference/api/);
+`beryl.gleam` and `beryl/socket.gleam` carry the authoritative signatures.
 
 ## Consequences
 
