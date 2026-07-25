@@ -12,6 +12,7 @@ Start a `beryl.Sockets` system, then hand that handle to the Mist transport.
 ```gleam
 import beryl
 import beryl/socket
+import beryl/transport/server
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/bytes_tree
@@ -38,7 +39,7 @@ pub fn main() {
 
   mist_transport.handler(
     sockets,
-    mist_transport.default_config("/socket/websocket"),
+    server.default_config("/socket/websocket"),
     http_handler,
   )
   |> mist.new
@@ -64,18 +65,18 @@ Use `with_on_connect` to authenticate a connection before upgrading. The callbac
 
 ```gleam
 let config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+  server.default_config("/socket/websocket")
+  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
     case validate_token(req) {
       Ok(user_id) -> Ok([#("user_id", user_id)])
-      Error(_) -> Error(mist_transport.ConnectRejected)
+      Error(_) -> Error(server.ConnectRejected)
     }
   })
 
 use <- mist_transport.upgrade(req, sockets, config)
 ```
 
-Returning `Error(mist_transport.ConnectRejected)` sends HTTP 403 before the WebSocket handshake.
+Returning `Error(server.ConnectRejected)` sends HTTP 403 before the WebSocket handshake.
 
 ### Origin validation and CSWSH
 
@@ -83,9 +84,9 @@ Browsers include cookies on WebSocket handshakes. If your socket authentication 
 
 ```gleam
 let config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_allowed_origins(["https://app.example.com"])
-  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+  server.default_config("/socket/websocket")
+  |> server.with_allowed_origins(["https://app.example.com"])
+  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
     validate_cookie_session(req)
   })
 ```

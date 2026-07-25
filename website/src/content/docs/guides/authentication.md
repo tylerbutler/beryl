@@ -63,18 +63,19 @@ fn query_param(req: Request(mist.Connection), name: String) -> Result(String, Ni
 `with_on_connect` returns `Result(List(#(String, String)), ConnectError)`.
 
 - `Ok(metadata)` allows the WebSocket upgrade and appends `metadata` to `ConnectSeed.metadata`.
-- `Error(mist_transport.ConnectRejected)` rejects the connection with HTTP 403 before any topic join.
+- `Error(server.ConnectRejected)` rejects the connection with HTTP 403 before any topic join.
 
 ```gleam
+import beryl/transport/server
 import beryl_mist as mist_transport
 import gleam/string
 
 // let verify_token: fn(String) -> Result(Claims, Nil)
 
 let ws_config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_allowed_origins(["https://app.example.com"])
-  |> mist_transport.with_on_connect(fn(req) {
+  server.default_config("/socket/websocket")
+  |> server.with_allowed_origins(["https://app.example.com"])
+  |> server.with_on_connect(fn(req) {
     case extract_token(req) {
       Ok(token) ->
         case verify_token(token) {
@@ -84,10 +85,10 @@ let ws_config =
               #("username", claims.username),
               #("roles", string.join(claims.roles, ",")),
             ])
-          Error(_) -> Error(mist_transport.ConnectRejected)
+          Error(_) -> Error(server.ConnectRejected)
         }
 
-      Error(_) -> Error(mist_transport.ConnectRejected)
+      Error(_) -> Error(server.ConnectRejected)
     }
   })
 ```

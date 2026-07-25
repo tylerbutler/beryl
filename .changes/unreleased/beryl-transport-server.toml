@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Added"
+body = "Server-agnostic WebSocket transport infrastructure in beryl/transport/server and beryl/transport/origin: TransportConfig (generic over the gleam/http request body type) with default_config/with_on_connect/with_allowed_origins/with_allow_all_origins builders, OriginPolicy with pure origin/vsn handshake checks, the shared upgrade admission pipeline (path matching, origin policy, ?vsn negotiation, connection limits, on_connect), per-connection lifecycle choreography (init_connection/close_connection), and the inbound frame pipeline (size caps, rate limiting, decode, routing)."

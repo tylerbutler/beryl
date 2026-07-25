@@ -1,5 +1,6 @@
 import beryl
 import beryl/socket
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -252,7 +253,7 @@ fn start_mist_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
     mist_transport.upgrade(
       request,
       channels,
-      mist_transport.default_config("/socket/websocket"),
+      server.default_config("/socket/websocket"),
       fn() {
         response.new(404)
         |> response.set_body(mist.Bytes(bytes_tree.new()))
@@ -432,7 +433,7 @@ fn auth_query(req, name: String) -> Result(String, Nil) {
 
 fn start_auth_server(
   channels: beryl.Sockets,
-  config: mist_transport.TransportConfig,
+  config: server.TransportConfig(mist.Connection),
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let handler = fn(request) {
@@ -462,11 +463,11 @@ pub fn on_connect_rejects_connection_without_token_test() {
       update: fn(model, _ev) { socket.Next(model, []) },
     )
   let config =
-    mist_transport.default_config("/socket/websocket")
-    |> mist_transport.with_on_connect(fn(req) {
+    server.default_config("/socket/websocket")
+    |> server.with_on_connect(fn(req) {
       case auth_query(req, "token") {
         Ok("secret") -> Ok([])
-        _ -> Error(mist_transport.ConnectRejected)
+        _ -> Error(server.ConnectRejected)
       }
     })
   let #(port, server_pid) = start_auth_server(channels, config)
@@ -498,11 +499,11 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
     )
 
   let config =
-    mist_transport.default_config("/socket/websocket")
-    |> mist_transport.with_on_connect(fn(req) {
+    server.default_config("/socket/websocket")
+    |> server.with_on_connect(fn(req) {
       auth_query(req, "token")
       |> result.map(fn(token) { [#("user", token), #("user", token)] })
-      |> result.map_error(fn(_) { mist_transport.ConnectRejected })
+      |> result.map_error(fn(_) { server.ConnectRejected })
     })
   let #(port, server_pid) = start_auth_server(channels, config)
 

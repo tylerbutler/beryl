@@ -11,6 +11,7 @@ import beryl
 import beryl/group
 import beryl/presence
 import beryl/socket.{type Input, type Next}
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
@@ -148,7 +149,7 @@ pub fn main() {
       mist_transport.upgrade(
         req,
         channels,
-        mist_transport.default_config("/socket/websocket"),
+        server.default_config("/socket/websocket"),
         fn() { router.handle_request(req, showcase_ctx) },
       )
     }

@@ -95,6 +95,7 @@ Mist transport:
 ```gleam
 // src/my_app.gleam
 import beryl
+import beryl/transport/server
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/bytes_tree
@@ -117,7 +118,7 @@ pub fn main() {
       mist_transport.upgrade(
         req,
         sockets,
-        mist_transport.default_config("/socket/websocket"),
+        server.default_config("/socket/websocket"),
         fn() { handle_http(req) },
       )
     }
@@ -143,7 +144,7 @@ fn handle_http(
 ```
 
 <Aside type="tip" title="Transport path">
-`mist_transport.default_config("/socket/websocket")` tells beryl to intercept
+`server.default_config("/socket/websocket")` tells beryl to intercept
 requests on `/socket/websocket`. When you create a Phoenix JS socket with
 `new Socket("/socket")`, the client appends `/websocket` automatically — so
 the paths line up.

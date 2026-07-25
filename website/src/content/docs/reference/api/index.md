@@ -23,6 +23,8 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.start`. |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Pattern matching for topic routing. |
 | [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
+| [`beryl/transport/origin`](/reference/api/beryl-transport-origin/) | Origin and handshake-version checks for WebSocket upgrades. |
+| [`beryl/transport/server`](/reference/api/beryl-transport-server/) | Server-agnostic WebSocket transport infrastructure. |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
 

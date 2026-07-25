@@ -18,11 +18,11 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    ```
    Your transport config must match:
    ```gleam
-   mist_transport.default_config("/socket/websocket")
+   server.default_config("/socket/websocket")
    ```
    Raw WebSocket clients (non-Phoenix) connect directly to the path with no suffix.
 
-3. **`on_connect` rejection.** If you configured `with_on_connect`, returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
+3. **`on_connect` rejection.** If you configured `with_on_connect`, returning `Error(server.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
 
 4. **Reverse proxy not forwarding upgrade headers.** See [Reverse proxy / nginx](#reverse-proxy--nginx) below.
 
@@ -138,7 +138,7 @@ let logging =
 
 1. **`on_connect` bug.** Add logging to your `with_on_connect` callback to confirm tokens are being extracted correctly from headers or query parameters.
 
-2. **Token validation error.** Make sure failed validation returns `Error(mist_transport.ConnectRejected)` (for connect-level auth) or a controlled `socket.RejectJoin` (for join-level auth), not a panic.
+2. **Token validation error.** Make sure failed validation returns `Error(server.ConnectRejected)` (for connect-level auth) or a controlled `socket.RejectJoin` (for join-level auth), not a panic.
 
 3. **`update` returns `RejectJoin` for every `Join`.** Log the incoming topic and decode the join payload you expect. Join payloads arrive as `gleam/dynamic.Dynamic`, so shape mismatches are easy to miss without explicit decoding.
 

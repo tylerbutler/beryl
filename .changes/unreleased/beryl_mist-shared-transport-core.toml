@@ -1,0 +1,3 @@
+project = "beryl_mist"
+kind = "Changed"
+body = "Transport configuration and shared infrastructure moved to the beryl core package: build configs with beryl/transport/server (default_config, with_on_connect, with_allowed_origins, with_allow_all_origins) and construct ConnectRejected/OriginPolicy values from beryl/transport/server and beryl/transport/origin. beryl_mist no longer exports TransportConfig, ConnectError, or OriginPolicy; upgrade, handler, and upgrade_connection now take a server.TransportConfig(mist.Connection) and keep only the Mist-specific glue (upgrade call, frame send, peer IP extraction)."

@@ -3,6 +3,7 @@ import aquamarine/error as aquamarine_error
 import aquamarine/phoenix
 import beryl
 import beryl/socket
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -83,7 +84,7 @@ fn start_test_server(
     mist_transport.upgrade(
       req,
       channels,
-      mist_transport.default_config(socket_path),
+      server.default_config(socket_path),
       fn() {
         response.new(404)
         |> response.set_body(mist.Bytes(bytes_tree.new()))

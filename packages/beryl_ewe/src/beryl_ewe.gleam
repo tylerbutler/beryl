@@ -4,205 +4,32 @@
 //// and the beryl runtime using Ewe request and response types directly.
 ////
 //// It mirrors the `beryl_mist` package: the two transports expose the same
-//// config-builder and handler API, so an integrator can run beryl sockets on
-//// either web server by choosing the matching transport package. Both consume
-//// only beryl's public `beryl/transport` SPI.
+//// handler API, so an integrator can run beryl sockets on either web server
+//// by choosing the matching transport package.
+////
+//// Transport configuration (path, `on_connect` authentication, origin
+//// policy) lives in `beryl/transport/server`; build a
+//// `server.TransportConfig` with its config builders and pass it to
+//// [`handler`](#handler) or [`upgrade`](#upgrade). This module supplies only
+//// the Ewe-specific glue: the WebSocket upgrade call, frame sending, and
+//// peer IP extraction.
 
 import beryl.{type Sockets}
-import beryl/socket
 import beryl/transport
-import beryl/wire/codec
+import beryl/transport/server.{type ConnectionState, type SendRequest}
 import ewe.{type Connection, type ResponseBody, type WebsocketConnection}
-import gleam/bit_array
-import gleam/bool
-import gleam/crypto
 import gleam/erlang/process.{type Selector}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import gleam/string
-
-/// Configuration for the Ewe WebSocket transport
-pub opaque type TransportConfig {
-  TransportConfig(
-    /// URL path to match for WebSocket upgrade (e.g., "/socket")
-    path: String,
-    /// Optional socket-level connect/authentication callback invoked once,
-    /// before the WebSocket upgrade.
-    ///
-    /// Runs the Phoenix `UserSocket.connect/3` analogue: it authenticates the
-    /// whole connection a single time and can reject it before any topic
-    /// join. Return `Ok(metadata)` to allow the connection and seed
-    /// `ConnectSeed.metadata` (an ordered list of string pairs, visible to
-    /// the app's `init` via `ConnectInfo.seed`), or `Error(ConnectRejected)`
-    /// to reject with a 403 Forbidden response. When `None`, all connections
-    /// are allowed and metadata starts empty (`[]`).
-    on_connect: Option(
-      fn(Request(Connection)) -> Result(List(#(String, String)), ConnectError),
-    ),
-    /// Policy applied to the request `Origin` header before the WebSocket
-    /// handshake. Defaults to [`SameOrigin`](#OriginPolicy).
-    origin_policy: OriginPolicy,
-  )
-}
-
-/// Errors returned from a transport `on_connect` callback.
-pub type ConnectError {
-  /// Reject the WebSocket upgrade with `403 Forbidden`.
-  ConnectRejected
-}
-
-/// Policy for validating the browser `Origin` header before a WebSocket
-/// upgrade completes.
-///
-/// The `Origin` check is the primary defence against Cross-Site WebSocket
-/// Hijacking (CSWSH): a browser attaches ambient cookies/session credentials
-/// to a WebSocket handshake regardless of which site initiated it, so a socket
-/// that authenticates from those credentials must reject upgrades that
-/// originate from other sites.
-///
-/// In every policy, a request with **no** `Origin` header is allowed: browsers
-/// always send `Origin` on WebSocket handshakes, so an absent header signals a
-/// non-browser client (native app, server-to-server, CLI) that is not subject
-/// to the browser same-origin model and cannot be tricked into a cross-site
-/// upgrade. The one exception is [`AllowList`](#OriginPolicy), which requires a
-/// matching `Origin` and therefore rejects absent ones.
-pub type OriginPolicy {
-  /// Allow an upgrade only when the request `Origin` authority (host plus any
-  /// port, with the scheme stripped) matches the request `Host` authority.
-  /// This is the default and rejects cross-site upgrades before the handshake.
-  ///
-  /// A malformed or opaque `Origin` (e.g. `null` from a sandboxed iframe, or a
-  /// value with no host) is rejected. Comparison is over the full `host:port`
-  /// authority, so a non-default port must match on both sides.
-  ///
-  /// Behind a reverse proxy this compares against the `Host` header as the app
-  /// sees it: ensure the proxy forwards the public `Host` unchanged, or use
-  /// [`AllowList`](#OriginPolicy) with the public origins instead. Forwarded
-  /// headers such as `X-Forwarded-Host` are not trusted, because clients can
-  /// spoof them.
-  SameOrigin
-  /// Allow an upgrade only when the request `Origin` header matches one of the
-  /// listed values exactly (including scheme, host, and any port), such as
-  /// `"https://app.example.com"`. Requests without an `Origin` header, or with
-  /// a non-matching one, are rejected.
-  AllowList(List(String))
-  /// Allow every upgrade regardless of `Origin`. This is an explicit opt-out
-  /// of CSWSH protection: only use it for sockets that do not rely on ambient
-  /// browser credentials (or that authenticate every message independently).
-  AllowAll
-}
-
-/// Create a default transport config with no connect hook.
-///
-/// The resulting config seeds empty (`[]`) `ConnectSeed.metadata` and applies
-/// the [`SameOrigin`](#OriginPolicy) origin policy, which rejects cross-site
-/// WebSocket upgrades before the handshake (CSWSH protection). Same-origin
-/// upgrades and non-browser clients (no `Origin` header) are admitted without
-/// configuration.
-///
-/// Add `with_on_connect` to authenticate connections and/or seed connect
-/// metadata. Use `with_allowed_origins` to pin an explicit allow-list, or
-/// `with_allow_all_origins` to opt out of origin checking entirely.
-pub fn default_config(path: String) -> TransportConfig {
-  TransportConfig(path: path, on_connect: None, origin_policy: SameOrigin)
-}
-
-/// Set a socket-level connect/authentication callback on the transport config.
-///
-/// The callback receives the HTTP request before the WebSocket upgrade and
-/// runs once per socket. Return `Ok(metadata)` to allow the connection and
-/// seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
-/// the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
-/// reject the connection with a 403 Forbidden response before any topic
-/// join occurs.
-///
-/// Callback order and duplicate keys are preserved verbatim in
-/// `ConnectSeed.metadata`; this transport never logs metadata values.
-pub fn with_on_connect(
-  config: TransportConfig,
-  callback: fn(Request(Connection)) ->
-    Result(List(#(String, String)), ConnectError),
-) -> TransportConfig {
-  TransportConfig(
-    path: config.path,
-    on_connect: Some(callback),
-    origin_policy: config.origin_policy,
-  )
-}
-
-/// Restrict WebSocket upgrades to requests whose `Origin` header exactly
-/// matches one of the given values.
-///
-/// This replaces the default [`SameOrigin`](#OriginPolicy) policy with an
-/// [`AllowList`](#OriginPolicy). Values are matched exactly against the full
-/// `Origin` header, including scheme and host (and port when present), such as
-/// `"https://app.example.com"`. Missing or non-matching origins are rejected
-/// with `403 Forbidden` before the WebSocket handshake.
-///
-/// Prefer this over `with_allow_all_origins` when you know the exact origins
-/// that should be allowed (e.g. behind a reverse proxy that rewrites the
-/// `Host` header, where `SameOrigin` cannot see the public host).
-pub fn with_allowed_origins(
-  config: TransportConfig,
-  origins: List(String),
-) -> TransportConfig {
-  TransportConfig(
-    path: config.path,
-    on_connect: config.on_connect,
-    origin_policy: AllowList(origins),
-  )
-}
-
-/// Disable `Origin` checking, allowing WebSocket upgrades from any origin.
-///
-/// This is an explicit opt-out of the default [`SameOrigin`](#OriginPolicy)
-/// CSWSH protection and restores the pre-1.0 allow-all behaviour. Only use it
-/// for sockets that do not rely on ambient browser credentials (cookies,
-/// sessions) for authorization, or that authenticate every message
-/// independently. For cookie/session-authenticated apps, prefer the default
-/// `SameOrigin` policy or `with_allowed_origins`.
-pub fn with_allow_all_origins(config: TransportConfig) -> TransportConfig {
-  TransportConfig(
-    path: config.path,
-    on_connect: config.on_connect,
-    origin_policy: AllowAll,
-  )
-}
-
-/// State maintained per WebSocket connection
-type ConnectionState {
-  ConnectionState(
-    socket_id: String,
-    channels: Sockets,
-    connection_permit: Option(beryl.ConnectionPermit),
-    max_inbound_frame_bytes: Int,
-    /// Wire codec for decoding inbound frames here in the connection
-    /// process, so parse cost and malformed input never reach the shared
-    /// runtime.
-    codec: codec.Codec,
-    /// Per-connection message-rate limiter (`None` = unlimited).
-    /// Enforced at the edge: frames over the rate are shed before decode,
-    /// so a flooding socket cannot fill the runtime's mailbox.
-    message_limiter: Option(transport.RateLimiter),
-  )
-}
-
-type SendRequest {
-  SendText(String)
-  SendBinary(BitArray)
-  /// Runtime-initiated close (e.g. heartbeat eviction).
-  Close
-}
 
 /// Upgrade a request to WebSocket if it matches the configured path
 ///
 /// Usage in your Ewe handler:
 /// ```gleam
 /// fn handle_request(req: Request(Connection), sockets: Sockets) -> Response(ResponseBody) {
-///   use <- ewe_transport.upgrade(req, sockets, ewe_transport.default_config("/socket"))
+///   use <- ewe_transport.upgrade(req, sockets, server.default_config("/socket"))
 ///   // Fall through to regular HTTP routing
 ///   case request.path_segments(req) {
 ///     [] -> index_page()
@@ -211,194 +38,40 @@ type SendRequest {
 /// }
 /// ```
 ///
-/// ## Path matching
-///
-/// The request path is normalised by re-joining its segments as
-/// `"/" <> string.join(segments, "/")` and compared for exact equality with
-/// `config.path`. Because the normalised path never has a trailing slash, a
-/// config path written with a trailing slash (e.g. `"/socket/"`) will never
-/// match. Configure the path without a trailing slash (e.g. `"/socket"`).
-///
-/// ## Connection limits
-///
-/// When `beryl.with_max_connections_per_ip` is configured, this transport
-/// enforces the limit before completing the handshake and returns `429 Too
-/// Many Requests` once the peer is at its limit. Enforcement uses the **real
-/// socket peer IP** from the TCP connection; forwarded headers such as
-/// `X-Forwarded-For` are **not** trusted or parsed, because clients can set
-/// them and would otherwise spoof their address to bypass the limit. Behind a
-/// trusted reverse proxy, all connections share the proxy's IP — resolve the
-/// real client IP at the proxy layer. See the WebSocket transport guide.
-///
-/// When `beryl.with_max_connections` is configured, this transport also
-/// enforces a node-wide ceiling on concurrent connections across all IPs,
-/// likewise returning `429` and rejecting the upgrade before allocating any
-/// long-lived socket/runtime state. The two limits compose: a connection
-/// must be under both to be admitted. The node-wide ceiling bounds total
-/// resource use when a per-IP limit alone cannot (many distributed source
-/// addresses / IPv6 rotation). It is enforced per BEAM node, so across a
-/// load-balanced cluster the effective ceiling scales with the node count —
-/// use the load balancer's own controls for a cluster-wide cap.
+/// Path matching, origin policy, `?vsn` version negotiation, connection
+/// limits (per-IP and node-wide, rejected with `429 Too Many Requests`), and
+/// the `on_connect` callback are handled by the shared admission pipeline —
+/// see `beryl/transport/server.upgrade` for the full contract. Enforcement
+/// uses the real socket peer IP from the TCP connection; forwarded headers
+/// such as `X-Forwarded-For` are not trusted.
 pub fn upgrade(
   request: Request(Connection),
   channels: Sockets,
-  config: TransportConfig,
+  config: server.TransportConfig(Connection),
   next: fn() -> Response(ResponseBody),
 ) -> Response(ResponseBody) {
-  // Check if path matches
-  let path = "/" <> string.join(request.path_segments(request), "/")
-
-  case path == config.path {
-    False -> next()
-    True -> handle_matched_upgrade(request, channels, config)
-  }
-}
-
-fn handle_matched_upgrade(
-  request: Request(Connection),
-  channels: Sockets,
-  config: TransportConfig,
-) -> Response(ResponseBody) {
-  use <- bool.lazy_guard(
-    when: !origin_allowed(request, config.origin_policy),
-    return: forbidden,
+  server.upgrade(
+    request: request,
+    sockets: channels,
+    config: config,
+    request_ip: request_ip,
+    reject: reject,
+    accept: fn(metadata, connection_permit) {
+      do_upgrade(request, channels, metadata, Some(connection_permit))
+    },
+    next: next,
   )
-  use <- bool.lazy_guard(when: !vsn_supported(request), return: forbidden)
-  let ip = request_ip(request)
-  case beryl.acquire_connection_slot(channels, ip) {
-    Error(Nil) ->
-      response.new(429)
-      |> response.set_body(ewe.Empty)
-    Ok(connection_permit) ->
-      run_connect_and_upgrade(request, channels, config, connection_permit)
-  }
 }
 
-/// Check the client's requested wire protocol version (`?vsn=` query
-/// parameter, sent by Phoenix clients) before upgrading.
-///
-/// Beryl speaks the Phoenix V2 array framing, so `vsn=2.x` is accepted. A
-/// missing `vsn` is accepted for non-Phoenix clients speaking the configured
-/// codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`) is
-/// rejected with `403 Forbidden` at the handshake — failing loudly instead
-/// of accepting a connection whose every frame would be undecodable.
-fn vsn_supported(request: Request(Connection)) -> Bool {
-  case request.get_query(request) {
-    Ok(params) ->
-      case list.key_find(params, "vsn") {
-        Ok(vsn) -> string.starts_with(vsn, "2.")
-        Error(Nil) -> True
-      }
-    // No query string / unparseable query: no version was requested.
-    Error(Nil) -> True
-  }
-}
-
-/// Decide whether an upgrade is allowed under the configured origin policy.
-///
-/// A request with no `Origin` header is admitted for `SameOrigin` and
-/// `AllowAll` (non-browser clients omit `Origin`), but rejected for
-/// `AllowList`, which requires an explicit match.
-fn origin_allowed(request: Request(Connection), policy: OriginPolicy) -> Bool {
-  case policy {
-    AllowAll -> True
-    AllowList(origins) ->
-      case request.get_header(request, "origin") {
-        Ok(origin) -> list.contains(origins, origin)
-        Error(Nil) -> False
-      }
-    SameOrigin ->
-      case request.get_header(request, "origin") {
-        // Non-browser clients don't send Origin; they can't be driven into a
-        // cross-site upgrade, so admit them.
-        Error(Nil) -> True
-        Ok(origin) ->
-          case request.get_header(request, "host") {
-            Ok(host) -> same_origin(origin, host)
-            // Without a Host header we cannot establish the request's own
-            // authority, so fail closed.
-            Error(Nil) -> False
-          }
-      }
-  }
-}
-
-/// Compare an `Origin` header value against a `Host` header value under the
-/// same-origin rule: strip the scheme from the origin and compare its
-/// authority (host plus any port) to the host authority, case-insensitively.
-///
-/// A malformed or opaque origin (no `scheme://host`, e.g. `null`) never
-/// matches. Comparison is over the full `host:port` authority, so a
-/// non-default port must be present and equal on both sides.
-@internal
-pub fn same_origin(origin: String, host: String) -> Bool {
-  case origin_authority(origin) {
-    Ok(authority) -> authority == string.lowercase(host)
-    Error(Nil) -> False
-  }
-}
-
-/// Extract the lower-cased authority (`host[:port]`) from an `Origin` header
-/// value, stripping the `scheme://` prefix. Returns `Error(Nil)` for values
-/// without a scheme-delimited host (malformed or opaque origins such as
-/// `null`).
-fn origin_authority(origin: String) -> Result(String, Nil) {
-  use #(_scheme, rest) <- result.try(string.split_once(origin, "://"))
-  // An Origin has no path, but strip a trailing path defensively.
-  let authority = case string.split_once(rest, "/") {
-    Ok(#(authority, _path)) -> authority
-    Error(Nil) -> rest
-  }
-  case authority {
-    "" -> Error(Nil)
-    _ -> Ok(string.lowercase(authority))
-  }
-}
-
-fn forbidden() -> Response(ResponseBody) {
-  response.new(403)
+fn reject(status: Int) -> Response(ResponseBody) {
+  response.new(status)
   |> response.set_body(ewe.Empty)
-}
-
-fn run_connect_and_upgrade(
-  request: Request(Connection),
-  channels: Sockets,
-  config: TransportConfig,
-  connection_permit: beryl.ConnectionPermit,
-) -> Response(ResponseBody) {
-  // Run on_connect callback if configured
-  case config.on_connect {
-    Some(callback) ->
-      case callback(request) {
-        Ok(metadata) ->
-          do_upgrade(request, channels, metadata, Some(connection_permit))
-        Error(ConnectRejected) -> {
-          beryl.release_connection_slot(connection_permit)
-          response.new(403)
-          |> response.set_body(ewe.Empty)
-        }
-      }
-    None -> do_upgrade(request, channels, [], Some(connection_permit))
-  }
 }
 
 fn request_ip(request: Request(Connection)) -> String {
   case ewe.get_client_info(request.body) {
     Ok(info) -> ewe.ip_address_to_string(info.ip)
     Error(Nil) -> "unknown"
-  }
-}
-
-/// Determine whether a request is a WebSocket upgrade request.
-///
-/// Checks for the standard `Upgrade: websocket` header (case-insensitive).
-/// Use this to distinguish WebSocket handshakes from regular HTTP traffic on
-/// the same listener.
-@internal
-pub fn is_websocket_request(request: Request(Connection)) -> Bool {
-  case request.get_header(request, "upgrade") {
-    Ok(value) -> string.lowercase(value) == "websocket"
-    Error(Nil) -> False
   }
 }
 
@@ -415,18 +88,18 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// by hand:
 ///
 /// ```gleam
-/// ewe_transport.handler(sockets, ewe_transport.default_config("/socket"), http_handler)
+/// ewe_transport.handler(sockets, server.default_config("/socket"), http_handler)
 /// |> ewe.new
 /// |> ewe.listening(port: 8000)
 /// |> ewe.start
 /// ```
 pub fn handler(
   channels: Sockets,
-  config: TransportConfig,
+  config: server.TransportConfig(Connection),
   http_fallback: fn(Request(Connection)) -> Response(ResponseBody),
 ) -> fn(Request(Connection)) -> Response(ResponseBody) {
   fn(request) {
-    case is_websocket_request(request) {
+    case server.is_websocket_request(request) {
       True ->
         upgrade(request, channels, config, fn() { http_fallback(request) })
       False -> http_fallback(request)
@@ -437,7 +110,7 @@ pub fn handler(
 /// Alternative: upgrade any request to WebSocket (caller handles path matching)
 ///
 /// Note: This function does not invoke the `on_connect` callback from
-/// `TransportConfig`. Sockets upgraded this way start with empty (`[]`)
+/// `server.TransportConfig`. Sockets upgraded this way start with empty (`[]`)
 /// `ConnectSeed.metadata`. If you need authentication or seeded metadata,
 /// either use `upgrade` with a full config or call your auth check before
 /// this function.
@@ -448,186 +121,55 @@ pub fn upgrade_connection(
   do_upgrade(request, channels, [], None)
 }
 
-/// Assemble the connection seed delivered to an app-dispatch system's
-/// `init` (`ConnectInfo.seed`). Systems that don't use connect metadata simply
-/// ignore it.
-///
-/// `metadata` is the ordered list of string pairs returned by the
-/// configured `on_connect` callback (empty when none is configured or it
-/// returns no metadata); order and duplicate keys are preserved verbatim.
-fn connect_seed(
-  request: Request(Connection),
-  metadata: List(#(String, String)),
-) -> socket.ConnectSeed {
-  socket.ConnectSeed(
-    path: request.path,
-    query: request.get_query(request) |> result.unwrap([]),
-    headers: request.headers,
-    metadata: metadata,
-  )
-}
-
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
   channels: Sockets,
   connect_metadata: List(#(String, String)),
-  connection_permit: Option(beryl.ConnectionPermit),
+  connection_permit: Option(transport.ConnectionPermit),
 ) -> Response(ResponseBody) {
-  let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
-  let active_codec = transport.active_codec(channels)
-  let seed = connect_seed(request, connect_metadata)
-  let response =
-    ewe.upgrade_websocket(
-      request,
-      on_init: fn(connection, base_selector) {
-        on_init(
-          connection,
-          base_selector,
-          channels,
-          seed,
-          connection_permit,
-          max_inbound_frame_bytes,
-          active_codec,
-        )
-      },
-      handler: on_message,
-      on_close: on_close,
-    )
-  // A failed handshake (e.g. missing Sec-WebSocket-Key) never runs
-  // on_init/on_close, so the acquired per-IP slot must be released here or
-  // repeated bad handshakes would permanently exhaust the IP's slots.
-  case response.status >= 400 {
-    True -> {
-      case connection_permit {
-        Some(permit) -> beryl.release_connection_slot(permit)
-        None -> Nil
-      }
-      response
-    }
-    False -> response
-  }
-}
-
-/// Initialize WebSocket connection
-fn on_init(
-  _connection: WebsocketConnection,
-  base_selector: Selector(SendRequest),
-  channels: Sockets,
-  seed: socket.ConnectSeed,
-  connection_permit: Option(beryl.ConnectionPermit),
-  max_inbound_frame_bytes: Int,
-  active_codec: codec.Codec,
-) -> #(ConnectionState, Selector(SendRequest)) {
-  // Bind the per-IP slot to this WebSocket process so it is reclaimed even
-  // if the process dies without running on_close.
-  case connection_permit {
-    Some(permit) -> beryl.bind_connection_slot(permit)
-    None -> Nil
-  }
-
-  // Generate unique socket ID
-  let socket_id = generate_socket_id()
-  let send_subject = process.new_subject()
-  // Extend the selector Ewe provides so the runtime can push outbound
-  // frames to this connection's process as `ewe.User(SendRequest)` messages.
-  let selector = process.select(base_selector, send_subject)
-
-  // Create send function that the runtime can use
-  let send_fn = fn(text: String) -> Result(Nil, Nil) {
-    process.send(send_subject, SendText(text))
-    Ok(Nil)
-  }
-
-  let send_binary_fn = fn(data: BitArray) -> Result(Nil, Nil) {
-    process.send(send_subject, SendBinary(data))
-    Ok(Nil)
-  }
-
-  // Register with runtime, seeding the connect seed (path/query/headers
-  // plus any `with_on_connect` metadata).
-  transport.socket_connected(
-    sockets: channels,
-    socket_id: socket_id,
-    send: send_fn,
-    send_binary: send_binary_fn,
-    seed: seed,
+  let seed = server.connect_seed(request, connect_metadata)
+  ewe.upgrade_websocket(
+    request,
+    on_init: fn(_connection, base_selector: Selector(SendRequest)) {
+      // Extend the selector Ewe provides so the runtime can push outbound
+      // frames to this connection's process as `ewe.User(SendRequest)`
+      // messages.
+      server.init_connection(
+        sockets: channels,
+        seed: seed,
+        connection_permit: connection_permit,
+        base_selector: base_selector,
+        logger_name: "beryl_ewe",
+      )
+    },
+    handler: on_message,
+    on_close: fn(_connection, state) { server.close_connection(state) },
   )
-
-  // Let the runtime actively close this connection (heartbeat eviction,
-  // server-side disconnects) instead of leaving a zombie socket open.
-  transport.register_closer(
-    sockets: channels,
-    socket_id: socket_id,
-    close: fn() { process.send(send_subject, Close) },
-  )
-
-  // Tie this connection's lifetime to the runtime that accepted it. If that
-  // runtime crashes or restarts, its registered closer is lost, so monitor it
-  // here and close the connection on its death rather than leaving a zombie
-  // socket whose frames a restarted runtime would silently drop. When the
-  // app runtime is momentarily unavailable (a restart window) the connection
-  // is refused so no orphaned socket is admitted.
-  let selector = case transport.connection_owner(channels) {
-    transport.OwnerAlive(runtime_pid) -> {
-      let monitor = process.monitor(runtime_pid)
-      process.select_specific_monitor(selector, monitor, fn(_down) { Close })
-    }
-    transport.OwnerUnavailable -> {
-      process.send(send_subject, Close)
-      selector
-    }
-  }
-
-  let state =
-    ConnectionState(
-      socket_id: socket_id,
-      channels: channels,
-      connection_permit: connection_permit,
-      max_inbound_frame_bytes: max_inbound_frame_bytes,
-      codec: active_codec,
-      message_limiter: transport.new_message_limiter(channels),
-    )
-
-  #(state, selector)
+  |> server.release_slot_on_failed_handshake(connection_permit)
 }
 
 /// Handle incoming WebSocket messages.
 ///
-/// Frames are routed to the runtime for dispatch. Ewe does not deliver a
-/// close message to the handler; cleanup happens in `on_close`.
+/// Inbound frames run the shared size/rate/decode pipeline; outbound
+/// `SendRequest`s from the runtime are written to the Ewe connection. Ewe
+/// does not deliver a close message to the handler; cleanup happens in
+/// `on_close`.
 fn on_message(
   connection: WebsocketConnection,
   state: ConnectionState,
   message: ewe.WebsocketMessage(SendRequest),
 ) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
   case message {
-    ewe.Text(text) -> {
-      case
-        frame_too_large(state.max_inbound_frame_bytes, string.byte_size(text))
-      {
-        True -> ewe.websocket_stop()
-        False -> handle_inbound_text(state, text)
-      }
-    }
-    ewe.Binary(data) -> {
-      case
-        frame_too_large(
-          state.max_inbound_frame_bytes,
-          bit_array.byte_size(data),
-        )
-      {
-        True -> ewe.websocket_stop()
-        False -> handle_inbound_binary(state, data)
-      }
-    }
-    ewe.User(Close) -> ewe.websocket_stop()
-    ewe.User(SendText(text)) -> {
+    ewe.Text(text) -> resume(server.handle_text_frame(state, text))
+    ewe.Binary(data) -> resume(server.handle_binary_frame(state, data))
+    ewe.User(server.Close) -> ewe.websocket_stop()
+    ewe.User(server.SendText(text)) -> {
       ewe.send_text_frame(connection, text)
       |> result.replace(ewe.websocket_continue(state))
       |> result.unwrap(ewe.websocket_continue(state))
     }
-    ewe.User(SendBinary(data)) -> {
+    ewe.User(server.SendBinary(data)) -> {
       ewe.send_binary_frame(connection, data)
       |> result.replace(ewe.websocket_continue(state))
       |> result.unwrap(ewe.websocket_continue(state))
@@ -635,100 +177,11 @@ fn on_message(
   }
 }
 
-/// Rate-check and decode a text frame in the connection process, so parse
-/// cost stays here and only valid, rate-admitted messages reach the shared
-/// runtime.
-fn handle_inbound_text(
-  state: ConnectionState,
-  text: String,
+fn resume(
+  outcome: server.FrameOutcome,
 ) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
-  let #(state, allowed) = take_message_token(state)
-  use <- bool.guard(when: !allowed, return: ewe.websocket_continue(state))
-  case codec.decode_text(state.codec)(text) {
-    Ok(msg) -> {
-      transport.route_decoded(state.channels, state.socket_id, msg)
-      ewe.websocket_continue(state)
-    }
-    Error(err) -> {
-      transport.log_warning(
-        transport_logger(),
-        "Failed to decode wire protocol message",
-        [
-          #("socket_id", state.socket_id),
-          #("error", codec.format_decode_error(err)),
-        ],
-      )
-      ewe.websocket_continue(state)
-    }
+  case outcome {
+    server.Continue(state) -> ewe.websocket_continue(state)
+    server.Stop -> ewe.websocket_stop()
   }
-}
-
-/// Rate-check and decode a binary frame in the connection process. Codecs
-/// without a binary decoder keep the raw `transport.route_binary` fan-out,
-/// routed through the runtime.
-fn handle_inbound_binary(
-  state: ConnectionState,
-  data: BitArray,
-) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
-  let #(state, allowed) = take_message_token(state)
-  use <- bool.guard(when: !allowed, return: ewe.websocket_continue(state))
-  case codec.decode_binary(state.codec) {
-    None -> {
-      transport.route_binary(state.channels, state.socket_id, data)
-      ewe.websocket_continue(state)
-    }
-    Some(decode_binary) ->
-      case decode_binary(data) {
-        Ok(msg) -> {
-          transport.route_decoded(state.channels, state.socket_id, msg)
-          ewe.websocket_continue(state)
-        }
-        Error(err) -> {
-          transport.log_warning(
-            transport_logger(),
-            "Failed to decode binary wire protocol message",
-            [
-              #("socket_id", state.socket_id),
-              #("error", codec.format_decode_error(err)),
-            ],
-          )
-          ewe.websocket_continue(state)
-        }
-      }
-  }
-}
-
-/// Take a token from the connection's message limiter; always allowed when
-/// no message rate is configured.
-fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
-  case state.message_limiter {
-    None -> #(state, True)
-    Some(limiter) -> {
-      let #(limiter, allowed) = transport.take_token(limiter)
-      #(ConnectionState(..state, message_limiter: Some(limiter)), allowed)
-    }
-  }
-}
-
-fn transport_logger() -> transport.Logger {
-  transport.logger("beryl_ewe")
-}
-
-fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
-  max_bytes > 0 && actual_bytes > max_bytes
-}
-
-/// Cleanup when connection closes
-fn on_close(_connection: WebsocketConnection, state: ConnectionState) -> Nil {
-  case state.connection_permit {
-    Some(permit) -> beryl.release_connection_slot(permit)
-    None -> Nil
-  }
-  transport.socket_disconnected(state.channels, state.socket_id)
-}
-
-/// Generate a unique socket ID
-fn generate_socket_id() -> String {
-  crypto.strong_random_bytes(16)
-  |> bit_array.base16_encode()
 }

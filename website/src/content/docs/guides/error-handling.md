@@ -45,16 +45,16 @@ Reject the entire WebSocket upgrade from `with_on_connect`.
 
 ```gleam
 let config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_on_connect(fn(req) {
+  server.default_config("/socket/websocket")
+  |> server.with_on_connect(fn(req) {
     case extract_token(req) {
       Ok(_token) -> Ok([])
-      Error(_) -> Error(mist_transport.ConnectRejected)
+      Error(_) -> Error(server.ConnectRejected)
     }
   })
 ```
 
-`Error(mist_transport.ConnectRejected)` returns HTTP 403 before the WebSocket handshake completes.
+`Error(server.ConnectRejected)` returns HTTP 403 before the WebSocket handshake completes.
 
 ## Malformed wire messages
 
