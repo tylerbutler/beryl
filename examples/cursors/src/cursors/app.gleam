@@ -12,13 +12,14 @@
 import beryl/socket.{type Effect, type Ref}
 import example_helpers/color
 import example_helpers/payload
+import example_helpers/router
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/string
 
 /// Per-topic state for one socket in a cursor room.
 pub type Model {
@@ -73,8 +74,8 @@ pub fn update(
       let move_payload =
         json.object([
           #("socket_id", json.string(socket_id)),
-          #("x", extract_json_number(payload, "x")),
-          #("y", extract_json_number(payload, "y")),
+          #("x", payload.json_number_or_zero(payload, "x")),
+          #("y", payload.json_number_or_zero(payload, "y")),
           #("username", json.string(model.username)),
           #("color", json.string(model.color)),
         ])
@@ -125,77 +126,65 @@ pub fn standalone_init(
   #(Standalone(socket_id: info.socket_id, cursors: dict.new()), [])
 }
 
-/// `update` for the standalone cursors app-dispatch runtime: route
-/// each event to the embeddable `join`/`update`/`closed` surface, keyed by
-/// topic. Non-`cursor:*` joins are rejected (fail closed), preserving the
-/// example's topic-namespace boundary.
+/// Adapt the `cursor:*` handlers to a containing socket-wide model.
+pub fn namespace(
+  ctx: Ctx,
+  socket_id socket_id: fn(model) -> String,
+  get get: fn(model) -> Dict(String, Model),
+  put put: fn(model, Dict(String, Model)) -> model,
+) -> router.Namespace(model) {
+  router.Namespace(
+    matches: fn(topic) { string.starts_with(topic, "cursor:") },
+    join: fn(model, topic, payload, ref) {
+      let #(joined, effects) = join(ctx, socket_id(model), topic, payload, ref)
+      case joined {
+        Some(sub) -> #(put(model, dict.insert(get(model), topic, sub)), effects)
+        None -> #(model, effects)
+      }
+    },
+    message: fn(model, topic, event_name, payload, _ref) {
+      case dict.get(get(model), topic) {
+        Ok(sub) -> {
+          let #(sub, effects) =
+            update(ctx, socket_id(model), topic, sub, event_name, payload)
+          #(put(model, dict.insert(get(model), topic, sub)), effects)
+        }
+        Error(Nil) -> #(model, [])
+      }
+    },
+    closed: fn(model, topic) {
+      case dict.get(get(model), topic) {
+        Ok(sub) -> #(
+          put(model, dict.delete(get(model), topic)),
+          closed(ctx, socket_id(model), topic, sub),
+        )
+        Error(Nil) -> #(model, [])
+      }
+    },
+  )
+}
+
+/// Route the standalone app through the shared namespace dispatcher.
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,
-  ev: socket.Input(Nil),
+  input: socket.Input(Nil),
 ) -> socket.Next(Standalone, Nil) {
-  case ev {
-    socket.Join(topic, payload, ref) ->
-      case topic {
-        "cursor:" <> _ -> {
-          let #(joined, effects) =
-            join(ctx, model.socket_id, topic, payload, ref)
-          case joined {
-            Some(sub) ->
-              socket.Next(
-                Standalone(
-                  ..model,
-                  cursors: dict.insert(model.cursors, topic, sub),
-                ),
-                effects,
-              )
-            None -> socket.Next(model, effects)
-          }
-        }
-        _ ->
-          socket.Next(model, [
-            socket.RejectJoin(
-              ref,
-              json.object([#("reason", json.string("unknown_topic"))]),
-            ),
-          ])
-      }
-
-    socket.Message(topic, event_name, payload, _ref) ->
-      case dict.get(model.cursors, topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            update(ctx, model.socket_id, topic, sub, event_name, payload)
-          socket.Next(
-            Standalone(..model, cursors: dict.insert(model.cursors, topic, sub)),
-            effects,
-          )
-        }
-        Error(Nil) -> socket.Next(model, [])
-      }
-
-    socket.Closed(topic, _reason) ->
-      case dict.get(model.cursors, topic) {
-        Ok(sub) ->
-          socket.Next(
-            Standalone(..model, cursors: dict.delete(model.cursors, topic)),
-            closed(ctx, model.socket_id, topic, sub),
-          )
-        Error(Nil) -> socket.Next(model, [])
-      }
-
-    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
-  }
+  let cursors =
+    namespace(
+      ctx,
+      socket_id: fn(model: Standalone) { model.socket_id },
+      get: fn(model: Standalone) { model.cursors },
+      put: fn(model: Standalone, cursors) {
+        Standalone(..model, cursors: cursors)
+      },
+    )
+  router.route([cursors], router.unknown_topic(), model, input)
 }
 
 fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {
-  let reaction_decoder = {
-    use reaction <- decode.field("reaction", decode.string)
-    decode.success(reaction)
-  }
-
   case
-    decode.run(payload, reaction_decoder),
+    payload.string_field(payload, "reaction"),
     payload.float_field(payload, "x"),
     payload.float_field(payload, "y")
   {
@@ -215,21 +204,4 @@ fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {
 
 fn coordinate_in_range(value: Float) -> Bool {
   value >=. 0.0 && value <=. 1.0
-}
-
-/// Extract a number from a JSON payload as Json, defaulting to 0.0.
-/// Ints stay ints and floats stay floats on the wire.
-fn extract_json_number(payload: Dynamic, field_name: String) -> json.Json {
-  let number =
-    decode.one_of(decode.float |> decode.map(json.float), or: [
-      decode.int |> decode.map(json.int),
-    ])
-  let decoder = {
-    use value <- decode.field(field_name, number)
-    decode.success(value)
-  }
-  case decode.run(payload, decoder) {
-    Ok(value) -> value
-    Error(_) -> json.float(0.0)
-  }
 }
