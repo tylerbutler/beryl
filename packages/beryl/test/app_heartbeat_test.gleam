@@ -6,11 +6,10 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/socket.{AcceptJoin, Closed, Join, Next}
+import beryl/socket.{Closed, Join}
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
-import gleam/option.{None}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -20,20 +19,11 @@ pub fn main() {
 }
 
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
-  let assert Ok(channels) =
-    beryl.start(
-      beryl.config(wire.phoenix_codec())
-        |> beryl.with_heartbeat(interval_ms: 20, timeout_ms: 40),
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
-          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
-        }
-      },
-    )
-  channels
+  h.start_observed(
+    beryl.config(wire.phoenix_codec())
+      |> beryl.with_heartbeat(interval_ms: 20, timeout_ms: 40),
+    events,
+  )
 }
 
 fn connect_with_closer(
@@ -111,7 +101,7 @@ pub fn active_socket_survives_while_stale_peer_is_evicted_test() {
   // The stale peer was evicted (closer ran); the active one was not.
   process.receive(stale_closed, 2000) |> should.equal(Ok(Nil))
   process.receive(active_closed, 0) |> should.be_error
-  process.is_alive(runtime_pid(channels)) |> should.be_true
+  process.is_alive(h.runtime_pid(channels)) |> should.be_true
 
   // The active socket still serves: it can join another topic.
   h.join(channels, "active", "room:b", "jr-3", "r-3")
@@ -133,9 +123,4 @@ fn send_heartbeats(
       send_heartbeats(channels, frames, socket_id, remaining - 1)
     }
   }
-}
-
-fn runtime_pid(channels: beryl.Sockets) -> process.Pid {
-  let assert Ok(pid) = beryl.app_runtime_pid(channels)
-  pid
 }

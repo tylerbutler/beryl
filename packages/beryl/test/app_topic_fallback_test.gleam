@@ -6,11 +6,10 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/socket.{AcceptJoin, Join, Message, Next}
+import beryl/socket.{Join, Message}
 import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
-import gleam/option.{None}
 import gleeunit
 import gleeunit/should
 
@@ -22,19 +21,7 @@ fn start_system(
   the_codec: codec.Codec,
   events: process.Subject(socket.Input(Nil)),
 ) -> beryl.Sockets {
-  let assert Ok(channels) =
-    beryl.start(
-      beryl.config(the_codec),
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
-          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
-        }
-      },
-    )
-  channels
+  h.start_observed(beryl.config(the_codec), events)
 }
 
 fn join_room(
@@ -43,8 +30,7 @@ fn join_room(
   frames: process.Subject(String),
   topic_name: String,
 ) -> Nil {
-  h.join(channels, "s1", topic_name, "jr-1", "r-1")
-  let _reply = h.recv(frames)
+  h.join_ok(channels, frames, "s1", topic_name, "jr-1", "r-1")
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
   Nil
 }

@@ -10,7 +10,49 @@ import beryl/socket
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
+import gleam/option.{None}
+import gleam/string
 import gleeunit/should
+
+/// A minimal app `init` that carries no model and produces no effects.
+/// Pair with `accepting_update` for a system that accepts every join.
+pub fn accepting_init(
+  _info: socket.ConnectInfo(Nil),
+) -> #(Nil, List(socket.Effect)) {
+  #(Nil, [])
+}
+
+/// A minimal app `update` that accepts every join and ignores every other
+/// event.
+pub fn accepting_update(
+  model: Nil,
+  ev: socket.Input(Nil),
+) -> socket.Next(Nil, Nil) {
+  case ev {
+    socket.Join(_, _, ref) -> socket.Next(model, [socket.AcceptJoin(ref, None)])
+    _ -> socket.Next(model, [])
+  }
+}
+
+/// Start an app system that accepts every join and forwards every event to
+/// the `events` observer subject.
+pub fn start_observed(
+  config: beryl.Config,
+  events: process.Subject(socket.Input(Nil)),
+) -> beryl.Sockets {
+  let assert Ok(channels) =
+    beryl.start(config, init: accepting_init, update: fn(model, ev) {
+      process.send(events, ev)
+      accepting_update(model, ev)
+    })
+  channels
+}
+
+/// The pid of the runtime backing `channels`, asserting it is running.
+pub fn runtime_pid(channels: beryl.Sockets) -> process.Pid {
+  let assert Ok(pid) = beryl.app_runtime_pid(channels)
+  pid
+}
 
 /// Connect a socket, returning the subject that captures its outbound
 /// text frames.
@@ -92,6 +134,19 @@ pub fn push(
       <> event_name
       <> "\",{}]",
   )
+}
+
+/// Send a `phx_join` for a topic and assert the reply has status "ok".
+pub fn join_ok(
+  channels: beryl.Sockets,
+  frames: process.Subject(String),
+  socket_id: String,
+  topic_name: String,
+  join_ref: String,
+  ref: String,
+) -> Nil {
+  join(channels, socket_id, topic_name, join_ref, ref)
+  recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
 /// Receive the next captured frame, failing after 500ms.

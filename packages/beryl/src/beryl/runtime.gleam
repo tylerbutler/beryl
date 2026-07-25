@@ -75,14 +75,10 @@ pub type Msg(msg) {
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
-    /// Wire codec negotiated for this connection; `None` falls back to the
-    /// configured codec.
-    codec: Option(Codec),
     seed: ConnectSeed,
   )
   SocketDisconnected(socket_id: String)
   RegisterCloser(socket_id: String, close: fn() -> Nil)
-  RouteText(socket_id: String, raw_text: String)
   RouteDecoded(socket_id: String, msg: codec.Inbound)
   HandleBinary(socket_id: String, data: BitArray)
   /// A typed server-side message for one socket, sent through its
@@ -113,7 +109,7 @@ type State(model, msg) {
     /// delivery into the actor's selector.
     subscriber: Option(pubsub.Subscriber(Json)),
     logger: Logger,
-    self_subject: Option(Subject(Msg(msg))),
+    self_subject: Subject(Msg(msg)),
     init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
     update: fn(model, Input(msg)) -> Next(model, msg),
     message_buckets: Dict(String, rate_limit.Bucket),
@@ -128,12 +124,11 @@ type SocketState(model, msg) {
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
     close: fn() -> Nil,
-    codec: Codec,
     /// The app's per-socket model, threaded through `update`.
     model: model,
-    subscribed_topics: Set(String),
     /// Per-topic join_ref from the accepted join, echoed in replies and
-    /// terminal frames and used to drop stale-instance messages.
+    /// terminal frames and used to drop stale-instance messages. The key
+    /// set is the socket's joined topics.
     join_refs: Dict(String, Option(String)),
     /// Presence refs tracked via `PresenceTrack`:
     /// topic -> key -> #(ref, meta). Auto-untracked when the topic closes.
@@ -154,7 +149,7 @@ type Pending {
 
 /// Where an event delivered to `update` came from, for crash attribution.
 type Source {
-  JoinSource(topic: String, join_ref: Option(String), msg_ref: Option(String))
+  JoinSource(pending: Pending)
   MessageSource(topic: String)
   BinarySource(topic: String)
   InfoSource
@@ -191,24 +186,23 @@ pub fn start_named(
     return: Error(InvalidHeartbeatTimeout),
   )
   internal.configure(config.logging)
-  let initial_state =
-    State(
-      sockets: dict.new(),
-      topics: dict.new(),
-      config: config,
-      pubsub: ps,
-      subscriber: None,
-      logger: internal.logger_with_config("beryl.runtime", config.logging),
-      self_subject: None,
-      init: init,
-      update: update,
-      message_buckets: dict.new(),
-      join_buckets: dict.new(),
-      channel_buckets: dict.new(),
-    )
 
   actor.new_with_initialiser(5000, fn(subject) {
-    let base = State(..initial_state, self_subject: Some(subject))
+    let base =
+      State(
+        sockets: dict.new(),
+        topics: dict.new(),
+        config: config,
+        pubsub: ps,
+        subscriber: None,
+        logger: internal.logger_with_config("beryl.runtime", config.logging),
+        self_subject: subject,
+        init: init,
+        update: update,
+        message_buckets: dict.new(),
+        join_buckets: dict.new(),
+        channel_buckets: dict.new(),
+      )
     schedule_heartbeat_check(subject, config)
     case ps {
       Some(pubsub_instance) -> {
@@ -251,21 +245,12 @@ fn handle_message(
   message: Msg(msg),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case message {
-    SocketConnected(socket_id, send, send_binary, socket_codec, seed) ->
-      handle_socket_connected(
-        state,
-        socket_id,
-        send,
-        send_binary,
-        socket_codec,
-        seed,
-      )
+    SocketConnected(socket_id, send, send_binary, seed) ->
+      handle_socket_connected(state, socket_id, send, send_binary, seed)
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
     RegisterCloser(socket_id, close) ->
       handle_register_closer(state, socket_id, close)
-    RouteText(socket_id, raw_text) ->
-      handle_route_text(state, socket_id, raw_text)
     RouteDecoded(socket_id, msg) -> dispatch_inbound(state, socket_id, msg)
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
     AppInfo(socket_id, app_message) ->
@@ -302,7 +287,6 @@ fn handle_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  socket_codec: Option(Codec),
   seed: ConnectSeed,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let sender = make_socket_sender(state, socket_id)
@@ -324,9 +308,7 @@ fn handle_socket_connected(
           send: send,
           send_binary: send_binary,
           close: fn() { Nil },
-          codec: option.unwrap(socket_codec, state.config.codec),
           model: model,
-          subscribed_topics: set.new(),
           join_refs: dict.new(),
           presence_refs: dict.new(),
           pending_reply_refs: set.new(),
@@ -350,13 +332,10 @@ fn make_socket_sender(
   state: State(model, msg),
   socket_id: String,
 ) -> sock.Sender(msg) {
-  case state.self_subject {
-    Some(subject) ->
-      sock.make_sender(fn(message) {
-        process.send(subject, AppInfo(socket_id, message))
-      })
-    None -> sock.make_sender(fn(_message) { Nil })
-  }
+  let subject = state.self_subject
+  sock.make_sender(fn(message) {
+    process.send(subject, AppInfo(socket_id, message))
+  })
 }
 
 fn handle_register_closer(
@@ -415,7 +394,7 @@ fn handle_heartbeat(
           state,
           SocketState(..socket, last_heartbeat: monotonic_time_ms()),
         )
-      let reply = codec.encode_heartbeat_reply(socket.codec)(ref)
+      let reply = codec.encode_heartbeat_reply(state.config.codec)(ref)
       let _send_result =
         send_frame_logged(state, socket, "__heartbeat__", reply)
       state.logger
@@ -451,43 +430,11 @@ fn handle_check_heartbeats(
     list.fold(stale_socket_ids, state, fn(st, socket_id) {
       teardown_socket(st, socket_id, sock.HeartbeatTimeout)
     })
-  case state.self_subject {
-    Some(subject) -> schedule_heartbeat_check(subject, state.config)
-    None -> Nil
-  }
+  schedule_heartbeat_check(state.self_subject, state.config)
   actor.continue(state)
 }
 
 // ── Inbound decoding and dispatch ───────────────────────────────────────────
-
-fn handle_route_text(
-  state: State(model, msg),
-  socket_id: String,
-  raw_text: String,
-) -> actor.Next(State(model, msg), Msg(msg)) {
-  let active_codec = case dict.get(state.sockets, socket_id) {
-    Ok(socket) -> socket.codec
-    Error(Nil) -> state.config.codec
-  }
-  let logging = state.config.logging
-  case codec.decode_text(active_codec)(raw_text) {
-    Error(err) -> {
-      state.logger
-      |> log.warn(
-        "Failed to decode wire protocol message",
-        list.append(
-          [
-            #("socket_id", socket_id),
-            #("error", codec.format_decode_error(err)),
-          ],
-          internal.preview_metadata("frame_preview", raw_text, logging),
-        ),
-      )
-      actor.continue(state)
-    }
-    Ok(msg) -> dispatch_inbound(state, socket_id, msg)
-  }
-}
 
 fn dispatch_inbound(
   state: State(model, msg),
@@ -513,7 +460,9 @@ fn dispatch_inbound(
         False -> reject_invalid_join(state, socket_id, msg)
       }
     codec.Leave -> {
-      use state <- with_message_rate_limit(state, socket_id, "leave")
+      use state <- with_message_rate_limit(state, socket_id, [
+        #("kind", "leave"),
+      ])
       case is_valid_topic(msg_topic, state.config) {
         False -> {
           state.logger
@@ -534,7 +483,9 @@ fn dispatch_inbound(
       }
     }
     codec.Heartbeat -> {
-      use state <- with_message_rate_limit(state, socket_id, "heartbeat")
+      use state <- with_message_rate_limit(state, socket_id, [
+        #("kind", "heartbeat"),
+      ])
       handle_heartbeat(state, socket_id, msg_ref)
     }
     codec.Event(event_name) -> {
@@ -588,8 +539,8 @@ fn resolve_event_topic(
       case dict.get(state.sockets, socket_id) {
         Ok(socket) ->
           case
-            codec.topicless_events(socket.codec),
-            set.to_list(socket.subscribed_topics)
+            codec.topicless_events(state.config.codec),
+            dict.keys(socket.join_refs)
           {
             True, [only] -> only
             _, _ -> requested
@@ -617,12 +568,13 @@ fn is_valid_event(event_name: String, config: Config) -> Bool {
   && result.is_ok(topic.validate_event(event_name))
 }
 
-/// Apply the per-socket message limiter to protocol frames (heartbeat,
-/// leave) so flooding them cannot bypass `with_message_rate`.
+/// Apply the per-socket message limiter, dropping the frame with a warning
+/// when the socket is over rate. `metadata` is appended to the warning's
+/// `socket_id` entry.
 fn with_message_rate_limit(
   state: State(model, msg),
   socket_id: String,
-  kind: String,
+  metadata: List(#(String, String)),
   next: fn(State(model, msg)) -> actor.Next(State(model, msg), Msg(msg)),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let #(state, allowed) = check_message_rate(state, socket_id)
@@ -631,7 +583,7 @@ fn with_message_rate_limit(
       state.logger
       |> log.warn("Message rate limited", [
         #("socket_id", socket_id),
-        #("kind", kind),
+        ..metadata
       ])
       actor.continue(state)
     }
@@ -654,7 +606,7 @@ fn reject_invalid_join(
     Error(Nil) -> actor.continue(state)
     Ok(socket) -> {
       let reply =
-        codec.encode_reply(socket.codec)(
+        codec.encode_reply(state.config.codec)(
           codec.inbound_join_ref(msg),
           codec.inbound_ref(msg),
           codec.inbound_topic(msg),
@@ -741,7 +693,7 @@ fn handle_join_inner(
           // topic replaces the previous instance. Close it first (the app
           // receives `Closed(topic, Normal)`) so cleanup keyed off closing
           // is never silently skipped by a rejoin.
-          let state = case set.contains(socket.subscribed_topics, topic_name) {
+          let state = case dict.has_key(socket.join_refs, topic_name) {
             True ->
               drive(
                 close_topic(state, socket_id, topic_name, sock.Normal),
@@ -790,7 +742,7 @@ fn deliver_join(
       state,
       socket_id,
       join_event,
-      JoinSource(topic_name, join_ref, ref),
+      JoinSource(Pending(topic_name, join_ref, ref)),
     )
   actor.continue(drive(outcome, socket_id))
 }
@@ -801,8 +753,8 @@ fn can_join_topic(
   config: Config,
 ) -> Bool {
   config.max_joined_topics_per_socket <= 0
-  || set.contains(socket.subscribed_topics, topic_name)
-  || set.size(socket.subscribed_topics) < config.max_joined_topics_per_socket
+  || dict.has_key(socket.join_refs, topic_name)
+  || dict.size(socket.join_refs) < config.max_joined_topics_per_socket
 }
 
 // ── Leaves ──────────────────────────────────────────────────────────────────
@@ -814,41 +766,46 @@ fn handle_leave(
   msg_join_ref: Option(String),
   ref: Option(String),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  let stale = case dict.get(state.sockets, socket_id) {
-    Ok(socket) -> is_stale_join_ref(socket, topic_name, msg_join_ref)
-    Error(Nil) -> False
-  }
-  use <- bool.lazy_guard(when: stale, return: fn() {
-    state.logger
-    |> log.debug("Leave dropped: stale join_ref", [
-      #("socket_id", socket_id),
-      #("topic", topic_name),
-    ])
-    actor.continue(state)
-  })
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> actor.continue(state)
+    Ok(socket) -> {
+      use <- bool.lazy_guard(
+        when: is_stale_join_ref(socket, topic_name, msg_join_ref),
+        return: fn() {
+          state.logger
+          |> log.debug("Leave dropped: stale join_ref", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+          ])
+          actor.continue(state)
+        },
+      )
 
-  // Acknowledge the leave before closing, so the client sees the reply to
-  // its own ref first and the terminal frame second — matching Phoenix.
-  case ref, dict.get(state.sockets, socket_id) {
-    Some(r), Ok(socket) -> {
-      let reply =
-        codec.encode_reply(socket.codec)(
-          joined_ref(socket, topic_name),
-          Some(r),
-          topic_name,
-          codec.StatusOk,
-          json.object([]),
-        )
-      let _send_result = send_frame_logged(state, socket, topic_name, reply)
-      Nil
+      // Acknowledge the leave before closing, so the client sees the reply
+      // to its own ref first and the terminal frame second — matching
+      // Phoenix.
+      case ref {
+        Some(r) -> {
+          let reply =
+            codec.encode_reply(state.config.codec)(
+              joined_ref(socket, topic_name),
+              Some(r),
+              topic_name,
+              codec.StatusOk,
+              json.object([]),
+            )
+          let _send_result = send_frame_logged(state, socket, topic_name, reply)
+          Nil
+        }
+        None -> Nil
+      }
+
+      actor.continue(drive(
+        close_topic(state, socket_id, topic_name, sock.Normal),
+        socket_id,
+      ))
     }
-    _, _ -> Nil
   }
-
-  actor.continue(drive(
-    close_topic(state, socket_id, topic_name, sock.Normal),
-    socket_id,
-  ))
 }
 
 /// A message is stale when it carries a join_ref from a previous channel
@@ -883,27 +840,18 @@ fn handle_in(
   msg_join_ref: Option(String),
   ref: Option(String),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  let #(state, allowed) = check_message_rate(state, socket_id)
-  case allowed {
-    False -> {
-      state.logger
-      |> log.warn("Message rate limited", [
-        #("socket_id", socket_id),
-        #("topic", topic_name),
-      ])
-      actor.continue(state)
-    }
-    True ->
-      handle_in_subscribed(
-        state,
-        socket_id,
-        topic_name,
-        event_name,
-        payload,
-        msg_join_ref,
-        ref,
-      )
-  }
+  use state <- with_message_rate_limit(state, socket_id, [
+    #("topic", topic_name),
+  ])
+  handle_in_subscribed(
+    state,
+    socket_id,
+    topic_name,
+    event_name,
+    payload,
+    msg_join_ref,
+    ref,
+  )
 }
 
 fn handle_in_subscribed(
@@ -927,7 +875,7 @@ fn handle_in_subscribed(
       actor.continue(state)
     }
     Ok(socket) ->
-      case set.contains(socket.subscribed_topics, topic_name) {
+      case dict.has_key(socket.join_refs, topic_name) {
         False ->
           reject_unjoined_event(
             state,
@@ -983,7 +931,7 @@ fn reject_unjoined_event(
   case ref {
     Some(r) -> {
       let reply =
-        codec.encode_reply(socket.codec)(
+        codec.encode_reply(state.config.codec)(
           None,
           Some(r),
           topic_name,
@@ -1063,11 +1011,7 @@ fn handle_binary_in(
   socket_id: String,
   data: BitArray,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  let active_codec = case dict.get(state.sockets, socket_id) {
-    Ok(socket) -> socket.codec
-    Error(Nil) -> state.config.codec
-  }
-  case codec.decode_binary(active_codec) {
+  case codec.decode_binary(state.config.codec) {
     Some(decode_binary) ->
       case decode_binary(data) {
         Error(err) -> {
@@ -1104,7 +1048,7 @@ fn handle_binary_in(
               // Fan the raw frame out to every joined topic, in sorted
               // order for determinism.
               let topics =
-                set.to_list(socket.subscribed_topics)
+                dict.keys(socket.join_refs)
                 |> list.sort(string.compare)
               actor.continue(fan_out_binary(state, socket_id, topics, data))
             }
@@ -1199,8 +1143,7 @@ fn update_once(
         Ok(sock.Next(new_model, effects)) -> {
           let state = store_model(state, socket_id, new_model)
           let pending = case source {
-            JoinSource(topic_name, join_ref, msg_ref) ->
-              Some(Pending(topic_name, join_ref, msg_ref))
+            JoinSource(p) -> Some(p)
             _ -> None
           }
           let #(state, pending, kicks) =
@@ -1244,19 +1187,19 @@ fn handle_update_crash(
   crash: String,
 ) -> Outcome(model, msg) {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref) -> {
+    JoinSource(p) -> {
       state.logger
       |> log.error("Update crashed handling join", [
         #("socket_id", socket_id),
-        #("topic", topic_name),
+        #("topic", p.topic),
         #("crash", crash),
       ])
       send_error_reply(
         state,
         socket_id,
-        topic_name,
-        join_ref,
-        msg_ref,
+        p.topic,
+        p.join_ref,
+        p.msg_ref,
         json.object([#("reason", json.string("join crashed"))]),
       )
       Outcome(state, [], None)
@@ -1297,13 +1240,13 @@ fn reject_unanswered_join(
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref) ->
+    JoinSource(p) ->
       send_error_reply(
         state,
         socket_id,
-        topic_name,
-        join_ref,
-        msg_ref,
+        p.topic,
+        p.join_ref,
+        p.msg_ref,
         json.object([#("reason", json.string("join not acknowledged"))]),
       )
     _ -> Nil
@@ -1355,7 +1298,7 @@ fn close_topic(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> Outcome(state, [], None)
     Ok(socket) ->
-      case set.contains(socket.subscribed_topics, topic_name) {
+      case dict.has_key(socket.join_refs, topic_name) {
         False -> Outcome(state, [], None)
         True -> {
           state.logger
@@ -1368,10 +1311,6 @@ fn close_topic(
           let socket =
             SocketState(
               ..socket,
-              subscribed_topics: set.delete(
-                socket.subscribed_topics,
-                topic_name,
-              ),
               join_refs: dict.delete(socket.join_refs, topic_name),
               pending_reply_refs: set.filter(socket.pending_reply_refs, fn(ref) {
                 sock.ref_topic(ref) != topic_name
@@ -1440,9 +1379,9 @@ fn send_terminal_frame(
     Error(Nil) -> Nil
     Ok(socket) -> {
       let encoder = case reason {
-        sock.Errored(_) -> codec.encode_error(socket.codec)
+        sock.Errored(_) -> codec.encode_error(state.config.codec)
         sock.Normal | sock.Shutdown | sock.HeartbeatTimeout ->
-          codec.encode_close(socket.codec)
+          codec.encode_close(state.config.codec)
       }
       case encoder {
         Some(encode) -> {
@@ -1494,10 +1433,11 @@ fn teardown_socket(
   }
 }
 
-/// Close every joined topic in sorted order. Each `close_topic` removes
-/// one topic from the subscription set, so this terminates; nested stop
-/// requests are ignored (the socket is already tearing down) and nested
-/// kicks are covered by the loop itself.
+/// Close every joined topic in sorted order. Nested stop requests are
+/// ignored (the socket is already tearing down), and a topic already
+/// closed by a nested kick is skipped by `close_topic`'s own joined
+/// check. No topic can be joined during teardown, so the list taken up
+/// front covers every close.
 fn close_all_topics(
   state: State(model, msg),
   socket_id: String,
@@ -1506,13 +1446,11 @@ fn close_all_topics(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
-      case set.to_list(socket.subscribed_topics) |> list.sort(string.compare) {
-        [] -> state
-        [topic_name, ..] -> {
-          let out = close_topic(state, socket_id, topic_name, reason)
-          close_all_topics(out.state, socket_id, reason)
-        }
-      }
+      dict.keys(socket.join_refs)
+      |> list.sort(string.compare)
+      |> list.fold(state, fn(st, topic_name) {
+        close_topic(st, socket_id, topic_name, reason).state
+      })
   }
 }
 
@@ -1522,7 +1460,7 @@ fn socket_subscribed(
   topic_name: String,
 ) -> Bool {
   case dict.get(state.sockets, socket_id) {
-    Ok(socket) -> set.contains(socket.subscribed_topics, topic_name)
+    Ok(socket) -> dict.has_key(socket.join_refs, topic_name)
     Error(Nil) -> False
   }
 }
@@ -1630,45 +1568,37 @@ fn apply_accept_join(
   pending: Option(Pending),
   kicks: List(String),
 ) -> #(State(model, msg), Option(Pending), List(String)) {
-  case pending {
-    Some(p) ->
-      case sock.ref_is_join(ref) && sock.ref_topic(ref) == p.topic {
-        True -> {
-          let state = subscribe_socket(state, socket_id, p)
-          case dict.get(state.sockets, socket_id) {
-            Ok(socket) -> {
-              let response = option.unwrap(reply, json.object([]))
-              let frame =
-                codec.encode_reply(socket.codec)(
-                  p.join_ref,
-                  p.msg_ref,
-                  p.topic,
-                  codec.StatusOk,
-                  response,
-                )
-              let _send_result =
-                send_frame_logged(state, socket, p.topic, frame)
-              Nil
-            }
-            Error(Nil) -> Nil
-          }
-          state.logger
-          |> log.debug("Join accepted", [
-            #("socket_id", socket_id),
-            #("topic", p.topic),
-          ])
-          #(state, None, kicks)
-        }
-        False -> {
-          warn_unmatched_join_answer(state, socket_id, ref, "AcceptJoin")
-          #(state, pending, kicks)
-        }
-      }
-    None -> {
-      warn_unmatched_join_answer(state, socket_id, ref, "AcceptJoin")
-      #(state, pending, kicks)
+  use p <- with_matching_pending_join(
+    state,
+    socket_id,
+    ref,
+    pending,
+    kicks,
+    "AcceptJoin",
+  )
+  let state = subscribe_socket(state, socket_id, p)
+  case dict.get(state.sockets, socket_id) {
+    Ok(socket) -> {
+      let response = option.unwrap(reply, json.object([]))
+      let frame =
+        codec.encode_reply(state.config.codec)(
+          p.join_ref,
+          p.msg_ref,
+          p.topic,
+          codec.StatusOk,
+          response,
+        )
+      let _send_result = send_frame_logged(state, socket, p.topic, frame)
+      Nil
     }
+    Error(Nil) -> Nil
   }
+  state.logger
+  |> log.debug("Join accepted", [
+    #("socket_id", socket_id),
+    #("topic", p.topic),
+  ])
+  state
 }
 
 fn apply_reject_join(
@@ -1679,32 +1609,46 @@ fn apply_reject_join(
   pending: Option(Pending),
   kicks: List(String),
 ) -> #(State(model, msg), Option(Pending), List(String)) {
+  use p <- with_matching_pending_join(
+    state,
+    socket_id,
+    ref,
+    pending,
+    kicks,
+    "RejectJoin",
+  )
+  state.logger
+  |> log.debug("Join rejected", [
+    #("socket_id", socket_id),
+    #("topic", p.topic),
+  ])
+  send_error_reply(state, socket_id, p.topic, p.join_ref, p.msg_ref, reason)
+  state
+}
+
+/// Run `answer` when `ref` matches the pending join, consuming it;
+/// otherwise warn that the effect had no matching pending join and leave
+/// the fold accumulator unchanged.
+fn with_matching_pending_join(
+  state: State(model, msg),
+  socket_id: String,
+  ref: Ref,
+  pending: Option(Pending),
+  kicks: List(String),
+  effect_name: String,
+  answer: fn(Pending) -> State(model, msg),
+) -> #(State(model, msg), Option(Pending), List(String)) {
   case pending {
     Some(p) ->
       case sock.ref_is_join(ref) && sock.ref_topic(ref) == p.topic {
-        True -> {
-          state.logger
-          |> log.debug("Join rejected", [
-            #("socket_id", socket_id),
-            #("topic", p.topic),
-          ])
-          send_error_reply(
-            state,
-            socket_id,
-            p.topic,
-            p.join_ref,
-            p.msg_ref,
-            reason,
-          )
-          #(state, None, kicks)
-        }
+        True -> #(answer(p), None, kicks)
         False -> {
-          warn_unmatched_join_answer(state, socket_id, ref, "RejectJoin")
+          warn_unmatched_join_answer(state, socket_id, ref, effect_name)
           #(state, pending, kicks)
         }
       }
     None -> {
-      warn_unmatched_join_answer(state, socket_id, ref, "RejectJoin")
+      warn_unmatched_join_answer(state, socket_id, ref, effect_name)
       #(state, pending, kicks)
     }
   }
@@ -1737,7 +1681,6 @@ fn subscribe_socket(
       let socket =
         SocketState(
           ..socket,
-          subscribed_topics: set.insert(socket.subscribed_topics, p.topic),
           join_refs: dict.insert(socket.join_refs, p.topic, p.join_ref),
         )
       let state = store_socket(state, socket)
@@ -1796,7 +1739,7 @@ fn apply_reply(
             }
             True -> {
               let frame =
-                codec.encode_reply(socket.codec)(
+                codec.encode_reply(state.config.codec)(
                   sock.ref_join_ref(ref),
                   sock.ref_msg_ref(ref),
                   sock.ref_topic(ref),
@@ -1849,7 +1792,7 @@ fn apply_push(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> Nil
     Ok(socket) ->
-      case set.contains(socket.subscribed_topics, topic_name) {
+      case dict.has_key(socket.join_refs, topic_name) {
         False ->
           state.logger
           |> log.warn("Push dropped: topic not joined", [
@@ -1859,7 +1802,11 @@ fn apply_push(
           ])
         True -> {
           let frame =
-            codec.encode_push(socket.codec)(topic_name, event_name, payload)
+            codec.encode_push(state.config.codec)(
+              topic_name,
+              event_name,
+              payload,
+            )
           let _send_result = send_frame_logged(state, socket, topic_name, frame)
           Nil
         }
@@ -2104,9 +2051,9 @@ fn broadcast_presence_diff(
 
 // ── Broadcasts ──────────────────────────────────────────────────────────────
 
-/// Fan a message out to the topic's local subscribers, encoding per
-/// recipient so connections with different codecs each get their own
-/// framing.
+/// Fan a message out to the topic's local subscribers. Every socket shares
+/// the configured codec, so the frame is encoded once and sent to each
+/// recipient.
 fn local_broadcast(
   state: State(model, msg),
   topic_name: String,
@@ -2114,26 +2061,26 @@ fn local_broadcast(
   payload: Json,
   except: Option(String),
 ) -> Nil {
-  let subscribers =
+  let subscriber_set =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
-    |> set.to_list()
-  let recipients = case except {
-    None -> subscribers
-    Some(except_id) -> list.filter(subscribers, fn(id) { id != except_id })
+  let subscriber_set = case except {
+    None -> subscriber_set
+    Some(except_id) -> set.delete(subscriber_set, except_id)
   }
   state.logger
   |> log.debug("Broadcast dispatched", [
     #("topic", topic_name),
     #("event", event_name),
-    #("recipient_count", int.to_string(list.length(recipients))),
+    #("recipient_count", int.to_string(set.size(subscriber_set))),
     #("except", optional_string(except)),
   ])
-  list.each(recipients, fn(socket_id) {
+  let frame =
+    codec.encode_push(state.config.codec)(topic_name, event_name, payload)
+  set.to_list(subscriber_set)
+  |> list.each(fn(socket_id) {
     case dict.get(state.sockets, socket_id) {
       Ok(socket) -> {
-        let frame =
-          codec.encode_push(socket.codec)(topic_name, event_name, payload)
         let _send_result = send_frame_logged(state, socket, topic_name, frame)
         Nil
       }
@@ -2156,26 +2103,40 @@ fn broadcast_with_pubsub(
   local_broadcast(state, topic_name, event_name, payload, except)
   case state.pubsub {
     Some(ps) ->
-      case except {
-        None ->
-          pubsub.broadcast_from(
-            ps,
-            process.self(),
-            topic_name,
-            event_name,
-            payload,
-          )
-        Some(socket_id) ->
-          pubsub.broadcast_from_socket(
-            ps,
-            process.self(),
-            socket_id,
-            topic_name,
-            event_name,
-            payload,
-          )
-      }
+      forward_to_pubsub(
+        ps,
+        process.self(),
+        topic_name,
+        event_name,
+        payload,
+        except,
+      )
     None -> Nil
+  }
+}
+
+/// Forward a broadcast to PubSub for the other nodes' runtimes,
+/// attributed to `from` so the runtime at that pid does not echo the
+/// message back to itself. Runs in the calling process.
+pub fn forward_to_pubsub(
+  ps: PubSub(Json),
+  from: process.Pid,
+  topic_name: String,
+  event_name: String,
+  payload: Json,
+  except: Option(String),
+) -> Nil {
+  case except {
+    None -> pubsub.broadcast_from(ps, from, topic_name, event_name, payload)
+    Some(socket_id) ->
+      pubsub.broadcast_from_socket(
+        ps,
+        from,
+        socket_id,
+        topic_name,
+        event_name,
+        payload,
+      )
   }
 }
 
@@ -2206,17 +2167,9 @@ fn check_message_rate(
   case state.config.message_limits {
     None -> #(state, True)
     Some(limits) -> {
-      let bucket =
-        dict.get(state.message_buckets, socket_id)
-        |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
-      let #(bucket, taken) = rate_limit.take(bucket)
-      #(
-        State(
-          ..state,
-          message_buckets: dict.insert(state.message_buckets, socket_id, bucket),
-        ),
-        result.is_ok(taken),
-      )
+      let #(buckets, allowed) =
+        take_from(state.message_buckets, socket_id, limits)
+      #(State(..state, message_buckets: buckets), allowed)
     }
   }
 }
@@ -2228,19 +2181,25 @@ fn check_join_rate(
   case state.config.join_limits {
     None -> #(state, True)
     Some(limits) -> {
-      let bucket =
-        dict.get(state.join_buckets, socket_id)
-        |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
-      let #(bucket, taken) = rate_limit.take(bucket)
-      #(
-        State(
-          ..state,
-          join_buckets: dict.insert(state.join_buckets, socket_id, bucket),
-        ),
-        result.is_ok(taken),
-      )
+      let #(buckets, allowed) = take_from(state.join_buckets, socket_id, limits)
+      #(State(..state, join_buckets: buckets), allowed)
     }
   }
+}
+
+/// Take one token from `key`'s bucket, creating the bucket from `limits`
+/// on first use. Returns the updated bucket dict and whether the token
+/// was granted.
+fn take_from(
+  buckets: Dict(String, rate_limit.Bucket),
+  key: String,
+  limits: RateLimitConfig,
+) -> #(Dict(String, rate_limit.Bucket), Bool) {
+  let bucket =
+    dict.get(buckets, key)
+    |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
+  let #(bucket, taken) = rate_limit.take(bucket)
+  #(dict.insert(buckets, key, bucket), result.is_ok(taken))
 }
 
 /// Per-topic message rate limits: the first matching topic pattern wins,
@@ -2260,35 +2219,48 @@ fn resolve_channel_limits(
   }
 }
 
+/// The topic's existing bucket refills from its stored config, so the
+/// per-topic-pattern scan runs only on the first message for a topic —
+/// when the bucket has to be created.
 fn check_channel_rate(
   state: State(model, msg),
   socket_id: String,
   topic_name: String,
 ) -> #(State(model, msg), Bool) {
-  case resolve_channel_limits(state.config, topic_name) {
-    None -> #(state, True)
-    Some(limits) -> take_channel_token(state, socket_id, topic_name, limits)
+  let socket_buckets =
+    dict.get(state.channel_buckets, socket_id)
+    |> result.unwrap(dict.new())
+  case dict.get(socket_buckets, topic_name) {
+    Ok(bucket) ->
+      take_channel_token(state, socket_id, socket_buckets, topic_name, bucket)
+    Error(Nil) ->
+      case resolve_channel_limits(state.config, topic_name) {
+        None -> #(state, True)
+        Some(limits) -> {
+          let cap = state.config.channel_limiter_max_keys_per_socket
+          use <- bool.guard(
+            when: cap > 0 && dict.size(socket_buckets) >= cap,
+            return: #(state, False),
+          )
+          take_channel_token(
+            state,
+            socket_id,
+            socket_buckets,
+            topic_name,
+            rate_limit.new_bucket(limits),
+          )
+        }
+      }
   }
 }
 
 fn take_channel_token(
   state: State(model, msg),
   socket_id: String,
+  socket_buckets: Dict(String, rate_limit.Bucket),
   topic_name: String,
-  limits: RateLimitConfig,
+  bucket: rate_limit.Bucket,
 ) -> #(State(model, msg), Bool) {
-  let socket_buckets =
-    dict.get(state.channel_buckets, socket_id)
-    |> result.unwrap(dict.new())
-  let cap = state.config.channel_limiter_max_keys_per_socket
-  let over_cap = case dict.has_key(socket_buckets, topic_name) {
-    True -> False
-    False -> cap > 0 && dict.size(socket_buckets) >= cap
-  }
-  use <- bool.guard(when: over_cap, return: #(state, False))
-  let bucket =
-    dict.get(socket_buckets, topic_name)
-    |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
   let #(bucket, taken) = rate_limit.take(bucket)
   let socket_buckets = dict.insert(socket_buckets, topic_name, bucket)
   #(
@@ -2368,7 +2340,7 @@ fn send_error_reply(
     Error(Nil) -> Nil
     Ok(socket) -> {
       let frame =
-        codec.encode_reply(socket.codec)(
+        codec.encode_reply(state.config.codec)(
           join_ref,
           msg_ref,
           topic_name,
@@ -2442,9 +2414,8 @@ fn optional_string(value: Option(String)) -> String {
 fn joined_topics_metadata(
   socket: SocketState(model, msg),
 ) -> List(#(String, String)) {
-  let topics = set.to_list(socket.subscribed_topics)
   [
-    #("joined_topic_count", int.to_string(list.length(topics))),
-    #("joined_topics", string.join(topics, ",")),
+    #("joined_topic_count", int.to_string(dict.size(socket.join_refs))),
+    #("joined_topics", string.join(dict.keys(socket.join_refs), ",")),
   ]
 }

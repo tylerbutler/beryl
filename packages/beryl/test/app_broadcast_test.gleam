@@ -45,8 +45,7 @@ fn join_lobby(
   join_ref: String,
 ) -> process.Subject(String) {
   let frames = h.connect(channels, socket_id)
-  h.join(channels, socket_id, "room:lobby", join_ref, "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  h.join_ok(channels, frames, socket_id, "room:lobby", join_ref, "r-1")
   frames
 }
 

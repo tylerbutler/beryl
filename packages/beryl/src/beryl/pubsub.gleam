@@ -125,11 +125,12 @@ fn pubsub_tag() -> Dynamic {
 /// Deliver a message to a subscriber pid through a typed `Subject`.
 ///
 /// Reconstructs the receiver's subject from its pid and the shared
-/// `pubsub_tag`, then sends with the ordinary typed `process.send`. This is
-/// the send counterpart of `selecting`: both sides agree on the tag and the
-/// `payload` type, so no value is ever coerced.
-fn deliver(pid: Pid, msg: Message(payload)) -> Nil {
-  process.send(process.unsafely_create_subject(pid, pubsub_tag()), msg)
+/// `pubsub_tag` (computed once per broadcast by the caller), then sends
+/// with the ordinary typed `process.send`. This is the send counterpart of
+/// `selecting`: both sides agree on the tag and the `payload` type, so no
+/// value is ever coerced.
+fn deliver(pid: Pid, tag: Dynamic, msg: Message(payload)) -> Nil {
+  process.send(process.unsafely_create_subject(pid, tag), msg)
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -263,8 +264,9 @@ pub fn broadcast(
   payload: payload,
 ) -> Nil {
   let msg = Message(topic: topic, event: event, payload: payload, from: System)
+  let tag = pubsub_tag()
   let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) { deliver(pid, msg) })
+  list.each(members, fn(pid) { deliver(pid, tag, msg) })
 }
 
 /// Broadcast a message to all subscribers except those from a specific pid
@@ -277,11 +279,12 @@ pub fn broadcast_from(
 ) -> Nil {
   let msg =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
+  let tag = pubsub_tag()
   let members = ffi_get_members(ps.scope, topic)
   list.each(members, fn(pid) {
     case pid == from {
       True -> Nil
-      False -> deliver(pid, msg)
+      False -> deliver(pid, tag, msg)
     }
   })
 }
@@ -303,11 +306,12 @@ pub fn broadcast_from_socket(
       payload: payload,
       from: FromSocket(from, except_socket_id),
     )
+  let tag = pubsub_tag()
   let members = ffi_get_members(ps.scope, topic)
   list.each(members, fn(pid) {
     case pid == from {
       True -> Nil
-      False -> deliver(pid, msg)
+      False -> deliver(pid, tag, msg)
     }
   })
 }
@@ -321,8 +325,9 @@ pub fn local_broadcast(
   payload: payload,
 ) -> Nil {
   let msg = Message(topic: topic, event: event, payload: payload, from: System)
+  let tag = pubsub_tag()
   let members = ffi_get_local_members(ps.scope, topic)
-  list.each(members, fn(pid) { deliver(pid, msg) })
+  list.each(members, fn(pid) { deliver(pid, tag, msg) })
 }
 
 /// Get all subscribers for a topic (all nodes)

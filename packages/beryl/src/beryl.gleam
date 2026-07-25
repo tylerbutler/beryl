@@ -102,17 +102,7 @@ pub opaque type LoggingConfig {
   )
 }
 
-// nolint: unused_exports -- package-internal accessors for tests; hidden from public docs with @internal
-@internal
-pub fn logging_level(logging: LoggingConfig) -> LogLevel {
-  logging.level
-}
-
-@internal
-pub fn logging_include_payloads(logging: LoggingConfig) -> Bool {
-  logging.include_payloads
-}
-
+// nolint: unused_exports -- package-internal accessor for tests; hidden from public docs with @internal
 @internal
 pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
   logging.payload_preview_bytes
@@ -468,7 +458,7 @@ pub fn with_max_joined_topics_per_socket(
   Config(..config, max_joined_topics_per_socket: max_topics)
 }
 
-// nolint: unused_exports -- package-internal accessors for supervisor/tests; hidden from public docs with @internal
+// nolint: unused_exports -- package-internal accessors for tests; hidden from public docs with @internal
 @internal
 pub fn config_heartbeat_interval_ms(config: Config) -> Int {
   config.heartbeat_interval_ms
@@ -482,21 +472,6 @@ pub fn config_heartbeat_timeout_ms(config: Config) -> Int {
 @internal
 pub fn config_max_connections_per_ip(config: Config) -> Int {
   config.max_connections_per_ip
-}
-
-@internal
-pub fn config_max_connections(config: Config) -> Int {
-  config.max_connections
-}
-
-@internal
-pub fn config_pubsub(config: Config) -> Option(PubSub(json.Json)) {
-  config.pubsub
-}
-
-@internal
-pub fn config_logging(config: Config) -> LoggingConfig {
-  config.logging
 }
 
 @internal
@@ -549,9 +524,8 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 /// Beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
-/// should be a visible one. Called by both `start` and `supervisor.start`.
-@internal
-pub fn warn_if_unprotected(config: Config) -> Nil {
+/// should be a visible one.
+fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
     config.max_connections_per_ip <= 0
     && config.max_connections <= 0
@@ -641,26 +615,20 @@ pub fn configured_codec(channels: Sockets) -> codec.Codec {
   channels.config.codec
 }
 
-/// A held per-IP connection slot returned by `acquire_connection_slot`.
+/// A held per-IP connection slot returned by
+/// `transport.acquire_connection_slot`.
 ///
 /// Opaque so Beryl can restructure the connection limiter without breaking
 /// transport authors. Hold it for the lifetime of the connection and pass it
-/// to `release_connection_slot` when the connection closes. When no per-IP
-/// limit is configured the permit is an admit-everything placeholder and
-/// releasing it is a no-op.
+/// to `transport.release_connection_slot` when the connection closes. When no
+/// per-IP limit is configured the permit is an admit-everything placeholder
+/// and releasing it is a no-op.
 pub opaque type ConnectionPermit {
   ConnectionPermit(inner: Option(connection_limit.Permit))
 }
 
-/// Try to acquire a configured per-IP connection slot for transports.
-///
-/// Transports call this before admitting a connection, passing the **real
-/// socket peer IP**. Do not pass a client-supplied address (e.g. from
-/// `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
-/// `Ok(permit)` when admitted (release the permit with
-/// `release_connection_slot` on close; when no limit is configured every
-/// connection is admitted), or `Error(Nil)` when the peer is already at its
-/// limit.
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
+@internal
 pub fn acquire_connection_slot(
   channels: Sockets,
   ip: String,
@@ -669,27 +637,20 @@ pub fn acquire_connection_slot(
   |> result.map(ConnectionPermit)
 }
 
-/// Bind an acquired connection slot to the calling process.
-///
-/// Call this from the long-lived connection process (e.g. the WebSocket
-/// handler's init) after `acquire_connection_slot`. The limiter monitors the
-/// caller so the slot is reclaimed even if the connection process dies
-/// without running its close path — otherwise crashed connections would
-/// permanently exhaust their IP's slots.
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
+@internal
 pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
   connection_limit.bind_optional(permit.inner)
 }
 
-/// Release a per-IP connection slot acquired by a transport.
-///
-/// Call from the process the permit was bound to (or from an unbound
-/// process when releasing before the connection was established).
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
+@internal
 pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
   connection_limit.release_optional(permit.inner)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Return the configured inbound frame size cap for transports.
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
+@internal
 pub fn max_inbound_frame_bytes(channels: Sockets) -> Int {
   channels.config.max_inbound_frame_bytes
 }
@@ -1113,7 +1074,7 @@ fn app_handle(
     socket_connected: fn(socket_id, send, send_binary, seed) {
       send_runtime(
         subject,
-        runtime.SocketConnected(socket_id, send, send_binary, None, seed),
+        runtime.SocketConnected(socket_id, send, send_binary, seed),
       )
     },
     register_closer: fn(socket_id, close) {
@@ -1137,25 +1098,14 @@ fn app_handle(
       )
       case ps, process.subject_owner(subject) {
         Some(ps), Ok(runtime_pid) ->
-          case except {
-            None ->
-              pubsub.broadcast_from(
-                ps,
-                runtime_pid,
-                topic_name,
-                event_name,
-                payload,
-              )
-            Some(socket_id) ->
-              pubsub.broadcast_from_socket(
-                ps,
-                runtime_pid,
-                socket_id,
-                topic_name,
-                event_name,
-                payload,
-              )
-          }
+          runtime.forward_to_pubsub(
+            ps,
+            runtime_pid,
+            topic_name,
+            event_name,
+            payload,
+            except,
+          )
         _, _ -> Nil
       }
     },
