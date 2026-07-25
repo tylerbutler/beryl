@@ -58,9 +58,10 @@ fn connect(
   socket_codec: option.Option(codec.Codec),
 ) -> process.Subject(String) {
   let sent = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(channels)
   transport.admit_socket(
     sockets: channels,
-    owner: transport.connection_owner(channels),
+    owner: owner,
     socket_id: socket_id,
     send: fn(text) {
       process.send(sent, text)

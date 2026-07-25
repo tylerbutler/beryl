@@ -156,9 +156,10 @@ pub fn init_crash_leaves_socket_unregistered_test() {
       update: fn(model: Nil, _ev: socket.Input(Msg)) { Next(model, []) },
     )
   let frames = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(channels)
   transport.admit_socket(
     sockets: channels,
-    owner: transport.connection_owner(channels),
+    owner: owner,
     socket_id: "s1",
     send: fn(message) {
       process.send(frames, message)

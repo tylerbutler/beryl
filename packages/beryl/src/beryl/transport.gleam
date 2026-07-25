@@ -5,7 +5,7 @@
 //// 1. Admits a connection (origin/auth policy is the transport's concern),
 ////    acquiring a slot with `acquire_connection_slot` and binding it with
 ////    `bind_connection_slot`.
-//// 2. Captures `connection_owner`, installs its monitor, and atomically
+//// 2. Captures `runtime_pid`, installs its monitor, and atomically
 ////    registers the socket and closer with `admit_socket`.
 //// 3. Decodes inbound frames with the codec from `active_codec` and routes
 ////    them with `route_decoded`, `route_decoded_binary`, or `route_binary`,
@@ -143,7 +143,6 @@ pub opaque type Telemetry {
   Telemetry(enabled: Bool, transport: telemetry.Transport)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transports
 /// Create a telemetry context from the channels configuration.
 pub fn telemetry(
   channels: Sockets,
@@ -316,33 +315,24 @@ pub fn log_warning(
 
 // --- Connection ownership ---
 
-/// The lifecycle relationship between a transport connection and the runtime
-/// that owns it.
+/// Return the pid of the runtime that owns transport connections.
 ///
-/// App-side dispatch systems own their connections through a supervised
-/// runtime. A transport should monitor the owning runtime and close the
-/// connection when it dies, so a runtime crash or restart never leaves a
-/// zombie connection whose frames are silently dropped by a runtime that no
-/// longer knows the socket.
-pub type ConnectionOwner {
-  /// The owning runtime is alive at this pid. Monitor it and close the
-  /// connection when it goes down.
-  OwnerAlive(pid: process.Pid)
-  /// This is an app-side dispatch system but its runtime is not currently
-  /// running (pre-start or a restart window). A new connection cannot be
-  /// owned, so the transport must refuse it rather than admit a dead socket.
-  OwnerUnavailable
+/// On `Ok(pid)`, monitor that exact pid before admission and close the
+/// connection on its `Down`. `Error(Nil)` means the runtime is unavailable
+/// (pre-start or a restart window), so the connection must be refused.
+pub fn runtime_pid(sockets: Sockets) -> Result(process.Pid, Nil) {
+  beryl.app_runtime_pid(sockets)
 }
 
 /// Register a socket and its closer against the captured connection owner.
 ///
-/// For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
-/// function. Admission succeeds only if that exact runtime instance processes
-/// the registration; a restart cannot redirect it to the successor runtime.
-/// On `Error`, close the connection so its bound connection permit is released.
+/// Install a monitor for `owner` before calling this function. Admission
+/// succeeds only if that exact runtime instance processes the registration; a
+/// restart cannot redirect it to the successor runtime. On `Error`, the
+/// connection is closed so its bound permit can be released.
 pub fn admit_socket(
   sockets sockets: Sockets,
-  owner owner: ConnectionOwner,
+  owner owner: process.Pid,
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
@@ -350,44 +340,21 @@ pub fn admit_socket(
   seed seed: ConnectSeed,
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
-  let expected_owner = case owner {
-    OwnerAlive(pid) -> Ok(Some(pid))
-    OwnerUnavailable -> {
+  use <- bool.lazy_guard(
+    when: !beryl.transport_admit_socket(
+      sockets,
+      Some(owner),
+      socket_id,
+      send,
+      send_binary,
+      codec,
+      seed,
+      close,
+    ),
+    return: fn() {
       close()
       Error(Nil)
-    }
-  }
-  case expected_owner {
-    Error(Nil) -> Error(Nil)
-    Ok(expected_owner) ->
-      case
-        beryl.transport_admit_socket(
-          sockets,
-          expected_owner,
-          socket_id,
-          send,
-          send_binary,
-          codec,
-          seed,
-          close,
-        )
-      {
-        True -> Ok(Nil)
-        False -> {
-          close()
-          Error(Nil)
-        }
-      }
-  }
-}
-
-/// Determine how a newly accepted connection is owned. Call this in the
-/// connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
-/// exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the
-/// connection immediately.
-pub fn connection_owner(sockets: Sockets) -> ConnectionOwner {
-  case beryl.app_runtime_pid(sockets) {
-    Ok(pid) -> OwnerAlive(pid)
-    Error(Nil) -> OwnerUnavailable
-  }
+    },
+  )
+  Ok(Nil)
 }

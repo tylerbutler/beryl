@@ -442,7 +442,7 @@ the framing without touching the runtime or any app code. There is no implicit
 wire default: callers pass a codec to `beryl.config`; choose
 `wire.phoenix_codec()` for Phoenix JSON and V2 binary compatibility. One new detail
 worth a beat: transports monitor the runtime's pid via
-`transport.connection_owner`, then pass that exact identity to
+`transport.runtime_pid`, then pass that exact pid to
 `transport.admit_socket`. A restart, identity mismatch, or failed
 registration closes the WebSocket instead of attaching it to the successor
 runtime.

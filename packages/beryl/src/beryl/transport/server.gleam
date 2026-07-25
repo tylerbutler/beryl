@@ -456,7 +456,6 @@ pub fn connect_seed(
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Initialize a newly upgraded WebSocket connection in its connection
 /// process.
 ///
@@ -507,16 +506,15 @@ pub fn init_connection(
   // Capture and monitor the exact runtime before registration. Admission is
   // atomic: a restart between capture and registration rejects the socket
   // instead of redirecting it into the successor runtime.
-  let owner = transport.connection_owner(sockets)
-  let selector = case owner {
-    transport.OwnerAlive(runtime_pid) -> {
+  let selector = case transport.runtime_pid(sockets) {
+    Ok(runtime_pid) -> {
       let monitor = process.monitor(runtime_pid)
       let selector =
         process.select_specific_monitor(selector, monitor, fn(_down) { Close })
       let _admitted =
         transport.admit_socket(
           sockets: sockets,
-          owner: owner,
+          owner: runtime_pid,
           socket_id: socket_id,
           send: send_fn,
           send_binary: send_binary_fn,
@@ -526,7 +524,7 @@ pub fn init_connection(
         )
       selector
     }
-    transport.OwnerUnavailable -> {
+    Error(Nil) -> {
       process.send(send_subject, Close)
       selector
     }
@@ -547,7 +545,6 @@ pub fn init_connection(
   #(state, selector)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Clean up when a connection closes: release any held connection slot and
 /// announce the disconnect to the runtime.
 pub fn close_connection(state: ConnectionState) -> Nil {
@@ -569,7 +566,6 @@ pub type FrameOutcome {
   Stop
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Size-check, rate-check, and decode an inbound text frame in the
 /// connection process, so parse cost stays there and only valid,
 /// rate-admitted messages reach the shared runtime.

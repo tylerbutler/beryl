@@ -57,9 +57,10 @@ fn connect_binary(
 ) -> #(process.Subject(String), process.Subject(BitArray)) {
   let text = process.new_subject()
   let binary = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(channels)
   transport.admit_socket(
     sockets: channels,
-    owner: transport.connection_owner(channels),
+    owner: owner,
     socket_id: socket_id,
     send: fn(message) {
       process.send(text, message)

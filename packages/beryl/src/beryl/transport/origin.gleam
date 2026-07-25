@@ -85,7 +85,6 @@ pub fn allowed(
   }
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Compare an `Origin` header value against a `Host` header value under the
 /// same-origin rule: strip the scheme from the origin and compare its
 /// authority (host plus any port) to the host authority, case-insensitively.
@@ -93,7 +92,7 @@ pub fn allowed(
 /// A malformed or opaque origin (no `scheme://host`, e.g. `null`) never
 /// matches. Comparison is over the full `host:port` authority, so a
 /// non-default port must be present and equal on both sides.
-pub fn same_origin(origin: String, host: String) -> Bool {
+fn same_origin(origin: String, host: String) -> Bool {
   case origin_authority(origin) {
     Ok(authority) -> authority == string.lowercase(host)
     Error(Nil) -> False

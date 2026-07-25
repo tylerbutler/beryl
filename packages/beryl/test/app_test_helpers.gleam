@@ -106,7 +106,7 @@ fn connect_with_seed_and_close(
   close: fn() -> Nil,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
-  let owner = transport.connection_owner(channels)
+  let assert Ok(owner) = transport.runtime_pid(channels)
   transport.admit_socket(
     sockets: channels,
     owner: owner,

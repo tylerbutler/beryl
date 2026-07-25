@@ -94,23 +94,6 @@ pub fn allowed(
 ) -> Bool
 ```
 
-### `same_origin`
-
-Compare an `Origin` header value against a `Host` header value under the
- same-origin rule: strip the scheme from the origin and compare its
- authority (host plus any port) to the host authority, case-insensitively.
-
- A malformed or opaque origin (no `scheme://host`, e.g. `null`) never
- matches. Comparison is over the full `host:port` authority, so a
- non-default port must be present and equal on both sides.
-
-```gleam
-pub fn same_origin(
-  String,
-  String
-) -> Bool
-```
-
 ### `vsn_supported`
 
 Check a client's requested wire protocol version (the `?vsn=` query
