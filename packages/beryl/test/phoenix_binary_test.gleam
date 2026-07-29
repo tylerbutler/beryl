@@ -4,6 +4,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/wire
 import beryl/wire/codec
 import gleam/dynamic
@@ -157,7 +158,8 @@ pub fn binary_encoders_reject_oversized_components_test() {
 // === End-to-end through the coordinator ===
 
 pub fn phoenix_binary_push_routes_to_handle_in_with_reply_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let seen = process.new_subject()
 
   let handler =
@@ -221,7 +223,8 @@ pub fn phoenix_binary_push_routes_to_handle_in_with_reply_test() {
 }
 
 pub fn phoenix_malformed_binary_frame_is_dropped_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let seen_binary = process.new_subject()
 
   let handler =

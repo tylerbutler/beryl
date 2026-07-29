@@ -8,6 +8,7 @@
 //// limit alone cannot enforce against distributed/rotating addresses.
 
 import beryl
+import beryl/internal/unsupervised
 import beryl/wire
 import gleam/erlang/process
 import gleam/int
@@ -29,7 +30,7 @@ fn seq_loop(n: Int, acc: List(Int)) -> List(Int) {
 
 fn start_with_global_limit(max_connections: Int) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections(max_connections: max_connections),
     )
@@ -41,7 +42,7 @@ fn start_with_both_limits(
   max_connections: Int,
 ) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: max_per_ip)
       |> beryl.with_max_connections(max_connections: max_connections),
@@ -61,7 +62,7 @@ pub fn global_zero_means_unlimited_test() {
   beryl.release_connection_slot(first)
   |> should.equal(Nil)
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // Connections at or below the node-wide limit are admitted regardless of which
@@ -73,7 +74,7 @@ pub fn admits_connections_under_global_limit_test() {
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.2"))
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.3"))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // A connection that would exceed the node-wide limit is rejected even though it
@@ -89,7 +90,7 @@ pub fn rejects_connection_over_global_limit_test() {
   beryl.acquire_connection_slot(channels, "10.0.1.3")
   |> should.equal(Error(Nil))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // Releasing a slot frees node-wide capacity so a subsequent connection (from
@@ -106,7 +107,7 @@ pub fn releasing_slot_frees_global_capacity_test() {
   beryl.release_connection_slot(permit)
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.2.2"))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // A global slot is reclaimed when its holder process dies without releasing —
@@ -133,7 +134,7 @@ pub fn global_slot_reclaimed_when_holder_dies_without_release_test() {
   // The reclaimed slot admits a connection from a *different* IP, proving the
   // global count (not just the per-IP count) was decremented.
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.3.2"))
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // The per-IP and node-wide ceilings compose: a connection must be under both.
@@ -148,7 +149,7 @@ pub fn per_ip_and_global_compose_test() {
   beryl.acquire_connection_slot(channels, "10.0.4.2")
   |> should.equal(Error(Nil))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // The per-IP limit still bites under a generous node-wide ceiling: a single IP
@@ -163,7 +164,7 @@ pub fn per_ip_limit_still_enforced_under_global_test() {
   // A different IP is admitted (node still under its global ceiling).
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.5.2"))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // Concurrent opens cannot race past the node-wide ceiling. Many processes
@@ -210,5 +211,5 @@ pub fn concurrent_opens_do_not_exceed_global_ceiling_test() {
   successes
   |> should.equal(ceiling)
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }

@@ -5,6 +5,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/topic
 import beryl/wire
 import gleam/dynamic
@@ -106,7 +107,8 @@ fn join_with_ref(
 }
 
 pub fn duplicate_join_terminates_previous_instance_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
   register_channel(channels, terminated)
 
@@ -133,7 +135,8 @@ pub fn duplicate_join_terminates_previous_instance_test() {
 }
 
 pub fn stale_join_ref_messages_are_dropped_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
   register_channel(channels, terminated)
 
@@ -167,7 +170,8 @@ pub fn stale_join_ref_messages_are_dropped_test() {
 }
 
 pub fn stale_join_ref_leave_is_ignored_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
   register_channel(channels, terminated)
 

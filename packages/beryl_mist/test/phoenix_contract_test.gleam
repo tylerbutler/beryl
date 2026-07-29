@@ -1,6 +1,7 @@
 import beryl
 import beryl/channel
 import beryl/socket
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -12,6 +13,8 @@ import gleam/http/response
 import gleam/json.{type Json}
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/static_supervisor
 import gleam/result
 import gleeunit
 import gleeunit/should
@@ -296,7 +299,7 @@ fn join_client(serializer: Serializer, client: WebsocketClient) {
 
 pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let serializer = json_serializer()
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
   let assert Ok(_) =
     beryl.register(channels, "room:*", contract_channel(channels, terminated))
@@ -449,7 +452,7 @@ fn start_auth_server(
 }
 
 pub fn on_connect_rejects_connection_without_token_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
   let config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
@@ -473,7 +476,7 @@ pub fn on_connect_rejects_connection_without_token_test() {
 
 pub fn on_connect_seeds_assigns_visible_at_join_test() {
   let serializer = json_serializer()
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
 
   // The channel's assigns is the connect-seeded user id; join echoes it back
   // without re-authenticating.
@@ -509,4 +512,20 @@ pub fn on_connect_seeds_assigns_visible_at_join_test() {
   assert_json_string(response, "user", "alice")
   close(client)
   stop_supervisor(server_pid)
+}
+
+/// Start a supervised channel system for tests.
+///
+/// beryl exposes no public unsupervised start, so tests stand up a real
+/// supervision tree the way an application would.
+fn start_supervised(
+  config: beryl.Config,
+) -> Result(beryl.Channels, actor.StartError) {
+  let supervised = supervisor.config(config)
+  use _root <- result.map(
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(supervised))
+    |> static_supervisor.start(),
+  )
+  supervisor.channels(supervised)
 }

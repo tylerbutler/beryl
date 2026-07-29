@@ -1,6 +1,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/wire
 import beryl/wire/codec
 import gleam/dynamic
@@ -14,7 +15,7 @@ fn start_with_socket(socket_id) {
   // Empty-topic fallback is an explicit codec capability for topicless
   // framings; the plain Phoenix codec drops empty-topic events instead.
   let topicless = wire.phoenix_codec() |> codec.with_topicless_events()
-  let assert Ok(channels) = beryl.start(beryl.config(topicless))
+  let assert Ok(channels) = unsupervised.start(beryl.config(topicless))
   let sent = process.new_subject()
   process.send(
     beryl.coordinator_subject(channels),
@@ -64,7 +65,8 @@ pub fn topicless_event_routes_to_single_join_test() {
 // The plain Phoenix codec never guesses: an empty-topic event is dropped
 // even when the socket has exactly one join, matching Phoenix.
 pub fn phoenix_codec_drops_topicless_events_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent = process.new_subject()
   process.send(
     beryl.coordinator_subject(channels),

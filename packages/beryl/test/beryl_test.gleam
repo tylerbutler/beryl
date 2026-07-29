@@ -3,6 +3,7 @@ import beryl/channel
 import beryl/coordinator
 import beryl/error as beryl_error
 import beryl/group
+import beryl/internal/unsupervised
 import beryl/socket
 import beryl/topic
 import beryl/wire
@@ -280,7 +281,8 @@ pub fn sanitize_for_log_test() {
 }
 
 pub fn join_with_control_character_topic_gets_error_reply_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -318,7 +320,7 @@ pub fn join_with_control_character_topic_gets_error_reply_test() {
 pub fn join_with_too_long_topic_gets_error_reply_test() {
   let long_topic = "room:" <> string.repeat("a", 300)
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_topic_length(max_length: 64),
     )
@@ -361,7 +363,7 @@ pub fn join_topic_over_byte_limit_but_under_grapheme_limit_gets_error_reply_test
   // max_topic_length is a byte limit, so this must be rejected.
   let multibyte_topic = "room:" <> string.repeat("€", 32)
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_topic_length(max_length: 64),
     )
@@ -400,7 +402,7 @@ pub fn join_topic_over_byte_limit_but_under_grapheme_limit_gets_error_reply_test
 
 pub fn event_over_byte_limit_but_under_grapheme_limit_is_dropped_test() {
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_event_length(max_length: 16),
     )
@@ -459,7 +461,8 @@ pub fn event_over_byte_limit_but_under_grapheme_limit_is_dropped_test() {
 }
 
 pub fn register_rejects_empty_pattern_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let handler =
     channel.new(fn(_topic_name, _payload, socket) {
       channel.JoinOk(reply: option.None, socket: socket)
@@ -470,7 +473,8 @@ pub fn register_rejects_empty_pattern_test() {
 }
 
 pub fn register_rejects_control_character_pattern_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let handler =
     channel.new(fn(_topic_name, _payload, socket) {
       channel.JoinOk(reply: option.None, socket: socket)
@@ -481,7 +485,8 @@ pub fn register_rejects_control_character_pattern_test() {
 }
 
 pub fn register_accepts_bare_catch_all_pattern_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let handler =
     channel.new(fn(_topic_name, _payload, socket) {
       channel.JoinOk(reply: option.None, socket: socket)
@@ -492,7 +497,7 @@ pub fn register_accepts_bare_catch_all_pattern_test() {
 
 pub fn socket_cannot_join_more_than_configured_topic_cap_test() {
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_joined_topics_per_socket(max_topics: 1),
     )
@@ -536,7 +541,8 @@ pub fn socket_cannot_join_more_than_configured_topic_cap_test() {
 }
 
 pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -578,7 +584,8 @@ pub fn segment_wildcard_registered_channel_routes_matching_topic_test() {
 }
 
 pub fn segment_wildcard_registered_channel_rejects_wrong_segment_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -649,7 +656,8 @@ pub fn with_max_connections_per_ip_sets_limit_test() {
 }
 
 pub fn send_info_routes_message_to_joined_channel_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -709,7 +717,8 @@ type Notification {
 }
 
 pub fn send_info_typed_message_round_trips_without_cast_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -767,7 +776,8 @@ pub fn send_info_typed_message_round_trips_without_cast_test() {
 }
 
 pub fn send_info_reply_result_pushes_message_to_client_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -817,7 +827,8 @@ pub fn send_info_reply_result_pushes_message_to_client_test() {
 // Connect-hook (on_connect) assigns seeding tests
 
 pub fn connect_assigns_visible_in_channel_join_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   // Seed socket-level assigns as if produced by the transport on_connect hook.
@@ -861,7 +872,8 @@ pub fn connect_assigns_visible_in_channel_join_test() {
 // the same socket/topic: the coordinator threads channel state between
 // dispatches.
 pub fn assigns_threaded_across_handle_in_calls_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(
@@ -1210,7 +1222,8 @@ pub fn start_failure_description_is_public_test() {
 }
 
 pub fn channels_handle_remains_usable_after_start_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
 
   let handler =
     channel.new(fn(_topic, _payload, socket) {
@@ -1227,7 +1240,7 @@ pub fn stop_shuts_down_unsupervised_coordinator_test() {
     |> beryl.with_message_rate(per_second: 10, burst: 10)
     |> beryl.with_join_rate(per_second: 10, burst: 10)
     |> beryl.with_channel_rate(per_second: 10, burst: 10)
-  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(channels) = unsupervised.start(config)
   let assert Ok(coordinator_pid) =
     process.subject_owner(beryl.coordinator_subject(channels))
   let sent_messages = process.new_subject()
@@ -1262,13 +1275,13 @@ pub fn stop_shuts_down_unsupervised_coordinator_test() {
   )
   let assert Ok(_) = process.receive(sent_messages, 500)
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
   let assert Ok(reason) = process.receive(terminated, 500)
   reason |> should.equal(channel.Shutdown)
   wait_until(fn() { !process.is_alive(coordinator_pid) }, 1000, 10)
 
   process.is_alive(coordinator_pid) |> should.be_false
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 pub fn topic_namespace_test() {
@@ -1277,7 +1290,8 @@ pub fn topic_namespace_test() {
 }
 
 pub fn group_broadcast_is_fire_and_forget_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
   let assert Ok(Nil) = group.add(groups, "team:eng", "room:lobby")

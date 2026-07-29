@@ -4,6 +4,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/topic
 import beryl/wire
 import gleam/dynamic
@@ -125,7 +126,8 @@ fn crashing_handle_in_handler(
 }
 
 pub fn handle_in_crash_terminates_channel_but_not_coordinator_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
   let _id = register_channel(channels, crashing_handle_in_handler(terminated))
 
@@ -164,7 +166,8 @@ pub fn handle_in_crash_terminates_channel_but_not_coordinator_test() {
 }
 
 pub fn join_crash_sends_error_reply_and_coordinator_survives_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let handler =
     coordinator.ChannelHandler(
       id: 0,
@@ -209,7 +212,8 @@ fn crashing_terminate_instance() -> coordinator.JoinedChannel {
 }
 
 pub fn terminate_crash_does_not_kill_coordinator_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let handler =
     coordinator.ChannelHandler(
       id: 0,
@@ -249,7 +253,8 @@ pub fn terminate_crash_does_not_kill_coordinator_test() {
 }
 
 pub fn handle_info_crash_terminates_channel_not_coordinator_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let terminated = process.new_subject()
   let id = register_channel(channels, crashing_handle_in_handler(terminated))
 

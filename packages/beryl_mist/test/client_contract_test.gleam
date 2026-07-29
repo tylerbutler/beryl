@@ -3,6 +3,7 @@ import aquamarine/error as aquamarine_error
 import aquamarine/phoenix
 import beryl
 import beryl/channel as bchannel
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -72,7 +73,7 @@ fn start_test_server(
   register: fn(beryl.Channels, process.Subject(TestEvent)) -> Nil,
   events: process.Subject(TestEvent),
 ) -> Result(TestServer, Nil) {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
   register(channels, events)
   let port_subject = process.new_subject()
 
@@ -332,4 +333,20 @@ fn receive_terminated(
       Ok(reason)
     _ -> Error(Nil)
   }
+}
+
+/// Start a supervised channel system for tests.
+///
+/// beryl exposes no public unsupervised start, so tests stand up a real
+/// supervision tree the way an application would.
+fn start_supervised(
+  config: beryl.Config,
+) -> Result(beryl.Channels, actor.StartError) {
+  let supervised = supervisor.config(config)
+  use _root <- result.map(
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(supervised))
+    |> static_supervisor.start(),
+  )
+  supervisor.channels(supervised)
 }

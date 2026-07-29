@@ -2,6 +2,7 @@ import beryl
 import beryl/channel
 import beryl/coordinator
 import beryl/internal
+import beryl/internal/unsupervised
 import beryl/wire
 import gleam/dict
 import gleam/dynamic
@@ -105,7 +106,7 @@ pub fn channels_start_accepts_debug_logging_config_test() {
       include_payloads: False,
     ))
 
-  beryl.start(config)
+  unsupervised.start(config)
   |> should.be_ok
 }
 
@@ -166,7 +167,7 @@ pub fn debug_decode_log_omits_frame_preview_by_default_test() {
       level: beryl.DebugLevel,
       include_payloads: False,
     ))
-  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(channels) = unsupervised.start(config)
 
   process.send(
     beryl.coordinator_subject(channels),
@@ -210,7 +211,7 @@ pub fn debug_join_missing_handler_logs_routing_and_send_test() {
       level: beryl.DebugLevel,
       include_payloads: False,
     ))
-  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(channels) = unsupervised.start(config)
 
   process.send(
     beryl.coordinator_subject(channels),
@@ -253,7 +254,7 @@ pub fn debug_channel_callback_logs_push_result_test() {
       level: beryl.DebugLevel,
       include_payloads: False,
     ))
-  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(channels) = unsupervised.start(config)
   let handler =
     channel.new(fn(_, _, socket) { channel.JoinOk(reply: None, socket: socket) })
     |> channel.with_handle_in(fn(_, _, socket) {
@@ -300,12 +301,13 @@ pub fn debug_channel_callback_logs_push_result_test() {
 pub fn start_warns_when_no_abuse_controls_configured_test() {
   let selector = begin_capture()
 
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
 
   receive_log(selector, "No abuse controls configured", 10)
   |> should.be_ok
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
   stop_capture()
 }
 
@@ -313,7 +315,7 @@ pub fn start_does_not_warn_when_a_limit_is_configured_test() {
   let selector = begin_capture()
 
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_message_rate(per_second: 100, burst: 200),
     )
@@ -321,7 +323,7 @@ pub fn start_does_not_warn_when_a_limit_is_configured_test() {
   receive_log(selector, "No abuse controls configured", 2)
   |> should.be_error
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
   stop_capture()
 }
 
