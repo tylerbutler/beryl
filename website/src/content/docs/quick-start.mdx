@@ -19,8 +19,20 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 
 ## Prerequisites
 
+- **Gleam 1.18 or later** — beryl is installed as a git dependency pointing at a
+  subdirectory of its monorepo, and the `path` field that makes that possible
+  was added in Gleam 1.18
 - Gleam project targeting **Erlang** (`gleam new my_app`)
-- `gleam add beryl beryl_mist` adds beryl, the Mist WebSocket transport, and all their dependencies
+- beryl and the Mist WebSocket transport in your `gleam.toml`:
+
+  ```toml
+  [dependencies]
+  beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl" }
+  beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl_mist" }
+  ```
+
+  Run `gleam deps download` to fetch them and their transitive dependencies. See
+  the [installation guide](/installation/) for details.
 
 ## 1. Define a channel
 

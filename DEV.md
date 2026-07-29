@@ -220,7 +220,12 @@ One-time steps to perform in the same PR that tags `v1.0.0`:
 - Remove (or rewrite) the "beryl is not yet 1.0 / API is unstable" callout at
   the top of `README.md`.
 - Confirm the documented Gleam version requirement in `README.md` and
-  `website/src/content/docs/installation.md` still matches `gleam.toml`.
+  `website/src/content/docs/installation.md`. Note that the documented
+  requirement (1.18+) is deliberately higher than the `gleam` constraint in each
+  package's `gleam.toml` (1.13+): 1.18 is what *consumers* need for the
+  `path` field on git dependencies, not what beryl needs to compile. If beryl is
+  published to Hex, that consumer-side requirement goes away and the docs should
+  drop back to the manifest constraint.
 - Verify the publish tarball with `gleam export hex-tarball` before tagging.
 
 ## Troubleshooting

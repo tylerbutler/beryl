@@ -1,15 +1,25 @@
 # beryl_mist
 
 [Mist](https://hex.pm/packages/mist) WebSocket transport for
-[beryl](https://hex.pm/packages/beryl) real-time channels.
+[beryl](https://github.com/tylerbutler/beryl) real-time channels.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
 > releases, and quality should not be considered production-ready.
 
-```sh
-gleam add beryl beryl_mist
+beryl is not yet on Hex. Add it and this transport as git dependencies in your
+`gleam.toml`:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl_mist" }
 ```
+
+> [!IMPORTANT]
+> **Gleam 1.18 or later is required.** These packages live in subdirectories of
+> the beryl monorepo, and the `path` field for git dependencies was added in
+> Gleam 1.18.
 
 ## Usage
 

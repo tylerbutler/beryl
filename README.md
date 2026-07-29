@@ -10,15 +10,30 @@
 
 ## Install
 
-```sh
-gleam add beryl beryl_mist
+beryl is not yet published to Hex, so add it as a git dependency in your
+`gleam.toml`:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl_mist" }
 ```
+
+> [!IMPORTANT]
+> **This requires Gleam 1.18 or later.** beryl's packages live in
+> subdirectories of this repository, and the `path` field that points a git
+> dependency at a subdirectory was added in Gleam 1.18. There is no way to
+> depend on beryl from an earlier Gleam version.
+
+`gleam add` only handles Hex packages, so edit `gleam.toml` by hand and then run
+`gleam deps download`.
 
 `beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
 WebSocket transport. An [Ewe](https://hex.pm/packages/ewe) transport is also
-available as `beryl_ewe` (`gleam add beryl beryl_ewe`) and mirrors the
-`beryl_mist` API. All live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
-workspace under `packages/`).
+available as `beryl_ewe` (same git dependency with
+`path = "packages/beryl_ewe"`) and mirrors the `beryl_mist` API. All live in
+this repository (a [trellis](https://trellis.tylerbutler.com)-managed workspace
+under `packages/`).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -292,7 +307,8 @@ and the changelog is managed with [changie](https://changie.dev/).
 ### Prerequisites
 
 - [Erlang](https://www.erlang.org/) 27+
-- [Gleam](https://gleam.run/) 1.13+
+- [Gleam](https://gleam.run/) 1.16+ (see `.tool-versions`; consuming beryl as a
+  dependency requires 1.18+)
 - [just](https://github.com/casey/just) (task runner)
 
 Install tools via [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/):
