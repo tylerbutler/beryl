@@ -157,6 +157,13 @@ function code(value) {
 	return `\`${String(value).replaceAll("`", "\\`")}\``;
 }
 
+/** Join items as prose: "a", "a and b", "a, b, and c". */
+function formatList(items) {
+	if (items.length <= 1) return items.join("");
+	if (items.length === 2) return `${items[0]} and ${items[1]}`;
+	return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
 function variableSymbol(id) {
 	return String.fromCharCode("a".charCodeAt(0) + (Number.isInteger(id) ? id : 0));
 }
@@ -284,24 +291,19 @@ ${moduleRows}`;
 		})
 		.join("\n\n");
 
-	const hexDocsLinks = packages
-		.map(
-			(packageInterface) =>
-				`[${packageInterface.name}](https://hexdocs.pm/${packageInterface.name}/)`,
-		)
-		.join(", ");
+	const packageList = formatList(
+		packages.map((packageInterface) => code(packageInterface.name)),
+	);
 
 	return `---
 title: API Reference
 description: Generated API reference from Gleam docs metadata.
 ---
 
-This reference is generated from Gleam's docs metadata for ${packages
-		.map((packageInterface) => code(packageInterface.name))
-		.join(" and ")}.
+This reference is generated from Gleam's docs metadata for ${packageList}.
 
 :::note[Generated content]
-Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: ${hexDocsLinks}.
+Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no \`hexdocs.pm\` listing.
 :::
 
 ${packageSections}
