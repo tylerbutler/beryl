@@ -95,10 +95,17 @@ This is equivalent to calling `beryl.broadcast` on each topic in the group in se
 
 ## Error reference
 
-| Error | When |
+Group operations return `GroupError`:
+
+| `GroupError` | When |
 |-------|------|
 | `GroupAlreadyExists` | `create` called for a name already in use |
 | `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
+
+Startup has its own separate type, `GroupStartError`:
+
+| `GroupStartError` | When |
+|-------|------|
 | `GroupActorStartFailed` | `group.start()` — the internal group actor failed to initialize |
 
 ## Full example: team rooms
@@ -136,6 +143,7 @@ When using `beryl/supervisor`, enable groups in the supervised configuration, ad
 
 ```gleam
 import beryl
+import beryl/group
 import beryl/supervisor
 import beryl/wire
 import gleam/option.{None, Some}
@@ -157,4 +165,4 @@ case supervisor.groups(beryl) {
 }
 ```
 
-See the [Supervision guide](/guides/supervision) for details on the supervised startup pattern.
+See the [Supervision guide](/guides/supervision/) for details on the supervised startup pattern.

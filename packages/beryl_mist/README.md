@@ -5,7 +5,8 @@
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
-> releases, and quality should not be considered production-ready.
+> releases, and quality should not be considered production-ready. We welcome
+> usage and feedback in the meantime!
 
 beryl is not yet on Hex. Add it and this transport as git dependencies in your
 `gleam.toml`:
@@ -47,7 +48,7 @@ pub fn main() {
   let assert Ok(_) =
     mist_transport.handler(
       channels,
-      mist_transport.default_config("/socket"),
+      mist_transport.default_config("/socket/websocket"),
       http_fallback,
     )
     |> mist.new
@@ -62,13 +63,17 @@ upgrade, validates the `Origin` header (same-origin by default, allow-list,
 or allow-all), and enforces beryl's frame-size, message-rate, and connection
 limits at the edge.
 
+If you serve HTTP with [Ewe](https://hex.pm/packages/ewe) rather than Mist, use
+[`beryl_ewe`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_ewe)
+instead — it exposes the same config-builder and handler API.
+
 ## Documentation
 
-- Guides and API reference: <https://beryl.tylerbutler.com>
-- Package docs: <https://hexdocs.pm/beryl_mist>
+- Guides: <https://beryl.tylerbutler.com>
+- API reference: <https://beryl.tylerbutler.com/reference/api/>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl_mist`)
 
-## Licence
+## License
 
 MIT

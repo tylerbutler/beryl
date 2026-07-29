@@ -11,14 +11,16 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 0.3.0+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 0.4.1+ | Gleam workspace manager (tasks, versions, publishing) |
 
-**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew.
+**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew. Note that `.mise.toml` also pins `erlang = "28"`, so mise users build on Erlang 28 while `.tool-versions` sets the 27.2.1 floor; CI matrix-tests both.
 
-This repository is a trellis-managed workspace: the publishable packages live
-in `packages/beryl` and `packages/beryl_mist`, runnable examples in
-`examples/`, and the root `gleam.toml` holds only the `[tools.trellis]`
-configuration. `just` recipes fan out across the workspace through
+This repository is a trellis-managed workspace: three packages live under
+`packages/` — `beryl`, `beryl_mist`, and `beryl_ewe` — with runnable examples
+in `examples/` and a root `gleam.toml` holding only the `[tools.trellis]`
+configuration. `beryl_ewe` is built, tested, and linted but excluded from
+release via the `@release` key, so only `beryl` and `beryl_mist` are
+publishable today. `just` recipes fan out across the workspace through
 `trellis run`.
 
 ```bash
@@ -206,9 +208,10 @@ Releases are driven by trellis changelog fragments (TOML files in
 4. After merge, the release workflow runs `trellis release pr`, which batches
    fragments into a release PR (branch `release/pending`) bumping versions
    and regenerating each package's CHANGELOG.md
-5. Merging the release PR publishes every untagged package to Hex in
-   dependency order and creates per-package tags (`beryl-v1.2.3`) and GitHub
-   releases
+5. Merging the release PR creates per-package tags (`beryl-v1.2.3`) and GitHub
+   releases. Hex.pm publishing is temporarily disabled — `trellis publish` is
+   not run; see the header comment in `.github/workflows/publish.yml` for how
+   to resume it
 
 Useful commands: `just version-plan` previews the next versions;
 `just doctor` validates workspace invariants.
@@ -217,8 +220,14 @@ Useful commands: `just version-plan` previews the next versions;
 
 One-time steps to perform in the same PR that tags `v1.0.0`:
 
-- Remove (or rewrite) the "beryl is not yet 1.0 / API is unstable" callout at
-  the top of `README.md`.
+- Remove (or rewrite) the "beryl is not yet 1.0 / API is unstable" callout.
+  The wording is identical everywhere it appears, so one find-and-replace
+  covers all of them:
+  - `README.md`, `packages/beryl/README.md`, `packages/beryl_mist/README.md`,
+    `packages/beryl_ewe/README.md`
+  - `website/src/content/docs/`: `introduction.md`, `installation.md`,
+    `quick-start.mdx`, `examples.mdx`, `reference/index.md` (the last one
+    keeps its trailing "See the Stability policy" pointer)
 - Confirm the documented Gleam version requirement in `README.md` and
   `website/src/content/docs/installation.md`. Note that the documented
   requirement (1.18+) is deliberately higher than the `gleam` constraint in each

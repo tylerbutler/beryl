@@ -108,6 +108,6 @@ The coordinator is a single OTP actor processing its mailbox sequentially; broad
 ## Where this lives
 
 - `packages/beryl_mist/src/beryl_mist.gleam` — connect/close, frame routing
-- `src/beryl/coordinator.gleam` — `route_message`, `route_decoded`, `route_binary`, heartbeat timer
-- `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam` — decode/encode frames
-- `src/beryl/pubsub.gleam` — fan-out
+- `packages/beryl/src/beryl/coordinator.gleam` — `route_message`, `route_decoded`, `route_binary`, heartbeat timer
+- `packages/beryl/src/beryl/wire.gleam`, `packages/beryl/src/beryl/wire/codec.gleam` — decode/encode frames
+- `packages/beryl/src/beryl/pubsub.gleam` — fan-out

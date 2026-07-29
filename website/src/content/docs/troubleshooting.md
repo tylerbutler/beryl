@@ -4,13 +4,15 @@ title: Troubleshooting
 
 This page lists common symptoms with targeted diagnosis steps. Start from your symptom and follow the checks in order.
 
+Examples use `beryl_mist`. `beryl_ewe` exposes the same config-builder and handler API, so every check applies with `ewe_transport` substituted for `mist_transport`.
+
 ## Clients cannot connect at all
 
 **Symptoms:** Browser WebSocket error, `net::ERR_CONNECTION_REFUSED`, or immediate close before any Phoenix messages.
 
 **Checks:**
 
-1. **Is Mist listening?** Confirm your HTTP server started without error. `mist.serve` or `mist.serve_ssl` returns a `Result` — make sure you handle `Error`.
+1. **Is the HTTP server listening?** Confirm it started without error — `mist.start` (and the Ewe equivalent) returns a `Result`, so make sure you handle `Error` rather than discarding it.
 
 2. **Path mismatch.** The Phoenix JS client appends `/websocket` to the socket path you pass:
    ```js
@@ -125,9 +127,9 @@ let logging =
 
 2. **Cross-node sync.** If running multiple nodes, each node must be configured with the same PubSub instance and each presence actor needs a unique replica ID. The CRDT merges state over PubSub; without PubSub, nodes have independent state.
 
-3. **`on_diff` not broadcasting.** If clients rely on receiving `presence_diff` events, confirm `on_diff` is configured and calls `beryl.broadcast_presence_diff`. See the [Presence guide](/guides/presence).
+3. **`on_diff` not broadcasting.** If clients rely on receiving `presence_diff` events, confirm `on_diff` is configured and calls `beryl.broadcast_presence_diff`. See the [Presence guide](/guides/presence/).
 
-4. **CRDT compaction.** The CRDT can accumulate causal history. Call `presence.compact` (on the state layer) if memory usage grows unexpectedly over a long uptime.
+4. **Long-lived causal history.** The CRDT retains causal context for tracked entries. beryl exposes no public compaction hook, so if presence memory grows over a long uptime the cause is almost always check 1 — entries that are never untracked — rather than unbounded CRDT metadata.
 
 ---
 
@@ -141,7 +143,7 @@ let logging =
 
 2. **Token validation error.** Check that your token validation logic handles expired or malformed tokens gracefully and returns `Error(Nil)` rather than panicking.
 
-3. **Join handler returning JoinError for all.** Log the `payload` argument in `join` to confirm the client is sending the expected shape. `payload` arrives as `gleam/json.Json` (already decoded from the raw frame).
+3. **Join handler returning JoinError for all.** Log the `payload` argument in `join` to confirm the client is sending the expected shape. `payload` arrives as `Dynamic` — decode it with `channel.decode_payload` and a `gleam/dynamic/decode` decoder, and check that a failed decode is not falling through to a rejection.
 
 ---
 

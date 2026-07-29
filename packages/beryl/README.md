@@ -32,8 +32,8 @@ JavaScript target.
 
 ## Documentation
 
-- Guides and API reference: <https://beryl.tylerbutler.com>
-- Package docs: <https://hexdocs.pm/beryl>
+- Guides: <https://beryl.tylerbutler.com>
+- API reference: <https://beryl.tylerbutler.com/reference/api/>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl`)
 
@@ -41,8 +41,9 @@ JavaScript target.
 
 The `beryl/transport` module is the public SPI for transport authors: socket
 lifecycle announcements, inbound routing, codec access, and per-connection
-rate limiting. `beryl_mist` is the reference implementation.
+rate limiting. `beryl_mist` is the reference implementation; `beryl_ewe`
+mirrors it against the same SPI.
 
-## Licence
+## License
 
 MIT

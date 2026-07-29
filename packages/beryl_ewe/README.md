@@ -5,7 +5,8 @@
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
-> releases, and quality should not be considered production-ready.
+> releases, and quality should not be considered production-ready. We welcome
+> usage and feedback in the meantime!
 
 beryl is not yet on Hex. Add it and this transport as git dependencies in your
 `gleam.toml`:
@@ -47,7 +48,7 @@ pub fn main() {
   let assert Ok(_) =
     ewe_transport.handler(
       channels,
-      ewe_transport.default_config("/socket"),
+      ewe_transport.default_config("/socket/websocket"),
       http_fallback,
     )
     |> ewe.new
@@ -68,11 +69,11 @@ channels on either web server by choosing the matching transport package.
 
 ## Documentation
 
-- Guides and API reference: <https://beryl.tylerbutler.com>
-- Package docs: <https://hexdocs.pm/beryl_ewe>
+- Guides: <https://beryl.tylerbutler.com>
+- API reference: <https://beryl.tylerbutler.com/reference/api/>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl_ewe`)
 
-## Licence
+## License
 
 MIT

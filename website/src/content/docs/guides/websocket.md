@@ -2,21 +2,64 @@
 title: WebSocket Transport
 ---
 
-beryl provides a WebSocket transport layer that integrates directly with [Mist](https://hexdocs.pm/mist/) for handling browser client connections.
+beryl serves channels over WebSockets through a transport package. Two are
+available and expose the same API:
+
+| Package | Web server |
+|---|---|
+| `beryl_mist` | [Mist](https://hexdocs.pm/mist/) |
+| `beryl_ewe` | [Ewe](https://hexdocs.pm/ewe/) |
+
+This guide uses `beryl_mist`. Every example applies to `beryl_ewe` with
+`ewe_transport` substituted for `mist_transport` — the config builders,
+`on_connect` hook, origin validation, and handler functions are identical.
 
 ## Basic setup
 
-The simplest way to add WebSocket support is with `mist_transport.upgrade`:
+`mist_transport.handler` composes the WebSocket upgrade and your regular HTTP
+handler into a single request handler, so it is the shortest path to a working
+server:
 
 ```gleam
 import beryl
 import beryl_mist as mist_transport
 import gleam/bytes_tree
-import gleam/http/request
 import gleam/http/request.{type Request}
 import gleam/http/response
 import mist
 
+pub fn start(channels: beryl.Channels) {
+  mist_transport.handler(
+    channels,
+    mist_transport.default_config("/socket/websocket"),
+    handle_http,
+  )
+  |> mist.new
+  |> mist.port(8000)
+  |> mist.start
+}
+
+fn handle_http(
+  req: Request(mist.Connection),
+) -> response.Response(mist.ResponseData) {
+  case request.path_segments(req) {
+    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
+    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
+}
+```
+
+WebSocket upgrades on the configured path go to beryl; everything else falls
+through to `handle_http`.
+
+### Driving the upgrade yourself
+
+When you need the upgrade decision inside your own routing — to run middleware
+first, or to mount the socket conditionally — use `mist_transport.upgrade`
+directly. It matches the request path, performs the upgrade, and calls the
+continuation when the path does not match:
+
+```gleam
 fn handle_request(
   req: Request(mist.Connection),
   channels: beryl.Channels,
@@ -29,14 +72,9 @@ fn handle_request(
   )
 
   // Non-WebSocket requests fall through here
-  case request.path_segments(req) {
-    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
-    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
-  }
+  handle_http(req)
 }
 ```
-
-The `upgrade` function checks if the request path matches, performs the WebSocket upgrade, and wires the connection to the beryl coordinator.
 
 :::tip[Phoenix JS clients]
 The Phoenix JS client (`new Socket("/socket", ...)`) connects to `/socket/websocket` by default — it appends `/websocket` to the path you pass. Configure the transport path to match:
@@ -69,7 +107,7 @@ let config =
 use <- mist_transport.upgrade(req, channels, config)
 ```
 
-Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
+Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling/#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting/#authentication-failures) for diagnosis steps.
 
 ### Origin validation and CSWSH
 
@@ -146,7 +184,7 @@ fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
 Note: `upgrade_connection` does not invoke the `on_connect` callback. Run your own auth check before calling it.
 
 :::tip[Troubleshooting connections]
-If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
+If clients cannot connect, see [Clients cannot connect at all](/troubleshooting/#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
 :::
 
 ## Wire protocol

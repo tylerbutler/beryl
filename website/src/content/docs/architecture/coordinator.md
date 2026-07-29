@@ -41,7 +41,7 @@ The registry lookup for topic matching uses `topic.matches`, which supports exac
 
 ## Heartbeat enforcement
 
-When `heartbeat_check_interval_ms` is greater than zero in `CoordinatorConfig`, the coordinator schedules a recurring self-message (`CheckHeartbeats`) at that interval. On each check it iterates all tracked sockets, compares the current monotonic time to `last_heartbeat`, and evicts any socket whose elapsed time exceeds `heartbeat_timeout_ms`. Eviction calls each joined topic's `terminate` callback, sends a disconnect notification over the socket's send function, then removes the socket from all state. By default `beryl.start` sets the check interval to half the timeout.
+When `heartbeat_check_interval_ms` is greater than zero in `CoordinatorConfig`, the coordinator schedules a recurring self-message (`CheckHeartbeats`) at that interval. On each check it iterates all tracked sockets, compares the current monotonic time to `last_heartbeat`, and evicts any socket whose elapsed time exceeds `heartbeat_timeout_ms`. Eviction calls each joined topic's `terminate` callback, sends a disconnect notification over the socket's send function, then removes the socket from all state. The supervised startup path sets the check interval to half the timeout.
 
 ## Supervision tree
 
@@ -76,5 +76,5 @@ PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which
 
 ## Where this lives
 
-- `src/beryl/coordinator.gleam` — `ChannelHandler`, `SocketContext`, `JoinResultErased`, `HandleResultErased`, `route_message`, `route_decoded`, `route_binary`, heartbeat timer.
-- `src/beryl/supervisor.gleam` — `SupervisedConfig`, stable named handles, and the `start` child specification; one-for-one isolation around a rest-for-one channel subtree.
+- `packages/beryl/src/beryl/coordinator.gleam` — `ChannelHandler`, `SocketContext`, `JoinResultErased`, `HandleResultErased`, `route_message`, `route_decoded`, `route_binary`, heartbeat timer.
+- `packages/beryl/src/beryl/supervisor.gleam` — `SupervisedConfig`, stable named handles, and the `start` child specification; one-for-one isolation around a rest-for-one channel subtree.

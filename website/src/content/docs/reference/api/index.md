@@ -3,10 +3,10 @@ title: API Reference
 description: Generated API reference from Gleam docs metadata.
 ---
 
-This reference is generated from Gleam's docs metadata for `beryl` and `beryl_ewe` and `beryl_mist`.
+This reference is generated from Gleam's docs metadata for `beryl`, `beryl_ewe`, and `beryl_mist`.
 
 :::note[Generated content]
-Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: [beryl](https://hexdocs.pm/beryl/), [beryl_ewe](https://hexdocs.pm/beryl_ewe/), [beryl_mist](https://hexdocs.pm/beryl_mist/).
+Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no `hexdocs.pm` listing.
 :::
 
 ## `beryl` `0.0.1`

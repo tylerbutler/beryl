@@ -6,7 +6,7 @@ description: Build your first beryl channel end-to-end — server callbacks, Web
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 <Aside type="caution" title="Pre-1.0 Software">
-beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
+beryl is not yet 1.0. The API is unstable, features may be removed in minor releases, and quality should not be considered production-ready. We welcome usage and feedback in the meantime!
 </Aside>
 
 This guide walks you through building a working real-time channel from scratch:
@@ -47,7 +47,7 @@ import beryl/socket.{type Socket}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
-import gleam/option.{None, Some}
+import gleam/option.{Some}
 
 /// Per-socket state for this channel.
 pub type RoomAssigns {
@@ -176,17 +176,15 @@ pub fn main() {
   let assert Ok(_) =
     beryl.register(channels, "room:*", room_channel.new(channels))
 
-  // Start the HTTP + WebSocket server.
+  // Start the HTTP + WebSocket server. `handler` composes the WebSocket
+  // upgrade with your HTTP handler: upgrades on the configured path go to
+  // beryl, everything else falls through to `handle_http`.
   let assert Ok(_) =
-    fn(req) {
-      // Upgrade WebSocket requests first; fall through to HTTP for everything else.
-      mist_transport.upgrade(
-        req,
-        channels,
-        mist_transport.default_config("/socket/websocket"),
-        fn() { handle_http(req) },
-      )
-    }
+    mist_transport.handler(
+      channels,
+      mist_transport.default_config("/socket/websocket"),
+      handle_http,
+    )
     |> mist.new
     |> mist.port(8000)
     |> mist.start
@@ -322,7 +320,7 @@ The client receives an `"error"` reply on its `.join()` call.
 
 ## Next steps
 
-- Explore the full [examples](/examples/) — two runnable demos with HTML frontends
+- Explore the full [examples](/examples/) — three runnable demos with HTML frontends
 - Learn about [Channels](/guides/channels/) in depth — topic patterns, handle_out, terminate
 - Add [Presence tracking](/guides/presence/) to see who's online
 - Set up [PubSub](/guides/pubsub/) for distributed messaging

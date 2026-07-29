@@ -3,7 +3,7 @@ title: Installation
 ---
 
 :::caution[Pre-1.0 Software]
-beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
+beryl is not yet 1.0. The API is unstable, features may be removed in minor releases, and quality should not be considered production-ready. We welcome usage and feedback in the meantime!
 :::
 
 beryl is not yet published to Hex. Add it to your Gleam project as a git
