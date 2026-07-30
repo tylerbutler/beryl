@@ -1,3 +1,13 @@
+// Renders the Open Graph card to website/public/og.png.
+//
+// Run this by hand (`pnpm generate:og`) when the card's design, wording, or
+// source assets change, then commit the regenerated public/og.png.
+//
+// Deliberately NOT part of `build:site`. public/og.png is a committed asset
+// that Astro copies verbatim into dist/, and sharp's PNG output is not
+// byte-stable across runs — rebuilding it on every build left an unrelated
+// ~300KB binary diff in the working tree after any local site build.
+
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
