@@ -42,16 +42,18 @@ import gleam/json
 let ref = presence.track(
   p,
   "room:lobby",   // topic
-  "user:alice",    // key (groups multiple connections)
-  socket_id,       // pid (unique per connection)
-  json.object([    // metadata
+  "user:alice",   // key (groups multiple connections)
+  socket_id,      // session id (unique per connection)
+  json.object([   // metadata
     #("status", json.string("online")),
     #("joined_at", json.int(1234567890)),
   ]),
 )
 ```
 
-The **key** groups multiple connections from the same user. The **pid** uniquely identifies each connection (typically the socket ID).
+The **key** groups multiple connections from the same user — every browser tab
+signed in as `alice` shares one key. The **session id** identifies a single
+connection; pass the socket ID, which is what `untrack_all` expects later.
 
 ## Untracking
 

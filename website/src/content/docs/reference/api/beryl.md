@@ -173,31 +173,6 @@ A handler is already registered for this exact topic pattern.
 The topic pattern is invalid. Patterns must be non-empty and must not
  contain control characters (codepoints 0–31 or 127).
 
-### `StartError`
-
-Errors when starting channels
-
-```gleam
-pub type StartError {
-  CoordinatorStartFailed(error.StartFailure)
-  InvalidHeartbeatTimeout
-}
-```
-
-#### Constructors
-
-##### `CoordinatorStartFailed(error.StartFailure)`
-
-The coordinator actor failed to start.
-
-##### `InvalidHeartbeatTimeout`
-
-`heartbeat_timeout_ms` must be at least 2. The server derives its staleness
- check interval as `heartbeat_timeout_ms / 2` (integer division), so a
- timeout of 1 would round down to a check interval of 0 — which disables
- heartbeat eviction entirely. `start` rejects such a config loudly rather
- than silently turning eviction off.
-
 ## Functions
 
 ### `acquire_connection_slot`
@@ -426,49 +401,6 @@ pub fn send_info(
   String,
   b
 ) -> Nil
-```
-
-### `start`
-
-Start the channels system
-
- Call once at application startup. Returns a handle that can be passed
- to the WebSocket transport and used for broadcasting.
-
- Heartbeat eviction is configured via `heartbeat_timeout_ms` in the Config.
- The coordinator evicts any socket that has not sent a heartbeat within that
- window, checking for stale sockets at a server-derived interval of
- `heartbeat_timeout_ms / 2`. `heartbeat_interval_ms` is client-advisory only
- (see `with_heartbeat`) and does not schedule anything on the server.
-
- Returns `Error(InvalidHeartbeatTimeout)` if `heartbeat_timeout_ms` is less
- than 2.
-
- ## Example
-
- ```gleam
- pub fn main() {
-   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-   // Use channels...
- }
- ```
-
-```gleam
-pub fn start(Config) -> Result(Channels, StartError)
-```
-
-### `stop`
-
-Stop an unsupervised channels system.
-
- This shuts down the coordinator actor started by `start` and any auxiliary
- limiter actors owned by the `Channels` handle. Joined channel handlers
- receive `channel.Shutdown` in their `terminate` callback before the
- coordinator exits. After this call the `Channels` handle should no longer be
- used.
-
-```gleam
-pub fn stop(Channels) -> Nil
 ```
 
 ### `with_channel_rate`

@@ -1,6 +1,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/wire
 import beryl/wire/codec
 import gleam/bit_array
@@ -154,7 +155,8 @@ fn ref_to_string(ref: Option(String)) -> String {
 pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
   let sent_text = process.new_subject()
   let sent_binary = process.new_subject()
-  let assert Ok(channels) = beryl.start(beryl.config(binary_test_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(binary_test_codec()))
 
   process.send(
     beryl.coordinator_subject(channels),
@@ -229,7 +231,7 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
   let config =
     beryl.config(binary_test_codec())
     |> beryl.with_message_rate(per_second: 100, burst: 2)
-  let assert Ok(channels) = beryl.start(config)
+  let assert Ok(channels) = unsupervised.start(config)
 
   process.send(
     beryl.coordinator_subject(channels),
@@ -284,7 +286,8 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
 pub fn binary_codec_broadcast_uses_binary_send_test() {
   let sent_text = process.new_subject()
   let sent_binary = process.new_subject()
-  let assert Ok(channels) = beryl.start(beryl.config(binary_test_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(binary_test_codec()))
 
   process.send(
     beryl.coordinator_subject(channels),
@@ -343,7 +346,7 @@ pub fn codec_without_binary_decoder_preserves_raw_binary_handler_test() {
       encode_push: wire.push,
       encode_heartbeat_reply: wire.heartbeat_reply,
     )
-  let assert Ok(channels) = beryl.start(beryl.config(text_only))
+  let assert Ok(channels) = unsupervised.start(beryl.config(text_only))
 
   process.send(
     beryl.coordinator_subject(channels),

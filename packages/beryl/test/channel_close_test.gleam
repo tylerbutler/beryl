@@ -5,6 +5,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/topic
 import beryl/wire
 import gleam/dynamic
@@ -106,7 +107,8 @@ fn join_topic(
 }
 
 pub fn leave_sends_reply_then_phx_close_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   register_stopping_channel(channels, channel.Normal)
 
   let socket = connect_socket(channels, "socket-1")
@@ -133,7 +135,8 @@ pub fn leave_sends_reply_then_phx_close_test() {
 }
 
 pub fn stop_with_error_sends_phx_error_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   register_stopping_channel(channels, channel.Errored("boom"))
 
   let socket = connect_socket(channels, "socket-1")
@@ -155,7 +158,8 @@ pub fn stop_with_error_sends_phx_error_test() {
 }
 
 pub fn stop_with_normal_sends_phx_close_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   register_stopping_channel(channels, channel.Normal)
 
   let socket = connect_socket(channels, "socket-1")

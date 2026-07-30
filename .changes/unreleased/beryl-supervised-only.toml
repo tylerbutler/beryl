@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Removed"
+body = "`beryl.start`, `beryl.stop`, and `beryl.StartError` are no longer public. Starting a channel system without supervision left a coordinator crash unrecoverable and every connected socket stranded, so the API no longer offers it as a choice. Applications start beryl through `beryl/supervisor`, which returns a child specification for their own OTP supervision tree — the pattern already used throughout the guides and examples."

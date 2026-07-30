@@ -6,13 +6,14 @@
 //// real socket peer IP.
 
 import beryl
+import beryl/internal/unsupervised
 import beryl/wire
 import gleam/erlang/process
 import gleeunit/should
 
 fn start_with_limit(max_connections: Int) -> beryl.Channels {
   let assert Ok(channels) =
-    beryl.start(
+    unsupervised.start(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: max_connections),
     )
@@ -31,7 +32,7 @@ pub fn zero_means_unlimited_test() {
   beryl.release_connection_slot(first)
   |> should.equal(Nil)
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // Connections at or below the configured limit are admitted.
@@ -41,7 +42,7 @@ pub fn admits_connections_under_limit_test() {
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.1"))
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.1"))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // The connection that would exceed the limit is rejected.
@@ -52,7 +53,7 @@ pub fn rejects_connection_over_limit_test() {
   beryl.acquire_connection_slot(channels, "10.0.0.2")
   |> should.equal(Error(Nil))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // Releasing a slot frees capacity so a subsequent connection from that IP
@@ -69,7 +70,7 @@ pub fn releasing_slot_frees_capacity_test() {
   beryl.release_connection_slot(permit)
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.3"))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // The limit is tracked independently per IP.
@@ -85,7 +86,7 @@ pub fn limit_is_per_ip_test() {
   beryl.acquire_connection_slot(channels, "10.0.0.5")
   |> should.equal(Error(Nil))
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // A slot is reclaimed when its holder process dies without releasing —
@@ -107,7 +108,7 @@ pub fn slot_reclaimed_when_holder_dies_without_release_test() {
   process.sleep(50)
 
   should.be_ok(beryl.acquire_connection_slot(channels, "10.0.0.7"))
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }
 
 // A permit obtained under a limit can be released explicitly.
@@ -117,5 +118,5 @@ pub fn permit_can_be_released_test() {
   let assert Ok(permit) = beryl.acquire_connection_slot(channels, "10.0.0.6")
   beryl.release_connection_slot(permit)
 
-  beryl.stop(channels)
+  unsupervised.stop(channels)
 }

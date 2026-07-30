@@ -1,5 +1,6 @@
 import beryl
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/presence
 import beryl/pubsub
 import beryl/topic
@@ -104,7 +105,8 @@ fn presence_diff() -> presence.Diff {
 }
 
 pub fn broadcast_from_local_only_excludes_socket_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   register_test_channel(channels)
 
   let sender = connect_socket(channels, "sender-socket")
@@ -134,8 +136,8 @@ pub fn broadcast_from_local_only_excludes_socket_test() {
 pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_coordinator_test() {
   let ps = pubsub.start(pubsub.config_with_scope("test_broadcast_from_pubsub"))
   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-  let assert Ok(origin_channels) = beryl.start(config)
-  let assert Ok(remote_channels) = beryl.start(config)
+  let assert Ok(origin_channels) = unsupervised.start(config)
+  let assert Ok(remote_channels) = unsupervised.start(config)
   register_test_channel(origin_channels)
   register_test_channel(remote_channels)
 
@@ -164,7 +166,8 @@ pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_coordinator_test() {
 }
 
 pub fn broadcast_presence_diff_local_delivers_phoenix_event_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   register_test_channel(channels)
 
   let socket = connect_socket(channels, "socket-1")
@@ -186,7 +189,8 @@ pub fn broadcast_presence_diff_local_delivers_phoenix_event_test() {
 }
 
 pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   register_test_channel(channels)
 
   let socket = connect_socket(channels, "socket-1")
@@ -224,8 +228,8 @@ pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() {
 pub fn broadcast_presence_diff_with_pubsub_delivers_to_remote_coordinator_test() {
   let ps = pubsub.start(pubsub.config_with_scope("test_presence_diff_pubsub"))
   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-  let assert Ok(origin_channels) = beryl.start(config)
-  let assert Ok(remote_channels) = beryl.start(config)
+  let assert Ok(origin_channels) = unsupervised.start(config)
+  let assert Ok(remote_channels) = unsupervised.start(config)
   register_test_channel(origin_channels)
   register_test_channel(remote_channels)
 

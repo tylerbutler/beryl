@@ -3,8 +3,9 @@
 ## Project Summary
 
 Beryl is a Gleam library for type-safe real-time channels and presence on the
-Erlang/BEAM runtime. It's a trellis-managed monorepo with three publishable
-packages, runnable examples, and an Astro/Starlight documentation website.
+Erlang/BEAM runtime. It's a trellis-managed monorepo with three packages — two
+of them currently publishable, since `beryl_ewe` is release-excluded — plus
+runnable examples and an Astro/Starlight documentation website.
 
 ## Essential Commands
 
@@ -81,10 +82,13 @@ A transport implementation must follow this lifecycle:
 
 ### Wire Protocol
 
-The default codec (`wire.phoenix_codec()`) implements the Phoenix wire format:
+The built-in codec (`wire.phoenix_codec()`) implements the Phoenix wire format.
+`beryl.config` takes the codec as a required argument — there is no implicit
+default.
 - Text frames: `[join_ref, ref, topic, event, payload]` JSON arrays
 - Binary frames: Phoenix V2 binary framing
-- Heartbeats: `phx_heartbeat` event with `null` payload
+- Heartbeats: topic `"phoenix"`, event `"heartbeat"`; replied to with
+  `phx_reply` on the same topic
 
 ### PubSub Wire Contract
 
@@ -178,11 +182,15 @@ untracked artifacts — clean before staging.
 
 ### Tool Versions
 
-`.tool-versions` is the source of truth for CI:
+`.tool-versions` sets the floor and is what CI's version-file resolution uses:
 - Erlang 27.2.1, Gleam 1.16.0, just 1.50.0
 
-`.mise.toml` pins trellis (>= 0.4.1) and rebar for local development only.
-Keep `.mise.toml` limited to mise-only helper tools.
+CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml`).
+
+`.mise.toml` pins trellis (0.4.1) and rebar for local development, and
+deliberately pins `erlang = "28"` so local dev runs on the newer of the two
+matrix versions. That pin intentionally overrides `.tool-versions` for mise
+users; keep everything else in `.mise.toml` limited to mise-only helper tools.
 
 ### Dependency Rules
 

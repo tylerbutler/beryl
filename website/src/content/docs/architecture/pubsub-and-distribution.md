@@ -12,7 +12,7 @@ Each PubSub instance is isolated by a **scope** (an Erlang atom). The default sc
 
 ## The FFI Boundary
 
-The Gleam module `beryl/pubsub` delegates all low-level pg operations to `src/beryl_pubsub_ffi.erl` via `@external` declarations. The FFI file is intentionally minimal — it is a thin wrapper that maps Gleam calls directly to `pg` BIFs.
+The Gleam module `beryl/pubsub` delegates all low-level pg operations to `packages/beryl/src/beryl_pubsub_ffi.erl` via `@external` declarations. The FFI file is intentionally minimal — it is a thin wrapper that maps Gleam calls directly to `pg` BIFs.
 
 **Public surface of `beryl/pubsub`:**
 
@@ -93,5 +93,5 @@ distribution, EPMD port restrictions, and cluster isolation).
 
 | File | Role |
 |---|---|
-| `src/beryl/pubsub.gleam` | Public Gleam API — types, config, and all broadcast functions |
-| `src/beryl_pubsub_ffi.erl` | Erlang FFI — thin `pg` wrappers called via `@external` |
+| `packages/beryl/src/beryl/pubsub.gleam` | Public Gleam API — types, config, and all broadcast functions |
+| `packages/beryl/src/beryl_pubsub_ffi.erl` | Erlang FFI — thin `pg` wrappers called via `@external` |

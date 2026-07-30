@@ -89,15 +89,19 @@ pub fn new() -> Channel(RoomAssigns, info) {
 
 Called when a client sends a `phx_join` message. Return `JoinOk` to accept or `JoinError` to reject:
 
+The callback's first argument is the topic string. Name it something other than
+`topic` if you also import the `beryl/topic` module — a local binding named
+`topic` shadows the module and its functions become unreachable:
+
 ```gleam
 fn join(
-  topic: String,
+  topic_name: String,
   payload: Dynamic,
   socket: Socket(RoomAssigns),
 ) -> JoinResult(RoomAssigns) {
   // Extract room ID from topic pattern
   let assert Ok(room_id) =
-    topic.extract_id(topic.Wildcard("room:"), topic)
+    topic.extract_id(topic.Wildcard("room:"), topic_name)
 
   let assigns = RoomAssigns(user_id: "user_123", room_id: room_id)
   let socket = socket.set_assigns(socket, assigns)
@@ -114,8 +118,10 @@ If every topic needs the same per-socket auth (e.g. the same JWT), validate it
 check in every `join`. `on_connect` runs once per socket, can reject the whole
 connection before any join, and can seed initial assigns that this `join`
 callback reads via `socket.get_assigns`. See
-[WebSocket Transport → Authentication](/guides/websocket#authentication).
+[WebSocket Transport → Authentication](/guides/websocket/#authentication).
 :::
+
+### Message handler
 
 Called for each incoming text message. The `event` string identifies the message type:
 
@@ -207,7 +213,7 @@ The handler receives the **typed** message you sent — there is no `Dynamic` an
 
 ```gleam
 type ServerMessage {
-  Tick(at: Int)
+  Tick(sequence: Int)
   Notify(text: String)
 }
 
@@ -216,10 +222,10 @@ fn handle_info(
   socket: Socket(RoomAssigns),
 ) -> HandleResult(RoomAssigns) {
   case message {
-    Tick(at) ->
+    Tick(sequence) ->
       channel.Push(
         "tick",
-        json.object([#("at", json.int(at))]),
+        json.object([#("sequence", json.int(sequence))]),
         socket,
       )
     Notify(text) ->
@@ -254,29 +260,50 @@ If the socket is not connected, the topic is not joined, or no `handle_info` is 
 
 A common use case is scheduling periodic pushes to a specific client. Spawn a process when the client joins and cancel it in `terminate`:
 
+The channel needs a `beryl.Channels` handle to send to itself, so capture one
+when you build the channel and close over it in the join callback:
+
 ```gleam
+import beryl
 import gleam/erlang/process
 
-fn join(topic, _payload, socket) -> JoinResult(RoomAssigns) {
+pub fn new(channels: beryl.Channels) -> Channel(RoomAssigns, ServerMessage) {
+  channel.new(fn(topic_name, _payload, socket) {
+    join(channels, topic_name, socket)
+  })
+  |> channel.with_handle_info(handle_info)
+}
+
+fn join(
+  channels: beryl.Channels,
+  topic_name: String,
+  socket: Socket(RoomAssigns),
+) -> JoinResult(RoomAssigns) {
   let socket_id = socket.id(socket)
 
-  // Spawn a timer process that sends a tick every 5 seconds
-  let _pid = process.spawn(fn() {
-    let rec = process.new_subject()
-    timer_loop(channels, socket_id, topic, rec)
-  })
+  // Spawn a timer process that sends a tick every 5 seconds. Spawn it
+  // unlinked so the timer dying cannot take the coordinator down with it.
+  let _pid =
+    process.spawn_unlinked(fn() {
+      timer_loop(channels, socket_id, topic_name, 0)
+    })
 
   channel.JoinOk(reply: None, socket: socket)
 }
 
-fn timer_loop(channels, socket_id, topic, _self) {
+fn timer_loop(
+  channels: beryl.Channels,
+  socket_id: String,
+  topic_name: String,
+  sequence: Int,
+) -> Nil {
   process.sleep(5000)
-  beryl.send_info(channels, socket_id, topic, Tick(erlang.system_time(erlang.Millisecond)))
-  timer_loop(channels, socket_id, topic, _self)
+  beryl.send_info(channels, socket_id, topic_name, Tick(sequence))
+  timer_loop(channels, socket_id, topic_name, sequence + 1)
 }
 ```
 
-For production use, prefer OTP-based timers (e.g., Erlang's `:timer.send_interval`) over bare recursion, and track the timer PID in assigns so you can cancel it in `terminate`.
+This loop runs until the process is killed. For production use, prefer OTP-based timers (e.g. Erlang's `timer:send_interval`) over bare recursion, and keep the timer's PID in assigns so `terminate` can cancel it — otherwise the loop outlives the socket and `send_info` keeps firing into a topic nobody has joined.
 
 ## Registering channels
 
@@ -284,15 +311,28 @@ Register channels with the beryl system using topic patterns:
 
 ```gleam
 import beryl
+import beryl/supervisor
 import beryl/wire
+import gleam/otp/static_supervisor
 
-let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
+
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(supervisor.start(beryl_config))
+  |> static_supervisor.start()
+
+let channels = supervisor.channels(beryl_config)
 
 // Register handlers for different topic patterns
 let assert Ok(_) = beryl.register(channels, "room:*", room_channel.new())
 let assert Ok(_) = beryl.register(channels, "user:*", user_channel.new())
 let assert Ok(_) = beryl.register(channels, "system", system_channel.new())
 ```
+
+Register channels after the root supervisor is running — `supervisor.channels`
+resolves a stable named subject, so the handle keeps routing to replacement
+processes after a restart. See the [Supervision guide](/guides/supervision/).
 
 ## Broadcasting
 

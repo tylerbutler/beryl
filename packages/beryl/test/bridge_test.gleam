@@ -2,6 +2,7 @@ import beryl
 import beryl/bridge
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/wire
 import gleam/dynamic
 import gleam/erlang/process
@@ -14,7 +15,8 @@ import test_helpers.{wait_until}
 fn start_channels_with_socket(
   socket_id: String,
 ) -> #(beryl.Channels, process.Subject(String)) {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let sent_messages = process.new_subject()
 
   process.send(

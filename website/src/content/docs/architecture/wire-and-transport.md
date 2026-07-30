@@ -9,7 +9,7 @@ The wire and transport layer sits between raw WebSocket frames and the coordinat
 A `Codec` is a plain data value that pairs a decoder with a set of encoders. The coordinator is framing-agnostic: it only ever sees `Inbound` values and emits `Frame` values; the codec performs every translation.
 
 ```
-src/beryl/wire/codec.gleam
+packages/beryl/src/beryl/wire/codec.gleam
 ```
 
 The `Codec` type carries five fields:
@@ -22,7 +22,7 @@ The `Codec` type carries five fields:
 | `encode_push` | Encode a server-initiated push |
 | `encode_heartbeat_reply` | Encode the heartbeat acknowledgement |
 
-The built-in `phoenix_codec()` (from `src/beryl/wire.gleam`) wires the Phoenix JSON framing into all five slots and is the default codec. Pass it to `beryl.config/1` to use it:
+The built-in `phoenix_codec()` (from `packages/beryl/src/beryl/wire.gleam`) wires the Phoenix JSON framing into all five slots. `beryl.config/1` takes the codec as a required argument — there is no implicit default — so pass it explicitly:
 
 ```gleam
 beryl.config(wire.phoenix_codec())
@@ -92,6 +92,6 @@ flowchart LR
 
 | Module | Path |
 |---|---|
-| Codec abstraction | `src/beryl/wire/codec.gleam` |
-| Phoenix wire helpers | `src/beryl/wire.gleam` |
+| Codec abstraction | `packages/beryl/src/beryl/wire/codec.gleam` |
+| Phoenix wire helpers | `packages/beryl/src/beryl/wire.gleam` |
 | Mist transport | `packages/beryl_mist/src/beryl_mist.gleam` |

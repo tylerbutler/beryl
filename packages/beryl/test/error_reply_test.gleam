@@ -5,6 +5,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/internal/unsupervised
 import beryl/wire
 import gleam/dynamic
 import gleam/erlang/process
@@ -18,7 +19,8 @@ pub fn main() {
 }
 
 fn start_with_error_channel() -> beryl.Channels {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) =
+    unsupervised.start(beryl.config(wire.phoenix_codec()))
   let handler =
     channel.new(fn(_topic, _payload, socket) {
       channel.JoinOk(reply: None, socket: socket)

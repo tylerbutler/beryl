@@ -74,17 +74,6 @@ import { Aside } from '@astrojs/starlight/components';
     color: var(--sl-color-gray-2);
     text-wrap: pretty;
   }
-  .beryl-path .beryl-path__cmd {
-    margin: 0.7rem 0 0.2rem;
-  }
-  .beryl-path .beryl-path__cmd code {
-    font-size: 0.95em;
-    background: var(--beryl-surface);
-    border: 1px solid var(--beryl-hairline);
-    color: var(--sl-color-white);
-    padding: 0.4em 0.75em;
-    border-radius: 8px;
-  }
   .beryl-path__go {
     display: inline-block;
     margin-top: 0.75rem;
@@ -98,8 +87,7 @@ import { Aside } from '@astrojs/starlight/components';
 	<ol>
 		<li>
 			<h3>Install beryl</h3>
-			<p>Add beryl and its BEAM dependencies to your Gleam project.</p>
-			<p class="beryl-path__cmd"><code>gleam add beryl</code></p>
+			<p>Add beryl and its BEAM dependencies to your Gleam project. beryl installs as a git dependency, which needs <strong>Gleam 1.18+</strong>.</p>
 			<a class="beryl-path__go" href="/installation/">Installation guide →</a>
 		</li>
 		<li>
@@ -109,7 +97,7 @@ import { Aside } from '@astrojs/starlight/components';
 		</li>
 		<li>
 			<h3>See it running</h3>
-			<p>Browse complete, runnable examples, then go deeper in the <a href="/guides/channels/">guides</a> or the <a href="https://hexdocs.pm/beryl/">API reference</a>.</p>
+			<p>Browse complete, runnable examples, then go deeper in the <a href="/guides/channels/">guides</a> or the <a href="/reference/api/">API reference</a>.</p>
 			<a class="beryl-path__go" href="/examples/">View examples →</a>
 		</li>
 	</ol>

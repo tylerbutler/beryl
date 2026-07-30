@@ -2,7 +2,9 @@
 title: Supervision
 ---
 
-`beryl/supervisor` integrates Beryl into your application's OTP supervision tree. It does not expose a separate function that starts an unmanaged Beryl process. Instead, `supervisor.start` returns a supervisor child specification for your root supervisor.
+`beryl/supervisor` integrates Beryl into your application's OTP supervision tree. `supervisor.start` returns a supervisor child specification that you add to your own root supervisor, rather than starting a process itself.
+
+This is the only way to start Beryl. There is deliberately no unsupervised entry point: a channel system with nothing watching it stays down after a coordinator crash, stranding every connected socket, so the API does not offer that as a choice.
 
 ## Add Beryl to your application supervisor
 

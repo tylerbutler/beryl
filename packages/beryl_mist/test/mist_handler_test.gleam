@@ -4,12 +4,16 @@
 //// handler routes WebSocket upgrades versus plain HTTP requests.
 
 import beryl
+import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/response
 import gleam/int
+import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/result
 import gleam/string
 import gleeunit/should
 import mist
@@ -84,7 +88,7 @@ fn start_server_with_config(
 
 fn start_limited_server() -> #(Int, process.Pid) {
   let assert Ok(channels) =
-    beryl.start(
+    start_supervised(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: 1),
     )
@@ -93,7 +97,7 @@ fn start_limited_server() -> #(Int, process.Pid) {
 
 fn start_frame_limited_server() -> #(Int, process.Pid) {
   let assert Ok(channels) =
-    beryl.start(
+    start_supervised(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_inbound_frame_bytes(max_bytes: 32),
     )
@@ -101,7 +105,7 @@ fn start_frame_limited_server() -> #(Int, process.Pid) {
 }
 
 fn start_channels() -> beryl.Channels {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
   channels
 }
 
@@ -279,7 +283,7 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
 
 pub fn handler_sheds_message_flood_at_the_edge_test() {
   let assert Ok(channels) =
-    beryl.start(
+    start_supervised(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_message_rate(per_second: 1, burst: 2),
     )
@@ -327,4 +331,20 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() {
 
   close(client)
   stop_supervisor(server_pid)
+}
+
+/// Start a supervised channel system for tests.
+///
+/// beryl exposes no public unsupervised start, so tests stand up a real
+/// supervision tree the way an application would.
+fn start_supervised(
+  config: beryl.Config,
+) -> Result(beryl.Channels, actor.StartError) {
+  let supervised = supervisor.config(config)
+  use _root <- result.map(
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(supervised))
+    |> static_supervisor.start(),
+  )
+  supervisor.channels(supervised)
 }

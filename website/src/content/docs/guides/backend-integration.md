@@ -12,7 +12,7 @@ connected sockets.
 This guide wires up that split:
 
 1. The existing backend authenticates users and issues a token.
-2. beryl verifies that token at connect (see [Authentication](/guides/authentication)).
+2. beryl verifies that token at connect (see [Authentication](/guides/authentication/)).
 3. When domain data changes, the backend calls an **internal publish endpoint**
    on the beryl service, which forwards the change with `beryl.broadcast`.
 
@@ -157,8 +157,8 @@ fn not_found() -> Response(mist.ResponseData) {
 - **Push from anywhere.** Any backend process — an HTTP handler, a background job,
   a webhook consumer — can publish by POSTing to the internal endpoint.
 - **Distributed fan-out for free.** If beryl runs as a cluster, use the
-  [PubSub layer](/guides/pubsub) so a broadcast on one node reaches subscribers on
+  [PubSub layer](/guides/pubsub/) so a broadcast on one node reaches subscribers on
   every node.
 
 For the connect-time verification of the tokens your backend issues, see the
-[Authentication guide](/guides/authentication).
+[Authentication guide](/guides/authentication/).

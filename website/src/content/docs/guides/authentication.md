@@ -9,7 +9,7 @@ from the handshake, verify it into typed **claims**, seed those claims as the
 socket's initial assigns, and then authorize individual topic joins.
 
 For the mechanics of `with_on_connect` and rejection behavior, see the
-[WebSocket Transport guide](/guides/websocket#authentication). This page focuses
+[WebSocket Transport guide](/guides/websocket/#authentication). This page focuses
 on wiring *real* auth end to end.
 
 ## 1. Model your claims
@@ -138,6 +138,6 @@ fn has_role(claims: Claims, role: String) -> Bool {
 - **Cookie sessions need origin checks.** If you authenticate from a cookie
   instead of a token, always pair it with `with_allowed_origins` to prevent
   Cross-Site WebSocket Hijacking. See
-  [Origin validation and CSWSH](/guides/websocket#origin-validation-and-cswsh).
+  [Origin validation and CSWSH](/guides/websocket/#origin-validation-and-cswsh).
 - **Rejection shape.** For the client-visible error when a join or connection is
-  refused, see [Error Handling](/guides/error-handling#connection-level-authentication-rejection).
+  refused, see [Error Handling](/guides/error-handling/#connection-level-authentication-rejection).

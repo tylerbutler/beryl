@@ -10,15 +10,30 @@
 
 ## Install
 
-```sh
-gleam add beryl beryl_mist
+beryl is not yet published to Hex, so add it as a git dependency in your
+`gleam.toml`:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl_mist" }
 ```
+
+> [!IMPORTANT]
+> **This requires Gleam 1.18 or later.** beryl's packages live in
+> subdirectories of this repository, and the `path` field that points a git
+> dependency at a subdirectory was added in Gleam 1.18. There is no way to
+> depend on beryl from an earlier Gleam version.
+
+`gleam add` only handles Hex packages, so edit `gleam.toml` by hand and then run
+`gleam deps download`.
 
 `beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
 WebSocket transport. An [Ewe](https://hex.pm/packages/ewe) transport is also
-available as `beryl_ewe` (`gleam add beryl beryl_ewe`) and mirrors the
-`beryl_mist` API. All live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
-workspace under `packages/`).
+available as `beryl_ewe` (same git dependency with
+`path = "packages/beryl_ewe"`) and mirrors the `beryl_mist` API. All live in
+this repository (a [trellis](https://trellis.tylerbutler.com)-managed workspace
+under `packages/`).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -26,14 +41,13 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 
 ```gleam
 import beryl
-import beryl/channel.{type Channel, type HandleResult, type JoinResult}
-import beryl/socket.{type Socket}
+import beryl/channel.{type Channel}
+import beryl/socket
 import beryl/supervisor
-import beryl_mist as mist_transport
 import beryl/wire
+import beryl_mist as mist_transport
 import gleam/dynamic/decode
 import gleam/erlang/process
-import gleam/json
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import mist
@@ -58,8 +72,8 @@ fn new_channel() -> Channel(RoomAssigns, info) {
 }
 
 pub fn main() {
-  // beryl doesn't start an unmanaged process; add its child specification to
-  // your own application supervisor.
+  // beryl has no unsupervised start; add its child specification to your own
+  // application supervisor so a coordinator crash restarts just that subtree.
   let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
 
   let assert Ok(_root) =
@@ -95,7 +109,10 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 ## Documentation
 
 - **Website & guides**: <https://beryl.tylerbutler.com>
-- **Generated API docs**: <https://hexdocs.pm/beryl/>
+- **Generated API reference**: <https://beryl.tylerbutler.com/reference/api/>
+
+beryl is not on Hex yet, so there is no `hexdocs.pm` listing; the reference
+above is generated from the same Gleam docs metadata.
 
 ## Ecosystem
 
@@ -170,6 +187,7 @@ import beryl/channel.{type Channel}
 import beryl/socket
 import gleam/json
 import gleam/option.{None}
+import my_app/doc
 
 // Messages emitted by your domain actor.
 pub type DocEvent {
@@ -246,53 +264,31 @@ see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/produc
 
 ### Required: an edge proxy frame-size limit
 
-Beryl's `with_max_inbound_frame_bytes` limit is enforced **post-assembly** —
-the WebSocket transport (Mist/gramps) buffers and reassembles a complete frame
-*before* Beryl measures it and rejects oversized frames. This bounds
-per-message processing cost, but it does **not** bound transport memory.
+`with_max_inbound_frame_bytes` is enforced **post-assembly** — the transport
+buffers and reassembles a complete frame before Beryl measures it. That bounds
+per-message processing cost but **not** transport memory: a hostile client can
+grow the receive buffer without limit on a single connection by declaring a huge
+payload length and streaming slowly, or by sending a long run of fragmented
+continuation frames. Neither `with_max_connections_per_ip` nor
+`with_message_rate` mitigates this — the buffer grows before any message reaches
+a channel.
 
-A hostile client can therefore exhaust node memory with a single connection by
-either:
+So in production you **must** put an edge proxy or load balancer in front of
+Beryl and set a maximum WebSocket frame/message size at or below your
+`with_max_inbound_frame_bytes` value, plus a matching body-size limit on the
+initial HTTP upgrade. Treat Beryl's in-process limit as defense-in-depth for
+per-message cost, not as a memory bound.
 
-- declaring a huge payload length in a frame header and streaming the body
-  slowly, or
-- sending a long run of fragmented continuation frames that the transport
-  aggregates into one buffer.
-
-In both cases the transport's receive buffer grows unbounded *before* Beryl's
-frame-size check ever runs. **Beryl's per-IP connection limit
-(`with_max_connections_per_ip`) and per-socket message-rate limit
-(`with_message_rate`) do not mitigate this vector** — the buffer grows within a
-single admitted connection and before any message is emitted to a channel.
-
-To bound transport memory in production you **must** place an edge proxy or
-load balancer (e.g. nginx, HAProxy, Envoy, or your cloud LB) in front of Beryl
-and configure:
-
-- a **maximum WebSocket frame/message size** at or below your chosen
-  `with_max_inbound_frame_bytes` value, and
-- a matching **request/body size limit** for the initial HTTP upgrade.
-
-Set the proxy limit to reject oversized frames at the edge, before they are
-buffered by the BEAM node. Beryl's in-process limit should be treated as
-defense-in-depth for per-message cost, not as a memory bound.
-
-The upstream work needed to enforce a size cap *before* buffering (in
-gramps/mist) is tracked in
+Upstream work to cap size *before* buffering is tracked in
 [`docs/security/frame-buffering-followup.md`](docs/security/frame-buffering-followup.md).
-
-## Releases & changelog
-
-See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
-release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
-and the changelog is managed with [changie](https://changie.dev/).
 
 ## Development
 
 ### Prerequisites
 
 - [Erlang](https://www.erlang.org/) 27+
-- [Gleam](https://gleam.run/) 1.13+
+- [Gleam](https://gleam.run/) 1.16+ (see `.tool-versions`; consuming beryl as a
+  dependency requires 1.18+)
 - [just](https://github.com/casey/just) (task runner)
 
 Install tools via [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/):

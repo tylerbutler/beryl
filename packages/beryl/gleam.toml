@@ -9,6 +9,7 @@ internal_modules = [
   "beryl/connection_limit",
   "beryl/coordinator",
   "beryl/internal",
+  "beryl/internal/unsupervised",
   "beryl/log",
   "beryl/rate_limit",
 ]

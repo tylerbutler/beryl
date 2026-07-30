@@ -316,7 +316,14 @@ on Elixir, use Phoenix.
 
 ```gleam
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
+
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.start()
+
+  let channels = supervisor.channels(beryl_config)
   let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
 
   let assert Ok(_) =
@@ -336,10 +343,11 @@ pub fn main() {
 <!--
 Walk it line by line — this is the whole server, not an excerpt:
 
-1. `beryl.start(beryl.config(wire.phoenix_codec()))` — boots the channel
-   runtime and returns a handle. The config takes a CODEC: Phoenix JSON
-   framing ships in the box, but it's an interface — custom binary
-   framing is a config change, not a fork.
+1. `supervisor.config(beryl.config(wire.phoenix_codec()))` — describes the
+   channel runtime as a child spec for YOUR supervision tree; there is no
+   unsupervised start. The config takes a CODEC: Phoenix JSON framing ships
+   in the box, but it's an interface — custom binary framing is a config
+   change, not a fork.
 2. `beryl.register(channels, "room:*", new_channel())` — binds a topic
    pattern to a channel definition. Call it as many times as you have
    channel types; patterns can be exact, prefix (`room:*`), or

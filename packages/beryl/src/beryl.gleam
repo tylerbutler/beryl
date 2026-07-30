@@ -64,7 +64,6 @@
 import beryl/channel.{type Channel}
 import beryl/connection_limit
 import beryl/coordinator
-import beryl/error as beryl_error
 import beryl/internal
 import beryl/log
 import beryl/presence.{type Diff}
@@ -761,118 +760,18 @@ pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
   channels.config.max_inbound_frame_bytes
 }
 
-/// Errors when starting channels
-pub type StartError {
-  /// The coordinator actor failed to start.
-  CoordinatorStartFailed(beryl_error.StartFailure)
-  /// `heartbeat_timeout_ms` must be at least 2. The server derives its staleness
-  /// check interval as `heartbeat_timeout_ms / 2` (integer division), so a
-  /// timeout of 1 would round down to a check interval of 0 — which disables
-  /// heartbeat eviction entirely. `start` rejects such a config loudly rather
-  /// than silently turning eviction off.
-  InvalidHeartbeatTimeout
+// nolint: unused_exports -- package-internal accessor for beryl/internal/unsupervised; hidden from public docs with @internal
+@internal
+pub fn channels_connection_limiter(
+  channels: Channels,
+) -> Option(connection_limit.ConnectionLimiter) {
+  channels.connection_limiter
 }
 
-/// Start the channels system
-///
-/// Call once at application startup. Returns a handle that can be passed
-/// to the WebSocket transport and used for broadcasting.
-///
-/// Heartbeat eviction is configured via `heartbeat_timeout_ms` in the Config.
-/// The coordinator evicts any socket that has not sent a heartbeat within that
-/// window, checking for stale sockets at a server-derived interval of
-/// `heartbeat_timeout_ms / 2`. `heartbeat_interval_ms` is client-advisory only
-/// (see `with_heartbeat`) and does not schedule anything on the server.
-///
-/// Returns `Error(InvalidHeartbeatTimeout)` if `heartbeat_timeout_ms` is less
-/// than 2.
-///
-/// ## Example
-///
-/// ```gleam
-/// pub fn main() {
-///   let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-///   // Use channels...
-/// }
-/// ```
-pub fn start(config: Config) -> Result(Channels, StartError) {
-  use <- bool.guard(
-    when: config.heartbeat_timeout_ms < 2,
-    return: internal.result_error(InvalidHeartbeatTimeout),
-  )
-  warn_if_unprotected(config)
-  // Registrations live in a registry that outlives the coordinator, so a
-  // supervised restart (or manual coordinator replacement) can re-seed
-  // them.
-  use registry <- result.try(
-    coordinator.start_registry()
-    |> result.map_error(fn(error) {
-      CoordinatorStartFailed(beryl_error.from_actor_start_error(error))
-    }),
-  )
-  let coord_config =
-    coordinator.CoordinatorConfig(
-      ..to_coordinator_config(config),
-      registry: Some(registry),
-    )
-
-  let coordinator_result = case config.pubsub {
-    Some(ps) -> coordinator.start_with_config_and_pubsub(coord_config, ps)
-    None -> coordinator.start_with_config(coord_config)
-  }
-
-  case coordinator_result {
-    Ok(coord) ->
-      Ok(channels_from_coordinator(
-        coordinator: coord,
-        config: config,
-        registry: Some(registry),
-      ))
-    error_result -> {
-      case
-        result.unwrap_error(
-          error_result,
-          or: coordinator.InvalidHeartbeatTimeout,
-        )
-      {
-        coordinator.ActorStartFailed(error) ->
-          internal.result_error(
-            CoordinatorStartFailed(beryl_error.from_actor_start_error(error)),
-          )
-        coordinator.InvalidHeartbeatTimeout ->
-          internal.result_error(InvalidHeartbeatTimeout)
-      }
-    }
-  }
-}
-
-/// Stop an unsupervised channels system.
-///
-/// This shuts down the coordinator actor started by `start` and any auxiliary
-/// limiter actors owned by the `Channels` handle. Joined channel handlers
-/// receive `channel.Shutdown` in their `terminate` callback before the
-/// coordinator exits. After this call the `Channels` handle should no longer be
-/// used.
-pub fn stop(channels: Channels) -> Nil {
-  stop_coordinator(channels.coordinator)
-  connection_limit.stop_optional(channels.connection_limiter)
-  case channels.registry {
-    Some(registry) -> coordinator.stop_registry(registry)
-    None -> Nil
-  }
-}
-
-fn stop_coordinator(coordinator: Subject(coordinator.Message)) -> Nil {
-  let should_send = case process.subject_owner(coordinator) {
-    Ok(pid) -> process.is_alive(pid)
-    _ -> False
-  }
-
-  use <- bool.guard(when: !should_send, return: Nil)
-  let reply = process.new_subject()
-  process.send(coordinator, coordinator.Stop(reply))
-  let _stop_result = process.receive(reply, 5000)
-  Nil
+// nolint: unused_exports -- package-internal accessor for beryl/internal/unsupervised; hidden from public docs with @internal
+@internal
+pub fn channels_registry(channels: Channels) -> Option(coordinator.Registry) {
+  channels.registry
 }
 
 /// Register a channel handler for a topic pattern
