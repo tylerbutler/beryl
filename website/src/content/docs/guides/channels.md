@@ -4,6 +4,8 @@ title: Channels
 
 Channels are the core abstraction in beryl. A channel maps a topic pattern to a set of typed callback functions that handle joins, messages, and cleanup.
 
+Two words recur throughout these docs and are not interchangeable: a **channel handler** is the `Channel` value you register against a pattern; a **callback** is one of the five functions inside it that beryl calls back into (`join`, `handle_in`, `handle_binary`, `handle_info`, `terminate`).
+
 ## Topics and patterns
 
 Topics are colon-delimited string identifiers. Patterns can be exact matches, legacy trailing prefix wildcards, or segment-aware wildcards:
@@ -44,7 +46,7 @@ topic.segments("room:lobby")  // -> ["room", "lobby"]
 topic.namespace("room:lobby")  // -> Ok("room")
 ```
 
-Use `document:tenant-a:*` to route all documents for one tenant while keeping the existing trailing-wildcard prefix semantics. Use `document:*:*` when a handler needs to extract both tenant and document IDs from a topic with the exact shape `document:{tenant_id}:{document_id}`:
+Use `document:tenant-a:*` to route all documents for one tenant while keeping the existing trailing-wildcard prefix semantics. Use `document:*:*` when a callback needs to extract both tenant and document IDs from a topic with the exact shape `document:{tenant_id}:{document_id}`:
 
 ```gleam
 let pattern = topic.parse_pattern("document:*:*")
@@ -121,7 +123,7 @@ callback reads via `socket.get_assigns`. See
 [WebSocket Transport → Authentication](/guides/websocket/#authentication).
 :::
 
-### Message handler
+### Message callback
 
 Called for each incoming text message. The `event` string identifies the message type:
 
@@ -141,7 +143,8 @@ fn handle_in(
         Ok(text) -> json.object([#("text", json.string(text))])
         Error(_) -> channel.error("invalid payload")
       }
-      // Reply to the sender — event arg is ignored, phx_reply is always sent
+      // Reply to the sender. The event arg is ignored; this is always a
+      // phx_reply with "status": "ok".
       channel.Reply("ok", reply_payload, socket)
     }
     "typing" -> {
@@ -160,20 +163,25 @@ fn handle_in(
 
 ### Handle results
 
-Channel handlers return one of these results:
+Channel callbacks return one of these results:
 
 | Result | Description |
 |--------|-------------|
 | `NoReply(socket)` | Continue without sending anything |
-| `Reply(event, payload, socket)` | Send a `phx_reply` tied to the client message ref (only meaningful from `handle_in`; see note below) |
+| `Reply(event, payload, socket)` | Send a `phx_reply` with `"status": "ok"`, tied to the client message ref (only meaningful from `handle_in`; see note below) |
+| `ReplyError(payload, socket)` | Send a `phx_reply` with `"status": "error"`, tied to the client message ref — fires the client's `receive("error", ...)` hook |
 | `Push(event, payload, socket)` | Send a server-initiated message with no ref |
 | `Stop(reason)` | Terminate the channel |
 
 :::note[Reply vs Push from handle_info]
-`Reply` is designed for `handle_in`, where the coordinator has a client message ref to reply to. When returned from `handle_info`, there is no client ref, so the coordinator sends it as a push instead. Prefer `Push` in `handle_info` to make this intent explicit.
+`Reply` is designed for `handle_in`, where the coordinator has a client message ref to reply to. When returned from `handle_info`, there is no client ref, so the coordinator sends it as a push instead. Prefer `Push` in `handle_info` to make this intent explicit. `ReplyError` has no push fallback — without a ref it is dropped with a warning.
 :::
 
-### Binary handler
+:::caution[`Reply` cannot express failure]
+`Reply` always encodes `"status": "ok"` and discards its `event` string, so `channel.Reply("error", payload, socket)` reaches the client as a *success*. Return `ReplyError` to signal failure. See [Error Handling](/guides/error-handling/#malformed-wire-messages).
+:::
+
+### Binary callback
 
 Handle raw binary WebSocket frames when the configured codec does not decode binary frames:
 
@@ -205,11 +213,11 @@ fn terminate(
 }
 ```
 
-### Server-originated message handler
+### Server-originated message callback
 
 Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications, timer ticks, background job results).
 
-The handler receives the **typed** message you sent — there is no `Dynamic` and no unsafe cast. Channels are parameterized as `Channel(assigns, info)`, where `info` is your server-message type:
+The callback receives the **typed** message you sent — there is no `Dynamic` and no unsafe cast. Channels are parameterized as `Channel(assigns, info)`, where `info` is your server-message type:
 
 ```gleam
 type ServerMessage {
@@ -237,7 +245,7 @@ fn handle_info(
   }
 }
 
-// Register the handler when building the channel
+// Register the callback when building the channel
 channel.new(join)
 |> channel.with_handle_in(handle_in)
 |> channel.with_handle_info(handle_info)

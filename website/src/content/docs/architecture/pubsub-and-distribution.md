@@ -4,7 +4,7 @@ title: PubSub & Distribution
 
 ## Foundation
 
-Beryl's PubSub layer is built on Erlang's built-in [`pg`](https://www.erlang.org/doc/man/pg.html) module (process groups). When a process subscribes to a topic, it joins a named `pg` group scoped to the PubSub instance. When a broadcast is sent, beryl looks up all members of that group and delivers the message to each one.
+beryl's PubSub layer is built on Erlang's built-in [`pg`](https://www.erlang.org/doc/man/pg.html) module (process groups). When a process subscribes to a topic, it joins a named `pg` group scoped to the PubSub instance. When a broadcast is sent, beryl looks up all members of that group and delivers the message to each one.
 
 Because `pg` is cluster-aware, this works transparently across nodes in an Erlang cluster — a process on Node A subscribing to `"room:lobby"` will receive broadcasts from Node B without any additional configuration.
 

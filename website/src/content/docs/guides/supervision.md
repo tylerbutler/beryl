@@ -2,11 +2,11 @@
 title: Supervision
 ---
 
-`beryl/supervisor` integrates Beryl into your application's OTP supervision tree. `supervisor.start` returns a supervisor child specification that you add to your own root supervisor, rather than starting a process itself.
+`beryl/supervisor` integrates beryl into your application's OTP supervision tree. `supervisor.start` returns a supervisor child specification that you add to your own root supervisor, rather than starting a process itself.
 
-This is the only way to start Beryl. There is deliberately no unsupervised entry point: a channel system with nothing watching it stays down after a coordinator crash, stranding every connected socket, so the API does not offer that as a choice.
+This is the only way to start beryl. There is deliberately no unsupervised entry point: a channel system with nothing watching it stays down after a coordinator crash, stranding every connected socket, so the API does not offer that as a choice.
 
-## Add Beryl to your application supervisor
+## Add beryl to your application supervisor
 
 ```gleam
 import beryl
@@ -34,7 +34,7 @@ pub fn main() {
 }
 ```
 
-The application owns the root supervisor and its lifecycle. Beryl only provides the child specification for its subtree.
+The application owns the root supervisor and its lifecycle. beryl only provides the child specification for its subtree.
 
 ## SupervisedConfig
 
@@ -67,11 +67,11 @@ Add `supervisor.start(beryl)` to a running supervision tree before using these h
 supervision.ChildSpecification(static_supervisor.Supervisor)
 ```
 
-This is the type accepted by `static_supervisor.add`. The child specification starts a supervisor process, so OTP applies supervisor shutdown semantics and can restart the entire Beryl subtree as part of the application's tree.
+This is the type accepted by `static_supervisor.add`. The child specification starts a supervisor process, so OTP applies supervisor shutdown semantics and can restart the entire beryl subtree as part of the application's tree.
 
 ## Restart strategy
 
-The Beryl subtree has a one-for-one parent with two independent children:
+The beryl subtree has a one-for-one parent with two independent children:
 
 ```text
 beryl supervisor (one-for-one)
@@ -90,7 +90,7 @@ beryl supervisor (one-for-one)
 - A presence crash restarts presence and groups.
 - A groups crash restarts only groups.
 
-The default restart tolerance is **3 restarts in 5 seconds** before the Beryl supervisor itself shuts down and lets its parent decide what to do next.
+The default restart tolerance is **3 restarts in 5 seconds** before the beryl supervisor itself shuts down and lets its parent decide what to do next.
 
 :::note[PubSub is not supervised]
 `beryl/pubsub` is backed by Erlang's `pg` module, whose lifecycle is managed by the BEAM runtime. Configure it with `beryl.with_pubsub`.

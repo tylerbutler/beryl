@@ -129,7 +129,7 @@ cd examples/collab_docs && gleam run
 |---|---|
 | **Segment wildcard topics** | Handler registered on `document:*:*` isolates each tenant/document pair |
 | **Client-side CRDT merge** | Browser state uses `lattice_core`, `lattice_maps`, and `lattice_registers` with `ORMap(MVRegister(String))` document blocks |
-| **Unordered realtime transport** | Beryl broadcasts document updates while the CRDT handles merge convergence |
+| **Unordered realtime transport** | beryl broadcasts document updates while the CRDT handles merge convergence |
 | **Late joiner cache** | Server returns cached merged state in the join reply for new clients |
 | **Conflict resolution UI** | Concurrent edits to the same block render explicit conflict cards with all versions |
 

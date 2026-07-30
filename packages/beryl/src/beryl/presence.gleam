@@ -160,7 +160,7 @@ pub type SyncPayload {
 
 /// Configuration for starting presence.
 ///
-/// Build configs with `default_config` and the `with_*` functions so Beryl can
+/// Build configs with `default_config` and the `with_*` functions so beryl can
 /// add future options without exposing record fields as public API.
 pub opaque type Config {
   Config(

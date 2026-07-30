@@ -1,12 +1,14 @@
-//// Beryl - Type-safe real-time communication
+//// beryl - Type-safe real-time communication
 ////
 //// A standalone Gleam library for building real-time applications on the BEAM.
-//// Provides WebSocket channels, distributed presence tracking, pub/sub
-//// messaging, and channel groups.
+//// Provides channels, distributed presence tracking, pub/sub messaging, and
+//// channel groups. Serving those channels over WebSockets is a separate
+//// package — `beryl_mist` or `beryl_ewe` — built on the `beryl/transport`
+//// SPI; this package depends on no web server.
 ////
 //// ## Features
 ////
-//// - **Channels** — Topic-based WebSocket messaging with pattern matching
+//// - **Channels** — Topic-based messaging with pattern matching
 ////   (`beryl`, `beryl/channel`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
@@ -106,7 +108,7 @@ pub type RegisterError {
   InvalidPattern(String)
 }
 
-/// Logging verbosity for Beryl's internal loggers.
+/// Logging verbosity for beryl's internal loggers.
 ///
 /// The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
 /// prelude's `Result` `Error` constructor when imported unqualified.
@@ -117,14 +119,14 @@ pub type LogLevel {
   ErrorLevel
 }
 
-/// Logging configuration for Beryl diagnostics.
+/// Logging configuration for beryl diagnostics.
 ///
 /// This type is opaque: construct it with `logging_config` and adjust it with
-/// the `with_*` builder functions so Beryl can add logging options without a
+/// the `with_*` builder functions so beryl can add logging options without a
 /// breaking change.
 pub opaque type LoggingConfig {
   LoggingConfig(
-    /// Minimum level emitted by Beryl's namespaced loggers.
+    /// Minimum level emitted by beryl's namespaced loggers.
     level: LogLevel,
     /// Whether debug diagnostics may include bounded payload/frame previews.
     include_payloads: Bool,
@@ -152,7 +154,7 @@ pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
 /// Configuration for the channels system.
 ///
 /// This type is opaque: construct it with `config` and adjust it with the
-/// `with_*` builder functions. Keeping it opaque lets Beryl add configuration
+/// `with_*` builder functions. Keeping it opaque lets beryl add configuration
 /// options in the future without a breaking change.
 pub opaque type Config {
   Config(
@@ -201,7 +203,7 @@ pub opaque type Config {
     /// Maximum joined topics per socket (default: 1000).
     /// Values <= 0 disable the cap.
     max_joined_topics_per_socket: Int,
-    /// Logging configuration for Beryl diagnostics
+    /// Logging configuration for beryl diagnostics
     logging: LoggingConfig,
   )
 }
@@ -291,11 +293,11 @@ pub fn with_heartbeat(
 ///
 /// The limit is enforced on the **real socket peer IP** as reported by the
 /// transport (for the Mist transport, the address of the TCP connection).
-/// Beryl deliberately does **not** trust or parse forwarded headers such as
+/// beryl deliberately does **not** trust or parse forwarded headers such as
 /// `X-Forwarded-For`, because a client can set them freely and would otherwise
 /// be able to spoof its address and bypass this limit.
 ///
-/// If Beryl runs behind a trusted reverse proxy or load balancer, every
+/// If beryl runs behind a trusted reverse proxy or load balancer, every
 /// connection shares the proxy's address, so a per-IP limit throttles all
 /// clients as a single IP. In that topology you must resolve the real client
 /// IP yourself at the proxy layer (for example, by enforcing limits there). A
@@ -343,7 +345,7 @@ pub fn with_max_connections(
   Config(..config, max_connections: max_connections)
 }
 
-/// Configure Beryl's internal logging.
+/// Configure beryl's internal logging.
 pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
   Config(..config, logging: logging)
 }
@@ -442,7 +444,7 @@ pub fn with_max_event_length(
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
 /// The limit is enforced **post-assembly**: the transport (Mist/gramps)
-/// buffers and assembles a complete frame first, and only then does Beryl
+/// buffers and assembles a complete frame first, and only then does beryl
 /// measure it and close the connection if it exceeds `max_bytes`. This bounds
 /// per-message processing cost (decode, routing, rate-limit accounting), but
 /// it does **not** by itself bound transport memory. A hostile client can
@@ -452,8 +454,8 @@ pub fn with_max_event_length(
 /// from exhausting node memory.
 ///
 /// For a true transport memory bound you **must** place an edge proxy or load
-/// balancer in front of Beryl and configure a WebSocket frame-size limit
-/// there (and a matching request/body size limit). Beryl's per-IP connection
+/// balancer in front of beryl and configure a WebSocket frame-size limit
+/// there (and a matching request/body size limit). beryl's per-IP connection
 /// limit and per-socket message-rate limit do not mitigate this vector. See
 /// the "Security & deployment" section of the README and
 /// `docs/security/frame-buffering-followup.md` for details.
@@ -554,7 +556,7 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 
 /// Warn when a channels system starts with every abuse control disabled.
 ///
-/// Beryl ships with rate and connection limits off (like Phoenix) because
+/// beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
 /// should be a visible one. Called by both `start` and `supervisor.start`.
@@ -629,7 +631,7 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
 ///
 /// This opaque handle is returned by `start` and passed to registration,
 /// broadcast, bridge, group, supervisor, and transport functions. Its internal
-/// actor protocol is intentionally hidden so Beryl can evolve coordinator
+/// actor protocol is intentionally hidden so beryl can evolve coordinator
 /// internals without breaking application code.
 pub opaque type Channels {
   Channels(
@@ -709,7 +711,7 @@ pub fn configured_codec(channels: Channels) -> codec.Codec {
 
 /// A held per-IP connection slot returned by `acquire_connection_slot`.
 ///
-/// Opaque so Beryl can restructure the connection limiter without breaking
+/// Opaque so beryl can restructure the connection limiter without breaking
 /// transport authors. Hold it for the lifetime of the connection and pass it
 /// to `release_connection_slot` when the connection closes. When no per-IP
 /// limit is configured the permit is an admit-everything placeholder and
@@ -928,7 +930,7 @@ pub fn broadcast_presence_diff(
 /// ## Example
 ///
 /// ```gleam
-/// // In a channel handler, broadcast to others
+/// // In a channel callback, broadcast to others
 /// beryl.broadcast_from(
 ///   channels,
 ///   socket_id,

@@ -160,7 +160,7 @@ The underlying CRDT state is intentionally internal. Applications should use Pub
 
 ## Integration with channels
 
-A common pattern is to track presence in your channel's join handler and untrack in terminate:
+A common pattern is to track presence in your channel's join callback and untrack in terminate:
 
 ```gleam
 fn join(topic, payload, socket) -> JoinResult(MyAssigns) {

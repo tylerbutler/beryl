@@ -61,7 +61,7 @@ flowchart TB
 
 The connection limiter is isolated under the one-for-one parent. The nested channel supervisor starts registry -> coordinator -> presence (optional) -> groups (optional) with rest-for-one semantics. Presence and groups are only started when configured via `SupervisedConfig`.
 
-`supervisor.start/1` returns an OTP `ChildSpecification(static_supervisor.Supervisor)` for the Beryl supervisor process:
+`supervisor.start/1` returns an OTP `ChildSpecification(static_supervisor.Supervisor)` for the beryl supervisor process:
 
 ```gleam
 import beryl/supervisor

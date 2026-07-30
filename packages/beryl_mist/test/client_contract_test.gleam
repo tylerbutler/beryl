@@ -249,7 +249,7 @@ pub fn gluegun_raw_malformed_frame_gets_error_reply_test() {
       },
     )
 
-  // Current Beryl contract: malformed text frames time out rather than reply.
+  // Current beryl contract: malformed text frames time out rather than reply.
   result |> should.be_error
 
   stop_test_server(server)

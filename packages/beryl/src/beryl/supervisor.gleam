@@ -1,4 +1,4 @@
-//// OTP supervision tree for Beryl subsystems.
+//// OTP supervision tree for beryl subsystems.
 ////
 //// This module does not start processes directly. It builds a supervisor child
 //// specification for the application's supervision tree, while stable named
@@ -41,7 +41,7 @@ import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
 
-/// Configuration and stable handles for Beryl's supervised subsystems.
+/// Configuration and stable handles for beryl's supervised subsystems.
 ///
 /// Construct it with [`config`](#config), add optional subsystems with the
 /// `with_*` functions, add [`start`](#start) to the application's supervisor,
@@ -59,7 +59,7 @@ pub opaque type SupervisedConfig {
   )
 }
 
-/// Configure the Beryl supervision subtree.
+/// Configure the beryl supervision subtree.
 ///
 /// The coordinator is always included. Presence and groups are opt-in via
 /// [`with_presence`](#with_presence) and [`with_groups`](#with_groups).
@@ -108,7 +108,7 @@ pub fn with_groups(config: SupervisedConfig) -> SupervisedConfig {
   }
 }
 
-/// The channels handle for this supervised Beryl instance.
+/// The channels handle for this supervised beryl instance.
 ///
 /// Add [`start`](#start) to a running application supervisor before using the
 /// handle.
@@ -134,7 +134,7 @@ pub fn groups(config: SupervisedConfig) -> Option(group.Groups) {
   |> option_map(fn(name) { group.from_subject(process.named_subject(name)) })
 }
 
-/// Build Beryl's supervisor child specification.
+/// Build beryl's supervisor child specification.
 ///
 /// Add the returned specification to the application's supervision tree. The
 /// subtree isolates the connection limiter from a nested rest-for-one channel

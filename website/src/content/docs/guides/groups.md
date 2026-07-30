@@ -139,7 +139,7 @@ let assert Ok(Nil) = group.delete(groups, "team:eng")
 
 ## Using groups with the supervisor
 
-When using `beryl/supervisor`, enable groups in the supervised configuration, add Beryl to the application's supervision tree, then resolve the stable groups handle with `supervisor.groups`:
+When using `beryl/supervisor`, enable groups in the supervised configuration, add beryl to the application's supervision tree, then resolve the stable groups handle with `supervisor.groups`:
 
 ```gleam
 import beryl

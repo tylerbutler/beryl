@@ -1,4 +1,4 @@
-//// Channel - Topic-based message handlers
+//// Channel - Topic-based message callbacks
 ////
 //// Channels handle real-time communication for topic patterns. Each channel
 //// defines how to handle joins, incoming messages, and cleanup.
@@ -16,7 +16,9 @@
 ////   |> channel.with_terminate(terminate)
 //// }
 ////
-//// fn join(topic, payload, socket) {
+//// // Name the first argument something other than `topic`: a local binding
+//// // named `topic` shadows the `beryl/topic` module if you import it.
+//// fn join(topic_name, payload, socket) {
 ////   let assigns = RoomAssigns(user_id: "...", room_id: "...")
 ////   channel.JoinOk(reply: None, socket: socket.set_assigns(socket, assigns))
 //// }
@@ -40,12 +42,17 @@ pub type JoinResult(assigns) {
 pub type HandleResult(assigns) {
   /// Continue without sending a reply
   NoReply(socket: Socket(assigns))
-  /// Send a reply to the client in response to their message.
+  /// Send a successful reply to the client in response to their message.
   ///
   /// When returned from `handle_in`, this is encoded as a Phoenix `phx_reply`
-  /// tied to the original client ref — the `event` field is ignored by the
-  /// coordinator. When returned from `handle_info` (where no client ref
-  /// exists), it is sent as a push using `event` as the event name.
+  /// with `"status": "ok"`, tied to the original client ref — the `event`
+  /// field is ignored by the coordinator. When returned from `handle_info`
+  /// (where no client ref exists), it is sent as a push using `event` as the
+  /// event name.
+  ///
+  /// The status is always `"ok"`: `Reply("error", payload, socket)` reaches
+  /// the client's `push.receive("ok", ...)` hook, not `receive("error", ...)`.
+  /// Use `ReplyError` to signal failure.
   Reply(event: String, payload: Json, socket: Socket(assigns))
   /// Send an error reply to the client in response to their message
   /// (`"status": "error"` in Phoenix framing, delivered to the client's
@@ -154,9 +161,9 @@ pub fn terminate_callback(
   channel.terminate
 }
 
-/// Create a new channel with just a join handler.
+/// Create a new channel with just a join callback.
 ///
-/// Other handlers can be added using the `with_*` functions.
+/// Other callbacks can be added using the `with_*` functions.
 pub fn new(
   join: fn(String, Dynamic, Socket(assigns)) -> JoinResult(assigns),
 ) -> Channel(assigns, info) {
@@ -169,7 +176,7 @@ pub fn new(
   )
 }
 
-/// Add an incoming message handler
+/// Add an incoming message callback
 pub fn with_handle_in(
   channel: Channel(assigns, info),
   handler: fn(String, Dynamic, Socket(assigns)) -> HandleResult(assigns),
@@ -185,7 +192,7 @@ pub fn decode_payload(
   decode.run(payload, decoder)
 }
 
-/// Add a binary message handler
+/// Add a binary message callback
 pub fn with_handle_binary(
   channel: Channel(assigns, info),
   handler: fn(BitArray, Socket(assigns)) -> HandleResult(assigns),
@@ -193,9 +200,9 @@ pub fn with_handle_binary(
   Channel(..channel, handle_binary: handler)
 }
 
-/// Add a server-originated OTP message handler.
+/// Add a server-originated OTP message callback.
 ///
-/// The handler receives the typed `info` value sent via `beryl.send_info`.
+/// The callback receives the typed `info` value sent via `beryl.send_info`.
 /// `Reply` results are sent as pushes because server-originated messages do not
 /// have a client message ref to reply to.
 pub fn with_handle_info(
@@ -205,7 +212,7 @@ pub fn with_handle_info(
   Channel(..channel, handle_info: handler)
 }
 
-/// Add a terminate handler for cleanup
+/// Add a terminate callback for cleanup
 pub fn with_terminate(
   channel: Channel(assigns, info),
   handler: fn(StopReason, Socket(assigns)) -> Nil,

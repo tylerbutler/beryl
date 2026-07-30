@@ -12,11 +12,11 @@ beryl is a **type-safe real-time channels and presence library** for Gleam, targ
 
 Building real-time features — like chat rooms, live cursors, collaborative editing, or presence indicators — requires coordinating state across many connected clients. beryl gives you:
 
-- **Channels** — Topic-based message handlers with typed callbacks and pattern matching (`"room:*"`)
+- **Channels** — Topic-based routing to typed callbacks, with pattern matching (`"room:*"`)
 - **Presence** — Distributed tracking of connected users backed by a conflict-free CRDT
 - **PubSub** — Distributed publish/subscribe built on Erlang's `pg` process groups
 - **Groups** — Named collections of topics for multi-topic broadcasting
-- **WebSocket transport** — Mist integration with JSON wire protocol (Phoenix-compatible)
+- **WebSocket transport** — a separate package per web server (`beryl_mist` for Mist, `beryl_ewe` for Ewe), both speaking the Phoenix-compatible JSON wire protocol
 
 ## Design principles
 
