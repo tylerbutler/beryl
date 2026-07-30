@@ -145,9 +145,11 @@ fn handle_in(
       let text = payload.string_or(payload, "text", "")
       case string.trim(text) {
         "" ->
-          // Reject empty messages with error code
-          channel.Reply(
-            event: "msg_error",
+          // Reject empty messages. This must be `ReplyError`: `Reply` always
+          // encodes "status": "ok" and discards its event name, so app.js's
+          // push.receive("error", ...) hook would never fire and the
+          // rejection would look like a successful send.
+          channel.ReplyError(
             payload: channel.error_with_code(422, "Message cannot be empty"),
             socket:,
           )
