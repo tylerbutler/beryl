@@ -43,9 +43,10 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 
 | Goal | API | Notes |
 |---|---|---|
-| Reply to an incoming message | `channel.Reply(event, payload, socket)` from `handle_in` | Sends `phx_reply`; the `event` arg is ignored on the wire — reply is keyed by ref |
+| Reply to an incoming message | `channel.Reply(event, payload, socket)` from `handle_in` | Sends `phx_reply` with `"status": "ok"`; the `event` arg is ignored on the wire — reply is keyed by ref |
+| Fail an incoming message | `channel.ReplyError(payload, socket)` from `handle_in` | Sends `phx_reply` with `"status": "error"`, firing the client's `receive("error", ...)` hook. `Reply` cannot do this — it is always `"ok"` |
 | Push to the current socket only | `channel.Push(event, payload, socket)` from `handle_in` or `handle_info` | Server-originated push on this socket's topic |
-| No response | `channel.NoReply(socket)` | Use when the handler has no output |
+| No response | `channel.NoReply(socket)` | Use when the callback has no output |
 | Broadcast to all sockets on a topic | `beryl.broadcast(channels, topic, event, payload)` | All subscribers including the sender |
 | Broadcast, excluding sender | `beryl.broadcast_from(channels, socket.id(socket), topic, event, payload)` | Second arg is `except_socket_id: String`; use `socket.id/1` to extract it when you have a `Socket` value. Skips the originating socket; works across PubSub nodes |
 | Send an OTP message to a joined channel context | `beryl.send_info(channels, socket_id, topic_name, message)` | Delivers the typed message to `handle_info`; the callback receives the concrete `info` value — no `Dynamic` decode and no unsafe cast required |
@@ -75,17 +76,21 @@ beryl speaks the same JSON array wire format as Phoenix channels. All frames are
 |---|---|---|
 | `phx_join` | client → server | Request to join a topic |
 | `phx_leave` | client → server | Unsubscribe from a topic |
-| `phx_reply` | server → client | Reply to a client message |
-| `phx_error` | server → client | Join rejected or channel error |
+| `phx_reply` | server → client | Reply to a client message, `"status"` of `"ok"` or `"error"`. Rejected joins arrive this way, not as `phx_error` |
+| `phx_error` | server → client | The channel terminated abnormally |
 | `phx_close` | server → client | Channel closed by server |
 | `heartbeat` | client → server | Keep-alive ping (topic `"phoenix"`) |
 
 ### Reply shape (`phx_reply`)
 
-Sent in response to any client message. The `event` arg passed to `channel.Reply` is not reflected on the wire — the frame always uses `phx_reply` and the original `ref`.
+Sent in response to any client message. The `event` arg passed to `channel.Reply` is not reflected on the wire — the frame always uses `phx_reply` and the original `ref`. `status` is what distinguishes success from failure, and it is set by which result you return, never by the payload:
 
 ```json
+// channel.Reply(event, payload, socket)
 [join_ref, original_ref, "topic:name", "phx_reply", {"status": "ok", "response": <your_payload>}]
+
+// channel.ReplyError(payload, socket)
+[join_ref, original_ref, "topic:name", "phx_reply", {"status": "error", "response": <your_payload>}]
 ```
 
 A join reply uses the `join_ref` as both `join_ref` and `ref`:

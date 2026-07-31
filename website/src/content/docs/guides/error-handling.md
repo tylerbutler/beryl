@@ -52,8 +52,8 @@ The client never receives a WebSocket handshake and cannot send any messages.
 beryl parses incoming frames as Phoenix protocol arrays `[join_ref, ref, topic, event, payload]`. Frames that cannot be decoded are dropped silently — no error is sent to the client. This is intentional: malformed frames are treated as protocol violations and do not warrant a reply.
 
 If you need to surface decode errors in your own payload handling, decode the
-`Dynamic` payload with `channel.decode_payload` and return an explicit `Reply`
-or `Push` from `handle_in`:
+`Dynamic` payload with `channel.decode_payload` and return `ReplyError` from
+`handle_in`:
 
 ```gleam
 fn handle_in(event, payload, socket) -> HandleResult(MyAssigns) {
@@ -65,8 +65,7 @@ fn handle_in(event, payload, socket) -> HandleResult(MyAssigns) {
           channel.Reply("ok", json.object([#("id", json.string(item.id))]), socket)
         }
         Error(_) ->
-          channel.Reply(
-            "error",
+          channel.ReplyError(
             json.object([#("reason", json.string("invalid_payload"))]),
             socket,
           )
@@ -77,9 +76,25 @@ fn handle_in(event, payload, socket) -> HandleResult(MyAssigns) {
 }
 ```
 
-:::note[Reply event name is ignored]
-When returning `Reply` from `handle_in`, the `event` string is not used. The coordinator always encodes the response as `phx_reply` tied to the original client ref. Use `Push` when you want to control the event name.
+`ReplyError` encodes `"status": "error"`, so the client's
+`push.receive("error", ...)` hook fires:
+
+```json
+["1", "7", "room:lobby", "phx_reply", {"status": "error", "response": {"reason": "invalid_payload"}}]
+```
+
+:::caution[`Reply` cannot express failure]
+`Reply` always encodes `"status": "ok"`, and its `event` string is discarded —
+the frame is keyed by the original client ref, not by a name. So
+`channel.Reply("error", payload, socket)` does **not** produce an error reply:
+the client's `receive("ok", ...)` hook fires with your error payload, and
+`receive("error", ...)` never runs. Use `ReplyError` for failures and `Push`
+when you want to control the event name.
 :::
+
+`ReplyError` needs a client ref to reply to. Returned from `handle_info` or
+`handle_binary`, where no ref exists, the reply is dropped and a warning is
+logged.
 
 ## Unmatched topics
 

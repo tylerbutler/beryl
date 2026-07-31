@@ -37,7 +37,7 @@ flowchart TB
 
 | Module | Responsibility | Page |
 |---|---|---|
-| `beryl` | Public entry-point: `config/1`, `start/1`, `register/3`, `broadcast/4`, `send_info/4` | — |
+| `beryl` | Public entry-point: `config/1`, `register/3`, `broadcast/4`, `send_info/4`. Starting is `beryl/supervisor`'s job — `beryl` has no `start` | — |
 | `beryl/coordinator` | Central OTP actor: handler registry, socket tracking, message routing, heartbeat enforcement | [Coordinator](/architecture/coordinator/) |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; subscribe, broadcast, and broadcast_from | [PubSub & Distribution](/architecture/pubsub-and-distribution/) |
 | `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, cross-node diff broadcast, `on_diff` callbacks | [Presence](/architecture/presence/) |
@@ -50,7 +50,7 @@ flowchart TB
 | `beryl/group` | Named topic collections managed by an OTP actor; supports grouped broadcast | — |
 | `beryl/topic` | Topic pattern matching: exact strings, `"ns:*"` prefix wildcards, and segment wildcards (`"document:*:ops"`) | — |
 | `beryl/socket` | Opaque connected-client type with typed assigns; `id`, `get_assigns`, `set_assigns`, `map_assigns` | — |
-| `beryl/channel` | Builder API for user-defined message handlers parameterized by an `assigns` type | [Message Lifecycle](/architecture/message-lifecycle/) |
+| `beryl/channel` | Builder API for user-defined message callbacks parameterized by an `assigns` type | [Message Lifecycle](/architecture/message-lifecycle/) |
 | `beryl/error` | Opaque `StartFailure` type that hides OTP's `actor.StartError` from public APIs | — |
 | `beryl/rate_limit` | Token-bucket rate limiter backed by an OTP registry actor; keyed by socket ID or topic | — |
 | `beryl/bridge` | Forwards an external OTP actor's message stream into a socket channel; avoids per-socket forwarder boilerplate | — |

@@ -47,6 +47,29 @@ added in 1.18. Gleam 1.17 and earlier have no way to point a git dependency at
 anything but the repository root, so beryl cannot be used as a dependency from
 those versions.
 
+This is a requirement on *your* Gleam, not on beryl's code: the packages
+themselves declare `gleam = ">= 1.13.0"` and compile fine on older toolchains.
+1.18 is only what it takes to write the dependency line above.
+
+On an older Gleam, `gleam deps download` fails while parsing your `gleam.toml`
+rather than reporting a version problem:
+
+```
+error: File IO failure
+
+An error occurred while trying to parse this file:
+
+    gleam.toml
+
+  |
+7 | beryl = { git = "...", ref = "v0.0", path = "packages/beryl" }
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+data did not match any variant of untagged enum Requirement
+```
+
+If you see `data did not match any variant of untagged enum Requirement`,
+upgrade Gleam.
+
 ## Choosing a ref
 
 The `ref` above pins the [`v0.0`](https://github.com/tylerbutler/beryl/releases)
@@ -54,6 +77,17 @@ tag. Pin a tag rather than a branch: git dependencies are resolved at the exact
 ref you name, and beryl is pre-1.0, so tracking `main` can pull in breaking
 changes without warning. Use the same `ref` for `beryl` and its transport
 package — mixing versions across the two is unsupported.
+
+:::caution[`v0.0` is behind these docs]
+`v0.0` is a preview tag, and the rest of this site documents `main`, which has
+moved on. The difference you are most likely to hit: `main` removed the
+unsupervised `beryl.start`, so `beryl/supervisor` is now the only way to start
+beryl, as the [Supervision guide](/guides/supervision/) describes. On `v0.0`,
+`beryl.start` still exists.
+
+Pin `ref = "main"` if you want the code these docs describe, accepting that it
+can break without warning.
+:::
 
 ## Dependencies
 

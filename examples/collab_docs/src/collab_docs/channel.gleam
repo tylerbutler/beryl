@@ -154,8 +154,16 @@ fn sync_state(
   }
 }
 
-fn reply_error(code: String, socket: Socket(Assigns)) -> HandleResult(Assigns) {
-  channel.Reply(event: "state_error", payload: error_payload(code), socket:)
+/// Reply to the client's push with a failure.
+///
+/// Must be `ReplyError`, not `Reply`: `Reply` always encodes
+/// `"status": "ok"` and discards its event name, so the frontend's
+/// `push.receive("error", ...)` hook would never fire and the error would be
+/// swallowed silently.
+///
+/// Generic over assigns because it only passes the socket through.
+pub fn reply_error(code: String, socket: Socket(a)) -> HandleResult(a) {
+  channel.ReplyError(payload: error_payload(code), socket:)
 }
 
 fn extract_state(payload: Dynamic) -> Result(String, Nil) {

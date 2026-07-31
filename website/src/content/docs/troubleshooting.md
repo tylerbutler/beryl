@@ -64,13 +64,13 @@ Examples use `beryl_mist`. `beryl_ewe` exposes the same config-builder and handl
 
 2. **Rate limits dropping messages.** If `with_message_rate` or `with_channel_rate` is configured and the client is sending faster than the limit, excess messages are silently dropped. Check your rate limit values or add server-side logging in `handle_in`.
 
-3. **Event name mismatch.** `handle_in` receives the raw event string. Verify the client sends the exact event name your handler expects.
+3. **Event name mismatch.** `handle_in` receives the raw event string. Verify the client sends the exact event name your callback expects.
 
 ---
 
-## Enable Beryl debug diagnostics
+## Enable beryl debug diagnostics
 
-Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed coordinator lifecycle diagnostics while debugging channel integration issues:
+beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed coordinator lifecycle diagnostics while debugging channel integration issues:
 
 ```gleam
 let config =
@@ -97,7 +97,7 @@ let logging =
 
 **Checks:**
 
-1. **Topic string must match exactly.** `beryl.broadcast("room:lobby", ...)` delivers only to sockets subscribed to the *exact* topic `"room:lobby"`. Wildcard patterns are for *routing incoming messages*, not for targeting broadcasts.
+1. **Topic string must match exactly.** `beryl.broadcast(channels, "room:lobby", event, payload)` delivers only to sockets subscribed to the *exact* topic `"room:lobby"`. Wildcard patterns are for *routing incoming messages*, not for targeting broadcasts.
 
 2. **Client has not joined the topic.** A socket must have successfully completed `phx_join` for the topic before it receives broadcasts on that topic.
 
@@ -143,7 +143,7 @@ let logging =
 
 2. **Token validation error.** Check that your token validation logic handles expired or malformed tokens gracefully and returns `Error(Nil)` rather than panicking.
 
-3. **Join handler returning JoinError for all.** Log the `payload` argument in `join` to confirm the client is sending the expected shape. `payload` arrives as `Dynamic` — decode it with `channel.decode_payload` and a `gleam/dynamic/decode` decoder, and check that a failed decode is not falling through to a rejection.
+3. **Join callback returning JoinError for all.** Log the `payload` argument in `join` to confirm the client is sending the expected shape. `payload` arrives as `Dynamic` — decode it with `channel.decode_payload` and a `gleam/dynamic/decode` decoder, and check that a failed decode is not falling through to a rejection.
 
 ---
 
@@ -214,7 +214,7 @@ Without `proxy_http_version 1.1` and the upgrade headers, nginx downgrades to HT
 
 **Checks:**
 
-1. **Is Beryl in the application supervision tree?** Add `supervisor.start(config)` to the root supervisor. It returns the child specification that restarts the coordinator automatically.
+1. **Is beryl in the application supervision tree?** Add `supervisor.start(config)` to the root supervisor. It returns the child specification that restarts the coordinator automatically.
 
 2. **Panic in a callback.** Gleam's `assert` expressions panic on mismatch. Audit your `join`, `handle_in`, and `terminate` callbacks for `let assert` expressions that may fail on unexpected inputs.
 

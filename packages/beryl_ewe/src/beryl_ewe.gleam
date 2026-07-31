@@ -273,7 +273,7 @@ fn handle_matched_upgrade(
 /// Check the client's requested wire protocol version (`?vsn=` query
 /// parameter, sent by Phoenix clients) before upgrading.
 ///
-/// Beryl speaks the Phoenix V2 array framing, so `vsn=2.x` is accepted. A
+/// beryl speaks the Phoenix V2 array framing, so `vsn=2.x` is accepted. A
 /// missing `vsn` is accepted for non-Phoenix clients speaking the configured
 /// codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`) is
 /// rejected with `403 Forbidden` at the handshake — failing loudly instead

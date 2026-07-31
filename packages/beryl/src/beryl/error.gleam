@@ -1,9 +1,9 @@
-//// Shared Beryl-owned error helpers.
+//// Shared beryl-owned error helpers.
 
 import gleam/erlang/process
 import gleam/otp/actor
 
-/// A stable description of an internal Beryl actor startup failure.
+/// A stable description of an internal beryl actor startup failure.
 ///
 /// This type hides OTP's `actor.StartError` so public APIs do not expose
 /// dependency-specific error constructors.

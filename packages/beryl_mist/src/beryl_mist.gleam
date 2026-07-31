@@ -2,6 +2,11 @@
 ////
 //// This module provides the bridge between Mist's native WebSocket handling
 //// and the beryl coordinator using Mist request and response types directly.
+////
+//// The `beryl_ewe` package mirrors it: the two transports expose the same
+//// config-builder and handler API, so an integrator can run beryl channels on
+//// either web server by choosing the matching transport package. Both consume
+//// only beryl's public `beryl/transport` SPI.
 
 import beryl.{type Channels}
 import beryl/transport
@@ -269,7 +274,7 @@ fn handle_matched_upgrade(
 /// Check the client's requested wire protocol version (`?vsn=` query
 /// parameter, sent by Phoenix clients) before upgrading.
 ///
-/// Beryl speaks the Phoenix V2 array framing, so `vsn=2.x` is accepted. A
+/// beryl speaks the Phoenix V2 array framing, so `vsn=2.x` is accepted. A
 /// missing `vsn` is accepted for non-Phoenix clients speaking the configured
 /// codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`) is
 /// rejected with `403 Forbidden` at the handshake — failing loudly instead

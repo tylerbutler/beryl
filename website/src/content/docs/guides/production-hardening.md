@@ -2,10 +2,10 @@
 title: Production Hardening
 ---
 
-Beryl ships with all rate and connection limits **disabled**, because no
+beryl ships with all rate and connection limits **disabled**, because no
 default is right for every deployment. That is fine for development, but a
 production server with no abuse controls can be degraded by a single hostile
-(or buggy) client. Beryl logs a warning at startup when every control is
+(or buggy) client. beryl logs a warning at startup when every control is
 off; this guide explains what to turn on and why.
 
 ## What is always on
@@ -100,7 +100,7 @@ attackers rotating connections.
 
 ## Erlang cluster security boundary
 
-Beryl's distributed PubSub and presence replication run over Erlang
+beryl's distributed PubSub and presence replication run over Erlang
 distribution. Every node in your Erlang cluster is **fully trusted**: a
 process on any peer node can subscribe to any topic, receive all
 broadcasts, and deliver messages that beryl's coordinator will process as
@@ -173,8 +173,8 @@ for the full trust-boundary and distribution-hardening reference.
   sheds oversized frames and (when configured) rate-limited traffic before
   it, but extreme fan-out workloads may want multiple channels systems
   sharded by topic space.
-- If beryl is embedded in your own supervision tree via `supervisor.start`,
-  the subtree has a one-for-one parent wrapping a rest-for-one channel
+- beryl always runs inside your own supervision tree via `supervisor.start`.
+  The subtree has a one-for-one parent wrapping a rest-for-one channel
   supervisor, and restarts are bounded at 3 per 5 seconds before the beryl
   supervisor shuts down and defers to its parent. See the
   [Supervision guide](/guides/supervision/) for the full tree.

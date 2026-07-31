@@ -40,7 +40,7 @@ pub type InboundKind {
 /// Normalised inbound message shape.
 ///
 /// `Inbound` is opaque: construct it with `inbound` and read it with the
-/// `inbound_*` accessors. Keeping the record hidden lets Beryl add fields
+/// `inbound_*` accessors. Keeping the record hidden lets beryl add fields
 /// (which default sensibly) without breaking every custom codec.
 pub opaque type Inbound {
   Inbound(
@@ -60,7 +60,7 @@ pub opaque type Inbound {
 /// - `ref`: optional per-message reference for reply correlation
 /// - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
 /// - `kind`: structural protocol event or user event
-/// - `payload`: message body as a `Dynamic` for the channel handler to
+/// - `payload`: message body as a `Dynamic` for the channel callback to
 ///   decode
 pub fn inbound(
   join_ref join_ref: Option(String),
@@ -92,7 +92,7 @@ pub fn inbound_kind(inbound: Inbound) -> InboundKind {
   inbound.kind
 }
 
-/// The inbound message's body, for the channel handler to decode.
+/// The inbound message's body, for the channel callback to decode.
 pub fn inbound_payload(inbound: Inbound) -> Dynamic {
   inbound.payload
 }
@@ -108,11 +108,11 @@ pub type DecodeError {
   MissingField(name: String)
 }
 
-/// Status of a reply produced by a channel handler.
+/// Status of a reply produced by a channel callback.
 pub type ReplyStatus {
-  /// The handler succeeded (`"ok"` in Phoenix framing).
+  /// The callback succeeded (`"ok"` in Phoenix framing).
   StatusOk
-  /// The handler failed (`"error"` in Phoenix framing).
+  /// The callback failed (`"error"` in Phoenix framing).
   StatusError
 }
 

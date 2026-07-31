@@ -13,9 +13,10 @@
 //// }
 ////
 //// // Socket has compile-time type safety
-//// fn handle_message(socket: Socket(RoomAssigns)) {
+//// fn handle_in(event, payload, socket: Socket(RoomAssigns)) {
 ////   let assigns = socket.get_assigns(socket)
 ////   io.println("User " <> assigns.user_id <> " in room " <> assigns.room_id)
+////   channel.NoReply(socket)
 //// }
 //// ```
 
@@ -117,7 +118,7 @@ pub fn get_assigns(socket: Socket(assigns)) -> assigns {
 
 /// Update the assigns (returns new socket)
 ///
-/// Use this in channel handlers to update socket state:
+/// Use this in channel callbacks to update socket state:
 ///
 /// ```gleam
 /// fn handle_in(event, payload, socket) {
