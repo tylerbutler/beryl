@@ -6,6 +6,10 @@
 //// - Receives remote state from PubSub and merges it internally
 //// - Invokes `on_diff` callback when merges produce non-empty diffs
 ////
+//// When running beryl under `beryl/supervisor`, enable presence with
+//// `supervisor.with_presence` and obtain the handle from
+//// `supervisor.presence` instead of calling `start` directly.
+////
 //// ## Example
 ////
 //// ```gleam
@@ -552,7 +556,7 @@ fn handle_message(
       |> log.debug("Presence tracked", [
         #("topic", topic),
         #("key", key),
-        #("pid", pid),
+        #("session_id", pid),
         #("ref", ref),
       ])
       let new_refs =
@@ -582,7 +586,7 @@ fn handle_message(
           |> log.debug("Presence untracked", [
             #("topic", topic),
             #("key", key),
-            #("pid", session_id),
+            #("session_id", session_id),
             #("ref", ref),
           ])
           process.send(reply, Nil)
