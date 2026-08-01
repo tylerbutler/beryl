@@ -177,8 +177,10 @@ updates that need to be pushed to each joined socket. The `beryl/bridge` module
 removes the per-socket forwarder boilerplate: start a bridge in `join`, subscribe
 your actor to the bridge's `Subject`, and stop it in `terminate`. Each value the
 actor emits is translated and delivered to the channel's `handle_info` callback
-via `beryl.send_info`. The forwarder also monitors the channel process, so it is
-cleaned up automatically if that process dies — no leaked processes.
+via `beryl.send_info`. Calling `bridge.stop` in `terminate` is required:
+channels are dispatched by a shared coordinator, so the forwarder's monitor
+only fires if the coordinator itself dies — it does not detect an individual
+channel ending.
 
 ```gleam
 import beryl.{type RegisteredChannel}

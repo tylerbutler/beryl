@@ -13,8 +13,8 @@ Topic - Pattern matching for channel routing
 
  Topics are string identifiers that clients join (e.g., "room:lobby").
  Patterns define how topics are routed to channel handlers. Patterns can be
- exact, legacy trailing prefix wildcards, or segment-aware wildcards where
- "*" occupies a complete colon-delimited segment.
+ exact, prefix wildcards, or segment wildcards where "*" occupies a
+ complete colon-delimited segment.
 
 ## Types
 
@@ -91,7 +91,7 @@ Exact match: "room:lobby" only matches "room:lobby"
 
 ##### `Wildcard(prefix: String)`
 
-Wildcard suffix: "room:*" matches "room:lobby", "room:123", etc.
+Prefix wildcard: "room:*" matches "room:lobby", "room:123", etc.
 
 ##### `SegmentWildcard(segments: List(String))`
 
@@ -124,7 +124,7 @@ pub fn extract_id(
 
 Extract values captured by wildcard segments.
 
- For legacy prefix wildcards, returns the suffix as a single value.
+ For prefix wildcards, returns the suffix as a single value.
  For segment wildcards, returns each topic segment matched by "*".
 
  ## Examples

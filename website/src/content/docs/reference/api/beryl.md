@@ -35,7 +35,6 @@ beryl - Type-safe real-time communication
 
  ```gleam
  import beryl
- import beryl/channel
  import beryl/group
  import beryl/presence
  import beryl/pubsub
@@ -80,8 +79,8 @@ beryl - Type-safe real-time communication
 
 Channels system handle.
 
- This opaque handle is returned by `start` and passed to registration,
- broadcast, bridge, group, supervisor, and transport functions. Its internal
+ This opaque handle is obtained from `supervisor.channels` and passed to
+ registration, broadcast, bridge, group, and transport functions. Its internal
  actor protocol is intentionally hidden so beryl can evolve coordinator
  internals without breaking application code.
 
@@ -218,9 +217,10 @@ pub fn bind_connection_slot(ConnectionPermit) -> Nil
 
 ### `broadcast`
 
-Broadcast a message to all subscribers of a topic
+Broadcast a message to all sockets subscribed to a topic.
 
- This sends the message to all sockets subscribed to the topic.
+ When the channels system was configured with PubSub, the broadcast also
+ fans out to subscribers on other nodes in the cluster.
 
  ## Example
 
@@ -302,9 +302,9 @@ pub fn broadcast_presence_diff(
 
 Build a configuration with sensible defaults.
 
- A `codec` is required — beryl no longer ships an implicit Phoenix
- default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
- or your own `Codec` for a custom framing.
+ A `codec` is required — there is no implicit default. Pass
+ `wire.phoenix_codec()` for Phoenix wire compatibility, or your own
+ `Codec` for a custom framing.
 
 ```gleam
 pub fn config(codec.Codec) -> Config
@@ -337,7 +337,7 @@ pub fn max_inbound_frame_bytes(Channels) -> Int
 
 Register a channel handler for a topic pattern
 
- Patterns can be exact matches like "room:lobby", legacy prefix wildcards
+ Patterns can be exact matches like "room:lobby", prefix wildcards
  like "room:*" which match any topic starting with "room:", or segment
  wildcards like "document:*:ops" where "*" matches one complete segment.
  The bare pattern "*" is a catch-all that matches every topic.
@@ -362,13 +362,13 @@ Register a channel handler for a topic pattern
    channel.NoReply(socket)
  })
 
- // Register it with a legacy prefix wildcard
+ // Register it with a prefix wildcard
  let assert Ok(chat) = beryl.register(channels, "chat:*", chat_channel)
 
  // Exact topic
  let assert Ok(lobby) = beryl.register(channels, "room:lobby", lobby_channel)
 
- // Segment-aware wildcard
+ // Segment wildcard
  let assert Ok(ops) = beryl.register(channels, "document:*:ops", ops_channel)
  ```
 
@@ -452,9 +452,9 @@ Configure heartbeat timing.
  `timeout_ms` is the server-side staleness window — a socket that sends no
  heartbeat within this window is evicted. The server derives its internal
  check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
- be at least 2; smaller values are rejected by `start` with
- `InvalidHeartbeatTimeout` because a check interval of 0 would disable
- eviction. The defaults are 30000 ms and 60000 ms respectively.
+ be at least 2; with smaller values `supervisor.start`'s child specification
+ fails to start, because a check interval of 0 would disable eviction. The
+ defaults are 30000 ms and 60000 ms respectively.
 
 ```gleam
 pub fn with_heartbeat(
@@ -575,7 +575,7 @@ pub fn with_max_event_length(
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- The limit is enforced **post-assembly**: the transport (Mist/gramps)
+ The limit is enforced **post-assembly**: the transport's WebSocket layer
  buffers and assembles a complete frame first, and only then does beryl
  measure it and close the connection if it exceeds `max_bytes`. This bounds
  per-message processing cost (decode, routing, rate-limit accounting), but
@@ -589,7 +589,7 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
  balancer in front of beryl and configure a WebSocket frame-size limit
  there (and a matching request/body size limit). beryl's per-IP connection
  limit and per-socket message-rate limit do not mitigate this vector. See
- the "Security & deployment" section of the README and
+ the "Security" section of the README and
  `docs/security/frame-buffering-followup.md` for details.
 
  Values <= 0 disable the cap. The default is 1 MiB.
@@ -619,9 +619,10 @@ pub fn with_max_joined_topics_per_socket(
 Configure the maximum allowed byte length for client-supplied topic
  strings.
 
- Topics longer than `max_length` bytes are rejected with a `phx_reply`
- error before reaching a channel handler, bounding the size of keys stored
- in the coordinator's topic registry. The default is 256.
+ Joins to topics longer than `max_length` bytes are rejected with an error
+ reply (a `phx_reply` under the Phoenix codec) before reaching a channel
+ handler, and other frames naming them are dropped — bounding the size of
+ keys stored in the coordinator's topic registry. The default is 256.
 
 ```gleam
 pub fn with_max_topic_length(
