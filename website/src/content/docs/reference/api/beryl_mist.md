@@ -11,8 +11,8 @@ description: Mist WebSocket Transport - Direct Mist integration for beryl
 
 Mist WebSocket Transport - Direct Mist integration for beryl
 
- This module provides the bridge between Mist's native WebSocket handling
- and the beryl coordinator using Mist request and response types directly.
+ Bridges Mist's native WebSocket handling to the beryl coordinator, using
+ Mist request and response types directly.
 
  The `beryl_ewe` package mirrors it: the two transports expose the same
  config-builder and handler API, so an integrator can run beryl channels on
@@ -140,6 +140,8 @@ Build a combined request handler that serves both WebSocket channels and
  by hand:
 
  ```gleam
+ import beryl_mist as mist_transport
+
  mist_transport.handler(channels, mist_transport.default_config("/socket"), http_handler)
  |> mist.new
  |> mist.port(8000)
@@ -160,6 +162,8 @@ Upgrade a request to WebSocket if it matches the configured path
 
  Usage in your Mist handler:
  ```gleam
+ import beryl_mist as mist_transport
+
  fn handle_request(req: Request(Connection), channels: Channels) -> Response(ResponseData) {
    use <- mist_transport.upgrade(req, channels, mist_transport.default_config("/socket"))
    // Fall through to regular HTTP routing
@@ -229,7 +233,7 @@ pub fn upgrade_connection(
 Disable `Origin` checking, allowing WebSocket upgrades from any origin.
 
  This is an explicit opt-out of the default [`SameOrigin`](#originpolicy)
- CSWSH protection and restores the pre-1.0 allow-all behaviour. Only use it
+ CSWSH protection. Only use it
  for sockets that do not rely on ambient browser credentials (cookies,
  sessions) for authorization, or that authenticate every message
  independently. For cookie/session-authenticated apps, prefer the default

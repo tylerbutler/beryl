@@ -2,8 +2,8 @@
 ////
 //// Topics are string identifiers that clients join (e.g., "room:lobby").
 //// Patterns define how topics are routed to channel handlers. Patterns can be
-//// exact, legacy trailing prefix wildcards, or segment-aware wildcards where
-//// "*" occupies a complete colon-delimited segment.
+//// exact, prefix wildcards, or segment wildcards where "*" occupies a
+//// complete colon-delimited segment.
 
 import gleam/bool
 import gleam/list
@@ -14,7 +14,7 @@ import gleam/string
 pub type TopicPattern {
   /// Exact match: "room:lobby" only matches "room:lobby"
   Exact(String)
-  /// Wildcard suffix: "room:*" matches "room:lobby", "room:123", etc.
+  /// Prefix wildcard: "room:*" matches "room:lobby", "room:123", etc.
   Wildcard(prefix: String)
   /// Segment wildcard: "document:*:ops" matches the same number of ":"
   /// segments where "*" occupies one complete segment.
@@ -143,7 +143,7 @@ pub fn extract_id(
 
 /// Extract values captured by wildcard segments.
 ///
-/// For legacy prefix wildcards, returns the suffix as a single value.
+/// For prefix wildcards, returns the suffix as a single value.
 /// For segment wildcards, returns each topic segment matched by "*".
 ///
 /// ## Examples

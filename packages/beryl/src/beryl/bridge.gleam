@@ -20,10 +20,12 @@
 //// ## Example
 ////
 //// ```gleam
-//// import beryl
+//// import beryl.{type RegisteredChannel}
 //// import beryl/bridge.{type Bridge}
-//// import beryl/channel
+//// import beryl/channel.{type Channel}
 //// import beryl/socket
+//// import gleam/option.{None}
+//// import my_app/doc
 ////
 //// // Messages emitted by your domain actor.
 //// pub type DocEvent {
@@ -34,22 +36,27 @@
 ////   Assigns(bridge: Bridge(DocEvent))
 //// }
 ////
-//// fn join(registered_channel, doc_actor, topic, _payload, socket) {
-////   // Forward each DocEvent to this socket's `handle_info` callback.
-////   let b =
-////     bridge.start(
-////       channel: registered_channel,
-////       socket_id: socket.id(socket),
-////       topic: topic,
-////       with: fn(event) { event },
-////     )
-////   // Subscribe the domain actor to the bridge's subject.
-////   doc.subscribe(doc_actor, bridge.subject(b))
-////   channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
-//// }
-////
-//// fn terminate(_reason, socket) {
-////   bridge.stop(socket.get_assigns(socket).bridge)
+//// // `registered_channel` is the handle returned by `beryl.register`.
+//// fn new_channel(
+////   registered_channel: RegisteredChannel(Assigns, DocEvent),
+////   doc_actor,
+//// ) -> Channel(Assigns, DocEvent) {
+////   channel.new(fn(topic, _payload, socket) {
+////     // Forward each DocEvent to this socket's `handle_info` callback.
+////     let b =
+////       bridge.start(
+////         channel: registered_channel,
+////         socket_id: socket.id(socket),
+////         topic: topic,
+////         with: fn(event) { event },
+////       )
+////     // Subscribe the domain actor to the bridge's subject.
+////     doc.subscribe(doc_actor, bridge.subject(b))
+////     channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
+////   })
+////   |> channel.with_terminate(fn(_reason, socket) {
+////     bridge.stop(socket.get_assigns(socket).bridge)
+////   })
 //// }
 //// ```
 

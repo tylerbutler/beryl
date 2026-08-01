@@ -27,9 +27,7 @@ Channel - Topic-based message callbacks
    |> channel.with_terminate(terminate)
  }
 
- // Name the first argument something other than `topic`: a local binding
- // named `topic` shadows the `beryl/topic` module if you import it.
- fn join(topic_name, payload, socket) {
+ fn join(topic, payload, socket) {
    let assigns = RoomAssigns(user_id: "...", room_id: "...")
    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, assigns))
  }

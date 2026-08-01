@@ -24,7 +24,6 @@
 ////
 //// ```gleam
 //// import beryl
-//// import beryl/channel
 //// import beryl/group
 //// import beryl/presence
 //// import beryl/pubsub
@@ -159,7 +158,7 @@ pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
 pub opaque type Config {
   Config(
     /// Wire codec used to decode inbound text and encode replies/pushes.
-    /// Use `wire.phoenix_codec()` for the historical Phoenix array format.
+    /// Use `wire.phoenix_codec()` for the Phoenix array format.
     codec: codec.Codec,
     /// Client-advisory heartbeat interval in milliseconds (default: 30000).
     /// The server does not read this value; it is the interval clients should
@@ -191,8 +190,9 @@ pub opaque type Config {
     /// Values <= 0 disable the cap.
     channel_rate_max_keys_per_socket: Int,
     /// Maximum byte length for client-supplied topic strings (default: 256).
-    /// Topics exceeding this limit are rejected with a `phx_reply` error before
-    /// reaching a channel handler.
+    /// Joins to longer topics are rejected with an error reply (a `phx_reply`
+    /// under the Phoenix codec) before reaching a channel handler; other
+    /// frames naming them are dropped.
     max_topic_length: Int,
     /// Maximum byte length for client-supplied event name strings (default: 64).
     /// Events exceeding this limit are dropped before reaching a channel handler.
@@ -226,9 +226,9 @@ pub fn logging_config(
 
 /// Build a configuration with sensible defaults.
 ///
-/// A `codec` is required — beryl no longer ships an implicit Phoenix
-/// default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
-/// or your own `Codec` for a custom framing.
+/// A `codec` is required — there is no implicit default. Pass
+/// `wire.phoenix_codec()` for Phoenix wire compatibility, or your own
+/// `Codec` for a custom framing.
 pub fn config(codec: codec.Codec) -> Config {
   Config(
     codec: codec,
@@ -267,9 +267,9 @@ pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
 /// `timeout_ms` is the server-side staleness window — a socket that sends no
 /// heartbeat within this window is evicted. The server derives its internal
 /// check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
-/// be at least 2; smaller values are rejected by `start` with
-/// `InvalidHeartbeatTimeout` because a check interval of 0 would disable
-/// eviction. The defaults are 30000 ms and 60000 ms respectively.
+/// be at least 2; with smaller values `supervisor.start`'s child specification
+/// fails to start, because a check interval of 0 would disable eviction. The
+/// defaults are 30000 ms and 60000 ms respectively.
 pub fn with_heartbeat(
   config: Config,
   interval_ms interval_ms: Int,
@@ -419,9 +419,10 @@ pub fn with_channel_rate_max_keys_per_socket(
 /// Configure the maximum allowed byte length for client-supplied topic
 /// strings.
 ///
-/// Topics longer than `max_length` bytes are rejected with a `phx_reply`
-/// error before reaching a channel handler, bounding the size of keys stored
-/// in the coordinator's topic registry. The default is 256.
+/// Joins to topics longer than `max_length` bytes are rejected with an error
+/// reply (a `phx_reply` under the Phoenix codec) before reaching a channel
+/// handler, and other frames naming them are dropped — bounding the size of
+/// keys stored in the coordinator's topic registry. The default is 256.
 pub fn with_max_topic_length(
   config: Config,
   max_length max_length: Int,
@@ -443,7 +444,7 @@ pub fn with_max_event_length(
 
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
-/// The limit is enforced **post-assembly**: the transport (Mist/gramps)
+/// The limit is enforced **post-assembly**: the transport's WebSocket layer
 /// buffers and assembles a complete frame first, and only then does beryl
 /// measure it and close the connection if it exceeds `max_bytes`. This bounds
 /// per-message processing cost (decode, routing, rate-limit accounting), but
@@ -457,7 +458,7 @@ pub fn with_max_event_length(
 /// balancer in front of beryl and configure a WebSocket frame-size limit
 /// there (and a matching request/body size limit). beryl's per-IP connection
 /// limit and per-socket message-rate limit do not mitigate this vector. See
-/// the "Security & deployment" section of the README and
+/// the "Security" section of the README and
 /// `docs/security/frame-buffering-followup.md` for details.
 ///
 /// Values <= 0 disable the cap. The default is 1 MiB.
@@ -559,7 +560,8 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 /// beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
-/// should be a visible one. Called by both `start` and `supervisor.start`.
+/// should be a visible one. Called by `supervisor.start` and the internal
+/// unsupervised start path.
 @internal
 pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
@@ -629,8 +631,8 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
 
 /// Channels system handle.
 ///
-/// This opaque handle is returned by `start` and passed to registration,
-/// broadcast, bridge, group, supervisor, and transport functions. Its internal
+/// This opaque handle is obtained from `supervisor.channels` and passed to
+/// registration, broadcast, bridge, group, and transport functions. Its internal
 /// actor protocol is intentionally hidden so beryl can evolve coordinator
 /// internals without breaking application code.
 pub opaque type Channels {
@@ -778,7 +780,7 @@ pub fn channels_registry(channels: Channels) -> Option(coordinator.Registry) {
 
 /// Register a channel handler for a topic pattern
 ///
-/// Patterns can be exact matches like "room:lobby", legacy prefix wildcards
+/// Patterns can be exact matches like "room:lobby", prefix wildcards
 /// like "room:*" which match any topic starting with "room:", or segment
 /// wildcards like "document:*:ops" where "*" matches one complete segment.
 /// The bare pattern "*" is a catch-all that matches every topic.
@@ -803,13 +805,13 @@ pub fn channels_registry(channels: Channels) -> Option(coordinator.Registry) {
 ///   channel.NoReply(socket)
 /// })
 ///
-/// // Register it with a legacy prefix wildcard
+/// // Register it with a prefix wildcard
 /// let assert Ok(chat) = beryl.register(channels, "chat:*", chat_channel)
 ///
 /// // Exact topic
 /// let assert Ok(lobby) = beryl.register(channels, "room:lobby", lobby_channel)
 ///
-/// // Segment-aware wildcard
+/// // Segment wildcard
 /// let assert Ok(ops) = beryl.register(channels, "document:*:ops", ops_channel)
 /// ```
 pub fn register(
@@ -857,9 +859,10 @@ fn map_register_error(error: coordinator.RegisterError) -> RegisterError {
   }
 }
 
-/// Broadcast a message to all subscribers of a topic
+/// Broadcast a message to all sockets subscribed to a topic.
 ///
-/// This sends the message to all sockets subscribed to the topic.
+/// When the channels system was configured with PubSub, the broadcast also
+/// fans out to subscribers on other nodes in the cluster.
 ///
 /// ## Example
 ///

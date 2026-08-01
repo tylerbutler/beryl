@@ -8,7 +8,7 @@ Two words recur throughout these docs and are not interchangeable: a **channel h
 
 ## Topics and patterns
 
-Topics are colon-delimited string identifiers. Patterns can be exact matches, legacy trailing prefix wildcards, or segment-aware wildcards:
+Topics are colon-delimited string identifiers. Patterns can be exact matches, prefix wildcards, or segment wildcards:
 
 ```gleam
 import beryl/topic
@@ -46,7 +46,7 @@ topic.segments("room:lobby")  // -> ["room", "lobby"]
 topic.namespace("room:lobby")  // -> Ok("room")
 ```
 
-Use `document:tenant-a:*` to route all documents for one tenant while keeping the existing trailing-wildcard prefix semantics. Use `document:*:*` when a callback needs to extract both tenant and document IDs from a topic with the exact shape `document:{tenant_id}:{document_id}`:
+Use `document:tenant-a:*` to route all documents for one tenant while keeping prefix-wildcard semantics. Use `document:*:*` when a callback needs to extract both tenant and document IDs from a topic with the exact shape `document:{tenant_id}:{document_id}`:
 
 ```gleam
 let pattern = topic.parse_pattern("document:*:*")
