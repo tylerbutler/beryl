@@ -17,6 +17,7 @@ import gleam/option.{None}
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
+import gleam/result
 import gleeunit
 import gleeunit/should
 import test_helpers
@@ -63,7 +64,7 @@ pub fn stop_shuts_down_only_beryl_subtree_test() {
 
   // Everything is up.
   test_helpers.wait_until(
-    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_ok },
     2000,
     10,
   )
@@ -260,20 +261,6 @@ pub fn runtime_pid_unavailable_before_start_test() {
   transport.runtime_pid(sockets) |> should.be_error
 }
 
-fn to_bool(result: Result(a, b)) -> Bool {
-  case result {
-    Ok(_) -> True
-    Error(_) -> False
-  }
-}
-
-fn not_running(sockets: beryl.Sockets) -> Bool {
-  case beryl.app_runtime_pid(sockets) {
-    Ok(_) -> False
-    Error(Nil) -> True
-  }
-}
-
 // ── the embedded subtree dies with the application root ─────────────────────
 
 pub fn application_root_shutdown_tears_down_beryl_subtree_test() {
@@ -289,7 +276,7 @@ pub fn application_root_shutdown_tears_down_beryl_subtree_test() {
     |> static_supervisor.add(beryl_spec)
     |> static_supervisor.start()
   test_helpers.wait_until(
-    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_ok },
     2000,
     10,
   )
@@ -340,7 +327,11 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
 
   // Whether or not the doomed supervisor reported an error, no Beryl runtime
   // or limiter is left running.
-  test_helpers.wait_until(fn() { not_running(sockets) }, 3000, 20)
+  test_helpers.wait_until(
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_error },
+    3000,
+    20,
+  )
   beryl.app_runtime_pid(sockets) |> should.be_error
   beryl.app_limiter_pid(sockets) |> should.be_error
 }

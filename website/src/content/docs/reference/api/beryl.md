@@ -478,24 +478,18 @@ pub fn with_channel_rate_max_keys_per_socket(
 
 ### `with_heartbeat`
 
-Configure heartbeat timing.
+Configure the server-side heartbeat staleness window.
 
- `interval_ms` is **client-advisory only**: it is the interval clients should
- use for their own outbound pings. The server never reads it and does not use
- it to schedule anything — it exists purely to communicate a suggested ping
- cadence to clients.
-
- `timeout_ms` is the server-side staleness window — a socket that sends no
- heartbeat within this window is evicted. The server derives its internal
- check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
- be at least 2; smaller values are rejected by `start` with
- `InvalidHeartbeatTimeout` because a check interval of 0 would disable
- eviction. The defaults are 30000 ms and 60000 ms respectively.
+ `timeout_ms` is the window within which a socket must send a heartbeat to
+ avoid eviction. The server derives its internal check interval as
+ `timeout_ms / 2` (integer division), so `timeout_ms` must be at least 2;
+ smaller values are rejected by `validate_config` (and therefore `start` and
+ `child_spec`) with `HeartbeatTimeoutTooLow` because a check interval of 0
+ would disable eviction. The default is 60000 ms.
 
 ```gleam
 pub fn with_heartbeat(
   Config,
-  interval_ms: Int,
   timeout_ms: Int
 ) -> Config
 ```
@@ -609,7 +603,25 @@ pub fn with_max_event_length(
 
 ### `with_max_inbound_frame_bytes`
 
+Configure the maximum allowed inbound WebSocket frame size in bytes.
 
+ The limit is enforced **post-assembly**: the transport (Mist/gramps)
+ buffers and assembles a complete frame first, and only then does Beryl
+ measure it and close the connection if it exceeds `max_bytes`. This bounds
+ per-message processing cost (decode, routing, rate-limit accounting), but
+ it does **not** by itself bound transport memory. A hostile client can
+ declare a huge payload and stream it slowly, or send many fragmented
+ continuation frames, and the transport's receive buffer grows before this
+ check ever runs — so this setting alone does not stop a single connection
+ from exhausting node memory.
+
+ For a true transport memory bound you **must** place an edge proxy or load
+ balancer in front of Beryl and configure a WebSocket frame-size limit
+ there (and a matching request/body size limit). Beryl's per-IP connection
+ limit and per-socket message-rate limit do not mitigate this vector. See
+ the README's "Security" section for deployment guidance.
+
+ Values <= 0 disable the cap. The default is 1 MiB.
 
 ```gleam
 pub fn with_max_inbound_frame_bytes(

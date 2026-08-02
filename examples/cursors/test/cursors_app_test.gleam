@@ -1,16 +1,9 @@
-import beryl/presence
 import beryl/socket
 import cursors/app
 import gleam/dynamic
 import gleam/json
 import gleam/list
 import gleeunit/should
-
-fn context() -> app.Ctx {
-  let assert Ok(handle) =
-    presence.start(presence.default_config("cursors-reaction-test"))
-  app.Ctx(presence: handle)
-}
 
 fn model() -> app.Model {
   app.Model(username: "Alice", color: "#abcdef")
@@ -33,7 +26,6 @@ pub fn supported_reactions_broadcast_test() {
   |> list.each(fn(reaction) {
     let #(_, effects) =
       app.update(
-        context(),
         "socket-1",
         "cursor:lobby",
         model(),
@@ -53,7 +45,6 @@ pub fn supported_reactions_broadcast_test() {
 pub fn integer_boundary_coordinates_broadcast_test() {
   let #(_, effects) =
     app.update(
-      context(),
       "socket-1",
       "cursor:lobby",
       model(),
@@ -84,14 +75,7 @@ pub fn invalid_reaction_payloads_are_dropped_test() {
   invalid_payloads
   |> list.each(fn(payload) {
     let #(_, effects) =
-      app.update(
-        context(),
-        "socket-1",
-        "cursor:lobby",
-        model(),
-        "reaction",
-        payload,
-      )
+      app.update("socket-1", "cursor:lobby", model(), "reaction", payload)
     effects |> should.equal([])
   })
 }
@@ -103,14 +87,7 @@ pub fn cursor_move_behavior_is_unchanged_test() {
       #(dynamic.string("y"), dynamic.int(34)),
     ])
   let #(_, effects) =
-    app.update(
-      context(),
-      "socket-1",
-      "cursor:lobby",
-      model(),
-      "cursor_move",
-      payload,
-    )
+    app.update("socket-1", "cursor:lobby", model(), "cursor_move", payload)
 
   let assert [socket.BroadcastFrom("cursor:lobby", "cursor_move", broadcast)] =
     effects

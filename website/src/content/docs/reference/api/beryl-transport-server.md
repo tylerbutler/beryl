@@ -101,7 +101,7 @@ pub type TransportConfig(a)
 
 ### `close_connection`
 
-Clean up when a connection closes: release any held connection slot and
+Clean up when a connection closes: release the held connection slot and
  announce the disconnect to the runtime.
 
 ```gleam
@@ -175,12 +175,28 @@ pub fn handle_text_frame(
 ) -> FrameOutcome
 ```
 
+### `handler`
+
+Build a combined request handler that routes WebSocket upgrade requests
+ to `upgrade` and everything else to `http_fallback`.
+
+ `upgrade` receives the request and a fall-through thunk for upgrade
+ requests on a non-matching path. Transport packages wrap this with their
+ server-specific `upgrade` to expose a one-call combined handler.
+
+```gleam
+pub fn handler(
+  upgrade: fn(request.Request(a), fn() -> response.Response(b)) -> response.Response(b),
+  http_fallback: fn(request.Request(a)) -> response.Response(b)
+) -> fn(request.Request(a)) -> response.Response(b)
+```
+
 ### `init_connection`
 
 Initialize a newly upgraded WebSocket connection in its connection
  process.
 
- Binds any held connection slot to the calling process (so the slot is
+ Binds the held connection slot to the calling process (so the slot is
  reclaimed even if the process dies without a clean close), registers the
  socket and a runtime-triggered closer with the runtime, and monitors the
  owning runtime so a runtime crash or restart closes the connection rather
@@ -199,7 +215,7 @@ Initialize a newly upgraded WebSocket connection in its connection
 pub fn init_connection(
   sockets: beryl.Sockets,
   seed: socket.ConnectSeed,
-  connection_permit: option.Option(beryl.ConnectionPermit),
+  connection_permit: beryl.ConnectionPermit,
   base_selector: process.Selector(SendRequest),
   logger_name: String
 ) -> #(ConnectionState, process.Selector(SendRequest))
@@ -230,7 +246,7 @@ Release a held connection slot when a WebSocket handshake fails.
 ```gleam
 pub fn release_slot_on_failed_handshake(
   response.Response(a),
-  option.Option(beryl.ConnectionPermit)
+  beryl.ConnectionPermit
 ) -> response.Response(a)
 ```
 

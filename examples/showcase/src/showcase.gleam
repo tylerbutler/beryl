@@ -43,9 +43,9 @@ type Model {
   )
 }
 
-/// Dependencies for the three embedded apps.
+/// Dependencies for the embedded apps (cursors has none).
 type Ctx {
-  Ctx(cursors: cursors_app.Ctx, rooms: chat_app.Ctx, docs: docs_app.Ctx)
+  Ctx(rooms: chat_app.Ctx, docs: docs_app.Ctx)
 }
 
 pub fn main() {
@@ -67,7 +67,6 @@ pub fn main() {
 
   let ctx =
     Ctx(
-      cursors: cursors_app.Ctx(presence: presence_actor),
       rooms: chat_app.Ctx(presence: presence_actor, groups: groups),
       docs: docs_app.Ctx(store: docs_store, secret: docs_secret),
     )
@@ -167,7 +166,6 @@ pub fn main() {
 fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
   let namespaces = [
     cursors_app.namespace(
-      ctx.cursors,
       socket_id: fn(model: Model) { model.socket_id },
       get: fn(model: Model) { model.cursors },
       put: fn(model: Model, cursors) { Model(..model, cursors: cursors) },

@@ -15,11 +15,7 @@ pub fn string_field(
   payload: Dynamic,
   field_name: String,
 ) -> Result(String, Nil) {
-  let decoder = {
-    use value <- decode.field(field_name, decode.string)
-    decode.success(value)
-  }
-  decode.run(payload, decoder)
+  decode.run(payload, decode.at([field_name], decode.string))
   |> result.replace_error(Nil)
 }
 
@@ -30,10 +26,7 @@ pub fn string_or(
   field_name: String,
   default: String,
 ) -> String {
-  case string_field(payload, field_name) {
-    Ok(value) -> value
-    Error(Nil) -> default
-  }
+  result.unwrap(string_field(payload, field_name), default)
 }
 
 /// Read a number-valued field from a payload as a `Float`, accepting both
@@ -42,11 +35,7 @@ pub fn string_or(
 pub fn float_field(payload: Dynamic, field_name: String) -> Result(Float, Nil) {
   let number =
     decode.one_of(decode.float, or: [decode.int |> decode.map(int.to_float)])
-  let decoder = {
-    use value <- decode.field(field_name, number)
-    decode.success(value)
-  }
-  decode.run(payload, decoder)
+  decode.run(payload, decode.at([field_name], number))
   |> result.replace_error(Nil)
 }
 
@@ -59,10 +48,6 @@ pub fn json_number_or_zero(payload: Dynamic, field_name: String) -> Json {
     decode.one_of(decode.float |> decode.map(json.float), or: [
       decode.int |> decode.map(json.int),
     ])
-  let decoder = {
-    use value <- decode.field(field_name, number)
-    decode.success(value)
-  }
-  decode.run(payload, decoder)
+  decode.run(payload, decode.at([field_name], number))
   |> result.unwrap(json.float(0.0))
 }

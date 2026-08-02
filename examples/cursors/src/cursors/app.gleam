@@ -9,7 +9,6 @@
 ////   `standalone_update` wrappers that drive the standalone cursors server
 ////   through `beryl.start`, reusing the same per-topic surface.
 
-import beryl/presence.{type Presence}
 import beryl/socket.{type Effect, type Ref}
 import example_helpers/color
 import example_helpers/payload
@@ -27,17 +26,10 @@ pub type Model {
   Model(username: String, color: String)
 }
 
-/// Dependencies the cursor logic reads (presence is written through
-/// effects; the handle is only needed for reads like `presence.list`).
-pub type Ctx {
-  Ctx(presence: Presence)
-}
-
 const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
 /// Handle a join for a `cursor:*` topic. Returns `None` when rejected.
 pub fn join(
-  _ctx: Ctx,
   socket_id: String,
   topic: String,
   payload: Dynamic,
@@ -72,7 +64,6 @@ pub fn join(
 
 /// Handle a client message on a joined `cursor:*` topic.
 pub fn update(
-  _ctx: Ctx,
   socket_id: String,
   topic: String,
   model: Model,
@@ -111,12 +102,7 @@ pub fn update(
 }
 
 /// Handle the topic closing (leave, kick, crash, or disconnect).
-pub fn closed(
-  _ctx: Ctx,
-  _socket_id: String,
-  topic: String,
-  model: Model,
-) -> List(Effect) {
+pub fn closed(_socket_id: String, topic: String, model: Model) -> List(Effect) {
   // The snapshot encodes after the untrack before it, so the broadcast
   // list already excludes the leaving user.
   [
@@ -150,52 +136,31 @@ pub fn standalone_init(
 /// owns, so the standalone server below and the composing showcase app share
 /// one adapter instead of writing the same dict plumbing twice.
 pub fn namespace(
-  ctx: Ctx,
   socket_id socket_id: fn(model) -> String,
   get get: fn(model) -> Dict(String, Model),
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
-  router.Namespace(
-    matches: fn(topic) { string.starts_with(topic, "cursor:") },
-    join: fn(model, topic, payload, ref) {
-      let #(joined, effects) = join(ctx, socket_id(model), topic, payload, ref)
-      case joined {
-        Some(sub) -> #(put(model, dict.insert(get(model), topic, sub)), effects)
-        None -> #(model, effects)
-      }
+  router.stateful(
+    matches: string.starts_with(_, "cursor:"),
+    socket_id:,
+    get:,
+    put:,
+    join:,
+    message: fn(socket_id, topic, model, event_name, payload, _ref) {
+      update(socket_id, topic, model, event_name, payload)
     },
-    message: fn(model, topic, event_name, payload, _ref) {
-      case dict.get(get(model), topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            update(ctx, socket_id(model), topic, sub, event_name, payload)
-          #(put(model, dict.insert(get(model), topic, sub)), effects)
-        }
-        Error(Nil) -> #(model, [])
-      }
-    },
-    closed: fn(model, topic) {
-      case dict.get(get(model), topic) {
-        Ok(sub) -> #(
-          put(model, dict.delete(get(model), topic)),
-          closed(ctx, socket_id(model), topic, sub),
-        )
-        Error(Nil) -> #(model, [])
-      }
-    },
+    closed:,
   )
 }
 
 /// `update` for the standalone cursors `beryl.start` runtime. Topics
 /// outside the registered namespaces are rejected (fail closed).
 pub fn standalone_update(
-  ctx: Ctx,
   model: Standalone,
   ev: socket.Input(Nil),
 ) -> socket.Next(Standalone, Nil) {
   let cursors =
     namespace(
-      ctx,
       socket_id: fn(model: Standalone) { model.socket_id },
       get: fn(model: Standalone) { model.cursors },
       put: fn(model: Standalone, cursors) {

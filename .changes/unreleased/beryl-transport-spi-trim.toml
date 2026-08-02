@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Removed"
+body = "beryl/transport no longer exports the per-connection rate-limiter (RateLimiter, new_message_limiter, take_token) or logging (Logger, logger, log_warning) helpers; the inbound frame pipeline in beryl/transport/server enforces rate limits and logs decode failures itself. The remaining SPI is socket lifecycle (socket_connected, register_closer, socket_disconnected), routing (route_decoded, route_binary), active_codec, runtime_pid, and the ConnectionPermit type."

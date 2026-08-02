@@ -17,9 +17,6 @@ pub fn main() {
   let presence_config = presence.default_config("node1")
   let assert Ok(presence_actor) = presence.start(presence_config)
 
-  // Dependencies the cursor logic reads (presence writes flow through effects).
-  let ctx = cursors_app.Ctx(presence: presence_actor)
-
   // Rate limiting for cursor events; the presence handle is required for
   // the app's presence effects to apply.
   let config =
@@ -31,7 +28,7 @@ pub fn main() {
     beryl.start(
       config,
       init: cursors_app.standalone_init,
-      update: fn(model, ev) { cursors_app.standalone_update(ctx, model, ev) },
+      update: cursors_app.standalone_update,
     )
 
   // Honor $PORT (Railway/PaaS) and $HOST/$BIND_ADDRESS; fall back to local defaults.

@@ -14,8 +14,11 @@
 //// server exposes `gleam/http` requests.
 
 import beryl.{type Sockets}
+import beryl/internal
+import beryl/log
+import beryl/rate_limit
 import beryl/socket.{type ConnectSeed}
-import beryl/transport.{type ConnectionPermit, type RateLimiter}
+import beryl/transport.{type ConnectionPermit}
 import beryl/transport/origin.{type OriginPolicy}
 import beryl/wire/codec.{type Codec}
 import gleam/bit_array
@@ -100,11 +103,7 @@ pub fn with_on_connect(
   config: TransportConfig(body),
   callback: fn(Request(body)) -> Result(List(#(String, String)), ConnectError),
 ) -> TransportConfig(body) {
-  TransportConfig(
-    path: config.path,
-    on_connect: Some(callback),
-    origin_policy: config.origin_policy,
-  )
+  TransportConfig(..config, on_connect: Some(callback))
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -124,11 +123,7 @@ pub fn with_allowed_origins(
   config: TransportConfig(body),
   origins: List(String),
 ) -> TransportConfig(body) {
-  TransportConfig(
-    path: config.path,
-    on_connect: config.on_connect,
-    origin_policy: origin.AllowList(origins),
-  )
+  TransportConfig(..config, origin_policy: origin.AllowList(origins))
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -142,11 +137,7 @@ pub fn with_allowed_origins(
 pub fn with_allow_all_origins(
   config: TransportConfig(body),
 ) -> TransportConfig(body) {
-  TransportConfig(
-    path: config.path,
-    on_connect: config.on_connect,
-    origin_policy: origin.AllowAll,
-  )
+  TransportConfig(..config, origin_policy: origin.AllowAll)
 }
 
 // --- Upgrade admission pipeline ---
@@ -232,6 +223,25 @@ pub fn upgrade(
   }
 }
 
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+/// Build a combined request handler that routes WebSocket upgrade requests
+/// to `upgrade` and everything else to `http_fallback`.
+///
+/// `upgrade` receives the request and a fall-through thunk for upgrade
+/// requests on a non-matching path. Transport packages wrap this with their
+/// server-specific `upgrade` to expose a one-call combined handler.
+pub fn handler(
+  upgrade upgrade: fn(Request(body), fn() -> Response(resp)) -> Response(resp),
+  http_fallback http_fallback: fn(Request(body)) -> Response(resp),
+) -> fn(Request(body)) -> Response(resp) {
+  fn(request) {
+    case is_websocket_request(request) {
+      True -> upgrade(request, fn() { http_fallback(request) })
+      False -> http_fallback(request)
+    }
+  }
+}
+
 fn handle_matched_upgrade(
   request: Request(body),
   sockets: Sockets,
@@ -241,13 +251,11 @@ fn handle_matched_upgrade(
   accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
 ) -> Response(resp) {
   use <- bool.lazy_guard(
-    when: !request_origin_allowed(request, config.origin_policy),
+    when: !request_origin_allowed(request, config.origin_policy)
+      || !request_vsn_supported(request),
     return: fn() { reject(403) },
   )
-  use <- bool.lazy_guard(when: !request_vsn_supported(request), return: fn() {
-    reject(403)
-  })
-  case transport.acquire_connection_slot(sockets, request_ip(request)) {
+  case beryl.acquire_connection_slot(sockets, request_ip(request)) {
     Error(Nil) -> reject(429)
     Ok(connection_permit) ->
       run_on_connect(request, config, connection_permit, reject, accept)
@@ -266,7 +274,7 @@ fn run_on_connect(
       case callback(request) {
         Ok(metadata) -> accept(metadata, connection_permit)
         Error(ConnectRejected) -> {
-          transport.release_connection_slot(connection_permit)
+          beryl.release_connection_slot(connection_permit)
           reject(403)
         }
       }
@@ -307,13 +315,10 @@ fn request_vsn_supported(request: Request(body)) -> Bool {
 /// response through this before returning it.
 pub fn release_slot_on_failed_handshake(
   response: Response(resp),
-  connection_permit: Option(ConnectionPermit),
+  connection_permit: ConnectionPermit,
 ) -> Response(resp) {
   use <- bool.guard(when: response.status < 400, return: response)
-  case connection_permit {
-    Some(permit) -> transport.release_connection_slot(permit)
-    None -> Nil
-  }
+  beryl.release_connection_slot(connection_permit)
   response
 }
 
@@ -334,7 +339,7 @@ pub opaque type ConnectionState {
   ConnectionState(
     socket_id: String,
     sockets: Sockets,
-    connection_permit: Option(ConnectionPermit),
+    connection_permit: ConnectionPermit,
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
@@ -343,8 +348,8 @@ pub opaque type ConnectionState {
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
     /// so a flooding socket cannot fill the runtime's mailbox.
-    message_limiter: Option(RateLimiter),
-    logger: transport.Logger,
+    message_limiter: Option(rate_limit.Bucket),
+    logger: log.Logger,
   )
 }
 
@@ -372,7 +377,7 @@ pub fn connect_seed(
 /// Initialize a newly upgraded WebSocket connection in its connection
 /// process.
 ///
-/// Binds any held connection slot to the calling process (so the slot is
+/// Binds the held connection slot to the calling process (so the slot is
 /// reclaimed even if the process dies without a clean close), registers the
 /// socket and a runtime-triggered closer with the runtime, and monitors the
 /// owning runtime so a runtime crash or restart closes the connection rather
@@ -389,16 +394,13 @@ pub fn connect_seed(
 pub fn init_connection(
   sockets sockets: Sockets,
   seed seed: ConnectSeed,
-  connection_permit connection_permit: Option(ConnectionPermit),
+  connection_permit connection_permit: ConnectionPermit,
   base_selector base_selector: Selector(SendRequest),
   logger_name logger_name: String,
 ) -> #(ConnectionState, Selector(SendRequest)) {
   // Bind the per-IP slot to this WebSocket process so it is reclaimed even
   // if the process dies without running the transport's close callback.
-  case connection_permit {
-    Some(permit) -> transport.bind_connection_slot(permit)
-    None -> Nil
-  }
+  beryl.bind_connection_slot(connection_permit)
 
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
@@ -450,23 +452,21 @@ pub fn init_connection(
       socket_id: socket_id,
       sockets: sockets,
       connection_permit: connection_permit,
-      max_inbound_frame_bytes: transport.max_inbound_frame_bytes(sockets),
+      max_inbound_frame_bytes: beryl.max_inbound_frame_bytes(sockets),
       codec: transport.active_codec(sockets),
-      message_limiter: transport.new_message_limiter(sockets),
-      logger: transport.logger(logger_name),
+      message_limiter: beryl.message_limits(sockets)
+        |> option.map(rate_limit.new_bucket),
+      logger: internal.logger(logger_name),
     )
 
   #(state, selector)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Clean up when a connection closes: release any held connection slot and
+/// Clean up when a connection closes: release the held connection slot and
 /// announce the disconnect to the runtime.
 pub fn close_connection(state: ConnectionState) -> Nil {
-  case state.connection_permit {
-    Some(permit) -> transport.release_connection_slot(permit)
-    None -> Nil
-  }
+  beryl.release_connection_slot(state.connection_permit)
   transport.socket_disconnected(state.sockets, state.socket_id)
 }
 
@@ -501,14 +501,10 @@ pub fn handle_text_frame(state: ConnectionState, text: String) -> FrameOutcome {
       Continue(state)
     }
     Error(err) -> {
-      transport.log_warning(
-        state.logger,
-        "Failed to decode wire protocol message",
-        [
-          #("socket_id", state.socket_id),
-          #("error", codec.format_decode_error(err)),
-        ],
-      )
+      log.warn(state.logger, "Failed to decode wire protocol message", [
+        #("socket_id", state.socket_id),
+        #("error", codec.format_decode_error(err)),
+      ])
       Continue(state)
     }
   }
@@ -546,7 +542,7 @@ pub fn handle_binary_frame(
           Continue(state)
         }
         Error(err) -> {
-          transport.log_warning(
+          log.warn(
             state.logger,
             "Failed to decode binary wire protocol message",
             [
@@ -565,9 +561,12 @@ pub fn handle_binary_frame(
 fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
   case state.message_limiter {
     None -> #(state, True)
-    Some(limiter) -> {
-      let #(limiter, allowed) = transport.take_token(limiter)
-      #(ConnectionState(..state, message_limiter: Some(limiter)), allowed)
+    Some(bucket) -> {
+      let #(bucket, taken) = rate_limit.take(bucket)
+      #(
+        ConnectionState(..state, message_limiter: Some(bucket)),
+        result.is_ok(taken),
+      )
     }
   }
 }

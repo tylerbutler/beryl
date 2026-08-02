@@ -116,26 +116,6 @@ fn init(info: socket.ConnectInfo(Nil)) -> #(Model, List(socket.Effect)) {
 
 `ConnectInfo.seed` also includes the request path, query parameters, and headers seen during the upgrade.
 
-## Direct upgrade
-
-If you want to handle path matching yourself, use `upgrade_connection` directly.
-
-```gleam
-import gleam/bytes_tree
-import gleam/http/request
-import gleam/http/response as response
-import gleam/http/response.{type Response}
-
-fn handle_request(req, sockets) -> Response(mist.ResponseData) {
-  case request.path_segments(req) {
-    ["ws"] -> mist_transport.upgrade_connection(req, sockets)
-    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
-  }
-}
-```
-
-`upgrade_connection` does **not** run the configured `with_on_connect` callback and seeds empty connect metadata, so run your own checks first if you need them.
-
 ## Wire protocol
 
 `wire.phoenix_codec()` keeps Phoenix-compatible JSON array frames:
@@ -171,13 +151,10 @@ Configure heartbeat timing on the Beryl config:
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
-  |> beryl.with_heartbeat(
-    interval_ms: 30_000,
-    timeout_ms: 60_000,
-  )
+  |> beryl.with_heartbeat(timeout_ms: 60_000)
 ```
 
-`interval_ms` is advisory for clients. `timeout_ms` is the server-side silence window.
+`timeout_ms` is the server-side silence window; clients choose their own ping cadence.
 
 ## Rate limiting
 

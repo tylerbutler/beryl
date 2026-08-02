@@ -13,7 +13,6 @@
 //// `token` HMAC-signed for the tenant whose document is being joined.
 
 import beryl/socket.{type Effect, type Ref}
-import beryl/topic as beryl_topic
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
 import example_helpers/payload
@@ -29,9 +28,6 @@ import gleam/string
 /// Maximum byte size of a `sync_state` payload's `state` field. Protects
 /// the doc_store actor from unbounded merges.
 const max_state_bytes = 65_536
-
-/// Topic pattern for document channels: `document:<tenant>:<document>`.
-const document_topic_pattern_string = "document:*:*"
 
 /// Per-topic state for one socket on a document.
 pub type Model {
@@ -58,9 +54,8 @@ pub fn join(
   payload: Dynamic,
   ref: Ref,
 ) -> #(Option(Model), List(Effect)) {
-  let pattern = beryl_topic.parse_pattern(document_topic_pattern_string)
-  case beryl_topic.extract_wildcards(pattern, topic_name) {
-    Ok([tenant, document]) ->
+  case string.split(topic_name, ":") {
+    ["document", tenant, document] ->
       // Topic-level auth: the join payload must carry a `token`
       // HMAC-signed for the tenant whose document is being joined.
       case payload.string_field(payload, "token") {
@@ -156,34 +151,18 @@ pub fn namespace(
   get get: fn(model) -> Dict(String, Model),
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
-  router.Namespace(
-    matches: fn(topic) { string.starts_with(topic, "document:") },
-    join: fn(model, topic, payload, ref) {
-      let #(joined, effects) = join(ctx, socket_id(model), topic, payload, ref)
-      case joined {
-        Some(sub) -> #(put(model, dict.insert(get(model), topic, sub)), effects)
-        None -> #(model, effects)
-      }
+  router.stateful(
+    matches: string.starts_with(_, "document:"),
+    socket_id:,
+    get:,
+    put:,
+    join: fn(socket_id, topic, payload, ref) {
+      join(ctx, socket_id, topic, payload, ref)
     },
-    message: fn(model, topic, event_name, payload, ref) {
-      case dict.get(get(model), topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            update(ctx, socket_id(model), topic, sub, event_name, payload, ref)
-          #(put(model, dict.insert(get(model), topic, sub)), effects)
-        }
-        Error(Nil) -> #(model, [])
-      }
+    message: fn(socket_id, topic, model, event_name, payload, ref) {
+      update(ctx, socket_id, topic, model, event_name, payload, ref)
     },
-    closed: fn(model, topic) {
-      case dict.get(get(model), topic) {
-        Ok(sub) -> #(
-          put(model, dict.delete(get(model), topic)),
-          closed(ctx, socket_id(model), topic, sub),
-        )
-        Error(Nil) -> #(model, [])
-      }
-    },
+    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
   )
 }
 

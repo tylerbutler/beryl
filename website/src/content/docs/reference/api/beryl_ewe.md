@@ -81,20 +81,3 @@ pub fn upgrade(
   fn() -> response.Response(ewe.ResponseBody)
 ) -> response.Response(ewe.ResponseBody)
 ```
-
-### `upgrade_connection`
-
-Alternative: upgrade any request to WebSocket (caller handles path matching)
-
- Note: This function does not invoke the `on_connect` callback from
- `server.TransportConfig`. Sockets upgraded this way start with empty (`[]`)
- `ConnectSeed.metadata`. If you need authentication or seeded metadata,
- either use `upgrade` with a full config or call your auth check before
- this function.
-
-```gleam
-pub fn upgrade_connection(
-  request.Request(http1.Connection),
-  beryl.Sockets
-) -> response.Response(ewe.ResponseBody)
-```

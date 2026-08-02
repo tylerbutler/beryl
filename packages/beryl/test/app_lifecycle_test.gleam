@@ -30,7 +30,7 @@ pub fn validate_config_accepts_default_test() {
 
 pub fn validate_config_rejects_low_heartbeat_test() {
   beryl.config(wire.phoenix_codec())
-  |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 1)
+  |> beryl.with_heartbeat(timeout_ms: 1)
   |> beryl.validate_config
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
@@ -61,7 +61,7 @@ pub fn validate_config_rejects_invalid_topic_pattern_test() {
 pub fn start_rejects_invalid_config_test() {
   beryl.start(
     beryl.config(wire.phoenix_codec())
-      |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 1),
+      |> beryl.with_heartbeat(timeout_ms: 1),
     init: h.accepting_init,
     update: h.accepting_update,
   )

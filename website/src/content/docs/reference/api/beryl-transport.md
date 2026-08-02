@@ -6,75 +6,32 @@ description: Transport SPI — the contract between beryl core and WebSocket tra
 Transport SPI — the contract between beryl core and WebSocket transport
  implementations such as the `beryl_mist` package.
 
- A transport implementation:
- 1. Admits a connection (origin/auth policy is the transport's concern),
-    acquiring a slot with `acquire_connection_slot` and binding it with
-    `bind_connection_slot`.
- 2. Announces the socket with `socket_connected` then `register_closer`.
- 3. Decodes inbound frames with the codec from `active_codec` (see
-    `beryl/wire/codec`) and routes them with `route_decoded` /
-    `route_binary`, shedding over-rate frames via `new_message_limiter` /
-    `take_token` and oversized frames via `max_inbound_frame_bytes`.
- 4. Announces disconnects with `socket_disconnected` and releases the
-    slot with `release_connection_slot`.
-
-## Types
-
-### `Logger`
-
-A named logger for transport diagnostics, routed through beryl's
- configured logging backend.
-
-```gleam
-pub type Logger
-```
-
-### `RateLimiter`
-
-A per-connection token bucket enforcing the configured message rate at
- the transport edge, so a flooding socket is shed before frames are
- decoded or enqueued on the runtime.
-
-```gleam
-pub type RateLimiter
-```
+ Transports built on `gleam/http` requests use `beryl/transport/server`,
+ which layers the upgrade admission pipeline, connection lifecycle, and
+ inbound frame pipeline on top of this module. The functions here are the
+ low-level contract that pipeline is built on: announce sockets
+ (`socket_connected`, `register_closer`, `socket_disconnected`), route
+ inbound frames (`route_decoded`, `route_binary`) decoded with the codec
+ from `active_codec` (see `beryl/wire/codec`), and tie connection
+ lifetimes to the owning runtime (`runtime_pid`).
 
 ## Type aliases
 
 ### `ConnectionPermit`
 
-A held per-IP connection slot returned by `acquire_connection_slot`.
+A held per-IP connection slot, acquired by the admission pipeline in
+ `beryl/transport/server` (`server.upgrade`) and released by
+ `server.close_connection` / `server.release_slot_on_failed_handshake`.
 
  Opaque so Beryl can restructure the connection limiter without breaking
- transport authors. Hold it for the lifetime of the connection and pass it
- to `release_connection_slot` when the connection closes. When no per-IP
- limit is configured the permit is an admit-everything placeholder and
- releasing it is a no-op.
+ transport authors. When no per-IP limit is configured the permit is an
+ admit-everything placeholder and releasing it is a no-op.
 
 ```gleam
 pub type ConnectionPermit = beryl.ConnectionPermit
 ```
 
 ## Functions
-
-### `acquire_connection_slot`
-
-Try to acquire a configured per-IP connection slot.
-
- Transports call this before admitting a connection, passing the **real
- socket peer IP**. Do not pass a client-supplied address (e.g. from
- `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
- `Ok(permit)` when admitted (release the permit with
- `release_connection_slot` on close; when no limit is configured every
- connection is admitted), or `Error(Nil)` when the peer is already at its
- limit.
-
-```gleam
-pub fn acquire_connection_slot(
-  sockets: beryl.Sockets,
-  ip: String
-) -> Result(beryl.ConnectionPermit, Nil)
-```
 
 ### `active_codec`
 
@@ -83,58 +40,6 @@ The wire codec configured for these sockets. Transports decode inbound
 
 ```gleam
 pub fn active_codec(beryl.Sockets) -> codec.Codec
-```
-
-### `bind_connection_slot`
-
-Bind an acquired connection slot to the calling process.
-
- Call this from the long-lived connection process (e.g. the WebSocket
- handler's init) after `acquire_connection_slot`. The limiter monitors the
- caller so the slot is reclaimed even if the connection process dies
- without running its close path — otherwise crashed connections would
- permanently exhaust their IP's slots.
-
-```gleam
-pub fn bind_connection_slot(permit: beryl.ConnectionPermit) -> Nil
-```
-
-### `log_warning`
-
-Log a warning with structured metadata.
-
-```gleam
-pub fn log_warning(
-  logger: Logger,
-  message: String,
-  metadata: List(#(String, String))
-) -> Nil
-```
-
-### `logger`
-
-Create a named transport logger (e.g. `"beryl.transport.mist"`).
-
-```gleam
-pub fn logger(String) -> Logger
-```
-
-### `max_inbound_frame_bytes`
-
-The configured inbound frame size cap. Transports close a connection
- whose assembled frame exceeds this many bytes, before wire decoding.
-
-```gleam
-pub fn max_inbound_frame_bytes(beryl.Sockets) -> Int
-```
-
-### `new_message_limiter`
-
-Create a fresh per-connection message limiter, `None` when no message
- rate is configured.
-
-```gleam
-pub fn new_message_limiter(beryl.Sockets) -> option.Option(RateLimiter)
 ```
 
 ### `register_closer`
@@ -149,17 +54,6 @@ pub fn register_closer(
   socket_id: String,
   close: fn() -> Nil
 ) -> Nil
-```
-
-### `release_connection_slot`
-
-Release a per-IP connection slot acquired with `acquire_connection_slot`.
-
- Call from the process the permit was bound to (or from an unbound
- process when releasing before the connection was established).
-
-```gleam
-pub fn release_connection_slot(permit: beryl.ConnectionPermit) -> Nil
 ```
 
 ### `route_binary`
@@ -232,13 +126,4 @@ pub fn socket_disconnected(
   sockets: beryl.Sockets,
   socket_id: String
 ) -> Nil
-```
-
-### `take_token`
-
-Take one token; returns the updated limiter and whether the frame is
- admitted. Transports drop the frame when `False`.
-
-```gleam
-pub fn take_token(RateLimiter) -> #(RateLimiter, Bool)
 ```

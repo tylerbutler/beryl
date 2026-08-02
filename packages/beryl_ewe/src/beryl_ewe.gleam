@@ -21,8 +21,6 @@ import ewe.{type Connection, type ResponseBody, type WebsocketConnection}
 import gleam/erlang/process.{type Selector}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import gleam/option.{type Option, None, Some}
-import gleam/result
 
 /// Upgrade a request to WebSocket if it matches the configured path
 ///
@@ -57,7 +55,7 @@ pub fn upgrade(
     request_ip: request_ip,
     reject: reject,
     accept: fn(metadata, connection_permit) {
-      do_upgrade(request, channels, metadata, Some(connection_permit))
+      do_upgrade(request, channels, metadata, connection_permit)
     },
     next: next,
   )
@@ -98,27 +96,10 @@ pub fn handler(
   config: server.TransportConfig(Connection),
   http_fallback: fn(Request(Connection)) -> Response(ResponseBody),
 ) -> fn(Request(Connection)) -> Response(ResponseBody) {
-  fn(request) {
-    case server.is_websocket_request(request) {
-      True ->
-        upgrade(request, channels, config, fn() { http_fallback(request) })
-      False -> http_fallback(request)
-    }
-  }
-}
-
-/// Alternative: upgrade any request to WebSocket (caller handles path matching)
-///
-/// Note: This function does not invoke the `on_connect` callback from
-/// `server.TransportConfig`. Sockets upgraded this way start with empty (`[]`)
-/// `ConnectSeed.metadata`. If you need authentication or seeded metadata,
-/// either use `upgrade` with a full config or call your auth check before
-/// this function.
-pub fn upgrade_connection(
-  request: Request(Connection),
-  channels: Sockets,
-) -> Response(ResponseBody) {
-  do_upgrade(request, channels, [], None)
+  server.handler(
+    upgrade: fn(request, next) { upgrade(request, channels, config, next) },
+    http_fallback: http_fallback,
+  )
 }
 
 /// Perform the actual WebSocket upgrade
@@ -126,7 +107,7 @@ fn do_upgrade(
   request: Request(Connection),
   channels: Sockets,
   connect_metadata: List(#(String, String)),
-  connection_permit: Option(transport.ConnectionPermit),
+  connection_permit: transport.ConnectionPermit,
 ) -> Response(ResponseBody) {
   let seed = server.connect_seed(request, connect_metadata)
   ewe.upgrade_websocket(
@@ -165,14 +146,12 @@ fn on_message(
     ewe.Binary(data) -> resume(server.handle_binary_frame(state, data))
     ewe.User(server.Close) -> ewe.websocket_stop()
     ewe.User(server.SendText(text)) -> {
-      ewe.send_text_frame(connection, text)
-      |> result.replace(ewe.websocket_continue(state))
-      |> result.unwrap(ewe.websocket_continue(state))
+      let _ = ewe.send_text_frame(connection, text)
+      ewe.websocket_continue(state)
     }
     ewe.User(server.SendBinary(data)) -> {
-      ewe.send_binary_frame(connection, data)
-      |> result.replace(ewe.websocket_continue(state))
-      |> result.unwrap(ewe.websocket_continue(state))
+      let _ = ewe.send_binary_frame(connection, data)
+      ewe.websocket_continue(state)
     }
   }
 }

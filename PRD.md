@@ -173,7 +173,6 @@ JSON array format compatible with Phoenix Channels:
 ### FR-6: Transport — Mist WebSocket Adapter
 
 - **`upgrade(request, sockets, config, next)`** — Middleware-style: intercepts requests matching the configured path, upgrades to WebSocket, falls through for non-matching requests.
-- **`upgrade_connection(request, sockets)`** — Direct upgrade for custom routing.
 
 The adapter manages the full WebSocket lifecycle: connection, message routing to the runtime, heartbeat handling, and graceful disconnection.
 

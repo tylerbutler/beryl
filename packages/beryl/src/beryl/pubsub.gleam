@@ -33,6 +33,7 @@
 //// ```
 
 import gleam/dynamic.{type Dynamic}
+import gleam/erlang/atom
 import gleam/erlang/process.{type Pid, type Selector, type Subject}
 import gleam/list
 
@@ -111,15 +112,12 @@ fn ffi_get_members(scope: Dynamic, group: String) -> List(Pid)
 @external(erlang, "beryl_pubsub_ffi", "get_local_members")
 fn ffi_get_local_members(scope: Dynamic, group: String) -> List(Pid)
 
-@external(erlang, "erlang", "binary_to_atom")
-fn binary_to_atom(name: String) -> Dynamic
-
 /// The single, statically-known subject tag every PubSub broadcast is
 /// delivered under. Shared by every PubSub instance regardless of scope or
 /// payload type, so it never grows the atom table beyond this one entry, and
 /// identical on every node so cross-node sends and receives agree.
 fn pubsub_tag() -> Dynamic {
-  binary_to_atom("beryl_pubsub_message")
+  atom.create("beryl_pubsub_message") |> atom.to_dynamic
 }
 
 /// Deliver a message to a subscriber pid through a typed `Subject`.
@@ -137,7 +135,7 @@ fn deliver(pid: Pid, tag: Dynamic, msg: Message(payload)) -> Nil {
 
 /// Create a default PubSub configuration with scope `beryl_pubsub`
 pub fn default_config() -> PubSubConfig {
-  PubSubConfig(scope: binary_to_atom("beryl_pubsub"))
+  PubSubConfig(scope: atom.create("beryl_pubsub") |> atom.to_dynamic)
 }
 
 /// Create a PubSub configuration with a custom scope name
@@ -163,7 +161,7 @@ pub fn default_config() -> PubSubConfig {
 /// // pubsub.config_with_scope(database_row.name)
 /// ```
 pub fn config_with_scope(name: String) -> PubSubConfig {
-  PubSubConfig(scope: binary_to_atom(name))
+  PubSubConfig(scope: atom.create(name) |> atom.to_dynamic)
 }
 
 /// Start a PubSub instance
@@ -280,13 +278,9 @@ pub fn broadcast_from(
   let msg =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
   let tag = pubsub_tag()
-  let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) {
-    case pid == from {
-      True -> Nil
-      False -> deliver(pid, tag, msg)
-    }
-  })
+  ffi_get_members(ps.scope, topic)
+  |> list.filter(fn(pid) { pid != from })
+  |> list.each(deliver(_, tag, msg))
 }
 
 /// Broadcast a message to all subscribers except a process, preserving a socket
@@ -307,13 +301,9 @@ pub fn broadcast_from_socket(
       from: FromSocket(from, except_socket_id),
     )
   let tag = pubsub_tag()
-  let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) {
-    case pid == from {
-      True -> Nil
-      False -> deliver(pid, tag, msg)
-    }
-  })
+  ffi_get_members(ps.scope, topic)
+  |> list.filter(fn(pid) { pid != from })
+  |> list.each(deliver(_, tag, msg))
 }
 
 // nolint: unused_exports -- public PubSub API surface alongside broadcast/broadcast_from; intended for downstream consumers

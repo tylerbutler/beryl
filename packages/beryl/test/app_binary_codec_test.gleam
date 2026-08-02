@@ -220,7 +220,7 @@ fn encode_reply(
   }
   {
     "R|"
-    <> ref_to_string(ref)
+    <> option.unwrap(ref, "null")
     <> "|"
     <> topic
     <> "|"
@@ -244,11 +244,4 @@ fn encode_push(
 
 fn encode_heartbeat_reply(ref: Option(String)) -> codec.Frame {
   encode_reply(None, ref, "phoenix", codec.StatusOk, json.object([]))
-}
-
-fn ref_to_string(ref: Option(String)) -> String {
-  case ref {
-    Some(value) -> value
-    None -> "null"
-  }
 }

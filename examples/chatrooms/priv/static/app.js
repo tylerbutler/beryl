@@ -18,7 +18,6 @@
   let isTyping = false;
   let lobbyChannel = null;
   let lobbyJoined = false;
-  let roomRefreshSequence = 0;
 
   // --- Username prompt ---
   const username = prompt("Choose a display name:", "User" + Math.floor(Math.random() * 1000)) || "Anonymous";
@@ -42,37 +41,19 @@
   const userList = document.getElementById("user-list");
 
   async function refreshRoomCounts() {
-    const requestSequence = ++roomRefreshSequence;
-
     try {
       const response = await fetch("/api/rooms");
       if (!response.ok) {
         throw new Error(`Room refresh failed with ${response.status}`);
       }
-      const rooms = await response.json();
-      if (requestSequence !== roomRefreshSequence) return;
-      updateRoomCounts(rooms);
+      updateRoomCounts(await response.json());
     } catch (error) {
-      if (requestSequence === roomRefreshSequence) {
-        console.warn("Could not refresh room counts", error);
-      }
+      console.warn("Could not refresh room counts", error);
     }
   }
 
   function updateRoomCounts(rooms) {
-    if (!Array.isArray(rooms)) return;
-
-    const counts = new Map();
-    for (const room of rooms) {
-      if (
-        room &&
-        typeof room.name === "string" &&
-        Number.isInteger(room.users) &&
-        room.users >= 0
-      ) {
-        counts.set(room.name, room.users);
-      }
-    }
+    const counts = new Map(rooms.map((room) => [room.name, room.users]));
 
     document.querySelectorAll(".room-count").forEach((badge) => {
       const roomName = badge.dataset.roomCount;

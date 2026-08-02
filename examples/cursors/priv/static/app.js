@@ -7,7 +7,6 @@
   // --- Config ---
   const THROTTLE_MS = 50; // 20fps cursor updates
   const CURSOR_TIMEOUT_MS = 5000; // Remove stale cursors after 5s
-  const REACTION_DURATION_MS = 1200;
 
   // --- State ---
   let mySocketId = null;
@@ -63,19 +62,8 @@
 
   // --- Handle remote reactions ---
   channel.on("reaction", (payload) => {
+    // The server validates reactions before broadcasting.
     const { reaction, x, y } = payload;
-    if (
-      !["👍", "❤️", "😂", "🎉", "🔥"].includes(reaction) ||
-      !Number.isFinite(x) ||
-      !Number.isFinite(y) ||
-      x < 0 ||
-      x > 1 ||
-      y < 0 ||
-      y > 1
-    ) {
-      return;
-    }
-
     const rect = canvas.getBoundingClientRect();
     spawnReaction(reaction, x * rect.width, y * rect.height);
   });
@@ -135,9 +123,7 @@
       (0.9 + Math.random() * 0.25).toFixed(2)
     );
 
-    const cleanup = () => el.remove();
-    el.addEventListener("animationend", cleanup, { once: true });
-    setTimeout(cleanup, REACTION_DURATION_MS + 200);
+    el.addEventListener("animationend", () => el.remove(), { once: true });
     canvas.appendChild(el);
   }
 
