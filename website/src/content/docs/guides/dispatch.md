@@ -66,7 +66,7 @@ topic.extract_wildcards(
 // -> Ok(["tenant-a", "doc-42"])
 ```
 
-Keep the topic pattern in your own routing function, then decide which branch owns the event.
+For one namespace, matching inside `update` is fine. When several namespaces share a socket, use `beryl/socket/router` so pattern ownership and fail-closed dispatch stay declarative.
 
 ## Single-topic example
 
@@ -190,88 +190,66 @@ A few important details:
 
 ## Routing many topics from one app
 
-Multi-topic apps usually keep one top-level `Model` and delegate to smaller pure modules.
+Multi-topic apps keep one top-level model and register one `router.Namespace`
+per topic pattern. The router sends each input to the first matching namespace.
 
 ```gleam
 import beryl/socket as socket
-import beryl/topic
-import gleam/json
+import beryl/socket/router
+import gleam/dict.{type Dict}
 
 pub type Model {
-  Model(chat: chat.Model, admin: admin.Model)
+  Model(
+    socket_id: String,
+    rooms: Dict(String, chat.Model),
+    docs: Dict(String, docs.Model),
+  )
 }
 
-pub type Msg {
-  ChatMsg(chat.Msg)
-  AdminMsg(admin.Msg)
-}
-
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
-  let chat_pattern = topic.parse_pattern("chat:*")
-  let admin_pattern = topic.parse_pattern("admin")
-
-  case ev {
-    socket.Join(topic_name, payload, ref) ->
-      case topic.extract_id(chat_pattern, topic_name) {
-        Ok(room_id) -> {
-          let #(chat_model, effects) =
-            chat.join(model.chat, room_id, payload, ref)
-          socket.Next(Model(..model, chat: chat_model), effects)
-        }
-
-        Error(_) ->
-          case topic.matches(admin_pattern, topic_name) {
-            True -> {
-              let #(admin_model, effects) =
-                admin.join(model.admin, payload, ref)
-              socket.Next(Model(..model, admin: admin_model), effects)
-            }
-            False ->
-              socket.Next(
-                model,
-                [
-                  socket.RejectJoin(
-                    ref,
-                    json.object([
-                      #("reason", json.string("unknown topic")),
-                    ]),
-                  ),
-                ],
-              )
-          }
-      }
-
-    socket.Message(topic_name, event_name, payload, ref) ->
-      case topic.extract_id(chat_pattern, topic_name) {
-        Ok(room_id) -> {
-          let #(chat_model, effects) =
-            chat.on_message(model.chat, room_id, event_name, payload, ref)
-          socket.Next(Model(..model, chat: chat_model), effects)
-        }
-        Error(_) ->
-          case topic.matches(admin_pattern, topic_name) {
-            True -> {
-              let #(admin_model, effects) =
-                admin.on_message(model.admin, event_name, payload, ref)
-              socket.Next(Model(..model, admin: admin_model), effects)
-            }
-            False -> socket.Next(model, [])
-          }
-      }
-
-    socket.Binary(topic_name, data) ->
-      chat.on_binary(model, topic_name, data)
-
-    socket.Closed(topic_name, reason) ->
-      chat.on_closed(model, topic_name, reason)
-
-    socket.Info(msg) ->
-      chat.on_info(model, msg)
+fn update(ctx: Ctx) -> fn(Model, socket.Input(Msg)) -> socket.Next(Model, Msg) {
+  let namespaces = [
+    router.accept_only("lobby"),
+    router.stateful(
+      pattern: "room:*",
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.rooms },
+      put: fn(model: Model, rooms) { Model(..model, rooms: rooms) },
+      join: chat.join,
+      message: chat.on_message,
+      closed: chat.on_closed,
+    ),
+    router.stateful(
+      pattern: "document:*:*",
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.docs },
+      put: fn(model: Model, docs) { Model(..model, docs: docs) },
+      join: fn(socket_id, match, payload, ref) {
+        docs.join(ctx, socket_id, match, payload, ref)
+      },
+      message: fn(socket_id, match, doc, event, payload, ref) {
+        docs.on_message(ctx, socket_id, match, doc, event, payload, ref)
+      },
+      closed: fn(_socket_id, _match, _doc) { [] },
+    ),
+  ]
+  fn(model, input) {
+    router.route(namespaces, router.unknown_topic(), model, input)
   }
 }
 ```
 
-The top-level `update` is the router. Smaller modules own their own sub-models and return ordinary `List(socket.Effect)` values back to the parent.
+Build the namespace list once in a factory like this rather than rebuilding it
+for every input. Patterns use the same syntax as `beryl.with_topic_rate`, and
+handlers receive `router.Match(topic:, params:)` with wildcard captures.
+
+Routing fails closed: unclaimed joins are rejected with the supplied payload,
+other unclaimed inputs are ignored, and `Binary`/`Info` pass through unchanged.
+Use `router.stateful` for per-topic `Dict` state, `router.accept_only` for
+read-only topics, or `router.namespace` for full model control.
+
+For a standalone server around one stateful namespace, pair
+`router.standalone_init` with `beryl.child_spec` and adapt the namespace with
+`router.standalone_namespace`.
 
 ## Typed server-side messages
 
