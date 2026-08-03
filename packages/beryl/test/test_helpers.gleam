@@ -99,9 +99,10 @@ pub fn stop_capture() -> Nil {
 }
 
 /// Receive captured logs from `selector` until one matching `message`
-/// arrives (`Ok`) or `attempts` are exhausted without a match (`Error(Nil)`).
-/// Each attempt waits up to 500ms, so this also serves as an absence check
-/// with a small `attempts` count.
+/// arrives (`Ok`), a mismatching log has been seen `attempts` times without
+/// a match, or no further log arrives within 500ms (`Error(Nil)` in either
+/// case). A small `attempts` count combined with the 500ms per-attempt wait
+/// also makes this usable as an absence check.
 pub fn receive_log(
   selector: process.Selector(CapturedLog),
   message: String,

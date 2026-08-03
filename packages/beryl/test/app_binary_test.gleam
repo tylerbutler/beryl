@@ -77,7 +77,7 @@ pub fn raw_binary_consumes_one_message_rate_token_test() {
   let channels =
     start_with(
       beryl.config(text_only_codec())
-        |> beryl.with_message_rate(per_second: 100, burst: 1),
+        |> beryl.with_message_rate(per_second: 1, burst: 1),
       events,
     )
   let frames = h.connect(channels, "s1")

@@ -6,6 +6,7 @@
 
 import app_test_helpers as h
 import beryl
+import beryl/internal
 import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/dict
@@ -13,6 +14,17 @@ import gleam/option.{None}
 import gleeunit
 import gleeunit/should
 import test_helpers.{begin_capture, receive_log, stop_capture}
+
+/// Palabres's level is a global, singleton setting (see
+/// `beryl/internal.configure`); restore it to Beryl's own default so a
+/// `DebugLevel` test doesn't leak verbosity into tests that run after it.
+fn restore_default_logging_level() -> Nil {
+  internal.configure(internal.LoggingConfig(
+    level: internal.Info,
+    include_payloads: False,
+    payload_preview_bytes: 200,
+  ))
+}
 
 pub fn main() {
   gleeunit.main()
@@ -86,4 +98,5 @@ pub fn inbound_routing_log_omits_payload_by_default_test() {
 
   let _ = beryl.stop(channels)
   stop_capture()
+  restore_default_logging_level()
 }

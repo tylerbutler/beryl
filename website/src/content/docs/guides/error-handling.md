@@ -150,7 +150,9 @@ When a client exceeds a configured rate limit, the offending frame or message is
 | `topic_rate` | First matching topic pattern | Runtime | `beryl.with_topic_rate` |
 
 `frame_rate` and `message_rate` are independent: neither falls back to the
-other, and joins consume only `join_rate` regardless of either setting.
+other. Joins consume `frame_rate` like every inbound frame, but never
+`message_rate`; runtime join accounting is tracked separately via
+`join_rate`.
 
 ```gleam
 let config =
