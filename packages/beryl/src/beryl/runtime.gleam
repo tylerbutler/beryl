@@ -684,7 +684,7 @@ fn dispatch_inbound(
       use state <- with_message_rate_limit(
         state,
         socket_id,
-        [#("kind", "leave")],
+        fn() { [#("kind", "leave")] },
         started_at,
         message_kind,
       )
@@ -712,7 +712,7 @@ fn dispatch_inbound(
       use state <- with_message_rate_limit(
         state,
         socket_id,
-        [#("kind", "heartbeat")],
+        fn() { [#("kind", "heartbeat")] },
         started_at,
         telemetry.HeartbeatMessage,
       )
@@ -723,10 +723,12 @@ fn dispatch_inbound(
       use state <- with_message_rate_limit(
         state,
         socket_id,
-        [
-          #("topic", topic.sanitize_for_log(msg_topic)),
-          #("event", topic.sanitize_for_log(event_name)),
-        ],
+        fn() {
+          [
+            #("topic", topic.sanitize_for_log(msg_topic)),
+            #("event", topic.sanitize_for_log(event_name)),
+          ]
+        },
         started_at,
         message_kind,
       )
@@ -825,11 +827,12 @@ fn is_valid_event(event_name: String, config: Config) -> Bool {
   && result.is_ok(topic.validate_event(event_name))
 }
 
-/// Apply the per-socket decoded-message limiter before semantic validation.
+/// Apply the decoded-message limiter before semantic validation. Metadata is
+/// built only on the over-rate path, and attacker-driven drops log at debug.
 fn with_message_rate_limit(
   state: State(model, msg),
   socket_id: String,
-  metadata: List(#(String, String)),
+  metadata: fn() -> List(#(String, String)),
   started_at: Int,
   kind: telemetry.MessageKind,
   next: fn(State(model, msg)) -> actor.Next(State(model, msg), Msg(msg)),
@@ -838,9 +841,9 @@ fn with_message_rate_limit(
   case allowed {
     False -> {
       state.logger
-      |> log.warn("Message rate limited", [
+      |> log.debug("Message rate limited", [
         #("socket_id", socket_id),
-        ..metadata
+        ..metadata()
       ])
       emit_message_stop(
         state,
@@ -1443,7 +1446,8 @@ fn handle_binary_in(
 }
 
 /// Rate-limit and fan an undecoded binary frame out to each joined topic.
-/// The frame keeps binary telemetry classification throughout the fan-out.
+/// The frame keeps binary telemetry classification; attacker-driven drops
+/// log at debug to avoid warning-level amplification.
 fn handle_undecoded_binary_in(
   state: State(model, msg),
   socket_id: String,
@@ -1454,7 +1458,7 @@ fn handle_undecoded_binary_in(
   case allowed, dict.get(state.sockets, socket_id) {
     False, _ -> {
       state.logger
-      |> log.warn("Binary message rate limited", [#("socket_id", socket_id)])
+      |> log.debug("Binary message rate limited", [#("socket_id", socket_id)])
       emit_message_stop(
         state,
         started_at,

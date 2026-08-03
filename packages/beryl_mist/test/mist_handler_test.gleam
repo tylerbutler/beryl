@@ -11,7 +11,10 @@ import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bit_array
 import gleam/bytes_tree
+import gleam/dict
 import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/http/response
 import gleam/int
@@ -82,6 +85,68 @@ fn http_get(port: Int, path: String) -> Result(Int, Nil)
 
 @external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
+
+// Runtime log capture distinguishes edge shedding from runtime shedding.
+type CapturedLog {
+  CapturedLog(message: String, metadata: dict.Dict(String, String))
+}
+
+@external(erlang, "beryl_log_capture", "start")
+fn start_capture(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_log_capture", "stop")
+fn stop_capture() -> Nil
+
+fn captured_decoder() -> decode.Decoder(CapturedLog) {
+  use message <- decode.field(1, decode.string)
+  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
+  decode.success(CapturedLog(message:, metadata:))
+}
+
+fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
+  case decode.run(value, captured_decoder()) {
+    Ok(captured) -> captured
+    Error(_) -> CapturedLog(message: "", metadata: dict.new())
+  }
+}
+
+fn captured_selector() -> process.Selector(CapturedLog) {
+  process.new_selector()
+  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
+}
+
+fn drain_captured(selector: process.Selector(CapturedLog)) -> Nil {
+  case process.selector_receive(selector, 0) {
+    Ok(_) -> drain_captured(selector)
+    Error(Nil) -> Nil
+  }
+}
+
+fn begin_capture() -> process.Selector(CapturedLog) {
+  start_capture(process.self())
+  let selector = captured_selector()
+  drain_captured(selector)
+  selector
+}
+
+fn receive_log(
+  selector: process.Selector(CapturedLog),
+  message: String,
+  attempts: Int,
+) -> Result(CapturedLog, Nil) {
+  case attempts <= 0 {
+    True -> Error(Nil)
+    False ->
+      case process.selector_receive(selector, 500) {
+        Ok(captured) ->
+          case captured.message == message {
+            True -> Ok(captured)
+            False -> receive_log(selector, message, attempts - 1)
+          }
+        Error(Nil) -> Error(Nil)
+      }
+  }
+}
 
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
@@ -410,15 +475,22 @@ pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() {
   let channels =
     start_app_system(
       beryl.config(wire.phoenix_codec())
-      |> beryl.with_message_rate(per_second: 1, burst: 2),
+      |> beryl.with_message_rate(per_second: 1, burst: 2)
+      |> beryl.with_logging(beryl.logging_config(
+        level: beryl.DebugLevel,
+        include_payloads: False,
+      )),
     )
   let #(port, server_pid) = start_server(channels)
   let assert Ok(client) = connect_websocket(port, "/socket")
+  let selector = begin_capture()
 
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)
   { replies <= 2 } |> should.be_true
   { replies >= 1 } |> should.be_true
+  receive_log(selector, "Message rate limited", 20) |> should.be_ok
+  stop_capture()
 
   close(client)
   stop_supervisor(server_pid)
