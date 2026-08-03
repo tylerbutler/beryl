@@ -29,7 +29,12 @@ pub fn socket_connected(
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   seed seed: ConnectSeed,
 ) -> Nil {
-  beryl.transport_socket_connected(sockets, socket_id, send, send_binary, seed)
+  beryl.app_dispatch(sockets).socket_connected(
+    socket_id,
+    send,
+    send_binary,
+    seed,
+  )
 }
 
 /// Register a function that force-closes the socket's underlying connection
@@ -40,7 +45,7 @@ pub fn register_closer(
   socket_id socket_id: String,
   close close: fn() -> Nil,
 ) -> Nil {
-  beryl.transport_register_closer(sockets, socket_id, close)
+  beryl.app_dispatch(sockets).register_closer(socket_id, close)
 }
 
 /// Announce that a socket's connection has closed.
@@ -48,7 +53,7 @@ pub fn socket_disconnected(
   sockets sockets: Sockets,
   socket_id socket_id: String,
 ) -> Nil {
-  beryl.transport_socket_disconnected(sockets, socket_id)
+  beryl.app_dispatch(sockets).socket_disconnected(socket_id)
 }
 
 // --- Inbound routing ---
@@ -61,7 +66,7 @@ pub fn route_decoded(
   socket_id socket_id: String,
   message message: Inbound,
 ) -> Nil {
-  beryl.transport_route_decoded(sockets, socket_id, message)
+  beryl.app_dispatch(sockets).route_decoded(socket_id, message)
 }
 
 /// Route a raw binary frame. When the codec has a binary decoder the frame
@@ -73,7 +78,7 @@ pub fn route_binary(
   socket_id socket_id: String,
   data data: BitArray,
 ) -> Nil {
-  beryl.transport_route_binary(sockets, socket_id, data)
+  beryl.app_dispatch(sockets).route_binary(socket_id, data)
 }
 
 // --- Configuration ---

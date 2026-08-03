@@ -510,7 +510,10 @@ pub opaque type Sockets {
 /// Monomorphic closures over a generic runtime actor, captured by
 /// `start`. This is what lets the frame-level transport SPI stay
 /// unparameterized while the runtime holds typed per-socket models.
-type AppHandle {
+/// Not opaque: `beryl/transport` reads its fields directly via
+/// `app_dispatch`.
+@internal
+pub type AppHandle {
   AppHandle(
     socket_connected: fn(
       String,
@@ -1088,60 +1091,12 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Transport dispatch — forward the frame-level SPI in `beryl/transport` to the
-// app runtime closures captured at `start`.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
+/// The app runtime closures captured at `start`, for the frame-level SPI
+/// in `beryl/transport` to call directly.
 @internal
-pub fn transport_socket_connected(
-  channels: Sockets,
-  socket_id: String,
-  send: fn(String) -> Result(Nil, Nil),
-  send_binary: fn(BitArray) -> Result(Nil, Nil),
-  seed: socket.ConnectSeed,
-) -> Nil {
-  channels.app.socket_connected(socket_id, send, send_binary, seed)
-}
-
-// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
-@internal
-pub fn transport_register_closer(
-  channels: Sockets,
-  socket_id: String,
-  close: fn() -> Nil,
-) -> Nil {
-  channels.app.register_closer(socket_id, close)
-}
-
-// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
-@internal
-pub fn transport_socket_disconnected(
-  channels: Sockets,
-  socket_id: String,
-) -> Nil {
-  channels.app.socket_disconnected(socket_id)
-}
-
-// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
-@internal
-pub fn transport_route_decoded(
-  channels: Sockets,
-  socket_id: String,
-  message: codec.Inbound,
-) -> Nil {
-  channels.app.route_decoded(socket_id, message)
-}
-
-// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
-@internal
-pub fn transport_route_binary(
-  channels: Sockets,
-  socket_id: String,
-  data: BitArray,
-) -> Nil {
-  channels.app.route_binary(socket_id, data)
+pub fn app_dispatch(channels: Sockets) -> AppHandle {
+  channels.app
 }
 
 /// Broadcast a message to all subscribers of a topic
