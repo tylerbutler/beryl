@@ -41,6 +41,19 @@ assert.deepEqual(
   { value: 42 },
 );
 assert.throws(() => decodeFrame('["too","short"]'), ProtocolError);
+assert.throws(
+  () => decodeReply(["1", "2", "bench:one", "phx_reply", { response: {} }]),
+  ProtocolError,
+);
 assert.throws(() => loadConfig({ TARGET_URL: "https://example.invalid" }));
+assert.throws(
+  () =>
+    loadConfig({
+      TARGET_URL: "ws://example.invalid",
+      HEARTBEAT_INTERVAL_MS: "1000",
+      HEARTBEAT_TIMEOUT_MS: "1000",
+    }),
+  /HEARTBEAT_TIMEOUT_MS/,
+);
 
 console.log("k6 pure helper checks passed");

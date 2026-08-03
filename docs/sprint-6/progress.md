@@ -21,6 +21,16 @@
 - Added tagged k6 Trend, Counter, Rate, and Gauge metrics without target-specific
   behavior or remote imports.
 
+## Phase 3: validation and handoff
+
+- Node syntax checks pass for all pure and k6-only modules.
+- Framework-free helper checks cover config, URL construction, refs, frames,
+  replies, malformed input, and heartbeat timeout validation.
+- k6 is not installed in the development environment, so no live WebSocket
+  smoke run was possible in this phase.
+- The full smoke and load scenario matrix remains intentionally deferred to the
+  later scenario-profiles todo.
+
 ## Telemetry foundation
 
 - Added the Erlang `telemetry` runtime dependency through Gleam tooling.
