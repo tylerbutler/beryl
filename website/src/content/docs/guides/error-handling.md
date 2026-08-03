@@ -231,7 +231,7 @@ Beryl still uses Phoenix-compatible wire frames.
 
 `beryl_channels.start` validates the handler table before any process is started and reports:
 
-- `beryl_channels.InvalidHandlers(InvalidPattern(pattern, reason))` — a pattern is not valid topic-pattern syntax,
+- `beryl_channels.InvalidHandlers(InvalidPattern(pattern, reason))` — a pattern is not valid topic-pattern syntax; the `beryl/topic.TopicError` is nested, not flattened to a string,
 - `beryl_channels.InvalidHandlers(DuplicatePattern(pattern))` — two handlers share one pattern string, so the second is unreachable,
 - `beryl_channels.SocketStartFailed(error)` — the core refused to start; the `beryl.StartError` is nested, not flattened.
 

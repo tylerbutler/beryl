@@ -19,7 +19,10 @@ Composable channels for beryl real-time sockets.
  import beryl/wire
  import beryl_channels
  import beryl_channels/channel
+ import gleam/json
 
+ // `rooms` and `documents` are your own modules; each exports a
+ // `channel()` returning a `channel.Handler`.
  pub fn handlers() -> List(channel.Handler) {
    [rooms.channel(), documents.channel()]
  }
@@ -30,6 +33,8 @@ Composable channels for beryl real-time sockets.
        beryl.config(wire.phoenix_codec()),
        handlers: handlers(),
      )
+
+   beryl.broadcast(sockets, "room:lobby", "announce", json.string("hi"))
  }
  ```
 
@@ -91,7 +96,7 @@ Why a handler table was rejected.
 pub type HandlerError {
   InvalidPattern(
     pattern: String,
-    reason: String
+    reason: topic.TopicError
   )
   DuplicatePattern(pattern: String)
 }
@@ -101,12 +106,13 @@ pub type HandlerError {
 
 ##### `InvalidPattern(
   pattern: String,
-  reason: String
+  reason: topic.TopicError
 )`
 
 A handler used a pattern string that is not a valid topic pattern.
- `pattern` is the offending pattern and `reason` describes the
- problem.
+ `pattern` is the offending pattern and `reason` is the
+ [`beryl/topic`](https://hexdocs.pm/beryl/beryl/topic.html) error
+ nested rather than flattened to a string, so it stays matchable.
 
 ##### `DuplicatePattern(pattern: String)`
 

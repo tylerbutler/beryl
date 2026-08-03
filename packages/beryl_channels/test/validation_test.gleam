@@ -2,6 +2,7 @@
 //// surface: deterministic pattern validation, exact-duplicate detection,
 //// and tolerated non-identical overlaps.
 
+import beryl/topic
 import beryl_channels
 import beryl_channels/channel
 import gleeunit
@@ -33,9 +34,7 @@ pub fn distinct_valid_patterns_are_accepted_test() {
 
 pub fn an_empty_pattern_is_rejected_test() {
   beryl_channels.validate_handlers([stub("room:*"), stub("")])
-  |> should.equal(
-    Error(beryl_channels.InvalidPattern("", "pattern cannot be empty")),
-  )
+  |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn a_control_character_pattern_is_rejected_test() {
@@ -43,7 +42,7 @@ pub fn a_control_character_pattern_is_rejected_test() {
   |> should.equal(
     Error(beryl_channels.InvalidPattern(
       "room:\u{0001}*",
-      "pattern contains control characters",
+      topic.InvalidFormat("pattern contains control characters"),
     )),
   )
 }
@@ -70,21 +69,15 @@ pub fn validation_checks_syntax_before_duplicates_test() {
   // Pattern syntax is checked for the whole table first, so the invalid
   // empty pattern wins even though a duplicate appears earlier.
   beryl_channels.validate_handlers([stub("a"), stub("a"), stub("")])
-  |> should.equal(
-    Error(beryl_channels.InvalidPattern("", "pattern cannot be empty")),
-  )
+  |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 
   beryl_channels.validate_handlers([stub(""), stub("a"), stub("a")])
-  |> should.equal(
-    Error(beryl_channels.InvalidPattern("", "pattern cannot be empty")),
-  )
+  |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn validation_reports_the_first_invalid_pattern_in_order_test() {
   beryl_channels.validate_handlers([stub("room:*"), stub(""), stub("\u{0001}")])
-  |> should.equal(
-    Error(beryl_channels.InvalidPattern("", "pattern cannot be empty")),
-  )
+  |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn validation_reports_the_first_repeated_pattern_in_order_test() {

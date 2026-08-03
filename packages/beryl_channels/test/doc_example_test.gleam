@@ -62,5 +62,7 @@ pub fn documented_start_example_compiles_and_starts_test() {
     beryl_channels.start(beryl.config(wire.phoenix_codec()), handlers: handlers)
     as "the documented handler table starts"
 
+  beryl.broadcast(sockets, "room:lobby", "announce", json.string("hi"))
+
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }

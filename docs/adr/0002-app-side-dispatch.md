@@ -4,6 +4,14 @@
 
 Accepted (2026-07-21). Supersedes [ADR 0001](0001-type-erased-channel-registry.md).
 
+Amended by [ADR 0003](0003-layered-channel-api.md) (accepted 2026-08-02),
+which adds `beryl_channels`, an optional channel layer built entirely on
+this ADR's public API. Every decision below stands unchanged: app-side
+dispatch remains the single core programming model, `packages/beryl` keeps
+one entry-point pair, and the core still contains no erasure. ADR 0003
+layers channel-module ergonomics *above* the core for applications that
+want them; it does not restore anything inside it.
+
 ## Context
 
 ADR 0001 chose type erasure given library-side dispatch, and its analysis

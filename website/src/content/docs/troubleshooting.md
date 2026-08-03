@@ -79,7 +79,7 @@ These apply when you start the system with `beryl_channels.start` or `beryl_chan
 
 **Symptoms:** The system never starts; the error is `beryl_channels.InvalidHandlers(..)`.
 
-1. **`InvalidPattern(pattern, reason)`** — the pattern is not a valid beryl topic pattern. Check it against `beryl/topic` syntax: `"room:lobby"`, `"room:*"`, `"document:*:ops"`, `"*"`. Empty patterns are rejected.
+1. **`InvalidPattern(pattern, reason)`** — the pattern is not a valid beryl topic pattern; `reason` is the core `beryl/topic.TopicError` (`EmptyTopic` or `InvalidFormat(detail)`), nested so you can match on it. Check the pattern against `beryl/topic` syntax: `"room:lobby"`, `"room:*"`, `"document:*:ops"`, `"*"`. Empty patterns are rejected.
 2. **`DuplicatePattern(pattern)`** — two handlers registered the *same* pattern string. Routing takes the first match, so the second could never receive a join. Merge them, or give one a more specific pattern.
 
 Call `beryl_channels.validate_handlers(handlers)` in a test to catch both at build time. Overlapping-but-different patterns (`"room:lobby"` plus `"room:*"`) are valid and are resolved by registration order.

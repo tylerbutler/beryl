@@ -2,12 +2,17 @@
 
 ## Status
 
-Proposed (2026-08-02). Amends [ADR 0002](0002-app-side-dispatch.md): the
+Accepted (2026-08-02). Amends [ADR 0002](0002-app-side-dispatch.md): the
 dispatch core and its soundness guarantees stand unchanged; this ADR
 restores the channel-module ergonomics ADR 0002 traded away, as a separate
 package layered on the public API. ADR 0001 anticipated this outcome — "a
 layered variant (typed core with channels as sugar on top) may merit a
 future ADR."
+
+Shipped as `packages/beryl_channels`; its initial release is recorded in
+that package's changelog. Two Decision bullets were rewritten on acceptance
+to describe what shipped rather than what was proposed; see [Revisions on
+acceptance](#revisions-on-acceptance).
 
 ## Context
 
@@ -40,27 +45,41 @@ API, with no access to internal modules:
   handler list into an `#(init, update)` pair and delegates to
   `beryl.start`/`beryl.child_spec`. `Config` — including declarative
   per-topic abuse controls — is the core's, untouched.
-- A handler pairs a topic pattern with a typed `join` callback receiving
-  the `ConnectInfo`, topic, and join payload, and returning either a
-  rejection or a `JoinedChannel`: a record of closures (message, binary,
-  info, terminate) that capture the channel's typed assigns, each
-  returning the next `JoinedChannel` plus a list of channel actions. No
-  erased assigns value ever exists — heterogeneity is encoded entirely in
-  closures.
+- A handler pairs a topic pattern with a typed `join` callback. The layer
+  owns the socket-level model, so `join` receives a layer-built
+  `channel.JoinInfo(info)` — the socket id, the transport's
+  `socket.ConnectSeed`, and a `channel.Sender(info)` scoped to this join —
+  rather than the core `ConnectInfo` itself, along with the concrete topic
+  that matched and the client's join payload. It answers with a rejection
+  or a `JoinedChannel`: a record of closures (message, binary, info,
+  terminate) that capture the channel's typed state, each returning the
+  next `JoinedChannel` plus a list of channel actions. No erased state
+  value ever exists — heterogeneity is encoded entirely in closures.
 - The router's model is the handler table plus one live `JoinedChannel`
   per joined topic; its `update` matches each `Input` by topic to the
   owning instance. Channel actions map one-to-one onto core `Effect`
   values (the old API's single-action `HandleResult` shape generalizes to
-  a list, a strict superset).
-- The layer owns the socket-level `msg` type. Server-side sends to a
-  specific channel erase the per-channel info type at the send site and
-  restore it inside the joined closure — both ends created by the same
-  handler registration, the sound pairing ADR 0001 documented for
-  `send_info`. This is the only erasure in the layer, and it is
-  quarantined there.
+  a list, a strict superset) and lower in the order they were added.
+  A join's accept-time actions (`channel.with_actions`) lower in the same
+  update turn as the acknowledgment and strictly after it, so the socket
+  is already subscribed and a push cannot overtake its own join reply.
+  `on_terminate` returns topic-scoped actions that lower in the turn
+  closing the topic, after the instance is removed: the topic is already
+  unsubscribed there, so core drops pushes to it while broadcasts and
+  presence track/untrack still reach the topic's remaining subscribers.
+- The layer owns the socket-level `msg` type, and it carries no typed
+  value: a socket message is an envelope stamped with a topic and a
+  per-socket monotonic join generation, wrapping one sealed `Mail`.
+  `channel.notify` seals the typed value in a closure that only the join
+  which created it can open; the router compares the stamp against the
+  live instance *before* anything is unsealed and drops mail for a
+  superseded or ended join still sealed. Nothing is erased to `Dynamic`,
+  so the sound one-registration erase/restore pair ADR 0001 documented for
+  `send_info` is not needed at all.
 - ADR 0001's remaining unchecked coercion — connect-time assigns seeded
-  erased and restored unchecked — closes structurally: `join` receives
-  `ConnectInfo` directly, so there is no pre-join erased seed.
+  erased and restored unchecked — closes structurally: a channel's state
+  is created inside `join` and sealed by `channel.joined`, so there is no
+  pre-join erased seed to restore.
 
 ## Consequences
 
@@ -72,9 +91,11 @@ API, with no access to internal modules:
   entire channel framework is an embeddable triple assembled from public
   API. Any capability it needs and cannot reach is a core public-API gap,
   surfaced before third parties hit it.
-- One erase/restore pair returns, of the sound one-registration kind,
-  confined to `beryl_channels`. Zero unchecked coercions anywhere in the
-  workspace.
+- No erasure returns. The layer's heterogeneity is entirely
+  closure-captured, and its typed server-side sends are checked against
+  the live join's topic and generation before anything is unsealed, so
+  there is no erase/restore pair to confine. Zero unchecked coercions
+  anywhere in the workspace.
 - Parity between the two APIs is enforced mechanically, not editorially:
   the `phoenix_channel_fixtures` contract suite runs as a matrix over
   `beryl.start` and `beryl_channels.start`, since both lower to the same
@@ -92,26 +113,31 @@ API, with no access to internal modules:
   changelog fragments and `beryl_channels-vX.Y.Z` tags, and a path
   dependency on `beryl` rewritten to a Hex requirement at publish, exactly
   as the transports do.
-- On acceptance, ADR 0002's Status gains an "amended by ADR 0003" note.
+- ADR 0002's Status carries an "amended by ADR 0003" note; its Decision
+  and Consequences are unchanged, because nothing this ADR ships alters
+  the core.
 
-## Implementation notes (as shipped)
+## Revisions on acceptance
 
-Two details of the Decision above were superseded by what landed in
-`packages/beryl_channels`. Recorded here rather than rewritten above, so
-the decision reads as it was made.
+The Decision above was proposed on 2026-08-02 and accepted the same day,
+after the package shipped. Two of its bullets described intentions that the
+implementation improved on, and both were rewritten in place so the record
+does not contradict `packages/beryl_channels`. What changed, and why:
 
-- **`join` does not receive the core `ConnectInfo`.** The layer owns the
-  socket-level model and message type, so a channel's `join` receives a
-  layer-built `channel.JoinInfo(info)` — `socket_id`, the transport's
-  `socket.ConnectSeed`, and a `channel.Sender(info)` scoped to this join.
-  The soundness claim is unaffected: there is still no pre-join erased
-  seed, because the channel's own state is created inside `join` and
-  sealed by `channel.joined`.
-- **No erase/restore pair returns.** Typed server-side sends are not
-  erased and re-cast. `channel.notify` seals the value inside an opaque
-  closure and the router carries it as an envelope stamped with the
-  join's topic and a per-socket monotonic generation. The router compares
-  the stamp against the live instance *before* anything is unsealed;
-  mail for a superseded or ended join is dropped still sealed. The
-  workspace therefore contains zero unchecked coercions, with no
-  one-registration erase/restore pair to confine.
+- **`join` receives `JoinInfo`, not the core `ConnectInfo`.** The layer
+  owns the socket-level model and message type, so handing a channel the
+  core `ConnectInfo(msg)` would have exposed the layer's own envelope type
+  to application code. `channel.JoinInfo(info)` carries what a channel can
+  actually use — `socket_id`, the transport's `socket.ConnectSeed`, and
+  this join's typed `Sender` — and nothing else. The soundness claim is
+  unaffected: there is still no pre-join erased seed, because a channel's
+  state is created inside `join` and sealed by `channel.joined`.
+- **No erase/restore pair returns.** The proposal budgeted for one sound
+  erase-at-send/restore-at-receive pair per handler registration. It was
+  not needed. `channel.notify` seals the typed value in a closure that
+  only its own join can open, and the router carries it inside an envelope
+  stamped with that join's topic and a per-socket monotonic generation.
+  The stamp is checked against the live instance *before* anything is
+  unsealed, so mail for a superseded or ended join is dropped still
+  sealed and can never be handed to a later join. The workspace therefore
+  contains zero coercions of any kind, checked or unchecked.

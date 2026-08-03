@@ -205,10 +205,14 @@ Steps 1–3 above are unchanged: `with_on_connect` belongs to the transport, so 
 
 What changes is where you read that metadata. A channel system has no app-level `init`: the verified metadata arrives as **`JoinInfo.seed.metadata`, inside each handler's `join` callback**, once per join rather than once per connection. Steps 4 and 5 therefore collapse into that one callback — decode the claims, then accept or `channel.reject`.
 
+The channel below reuses three definitions from earlier in this guide unchanged: `Claims` (step 1), `claims_from_metadata` (step 4), and `authorized_for_topic` with its `has_role` helper (step 5). Keep them in this module — which is what the `gleam/list`, `gleam/result` and `gleam/string` imports are for — or import them from wherever your app already defines them.
+
 ```gleam
 // src/my_app/room_channel.gleam
 import beryl_channels/channel
 import gleam/json
+// Used by claims_from_metadata (step 4) and authorized_for_topic (step 5),
+// which live in this module alongside the Claims type from step 1.
 import gleam/list
 import gleam/result
 import gleam/string

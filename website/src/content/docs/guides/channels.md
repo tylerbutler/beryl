@@ -189,19 +189,27 @@ Validate a table without starting anything:
 
 ```gleam
 // src/my_app/handler_check.gleam
+import beryl/topic
 import beryl_channels
 import my_app
 
 pub fn check_handlers() -> Nil {
   case beryl_channels.validate_handlers(my_app.handlers()) {
     Ok(Nil) -> Nil
-    Error(beryl_channels.InvalidPattern(pattern, reason)) ->
-      panic as { "invalid channel pattern " <> pattern <> ": " <> reason }
+    Error(beryl_channels.InvalidPattern(pattern, topic.EmptyTopic)) ->
+      panic as { "channel pattern " <> pattern <> " is empty" }
+    Error(beryl_channels.InvalidPattern(pattern, topic.InvalidFormat(detail))) ->
+      panic as { "invalid channel pattern " <> pattern <> ": " <> detail }
     Error(beryl_channels.DuplicatePattern(pattern)) ->
       panic as { "duplicate channel pattern " <> pattern }
   }
 }
 ```
+
+`InvalidPattern` carries the core
+[`topic.TopicError`](/reference/api/beryl-topic/) itself rather than a
+flattened string, so the reason stays matchable — the same nesting rule
+`StartError` and `ChildSpecError` follow for core errors.
 
 Validation is deterministic and two-phase: every pattern's syntax is
 checked in registration order first, then duplicate pattern strings are

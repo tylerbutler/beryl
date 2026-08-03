@@ -16,10 +16,11 @@ Ensure you have the following installed:
 **Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew.
 
 This repository is a trellis-managed workspace: the publishable packages live
-in `packages/beryl` and `packages/beryl_mist`, runnable examples in
-`examples/`, and the root `gleam.toml` holds only the `[tools.trellis]`
-configuration. `just` recipes fan out across the workspace through
-`trellis run`.
+in `packages/beryl`, `packages/beryl_channels`, and `packages/beryl_mist`
+(`packages/beryl_ewe` is built, tested and linted but excluded from release
+until it is ready), runnable examples in `examples/`, and the root
+`gleam.toml` holds only the `[tools.trellis]` configuration. `just` recipes
+fan out across the workspace through `trellis run`.
 
 ```bash
 # With mise

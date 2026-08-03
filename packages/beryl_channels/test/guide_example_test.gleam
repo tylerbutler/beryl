@@ -1,8 +1,8 @@
 //// Compiles the flagship channel-layer guide example from
 //// `website/src/content/docs/guides/channels.md` — the room channel from
-//// "The shape" plus the `start` and transport wiring from "Starting a
-//// channel system" — so the guide's start shape cannot drift from the
-//// real API.
+//// "The shape", the `start` and transport wiring from "Starting a
+//// channel system", and the handler-table check from "Routing rules" —
+//// so the guide's start shape cannot drift from the real API.
 ////
 //// Two deliberate deviations from the published text: the guide splits the
 //// two snippets across `src/my_app/room_channel.gleam` and
@@ -12,6 +12,7 @@
 //// a live listener. Real listeners are covered by `wire_matrix_test`.
 
 import beryl
+import beryl/topic
 import beryl/transport/server
 import beryl/wire
 import beryl_channels
@@ -120,4 +121,23 @@ pub fn documented_guide_start_example_compiles_and_starts_test() {
 /// The guide's `validate_handlers` check, run over the guide's own table.
 pub fn documented_guide_handler_table_validates_test() {
   beryl_channels.validate_handlers(handlers()) |> should.equal(Ok(Nil))
+  check_handlers() |> should.equal(Nil)
+}
+
+// ---------------------------------------------------------------------------
+// guides/channels.md — "Routing rules" (src/my_app/handler_check.gleam)
+// ---------------------------------------------------------------------------
+
+/// The guide's handler-table check, pinning the `HandlerError` match it
+/// documents. The guide reads `my_app.handlers()`; the table is local here.
+pub fn check_handlers() -> Nil {
+  case beryl_channels.validate_handlers(handlers()) {
+    Ok(Nil) -> Nil
+    Error(beryl_channels.InvalidPattern(pattern, topic.EmptyTopic)) ->
+      panic as { "channel pattern " <> pattern <> " is empty" }
+    Error(beryl_channels.InvalidPattern(pattern, topic.InvalidFormat(detail))) ->
+      panic as { "invalid channel pattern " <> pattern <> ": " <> detail }
+    Error(beryl_channels.DuplicatePattern(pattern)) ->
+      panic as { "duplicate channel pattern " <> pattern }
+  }
 }

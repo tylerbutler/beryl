@@ -42,6 +42,10 @@ pub fn main() {
       beryl.config(wire.phoenix_codec()),
       handlers: [room()],
     )
+
+  // `sockets` is an ordinary beryl handle: hand it to a transport
+  // (`beryl_mist`, `beryl_ewe`), to `beryl.broadcast`, or to `beryl.stop`.
+  beryl.broadcast(sockets, "room:lobby", "announce", json.string("hello"))
 }
 ```
 
