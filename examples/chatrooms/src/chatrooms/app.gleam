@@ -5,9 +5,9 @@
 //// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
 ////   composing app (see the showcase example) routes `room:*` events
 ////   through, storing the returned model per topic.
-//// - A socket-wide `Standalone` model plus `standalone_init`/
-////   `standalone_update` wrappers that drive the standalone chatrooms
-////   server through `beryl.start`, reusing the same per-topic surface.
+//// - A `standalone_update` wrapper over the shared `router.Standalone`
+////   model that drives the standalone chatrooms server through
+////   `beryl.start`, reusing the same per-topic surface.
 ////
 //// Wire behavior matches the original per-topic handler, including its
 //// replies (an ok-status reply carrying an error payload).
@@ -121,7 +121,6 @@ pub fn join(
 
 /// Handle a client message on a joined `room:*` topic.
 pub fn update(
-  _ctx: Ctx,
   socket_id: String,
   topic: String,
   model: Model,
@@ -172,12 +171,7 @@ pub fn update(
 }
 
 /// Handle the topic closing (leave, kick, crash, or disconnect).
-pub fn closed(
-  _ctx: Ctx,
-  _socket_id: String,
-  topic: String,
-  model: Model,
-) -> List(Effect) {
+pub fn closed(_socket_id: String, topic: String, model: Model) -> List(Effect) {
   let sys_payload = system_message(model.username <> " left the room")
   // The snapshot encodes after the untrack before it, so the broadcast
   // list already excludes the leaving user.
@@ -194,20 +188,6 @@ pub fn closed(
 }
 
 // --- Standalone app-side dispatch wrapper ---
-
-/// Socket-wide state for the standalone chatrooms server: one per-topic
-/// `Model` per joined `room:*` topic, keyed by topic. The application-wide
-/// `lobby` topic is read-only and carries no state.
-pub type Standalone {
-  Standalone(socket_id: String, rooms: Dict(String, Model))
-}
-
-/// `init` for the standalone chatrooms `beryl.start` runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, rooms: dict.new()), [])
-}
 
 /// The `room:*` namespace, adapted to whatever socket-wide model holds it.
 ///
@@ -228,33 +208,27 @@ pub fn namespace(
     join: fn(socket_id, topic, payload, ref) {
       join(ctx, socket_id, topic, payload, ref)
     },
-    message: fn(socket_id, topic, model, event_name, payload, ref) {
-      update(ctx, socket_id, topic, model, event_name, payload, ref)
-    },
-    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
+    message: update,
+    closed: closed,
   )
 }
 
-/// `update` for the standalone chatrooms `beryl.start` runtime. Topics
-/// outside the registered namespaces are rejected (fail closed).
+/// Build the `update` for the standalone chatrooms `beryl.start` runtime
+/// (paired with `router.standalone_init`; the application-wide read-only
+/// `lobby` topic carries no state). The namespace list is built once here
+/// rather than per delivered input. Topics outside the registered
+/// namespaces are rejected (fail closed).
 pub fn standalone_update(
   ctx: Ctx,
-  model: Standalone,
-  ev: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  let rooms =
-    namespace(
-      ctx,
-      socket_id: fn(model: Standalone) { model.socket_id },
-      get: fn(model: Standalone) { model.rooms },
-      put: fn(model: Standalone, rooms) { Standalone(..model, rooms: rooms) },
-    )
-  router.route(
-    [router.accept_only("lobby"), rooms],
-    router.unknown_topic(),
-    model,
-    ev,
-  )
+) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [
+    router.accept_only("lobby"),
+    router.standalone_namespace(fn(socket_id, get, put) {
+      namespace(ctx, socket_id, get, put)
+    }),
+  ]
+  fn(model, ev) { router.route(namespaces, router.unknown_topic(), model, ev) }
 }
 
 // --- Helpers ---

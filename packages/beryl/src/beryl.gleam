@@ -916,7 +916,7 @@ fn build_app_subtree(
     Sockets(
       config: config,
       connection_limiter: option.map(limiter_name, connection_limit.from_name),
-      app: app_handle(process.named_subject(runtime_name), config.pubsub),
+      app: app_handle(process.named_subject(runtime_name)),
     )
 
   AppSubtree(handle: handle, start_supervisor: fn() {
@@ -980,10 +980,7 @@ fn start_app_supervisor(
 /// subject is name-backed, so the closures keep working across supervised
 /// runtime restarts; sends are owner-guarded so use during a restart
 /// window or after `stop` degrades to a no-op instead of a crash.
-fn app_handle(
-  subject: Subject(runtime.Msg(msg)),
-  ps: Option(PubSub(json.Json)),
-) -> AppHandle {
+fn app_handle(subject: Subject(runtime.Msg(msg))) -> AppHandle {
   AppHandle(
     socket_connected: fn(socket_id, send, send_binary, seed) {
       send_runtime(
@@ -1004,24 +1001,13 @@ fn app_handle(
       send_runtime(subject, runtime.HandleBinary(socket_id, data))
     },
     broadcast: fn(topic_name, event_name, payload, except) {
-      // Local fan-out via the runtime; distributed fan-out via PubSub with
-      // the runtime's pid as sender so it does not echo back to itself.
+      // The runtime owns both fan-outs: local delivery plus PubSub
+      // forwarding attributed to its own pid, so every `Broadcast` sender
+      // gets distributed delivery without repeating the forwarding here.
       send_runtime(
         subject,
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
-      case ps, process.subject_owner(subject) {
-        Some(ps), Ok(runtime_pid) ->
-          runtime.forward_to_pubsub(
-            ps,
-            runtime_pid,
-            topic_name,
-            event_name,
-            payload,
-            except,
-          )
-        _, _ -> Nil
-      }
     },
     stop: fn() {
       // Drain sockets gracefully; the Transient child is not restarted

@@ -64,8 +64,10 @@ pub fn route_decoded(
   beryl.transport_route_decoded(sockets, socket_id, message)
 }
 
-/// Route a raw binary frame, for codecs without a binary decoder (fans out
-/// to the socket's joined topics as `Binary` events delivered to `update`).
+/// Route a raw binary frame. When the codec has a binary decoder the frame
+/// is decoded in the runtime and dispatched like any inbound message;
+/// otherwise it fans out to the socket's joined topics as `Binary` events
+/// delivered to `update`.
 pub fn route_binary(
   sockets sockets: Sockets,
   socket_id socket_id: String,

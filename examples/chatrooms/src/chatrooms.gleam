@@ -6,6 +6,7 @@ import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
 import chatrooms/router
+import example_helpers/router as topic_router
 import gleam/erlang/process
 import gleam/http/request
 import gleam/io
@@ -38,9 +39,11 @@ pub fn main() {
     |> beryl.with_presence_handle(presence_actor)
 
   let assert Ok(channels) =
-    beryl.start(config, init: chat_app.standalone_init, update: fn(model, ev) {
-      chat_app.standalone_update(ctx, model, ev)
-    })
+    beryl.start(
+      config,
+      init: topic_router.standalone_init,
+      update: chat_app.standalone_update(ctx),
+    )
 
   io.println("💬 Chat Rooms Demo")
   io.println("   Open http://localhost:8001?token=beryl-demo")
@@ -74,10 +77,6 @@ pub fn main() {
 }
 
 fn get_query_param(req, name: String) -> Result(String, Nil) {
-  case request.get_query(req) {
-    Ok(params) ->
-      list.find(params, fn(pair) { pair.0 == name })
-      |> result.map(fn(pair) { pair.1 })
-    Error(_) -> Error(Nil)
-  }
+  request.get_query(req)
+  |> result.try(list.key_find(_, name))
 }

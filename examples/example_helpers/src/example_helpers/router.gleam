@@ -10,7 +10,9 @@
 //// which is what lets namespaces with different per-topic state types share
 //// one list.
 
-import beryl/socket.{type Effect, type Input, type Next, type Ref}
+import beryl/socket.{
+  type ConnectInfo, type Effect, type Input, type Next, type Ref,
+}
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
@@ -92,6 +94,38 @@ pub fn stateful(
 /// The conventional rejection payload for a topic no namespace claims.
 pub fn unknown_topic() -> Json {
   json.object([#("reason", json.string("unknown_topic"))])
+}
+
+/// Socket-wide model for a standalone server built around one stateful
+/// namespace: the socket id plus one per-topic sub-model per joined topic.
+/// Every standalone example shares this shape, so the type, its `init`,
+/// and its projections live here instead of being copied per app.
+pub type Standalone(sub) {
+  Standalone(socket_id: String, topics: Dict(String, sub))
+}
+
+/// `init` for a standalone `beryl.start` runtime whose model is
+/// `Standalone`.
+pub fn standalone_init(
+  info: ConnectInfo(msg),
+) -> #(Standalone(sub), List(Effect)) {
+  #(Standalone(socket_id: info.socket_id, topics: dict.new()), [])
+}
+
+/// Adapt a projection-taking namespace factory (the `namespace` function
+/// each example app exports) to the canonical `Standalone` model.
+pub fn standalone_namespace(
+  factory: fn(
+    fn(Standalone(sub)) -> String,
+    fn(Standalone(sub)) -> Dict(String, sub),
+    fn(Standalone(sub), Dict(String, sub)) -> Standalone(sub),
+  ) -> Namespace(Standalone(sub)),
+) -> Namespace(Standalone(sub)) {
+  factory(
+    fn(model) { model.socket_id },
+    fn(model) { model.topics },
+    fn(model, topics) { Standalone(..model, topics:) },
+  )
 }
 
 /// Route one input to the namespace that owns its topic.

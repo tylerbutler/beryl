@@ -96,7 +96,7 @@ pub fn main() {
           [],
         )
       },
-      update: fn(model, ev) { update(ctx, model, ev) },
+      update: update(ctx),
     )
 
   // Build per-example contexts pinned to their URL prefix.
@@ -159,11 +159,12 @@ pub fn main() {
   process.sleep_forever()
 }
 
-/// The socket-wide router: register each embedded app's topic namespace,
-/// projecting this app's `Model` onto the `Dict` that namespace owns. The
-/// dispatch itself lives in `example_helpers/router`, shared with each
-/// example's standalone server.
-fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
+/// Build the socket-wide router: register each embedded app's topic
+/// namespace, projecting this app's `Model` onto the `Dict` that namespace
+/// owns. The namespace list is built once here rather than per delivered
+/// input; the dispatch itself lives in `example_helpers/router`, shared
+/// with each example's standalone server.
+fn update(ctx: Ctx) -> fn(Model, Input(Nil)) -> Next(Model, Nil) {
   let namespaces = [
     cursors_app.namespace(
       socket_id: fn(model: Model) { model.socket_id },
@@ -183,5 +184,7 @@ fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
       put: fn(model: Model, docs) { Model(..model, docs: docs) },
     ),
   ]
-  topic_router.route(namespaces, topic_router.unknown_topic(), model, ev)
+  fn(model, ev) {
+    topic_router.route(namespaces, topic_router.unknown_topic(), model, ev)
+  }
 }

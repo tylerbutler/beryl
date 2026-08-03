@@ -5,9 +5,9 @@
 //// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
 ////   composing app (see the showcase example) routes `cursor:*` events
 ////   through, storing the returned model per topic.
-//// - A socket-wide `Standalone` model plus `standalone_init`/
-////   `standalone_update` wrappers that drive the standalone cursors server
-////   through `beryl.start`, reusing the same per-topic surface.
+//// - A `standalone_update` wrapper over the shared `router.Standalone`
+////   model that drives the standalone cursors server through
+////   `beryl.start`, reusing the same per-topic surface.
 
 import beryl/socket.{type Effect, type Ref}
 import example_helpers/color
@@ -117,19 +117,6 @@ pub fn closed(_socket_id: String, topic: String, model: Model) -> List(Effect) {
 
 // --- Standalone app-side dispatch wrapper ---
 
-/// Socket-wide state for the standalone cursors server: one per-topic
-/// `Model` per joined `cursor:*` topic, keyed by topic.
-pub type Standalone {
-  Standalone(socket_id: String, cursors: Dict(String, Model))
-}
-
-/// `init` for the standalone cursors `beryl.start` runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, cursors: dict.new()), [])
-}
-
 /// The `cursor:*` namespace, adapted to whatever socket-wide model holds it.
 ///
 /// `socket_id`, `get`, and `put` project that model onto the pieces this app
@@ -153,21 +140,14 @@ pub fn namespace(
   )
 }
 
-/// `update` for the standalone cursors `beryl.start` runtime. Topics
-/// outside the registered namespaces are rejected (fail closed).
-pub fn standalone_update(
-  model: Standalone,
-  ev: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  let cursors =
-    namespace(
-      socket_id: fn(model: Standalone) { model.socket_id },
-      get: fn(model: Standalone) { model.cursors },
-      put: fn(model: Standalone, cursors) {
-        Standalone(..model, cursors: cursors)
-      },
-    )
-  router.route([cursors], router.unknown_topic(), model, ev)
+/// Build the `update` for the standalone cursors `beryl.start` runtime
+/// (paired with `router.standalone_init`). The namespace list is built once
+/// here rather than per delivered input. Topics outside the registered
+/// namespaces are rejected (fail closed).
+pub fn standalone_update() -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [router.standalone_namespace(namespace)]
+  fn(model, ev) { router.route(namespaces, router.unknown_topic(), model, ev) }
 }
 
 fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {

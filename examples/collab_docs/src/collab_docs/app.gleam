@@ -5,9 +5,9 @@
 //// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
 ////   composing app (see the showcase example) routes `document:*:*` events
 ////   through, storing the returned model per topic.
-//// - A socket-wide `Standalone` model plus `standalone_init`/
-////   `standalone_update` wrappers that drive the standalone collab-docs
-////   server through `beryl.start`, reusing the same per-topic surface.
+//// - A `standalone_update` wrapper over the shared `router.Standalone`
+////   model that drives the standalone collab-docs server through
+////   `beryl.start`, reusing the same per-topic surface.
 ////
 //// Join-level tenant-token auth is preserved: the join payload must carry a
 //// `token` HMAC-signed for the tenant whose document is being joined.
@@ -113,34 +113,11 @@ pub fn update(
   }
 }
 
-/// Handle the topic closing. Documents keep no per-socket server state
-/// beyond the model itself, so there is nothing to clean up.
-pub fn closed(
-  _ctx: Ctx,
-  _socket_id: String,
-  _topic_name: String,
-  _model: Model,
-) -> List(Effect) {
-  []
-}
-
 // --- Standalone app-side dispatch wrapper ---
 
-/// Socket-wide state for the standalone collab-docs server: one per-topic
-/// `Model` per joined `document:*:*` topic, keyed by topic.
-pub type Standalone {
-  Standalone(socket_id: String, docs: Dict(String, Model))
-}
-
-/// `init` for the standalone collab-docs `beryl.start` runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, docs: dict.new()), [])
-}
-
 /// The `document:*` namespace, adapted to whatever socket-wide model holds
-/// it.
+/// it. Documents keep no per-socket server state beyond the model itself,
+/// so closing a topic has no effects.
 ///
 /// `socket_id`, `get`, and `put` project that model onto the pieces this app
 /// owns, so the standalone server below and the composing showcase app share
@@ -162,25 +139,26 @@ pub fn namespace(
     message: fn(socket_id, topic, model, event_name, payload, ref) {
       update(ctx, socket_id, topic, model, event_name, payload, ref)
     },
-    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
+    closed: fn(_socket_id, _topic, _model) { [] },
   )
 }
 
-/// `update` for the standalone collab-docs `beryl.start` runtime. Topics
-/// outside the registered namespaces are rejected (fail closed).
+/// Build the `update` for the standalone collab-docs `beryl.start` runtime
+/// (paired with `router.standalone_init`). The namespace list is built once
+/// here rather than per delivered input. Topics outside the registered
+/// namespaces are rejected (fail closed).
 pub fn standalone_update(
   ctx: Ctx,
-  model: Standalone,
-  ev: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  let docs =
-    namespace(
-      ctx,
-      socket_id: fn(model: Standalone) { model.socket_id },
-      get: fn(model: Standalone) { model.docs },
-      put: fn(model: Standalone, docs) { Standalone(..model, docs: docs) },
-    )
-  router.route([docs], error_payload("invalid_topic"), model, ev)
+) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [
+    router.standalone_namespace(fn(socket_id, get, put) {
+      namespace(ctx, socket_id, get, put)
+    }),
+  ]
+  fn(model, ev) {
+    router.route(namespaces, error_payload("invalid_topic"), model, ev)
+  }
 }
 
 fn sync_state(

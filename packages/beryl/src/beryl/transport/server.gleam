@@ -81,10 +81,22 @@ pub type ConnectError {
 /// `with_allow_all_origins` to opt out of origin checking entirely.
 pub fn default_config(path: String) -> TransportConfig(body) {
   TransportConfig(
-    path: path,
+    path: normalize_path(path),
     on_connect: None,
     origin_policy: origin.SameOrigin,
   )
+}
+
+/// Canonicalize a path as `"/" <> segments joined by "/"`, so config paths
+/// and request paths compare equal regardless of trailing or doubled
+/// slashes.
+fn normalize_path(path: String) -> String {
+  "/"
+  <> {
+    string.split(path, "/")
+    |> list.filter(fn(segment) { segment != "" })
+    |> string.join("/")
+  }
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -172,18 +184,20 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 ///
 /// ## Path matching
 ///
-/// The request path is normalised by re-joining its segments as
-/// `"/" <> string.join(segments, "/")` and compared for exact equality with
-/// `config.path`. Because the normalised path never has a trailing slash, a
-/// config path written with a trailing slash (e.g. `"/socket/"`) will never
-/// match. Configure the path without a trailing slash (e.g. `"/socket"`).
+/// Both the request path and the configured path are normalised to
+/// `"/" <> string.join(segments, "/")` (no trailing or doubled slashes)
+/// before an exact-equality comparison, so `default_config("/socket/")`
+/// and a request for `/socket` match.
 ///
 /// ## Connection limits
 ///
 /// When `beryl.with_max_connections_per_ip` is configured, the limit is
 /// enforced before completing the handshake, returning `reject(429)` once the
 /// peer is at its limit. `request_ip` must return the **real socket peer IP**
-/// from the TCP connection; forwarded headers such as `X-Forwarded-For` must
+/// from the TCP connection, or `Error(Nil)` when the server cannot determine
+/// it — all such connections share a single `"unknown"` limiter bucket, so
+/// they are limited collectively rather than admitted unchecked. Forwarded
+/// headers such as `X-Forwarded-For` must
 /// **not** be trusted or parsed, because clients can set them and would
 /// otherwise spoof their address to bypass the limit. Behind a trusted
 /// reverse proxy, all connections share the proxy's IP — resolve the real
@@ -202,7 +216,7 @@ pub fn upgrade(
   request request: Request(body),
   sockets sockets: Sockets,
   config config: TransportConfig(body),
-  request_ip request_ip: fn(Request(body)) -> String,
+  request_ip request_ip: fn(Request(body)) -> Result(String, Nil),
   reject reject: fn(Int) -> Response(resp),
   accept accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
   next next: fn() -> Response(resp),
@@ -246,7 +260,7 @@ fn handle_matched_upgrade(
   request: Request(body),
   sockets: Sockets,
   config: TransportConfig(body),
-  request_ip: fn(Request(body)) -> String,
+  request_ip: fn(Request(body)) -> Result(String, Nil),
   reject: fn(Int) -> Response(resp),
   accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
 ) -> Response(resp) {
@@ -255,7 +269,11 @@ fn handle_matched_upgrade(
       || !request_vsn_supported(request),
     return: fn() { reject(403) },
   )
-  case beryl.acquire_connection_slot(sockets, request_ip(request)) {
+  // Connections without a determinable peer IP share one limiter bucket:
+  // limited collectively (fail-closed under load) rather than admitted
+  // unchecked or rejected outright.
+  let peer_ip = request_ip(request) |> result.unwrap("unknown")
+  case beryl.acquire_connection_slot(sockets, peer_ip) {
     Error(Nil) -> reject(429)
     Ok(connection_permit) ->
       run_on_connect(request, config, connection_permit, reject, accept)
@@ -489,25 +507,12 @@ pub type FrameOutcome {
 /// Oversized frames return `Stop` (close the connection); over-rate frames
 /// are shed silently; undecodable frames are logged and dropped.
 pub fn handle_text_frame(state: ConnectionState, text: String) -> FrameOutcome {
-  use <- bool.guard(
-    when: frame_too_large(state.max_inbound_frame_bytes, string.byte_size(text)),
-    return: Stop,
+  use state <- admit_frame(state, string.byte_size(text))
+  route_or_warn(
+    state,
+    codec.decode_text(state.codec)(text),
+    "Failed to decode wire protocol message",
   )
-  let #(state, allowed) = take_message_token(state)
-  use <- bool.guard(when: !allowed, return: Continue(state))
-  case codec.decode_text(state.codec)(text) {
-    Ok(msg) -> {
-      transport.route_decoded(state.sockets, state.socket_id, msg)
-      Continue(state)
-    }
-    Error(err) -> {
-      log.warn(state.logger, "Failed to decode wire protocol message", [
-        #("socket_id", state.socket_id),
-        #("error", codec.format_decode_error(err)),
-      ])
-      Continue(state)
-    }
-  }
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -521,38 +526,49 @@ pub fn handle_binary_frame(
   state: ConnectionState,
   data: BitArray,
 ) -> FrameOutcome {
+  use state <- admit_frame(state, bit_array.byte_size(data))
+  case codec.decode_binary(state.codec) {
+    None -> transport.route_binary(state.sockets, state.socket_id, data)
+    Some(decode_binary) ->
+      route_or_warn(
+        state,
+        decode_binary(data),
+        "Failed to decode binary wire protocol message",
+      )
+  }
+}
+
+/// Shared admission for inbound frames: close the connection on oversized
+/// frames, silently shed over-rate frames, and hand admitted frames to
+/// `route`.
+fn admit_frame(
+  state: ConnectionState,
+  frame_bytes: Int,
+  route: fn(ConnectionState) -> Nil,
+) -> FrameOutcome {
   use <- bool.guard(
-    when: frame_too_large(
-      state.max_inbound_frame_bytes,
-      bit_array.byte_size(data),
-    ),
+    when: frame_too_large(state.max_inbound_frame_bytes, frame_bytes),
     return: Stop,
   )
   let #(state, allowed) = take_message_token(state)
   use <- bool.guard(when: !allowed, return: Continue(state))
-  case codec.decode_binary(state.codec) {
-    None -> {
-      transport.route_binary(state.sockets, state.socket_id, data)
-      Continue(state)
-    }
-    Some(decode_binary) ->
-      case decode_binary(data) {
-        Ok(msg) -> {
-          transport.route_decoded(state.sockets, state.socket_id, msg)
-          Continue(state)
-        }
-        Error(err) -> {
-          log.warn(
-            state.logger,
-            "Failed to decode binary wire protocol message",
-            [
-              #("socket_id", state.socket_id),
-              #("error", codec.format_decode_error(err)),
-            ],
-          )
-          Continue(state)
-        }
-      }
+  route(state)
+  Continue(state)
+}
+
+/// Route a decoded message, or log `warning` and drop an undecodable one.
+fn route_or_warn(
+  state: ConnectionState,
+  decoded: Result(codec.Inbound, codec.DecodeError),
+  warning: String,
+) -> Nil {
+  case decoded {
+    Ok(msg) -> transport.route_decoded(state.sockets, state.socket_id, msg)
+    Error(err) ->
+      log.warn(state.logger, warning, [
+        #("socket_id", state.socket_id),
+        #("error", codec.format_decode_error(err)),
+      ])
   }
 }
 

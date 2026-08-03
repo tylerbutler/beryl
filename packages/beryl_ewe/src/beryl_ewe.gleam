@@ -21,6 +21,7 @@ import ewe.{type Connection, type ResponseBody, type WebsocketConnection}
 import gleam/erlang/process.{type Selector}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/result
 
 /// Upgrade a request to WebSocket if it matches the configured path
 ///
@@ -66,11 +67,9 @@ fn reject(status: Int) -> Response(ResponseBody) {
   |> response.set_body(ewe.Empty)
 }
 
-fn request_ip(request: Request(Connection)) -> String {
-  case ewe.get_client_info(request.body) {
-    Ok(info) -> ewe.ip_address_to_string(info.ip)
-    Error(Nil) -> "unknown"
-  }
+fn request_ip(request: Request(Connection)) -> Result(String, Nil) {
+  ewe.get_client_info(request.body)
+  |> result.map(fn(info) { ewe.ip_address_to_string(info.ip) })
 }
 
 /// Build a combined request handler that serves both WebSocket upgrades and

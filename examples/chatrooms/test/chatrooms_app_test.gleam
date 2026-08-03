@@ -2,6 +2,7 @@ import beryl/group
 import beryl/presence
 import beryl/socket
 import chatrooms/app
+import example_helpers/router
 import gleam/dict
 import gleam/dynamic
 import gleam/json
@@ -46,10 +47,9 @@ fn connect_info() -> socket.ConnectInfo(Nil) {
 }
 
 pub fn standalone_routes_lobby_join_test() {
-  let #(model, _) = app.standalone_init(connect_info())
+  let #(model, _) = router.standalone_init(connect_info())
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Join("lobby", empty_payload(), lobby_ref()),
     )
@@ -58,11 +58,10 @@ pub fn standalone_routes_lobby_join_test() {
 }
 
 pub fn lobby_messages_are_ignored_test() {
-  let #(model, _) = app.standalone_init(connect_info())
+  let #(model, _) = router.standalone_init(connect_info())
 
   let assert socket.Next(next_model, effects) =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Message("lobby", "refresh", empty_payload(), None),
     )
@@ -75,27 +74,26 @@ pub fn closing_lobby_preserves_room_models_test() {
   let room =
     app.Model(username: "Alice", color: "#abcdef", room_name: "general")
   let model =
-    app.Standalone(
+    router.Standalone(
       socket_id: "socket-1",
-      rooms: dict.from_list([#("room:general", room)]),
+      topics: dict.from_list([#("room:general", room)]),
     )
 
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Closed("lobby", socket.Normal),
     )
 
-  let assert socket.Next(app.Standalone(socket_id: _, rooms: rooms), []) = next
+  let assert socket.Next(router.Standalone(socket_id: _, topics: rooms), []) =
+    next
   dict.has_key(rooms, "room:general") |> should.be_true
 }
 
 pub fn unrelated_topic_is_rejected_test() {
-  let #(model, _) = app.standalone_init(connect_info())
+  let #(model, _) = router.standalone_init(connect_info())
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Join(
         "notifications:alice",
@@ -149,7 +147,7 @@ pub fn rejected_room_join_does_not_invalidate_lobby_test() {
 pub fn room_close_invalidates_lobby_after_presence_untrack_test() {
   let model =
     app.Model(username: "Alice", color: "#abcdef", room_name: "general")
-  let effects = app.closed(context(), "socket-1", "room:general", model)
+  let effects = app.closed("socket-1", "room:general", model)
 
   let assert [
     socket.PresenceUntrack("room:general", "Alice"),

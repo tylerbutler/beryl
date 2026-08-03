@@ -6,6 +6,7 @@ import collab_docs/app as docs_app
 import collab_docs/auth
 import collab_docs/doc_store
 import collab_docs/router
+import example_helpers/router as topic_router
 import gleam/erlang/process
 import gleam/io
 import mist
@@ -21,8 +22,8 @@ pub fn main() {
   let assert Ok(channels) =
     beryl.start(
       beryl.config(wire.phoenix_codec()),
-      init: docs_app.standalone_init,
-      update: fn(model, ev) { docs_app.standalone_update(ctx, model, ev) },
+      init: topic_router.standalone_init,
+      update: docs_app.standalone_update(ctx),
     )
 
   io.println("📝 Collaborative CRDT Docs Demo")

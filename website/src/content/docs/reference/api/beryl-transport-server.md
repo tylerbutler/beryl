@@ -268,18 +268,20 @@ Run the shared upgrade admission pipeline for a request.
 
  ## Path matching
 
- The request path is normalised by re-joining its segments as
- `"/" <> string.join(segments, "/")` and compared for exact equality with
- `config.path`. Because the normalised path never has a trailing slash, a
- config path written with a trailing slash (e.g. `"/socket/"`) will never
- match. Configure the path without a trailing slash (e.g. `"/socket"`).
+ Both the request path and the configured path are normalised to
+ `"/" <> string.join(segments, "/")` (no trailing or doubled slashes)
+ before an exact-equality comparison, so `default_config("/socket/")`
+ and a request for `/socket` match.
 
  ## Connection limits
 
  When `beryl.with_max_connections_per_ip` is configured, the limit is
  enforced before completing the handshake, returning `reject(429)` once the
  peer is at its limit. `request_ip` must return the **real socket peer IP**
- from the TCP connection; forwarded headers such as `X-Forwarded-For` must
+ from the TCP connection, or `Error(Nil)` when the server cannot determine
+ it — all such connections share a single `"unknown"` limiter bucket, so
+ they are limited collectively rather than admitted unchecked. Forwarded
+ headers such as `X-Forwarded-For` must
  **not** be trusted or parsed, because clients can set them and would
  otherwise spoof their address to bypass the limit. Behind a trusted
  reverse proxy, all connections share the proxy's IP — resolve the real
@@ -300,7 +302,7 @@ pub fn upgrade(
   request: request.Request(a),
   sockets: beryl.Sockets,
   config: TransportConfig(a),
-  request_ip: fn(request.Request(a)) -> String,
+  request_ip: fn(request.Request(a)) -> Result(String, Nil),
   reject: fn(Int) -> response.Response(b),
   accept: fn(List(#(String, String)), beryl.ConnectionPermit) -> response.Response(b),
   next: fn() -> response.Response(b)

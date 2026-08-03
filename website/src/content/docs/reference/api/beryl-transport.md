@@ -58,8 +58,10 @@ pub fn register_closer(
 
 ### `route_binary`
 
-Route a raw binary frame, for codecs without a binary decoder (fans out
- to the socket's joined topics as `Binary` events delivered to `update`).
+Route a raw binary frame. When the codec has a binary decoder the frame
+ is decoded in the runtime and dispatched like any inbound message;
+ otherwise it fans out to the socket's joined topics as `Binary` events
+ delivered to `update`.
 
 ```gleam
 pub fn route_binary(

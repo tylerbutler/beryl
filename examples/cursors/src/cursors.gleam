@@ -6,6 +6,7 @@ import beryl_mist as mist_transport
 import cursors/app as cursors_app
 import cursors/router
 import envoy
+import example_helpers/router as topic_router
 import gleam/erlang/process
 import gleam/int
 import gleam/io
@@ -27,8 +28,8 @@ pub fn main() {
   let assert Ok(channels) =
     beryl.start(
       config,
-      init: cursors_app.standalone_init,
-      update: cursors_app.standalone_update,
+      init: topic_router.standalone_init,
+      update: cursors_app.standalone_update(),
     )
 
   // Honor $PORT (Railway/PaaS) and $HOST/$BIND_ADDRESS; fall back to local defaults.
