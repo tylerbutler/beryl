@@ -8,6 +8,8 @@
 //// | join actions retain declared order | async presence may yield, but later actions resume only after it completes |
 //// | termination actions apply in order, once | leave announcements and post-leave rosters are ordinary features |
 //// | pushes to the closing topic are dropped | documented consequence of the topic being unsubscribed first |
+//// | a termination `presence_track` is reversed by core's automatic untrack | `presence_untrack` is the action a terminating channel wants |
+//// | a termination reply is dropped | the topic's reply refs are purged before `Closed` |
 ////
 //// Everything runs against a real system through beryl's public transport
 //// SPI, so these are assertions about frames on the wire.
@@ -20,6 +22,7 @@ import dispatch_helpers as helper
 import gleam/erlang/process
 import gleam/json
 import gleam/list
+import gleam/option
 import gleam/string
 import gleeunit/should
 
@@ -242,6 +245,86 @@ pub fn termination_actions_run_exactly_once_test() {
   helper.disconnect(channels, "s1")
   helper.no_trace(trace)
   helper.recv_none(peer)
+}
+
+fn late_tracking_handler() -> channel.Handler {
+  channel.handler("room:*", fn(info, _topic, _payload) {
+    let callbacks =
+      channel.callbacks()
+      |> channel.on_terminate(fn(_state, _reason) {
+        channel.actions()
+        |> channel.presence_track(
+          info.socket_id,
+          json.object([#("state", json.string("leaving"))]),
+        )
+      })
+    channel.accept(channel.joined(Nil, callbacks))
+  })
+}
+
+pub fn a_presence_track_from_termination_is_reversed_by_core_test() {
+  let handle = start_presence("terminate-track")
+  let channels = start_with_presence([late_tracking_handler()], handle)
+  let leaver = helper.connect(channels, "s1")
+  let peer = helper.connect(channels, "s2")
+
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ack = helper.recv(leaver)
+  helper.join(channels, "s2", "room:a", "jr-1", "r-1")
+  let _peer_ack = helper.recv(peer)
+
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
+
+  let joined_diff = helper.recv(peer)
+  joined_diff |> string.contains("presence_diff") |> should.be_true
+  joined_diff |> string.contains("\"leaving\"") |> should.be_true
+  let left_diff = helper.recv(peer)
+  left_diff |> string.contains("presence_diff") |> should.be_true
+  left_diff |> string.contains("leaves") |> should.be_true
+
+  presence.list(handle, "room:a")
+  |> list.any(fn(entry) { entry.key == "s1" })
+  |> should.be_false
+}
+
+fn late_replying_handler() -> channel.Handler {
+  channel.handler("room:*", fn(_info, _topic, _payload) {
+    let callbacks =
+      channel.callbacks()
+      |> channel.on_message(fn(state, message) {
+        case message.event {
+          "arm" -> channel.continue(message.reply)
+          _ -> {
+            let _ = state
+            channel.close()
+          }
+        }
+      })
+      |> channel.on_terminate(fn(state, _reason) {
+        case state {
+          option.None -> channel.actions()
+          option.Some(ref) ->
+            channel.actions()
+            |> channel.reply_ok(ref, json.object([#("late", json.bool(True))]))
+        }
+      })
+    channel.accept(channel.joined(option.None, callbacks))
+  })
+}
+
+pub fn a_reply_from_termination_is_dropped_by_core_test() {
+  let channels = start([late_replying_handler()])
+  let frames = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ack = helper.recv(frames)
+  helper.push(channels, "s1", "room:a", "arm", "r-2")
+  helper.push(channels, "s1", "room:a", "farewell", "r-3")
+
+  let seen = drain(frames, [])
+  list.any(seen, string.contains(_, "\"late\"")) |> should.be_false
+  list.any(seen, string.contains(_, "phx_reply")) |> should.be_false
+  list.any(seen, string.contains(_, "phx_close")) |> should.be_true
 }
 
 fn join_pair(

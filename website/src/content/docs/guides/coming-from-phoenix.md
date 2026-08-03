@@ -61,7 +61,7 @@ Two practical consequences either way:
 | `handle_in/3` | `channel.on_message` | `socket.Message(topic, event, payload, ref)` |
 | `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(ref, payload)` / `channel.reply_error(ref, payload)` action | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
 | `{:noreply, socket}` | `channel.continue(state)` | `socket.Next(model, [])` |
-| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep the `Ref` in the channel's state, `reply_ok` from a later callback | store the `Ref` in your model, `socket.ReplyOk` from a later `update` turn |
+| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep the `Ref` in the channel's state, `reply_ok` from a later callback (not from `on_terminate` — see below) | store the `Ref` in your model, `socket.ReplyOk` from a later `update` turn |
 | `push(socket, event, payload)` | `channel.push(event, payload)` action | `socket.Push(topic, event, payload)` effect |
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
 | `broadcast_from!/3` | `channel.broadcast_from(event, payload)` action | `socket.BroadcastFrom(topic, event, payload)` effect |
@@ -300,8 +300,9 @@ channel.on_terminate(fn(state: State, _reason) {
 })
 ```
 
-The topic is already unsubscribed at that point, so `push` actions are dropped
-while broadcasts and presence changes still apply. See
+The topic is already unsubscribed at that point and its reply refs are already
+purged, so `push` and `reply_ok`/`reply_error` actions are dropped while
+broadcasts and `presence_untrack` still apply. See
 [Termination](/guides/channels/#termination).
 
 The wire payloads (`presence_state`, `presence_diff`) match Phoenix Presence's
