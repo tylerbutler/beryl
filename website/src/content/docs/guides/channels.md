@@ -1,320 +1,558 @@
 ---
-title: Sockets and Topics
+title: Channels
+description: The beryl_channels layer — handler tables, per-channel private state, typed senders, ordered actions, and lifecycle from join to termination.
 ---
 
-Beryl delivers every WebSocket event to a single pair of functions your app
-supplies to `beryl.child_spec`: `init`, which builds a per-socket **model**
-when a client connects, and `update`, which receives every **event** for
-that socket and returns the next model plus a list of **effects**. Your app
-routes topics itself by pattern matching on the event's topic — there is no
-handler registry and no per-topic callback modules.
+`beryl_channels` is the **recommended default** for applications that serve
+more than one topic namespace on a socket, and for anyone porting a
+Phoenix-shaped design. You register a list of channel handlers, and the
+layer routes every join, message, binary frame, typed server-side message,
+and close to the channel that owns the topic.
 
-```gleam
-import beryl
-import beryl/socket.{type Input, type Next}
-import beryl/wire
-import gleam/otp/static_supervisor
+If you are not sure which layer you want, read
+[Choose an API](/choosing-an-api/) first. If you want one topic family and
+complete control over routing, use [App-Side Dispatch](/guides/dispatch/)
+instead — it is the core the channel layer is built on.
 
-pub fn main() {
-  let assert Ok(#(sockets, spec)) =
-    beryl.child_spec(
-      beryl.config(wire.phoenix_codec()),
-      init: fn(_info) { #(initial_model(), []) },
-      update: update,
-    )
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
-    |> static_supervisor.start()
-  // Hand `sockets` to a transport (beryl_mist / beryl_ewe) and to any
-  // code that broadcasts.
-}
+:::note[Separate package]
+The channel layer ships as its own package. Add it alongside beryl and a
+transport:
+
+```bash
+gleam add beryl beryl_channels beryl_mist
 ```
+:::
 
-If you've used Elm or Lustre, this is the same architecture applied to a
-socket: model in, event in, new model and effects out.
+## The shape
 
-## Topics
-
-Topics are colon-delimited string identifiers like `room:lobby` or
-`document:tenant-a:doc-42`. Clients join topics with `phx_join`; your
-`update` decides which joins to accept by matching on the topic string:
+A channel is a **topic pattern** plus a typed `join` callback. The `join`
+callback answers with a rejection, or with a joined channel: a set of
+callbacks bound to that channel's own private state.
 
 ```gleam
-case ev {
-  socket.Join("room:" <> room_id, payload, ref) -> // accept or reject
-  socket.Join("admin", payload, ref) -> // ...
-  socket.Join(_, _, ref) ->
-    socket.Next(model, [socket.RejectJoin(ref, unknown_topic_error())])
-  // ...
-}
-```
-
-For topics with several dynamic segments, `beryl/topic` helps take them
-apart:
-
-```gleam
-import beryl/topic
-
-topic.segments("room:lobby")   // -> ["room", "lobby"]
-topic.namespace("room:lobby")  // -> Ok("room")
-
-// Extract multiple dynamic segments with a pattern
-topic.extract_wildcards(
-  topic.parse_pattern("document:*:*"),
-  "document:tenant-a:doc-42",
-)
-// -> Ok(["tenant-a", "doc-42"])
-```
-
-## Events
-
-`update` receives one of five inputs (`beryl/socket.Input(msg)`):
-
-| Input | When |
-|-------|------|
-| `Join(topic, payload, ref)` | Client asked to join a topic. Answer with `AcceptJoin` or `RejectJoin`. |
-| `Message(topic, event, payload, ref)` | Client message on a joined topic. `ref` is `Some` when the client expects a reply. |
-| `Binary(topic, data)` | Raw binary frame on a joined topic (codecs without a binary decoder). |
-| `Closed(topic, reason)` | A joined topic ended — client leave, kick, heartbeat eviction, or socket close. |
-| `Info(msg)` | Typed server-side message delivered through the socket's `Sender`. |
-
-The `msg` parameter is your own type: whatever server-side processes send
-to this socket arrives as `Info(msg)` with no casts and no `Dynamic`.
-
-## Effects
-
-One update may return several effects; they are applied in list order:
-
-| Effect | Description |
-|--------|-------------|
-| `AcceptJoin(ref, reply)` | Accept a pending join, optionally with a reply payload |
-| `RejectJoin(ref, reason)` | Reject a pending join with an error payload |
-| `ReplyOk(ref, payload)` / `ReplyError(ref, payload)` | Answer a client message's ref with an ok/error `phx_reply` |
-| `Push(topic, event, payload)` | Server-initiated message to this socket |
-| `Broadcast(topic, event, payload)` | Message to every subscriber of a topic |
-| `BroadcastFrom(topic, event, payload)` | Broadcast excluding this socket |
-| `KickTopic(topic)` | Close this socket's subscription to a topic |
-
-A `Join` left unanswered by the end of the update is rejected automatically
-(fail closed), and `Push`/`Broadcast` to a topic whose join has not been
-accepted yet are dropped. An `AcceptJoin` earlier in the list is guaranteed
-to reach the wire before a `Push` later in the same list.
-
-To end the whole socket instead of returning effects, return
-`socket.Stop(reason)`.
-
-## A minimal topic app
-
-A single-topic-namespace app needs no routing machinery — your model and
-message types are used directly:
-
-```gleam
-import beryl
-import beryl/socket.{
-  type Input, type Next, AcceptJoin, Broadcast, Join, Message, Next, ReplyOk,
-}
-import beryl/wire
-import gleam/dynamic/decode
+import beryl_channels/channel
 import gleam/json
-import gleam/option.{None, Some}
-import gleam/otp/static_supervisor
 
-pub type Model {
-  Model(username: String, joined: Bool)
+/// This channel's private state — one value per joined topic.
+type State {
+  State(room_id: String, username: String, sent: Int)
+}
+
+/// This channel's server-side message type.
+type Note {
+  Tick(Int)
+}
+
+pub fn room() -> channel.Handler {
+  channel.handler("room:*", fn(info: channel.JoinInfo(Note), topic, _payload) {
+    let state = State(room_id: topic, username: info.socket_id, sent: 0)
+
+    channel.accept_with(
+      channel.joined(state, callbacks()),
+      json.object([#("room", json.string(topic))]),
+    )
+    |> channel.with_actions(
+      channel.actions()
+      |> channel.broadcast("joined", json.string(state.username)),
+    )
+  })
+}
+
+fn callbacks() -> channel.Callbacks(State, Note) {
+  channel.callbacks()
+  |> channel.on_message(fn(state: State, message: channel.Message) {
+    channel.continue_with(
+      State(..state, sent: state.sent + 1),
+      channel.actions()
+        |> channel.broadcast_from(message.event, json.int(state.sent + 1)),
+    )
+  })
+  |> channel.on_info(fn(state: State, note: Note) {
+    let Tick(at) = note
+    channel.continue_with(
+      state,
+      channel.actions() |> channel.push("tick", json.int(at)),
+    )
+  })
+  |> channel.on_terminate(fn(state: State, _reason) {
+    channel.actions()
+    |> channel.broadcast("left", json.string(state.username))
+  })
+}
+```
+
+Nothing about `State` or `Note` escapes: `channel.handler` returns a
+plain `channel.Handler`, not a generic one, so channels that agree on
+nothing compose in a single list.
+
+## Starting a channel system
+
+`beryl_channels.start` takes the same `beryl.Config` as `beryl.start` —
+codec, rate limits, presence handle, PubSub, logging — plus the handler
+table, and returns the same `beryl.Sockets` handle.
+
+```gleam
+import beryl
+import beryl/transport/server
+import beryl/wire
+import beryl_channels
+import beryl_channels/channel
+import beryl_mist as mist_transport
+
+pub fn handlers() -> List(channel.Handler) {
+  [lobby.channel(), rooms.channel(), documents.channel()]
 }
 
 pub fn main() {
-  let assert Ok(#(sockets, spec)) =
-    beryl.child_spec(
-      beryl.config(wire.phoenix_codec()),
-      init: fn(_info) { #(Model(username: "anonymous", joined: False), []) },
-      update: update,
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
+
+  let assert Ok(sockets) =
+    beryl_channels.start(config, handlers: handlers())
+
+  // `sockets` is an ordinary core handle: hand it to a transport, to
+  // `beryl.broadcast`, and to `beryl.stop`.
+  let assert Ok(_) =
+    mist_transport.handler(
+      sockets,
+      server.default_config("/socket/websocket"),
+      handle_http,
     )
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
-    |> static_supervisor.start()
-  // ... wire up the transport
-}
+    |> mist.new
+    |> mist.port(8000)
+    |> mist.start
 
-fn update(model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
-  case ev {
-    Join("room:" <> _, payload, ref) -> {
-      let username = decode_username(payload)
-      Next(Model(username: username, joined: True), [
-        AcceptJoin(ref, Some(json.object([#("status", json.string("joined"))]))),
-      ])
-    }
-    Join(_, _, ref) ->
-      Next(model, [
-        socket.RejectJoin(
-          ref,
-          json.object([#("reason", json.string("unknown_topic"))]),
-        ),
-      ])
-
-    Message(topic, "new_message", payload, Some(ref)) ->
-      Next(model, [
-        ReplyOk(ref, json.object([#("ok", json.bool(True))])),
-        Broadcast(topic, "new_message", relay(payload, model.username)),
-      ])
-    Message(_, "typing", _, _) ->
-      // No reply needed
-      Next(model, [])
-
-    socket.Closed(_topic, _reason) ->
-      // Clean up anything this topic owned
-      Next(Model(..model, joined: False), [])
-
-    _ -> Next(model, [])
-  }
+  process.sleep_forever()
 }
 ```
 
-Note how state threading is just the model: no socket handle, no assigns
-API — the value you return is the value the next event sees.
+Everything downstream of `start` is unchanged from raw dispatch: the same
+runtime, the same wire codec, the same presence and abuse controls, the
+same transports. The layer only supplies the `init`/`update` pair.
 
-## Routing multiple topic namespaces
+`start` fails with `beryl_channels.StartError`:
 
-Apps that serve several kinds of topics keep one sub-model per joined topic
-and route by prefix. The conventional shape is a `Dict` per namespace,
-pruned on `Closed`:
+| Variant | Meaning |
+|---|---|
+| `InvalidHandlers(HandlerError)` | The handler table was rejected before any process started |
+| `SocketStartFailed(beryl.StartError)` | The core refused to start; the beryl error is nested, not flattened |
+
+## Handler patterns and precedence
+
+Patterns use beryl's topic pattern syntax — `"room:lobby"`, `"room:*"`,
+`"document:*:ops"`, `"*"` — and are matched in **registration order**.
+The first pattern that matches a topic owns it.
 
 ```gleam
-import gleam/dict.{type Dict}
+[
+  // Special-case one topic by putting it ahead of the wildcard.
+  lobby.channel(),      // "room:lobby"
+  rooms.channel(),      // "room:*"
+  documents.channel(),  // "document:*"
+]
+```
 
-type Model {
-  Model(socket_id: String, rooms: Dict(String, chat.Model))
-}
+- **Overlapping patterns are allowed and useful.** `"room:lobby"` ahead of
+  `"room:*"` is the normal way to give one topic its own channel.
+- **More specific patterns belong earlier.** A `"room:*"` registered ahead
+  of `"room:lobby"` would make the lobby channel unreachable — that is a
+  routing mistake the layer cannot detect for you.
+- **Two handlers with the same pattern string are rejected**, because the
+  second could never receive a join.
+- **A join for a topic no handler matches is refused explicitly** with
+  `{"reason": "unmatched topic"}` rather than left unanswered.
 
-fn update(ctx: chat.Ctx, model: Model, ev: Input(Msg)) -> Next(Model, Msg) {
-  case ev {
-    socket.Join(topic, payload, ref) ->
-      case topic {
-        "room:" <> _ -> {
-          let #(joined, effects) =
-            chat.join(ctx, model.socket_id, topic, payload, ref)
-          socket.Next(store(model, topic, joined), effects)
-        }
-        _ -> socket.Next(model, [socket.RejectJoin(ref, unknown_topic())])
-      }
+Validate a table without starting anything:
 
-    socket.Message(topic, event_name, payload, ref) ->
-      case dict.get(model.rooms, topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            chat.update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
-          socket.Next(store(model, topic, Some(sub)), effects)
-        }
-        Error(Nil) -> socket.Next(model, [])
-      }
+```gleam
+import beryl_channels
 
-    socket.Closed(topic, _reason) ->
-      case dict.get(model.rooms, topic) {
-        Ok(sub) ->
-          socket.Next(
-            Model(..model, rooms: dict.delete(model.rooms, topic)),
-            chat.closed(ctx, model.socket_id, topic, sub),
-          )
-        Error(Nil) -> socket.Next(model, [])
-      }
-
-    _ -> socket.Next(model, [])
-  }
+case beryl_channels.validate_handlers(handlers()) {
+  Ok(Nil) -> Nil
+  Error(beryl_channels.InvalidPattern(pattern, reason)) -> panic
+  Error(beryl_channels.DuplicatePattern(pattern)) -> panic
 }
 ```
 
-Here `chat` is an **embeddable app**: a module exporting a topic-scoped
-`Model`, a `join`/`update`/`closed` triple, and its own `Ctx` of
-dependencies. This is the Elm/Lustre composition pattern — third-party
-functionality ships as such triples and apps wire them in exactly like
-their own namespaces. The repository's `examples/showcase` composes three
-embeddable apps (chat rooms, live cursors, collaborative documents) on one
-socket this way.
+Validation is deterministic and two-phase: every pattern's syntax is
+checked in registration order first, then duplicate pattern strings are
+looked for in registration order. `start` and `child_spec` run exactly
+this check before starting anything.
 
-## Connect-time data
+## Typed state instead of assigns
 
-`init` receives a `ConnectInfo(msg)` with everything known at connect
-time:
+Phoenix keeps per-channel state in `socket.assigns`, a map of atoms to
+untyped terms. A beryl channel keeps a **value of its own type**, chosen
+by the channel and known to the compiler:
 
 ```gleam
-init: fn(info: socket.ConnectInfo(Msg)) {
-  // info.socket_id — unique id for this socket
-  // info.seed      — request path, query params, and headers from the upgrade
-  // info.self      — typed Sender for server-side messages (see below)
-  let token = list.key_find(info.seed.query, "token")
-  #(build_model(info.socket_id, token), [])
+type State {
+  State(room_id: String, username: String, sent: Int)
 }
+
+channel.joined(State(room_id: topic, username: name, sent: 0), callbacks())
 ```
 
-The `seed` replaces connect-time "assigns": the transport gathers the
-upgrade request's path, query, and headers, and your `init` turns them into
-whatever model state it wants. Transport-level `on_connect` hooks remain
-available as pure auth gates that can reject the upgrade before any join —
-see [WebSocket Transport → Authentication](/guides/websocket#authentication).
+`channel.joined` binds the state to the callbacks by capturing it in
+closures. Each `channel.continue`/`continue_with` result rebuilds the same
+closures over the next state. No value is ever erased to `Dynamic`, and no
+unchecked coercion is involved — which is why a `List(Handler)` can hold
+channels whose states have nothing in common.
 
-## Server-side messages
+The layer keeps **one instance per joined topic**. A socket joined to
+`room:general` and `room:random` has two independent `State` values, and
+the layer prunes an instance when its topic closes. You do not write
+cleanup code for the state itself.
 
-Any process can push typed messages into a socket through the `Sender`
-handed to `init`:
+## `JoinInfo` and the typed sender
+
+The `join` callback receives a `channel.JoinInfo(info)`:
+
+| Field | Type | What it is |
+|---|---|---|
+| `socket_id` | `String` | Unique id of the socket that is joining |
+| `seed` | `socket.ConnectSeed` | Request data the transport assembled before the upgrade: path, query, headers, and any `on_connect` metadata |
+| `self` | `channel.Sender(info)` | This channel instance's own typed sender |
+
+`JoinInfo` is a per-join view built by the layer, not beryl's core
+`socket.ConnectInfo`. The layer owns the socket-level model and the
+socket-level message type — that is what lets channels keep private state
+and private message types — so it hands each join the connection facts it
+needs (`socket_id`, `seed`) plus a sender scoped to *this* join, rather
+than the core connect record.
+
+`channel.notify(sender, message)` delivers `message` to that channel's
+`on_info` callback with its type intact:
 
 ```gleam
-type Msg {
-  Tick(at: Int)
-  Notify(text: String)
+pub type Note {
+  Tick(Int)
 }
 
-init: fn(info: socket.ConnectInfo(Msg)) {
-  // Hand info.self to whatever server-side process needs to reach this
-  // socket — a timer, a DB listener, a job runner.
-  start_ticker(info.self)
-  #(initial_model(), [])
-}
-
-// Elsewhere, in the ticker process:
-socket.notify(sender, Tick(now_ms))
+// Anywhere — a timer, a domain actor, an HTTP handler:
+channel.notify(sender, Tick(1))
 ```
 
-The message arrives in `update` as `Info(Tick(at))` — an ordinary typed
-send with exhaustive pattern matching, no `Dynamic`, and no registry
-lookup. If the socket has disconnected, `notify` is a quiet no-op.
+The mechanism is cast-free. `notify` seals the typed value inside a
+closure and hands the layer an **envelope** stamped with this join's topic
+and generation — a counter the layer advances on every join attempt and
+never reuses. The envelope carries no readable payload; the router
+compares its stamp against the live instance and only then lets the
+owning join open it, in the same turn it is delivered. Nothing typed is
+ever parked in a shared mailbox between turns, and nothing is coerced on
+the way through.
 
-For timers and background jobs, spawn the process in `init` (or on join)
-and stop it when you see `Closed` for the owning topic or when the model is
-torn down.
+### Stale senders
 
-## Broadcasting from outside update
+A sender is scoped to the join that produced it. Sending is asynchronous
+and never fails, so it cannot report that the channel is gone — liveness
+is decided where the message is delivered:
 
-Code that holds the `Sockets` handle can broadcast without going through
-`update`:
+- If the channel has **closed**, the envelope is dropped, still sealed.
+- If the same topic has since been **joined again**, the envelope's
+  generation no longer matches the live instance, so it is dropped rather
+  than handed to the new join.
+- A live match delivers exactly one `on_info` call. Sends are never
+  coalesced, and they arrive in the order the owning socket receives them.
+
+So a sender kept by a long-lived process is always safe to use; the worst
+case is that the message goes nowhere.
+
+Use `notify` to schedule a **later** turn — including from another
+process. Work that has to be part of the join itself belongs in
+[join actions](#join-actions).
+
+## Actions
+
+An action is one thing to do **on this channel's own topic**. Build an
+ordered list with `channel.actions()` and the builder functions:
+
+| Action | Effect |
+|---|---|
+| `push(event, payload)` | Server-initiated message to this socket on this topic |
+| `broadcast(event, payload)` | To every subscriber of this topic, including this socket |
+| `broadcast_from(event, payload)` | To every subscriber except this socket |
+| `reply_ok(ref, payload)` | Success reply, using the `reply` handle from a `Message` |
+| `reply_error(ref, payload)` | Error reply, using the same handle |
+| `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
+| `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
+| `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |
+| `broadcast_presence(event, encode)` | Presence snapshot for this topic, to every subscriber |
+
+No action names a topic: actions are always scoped to the channel that
+returned them. Cross-topic work is [a deliberate limitation](#limitations).
+
+Presence actions need a presence handle on the config
+(`beryl.with_presence_handle`); without one they are dropped with a
+warning, exactly as the equivalent core effects are.
+
+### Order is wire order
+
+Actions are applied strictly in the order they were added. They lower
+one-to-one onto core `socket.Effect` values, which the runtime applies in
+list order inside a single actor turn.
+
+The `encode` callbacks of `push_presence` and `broadcast_presence` run
+**when the action is applied**, so a snapshot already reflects any
+`presence_track` or `presence_untrack` earlier in the same list:
 
 ```gleam
-// Broadcast to everyone on a topic
-beryl.broadcast(
-  sockets,
-  "room:lobby",
-  "new_message",
-  json.object([#("text", json.string("Hello!"))]),
+channel.actions()
+|> channel.presence_track(state.username, meta(state))
+|> channel.broadcast_presence("presence_list", presence_helpers.encode_users)
+```
+
+## Join actions
+
+`channel.with_actions` attaches ordered actions to an accepted join. They
+are lowered in the **same update turn** as the acknowledgment and strictly
+after it:
+
+```gleam
+channel.accept_with(channel.joined(state, callbacks()), reply)
+|> channel.with_actions(
+  channel.actions()
+  |> channel.presence_track(state.username, meta(state))
+  |> channel.broadcast("new_msg", joined_message(state))
+  |> channel.broadcast_presence("presence_list", encode_users),
 )
-
-// Broadcast to everyone except one socket
-beryl.broadcast_from(
-  sockets,
-  socket_id,
-  "room:lobby",
-  "user_typing",
-  json.object([#("user", json.string("alice"))]),
-)
 ```
 
-Inside `update`, prefer the `Broadcast`/`BroadcastFrom` effects — they are
-ordered relative to the other effects in the same list.
+Two consequences worth designing around:
+
+- **The acknowledgment always reaches the wire first.** The socket is
+  already subscribed to the topic when the join's own actions run, so a
+  `push` cannot overtake its own join reply.
+- **A join is atomic.** A check made inside `join` and the action that
+  acts on it — a capacity check and the `presence_track` that closes it —
+  cannot be split by another socket's turn.
+
+`with_actions` appends, so it composes with itself, and it returns
+`channel.reject` results unchanged: a refused join has no topic to act on.
+
+This is what to reach for instead of notifying yourself from `join`.
+`notify` schedules a later turn, which is right for work that may block or
+wait, but it cannot be atomic with the join.
+
+## Handling input
+
+| Callback | Runs on | Signature |
+|---|---|---|
+| `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
+| `on_binary` | A binary frame on this topic | `fn(state, BitArray) -> Next(state)` |
+| `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
+| `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> Actions` |
+
+`channel.callbacks()` starts from callbacks that ignore every input and
+stay joined; override only what the channel cares about.
+
+A `channel.Message` carries `topic`, `event`, the raw `payload` as
+`Dynamic`, and `reply: Option(socket.Ref)` — present only when the client
+asked for a reply:
+
+```gleam
+channel.on_message(fn(state: State, message: channel.Message) {
+  case message.event, message.reply {
+    "new_msg", Some(ref) ->
+      channel.continue_with(
+        state,
+        channel.actions()
+          |> channel.broadcast("new_msg", body(message.payload))
+          |> channel.reply_ok(ref, json.object([])),
+      )
+
+    "typing", _ ->
+      channel.continue_with(
+        state,
+        channel.actions() |> channel.broadcast_from("typing", json.object([])),
+      )
+
+    _, _ -> channel.continue(state)
+  }
+})
+```
+
+Every callback answers with a `channel.Next(state)`:
+
+| Result | Meaning |
+|---|---|
+| `continue(state)` | Stay joined, no actions |
+| `continue_with(state, actions)` | Stay joined, apply `actions` in order |
+| `close()` | Leave this channel; the socket and its other channels are untouched |
+| `close_with(actions)` | Apply `actions`, then leave |
+| `stop_socket(reason)` | Tear down the whole socket |
+
+`close_with` applies its actions first and then closes the topic, so a
+farewell broadcast still reaches the topic's subscribers.
+`stop_socket` deliberately carries no actions: the socket and every
+channel on it are going away, so there is nothing left to apply them to —
+but each channel still runs its `on_terminate`.
+
+## Termination
+
+`on_terminate` runs **exactly once per accepted join**, on every exit
+path: a client `phx_leave`, a `close()` result, `stop_socket`, a socket
+disconnect, a heartbeat timeout, and `beryl.stop`. A join that was
+*rejected* never started an instance, so it never terminates.
+
+The actions it returns are lowered inside the turn that closes the topic,
+right after the instance has been removed. Core has already dropped the
+subscription by then, which splits the action table:
+
+| Action | During termination |
+|---|---|
+| `push`, `push_presence` | Dropped — the socket has already left the topic |
+| `broadcast`, `broadcast_from` | Delivered to the remaining subscribers |
+| `broadcast_presence` | Delivered, encoded at apply time |
+| `presence_track`, `presence_untrack` | Applied |
+| `reply_ok`, `reply_error` | Only meaningful for a ref you are still holding |
+
+This is why a leave announcement and a post-leave roster belong here
+rather than in an out-of-band broadcast:
+
+```gleam
+channel.on_terminate(fn(state: State, _reason) {
+  channel.actions()
+  |> channel.broadcast("new_msg", departure(state))
+  |> channel.presence_untrack(state.username)
+  |> channel.broadcast_presence("presence_list", encode_users)
+})
+```
+
+Ordering the explicit `presence_untrack` *before* the
+`broadcast_presence` is what makes the roster correct: the snapshot is
+encoded when the action is applied, after the untrack, so it cannot be
+stale. Presence entries are auto-untracked when the topic closes anyway,
+but the automatic untrack runs after `Closed`, not before your actions.
+
+## Lifecycle at a glance
+
+```mermaid
+sequenceDiagram
+  participant Client
+  participant Router as beryl_channels router
+  participant Ch as your channel
+  Client->>Router: phx_join "room:lobby"
+  Router->>Router: first matching pattern wins
+  Router->>Ch: join(JoinInfo, topic, payload)
+  Ch-->>Router: accept_with(joined(state, callbacks), reply) |> with_actions(..)
+  Router-->>Client: phx_reply ok, then the join's actions
+  Client->>Router: event on "room:lobby"
+  Router->>Ch: on_message(state, Message)
+  Ch-->>Router: continue_with(state', actions)
+  Router-->>Client: actions, in order
+  Client->>Router: phx_leave / disconnect
+  Router->>Router: remove the instance
+  Router->>Ch: on_terminate(state, reason)
+  Ch-->>Router: actions (pushes dropped, broadcasts delivered)
+```
+
+## Crash behavior
+
+App code that panics never takes the runtime down. The core's crash
+policy is attributed by *where* the panic happened, and the layer does not
+blunt it:
+
+| Panic in | Effect |
+|---|---|
+| `join` | That join is rejected; the socket survives |
+| `on_message` / `on_binary` | That topic closes; the socket's other topics survive |
+| `on_info` | The whole socket is torn down |
+| `on_terminate` | Teardown still completes, and sibling channels still run their own termination actions |
+
+A panic inside `on_terminate` discards that channel's own `Closed` turn,
+so its termination actions are lost and its instance entry is left behind
+in the router's model. That entry is inert — core never delivers another
+input for a closed topic, and a rejoin replaces it.
+
+Crash isolation stops at the socket, as it does with raw dispatch: a
+panic in `on_info` ends one socket, not the runtime. A crash of the
+runtime actor itself still loses every socket on that `beryl.Sockets`
+handle. See [Runtime & Effect Interpreter](/architecture/runtime/).
+
+## Supervision
+
+`beryl_channels.child_spec` mirrors `beryl.child_spec` for applications
+that own their supervision tree:
+
+```gleam
+import beryl
+import beryl/wire
+import beryl_channels
+import gleam/otp/static_supervisor
+
+let assert Ok(#(sockets, spec)) =
+  beryl_channels.child_spec(
+    beryl.config(wire.phoenix_codec()),
+    handlers: handlers(),
+  )
+
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(spec)
+  |> static_supervisor.start()
+```
+
+It reports only what can be detected before the tree starts, as
+`beryl_channels.ChildSpecError`:
+
+| Variant | Meaning |
+|---|---|
+| `ChildSpecInvalidHandlers(HandlerError)` | The handler table failed validation |
+| `ChildSpecInvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
+
+The subtree, restart policy, and `beryl.stop` semantics are the core's,
+unchanged — see the [Supervision guide](/guides/supervision/). PubSub,
+presence, and group actors are still yours to start and supervise; pass
+their handles into `beryl.Config` as usual.
+
+After a runtime crash the handle keeps working for new connections, but
+every live channel instance is gone: clients reconnect and rejoin, and
+each join runs afresh.
+
+## Limitations
+
+The layer is deliberately scoped to *one topic at a time*. These are the
+edges to know before you design around it:
+
+- **Actions are topic-scoped.** A `room:general` channel cannot broadcast
+  on `lobby`. Cross-topic publishing goes through the external `Sockets`
+  APIs — `beryl.broadcast`, `beryl.broadcast_from`, or a `beryl/group`
+  actor — with the handle `beryl_channels.start` returned.
+- **The handle exists only after `start`.** Handlers are built before
+  `start` returns, so a channel cannot capture the `Sockets` handle
+  directly. The usual pattern is a small actor that holds the handle and
+  exposes a `publish(topic, event, payload)` function — the equivalent of
+  Phoenix's `Endpoint.broadcast/3` — bound immediately after `start` and
+  before the transport starts accepting connections.
+  [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
+  does exactly this for its `lobby` room list.
+- **Channels do not share state with each other.** Anything two channels
+  both need — a document store, a presence handle, a groups actor — is a
+  dependency you capture in the handler closures when you build the
+  table.
+- **The layer owns the socket-level model and message type.** Pick raw
+  dispatch or the channel layer per socket endpoint; mixing hand-written
+  `update` logic into a channel system is not a supported surface.
+- **`stop_socket` carries no actions**, and termination `push` actions are
+  dropped. Both follow from the topic already being gone.
+- **`beryl/bridge` targets the core sender, not a channel's.**
+  `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
+  channel never sees. To adapt an existing actor's messages into
+  `on_info`, forward them yourself from your own process by calling
+  `channel.notify(info.self, ..)` — the sealed sender is safe to hold and
+  is dropped after the join ends.
+- **Nothing is per-topic-process.** Like raw dispatch, all of a socket's
+  channels run in the runtime actor, sequentially. Long or blocking work
+  belongs in your own process, which can hand results back through
+  `channel.notify`.
 
 ## Next steps
 
-- [Reference](/reference/) — module map, wire protocol details, and the broadcast/push cheatsheet
-- [Presence guide](/guides/presence/) — track who is online and broadcast presence diffs to clients
-- [Groups guide](/guides/groups/) — broadcast a single event to multiple topics at once
-- [PubSub guide](/guides/pubsub/) — distributed messaging for multi-node deployments
-- [Error Handling guide](/guides/error-handling/) — rejected joins, rate limits, and client-visible error shapes
+- [Choose an API](/choosing-an-api/) — when to use this layer and when to use raw dispatch
+- [Coming from Phoenix](/guides/coming-from-phoenix/) — the callback-by-callback map
+- [App-Side Dispatch](/guides/dispatch/) — the core this layer is built on
+- [Presence](/guides/presence/) — the presence actor the presence actions need
+- [Supervision](/guides/supervision/) — subtree shape, crash, and shutdown semantics
+- [`beryl_channels`](/reference/api/beryl_channels/) and [`beryl_channels/channel`](/reference/api/beryl_channels-channel/) — generated API reference

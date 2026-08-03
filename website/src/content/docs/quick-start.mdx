@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: Build your first beryl app end-to-end — init/update on the server, WebSocket transport, and a Phoenix JS client.
+description: Build your first beryl socket app end-to-end — a channel handler, the WebSocket transport, and a Phoenix JS client.
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -9,9 +9,15 @@ import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
 </Aside>
 
-This guide walks you through building a working real-time channel from scratch:
-a Gleam server that handles join and message events, wired to a Phoenix JS client
+This guide walks you through building a working real-time app from scratch:
+a Gleam server built on the **channel layer**, wired to a Phoenix JS client
 running in the browser.
+
+The channel layer is beryl's recommended default. If you want one topic family
+and full control over routing, the same app in raw app-side dispatch is
+[a few lines further down](#alternative-raw-app-side-dispatch) and in the
+[Dispatch guide](/guides/dispatch/). See [Choose an API](/choosing-an-api/) for
+the decision.
 
 The snippets here are abbreviated to keep things readable. For a fully
 runnable application with HTML, static assets, and end-to-end tests, see the
@@ -20,150 +26,147 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 ## Prerequisites
 
 - Gleam >= 1.18 project targeting **Erlang** (`gleam new my_app`)
-- beryl and the Mist WebSocket transport as git dependencies in `gleam.toml` (beryl isn't on Hex yet):
+- beryl, the channel layer, and the Mist WebSocket transport as git dependencies in `gleam.toml` (beryl isn't on Hex yet):
 
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
 Run `gleam deps download` afterwards. The [Installation guide](/installation/)
 covers version pinning and the Ewe transport alternative.
 
-## 1. Define your app
+## 1. Write a channel
 
-A beryl app is two functions. `init` builds a per-socket **model** when a
-client connects; `update` receives every **event** for that socket and
-returns the next model plus a list of **effects**.
+A channel is a topic pattern plus a typed `join` callback. The callback answers
+with a rejection, or with a joined channel: callbacks bound to that channel's
+own private state.
 
 ```gleam
-// src/my_app/room_app.gleam
-import beryl/socket.{
-  type Input, type Next, AcceptJoin, Broadcast, Join, Message, Next,
-}
-import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
+// src/my_app/room_channel.gleam
+import beryl/wire
+import beryl_channels/channel
 import gleam/json
 import gleam/option.{Some}
 
-/// Per-socket state — anything you want to remember about this connection.
-pub type Model {
-  Model(username: String)
+/// This channel's private state — one value per joined topic.
+type State {
+  State(room_id: String, sent: Int)
 }
 
-pub fn init(_info: socket.ConnectInfo(Nil)) -> #(Model, List(socket.Effect)) {
-  #(Model(username: "Anonymous"), [])
+/// This channel's server-side message type. It sends itself nothing, so
+/// `Nil` is enough.
+type Note =
+  Nil
+
+pub fn channel() -> channel.Handler {
+  channel.handler("room:*", fn(info: channel.JoinInfo(Note), topic, _payload) {
+    let state = State(room_id: topic, sent: 0)
+
+    channel.accept_with(
+      channel.joined(state, callbacks()),
+      json.object([
+        #("room", json.string(topic)),
+        #("socket_id", json.string(info.socket_id)),
+      ]),
+    )
+    // Applied right after the acknowledgment, in the same turn.
+    |> channel.with_actions(
+      channel.actions()
+      |> channel.broadcast("joined", json.string(info.socket_id)),
+    )
+  })
 }
 
-pub fn update(model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
-  case ev {
-    // A client asked to join a "room:*" topic.
-    Join("room:" <> _, payload, ref) -> {
-      // Payloads arrive as `Dynamic`; decode the fields you need.
-      let username = string_field(payload, "username", or: "Anonymous")
+fn callbacks() -> channel.Callbacks(State, Note) {
+  channel.callbacks()
+  |> channel.on_message(fn(state: State, message: channel.Message) {
+    case message.event, message.reply {
+      // Broadcast the message, then acknowledge the client's push.
+      "new_msg", Some(ref) ->
+        channel.continue_with(
+          State(..state, sent: state.sent + 1),
+          channel.actions()
+            |> channel.broadcast("new_msg", wire.dynamic_to_json(message.payload))
+            |> channel.reply_ok(ref, json.object([#("sent", json.int(state.sent + 1))])),
+        )
 
-      // AcceptJoin answers the join; the reply is delivered to the client
-      // as phx_reply on the join ref.
-      Next(Model(username: username), [
-        AcceptJoin(
-          ref,
-          Some(json.object([#("username", json.string(username))])),
-        ),
-      ])
+      "new_msg", _ ->
+        channel.continue_with(
+          State(..state, sent: state.sent + 1),
+          channel.actions()
+            |> channel.broadcast("new_msg", wire.dynamic_to_json(message.payload)),
+        )
+
+      // Anything else with a ref gets an explicit error.
+      _, Some(ref) ->
+        channel.continue_with(
+          state,
+          channel.actions()
+            |> channel.reply_error(
+              ref,
+              json.object([#("error", json.string("unknown_event"))]),
+            ),
+        )
+
+      _, _ -> channel.continue(state)
     }
-    // Reject joins for topics you don't serve.
-    Join(_, _, ref) ->
-      Next(model, [
-        socket.RejectJoin(
-          ref,
-          json.object([#("reason", json.string("unknown_topic"))]),
-        ),
-      ])
-
-    // A client push on a joined topic.
-    Message(topic, "new_msg", payload, _ref) -> {
-      let text = string_field(payload, "text", or: "")
-      // Broadcast to every socket joined to this topic, including the
-      // sender.
-      Next(model, [
-        Broadcast(
-          topic,
-          "new_msg",
-          json.object([
-            #("username", json.string(model.username)),
-            #("text", json.string(text)),
-          ]),
-        ),
-      ])
-    }
-
-    _ -> Next(model, [])
-  }
-}
-
-fn string_field(payload: Dynamic, name: String, or default: String) -> String {
-  case
-    decode.run(payload, {
-      use value <- decode.field(name, decode.string)
-      decode.success(value)
-    })
-  {
-    Ok(value) -> value
-    Error(_) -> default
-  }
+  })
+  |> channel.on_terminate(fn(state: State, _reason) {
+    channel.actions()
+    |> channel.broadcast("left", json.string(state.room_id))
+  })
 }
 ```
 
 <Aside type="note" title="Reply vs Push vs Broadcast">
-- **`ReplyOk(ref, payload)`** — sends a `phx_reply` back to the *calling*
-  client tied to the original message ref (available when the event's `ref`
-  is `Some`). Use it to acknowledge a specific push.
-- **`Push(topic, event, payload)`** — a server-initiated message to this
-  socket only.
-- **`Broadcast(topic, event, payload)`** — a named event to *all* sockets on
-  the topic, including the sender. Use `BroadcastFrom` to exclude the sender.
-- Returning no effects silently continues — nothing is sent to the caller.
+Every action is scoped to the channel's own topic, and they are applied in the order you add them.
+- **`channel.reply_ok` / `channel.reply_error`** — send `phx_reply` back to the calling client on the ref from `message.reply`.
+- **`channel.push`** — send a named event to this socket only.
+- **`channel.broadcast`** — send a named event to every socket on this topic, including the sender; **`channel.broadcast_from`** excludes the sender.
+- **`channel.continue(state)`** — continue with no outgoing frames.
 </Aside>
 
-## 2. Start beryl and the transport
+## 2. Start the channel system and wire the transport
 
-Wire everything together in your application entry point:
+Register the handler table and pass the returned `beryl.Sockets` handle to the
+Mist transport. That handle is an ordinary core handle — the same one
+`beryl.start` returns.
 
 ```gleam
 // src/my_app.gleam
 import beryl
 import beryl/transport/server
-import beryl_mist as mist_transport
 import beryl/wire
+import beryl_channels
+import beryl_channels/channel
+import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
-import gleam/otp/static_supervisor
 import mist
-import my_app/room_app
+import my_app/room_channel
+
+pub fn handlers() -> List(channel.Handler) {
+  [room_channel.channel()]
+}
 
 pub fn main() {
-  // Start the beryl app-dispatch system.
-  let assert Ok(#(channels, spec)) =
-    beryl.child_spec(
-      beryl.config(wire.phoenix_codec()),
-      init: room_app.init,
-      update: room_app.update,
-    )
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
-    |> static_supervisor.start()
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  // Start the HTTP + WebSocket server.
+  let assert Ok(sockets) =
+    beryl_channels.start(config, handlers: handlers())
+
   let assert Ok(_) =
     fn(req) {
-      // Upgrade WebSocket requests first; fall through to HTTP for everything else.
       mist_transport.upgrade(
         req,
-        channels,
+        sockets,
         server.default_config("/socket/websocket"),
         fn() { handle_http(req) },
       )
@@ -188,6 +191,10 @@ fn handle_http(
   }
 }
 ```
+
+Handlers are matched in registration order and the first pattern that matches a
+topic owns it, so put more specific patterns first. A join for a topic no
+handler matches is refused with `{"reason": "unmatched topic"}`.
 
 <Aside type="tip" title="Transport path">
 `server.default_config("/socket/websocket")` tells beryl to intercept
@@ -227,8 +234,8 @@ const channel = socket.channel("room:lobby", { username: "alice" });
 channel
   .join()
   .receive("ok", (resp) => {
-    // resp is the AcceptJoin reply payload — { username: "alice" }
-    console.log("Joined as", resp.username);
+    // resp is the JSON payload you returned from `channel.accept_with`.
+    console.log("Joined room", resp.room);
   })
   .receive("error", (resp) => {
     console.error("Join failed", resp);
@@ -239,68 +246,115 @@ channel.on("new_msg", (payload) => {
   console.log("Message:", payload);
 });
 
-// Send a message.
-channel.push("new_msg", { text: "Hello, world!" });
-```
-
-## 4. Acknowledging a specific push
-
-If you want the server to confirm delivery of an individual push, return a
-`ReplyOk` effect for the message's ref. The client receives a `phx_reply`
-event tied to the original message ref:
-
-```gleam
-// Server side — acknowledge message delivery
-Message(topic, "new_msg", payload, Some(ref)) ->
-  Next(model, [
-    Broadcast(
-      topic,
-      "new_msg",
-      json.object([#("username", json.string(model.username))]),
-    ),
-    socket.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
-  ])
-```
-
-```js
-// Client side — receive the acknowledgment
+// Send a message. The channel's `reply_ok` action answers this push's ref.
 channel
-  .push("new_msg", { text: "Hello!" })
+  .push("new_msg", { text: "Hello, world!" })
   .receive("ok", (resp) => {
-    // resp is the ReplyOk payload — { status: "ok" }
+    // resp is the payload from `channel.reply_ok` — { sent: 1 }
     console.log("Delivered", resp);
   });
 ```
 
-The `ref` is `Some` whenever the client expects a reply; a `Message` whose
-`ref` is `None` cannot be answered (there is nothing to correlate a reply
-with).
+## 4. Rejecting a join
 
-## 5. Rejecting a join
-
-Return a `RejectJoin` effect to refuse a client:
+Return `channel.reject` when a topic should not be admitted. Join-level auth,
+capacity checks, and payload validation all live in the `join` callback:
 
 ```gleam
-Join("room:" <> room_id, _payload, ref) ->
-  case is_room_valid(room_id) {
+channel.handler("room:*", fn(_info, topic, _payload) {
+  case is_room_valid(topic) {
     False ->
-      Next(model, [
-        socket.RejectJoin(
-          ref,
-          json.object([#("reason", json.string("Room not found"))]),
-        ),
-      ])
-    True -> // ... AcceptJoin as normal
+      channel.reject(json.object([#("reason", json.string("room_not_found"))]))
+
+    True -> channel.accept(channel.joined(State(room_id: topic, sent: 0), callbacks()))
   }
+})
 ```
 
-The client receives an `"error"` reply on its `.join()` call. A `Join` you
-leave unanswered is rejected automatically — beryl fails closed.
+A rejected join never becomes a channel instance, so it never runs
+`on_terminate`. A topic no handler claims is rejected by the layer itself, so
+joins fail closed by default.
+
+## Alternative: raw app-side dispatch
+
+The same server without the channel layer: one `init`/`update` pair passed to
+`beryl.start`, and you own the routing.
+
+```gleam
+// src/my_app/room_app.gleam
+import beryl/socket
+import beryl/wire
+import gleam/json
+import gleam/option.{None, Some}
+
+pub type Msg {
+  NoOp
+}
+
+pub type Model {
+  Model(socket_id: String)
+}
+
+pub fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
+  #(Model(socket_id: info.socket_id), [])
+}
+
+pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
+  case ev {
+    socket.Join("room:" <> _, payload, ref) ->
+      socket.Next(
+        model,
+        [socket.AcceptJoin(ref, Some(wire.dynamic_to_json(payload)))],
+      )
+
+    // Every join must be answered, or it fails closed.
+    socket.Join(_topic, _payload, ref) ->
+      socket.Next(
+        model,
+        [socket.RejectJoin(
+          ref,
+          json.object([#("reason", json.string("unknown topic"))]),
+        )],
+      )
+
+    socket.Message(topic, "new_msg", payload, _ref) ->
+      socket.Next(
+        model,
+        [socket.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))],
+      )
+
+    socket.Message(_, _, _, Some(ref)) ->
+      socket.Next(
+        model,
+        [socket.ReplyError(
+          ref,
+          json.object([#("error", json.string("unknown_event"))]),
+        )],
+      )
+
+    socket.Binary(_, _)
+    | socket.Closed(_, _)
+    | socket.Info(_)
+    | socket.Message(_, _, _, None) ->
+      socket.Next(model, [])
+  }
+}
+```
+
+Start it with `beryl.start(config, init: room_app.init, update: room_app.update)`
+instead of `beryl_channels.start`; everything else — transport wiring, client
+code, wire format — is identical. A `Join` that reaches the end of the `update`
+turn unanswered is rejected automatically, so joins fail closed here too.
+
+The [Dispatch guide](/guides/dispatch/) covers this model in full, including
+routing several topic families from one `update`.
 
 ## Next steps
 
-- Explore the full [examples](/examples/) — runnable demos with HTML frontends
-- Learn about [Channels](/guides/channels/) in depth — events, effects, and routing multiple topic namespaces
+- Read [Choose an API](/choosing-an-api/) if you are still deciding between the two layers
+- Explore the full [examples](/examples/)
+- Learn the layer in depth in the [Channels guide](/guides/channels/)
+- Learn app-side routing in the [Dispatch guide](/guides/dispatch/)
 - Add [Presence tracking](/guides/presence/) to see who's online
 - Set up [PubSub](/guides/pubsub/) for distributed messaging
 - Configure [WebSocket transport](/guides/websocket/) options including `on_connect` auth

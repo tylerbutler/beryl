@@ -158,9 +158,17 @@ function descriptionFromDocs(documentation, fallback) {
 	return firstLine ? firstLine.trim() : fallback;
 }
 
-/** Quote a scalar for safe embedding in YAML frontmatter. */
-function yamlQuote(value) {
+// Frontmatter values are arbitrary prose lifted from module docs, so they
+// can contain `:`, `#`, quotes, or a leading `-` — all of which change
+// meaning in bare YAML. Always emit a double-quoted scalar.
+function yamlString(value) {
 	return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+// Markdown tables are cell-delimited by `|`, so any pipe inside prose has
+// to be escaped or it splits the row.
+function tableCell(value) {
+	return String(value).replaceAll("|", "\\|");
 }
 
 function normalizeDoc(documentation) {
@@ -300,7 +308,7 @@ function renderIndex(packages) {
 						moduleInterface.documentation,
 						`Reference for ${moduleName}.`,
 					);
-					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${description} |`;
+					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${tableCell(description)} |`;
 				})
 				.join("\n");
 			return `## ${code(packageInterface.name)} ${code(packageInterface.version)}
@@ -345,8 +353,8 @@ function renderModulePage(moduleName, moduleInterface) {
 	].filter(Boolean);
 
 	return `---
-title: ${moduleName}
-description: ${yamlQuote(description)}
+title: ${yamlString(moduleName)}
+description: ${yamlString(description)}
 ---
 
 ${GENERATED_MARKER}

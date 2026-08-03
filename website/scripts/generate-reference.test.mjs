@@ -178,6 +178,62 @@ test("surfaces deprecations as a caution block", async () => {
 	});
 });
 
+test("quotes frontmatter so prose punctuation cannot break the YAML", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-"));
+	try {
+		const jsonPath = path.join(dir, "package-interface.json");
+		const outputDir = path.join(dir, "out");
+		await writeFile(
+			jsonPath,
+			JSON.stringify({
+				name: "beryl_channels",
+				version: "0.0.1",
+				modules: {
+					"beryl_channels/channel": {
+						// A colon in the first line is bare-YAML poison, and a pipe
+						// would split the module table row on the index page.
+						documentation: [
+							'The channel surface: a "pattern" | a callback.',
+							"",
+							"More prose.",
+						],
+						types: {},
+						"type-aliases": {},
+						constants: {},
+						functions: {},
+					},
+				},
+			}),
+		);
+		await generateReference({ docsJsonPath: jsonPath, outputDir });
+
+		const page = await readFile(
+			path.join(outputDir, "beryl_channels-channel.md"),
+			"utf8",
+		);
+		const frontmatter = page.split("---")[1];
+		assert.match(frontmatter, /title: "beryl_channels\/channel"/);
+		assert.match(
+			frontmatter,
+			/description: "The channel surface: a \\"pattern\\" \| a callback\."/,
+		);
+		// Every frontmatter value is a quoted scalar, so no bare `:` or `#`
+		// can be reinterpreted as YAML structure.
+		for (const line of frontmatter.trim().split("\n")) {
+			assert.match(line, /^[a-z]+: ".*"$/);
+		}
+
+		const index = await readFile(path.join(outputDir, "index.md"), "utf8");
+		const row = index
+			.split("\n")
+			.find((line) => line.includes("/reference/api/beryl_channels-channel/"));
+		// Escaped pipe keeps the row at exactly two cells.
+		assert.equal(row.split(/(?<!\\)\|/).length - 2, 2);
+	} finally {
+		await rm(dir, { force: true, recursive: true });
+	}
+});
+
 test("merges multiple packages into one grouped reference", async () => {
 	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-multi-"));
 	try {

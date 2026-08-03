@@ -99,3 +99,25 @@ API, with no access to internal modules:
   dependency on `beryl` rewritten to a Hex requirement at publish, exactly
   as the transports do.
 - On acceptance, ADR 0002's Status gains an "amended by ADR 0003" note.
+
+## Implementation notes (as shipped)
+
+Two details of the Decision above were superseded by what landed in
+`packages/beryl_channels`. Recorded here rather than rewritten above, so
+the decision reads as it was made.
+
+- **`join` does not receive the core `ConnectInfo`.** The layer owns the
+  socket-level model and message type, so a channel's `join` receives a
+  layer-built `channel.JoinInfo(info)` — `socket_id`, the transport's
+  `socket.ConnectSeed`, and a `channel.Sender(info)` scoped to this join.
+  The soundness claim is unaffected: there is still no pre-join erased
+  seed, because the channel's own state is created inside `join` and
+  sealed by `channel.joined`.
+- **No erase/restore pair returns.** Typed server-side sends are not
+  erased and re-cast. `channel.notify` seals the value inside an opaque
+  closure and the router carries it as an envelope stamped with the
+  join's topic and a per-socket monotonic generation. The router compares
+  the stamp against the live instance *before* anything is unsealed;
+  mail for a superseded or ended join is dropped still sealed. The
+  workspace therefore contains zero unchecked coercions, with no
+  one-registration erase/restore pair to confine.

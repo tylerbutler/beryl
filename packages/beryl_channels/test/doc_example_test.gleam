@@ -37,9 +37,16 @@ pub fn room() -> channel.Handler {
           channel.actions() |> channel.push("announce", json.string(text)),
         )
       })
+      |> channel.on_terminate(fn(_count, _reason) {
+        channel.actions()
+        |> channel.broadcast("left", json.string(topic))
+      })
 
-    channel.notify(info.self, Announce("welcome to " <> topic))
+    channel.notify(info.self, Announce("later, on this topic"))
     channel.accept(channel.joined(0, callbacks))
+    |> channel.with_actions(
+      channel.actions() |> channel.push("welcome", json.string(topic)),
+    )
   })
 }
 

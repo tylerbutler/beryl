@@ -18,6 +18,8 @@ Browser ──WebSocket──► beryl ◄──HTTP POST /internal/publish─�
                          └── broadcasts to topic subscribers     └── owns auth + DB
 ```
 
+The `beryl.Sockets` handle in this guide can come from either layer — `beryl.start` or `beryl_channels.start` return the same handle type, and `beryl.broadcast` behaves identically for both.
+
 ## The internal publish endpoint
 
 Run the endpoint on the same Mist listener as the WebSocket transport. Guard it with a shared secret so only your backend can publish.
