@@ -1,56 +1,85 @@
-//// Showcase: all three real-time examples on one socket, composed through
-//// app-side dispatch.
+//// Showcase: all three example channels on one socket, composed with
+//// `beryl_channels`.
 ////
-//// This demonstrates composition with the `beryl.child_spec` API: the cursors,
-//// chatrooms, and collab_docs packages each export an embeddable
-//// `Model`/`join`/`update`/`closed` triple (`<example>/app`), and this app
-//// owns the socket-wide model and router — one `Dict` of sub-models per
-//// topic namespace, routed by topic prefix, pruned on `Closed`.
+//// Each example's topic namespace is a channel handler here — `cursor:*`,
+//// `room:*`, and `document:*:*` — and the layer routes every socket event
+//// to the handler that owns its topic. There is no socket-wide model, no
+//// message union, and no hand-written router: a channel keeps its own
+//// private state per joined topic and the layer prunes it when the topic
+//// closes.
+////
+//// The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay
+//// on raw `beryl.start` dispatch on purpose: each serves a single topic
+//// namespace, which is the case the core API already handles well. This
+//// app is the multi-topic case the channel layer exists for.
 
 import beryl
 import beryl/group
-import beryl/socket.{type Input, type Next}
-import beryl/socket/router as topic_router
+import beryl/presence
 import beryl/transport/server
 import beryl/wire
+import beryl_channels
+import beryl_channels/channel
 import beryl_mist as mist_transport
-import chatrooms/app as chat_app
 import chatrooms/router as chatrooms_router
-import collab_docs/app as docs_app
 import collab_docs/auth as docs_auth
 import collab_docs/doc_store
 import collab_docs/router as collab_docs_router
-import cursors/app as cursors_app
 import cursors/router as cursors_router
 import envoy
-import example_helpers/session_presence
-import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
 import gleam/io
-import gleam/otp/static_supervisor
 import gleam/result
 import mist
+import showcase/channels/cursors as cursors_channel
+import showcase/channels/documents as documents_channel
+import showcase/channels/rooms as rooms_channel
+import showcase/hub
 import showcase/router
 
-/// Socket-wide state: one sub-model per joined topic, grouped by the
-/// namespace that owns it. `Closed` events prune their entry.
-type Model {
-  Model(
-    socket_id: String,
-    cursors: Dict(String, cursors_app.Model),
-    rooms: Dict(String, chat_app.Model),
-    docs: Dict(String, docs_app.Model),
+/// Everything the showcase channels read. Assembled in `main` and passed
+/// to `handlers`, which is also what the tests register, so the deployed
+/// table and the tested table cannot drift.
+pub type Deps {
+  Deps(
+    presence: presence.Presence,
+    groups: group.Groups,
+    store: doc_store.Store,
+    secret: BitArray,
+    hub: hub.Hub,
   )
 }
 
-/// Dependencies for the three embedded apps.
-type Ctx {
-  Ctx(cursors: cursors_app.Ctx, rooms: chat_app.Ctx, docs: docs_app.Ctx)
+/// The showcase's channel table: one handler per topic namespace.
+///
+/// Handlers are consulted in list order and the first matching pattern
+/// owns the topic; these three patterns do not overlap, so the order is
+/// documentation rather than resolution. A topic none of them claims —
+/// `lobby`, for instance — is refused by the layer.
+pub fn handlers(deps: Deps) -> List(channel.Handler) {
+  [
+    cursors_channel.channel(cursors_channel.Ctx(
+      presence: deps.presence,
+      hub: deps.hub,
+    )),
+    rooms_channel.channel(rooms_channel.Ctx(
+      presence: deps.presence,
+      groups: deps.groups,
+      hub: deps.hub,
+    )),
+    documents_channel.channel(documents_channel.Ctx(
+      store: deps.store,
+      secret: deps.secret,
+    )),
+  ]
 }
 
 pub fn main() {
-  let presence_tracker = session_presence.start()
+  // Shared presence actor — each embedded app scopes presence to its own
+  // topic namespace, so a single actor is safe.
+  let presence_config = presence.default_config("node1")
+  let assert Ok(presence_actor) = presence.start(presence_config)
 
   // Chatrooms-specific state.
   let assert Ok(groups) = group.start()
@@ -63,54 +92,48 @@ pub fn main() {
   let docs_secret = docs_auth.new_secret()
   let assert Ok(docs_store) = doc_store.start()
 
-  let ctx =
-    Ctx(
-      cursors: cursors_app.Ctx(presence: presence_tracker),
-      rooms: chat_app.Ctx(presence: presence_tracker, groups: groups),
-      docs: docs_app.Ctx(store: docs_store, secret: docs_secret),
-    )
+  // The showcase's broadcast hub: bound to the running system below, and
+  // used by the channels for the few things a topic-scoped channel cannot
+  // address itself (the `lobby` room list, leave-time presence rosters).
+  let assert Ok(hub) = hub.start()
 
   // Per-topic-pattern rate limits replace the old single global
   // channel-rate compromise: cursors stream fast, chat and docs do not.
-  // with_frame_rate covers every pre-decode frame and is sized modestly
-  // above with_message_rate to account for join frames and malformed data.
   let config =
     beryl.config(wire.phoenix_codec())
-    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
     |> beryl.with_join_rate(per_second: 5, burst: 10)
     |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
     |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
     |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
+    |> beryl.with_presence_handle(presence_actor)
 
-  let assert Ok(#(channels, beryl_spec)) =
-    beryl.child_spec(
-      config,
-      init: fn(info: socket.ConnectInfo(Nil)) {
-        #(
-          Model(
-            socket_id: info.socket_id,
-            cursors: dict.new(),
-            rooms: dict.new(),
-            docs: dict.new(),
-          ),
-          [],
-        )
-      },
-      update: update(ctx),
+  let deps =
+    Deps(
+      presence: presence_actor,
+      groups: groups,
+      store: docs_store,
+      secret: docs_secret,
+      hub: hub,
     )
-  session_presence.configure(presence_tracker, channels)
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(beryl_spec)
-    |> static_supervisor.start()
+
+  let assert Ok(channels) =
+    beryl_channels.start(config, handlers: handlers(deps))
+
+  // Bound before the listener starts, so no channel can run unbound.
+  hub.bind(hub, channels)
 
   // Build per-example contexts pinned to their URL prefix.
-  let cursors_ctx = cursors_router.Context(channels:, base_path: "/cursors")
+  let cursors_ctx =
+    cursors_router.Context(
+      channels:,
+      presence: presence_actor,
+      base_path: "/cursors",
+    )
   let chatrooms_ctx =
     chatrooms_router.Context(
       channels:,
-      presence: presence_tracker,
+      presence: presence_actor,
       groups:,
       base_path: "/chat",
     )
@@ -136,7 +159,7 @@ pub fn main() {
     envoy.get("BIND_ADDRESS")
     |> result.unwrap("localhost")
 
-  io.println("✨ beryl examples showcase (app-side dispatch)")
+  io.println("✨ beryl examples showcase (beryl_channels)")
   io.println("   Listening on " <> interface <> ":" <> int.to_string(port))
   io.println("")
 
@@ -158,33 +181,4 @@ pub fn main() {
     |> mist.start
 
   process.sleep_forever()
-}
-
-/// Build the composed router once. The read-only lobby remains mounted so the
-/// chatrooms UI keeps live room-count invalidations in the showcase.
-fn update(ctx: Ctx) -> fn(Model, Input(Nil)) -> Next(Model, Nil) {
-  let namespaces = [
-    topic_router.accept_only("lobby"),
-    cursors_app.namespace(
-      ctx.cursors,
-      socket_id: fn(model: Model) { model.socket_id },
-      get: fn(model: Model) { model.cursors },
-      put: fn(model: Model, cursors) { Model(..model, cursors: cursors) },
-    ),
-    chat_app.namespace(
-      ctx.rooms,
-      socket_id: fn(model: Model) { model.socket_id },
-      get: fn(model: Model) { model.rooms },
-      put: fn(model: Model, rooms) { Model(..model, rooms: rooms) },
-    ),
-    docs_app.namespace(
-      ctx.docs,
-      socket_id: fn(model: Model) { model.socket_id },
-      get: fn(model: Model) { model.docs },
-      put: fn(model: Model, docs) { Model(..model, docs: docs) },
-    ),
-  ]
-  fn(model, input) {
-    topic_router.route(namespaces, topic_router.unknown_topic(), model, input)
-  }
 }
