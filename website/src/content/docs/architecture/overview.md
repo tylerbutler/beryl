@@ -3,7 +3,9 @@ title: Architecture Overview
 description: How beryl is organized, the major modules, and where to make changes.
 ---
 
-Beryl is an app-side dispatch runtime for WebSocket topics on the BEAM. Transports turn frames into `beryl/socket` values, one runtime actor per `Sockets` handle delivers those events to your app's `update`, and the same runtime applies the returned `Effect`s in order.
+Beryl is an app-side dispatch runtime for WebSocket topics on the BEAM. Transports turn frames into `beryl/socket` values, one runtime actor per `Sockets` handle delivers those events to an `update` function, and the same runtime applies the returned `Effect`s in order.
+
+That `update` is either yours or the channel layer's. `beryl_channels` is a separate package built strictly on the public `beryl` API: it compiles a handler table into exactly the `init`/`update` pair `beryl.start` expects, routes each input to the channel that owns its topic, and lowers each channel's `Actions` onto the same `Effect` values. Nothing below the dispatch contract knows which one is in use — see the [Channels guide](/guides/channels/) and [Choose an API](/choosing-an-api/).
 
 PubSub is still the cluster-wide fan-out primitive. Presence and groups remain separate OTP actors that your app starts and supervises; the runtime borrows their handles when configured, but they are not children of the Beryl subtree.
 
@@ -26,20 +28,25 @@ flowchart TB
   W["Wire protocol<br/>beryl/wire · beryl/wire/codec"]
   R["Runtime & effect interpreter<br/>beryl/runtime (internal)"]
   E["App dispatch contract<br/>beryl/socket"]
-  APP["your app's init/update"]
+  CH["Channel layer (separate package)<br/>beryl_channels · beryl_channels/channel"]
+  APP["your app: handler table<br/>or your own init/update"]
   PS["PubSub<br/>beryl/pubsub"]
   PR["Presence handle (optional)<br/>beryl/presence"]
   G["Groups actor (app-owned)<br/>beryl/group"]
   B["Bridge helper<br/>beryl/bridge"]
 
   T --> SPI --> W --> R
-  R <-->|ConnectInfo · Event · Effect| E
-  E --> APP
+  R <-->|ConnectInfo · Input · Effect| E
+  E -->|"recommended default"| CH
+  CH -->|"Handler · JoinInfo · Actions"| APP
+  E -->|"raw dispatch"| APP
   R --> PS
   R -. uses handle .-> PR
   G -. calls broadcast on Sockets .-> R
   B -. sends Info messages through Sender .-> E
 ```
+
+The channel layer sits *on* the dispatch contract, not beside it: it is an ordinary consumer of `beryl.start`/`beryl.child_spec` with no access to internal modules.
 
 ## Module map
 
@@ -59,6 +66,10 @@ flowchart TB
 | `beryl/topic` | Topic and event-name validation plus wildcard pattern matching | — |
 | `beryl_mist` | Mist WebSocket adapter built on `beryl/transport` | [Wire & Transport](/architecture/wire-and-transport) |
 | `beryl_ewe` | Ewe WebSocket adapter built on `beryl/transport` | [Wire & Transport](/architecture/wire-and-transport) |
+| `beryl_channels` | Channel-system entry points (`start`, `child_spec`, `validate_handlers`) built on the public `beryl` API | [Channels](/guides/channels) |
+| `beryl_channels/channel` | The composition surface: `Handler`, `JoinInfo`, `Sender`, `Callbacks`, `Actions`, join and lifecycle results | [Channels](/guides/channels) |
+
+`beryl_channels`'s own router lives in `beryl_channels/internal/router`, which Gleam hides from other packages and from the generated docs. It holds one per-socket model — the handler table, the live instance per joined topic, and a monotonically increasing join generation — and is reachable only through the two entry points above.
 
 ## Process & supervision at a glance
 
@@ -88,7 +99,7 @@ flowchart TB
 
 ## Where things live
 
-Core library code lives under `packages/beryl/src/`. The WebSocket transports live in `packages/beryl_mist/src/` and `packages/beryl_ewe/src/`.
+Core library code lives under `packages/beryl/src/`. The WebSocket transports live in `packages/beryl_mist/src/` and `packages/beryl_ewe/src/`, and the channel layer in `packages/beryl_channels/src/`.
 
 Start with `packages/beryl/src/beryl.gleam` and `packages/beryl/src/beryl/socket.gleam` for the public surface, then read [Runtime & Effect Interpreter](/architecture/runtime) for the runtime tree and lifecycle.
 

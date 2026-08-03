@@ -14,6 +14,27 @@ gleam add beryl
 
 This adds beryl to your `gleam.toml` dependencies. beryl targets the **Erlang (BEAM)** runtime — it does not support the JavaScript target.
 
+## Packages
+
+A typical application adds three packages: the core, a programming layer, and a WebSocket transport.
+
+| Package | Add it when |
+|---------|-------------|
+| `beryl` | Always — the runtime, wire codec, presence, PubSub, groups, and the app-side dispatch API |
+| `beryl_channels` | You want the [channel layer](/guides/channels/), the recommended default for multi-channel and Phoenix-shaped apps |
+| `beryl_mist` | You serve HTTP with [Mist](https://hex.pm/packages/mist) |
+| `beryl_ewe` | You serve HTTP with [Ewe](https://hex.pm/packages/ewe) |
+
+```bash
+# Channel layer on Mist — the recommended default
+gleam add beryl beryl_channels beryl_mist
+
+# Raw app-side dispatch on Mist
+gleam add beryl beryl_mist
+```
+
+`beryl_channels` depends only on `beryl`, so it adds no transitive dependencies of its own. See [Choose an API](/choosing-an-api/) if you are deciding between the two layers.
+
 ## Requirements
 
 - **Gleam** >= 1.13.0

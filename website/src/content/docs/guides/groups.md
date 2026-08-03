@@ -123,7 +123,9 @@ let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
 group.broadcast(groups, sockets, "team:eng", "alert", payload)
 ```
 
-If your application supervises groups, do that in your own tree. They are not part of the Beryl subtree returned by `beryl.start` or `beryl.child_spec`.
+If your application supervises groups, do that in your own tree. They are not part of the Beryl subtree returned by `beryl.start` or `beryl.child_spec` (or by the `beryl_channels` equivalents).
+
+Groups are also the layer-agnostic way for a channel to reach topics other than its own: channel actions are topic-scoped, so cross-topic fan-out goes through a groups actor or `beryl.broadcast` with the `Sockets` handle. See [Limitations](/guides/channels/#limitations).
 
 ## Error reference
 

@@ -1,6 +1,6 @@
 ---
-title: beryl_channels/channel
-description: The channel composition surface: a channel is a topic pattern paired
+title: "beryl_channels/channel"
+description: "The channel composition surface: a channel is a topic pattern paired"
 ---
 
 The channel composition surface: a channel is a topic pattern paired

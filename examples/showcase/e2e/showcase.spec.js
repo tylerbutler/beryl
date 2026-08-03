@@ -100,7 +100,8 @@ test.describe("Showcase (beryl_channels)", () => {
       { send: ["2", "2", "cursor:main", "phx_join", { username: "e2e-user" }] },
       { waitReply: "2" },
       // The document channel requires a tenant token: joining without one
-      // must be rejected by the docs app through the same router.
+      // must be rejected by the documents channel's own join callback,
+      // reached through the same handler table.
       { send: ["3", "3", "document:demo:welcome", "phx_join", {}] },
       { waitReply: "3" },
       // Channel isolation: a chat message gets its ack while the cursor
@@ -142,10 +143,10 @@ test.describe("Showcase (beryl_channels)", () => {
       { waitEvent: "presence_list", topic: "room:general" },
     ]);
 
-    // The room channel acknowledges the join, then does its
-    // presence_track / new_msg / presence_list work in the turn its own
-    // self-notification schedules — so the ack must hit the wire before
-    // every frame that later work produces.
+    // The room channel acknowledges the join, then applies its join
+    // actions — presence_track / new_msg / presence_list — in the same
+    // update turn, lowered strictly after the AcceptJoin. So the ack must
+    // hit the wire before every frame those actions produce.
     const ackIndex = frames.findIndex(
       (f) => f[3] === "phx_reply" && f[1] === "1"
     );

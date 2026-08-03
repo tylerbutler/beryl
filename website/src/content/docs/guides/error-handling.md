@@ -5,9 +5,11 @@ description: Understand how joins, message replies, connection rejection, startu
 
 This guide covers how Beryl surfaces errors to your app logic and to connected clients.
 
+The examples use raw [app-side dispatch](/guides/dispatch/). Everything here holds for the [channel layer](/guides/channels/) too — it lowers onto the same effects — with the layer equivalents noted inline.
+
 ## Rejected joins
 
-Reject a pending join by returning `socket.RejectJoin(ref, reason)` from `update`.
+Reject a pending join by returning `socket.RejectJoin(ref, reason)` from `update`. With the channel layer, return `channel.reject(reason)` from the handler's `join` callback.
 
 ```gleam
 import beryl/socket
@@ -92,7 +94,7 @@ fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
 
 ## Unanswered joins fail closed
 
-Routing now lives entirely in your own `update`. If a `Join` falls through every branch and you return no `socket.AcceptJoin` or `socket.RejectJoin`, the runtime rejects it automatically at the end of the turn.
+With raw dispatch, routing lives entirely in your own `update`. If a `Join` falls through every branch and you return no `socket.AcceptJoin` or `socket.RejectJoin`, the runtime rejects it automatically at the end of the turn.
 
 The client-visible error payload is:
 
@@ -101,6 +103,12 @@ The client-visible error payload is:
 ```
 
 This also applies when your join logic returns `socket.Stop(...)` before answering the join.
+
+With the channel layer, every join is answered: the handler that owns the topic returns `channel.accept`/`channel.accept_with` or `channel.reject`, and a topic no handler matches is refused by the layer itself with:
+
+```json
+{"reason": "unmatched topic"}
+```
 
 ## Heartbeat timeouts and topic closure
 
@@ -136,6 +144,8 @@ Crash behavior depends on which event was being processed:
 - a crash while handling `socket.Message` or `socket.Binary` closes that topic,
 - a crash while handling `socket.Info` closes the whole socket,
 - a crash while handling `socket.Closed` is logged and teardown continues.
+
+The channel layer inherits this policy unchanged, attributed per callback: `join`, `on_message`/`on_binary`, `on_info`, and `on_terminate` respectively. See [Crash behavior](/guides/channels/#crash-behavior).
 
 ## Rate limiting
 
@@ -196,6 +206,8 @@ import beryl/socket
 socket.notify(sender, RefreshRequested)
 ```
 
+The channel layer's `channel.notify(sender, message)` behaves the same way and drops one more case: a sender bound to a join whose topic has since been closed *or rejoined* delivers nothing, rather than delivering to the new join. See [Stale senders](/guides/channels/#stale-senders).
+
 ## Client-visible error shapes
 
 Beryl still uses Phoenix-compatible wire frames.
@@ -215,8 +227,19 @@ Beryl still uses Phoenix-compatible wire frames.
 [null, null, "room:lobby", "phx_close", {}]
 ```
 
+## Startup errors with the channel layer
+
+`beryl_channels.start` validates the handler table before any process is started and reports:
+
+- `beryl_channels.InvalidHandlers(InvalidPattern(pattern, reason))` — a pattern is not valid topic-pattern syntax,
+- `beryl_channels.InvalidHandlers(DuplicatePattern(pattern))` — two handlers share one pattern string, so the second is unreachable,
+- `beryl_channels.SocketStartFailed(error)` — the core refused to start; the `beryl.StartError` is nested, not flattened.
+
+`beryl_channels.child_spec` reports the same handler errors as `ChildSpecInvalidHandlers`, plus `ChildSpecInvalidConfig(beryl.ConfigError)`.
+
 ## See also
 
+- [Channels](/guides/channels/) — handler validation, crash policy, and termination semantics
 - [WebSocket Transport](/guides/websocket/#authentication) — connection rejection and origin policy
 - [Supervision](/guides/supervision/) — standalone vs embedded startup and what a restart actually resets
 - [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for failed joins, missed broadcasts, and auth problems

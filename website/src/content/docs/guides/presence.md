@@ -137,7 +137,7 @@ Self-delivery is prevented by `pubsub.broadcast_from`, so a node does not proces
 
 ## Integrating presence with app-side dispatch
 
-In the current Beryl API, applications usually attach a presence handle to `beryl.Config` and let the runtime apply presence effects.
+Applications attach a presence handle to `beryl.Config` and let the runtime apply presence effects. This is the raw-dispatch shape; the [channel-layer equivalent](#integrating-presence-with-the-channel-layer) is below and behaves identically.
 
 ```gleam
 import beryl
@@ -190,8 +190,42 @@ A few things to notice:
 - `socket.PushPresence` and `socket.BroadcastPresence` read presence state **when the effect is applied**, so they already reflect earlier `PresenceTrack` / `PresenceUntrack` effects in the same list.
 - the runtime still auto-cleans any leftover tracked keys when a topic closes, so `PresenceUntrack` in `socket.Closed` is explicit cleanup, not the only cleanup path.
 
+## Integrating presence with the channel layer
+
+`beryl_channels` exposes the same four presence effects as topic-scoped actions, so no action names a topic. The config is identical — `beryl.with_presence_handle(p)` — and the wire output is identical.
+
+```gleam
+import beryl_channels/channel
+import beryl/presence/wire as presence_wire
+import gleam/json
+
+// On join: track, then snapshot. Both run in the same turn as the ack.
+channel.accept(channel.joined(state, callbacks()))
+|> channel.with_actions(
+  channel.actions()
+  |> channel.presence_track(
+    "user:" <> state.user_id,
+    json.object([#("status", json.string("online"))]),
+  )
+  |> channel.push_presence("presence_state", presence_wire.encode_state),
+)
+
+// On leave: untrack, then snapshot for everyone still on the topic.
+channel.on_terminate(fn(state: State, _reason) {
+  channel.actions()
+  |> channel.presence_untrack("user:" <> state.user_id)
+  |> channel.broadcast_presence("presence_state", presence_wire.encode_state)
+})
+```
+
+Two layer-specific notes:
+
+- `push_presence` is **dropped** during termination, because the socket has already left the topic. Use `broadcast_presence` for a post-leave roster.
+- The explicit `presence_untrack` before the snapshot is what keeps that roster correct: snapshots encode at apply time, and the runtime's automatic untrack runs after the `Closed` turn.
+
 ## Next steps
 
 - [PubSub](/guides/pubsub/) — required for cross-node replication
+- [Channels](/guides/channels/) — presence actions inside a channel's join and termination
 - [App-Side Dispatch](/guides/dispatch/) — see where presence effects fit into your socket model and routing logic
 - [Troubleshooting](/troubleshooting/#presence-is-stale-or-incorrect) — diagnosing stale entries, missing diffs, and replication issues

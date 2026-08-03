@@ -140,7 +140,20 @@ function moduleSlug(moduleName) {
 function descriptionFromDocs(documentation, fallback) {
 	const text = normalizeDoc(documentation);
 	const firstLine = text.split("\n").find((line) => line.trim().length > 0);
-	return firstLine ? firstLine.replaceAll('"', '\\"') : fallback;
+	return firstLine ? firstLine.trim() : fallback;
+}
+
+// Frontmatter values are arbitrary prose lifted from module docs, so they
+// can contain `:`, `#`, quotes, or a leading `-` — all of which change
+// meaning in bare YAML. Always emit a double-quoted scalar.
+function yamlString(value) {
+	return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+// Markdown tables are cell-delimited by `|`, so any pipe inside prose has
+// to be escaped or it splits the row.
+function tableCell(value) {
+	return String(value).replaceAll("|", "\\|");
 }
 
 function normalizeDoc(documentation) {
@@ -273,7 +286,7 @@ function renderIndex(packages) {
 						moduleInterface.documentation,
 						`Reference for ${moduleName}.`,
 					);
-					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${description} |`;
+					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${tableCell(description)} |`;
 				})
 				.join("\n");
 			return `## ${code(packageInterface.name)} ${code(packageInterface.version)}
@@ -321,8 +334,8 @@ function renderModulePage(moduleName, moduleInterface) {
 	].filter(Boolean);
 
 	return `---
-title: ${moduleName}
-description: ${description}
+title: ${yamlString(moduleName)}
+description: ${yamlString(description)}
 ---
 
 ${normalizeDoc(moduleInterface.documentation) || description}

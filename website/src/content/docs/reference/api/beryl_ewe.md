@@ -1,6 +1,6 @@
 ---
-title: beryl_ewe
-description: Ewe WebSocket Transport - Direct Ewe integration for beryl
+title: "beryl_ewe"
+description: "Ewe WebSocket Transport - Direct Ewe integration for beryl"
 ---
 
 Ewe WebSocket Transport - Direct Ewe integration for beryl

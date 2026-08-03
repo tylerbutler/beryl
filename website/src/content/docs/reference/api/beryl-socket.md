@@ -1,6 +1,6 @@
 ---
-title: beryl/socket
-description: Types for building app-side dispatch systems with `beryl.start`.
+title: "beryl/socket"
+description: "Types for building app-side dispatch systems with `beryl.start`."
 ---
 
 Types for building app-side dispatch systems with `beryl.start`.

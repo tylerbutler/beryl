@@ -2,7 +2,9 @@
 title: Runtime & Effect Interpreter
 ---
 
-The runtime is the single OTP actor behind a Beryl app-side dispatch system. One runtime tracks every connected socket for a `Sockets` handle, delivers `Join`/`Message`/`Binary`/`Closed`/`Info` events to your app's `update`, and applies the returned `Effect` list itself.
+The runtime is the single OTP actor behind a Beryl app-side dispatch system. One runtime tracks every connected socket for a `Sockets` handle, delivers `Join`/`Message`/`Binary`/`Closed`/`Info` events to the app's `update`, and applies the returned `Effect` list itself.
+
+This page describes the runtime, so it speaks in terms of `init`/`update`. A channel system is the same picture with `beryl_channels`'s router as that `update`: it holds one router model per socket and dispatches each input to the channel that owns the topic. Every guarantee below — fail-closed joins, effect ordering, supervision, crash and restart behavior — applies unchanged, and a channel's `Actions` are simply the `Effect` list the runtime receives.
 
 ## Role
 
@@ -77,7 +79,7 @@ On a runtime crash, the supervisor restarts a fresh runtime under the same regis
 
 What is lost on crash:
 
-- every joined socket's current `model`
+- every joined socket's current `model` (with the channel layer: the router model and every live channel instance)
 - topic membership and join refs
 - pending reply refs
 - heartbeat timestamps and rate-limit buckets
@@ -102,3 +104,4 @@ It does **not** stop your app's root supervisor, sibling children, PubSub instan
 
 - `packages/beryl/src/beryl.gleam` — public lifecycle and handle surface: `start`, `child_spec`, `stop`, `build_app_subtree`, `start_app_supervisor`, `app_handle`
 - `packages/beryl/src/beryl/runtime.gleam` — internal runtime actor: socket connect/disconnect, inbound dispatch, heartbeat checks, topic teardown, effect interpretation
+- `packages/beryl_channels/src/beryl_channels.gleam` — the channel system's entry points, which supply the `init`/`update` pair described above

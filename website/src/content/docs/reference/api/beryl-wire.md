@@ -1,6 +1,6 @@
 ---
-title: beryl/wire
-description: Phoenix Wire Protocol — encoding/decoding helpers and the canonical
+title: "beryl/wire"
+description: "Phoenix Wire Protocol — encoding/decoding helpers and the canonical"
 ---
 
 Phoenix Wire Protocol — encoding/decoding helpers and the canonical

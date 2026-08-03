@@ -10,6 +10,12 @@ beryl ships four runnable example applications in the
 directory. They use a Gleam/BEAM backend with browser frontends that exercise
 different realtime collaboration patterns.
 
+They also demonstrate both of beryl's layers, deliberately. **Showcase** is the
+multi-namespace app, so it uses the [channel layer](/guides/channels/). The
+three focused servers each own a single topic family, so they stay on
+[raw app-side dispatch](/guides/dispatch/) — the comparison is the point. See
+[Choose an API](/choosing-an-api/).
+
 <Aside type="caution" title="Pre-1.0 Software">
 beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
 </Aside>
@@ -18,10 +24,10 @@ beryl is not yet 1.0. The API is unstable and features may be removed in minor r
 
 **Source**: [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
 
-One socket runtime and three topic families, composed with `beryl_channels`.
-The cursors, chatrooms, and collab-docs behaviors are each a channel handler
-registered on one socket system — no socket-wide model and no hand-written
-router.
+One socket runtime and three topic families, composed with
+[`beryl_channels`](/guides/channels/). The cursors, chatrooms, and collab-docs
+behaviors are each a channel handler registered on one socket system — no
+socket-wide model and no hand-written router.
 
 ```bash
 cd examples/showcase
@@ -33,12 +39,13 @@ gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **Channel composition** | One `beryl_channels.start` handler table owns `cursor:*`, `room:*`, and the `document:` prefix |
+| **Channel composition** | One `beryl_channels.start` handler table owns `cursor:*`, `room:*`, and the `document:` prefix, matched in registration order |
 | **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
 | **Lifecycle actions** | Presence tracking rides along with the join accept; the departure message and post-leave roster are termination actions |
 | **Per-pattern rate limits** | `with_topic_rate` gives cursors, chat, and docs different limits |
 | **Shared presence** | One presence actor is reused across the embedded apps that need it |
 | **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
+| **Cross-topic publishing** | The one genuinely cross-topic announcement (`lobby` room list) goes through a small actor holding the `beryl.Sockets` handle — the layer's `Endpoint.broadcast/3` |
 
 ### Architecture
 
@@ -72,7 +79,7 @@ gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **App-side dispatch** | `standalone_update` routes every `cursor:*` join and message |
+| **App-side dispatch** | One topic family, so `standalone_update` routes every `cursor:*` join and message directly |
 | **Topic wildcards** | `cursor:*` matches any cursor room |
 | **Presence (CRDT)** | `PresenceTrack` + `BroadcastPresence` keep the `presence_list` current |
 | **`BroadcastFrom`** | Fans out cursor moves to all *other* clients, excluding the sender |
@@ -121,7 +128,7 @@ slice of the beryl API:
 | **Groups** | Three rooms (`general`, `random`, `help`) are organized in a named group |
 | **Presence typing** | `PresenceTrack` updates typing metadata and `BroadcastFrom` fans out typing indicators |
 | **System messages** | Join/leave notices broadcast via `socket.Broadcast` |
-| **Multiple topics** | One app-side `update` routes every `room:*` topic |
+| **Multiple topics** | One topic family (`room:*`), routed by one app-side `update` |
 | **Rate limiting** | `with_join_rate` (5/sec, burst 10) and `with_channel_rate` (10/sec, burst 20) |
 
 ### Architecture
@@ -198,5 +205,7 @@ Server (Gleam)
 | I want to see live presence + cursors | [examples/cursors](https://github.com/tylerbutler/beryl/tree/main/examples/cursors) |
 | I want auth, join validation, or groups | [examples/chatrooms](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms) |
 | I want collaborative documents or CRDT conflicts | [examples/collab_docs](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs) |
+| I am not sure which API to build on | [Choose an API](/choosing-an-api/) |
+| I want to understand the channel layer | [Channels guide](/guides/channels/) |
 | I want to understand app-side dispatch | [Dispatch guide](/guides/dispatch/) |
 | I want to add presence to my app | [Presence guide](/guides/presence/) |

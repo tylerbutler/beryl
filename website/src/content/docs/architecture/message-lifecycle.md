@@ -2,7 +2,9 @@
 title: Message Lifecycle
 ---
 
-This page traces how a WebSocket connection moves through Beryl's app-side dispatch runtime. The transport owns the HTTP/WebSocket edge, the runtime owns per-socket state, and your app's `update` decides what effects to apply.
+This page traces how a WebSocket connection moves through Beryl's app-side dispatch runtime. The transport owns the HTTP/WebSocket edge, the runtime owns per-socket state, and the app's `update` decides what effects to apply.
+
+The diagrams show "app init"/"app update" because that is the runtime's contract. With the [channel layer](/guides/channels/) those boxes are `beryl_channels`'s router, which adds one hop and no new machinery — see [Where the channel layer fits](#where-the-channel-layer-fits) at the end.
 
 ## Connect and register
 
@@ -116,6 +118,19 @@ sequenceDiagram
 
 The same `Closed` path is used for client leaves, heartbeat timeouts, `KickTopic`, and graceful `beryl.stop` shutdown.
 
+## Where the channel layer fits
+
+`beryl_channels` supplies the `init`/`update` pair in every diagram above. `init` builds one router per socket — the handler table, an empty live-instance dictionary, and a join generation counter — and returns no effects. `update` then maps each input onto one channel:
+
+| Runtime input | Router behavior |
+|---|---|
+| `Join(topic, payload, ref)` | First matching pattern wins; allocate a generation, run that handler's `join`, and emit `AcceptJoin(ref, reply)` followed by the join's own actions, or `RejectJoin(ref, reason)`. No match at all is refused with `{"reason": "unmatched topic"}` |
+| `Message(topic, ..)` / `Binary(topic, ..)` | Delivered to the live instance for that topic, if any; inputs for a topic with no instance are ignored |
+| `Info(envelope)` | The envelope's topic and generation are checked against the live instance first; a stale envelope is dropped still sealed, so nothing typed reaches the wrong join |
+| `Closed(topic, reason)` | The instance is removed, then its `on_terminate` actions are lowered in the same turn |
+
+Every channel action lowers one-to-one onto the `Effect` values in the diagrams above, scoped to the channel's own topic, so the frames on the wire are indistinguishable from the hand-written equivalent.
+
 ## Concurrency note
 
 The runtime is one OTP actor processing its mailbox sequentially. Broadcasts arrive as actor messages too, so effect order and test mailbox hygiene still matter.
@@ -127,3 +142,4 @@ The runtime is one OTP actor processing its mailbox sequentially. Broadcasts arr
 - `packages/beryl/src/beryl/wire.gleam`, `packages/beryl/src/beryl/wire/codec.gleam` — frame decoding and encoding
 - `packages/beryl/src/beryl/pubsub.gleam` — local and distributed broadcast delivery
 - `packages/beryl_mist/src/beryl_mist.gleam`, `packages/beryl_ewe/src/beryl_ewe.gleam` — WebSocket edge adapters
+- `packages/beryl_channels/src/beryl_channels/internal/router.gleam` — the channel layer's per-socket router (package-internal)

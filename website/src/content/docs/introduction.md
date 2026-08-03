@@ -16,18 +16,54 @@ Building real-time features — like chat rooms, live cursors, collaborative
 editing, or presence indicators — requires coordinating state across many
 connected clients. beryl gives you:
 
-- **App-side dispatch** — Topic-based routing in your app's `update` function, with pattern matching such as `"room:*"`
+- **Channels** — Register one handler per topic pattern; each channel keeps private, typed state and its own server-side message type (`beryl_channels`)
+- **App-side dispatch** — Or route every socket event yourself in one typed `update` function, with pattern matching such as `"room:*"`
 - **Presence** — Distributed tracking of connected users backed by a conflict-free CRDT
 - **PubSub** — Distributed publish/subscribe built on Erlang's `pg` process groups
 - **Groups** — Named collections of topics for multi-topic broadcasting
 - **WebSocket transport** — Mist integration with JSON wire protocol (Phoenix-compatible)
 
+## Two layers, one runtime
+
+beryl ships one runtime and two ways to program it.
+
+The **channel layer** (`beryl_channels`) is the recommended default. You
+register a list of channel handlers — a topic pattern plus a typed `join`
+callback — and the layer routes every join, message, binary frame, typed
+server-side message, and close to the channel that owns the topic:
+
+```gleam
+let assert Ok(sockets) =
+  beryl_channels.start(
+    beryl.config(wire.phoenix_codec()),
+    handlers: [lobby.channel(), rooms.channel(), documents.channel()],
+  )
+```
+
+**Raw app-side dispatch** (`beryl`) is the core underneath. You pass one
+`init`/`update` pair to `beryl.start` and own the router yourself. It is the
+right choice for a single-topic system, or when you want complete control over
+routing and effect ordering:
+
+```gleam
+let assert Ok(sockets) =
+  beryl.start(beryl.config(wire.phoenix_codec()), init: init, update: update)
+```
+
+Both lower to the same runtime, wire codec, presence, PubSub, and abuse
+controls — the channel layer is built entirely on beryl's public API. See
+[Choose an API](/choosing-an-api/) for the decision in one table.
+
 ## Design principles
 
 ### Type safety first
 
-Your socket app owns one `Model` type and one `update` function. The Gleam
-compiler keeps every branch honest:
+Nothing in beryl is erased to `Dynamic` and nothing is coerced. With the
+channel layer, each channel picks its own private state type and its own
+server-side message type, and both stay sealed inside that channel's closures —
+which is how channels that agree on nothing compose in one list. With raw
+dispatch, your socket app owns one `Model` type and one `update` function, and
+the Gleam compiler keeps every branch honest:
 
 ```gleam
 import beryl/socket
@@ -74,8 +110,9 @@ and leaves automatically, even across distributed Erlang nodes.
 The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`,
 `gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres` — all standard
 BEAM ecosystem packages. A WebSocket transport such as `beryl_mist` adds `mist`
-and `gleam_http`, but the core library pulls in neither. No external message
-brokers or databases required.
+and `gleam_http`, but the core library pulls in neither. `beryl_channels` adds
+nothing beyond `beryl` itself. No external message brokers or databases
+required.
 
 ### Phoenix wire protocol compatibility
 
@@ -83,11 +120,13 @@ beryl uses the same JSON array wire format as Phoenix channels
 (`[join_ref, ref, topic, event, payload]`), making it compatible with existing
 Phoenix client libraries. If you know Phoenix Channels, the
 [Coming from Phoenix](/guides/coming-from-phoenix/) guide maps channel
-modules, callbacks, and assigns onto beryl's model.
+modules, callbacks, and assigns onto both of beryl's layers.
 
 ## Next steps
 
+- [Choose an API](/choosing-an-api/) — channel layer or raw dispatch
 - [Quick Start](/quick-start/) — get a working server in minutes
+- [Channels guide](/guides/channels/) — handler tables, typed state, actions, and lifecycle
 - [Dispatch guide](/guides/dispatch/) — route topics, messages, and close events in one app
 - [Supervision guide](/guides/supervision/) — production startup with OTP supervision
 - [Error Handling guide](/guides/error-handling/) — rejected joins, rate limits, and more

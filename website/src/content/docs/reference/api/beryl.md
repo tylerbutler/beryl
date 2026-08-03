@@ -1,6 +1,6 @@
 ---
-title: beryl
-description: Beryl - Type-safe real-time communication
+title: "beryl"
+description: "Beryl - Type-safe real-time communication"
 ---
 
 Beryl - Type-safe real-time communication

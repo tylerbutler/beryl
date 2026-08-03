@@ -3,12 +3,16 @@ title: Supervision
 description: Choose between standalone start and an embedded child specification, and understand what Beryl owns.
 ---
 
-Beryl now exposes two entry points for the same runtime subtree:
+Beryl exposes two entry points for the same runtime subtree:
 
 - `beryl.start(config, init:, update:)` starts a **standalone** Beryl subtree and returns `Result(beryl.Sockets, beryl.StartError)`.
 - `beryl.child_spec(config, init:, update:)` validates the same config but returns `Result(#(beryl.Sockets, ChildSpecification(static_supervisor.Supervisor)), beryl.ConfigError)` so you can add that subtree to your own supervisor.
 
 Both entry points build the same nested supervisor shape and run the same app-side dispatch runtime.
+
+:::note[Channel layer]
+`beryl_channels.start(config, handlers:)` and `beryl_channels.child_spec(config, handlers:)` delegate to exactly these two functions, so everything on this page — subtree shape, restart policy, ownership, `beryl.stop`, and crash semantics — applies unchanged. They only differ in their error types, which additionally report handler-table validation failures. See [Supervision](/guides/channels/#supervision) in the Channels guide.
+:::
 
 ## Standalone start
 
@@ -138,14 +142,14 @@ After a crash:
 
 - the supervisor restarts the runtime under the same registered name,
 - the `beryl.Sockets` handle continues to work for **new** connections and broadcasts,
-- all in-memory per-socket state is gone: models, joined topics, and rate-limit buckets are rebuilt from scratch,
+- all in-memory per-socket state is gone: models (or router models and live channel instances), joined topics, and rate-limit buckets are rebuilt from scratch,
 - existing WebSocket connections close, because the transport monitors the runtime that accepted them and tears the socket down when that runtime dies.
 
 In other words: the handle is stable, but live socket state is not.
 
 ## Production checklist
 
-- Pick `beryl.start` for a standalone subtree or `beryl.child_spec` for an application-owned supervision tree.
+- Pick `beryl.start` / `beryl_channels.start` for a standalone subtree, or the matching `child_spec` for an application-owned supervision tree.
 - Start PubSub, presence, and groups separately before attaching their handles to Beryl config.
 - Treat runtime crashes as loss of all live socket state; design reconnect and rejoin flows accordingly.
 - Call `beryl.stop` only when you want to drain and stop the Beryl subtree itself.

@@ -1,6 +1,6 @@
 ---
-title: beryl/wire/codec
-description: Pluggable wire codec for beryl.
+title: "beryl/wire/codec"
+description: "Pluggable wire codec for beryl."
 ---
 
 Pluggable wire codec for beryl.

@@ -3,9 +3,13 @@ title: App-Side Dispatch
 description: Route joins, messages, binary frames, close events, and typed server messages in one update function.
 ---
 
-Beryl's current programming model is **app-side dispatch**: you start one runtime with `beryl.start` (or `beryl.child_spec`), build a per-socket model in `init`, and route every socket event in one `update` function.
+**App-side dispatch** is beryl's core programming model: you start one runtime with `beryl.start` (or `beryl.child_spec`), build a per-socket model in `init`, and route every socket event in one `update` function.
 
 There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `socket.Input` values and returning `socket.Next(model, effects)`.
+
+:::tip[Which layer?]
+Raw dispatch is the right choice for a single topic family, and whenever you want complete control over routing and effect order — including effects that span topics. For apps that serve several topic namespaces on one socket, or that port a Phoenix Channels design, the [channel layer](/guides/channels/) is the recommended default; it is built on exactly the API described below. See [Choose an API](/choosing-an-api/).
+:::
 
 ## The two app entry points
 
@@ -268,6 +272,8 @@ fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
 
 The top-level `update` is the router. Smaller modules own their own sub-models and return ordinary `List(socket.Effect)` values back to the parent.
 
+This is the boilerplate the [channel layer](/guides/channels/) exists to remove: it grows with each topic family you add — a wider model, a wider message union, and more router branches — while a handler table grows by one list entry. Keep writing it by hand when the cross-topic control it gives you is the point.
+
 ## Typed server-side messages
 
 `socket.ConnectInfo.self` gives each socket a typed `socket.Sender(msg)`. Any process can keep that sender and deliver `socket.Info(msg)` later with `socket.notify`.
@@ -309,6 +315,7 @@ The same rule matters for presence and replies:
 
 ## Next steps
 
+- [Channels](/guides/channels/) — the same routing, written for you, when one app owns several topic namespaces
 - [Coming from Phoenix](/guides/coming-from-phoenix/) — map channel modules, callbacks, and assigns onto this model
 - [WebSocket Transport](/guides/websocket/) — connect browsers and seed `ConnectInfo.seed.metadata`
 - [Presence](/guides/presence/) — use `PresenceTrack`, `PresenceUntrack`, and snapshot effects

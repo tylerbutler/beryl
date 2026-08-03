@@ -104,7 +104,7 @@ import { Aside } from '@astrojs/starlight/components';
 		</li>
 		<li>
 			<h3>Build your first socket app</h3>
-			<p>Wire up one typed <code>init</code>/<code>update</code> pair, the WebSocket transport, and a Phoenix JS client, end to end, in one sitting.</p>
+			<p>Write one channel handler, wire the WebSocket transport, and connect a Phoenix JS client, end to end, in one sitting. Prefer to own the router? <a href="/choosing-an-api/">Choose an API</a> lays out both layers.</p>
 			<a class="beryl-path__go" href="/quick-start/">Open the Quick Start →</a>
 		</li>
 		<li>
@@ -228,9 +228,9 @@ import { Aside } from '@astrojs/starlight/components';
 
 <div class="beryl-features">
 	<article class="beryl-feature beryl-feature--lead">
-		<h3>App-side dispatch</h3>
-		<p>Route every socket event through one typed <code>update</code> function you own. Match topics, thread your own model, and return ordered effects with compile-time guarantees — no registry, no assigns, no type erasure.</p>
-		<a class="beryl-feature__link" href="/guides/dispatch/">Dispatch guide →</a>
+		<h3>Channels, or your own router</h3>
+		<p>Register one handler per topic pattern and let <code>beryl_channels</code> route joins, messages, and closes to the channel that owns the topic — each with private, typed state. Or drop to the core and route every event yourself in one typed <code>update</code> function. No registry, no assigns, no type erasure either way.</p>
+		<a class="beryl-feature__link" href="/choosing-an-api/">Choose an API →</a>
 	</article>
 	<article class="beryl-feature">
 		<h3>Presence tracking</h3>

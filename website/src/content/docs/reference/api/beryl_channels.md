@@ -1,6 +1,6 @@
 ---
-title: beryl_channels
-description: Composable channels for beryl real-time sockets.
+title: "beryl_channels"
+description: "Composable channels for beryl real-time sockets."
 ---
 
 Composable channels for beryl real-time sockets.

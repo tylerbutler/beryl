@@ -11,14 +11,22 @@
 ## Install
 
 ```sh
-gleam add beryl beryl_mist
+gleam add beryl beryl_channels beryl_mist
 ```
 
-`beryl` is the core real-time sockets library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
-WebSocket transport. An [Ewe](https://hex.pm/packages/ewe) transport is also
-available as `beryl_ewe` (`gleam add beryl beryl_ewe`) and mirrors the
-`beryl_mist` API. All live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
-workspace under `packages/`).
+`beryl` is the core real-time sockets library; `beryl_channels` is the channel
+layer built on its public API; `beryl_mist` is the
+[Mist](https://hex.pm/packages/mist) WebSocket transport. An
+[Ewe](https://hex.pm/packages/ewe) transport is also available as `beryl_ewe`
+(`gleam add beryl beryl_ewe`) and mirrors the `beryl_mist` API. All live in this
+repository (a [trellis](https://trellis.tylerbutler.com)-managed workspace under
+`packages/`).
+
+`beryl_channels` is the recommended default for apps that serve several topic
+namespaces on one socket, or that port a Phoenix Channels design. Apps with a
+single topic family, or that want full control over routing, can use the core's
+app-side dispatch API directly (`gleam add beryl beryl_mist`). See
+[Choose an API](https://beryl.tylerbutler.com/choosing-an-api/).
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -26,41 +34,49 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 
 ```gleam
 import beryl
-import beryl/event.{type ConnectInfo, AcceptJoin, Join, Next}
 import beryl/transport/server
-import beryl_mist as mist_transport
 import beryl/wire
-import gleam/dynamic/decode
+import beryl_channels
+import beryl_channels/channel
+import beryl_mist as mist_transport
 import gleam/erlang/process
-import gleam/option.{None}
+import gleam/json
 import mist
 
-pub type Model { Model(username: String) }
-
-fn init(info: ConnectInfo(msg)) -> #(Model, List(event.Effect)) {
-  #(Model(username: "anonymous"), [])
+type State {
+  State(room: String)
 }
 
-fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
-  case ev {
-    Join("room:" <> _, payload, ref) -> {
-      let username_decoder = {
-        use username <- decode.field("username", decode.string)
-        decode.success(username)
-      }
-      let username = case decode.run(payload, username_decoder) {
-        Ok(username) -> username
-        Error(_) -> model.username
-      }
-      Next(Model(username:), [AcceptJoin(ref, None)])
-    }
-    _ -> Next(model, [])
-  }
+/// This channel sends itself nothing, so its server-side message type is Nil.
+type Note =
+  Nil
+
+fn room_channel() -> channel.Handler {
+  channel.handler("room:*", fn(info: channel.JoinInfo(Note), topic, _payload) {
+    channel.accept_with(
+      channel.joined(State(room: topic), callbacks()),
+      json.object([#("socket_id", json.string(info.socket_id))]),
+    )
+  })
+}
+
+fn callbacks() -> channel.Callbacks(State, Note) {
+  channel.callbacks()
+  |> channel.on_message(fn(state: State, message: channel.Message) {
+    channel.continue_with(
+      state,
+      channel.actions()
+        |> channel.broadcast(message.event, wire.dynamic_to_json(message.payload)),
+    )
+  })
 }
 
 pub fn main() {
   let assert Ok(sockets) =
-    beryl.start(beryl.config(wire.phoenix_codec()), init:, update:)
+    beryl_channels.start(
+      beryl.config(wire.phoenix_codec()),
+      handlers: [room_channel()],
+    )
 
   let assert Ok(_) =
     mist_transport.handler(sockets, server.default_config("/socket/websocket"), fn(_req) {
@@ -75,6 +91,10 @@ pub fn main() {
 }
 ```
 
+Without the channel layer, the same server is one `init`/`update` pair passed to
+`beryl.start` — see the
+[Dispatch guide](https://beryl.tylerbutler.com/guides/dispatch/).
+
 `mist_transport.handler` composes the WebSocket upgrade and your HTTP handler
 into a single Mist request handler: WebSocket upgrades on the configured path go
 to beryl, everything else falls through to the HTTP fallback. If you need to drive
@@ -87,7 +107,7 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 ## Documentation
 
 - **Website & guides**: <https://beryl.tylerbutler.com>
-- **Generated API docs**: <https://hexdocs.pm/beryl/>
+- **Generated API docs**: <https://hexdocs.pm/beryl/> and <https://hexdocs.pm/beryl_channels/>
 
 ## Ecosystem
 
@@ -122,13 +142,17 @@ flowchart TD
 | `phoenix_channel_fixtures` | Shared test fixtures for Phoenix channel wire compatibility. |
 | `roost` | Pure Phoenix channel frame constants, encode/decode helpers, and reply helpers. |
 | `beryl` | Server-side runtime with its own pluggable codec; its Phoenix codec is fixture-tested. |
+| `beryl_channels` | Channel composition layer built strictly on beryl's public API. |
 | `aquamarine` | Client-side channel runtime that uses Roost for Phoenix compatibility. |
 
 ## Features
 
-- **App-side dispatch** — one typed `init`/`update` pair per app; route topics
+- **Channels** — register one handler per topic pattern; each channel keeps
+  private, typed state and its own server-side message type, and the layer
+  routes every join, message, and close to the channel that owns the topic
+- **App-side dispatch** — or one typed `init`/`update` pair per app; route topics
   yourself by pattern matching (e.g. `room:*`, `document:*:*`) — no assigns, no
-  erasure, no registry
+  erasure, no registry either way
 - **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
 - **Groups** — Named topic groups for multi-topic broadcasting
 - **PubSub** — pg-based distributed publish/subscribe with a typed `Subscriber`
@@ -145,7 +169,7 @@ Four runnable demos are included in the `examples/` directory:
 | [`examples/cursors`](examples/cursors/) | App-side dispatch, topic wildcards, presence, `BroadcastFrom`, rate limiting |
 | [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection (`RejectJoin`), `ReplyOk`, `Push`, groups, validation, typing indicators |
 | [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
-| [`examples/showcase`](examples/showcase/) | End-to-end `beryl_channels` showcase across every subsystem |
+| [`examples/showcase`](examples/showcase/) | End-to-end `beryl_channels` showcase across every subsystem — the three focused demos above stay on raw dispatch on purpose |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 
@@ -157,12 +181,12 @@ removes the per-socket forwarder boilerplate: start a bridge in `init` (or when
 a topic joins), subscribe your actor to the bridge's `Subject`, and stop it
 when the socket or topic closes. Each value the actor emits is translated and
 delivered to the app's `update` function as an `Info` event via
-`event.notify`. The forwarder also monitors the owning process, so it is
+`socket.notify`. The forwarder also monitors the owning process, so it is
 cleaned up automatically if that process dies — no leaked processes.
 
 ```gleam
 import beryl/bridge.{type Bridge}
-import beryl/event.{type ConnectInfo}
+import beryl/socket.{type ConnectInfo}
 
 // Messages emitted by your domain actor.
 pub type DocEvent {

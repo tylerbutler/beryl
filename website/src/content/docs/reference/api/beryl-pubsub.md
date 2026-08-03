@@ -1,6 +1,6 @@
 ---
-title: beryl/pubsub
-description: PubSub - Distributed publish/subscribe using Erlang pg
+title: "beryl/pubsub"
+description: "PubSub - Distributed publish/subscribe using Erlang pg"
 ---
 
 PubSub - Distributed publish/subscribe using Erlang pg

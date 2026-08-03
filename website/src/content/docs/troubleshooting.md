@@ -4,6 +4,8 @@ title: Troubleshooting
 
 This page lists common symptoms with targeted diagnosis steps. Start from your symptom and follow the checks in order.
 
+Checks that mention `update` apply to [raw app-side dispatch](/guides/dispatch/). If you use the [channel layer](/guides/channels/), start with [Channel-layer symptoms](#channel-layer-symptoms) — the layer writes that `update` for you.
+
 ## Clients cannot connect at all
 
 **Symptoms:** Browser WebSocket error, `net::ERR_CONNECTION_REFUSED`, or immediate close before any Phoenix messages.
@@ -34,7 +36,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 **Checks:**
 
-1. **Does your `update` function match this topic and answer the join?** There is no registry anymore. A `Join` must return `socket.AcceptJoin(ref, ...)` or `socket.RejectJoin(ref, ...)` in the same `update` turn:
+1. **Does your `update` function match this topic and answer the join?** (Raw dispatch.) A `Join` must return `socket.AcceptJoin(ref, ...)` or `socket.RejectJoin(ref, ...)` in the same `update` turn:
    ```gleam
    case ev {
      socket.Join("room:" <> _, _payload, ref) ->
@@ -43,9 +45,9 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
        socket.Next(model, [])
    }
    ```
-   If a `Join` falls through to `socket.Next(model, [])`, beryl rejects it automatically (fail closed).
+   If a `Join` falls through to `socket.Next(model, [])`, beryl rejects it automatically (fail closed). With the channel layer, the layer always answers — see [Joins are refused with `unmatched topic`](#joins-are-refused-with-unmatched-topic).
 
-2. **Is the same `beryl.Sockets` handle passed to the transport?** `mist_transport.upgrade` or `mist_transport.handler` must receive the exact `sockets` value returned by `beryl.start` or `beryl.child_spec`.
+2. **Is the same `beryl.Sockets` handle passed to the transport?** `mist_transport.upgrade` or `mist_transport.handler` must receive the exact `sockets` value returned by `beryl.start`, `beryl.child_spec`, or their `beryl_channels` equivalents.
 
 3. **`update` panics or crashes.** One runtime actor serves every socket for a `beryl.Sockets` handle. A panic in `update` terminates that shared runtime, drops its existing connections, and restarts a fresh runtime under supervision. See [Runtime & Effect Interpreter](/architecture/runtime/) and [Supervision](/guides/supervision/).
 
@@ -66,6 +68,65 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 3. **Rate limits dropping messages.** If `with_message_rate`, `with_channel_rate`, or `with_topic_rate` is configured and the client sends faster than the limit, excess messages are dropped before your application logic sees them.
 
 4. **Event name limits.** If you configured `with_max_event_length`, overlong event names are dropped before they reach `update`.
+
+---
+
+## Channel-layer symptoms
+
+These apply when you start the system with `beryl_channels.start` or `beryl_channels.child_spec`.
+
+### `start` returns `InvalidHandlers`
+
+**Symptoms:** The system never starts; the error is `beryl_channels.InvalidHandlers(..)`.
+
+1. **`InvalidPattern(pattern, reason)`** — the pattern is not a valid beryl topic pattern. Check it against `beryl/topic` syntax: `"room:lobby"`, `"room:*"`, `"document:*:ops"`, `"*"`. Empty patterns are rejected.
+2. **`DuplicatePattern(pattern)`** — two handlers registered the *same* pattern string. Routing takes the first match, so the second could never receive a join. Merge them, or give one a more specific pattern.
+
+Call `beryl_channels.validate_handlers(handlers)` in a test to catch both at build time. Overlapping-but-different patterns (`"room:lobby"` plus `"room:*"`) are valid and are resolved by registration order.
+
+### Joins are refused with `unmatched topic`
+
+**Symptoms:** `.join()` lands in `"error"` with `{"reason": "unmatched topic"}`.
+
+1. **No handler pattern matches the topic.** The layer refuses unclaimed topics explicitly rather than leaving them unanswered. Check the exact topic string the client sends, including segment count — `"document:*:ops"` matches exactly three segments.
+2. **The topic is claimed by an earlier, broader pattern.** Handlers are consulted in registration order and the first match wins, so a `"room:*"` registered ahead of `"room:lobby"` makes the lobby handler unreachable. Put specific patterns first.
+
+### A channel is joined but its handler never runs
+
+**Symptoms:** The join is acknowledged, but messages on that topic do nothing.
+
+1. **The wrong handler owns the topic.** Two patterns can both match; only the first one registered runs. Log the topic in each `join` callback to see which handler actually opened it.
+2. **The callback was never installed.** `channel.callbacks()` starts from callbacks that ignore every input. Confirm you piped through `channel.on_message` (or `on_binary`) and passed the result to `channel.joined`.
+3. **The channel closed.** A callback that returned `channel.close()` (or panicked in `on_message`/`on_binary`) ends that topic; later inputs for it are ignored. Watch for the `phx_close` frame.
+
+### `channel.notify` never reaches `on_info`
+
+**Symptoms:** A server-side send appears to vanish. `notify` is fire-and-forget and never reports failure.
+
+1. **The channel has closed.** The envelope is dropped, still sealed. That is by design: liveness is decided at delivery.
+2. **The topic was rejoined.** A sender is bound to one join generation. After a leave-and-rejoin, senders held from the old join no longer match the live instance and are dropped rather than handed to the new one. Capture `info.self` fresh in each `join`.
+3. **You are sending from `join` and expecting it in the same turn.** `notify` always schedules a *later* turn. Work that must be part of the join belongs in `channel.with_actions`.
+4. **`on_info` was not installed** — see the previous section.
+
+### Termination actions do not arrive
+
+**Symptoms:** A leave announcement or post-leave roster never reaches clients.
+
+1. **You used `push` or `push_presence`.** The socket has already left the topic when `on_terminate` runs, so core drops those. Use `broadcast`, `broadcast_from`, or `broadcast_presence`, which still reach the topic's remaining subscribers.
+2. **Nobody else is subscribed.** A broadcast from the last member of a topic has no recipients.
+3. **The callback panicked.** A panic in `on_terminate` discards that turn, so its actions are lost. Sibling channels and core teardown are unaffected.
+
+### A whole socket disappears when one channel misbehaves
+
+**Symptoms:** All topics on a socket close at once.
+
+Crash policy is attributed by where the panic happened: `join` rejects that join, `on_message`/`on_binary` closes that topic, and **`on_info` tears down the whole socket**. Audit `let assert` and partial matches in `on_info` first. See [Crash behavior](/guides/channels/#crash-behavior).
+
+### A channel needs to broadcast on another topic
+
+**Symptoms:** There is no action that names a topic.
+
+That is deliberate — actions are scoped to the channel's own topic. Use `beryl.broadcast` / `beryl.broadcast_from` with the `Sockets` handle, or a `beryl/group` actor. Because the handle only exists after `start` returns, keep it in a small actor your handlers can call. See [Limitations](/guides/channels/#limitations).
 
 ---
 
@@ -126,7 +187,9 @@ let logging =
 
 4. **Cross-node sync.** If running multiple nodes, each node must use the same PubSub instance and each presence actor needs a unique replica ID. Without PubSub, nodes have independent presence state.
 
-5. **Clean up your own app model on `Closed`.** Presence entries tracked through effects are auto-untracked when a topic or socket closes, but any extra topic-local state you keep in your `Model` still needs to be pruned from your `socket.Closed(topic, reason)` branch.
+5. **Clean up your own app model on `Closed`.** Presence entries tracked through effects are auto-untracked when a topic or socket closes, but any extra topic-local state you keep in your `Model` still needs to be pruned from your `socket.Closed(topic, reason)` branch. With the channel layer the instance's state is pruned for you; only state you keep *outside* the channel is yours to clean up, in `on_terminate`.
+
+6. **A post-leave roster looks stale.** Untrack explicitly before you snapshot: put `channel.presence_untrack(key)` ahead of `channel.broadcast_presence(..)` in the same `on_terminate` action list. The automatic untrack runs after the `Closed` turn, so a snapshot that relies on it still shows the leaver.
 
 ---
 
@@ -211,8 +274,8 @@ Without `proxy_http_version 1.1` and the upgrade headers, nginx downgrades to HT
 
 **Checks:**
 
-1. **Are you starting Beryl the right way?** `beryl.start(...)` already runs Beryl inside its own supervised subtree. If you use `beryl.child_spec(...)`, make sure the returned child spec is actually added to a running supervisor.
+1. **Are you starting Beryl the right way?** `beryl.start(...)` (and `beryl_channels.start(...)`) already runs Beryl inside its own supervised subtree. If you use `child_spec(...)`, make sure the returned child spec is actually added to a running supervisor.
 
-2. **Panic in `init` or `update`.** Gleam's `assert` expressions panic on mismatch. Audit your `init`/`update` code for `let assert` expressions or partial matches that may fail on unexpected inputs.
+2. **Panic in `init` or `update`.** Gleam's `assert` expressions panic on mismatch. Audit your `init`/`update` code — or your channel callbacks — for `let assert` expressions or partial matches that may fail on unexpected inputs. Callback panics are isolated (see [Crash behavior](/guides/channels/#crash-behavior)); they do not take the runtime down.
 
-3. **A runtime crash affects every socket on that handle.** One runtime actor backs each `beryl.Sockets` system. After a crash, existing WebSocket connections close, clients must reconnect and rejoin, and the fresh runtime starts with no per-socket model or joined-topic state. See [Runtime & Effect Interpreter](/architecture/runtime/).
+3. **A runtime crash affects every socket on that handle.** One runtime actor backs each `beryl.Sockets` system, whichever layer produced it. After a crash, existing WebSocket connections close, clients must reconnect and rejoin, and the fresh runtime starts with no per-socket model, router model, or channel instances. See [Runtime & Effect Interpreter](/architecture/runtime/).

@@ -66,6 +66,10 @@ export default defineConfig({
 							slug: "installation",
 						},
 						{
+							label: "Choose an API",
+							slug: "choosing-an-api",
+						},
+						{
 							label: "Quick Start",
 							slug: "quick-start",
 						},
@@ -78,6 +82,10 @@ export default defineConfig({
 				{
 					label: "Guides",
 					items: [
+						{
+							label: "Channels",
+							slug: "guides/channels",
+						},
 						{
 							label: "App-Side Dispatch",
 							slug: "guides/dispatch",
