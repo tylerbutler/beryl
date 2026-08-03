@@ -46,8 +46,9 @@
 //// the resulting [`Handler`](#Handler) is not generic and handlers with
 //// unrelated `state` and `info` types compose in one list. No value is
 //// ever erased to `Dynamic` and no unchecked coercion is involved:
-//// typed `info` values travel over a per-join typed mailbox created by
-//// [`handler`](#handler) itself.
+//// typed `info` values travel inside a closure that only the join which
+//// created it can open, and the socket that owns the join opens it — or
+//// drops it unopened, if the join has since ended.
 ////
 //// ## Ordering
 ////
@@ -60,6 +61,7 @@ import beryl/presence
 import beryl/socket
 import gleam/dynamic
 import gleam/erlang/process
+import gleam/erlang/reference
 import gleam/json
 import gleam/list
 import gleam/option
@@ -74,17 +76,25 @@ import gleam/option
 /// share with any process. Messages sent through it are delivered to the
 /// channel's `on_info` callback with their type intact.
 ///
-/// A sender is scoped to the join that produced it: once that channel has
-/// closed, or the same topic has been joined again, messages sent through
-/// the old sender are dropped rather than delivered to the new instance.
+/// A sender is scoped to the join that produced it. Sending is
+/// asynchronous and never fails, so it cannot report that the channel is
+/// gone: liveness is decided where the message is delivered. If the
+/// channel has closed, or the same topic has since been joined again, the
+/// message is dropped there — it is never handed to a different join.
 pub opaque type Sender(info) {
   Sender(send: fn(info) -> Nil)
 }
 
 /// Send a typed server-side message to the channel that owns `sender`.
 ///
-/// Delivered to the channel's `on_info` callback. Ignored when the channel
-/// or its socket has since gone away.
+/// Each call enqueues exactly one message, and each enqueued message
+/// produces exactly one `on_info` call — sends are never coalesced, and
+/// they are delivered in the order the owning socket receives them.
+///
+/// This is a fire-and-forget send: it returns as soon as the message is
+/// enqueued, whether or not the channel is still joined. A message
+/// enqueued for a channel that has already ended is discarded on arrival
+/// (see [`Sender`](#Sender)).
 pub fn notify(sender: Sender(info), message: info) -> Nil {
   sender.send(message)
 }
@@ -459,15 +469,24 @@ pub fn handler(
   join: fn(JoinInfo(info), String, dynamic.Dynamic) -> JoinResult(info),
 ) -> Handler {
   Handler(pattern: pattern, open: fn(context: JoinContext) {
-    // The typed mailbox for this join. It exists only inside this closure,
-    // where `info` is still in scope, which is what lets server-side sends
-    // stay typed without erasure: the socket-level wake-up carries no
-    // payload, and the value is read back here at its original type.
-    let mailbox = process.new_subject()
+    // The typed hand-off point for this join. It lives only inside this
+    // closure, where `info` is still in scope, which is what lets
+    // server-side sends stay typed without erasure.
+    //
+    // A `Sender` does *not* write to it directly: it seals the typed value
+    // into a `Mail` thunk and hands that to the router, which carries it
+    // to the socket that owns this join. Only once the router has decided
+    // the join is still live does it run the thunk — and it runs it
+    // through `on_mail`, which reads the value back at its original type
+    // in the same turn. Nothing typed is ever left sitting in a shared
+    // process mailbox between turns.
+    let handoff = process.new_subject()
+    let join_id = reference.new()
     let sender =
       Sender(send: fn(message) {
-        process.send(mailbox, message)
-        context.wake()
+        context.deliver(
+          Mail(join: join_id, place: fn() { process.send(handoff, message) }),
+        )
       })
     let info =
       JoinInfo(socket_id: context.socket_id, seed: context.seed, self: sender)
@@ -475,7 +494,7 @@ pub fn handler(
     case join(info, context.topic, context.payload) {
       JoinRejected(reason) -> Rejected(reason: reason)
       JoinAccepted(channel, reply) ->
-        Accepted(reply: reply, channel: live(channel, mailbox))
+        Accepted(reply: reply, channel: live(channel, handoff, join_id))
     }
   })
 }
@@ -525,16 +544,36 @@ pub type LiveChannel {
   LiveChannel(
     on_message: fn(Message) -> Step,
     on_binary: fn(BitArray) -> Step,
-    /// Deliver one pending server-side message from this channel's typed
-    /// mailbox. A no-op continuation when the mailbox is empty, which is
-    /// how wake-ups for an already-ended generation are absorbed.
-    on_mail: fn() -> Step,
+    /// Deliver one enqueued server-side message to this channel's
+    /// `on_info` callback.
+    ///
+    /// The router must call this **only after** it has confirmed that the
+    /// `Mail` was addressed to this exact join — same topic, same
+    /// generation — and must run each `Mail` at most once. `on_mail`
+    /// unseals the typed value and runs the callback in a single turn, so
+    /// no typed value is ever left behind for another turn, another
+    /// generation, or the actor's catch-all selector to pick up. One
+    /// `Mail` produces exactly one `on_info` call.
+    ///
+    /// A `Mail` belonging to a different join can never be delivered
+    /// here: its value goes to the join that sealed it, so this returns
+    /// an unchanged channel with no actions instead.
+    on_mail: fn(Mail) -> Step,
     on_terminate: fn(socket.StopReason) -> Nil,
-    /// Discard everything still waiting in this channel's typed mailbox.
-    /// The router calls this once the channel has ended, so messages from
-    /// a stale `Sender` do not pile up in the socket's process mailbox.
-    drain_mail: fn() -> Nil,
   )
+}
+
+/// One typed server-side message, sealed into a thunk.
+///
+/// Opaque and inert: it carries no payload the router can read, construct,
+/// or redirect, and it has no effect at all until the join that sealed it
+/// runs it through [`LiveChannel.on_mail`](#LiveChannel). Dropping a
+/// `Mail` — which is what the router does for a stale topic or generation
+/// — sends nothing anywhere, and handing one to the wrong join does
+/// nothing either: it carries the identity of its own join.
+@internal
+pub opaque type Mail {
+  Mail(join: reference.Reference, place: fn() -> Nil)
 }
 
 /// The non-generic form of a callback result.
@@ -547,9 +586,18 @@ pub type Step {
 
 /// Everything the router supplies for one join attempt.
 ///
-/// `wake` is bound by the router to this topic and join generation; the
-/// channel's `Sender` calls it after writing to the typed mailbox so the
-/// socket knows to run `on_mail`.
+/// `deliver` is bound by the router to this topic and join generation. The
+/// channel's `Sender` calls it with one sealed [`Mail`](#Mail) per
+/// `notify`; the router is expected to carry that mail to the owning
+/// socket as one envelope, check the envelope against the live join, and
+/// then either run it through `on_mail` or drop it. Envelopes are never
+/// coalesced: one send, one envelope, one `on_info`.
+///
+/// Bind `deliver` to the topic and generation this join is *about* to be
+/// given, before calling [`open`](#open): a `join` callback may use its
+/// own `Sender` (that is the documented way to schedule work for just
+/// after the join acknowledgment), and the mail it enqueues has to be
+/// addressed to the join being opened rather than to the previous one.
 @internal
 pub type JoinContext {
   JoinContext(
@@ -557,7 +605,7 @@ pub type JoinContext {
     seed: socket.ConnectSeed,
     topic: String,
     payload: dynamic.Dynamic,
-    wake: fn() -> Nil,
+    deliver: fn(Mail) -> Nil,
   )
 }
 
@@ -576,36 +624,51 @@ pub fn open(handler: Handler, context: JoinContext) -> JoinOutcome {
 
 fn live(
   channel: JoinedChannel(info),
-  mailbox: process.Subject(info),
+  handoff: process.Subject(info),
+  join_id: reference.Reference,
 ) -> LiveChannel {
+  let unchanged = fn() {
+    StepContinue(next: live(channel, handoff, join_id), actions: [])
+  }
   LiveChannel(
-    on_message: fn(message) { step(channel.on_message(message), mailbox) },
-    on_binary: fn(data) { step(channel.on_binary(data), mailbox) },
-    on_mail: fn() {
-      case process.receive(mailbox, 0) {
-        Ok(message) -> step(channel.on_info(message), mailbox)
-        Error(Nil) -> StepContinue(next: live(channel, mailbox), actions: [])
+    on_message: fn(message) {
+      step(channel.on_message(message), handoff, join_id)
+    },
+    on_binary: fn(data) { step(channel.on_binary(data), handoff, join_id) },
+    on_mail: fn(mail: Mail) {
+      case mail.join == join_id {
+        // Someone else's mail: leave it sealed, so its value stays where
+        // its own join can still read it and reaches nothing here.
+        False -> unchanged()
+        True -> {
+          // Unsealing and consuming happen back to back in this turn, so
+          // the typed value is never visible to anything else.
+          mail.place()
+          case process.receive(handoff, 0) {
+            Ok(message) -> step(channel.on_info(message), handoff, join_id)
+            // Unreachable: this join sealed the mail and a mail places
+            // exactly one message. Continuing unchanged keeps a router
+            // mistake from taking the socket down with it.
+            Error(Nil) -> unchanged()
+          }
+        }
       }
     },
     on_terminate: channel.on_terminate,
-    drain_mail: fn() { drain(mailbox) },
   )
-}
-
-fn drain(mailbox: process.Subject(info)) -> Nil {
-  case process.receive(mailbox, 0) {
-    Ok(_message) -> drain(mailbox)
-    Error(Nil) -> Nil
-  }
 }
 
 fn step(
   continuation: Continuation(info),
-  mailbox: process.Subject(info),
+  handoff: process.Subject(info),
+  join_id: reference.Reference,
 ) -> Step {
   case continuation {
     ContinueWith(next, actions) ->
-      StepContinue(next: live(next, mailbox), actions: action_list(actions))
+      StepContinue(
+        next: live(next, handoff, join_id),
+        actions: action_list(actions),
+      )
     CloseWith(actions) -> StepClose(actions: action_list(actions))
     StopSocketWith(reason) -> StepStop(reason: reason)
   }

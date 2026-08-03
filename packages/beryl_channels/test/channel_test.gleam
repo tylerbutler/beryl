@@ -33,19 +33,19 @@ pub type Note {
 fn context(
   topic topic: String,
   payload payload: dynamic.Dynamic,
-  wake wake: fn() -> Nil,
+  deliver deliver: fn(channel.Mail) -> Nil,
 ) -> channel.JoinContext {
   channel.JoinContext(
     socket_id: "socket-1",
     seed: socket.empty_seed(),
     topic: topic,
     payload: payload,
-    wake: wake,
+    deliver: deliver,
   )
 }
 
 fn quiet_context(topic: String) -> channel.JoinContext {
-  context(topic: topic, payload: dynamic.nil(), wake: fn() { Nil })
+  context(topic: topic, payload: dynamic.nil(), deliver: fn(_mail) { Nil })
 }
 
 fn client_message(event: String) -> channel.Message {
@@ -209,9 +209,11 @@ pub fn join_receives_the_topic_and_payload_test() {
   let outcome =
     channel.open(
       handler,
-      context(topic: "room:lobby", payload: dynamic.string("hello"), wake: fn() {
-        Nil
-      }),
+      context(
+        topic: "room:lobby",
+        payload: dynamic.string("hello"),
+        deliver: fn(_mail) { Nil },
+      ),
     )
 
   case outcome {
@@ -334,8 +336,8 @@ pub fn terminate_runs_the_terminate_callback_test() {
 
 // --- typed server-side sends -----------------------------------------------
 
-pub fn sender_delivers_typed_info_without_erasure_test() {
-  let wakes = process.new_subject()
+pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
+  let outbox = process.new_subject()
   let senders = process.new_subject()
 
   let handler =
@@ -359,74 +361,80 @@ pub fn sender_delivers_typed_info_without_erasure_test() {
   let live =
     channel.open(
       handler,
-      context(topic: "room:lobby", payload: dynamic.nil(), wake: fn() {
-        process.send(wakes, Nil)
+      context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
+        process.send(outbox, mail)
       }),
     )
     |> accepted_channel
 
   let assert Ok(sender) = process.receive(senders, 100)
   channel.notify(sender, Note("hi"))
+  channel.notify(sender, Note("again"))
 
-  process.receive(wakes, 100) |> should.equal(Ok(Nil))
+  // One send, one mail: no coalescing.
+  let assert Ok(first) = process.receive(outbox, 100)
+  let assert Ok(second) = process.receive(outbox, 100)
+  process.receive(outbox, 0) |> should.equal(Error(Nil))
 
-  case live.on_mail() {
+  let assert channel.StepContinue(next, first_actions) = live.on_mail(first)
+  first_actions |> rendered |> should.equal("push/note/\"hi\"")
+
+  case next.on_mail(second) {
     channel.StepContinue(_next, actions) ->
-      actions |> rendered |> should.equal("push/note/\"hi\"")
+      actions |> rendered |> should.equal("push/note/\"again\"")
     _ -> should.fail()
   }
 }
 
-pub fn mail_delivery_with_an_empty_mailbox_is_a_no_op_test() {
-  let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
-    |> accepted_channel
-
-  case live.on_mail() {
-    channel.StepContinue(next, actions) -> {
-      actions |> should.equal([])
-      // The unchanged channel keeps its state: the first bump is still 1.
-      case next.on_message(client_message("bump")) {
-        channel.StepContinue(_, bumped) ->
-          bumped
-          |> rendered
-          |> should.equal("push/total/1,broadcast/bumped/\"room:lobby\"")
-        _ -> should.fail()
-      }
-    }
-    _ -> should.fail()
-  }
-}
-
-pub fn info_can_close_the_channel_test() {
+pub fn an_unrun_mail_delivers_nothing_test() {
+  let outbox = process.new_subject()
   let senders = process.new_subject()
+
   let handler =
     channel.handler("room:*", fn(info, _topic, _payload) {
       process.send(senders, info.self)
       let callbacks =
         channel.callbacks()
-        |> channel.on_info(fn(_state, note) {
-          case note {
-            Bye -> channel.close()
-            Note(_) -> channel.continue(Nil)
-          }
+        |> channel.on_info(fn(count, note) {
+          let assert Note(text) = note as "only Note values are sent here"
+          channel.continue_with(
+            count + 1,
+            channel.actions() |> channel.push("note", json.string(text)),
+          )
         })
-      channel.accept(channel.joined(Nil, callbacks))
+      channel.accept(channel.joined(0, callbacks))
     })
 
   let live =
-    channel.open(handler, quiet_context("room:lobby")) |> accepted_channel
-  let assert Ok(sender) = process.receive(senders, 100)
-  channel.notify(sender, Bye)
+    channel.open(
+      handler,
+      context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
+        process.send(outbox, mail)
+      }),
+    )
+    |> accepted_channel
 
-  case live.on_mail() {
-    channel.StepClose(actions) -> actions |> should.equal([])
+  let assert Ok(sender) = process.receive(senders, 100)
+  channel.notify(sender, Note("dropped"))
+  channel.notify(sender, Note("kept"))
+
+  // The router drops the first mail instead of running it — as it does for
+  // a stale generation — so its payload reaches nothing at all, and the
+  // channel's state is untouched by it.
+  let assert Ok(_dropped) = process.receive(outbox, 100)
+  let assert Ok(kept) = process.receive(outbox, 100)
+
+  case live.on_mail(kept) {
+    channel.StepContinue(_next, actions) ->
+      actions |> rendered |> should.equal("push/note/\"kept\"")
     _ -> should.fail()
   }
 }
 
-pub fn draining_discards_pending_mail_test() {
+pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
+  let outbox = process.new_subject()
   let senders = process.new_subject()
+
   let handler =
     channel.handler("room:*", fn(info, _topic, _payload) {
       process.send(senders, info.self)
@@ -445,16 +453,65 @@ pub fn draining_discards_pending_mail_test() {
       channel.accept(channel.joined(Nil, callbacks))
     })
 
-  let live =
-    channel.open(handler, quiet_context("room:lobby")) |> accepted_channel
-  let assert Ok(sender) = process.receive(senders, 100)
-  channel.notify(sender, Note("one"))
-  channel.notify(sender, Note("two"))
+  let join_context =
+    context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
+      process.send(outbox, mail)
+    })
+  let first = channel.open(handler, join_context) |> accepted_channel
+  let second = channel.open(handler, join_context) |> accepted_channel
 
-  live.drain_mail()
+  let assert Ok(sender_of_first) = process.receive(senders, 100)
+  let assert Ok(_sender_of_second) = process.receive(senders, 100)
+  channel.notify(sender_of_first, Note("mine"))
+  let assert Ok(mail) = process.receive(outbox, 100)
 
-  case live.on_mail() {
+  // Handing one join's mail to another join delivers nothing and leaves
+  // the mail sealed: the value is only ever readable by its own join.
+  case second.on_mail(mail) {
     channel.StepContinue(_next, actions) -> actions |> should.equal([])
+    _ -> should.fail()
+  }
+
+  // ...so it is still intact and still the first join's message when the
+  // join that sealed it runs it.
+  case first.on_mail(mail) {
+    channel.StepContinue(_next, actions) ->
+      actions |> rendered |> should.equal("push/note/\"mine\"")
+    _ -> should.fail()
+  }
+}
+
+pub fn info_can_close_the_channel_test() {
+  let outbox = process.new_subject()
+  let senders = process.new_subject()
+  let handler =
+    channel.handler("room:*", fn(info, _topic, _payload) {
+      process.send(senders, info.self)
+      let callbacks =
+        channel.callbacks()
+        |> channel.on_info(fn(_state, note) {
+          case note {
+            Bye -> channel.close()
+            Note(_) -> channel.continue(Nil)
+          }
+        })
+      channel.accept(channel.joined(Nil, callbacks))
+    })
+
+  let live =
+    channel.open(
+      handler,
+      context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
+        process.send(outbox, mail)
+      }),
+    )
+    |> accepted_channel
+  let assert Ok(sender) = process.receive(senders, 100)
+  channel.notify(sender, Bye)
+  let assert Ok(mail) = process.receive(outbox, 100)
+
+  case live.on_mail(mail) {
+    channel.StepClose(actions) -> actions |> should.equal([])
     _ -> should.fail()
   }
 }

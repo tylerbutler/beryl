@@ -2,8 +2,6 @@
 //// surface: deterministic pattern validation, exact-duplicate detection,
 //// and tolerated non-identical overlaps.
 
-import beryl
-import beryl/wire
 import beryl_channels
 import beryl_channels/channel
 import gleeunit
@@ -98,66 +96,7 @@ pub fn validation_reports_the_first_repeated_pattern_in_order_test() {
   ])
   |> should.equal(Error(beryl_channels.DuplicatePattern("b")))
 }
-
-pub fn validation_is_deterministic_across_runs_test() {
-  let handlers = [stub("room:*"), stub("room:*")]
-  beryl_channels.validate_handlers(handlers)
-  |> should.equal(beryl_channels.validate_handlers(handlers))
-}
-
-// --- nested core errors ----------------------------------------------------
-
-/// A real `beryl.ConfigError`, produced by the core's own validation
-/// rather than hand-built, so the nesting below is checked against what
-/// `beryl` actually reports.
-fn core_config_error() -> beryl.ConfigError {
-  beryl.config(wire.phoenix_codec())
-  |> beryl.with_topic_rate(
-    pattern: "bad\u{0001}pattern",
-    per_second: 1,
-    burst: 1,
-  )
-  |> beryl.validate_config
-  |> should.be_error
-}
-
-pub fn start_errors_preserve_nested_errors_test() {
-  let core = beryl.InvalidConfig(core_config_error())
-  let handler_error =
-    beryl_channels.InvalidPattern("", "pattern cannot be empty")
-  let errors: List(beryl_channels.StartError) = [
-    beryl_channels.InvalidHandlers(handler_error),
-    beryl_channels.SocketStartFailed(core),
-  ]
-
-  case errors {
-    [
-      beryl_channels.InvalidHandlers(handlers),
-      beryl_channels.SocketStartFailed(nested),
-    ] -> {
-      handlers |> should.equal(handler_error)
-      nested |> should.equal(core)
-    }
-    _ -> should.fail()
-  }
-}
-
-pub fn child_spec_errors_preserve_nested_errors_test() {
-  let core = core_config_error()
-  let handler_error = beryl_channels.DuplicatePattern("room:*")
-  let errors: List(beryl_channels.ChildSpecError) = [
-    beryl_channels.ChildSpecInvalidHandlers(handler_error),
-    beryl_channels.ChildSpecInvalidConfig(core),
-  ]
-
-  case errors {
-    [
-      beryl_channels.ChildSpecInvalidHandlers(handlers),
-      beryl_channels.ChildSpecInvalidConfig(nested),
-    ] -> {
-      handlers |> should.equal(handler_error)
-      nested |> should.equal(core)
-    }
-    _ -> should.fail()
-  }
-}
+// Error-surface coverage deliberately stops here. `StartError` and
+// `ChildSpecError` are only reachable through the `start`/`child_spec`
+// entry points, which land with the event router; asserting on
+// hand-constructed values would test the compiler, not this package.

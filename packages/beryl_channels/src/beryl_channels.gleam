@@ -63,6 +63,7 @@ pub type HandlerError {
   DuplicatePattern(pattern: String)
 }
 
+// nolint: unused_exports -- consumed by `start`, which lands with the event router
 /// Why starting a channel system failed.
 ///
 /// The beryl error is nested rather than flattened, so nothing the core
@@ -77,6 +78,7 @@ pub type StartError {
   SocketStartFailed(beryl.StartError)
 }
 
+// nolint: unused_exports -- consumed by `child_spec`, which lands with the event router
 /// Why building a channel-system child specification failed.
 ///
 /// Like `beryl.child_spec`, this reports only the failures that can be

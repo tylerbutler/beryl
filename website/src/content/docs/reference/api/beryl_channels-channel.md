@@ -51,8 +51,9 @@ The channel composition surface: a channel is a topic pattern paired
  the resulting [`Handler`](#Handler) is not generic and handlers with
  unrelated `state` and `info` types compose in one list. No value is
  ever erased to `Dynamic` and no unchecked coercion is involved:
- typed `info` values travel over a per-join typed mailbox created by
- [`handler`](#handler) itself.
+ typed `info` values travel inside a closure that only the join which
+ created it can open, and the socket that owns the join opens it — or
+ drops it unopened, if the join has since ended.
 
  ## Ordering
 
@@ -176,9 +177,11 @@ A typed handle for sending server-side messages to one joined channel.
  share with any process. Messages sent through it are delivered to the
  channel's `on_info` callback with their type intact.
 
- A sender is scoped to the join that produced it: once that channel has
- closed, or the same topic has been joined again, messages sent through
- the old sender are dropped rather than delivered to the new instance.
+ A sender is scoped to the join that produced it. Sending is
+ asynchronous and never fails, so it cannot report that the channel is
+ gone: liveness is decided where the message is delivered. If the
+ channel has closed, or the same topic has since been joined again, the
+ message is dropped there — it is never handed to a different join.
 
 ```gleam
 pub type Sender(a)
@@ -341,8 +344,14 @@ pub fn joined(
 
 Send a typed server-side message to the channel that owns `sender`.
 
- Delivered to the channel's `on_info` callback. Ignored when the channel
- or its socket has since gone away.
+ Each call enqueues exactly one message, and each enqueued message
+ produces exactly one `on_info` call — sends are never coalesced, and
+ they are delivered in the order the owning socket receives them.
+
+ This is a fire-and-forget send: it returns as soon as the message is
+ enqueued, whether or not the channel is still joined. A message
+ enqueued for a channel that has already ended is discarded on arrival
+ (see [`Sender`](#Sender)).
 
 ```gleam
 pub fn notify(
