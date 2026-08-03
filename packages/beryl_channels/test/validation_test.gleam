@@ -98,5 +98,6 @@ pub fn validation_reports_the_first_repeated_pattern_in_order_test() {
 }
 // Error-surface coverage deliberately stops here. `StartError` and
 // `ChildSpecError` are only reachable through the `start`/`child_spec`
-// entry points, which land with the event router; asserting on
-// hand-constructed values would test the compiler, not this package.
+// entry points, so they are asserted end to end in `entry_point_test`;
+// asserting on hand-constructed values here would test the compiler, not
+// this package.

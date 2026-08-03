@@ -15,6 +15,8 @@ Composable channels for beryl real-time sockets.
  type.
 
  ```gleam
+ import beryl
+ import beryl/wire
  import beryl_channels
  import beryl_channels/channel
 
@@ -23,9 +25,17 @@ Composable channels for beryl real-time sockets.
  }
 
  pub fn main() {
-   let assert Ok(Nil) = beryl_channels.validate_handlers(handlers())
+   let assert Ok(sockets) =
+     beryl_channels.start(
+       beryl.config(wire.phoenix_codec()),
+       handlers: handlers(),
+     )
  }
  ```
+
+ The returned `beryl.Sockets` is an ordinary core handle: pass it to a
+ transport (`beryl_mist`, `beryl_ewe`), to `beryl.broadcast`, and to
+ `beryl.stop`.
 
  ## Routing rules
 
@@ -36,13 +46,9 @@ Composable channels for beryl real-time sockets.
  handlers registered with the *same* pattern string are rejected
  instead, because the second one could never be reached.
 
- ## Status
-
- The handler surface, the error surface, and the validation below are
- complete. The socket entry points that start a system from a handler
- table (`start` and `child_spec`, delegating to `beryl.start` and
- `beryl.child_spec`) land together with the event router; they are
- deliberately absent rather than present and inert.
+ A join for a topic no handler matches is refused explicitly, with the
+ reason payload `{"reason": "unmatched topic"}`, rather than left
+ unanswered.
 
 ## Types
 
@@ -136,6 +142,72 @@ The underlying beryl system refused to start. The wrapped value is
  the core error exactly as `beryl.start` returned it.
 
 ## Functions
+
+### `child_spec`
+
+Build a channel system's supervision child specification, for
+ embedding it in an application's own supervision tree instead of
+ starting it standalone with [`start`](#start).
+
+ Like `beryl.child_spec`, this reports only what can be detected before
+ the tree is started: the handler table is validated first, then the
+ `beryl.Config`, whose error is returned nested in
+ [`ChildSpecInvalidConfig`](#ChildSpecError). The returned
+ `beryl.Sockets` is usable as soon as the owning tree is running.
+
+ ## Example
+
+ ```gleam
+ let assert Ok(#(sockets, spec)) =
+   beryl_channels.child_spec(
+     beryl.config(wire.phoenix_codec()),
+     handlers: [rooms.channel()],
+   )
+
+ let assert Ok(_root) =
+   static_supervisor.new(static_supervisor.OneForOne)
+   |> static_supervisor.add(spec)
+   |> static_supervisor.start()
+ ```
+
+```gleam
+pub fn child_spec(
+  beryl.Config,
+  handlers: List(channel.Handler)
+) -> Result(#(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ChildSpecError)
+```
+
+### `start`
+
+Start a channel system: one beryl socket system that routes every
+ event to the handler owning its topic.
+
+ The handler table is validated first (see
+ [`validate_handlers`](#validate_handlers)), so an unusable table is
+ reported before any process is started. Only then is `beryl.start`
+ called, with the handler table compiled into its `init`/`update` pair;
+ its error is returned nested in
+ [`SocketStartFailed`](#StartError).
+
+ The returned handle is an ordinary `beryl.Sockets`: give it to a
+ transport, to `beryl.broadcast`, and to `beryl.stop`.
+
+ ## Example
+
+ ```gleam
+ let assert Ok(sockets) =
+   beryl_channels.start(
+     beryl.config(wire.phoenix_codec()),
+     handlers: [rooms.channel()],
+   )
+ ```
+
+```gleam
+pub fn start(
+  beryl.Config,
+  handlers: List(channel.Handler)
+) -> Result(beryl.Sockets, StartError)
+```
 
 ### `validate_handlers`
 

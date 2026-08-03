@@ -1,6 +1,10 @@
-//// Compiles the module-doc example from `beryl_channels/channel` so the
-//// documented shape cannot drift from the real API.
+//// Compiles the module-doc examples from `beryl_channels` and
+//// `beryl_channels/channel` so the documented shapes cannot drift from
+//// the real API.
 
+import beryl
+import beryl/wire
+import beryl_channels
 import beryl_channels/channel
 import gleam/json
 import gleeunit
@@ -40,4 +44,16 @@ pub fn room() -> channel.Handler {
 
 pub fn documented_example_compiles_and_joins_test() {
   room() |> channel.pattern |> should.equal("room:*")
+}
+
+/// The `beryl_channels` module-doc entry-point example, compiled and run
+/// so the documented shape cannot drift from the real API either.
+pub fn documented_start_example_compiles_and_starts_test() {
+  let handlers = [room()]
+
+  let assert Ok(sockets) =
+    beryl_channels.start(beryl.config(wire.phoenix_codec()), handlers: handlers)
+    as "the documented handler table starts"
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
