@@ -9,77 +9,13 @@ import beryl
 import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/dict
-import gleam/dynamic
-import gleam/dynamic/decode
-import gleam/erlang/atom
-import gleam/erlang/process
 import gleam/option.{None}
 import gleeunit
 import gleeunit/should
+import test_helpers.{begin_capture, receive_log, stop_capture}
 
 pub fn main() {
   gleeunit.main()
-}
-
-type CapturedLog {
-  CapturedLog(message: String, metadata: dict.Dict(String, String))
-}
-
-@external(erlang, "beryl_log_capture", "start")
-fn start_capture(pid: process.Pid) -> Nil
-
-@external(erlang, "beryl_log_capture", "stop")
-fn stop_capture() -> Nil
-
-fn captured_decoder() -> decode.Decoder(CapturedLog) {
-  use message <- decode.field(1, decode.string)
-  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
-  decode.success(CapturedLog(message:, metadata:))
-}
-
-fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
-  case decode.run(value, captured_decoder()) {
-    Ok(captured) -> captured
-    Error(_) -> CapturedLog(message: "", metadata: dict.new())
-  }
-}
-
-fn captured_selector() -> process.Selector(CapturedLog) {
-  process.new_selector()
-  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
-}
-
-fn begin_capture() -> process.Selector(CapturedLog) {
-  start_capture(process.self())
-  let selector = captured_selector()
-  drain(selector)
-  selector
-}
-
-fn drain(selector: process.Selector(CapturedLog)) -> Nil {
-  case process.selector_receive(selector, 0) {
-    Ok(_) -> drain(selector)
-    Error(Nil) -> Nil
-  }
-}
-
-fn receive_log(
-  selector: process.Selector(CapturedLog),
-  message: String,
-  attempts: Int,
-) -> Result(CapturedLog, Nil) {
-  case attempts <= 0 {
-    True -> Error(Nil)
-    False ->
-      case process.selector_receive(selector, 500) {
-        Ok(captured) ->
-          case captured.message == message {
-            True -> Ok(captured)
-            False -> receive_log(selector, message, attempts - 1)
-          }
-        Error(Nil) -> Error(Nil)
-      }
-  }
 }
 
 pub fn start_warns_when_no_abuse_controls_configured_test() {

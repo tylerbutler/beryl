@@ -10,6 +10,10 @@ import beryl/transport/server
 import beryl/wire
 import beryl_ewe as ewe_transport
 import ewe
+import gleam/dict
+import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
@@ -60,6 +64,76 @@ fn http_get(port: Int, path: String) -> Result(Int, Nil)
 
 @external(erlang, "beryl_ewe_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
+
+// ── Palabres log capture ─────────────────────────────────────────────────
+//
+// Used to observe runtime-side logging as a proxy for "did the decoded
+// envelope reach the runtime" — reply presence/absence alone cannot tell
+// edge-level frame shedding apart from runtime-level message shedding.
+// Mirrors the harness in `beryl/test/test_helpers.gleam`; duplicated here
+// because it depends on a test-only Erlang handler (`beryl_log_capture`)
+// that must live in this package's own test build.
+
+type CapturedLog {
+  CapturedLog(message: String, metadata: dict.Dict(String, String))
+}
+
+@external(erlang, "beryl_log_capture", "start")
+fn start_capture(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_log_capture", "stop")
+fn stop_capture() -> Nil
+
+fn captured_decoder() -> decode.Decoder(CapturedLog) {
+  use message <- decode.field(1, decode.string)
+  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
+  decode.success(CapturedLog(message:, metadata:))
+}
+
+fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
+  case decode.run(value, captured_decoder()) {
+    Ok(captured) -> captured
+    Error(_) -> CapturedLog(message: "", metadata: dict.new())
+  }
+}
+
+fn captured_selector() -> process.Selector(CapturedLog) {
+  process.new_selector()
+  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
+}
+
+fn drain(selector: process.Selector(CapturedLog)) -> Nil {
+  case process.selector_receive(selector, 0) {
+    Ok(_) -> drain(selector)
+    Error(Nil) -> Nil
+  }
+}
+
+fn begin_capture() -> process.Selector(CapturedLog) {
+  start_capture(process.self())
+  let selector = captured_selector()
+  drain(selector)
+  selector
+}
+
+fn receive_log(
+  selector: process.Selector(CapturedLog),
+  message: String,
+  attempts: Int,
+) -> Result(CapturedLog, Nil) {
+  case attempts <= 0 {
+    True -> Error(Nil)
+    False ->
+      case process.selector_receive(selector, 500) {
+        Ok(captured) ->
+          case captured.message == message {
+            True -> Ok(captured)
+            False -> receive_log(selector, message, attempts - 1)
+          }
+        Error(Nil) -> Error(Nil)
+      }
+  }
+}
 
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
@@ -321,18 +395,32 @@ pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() {
   // heartbeat flood still gets shed (the runtime's message limiter catches
   // it after decode), but the two settings are independent — this proves
   // `with_message_rate` is not silently doing edge-level frame shedding.
+  //
+  // Reply counts alone can't distinguish edge-level shedding from
+  // runtime-level shedding (both look identical from the client), so this
+  // also asserts on the runtime's own "Message rate limited" debug log,
+  // which only fires once a decoded envelope has actually reached the
+  // runtime and been rejected there.
   let channels =
     start_app_system(
       beryl.config(wire.phoenix_codec())
-      |> beryl.with_message_rate(per_second: 1, burst: 2),
+      |> beryl.with_message_rate(per_second: 1, burst: 2)
+      |> beryl.with_logging(beryl.logging_config(
+        level: beryl.DebugLevel,
+        include_payloads: False,
+      )),
     )
   let #(port, server_pid) = start_server(channels)
   let assert Ok(client) = connect_websocket(port, "/socket")
+  let selector = begin_capture()
 
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)
   { replies <= 2 } |> should.be_true
   { replies >= 1 } |> should.be_true
+
+  receive_log(selector, "Message rate limited", 20) |> should.be_ok
+  stop_capture()
 
   close(client)
   stop_supervisor(server_pid)

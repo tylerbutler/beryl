@@ -22,6 +22,7 @@ import gleam/option
 import gleam/string
 import gleeunit
 import gleeunit/should
+import test_helpers.{begin_capture, receive_log, stop_capture}
 
 pub fn main() {
   gleeunit.main()
@@ -121,14 +122,22 @@ pub fn frame_rate_counts_malformed_frames_test() {
 
 pub fn message_rate_alone_does_not_shed_at_the_edge_test() {
   // With no frame_rate configured, every frame reaches decode and routing;
-  // the runtime's message-rate bucket is what sheds the flood (invisible
-  // from this layer as anything other than a dropped reply — the edge
-  // itself never rejects the frame).
+  // the runtime's message-rate bucket is what sheds the flood. A dropped
+  // reply alone would be identical to edge-level shedding, so this test
+  // additionally observes the runtime's own "Message rate limited" debug
+  // log — it only fires once the decoded envelope has reached the runtime
+  // and been rejected there, which an edge-level shed (no decode, no
+  // runtime dispatch at all) could never produce.
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 1, burst: 1)
+    |> beryl.with_logging(beryl.logging_config(
+      level: beryl.DebugLevel,
+      include_payloads: False,
+    ))
   let channels = start_system(config)
   let conn = connect(channels, "10.10.10.3")
+  let selector = begin_capture()
 
   let conn = send_text(conn, heartbeat("hb-1"))
   let assert Ok(reply) = recv(conn)
@@ -136,6 +145,14 @@ pub fn message_rate_alone_does_not_shed_at_the_edge_test() {
 
   let conn = send_text(conn, heartbeat("hb-2"))
   recv(conn) |> should.equal(Error(Nil))
+
+  // The second heartbeat's envelope reached the runtime and was rejected
+  // by the message-rate gate there — proof the edge itself admitted the
+  // frame and did no shedding of its own.
+  receive_log(selector, "Message rate limited", 10) |> should.be_ok
+
+  let _conn = conn
+  stop_capture()
 }
 
 // ── Combined accounting ──────────────────────────────────────────────────

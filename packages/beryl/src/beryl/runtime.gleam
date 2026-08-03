@@ -444,9 +444,9 @@ fn dispatch_inbound(
         False -> reject_invalid_join(state, socket_id, msg)
       }
     codec.Leave -> {
-      use state <- with_message_rate_limit(state, socket_id, [
-        #("kind", "leave"),
-      ])
+      use state <- with_message_rate_limit(state, socket_id, fn() {
+        [#("kind", "leave")]
+      })
       case is_valid_topic(msg_topic, state.config) {
         False -> {
           state.logger
@@ -467,16 +467,18 @@ fn dispatch_inbound(
       }
     }
     codec.Heartbeat -> {
-      use state <- with_message_rate_limit(state, socket_id, [
-        #("kind", "heartbeat"),
-      ])
+      use state <- with_message_rate_limit(state, socket_id, fn() {
+        [#("kind", "heartbeat")]
+      })
       handle_heartbeat(state, socket_id, msg_ref)
     }
     codec.Event(event_name) -> {
-      use state <- with_message_rate_limit(state, socket_id, [
-        #("topic", topic.sanitize_for_log(msg_topic)),
-        #("event", topic.sanitize_for_log(event_name)),
-      ])
+      use state <- with_message_rate_limit(state, socket_id, fn() {
+        [
+          #("topic", topic.sanitize_for_log(msg_topic)),
+          #("event", topic.sanitize_for_log(event_name)),
+        ]
+      })
       let resolved = resolve_event_topic(state, socket_id, msg_topic)
       case
         is_valid_topic(resolved, state.config),
@@ -557,24 +559,30 @@ fn is_valid_event(event_name: String, config: Config) -> Bool {
 }
 
 /// Apply the per-socket message limiter (`beryl.with_message_rate`),
-/// dropping the decoded, non-join envelope with a warning when the socket is
-/// over rate. Every leave, heartbeat, and event — valid or semantically
+/// dropping the decoded, non-join envelope at debug level when the socket
+/// is over rate. Every leave, heartbeat, and event — valid or semantically
 /// invalid — consumes one token here before any further validity check or
 /// dispatch; joins never pass through this gate (see `with_join_rate`
-/// instead). `metadata` is appended to the warning's `socket_id` entry.
+/// instead). Logged at debug rather than warn because the rate is driven
+/// by inbound traffic: an attacker flooding a socket would otherwise
+/// amplify their traffic into a matching flood of warning-level logs.
+/// `metadata` is a thunk appended to the log's `socket_id` entry, evaluated
+/// only when the socket is actually over rate so building it (e.g.
+/// sanitizing the topic/event for the log) costs nothing on the common,
+/// allowed path.
 fn with_message_rate_limit(
   state: State(model, msg),
   socket_id: String,
-  metadata: List(#(String, String)),
+  metadata: fn() -> List(#(String, String)),
   next: fn(State(model, msg)) -> actor.Next(State(model, msg), Msg(msg)),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let #(state, allowed) = check_message_rate(state, socket_id)
   case allowed {
     False -> {
       state.logger
-      |> log.warn("Message rate limited", [
+      |> log.debug("Message rate limited", [
         #("socket_id", socket_id),
-        ..metadata
+        ..metadata()
       ])
       actor.continue(state)
     }
@@ -997,7 +1005,10 @@ fn handle_binary_in(
 }
 
 /// Deliver a binary frame the codec cannot decode: rate-limit it per socket,
-/// then hand the raw bytes to every topic the socket has joined.
+/// then hand the raw bytes to every topic the socket has joined. Logged at
+/// debug rather than warn: this is the same attacker-driven message-rate
+/// bucket as `with_message_rate_limit`, so a flood must not amplify into a
+/// matching flood of warning-level logs.
 fn handle_undecoded_binary_in(
   state: State(model, msg),
   socket_id: String,
@@ -1007,7 +1018,7 @@ fn handle_undecoded_binary_in(
   case allowed, dict.get(state.sockets, socket_id) {
     False, _ -> {
       state.logger
-      |> log.warn("Binary message rate limited", [#("socket_id", socket_id)])
+      |> log.debug("Binary message rate limited", [#("socket_id", socket_id)])
       actor.continue(state)
     }
     True, Error(Nil) -> {
