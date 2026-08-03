@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Added"
+body = "Add opt-in telemetry configuration and typed internal event foundations."

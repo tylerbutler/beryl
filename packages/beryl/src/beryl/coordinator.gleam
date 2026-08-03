@@ -148,6 +148,8 @@ pub type CoordinatorConfig {
     max_event_length: Int,
     /// Maximum joined topics per socket. Values <= 0 disable the cap.
     max_joined_topics_per_socket: Int,
+    /// Whether internal telemetry events are enabled.
+    telemetry: Bool,
     /// Logging configuration for coordinator diagnostics.
     logging: LoggingConfig,
     /// Optional crash-survivable handler registry. When set, the
@@ -172,6 +174,7 @@ pub fn config(codec: Codec) -> CoordinatorConfig {
     max_topic_length: 256,
     max_event_length: 64,
     max_joined_topics_per_socket: 1000,
+    telemetry: False,
     logging: LoggingConfig(
       level: Info,
       include_payloads: False,

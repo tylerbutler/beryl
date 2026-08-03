@@ -203,6 +203,8 @@ pub opaque type Config {
     /// Maximum joined topics per socket (default: 1000).
     /// Values <= 0 disable the cap.
     max_joined_topics_per_socket: Int,
+    /// Whether beryl emits `:telemetry` events (default: false).
+    telemetry: Bool,
     /// Logging configuration for beryl diagnostics
     logging: LoggingConfig,
   )
@@ -248,6 +250,7 @@ pub fn config(codec: codec.Codec) -> Config {
     max_event_length: 64,
     max_inbound_frame_bytes: 1_048_576,
     max_joined_topics_per_socket: 1000,
+    telemetry: False,
     logging: logging_config(level: InfoLevel, include_payloads: False),
   )
 }
@@ -255,6 +258,15 @@ pub fn config(codec: codec.Codec) -> Config {
 /// Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(ps))
+}
+
+/// Enable beryl's `:telemetry` events.
+///
+/// Telemetry is disabled by default. Handlers run synchronously in the
+/// process emitting an event, so handlers should enqueue or aggregate work
+/// quickly to avoid adding latency to channel and transport operations.
+pub fn with_telemetry(config: Config) -> Config {
+  Config(..config, telemetry: True)
 }
 
 /// Configure heartbeat timing.
@@ -555,6 +567,12 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
   config.max_joined_topics_per_socket
 }
 
+// nolint: unused_exports -- package-internal accessor for instrumentation/tests; hidden from public docs with @internal
+@internal
+pub fn config_telemetry(config: Config) -> Bool {
+  config.telemetry
+}
+
 /// Warn when a channels system starts with every abuse control disabled.
 ///
 /// beryl ships with rate and connection limits off (like Phoenix) because
@@ -624,6 +642,7 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
     max_topic_length: config.max_topic_length,
     max_event_length: config.max_event_length,
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
+    telemetry: config.telemetry,
     logging: coordinator_logging(config.logging),
     registry: None,
   )
