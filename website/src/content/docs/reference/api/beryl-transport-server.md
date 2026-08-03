@@ -155,9 +155,6 @@ Size-check, rate-check, and decode an inbound binary frame in the
  connection process. Codecs without a binary decoder keep the raw
  `transport.route_binary` fan-out, routed through the runtime.
 
- Oversized frames return `Stop` (close the connection); over-rate frames
- are shed silently; undecodable frames are logged and dropped.
-
 ```gleam
 pub fn handle_binary_frame(
   ConnectionState,
@@ -254,18 +251,17 @@ Run the shared upgrade admission pipeline for a request.
 
  ## Path matching
 
- The request path is normalised by re-joining its segments as
- `"/" <> string.join(segments, "/")` and compared for exact equality with
- `config.path`. Because the normalised path never has a trailing slash, a
- config path written with a trailing slash (e.g. `"/socket/"`) will never
- match. Configure the path without a trailing slash (e.g. `"/socket"`).
+ Request and configured paths are normalized without trailing or doubled
+ slashes before an exact comparison.
 
  ## Connection limits
 
  When `beryl.with_max_connections_per_ip` is configured, the limit is
  enforced before completing the handshake, returning `reject(429)` once the
  peer is at its limit. `request_ip` must return the **real socket peer IP**
- from the TCP connection; forwarded headers such as `X-Forwarded-For` must
+ from the TCP connection, or `Error(Nil)` when unavailable. Unknown peers
+ share one limiter bucket rather than bypassing the limit. Forwarded
+ headers such as `X-Forwarded-For` must
  **not** be trusted or parsed, because clients can set them and would
  otherwise spoof their address to bypass the limit. Behind a trusted
  reverse proxy, all connections share the proxy's IP — resolve the real
@@ -287,7 +283,7 @@ pub fn upgrade(
   sockets: beryl.Sockets,
   config: TransportConfig(a),
   telemetry: transport.Telemetry,
-  request_ip: fn(request.Request(a)) -> String,
+  request_ip: fn(request.Request(a)) -> Result(String, Nil),
   reject: fn(Int) -> response.Response(b),
   accept: fn(List(#(String, String)), beryl.ConnectionPermit) -> response.Response(b),
   next: fn() -> response.Response(b)

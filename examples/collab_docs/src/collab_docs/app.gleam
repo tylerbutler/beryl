@@ -127,19 +127,6 @@ pub fn closed(
 
 // --- Standalone app-side dispatch wrapper ---
 
-/// Socket-wide state for the standalone collab-docs server: one per-topic
-/// `Model` per joined `document:*:*` topic, keyed by topic.
-pub type Standalone {
-  Standalone(socket_id: String, docs: Dict(String, Model))
-}
-
-/// `init` for the standalone collab-docs app-dispatch runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, docs: dict.new()), [])
-}
-
 /// Adapt the `document:*` handlers to a containing socket-wide model.
 pub fn namespace(
   ctx: Ctx,
@@ -158,24 +145,23 @@ pub fn namespace(
     message: fn(socket_id, topic, model, event_name, payload, ref) {
       update(ctx, socket_id, topic, model, event_name, payload, ref)
     },
-    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
+    closed: fn(_socket_id, _topic, _model) { [] },
   )
 }
 
-/// Route the standalone app through the shared namespace dispatcher.
+/// Build the standalone update once, sharing the canonical router model.
 pub fn standalone_update(
   ctx: Ctx,
-  model: Standalone,
-  input: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  let docs =
-    namespace(
-      ctx,
-      socket_id: fn(model: Standalone) { model.socket_id },
-      get: fn(model: Standalone) { model.docs },
-      put: fn(model: Standalone, docs) { Standalone(..model, docs: docs) },
-    )
-  router.route([docs], error_payload("invalid_topic"), model, input)
+) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [
+    router.standalone_namespace(fn(socket_id, get, put) {
+      namespace(ctx, socket_id, get, put)
+    }),
+  ]
+  fn(model, input) {
+    router.route(namespaces, error_payload("invalid_topic"), model, input)
+  }
 }
 
 fn sync_state(

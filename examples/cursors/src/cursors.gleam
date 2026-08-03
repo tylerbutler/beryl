@@ -5,6 +5,7 @@ import beryl_mist as mist_transport
 import cursors/app as cursors_app
 import cursors/router
 import envoy
+import example_helpers/router as topic_router
 import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/int
@@ -25,8 +26,8 @@ pub fn main() {
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
       config,
-      init: cursors_app.standalone_init,
-      update: fn(model, ev) { cursors_app.standalone_update(ctx, model, ev) },
+      init: topic_router.standalone_init,
+      update: cursors_app.standalone_update(ctx),
     )
   session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =

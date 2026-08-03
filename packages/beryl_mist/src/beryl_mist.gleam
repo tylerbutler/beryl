@@ -17,6 +17,7 @@ import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/option.{None, Some}
+import gleam/result
 import mist.{type Connection, type ResponseData, type WebsocketConnection}
 
 /// Upgrade a request to WebSocket if it matches the configured path
@@ -65,11 +66,9 @@ fn reject(status: Int) -> Response(ResponseData) {
   |> response.set_body(mist.Bytes(bytes_tree.new()))
 }
 
-fn request_ip(request: Request(Connection)) -> String {
-  case mist.get_connection_info(request.body) {
-    Ok(info) -> mist.ip_address_to_string(info.ip_address)
-    Error(Nil) -> "unknown"
-  }
+fn request_ip(request: Request(Connection)) -> Result(String, Nil) {
+  mist.get_connection_info(request.body)
+  |> result.map(fn(info) { mist.ip_address_to_string(info.ip_address) })
 }
 
 /// Build a combined request handler that serves both WebSocket upgrades and

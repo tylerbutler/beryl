@@ -108,9 +108,8 @@ pub type Msg(msg) {
   /// A typed server-side message for one socket, sent through its
   /// `Sender`. Delivered to `update` as `Info(message)`.
   AppInfo(socket_id: String, message: msg)
-  /// Local broadcast fan-out. PubSub forwarding is the sender's concern
-  /// (the `beryl` broadcast helpers and the effect interpreter forward
-  /// before/while sending this).
+  /// Broadcast fan-out: local subscribers plus PubSub forwarding to other
+  /// runtimes when PubSub is configured.
   Broadcast(topic: String, event: String, payload: Json, except: Option(String))
   RemoteBroadcast(pubsub.Message(Json))
   CheckHeartbeats
@@ -371,14 +370,7 @@ fn handle_message(
     AppInfo(socket_id, app_message) ->
       handle_app_info(state, socket_id, app_message)
     Broadcast(topic_name, event_name, payload, except) -> {
-      emit_broadcast(
-        state,
-        topic_name,
-        event_name,
-        payload,
-        except,
-        telemetry.Local,
-      )
+      broadcast_with_pubsub(state, topic_name, event_name, payload, except)
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
@@ -873,7 +865,7 @@ fn reject_invalid_join(
           codec.inbound_ref(msg),
           codec.inbound_topic(msg),
           codec.StatusError,
-          json.object([#("reason", json.string("invalid_topic"))]),
+          error_reason("invalid_topic"),
         )
       let _send_result = send_frame_logged(state, socket, safe_topic, reply)
       emit_join_stop(state, started_at, telemetry.JoinInvalidTopic)
@@ -907,7 +899,7 @@ fn handle_join(
         topic_name,
         join_ref,
         ref,
-        json.object([#("reason", json.string("rate_limited"))]),
+        error_reason("rate_limited"),
       )
       emit_join_stop(state, started_at, telemetry.JoinRateLimited)
       actor.continue(state)
@@ -959,7 +951,7 @@ fn handle_join_inner(
             topic_name,
             join_ref,
             ref,
-            json.object([#("reason", json.string("too_many_topics"))]),
+            error_reason("too_many_topics"),
           )
           emit_join_stop(state, started_at, telemetry.JoinTopicLimit)
           actor.continue(state)
@@ -1255,7 +1247,7 @@ fn reject_unjoined_event(
           Some(r),
           topic_name,
           codec.StatusError,
-          json.object([#("reason", json.string("unmatched topic"))]),
+          error_reason("unmatched topic"),
         )
       let _send_result = send_frame_logged(state, socket, topic_name, reply)
       Nil
@@ -1393,7 +1385,7 @@ fn route_message_with_ref(
         topic_name,
         sock.ref_join_ref(message_ref),
         sock.ref_msg_ref(message_ref),
-        json.object([#("reason", json.string("duplicate_ref"))]),
+        error_reason("duplicate_ref"),
       )
       emit_message_stop(
         state,
@@ -1687,7 +1679,7 @@ fn apply_update_stop(
   ])
   // A join answered with Stop is still unanswered on the wire:
   // fail it closed before the teardown frames.
-  reject_unanswered_join(state, socket_id, source)
+  reject_stopped_join(state, socket_id, source)
   case source {
     JoinSource(_, _, _, _, started_at) ->
       emit_join_stop(state, started_at, telemetry.JoinHandlerRejected)
@@ -1736,14 +1728,7 @@ fn apply_update_next(
         #("socket_id", socket_id),
         #("topic", p.topic),
       ])
-      send_error_reply(
-        state,
-        socket_id,
-        p.topic,
-        p.join_ref,
-        p.msg_ref,
-        json.object([#("reason", json.string("join not acknowledged"))]),
-      )
+      reject_unanswered_join(state, socket_id, p)
     }
     None -> Nil
   }
@@ -1803,7 +1788,7 @@ fn handle_update_crash(
         topic_name,
         join_ref,
         msg_ref,
-        json.object([#("reason", json.string("join crashed"))]),
+        error_reason("join crashed"),
       )
       emit_join_stop(state, started_at, telemetry.JoinCallbackFailed)
       Outcome(state, [], None)
@@ -1850,25 +1835,37 @@ fn handle_update_crash(
   }
 }
 
-/// Fail-closed reply for a join the update never answered (used for both
-/// the missing-`AcceptJoin` case and `Stop` returned from a join).
-fn reject_unanswered_join(
+/// Fail closed when an update returns `Stop` while handling a join.
+fn reject_stopped_join(
   state: State(model, msg),
   socket_id: String,
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref, _, _) ->
-      send_error_reply(
+    JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
+      reject_unanswered_join(
         state,
         socket_id,
-        topic_name,
-        join_ref,
-        msg_ref,
-        json.object([#("reason", json.string("join not acknowledged"))]),
+        Pending(topic_name, join_ref, msg_ref, ref),
       )
     _ -> Nil
   }
+}
+
+/// Fail-closed reply for a join the update never answered.
+fn reject_unanswered_join(
+  state: State(model, msg),
+  socket_id: String,
+  pending: Pending,
+) -> Nil {
+  send_error_reply(
+    state,
+    socket_id,
+    pending.topic,
+    pending.join_ref,
+    pending.msg_ref,
+    error_reason("join not acknowledged"),
+  )
 }
 
 /// Process an outcome's follow-ups: tear the socket down if an update
@@ -2678,6 +2675,10 @@ fn remove_socket_rate_limits(
 }
 
 // ── Small helpers ───────────────────────────────────────────────────────────
+
+fn error_reason(text: String) -> Json {
+  json.object([#("reason", json.string(text))])
+}
 
 fn store_socket(
   state: State(model, msg),

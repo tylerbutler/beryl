@@ -113,19 +113,6 @@ pub fn closed(
 
 // --- Standalone app-side dispatch wrapper ---
 
-/// Socket-wide state for the standalone cursors server: one per-topic
-/// `Model` per joined `cursor:*` topic, keyed by topic.
-pub type Standalone {
-  Standalone(socket_id: String, cursors: Dict(String, Model))
-}
-
-/// `init` for the standalone cursors app-dispatch runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, cursors: dict.new()), [])
-}
-
 /// Adapt the `cursor:*` handlers to a containing socket-wide model.
 pub fn namespace(
   ctx: Ctx,
@@ -148,22 +135,19 @@ pub fn namespace(
   )
 }
 
-/// Route the standalone app through the shared namespace dispatcher.
+/// Build the standalone update once, sharing the canonical router model.
 pub fn standalone_update(
   ctx: Ctx,
-  model: Standalone,
-  input: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  let cursors =
-    namespace(
-      ctx,
-      socket_id: fn(model: Standalone) { model.socket_id },
-      get: fn(model: Standalone) { model.cursors },
-      put: fn(model: Standalone, cursors) {
-        Standalone(..model, cursors: cursors)
-      },
-    )
-  router.route([cursors], router.unknown_topic(), model, input)
+) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [
+    router.standalone_namespace(fn(socket_id, get, put) {
+      namespace(ctx, socket_id, get, put)
+    }),
+  ]
+  fn(model, input) {
+    router.route(namespaces, router.unknown_topic(), model, input)
+  }
 }
 
 fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {

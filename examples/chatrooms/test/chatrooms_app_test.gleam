@@ -1,6 +1,7 @@
 import beryl/group
 import beryl/socket
 import chatrooms/app
+import example_helpers/router as topic_router
 import example_helpers/session_presence
 import gleam/dict
 import gleam/dynamic
@@ -45,10 +46,9 @@ fn connect_info() -> socket.ConnectInfo(Nil) {
 }
 
 pub fn standalone_routes_lobby_join_test() {
-  let #(model, _) = app.standalone_init(connect_info())
+  let #(model, _) = topic_router.standalone_init(connect_info())
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Join("lobby", empty_payload(), lobby_ref()),
     )
@@ -57,11 +57,10 @@ pub fn standalone_routes_lobby_join_test() {
 }
 
 pub fn lobby_messages_are_ignored_test() {
-  let #(model, _) = app.standalone_init(connect_info())
+  let #(model, _) = topic_router.standalone_init(connect_info())
 
   let assert socket.Next(next_model, effects) =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Message("lobby", "refresh", empty_payload(), None),
     )
@@ -74,27 +73,28 @@ pub fn closing_lobby_preserves_room_models_test() {
   let room =
     app.Model(username: "Alice", color: "#abcdef", room_name: "general")
   let model =
-    app.Standalone(
+    topic_router.Standalone(
       socket_id: "socket-1",
-      rooms: dict.from_list([#("room:general", room)]),
+      topics: dict.from_list([#("room:general", room)]),
     )
 
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Closed("lobby", socket.Normal),
     )
 
-  let assert socket.Next(app.Standalone(socket_id: _, rooms: rooms), []) = next
+  let assert socket.Next(
+    topic_router.Standalone(socket_id: _, topics: rooms),
+    [],
+  ) = next
   dict.has_key(rooms, "room:general") |> should.be_true
 }
 
 pub fn unrelated_topic_is_rejected_test() {
-  let #(model, _) = app.standalone_init(connect_info())
+  let #(model, _) = topic_router.standalone_init(connect_info())
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Join(
         "notifications:alice",

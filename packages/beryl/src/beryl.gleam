@@ -850,7 +850,6 @@ fn build_app_subtree(
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
-        config.pubsub,
       ),
     )
 
@@ -934,7 +933,6 @@ fn await_admission(
 fn app_handle(
   subject: Subject(runtime.Msg(msg)),
   supervisor: Subject(app_supervisor.Message),
-  ps: Option(PubSub(json.Json)),
 ) -> AppHandle {
   AppHandle(
     admit_socket: fn(
@@ -982,35 +980,12 @@ fn app_handle(
       send_runtime(subject, runtime.HandleBinary(socket_id, data))
     },
     broadcast: fn(topic_name, event_name, payload, except) {
-      // Local fan-out via the runtime; distributed fan-out via PubSub with
-      // the runtime's pid as sender so it does not echo back to itself.
+      // The runtime owns local and distributed fan-out so every sender uses
+      // one ordered path and PubSub attribution always uses the runtime pid.
       send_runtime(
         subject,
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
-      case ps, process.subject_owner(subject) {
-        Some(ps), Ok(runtime_pid) ->
-          case except {
-            None ->
-              pubsub.broadcast_from(
-                ps,
-                runtime_pid,
-                topic_name,
-                event_name,
-                payload,
-              )
-            Some(socket_id) ->
-              pubsub.broadcast_from_socket(
-                ps,
-                runtime_pid,
-                socket_id,
-                topic_name,
-                event_name,
-                payload,
-              )
-          }
-        _, _ -> Nil
-      }
     },
     stop: fn() { request_runtime_stop(supervisor) },
     runtime_owner: fn() { process.subject_owner(subject) },

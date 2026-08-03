@@ -177,20 +177,6 @@ pub fn closed(
 
 // --- Standalone app-side dispatch wrapper ---
 
-/// Socket-wide state for the standalone chatrooms server: one per-topic
-/// `Model` per joined `room:*` topic, keyed by topic. The application-wide
-/// `lobby` topic is read-only and carries no state.
-pub type Standalone {
-  Standalone(socket_id: String, rooms: Dict(String, Model))
-}
-
-/// `init` for the standalone chatrooms app-dispatch runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, rooms: dict.new()), [])
-}
-
 /// Adapt the `room:*` handlers to a containing socket-wide model.
 pub fn namespace(
   ctx: Ctx,
@@ -213,25 +199,20 @@ pub fn namespace(
   )
 }
 
-/// Route the standalone app through the shared namespace dispatcher.
+/// Build the standalone update once, sharing the canonical router model.
 pub fn standalone_update(
   ctx: Ctx,
-  model: Standalone,
-  input: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  let rooms =
-    namespace(
-      ctx,
-      socket_id: fn(model: Standalone) { model.socket_id },
-      get: fn(model: Standalone) { model.rooms },
-      put: fn(model: Standalone, rooms) { Standalone(..model, rooms: rooms) },
-    )
-  router.route(
-    [router.accept_only("lobby"), rooms],
-    router.unknown_topic(),
-    model,
-    input,
-  )
+) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [
+    router.accept_only("lobby"),
+    router.standalone_namespace(fn(socket_id, get, put) {
+      namespace(ctx, socket_id, get, put)
+    }),
+  ]
+  fn(model, input) {
+    router.route(namespaces, router.unknown_topic(), model, input)
+  }
 }
 
 // --- Helpers ---

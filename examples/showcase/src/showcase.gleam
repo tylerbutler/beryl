@@ -94,7 +94,7 @@ pub fn main() {
           [],
         )
       },
-      update: fn(model, ev) { update(ctx, model, ev) },
+      update: update(ctx),
     )
   session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
@@ -157,10 +157,9 @@ pub fn main() {
   process.sleep_forever()
 }
 
-/// Register each embedded app's topic namespace against the same socket-wide
-/// model. The read-only lobby remains mounted so the chatrooms UI keeps its
-/// live room-count invalidations in the composed showcase.
-fn update(ctx: Ctx, model: Model, input: Input(Nil)) -> Next(Model, Nil) {
+/// Build the composed router once. The read-only lobby remains mounted so the
+/// chatrooms UI keeps live room-count invalidations in the showcase.
+fn update(ctx: Ctx) -> fn(Model, Input(Nil)) -> Next(Model, Nil) {
   let namespaces = [
     topic_router.accept_only("lobby"),
     cursors_app.namespace(
@@ -182,5 +181,7 @@ fn update(ctx: Ctx, model: Model, input: Input(Nil)) -> Next(Model, Nil) {
       put: fn(model: Model, docs) { Model(..model, docs: docs) },
     ),
   ]
-  topic_router.route(namespaces, topic_router.unknown_topic(), model, input)
+  fn(model, input) {
+    topic_router.route(namespaces, topic_router.unknown_topic(), model, input)
+  }
 }
