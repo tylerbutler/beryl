@@ -293,21 +293,38 @@ owning join open it, in the same turn it is delivered. Nothing typed is
 ever parked in a shared mailbox between turns, and nothing is coerced on
 the way through.
 
+Cast-free is not cost-free. Opening the envelope is a selective receive
+on the socket's runtime actor mailbox, performed in the same turn, so one
+delivery costs O(mailbox depth). At ordinary depths that is noise; on a
+socket running a deep backlog it is the thing to know before making
+`notify` a high-rate data path. See
+[Limitations](#limitations).
+
 ### Stale senders
 
 A sender is scoped to the join that produced it. Sending is asynchronous
 and never fails, so it cannot report that the channel is gone — liveness
 is decided where the message is delivered:
 
-- If the channel has **closed**, the envelope is dropped, still sealed.
+- If the channel has **closed** normally — a client leave, a `close()`
+  result, a socket teardown — the envelope is dropped, still sealed.
 - If the same topic has since been **joined again**, the envelope's
   generation no longer matches the live instance, so it is dropped rather
   than handed to the new join.
 - A live match delivers exactly one `on_info` call. Sends are never
   coalesced, and they arrive in the order the owning socket receives them.
 
-So a sender kept by a long-lived process is always safe to use; the worst
-case is that the message goes nowhere.
+So a sender kept by a long-lived process is always safe to use: it never
+reaches a *different* join, and the ordinary worst case is that the
+message goes nowhere.
+
+There is one exception, and it is the only one: a **panic inside
+`on_terminate`**. Core's policy for a crash while closing a topic is to
+log it and keep the model from before the close — which is the model that
+still lists that instance. The instance therefore outlives its own
+termination, and its own sender keeps delivering `on_info` to it until
+the topic is joined again or the socket ends. See
+[Crash behavior](#crash-behavior).
 
 Use `notify` to schedule a **later** turn — including from another
 process. Work that has to be part of the join itself belongs in
@@ -447,16 +464,19 @@ disconnect, a heartbeat timeout, and `beryl.stop`. A join that was
 *rejected* never started an instance, so it never terminates.
 
 The actions it returns are lowered inside the turn that closes the topic,
-right after the instance has been removed. Core has already dropped the
-subscription by then, which splits the action table:
+right after the instance has been removed. By then core has dropped the
+subscription and purged the topic's outstanding reply refs, and its own
+automatic presence untrack for the topic runs immediately after the turn.
+That splits the action table:
 
 | Action | During termination |
 |---|---|
-| `push`, `push_presence` | Dropped — the socket has already left the topic |
 | `broadcast`, `broadcast_from` | Delivered to the remaining subscribers |
 | `broadcast_presence` | Delivered, encoded at apply time |
-| `presence_track`, `presence_untrack` | Applied |
-| `reply_ok`, `reply_error` | Only meaningful for a ref you are still holding |
+| `presence_untrack` | Applied — the presence action to use here |
+| `push`, `push_presence` | Dropped — the socket has already left the topic |
+| `reply_ok`, `reply_error` | Dropped — the topic's reply refs are purged before `on_terminate` runs |
+| `presence_track` | Applied, then reversed by core's automatic untrack — can emit a join diff followed at once by the matching leave diff. Use `presence_untrack` instead |
 
 This is why a leave announcement and a post-leave roster belong here
 rather than in an out-of-band broadcast:
@@ -474,7 +494,9 @@ Ordering the explicit `presence_untrack` *before* the
 `broadcast_presence` is what makes the roster correct: the snapshot is
 encoded when the action is applied, after the untrack, so it cannot be
 stale. Presence entries are auto-untracked when the topic closes anyway,
-but the automatic untrack runs after `Closed`, not before your actions.
+but the automatic untrack runs after `Closed`, not before your actions —
+which is also why a `presence_track` here is pointless: the same
+automatic pass takes it straight back out.
 
 ## Lifecycle at a glance
 
@@ -512,9 +534,22 @@ blunt it:
 | `on_terminate` | Teardown still completes, and sibling channels still run their own termination actions |
 
 A panic inside `on_terminate` discards that channel's own `Closed` turn,
-so its termination actions are lost and its instance entry is left behind
-in the router's model. That entry is inert — core never delivers another
-input for a closed topic, and a rejoin replaces it.
+so its termination actions are lost — and so is the model update that
+removed its instance from the layer's map. The instance is retained at
+its original generation. Core cannot reach it: the topic is closed, so no
+client message, binary frame, or second `Closed` can name it. But
+`on_info` is socket-scoped rather than topic-scoped, so a `Sender` created
+by that join still resolves to the retained instance and still delivers to
+it — until the topic is joined again (a rejoin overwrites the entry) or
+the socket ends.
+
+That is a deliberate trade, not an oversight. Undoing it is exactly the
+model update the panic threw away, and the alternatives — rescuing the
+callback inside the layer, or moving termination onto a second turn — hide
+a crash core is responsible for logging, or make a terminate panic
+socket-fatal. `crash_test` pins the behavior so it cannot drift quietly.
+Keep `on_terminate` free of code that can panic and the ordinary rule
+holds: a closed channel is gone, and its senders reach nothing.
 
 Crash isolation stops at the socket, as it does with raw dispatch: a
 panic in `on_info` ends one socket, not the runtime. A crash of the
@@ -591,8 +626,8 @@ edges to know before you design around it:
 - **The layer owns the socket-level model and message type.** Pick raw
   dispatch or the channel layer per socket endpoint; mixing hand-written
   `update` logic into a channel system is not a supported surface.
-- **`stop_socket` carries no actions**, and termination `push` actions are
-  dropped. Both follow from the topic already being gone.
+- **`stop_socket` carries no actions**, and termination `push` and reply
+  actions are dropped. Both follow from the topic already being gone.
 - **`beryl/bridge` targets the core sender, not a channel's.**
   `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
   channel never sees. To adapt an existing actor's messages into
@@ -603,6 +638,11 @@ edges to know before you design around it:
   channels run in the runtime actor, sequentially. Long or blocking work
   belongs in your own process, which can hand results back through
   `channel.notify`.
+- **`notify` delivery costs O(mailbox depth).** Keeping the typed value
+  out of the shared mailbox costs a same-turn selective receive on the
+  runtime actor's mailbox, which scans it. Fine at ordinary depths; not a
+  free high-rate data path on a socket with a deep backlog. Batch in your
+  own process rather than sending per item.
 
 ## Next steps
 

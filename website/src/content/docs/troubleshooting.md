@@ -113,8 +113,15 @@ Call `beryl_channels.validate_handlers(handlers)` in a test to catch both at bui
 **Symptoms:** A leave announcement or post-leave roster never reaches clients.
 
 1. **You used `push` or `push_presence`.** The socket has already left the topic when `on_terminate` runs, so core drops those. Use `broadcast`, `broadcast_from`, or `broadcast_presence`, which still reach the topic's remaining subscribers.
-2. **Nobody else is subscribed.** A broadcast from the last member of a topic has no recipients.
-3. **The callback panicked.** A panic in `on_terminate` discards that turn, so its actions are lost. Sibling channels and core teardown are unaffected.
+2. **You used `reply_ok` or `reply_error`.** The topic's outstanding reply refs are purged before `on_terminate` runs, so a termination reply is always dropped (core logs it as an unknown ref). Answer the ref from the callback that received it.
+3. **Nobody else is subscribed.** A broadcast from the last member of a topic has no recipients.
+4. **The callback panicked.** A panic in `on_terminate` discards that turn, so its actions are lost. Sibling channels and core teardown are unaffected — but the panicking channel's instance is retained in the layer's map, so its own `channel.notify` sender can still reach it until the topic is rejoined or the socket ends. See [Crash behavior](/guides/channels/#crash-behavior).
+
+### A leaver appears to join on the way out
+
+**Symptoms:** Clients see a `presence_diff` join for a member that is leaving, immediately followed by the matching leave.
+
+**Cause:** `channel.presence_track` in an `on_terminate` action list. The track is applied, and then core's automatic topic untrack — which runs right after the `Closed` turn — takes it back out. Use `channel.presence_untrack(key)` instead; it is the only presence lifecycle action that means anything during termination.
 
 ### A whole socket disappears when one channel misbehaves
 

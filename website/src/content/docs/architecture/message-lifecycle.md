@@ -127,7 +127,7 @@ The same `Closed` path is used for client leaves, heartbeat timeouts, `KickTopic
 | `Join(topic, payload, ref)` | First matching pattern wins; allocate a generation, run that handler's `join`, and emit `AcceptJoin(ref, reply)` followed by the join's own actions, or `RejectJoin(ref, reason)`. No match at all is refused with `{"reason": "unmatched topic"}` |
 | `Message(topic, ..)` / `Binary(topic, ..)` | Delivered to the live instance for that topic, if any; inputs for a topic with no instance are ignored |
 | `Info(envelope)` | The envelope's topic and generation are checked against the live instance first; a stale envelope is dropped still sealed, so nothing typed reaches the wrong join |
-| `Closed(topic, reason)` | The instance is removed, then its `on_terminate` actions are lowered in the same turn |
+| `Closed(topic, reason)` | The instance is removed, then its `on_terminate` actions are lowered in the same turn. If that callback panics, core keeps the pre-`Closed` model, so the instance is retained and its own sender can still reach it — see [Crash behavior](/guides/channels/#crash-behavior) |
 
 Every channel action lowers one-to-one onto the `Effect` values in the diagrams above, scoped to the channel's own topic, so the frames on the wire are indistinguishable from the hand-written equivalent.
 
