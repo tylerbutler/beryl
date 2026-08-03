@@ -4,11 +4,13 @@
 //// `select_other` handler that swallows and logs any message arriving in
 //// the process mailbox that its own selector does not match.
 ////
-//// The router below is a faithful miniature of the Task 3 router: its
-//// actor message type is the socket-level envelope, it owns the live
-//// channel and its generation, and every server-side send has to make the
-//// round trip out through `channel.notify` and back in as an envelope
-//// before `on_info` can run.
+//// The router below is a faithful miniature of the real adapter in
+//// `beryl_channels/internal/router`: its actor message type is the
+//// socket-level envelope, it owns the live channel and its generation,
+//// and every server-side send has to make the round trip out through
+//// `channel.notify` and back in as an envelope before `on_info` can run.
+//// It pins the seam in isolation; `dispatch_test` pins the same
+//// behaviour through a real running system.
 
 import beryl/socket
 import beryl_channels/channel
