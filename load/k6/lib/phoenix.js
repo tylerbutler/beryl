@@ -2,6 +2,7 @@ import { WebSocket } from "k6/websockets";
 
 import { buildWebSocketUrl } from "./config.js";
 import {
+  BoundedRefTombstones,
   ProtocolError,
   RefGenerator,
   decodeFrame,
@@ -56,12 +57,14 @@ export class PhoenixClient {
     this.state = "idle";
     this.channels = new Map();
     this.pending = new Map();
+    this.expiredRefs = new BoundedRefTombstones(config.expiredRefLimit ?? 256);
     this.messageHandlers = new Set();
     this.errorHandlers = new Set();
     this.connectTimer = null;
     this.heartbeatTimer = null;
     this.heartbeatPending = false;
     this.closeWaiters = [];
+    this.connectAbort = null;
     this.wasOpened = false;
   }
 
@@ -82,43 +85,57 @@ export class PhoenixClient {
 
     this.state = "connecting";
     this.wasOpened = false;
+    this.socket = null;
+    this.expiredRefs.clear();
     const startedAt = Date.now();
 
     return new Promise((resolve, reject) => {
       let settled = false;
+      let socket = null;
       const fail = (error, type) => {
         if (settled) return;
         settled = true;
+        this.connectAbort = null;
         this._clearConnectTimer();
-        this.state = "closed";
+        if (this.socket === socket && this.state !== "closing") {
+          this.state = "closed";
+        }
         this.metricSink.connectFailed(Date.now() - startedAt, this.tags);
         this._observeError(error, type);
         reject(error);
       };
+      this.connectAbort = fail;
 
       this.connectTimer = setTimeout(() => {
+        if (this.socket !== socket) return;
         const error = new PhoenixTimeoutError(
           "websocket",
           "connect",
           this.config.connectTimeoutMs,
         );
         fail(error, "connect_timeout");
-        this._closeSocket(NORMAL_CLOSE, "connect timeout");
+        this._closeSocket(socket, NORMAL_CLOSE, "connect timeout");
       }, this.config.connectTimeoutMs);
 
       try {
-        this.socket = new WebSocket(this.url, this.protocols, { tags: this.tags });
+        socket = new WebSocket(this.url, this.protocols, { tags: this.tags });
+        this.socket = socket;
       } catch (error) {
         fail(error, "connect");
         return;
       }
 
-      this.socket.addEventListener("open", () => {
+      socket.addEventListener("open", () => {
+        if (this.socket !== socket) {
+          this._closeSocket(socket, NORMAL_CLOSE, "stale connection");
+          return;
+        }
         if (settled) {
-          this._closeSocket(NORMAL_CLOSE, "late open");
+          this._closeSocket(socket, NORMAL_CLOSE, "late open");
           return;
         }
         settled = true;
+        this.connectAbort = null;
         this._clearConnectTimer();
         this.state = "open";
         this.wasOpened = true;
@@ -127,32 +144,43 @@ export class PhoenixClient {
         resolve(this);
       });
 
-      this.socket.addEventListener("message", (event) => {
+      socket.addEventListener("message", (event) => {
+        if (this.socket !== socket) return;
         this._handleMessage(event.data);
       });
 
-      this.socket.addEventListener("error", (event) => {
+      socket.addEventListener("error", (event) => {
+        if (this.socket !== socket) return;
         const error =
           event?.error instanceof Error
             ? event.error
             : new Error(event?.message || "WebSocket error");
         if (!settled) {
           fail(error, "connect");
+          this._closeSocket(socket, NORMAL_CLOSE, "connect failed");
         } else {
           this._observeError(error, "websocket");
         }
       });
 
-      this.socket.addEventListener("close", (event) => {
+      socket.addEventListener("close", (event) => {
+        if (this.socket !== socket) return;
         const opened = this.wasOpened;
+        const expected = this.state === "closing";
         if (!settled) {
           fail(
-            new Error(`WebSocket closed during connect (code ${event.code})`),
-            "connect_close",
+            new Error(
+              expected
+                ? "WebSocket closed by client during connect"
+                : `WebSocket closed during connect (code ${event.code})`,
+            ),
+            expected ? "connect_cancelled" : "connect_close",
           );
         }
         if (opened) {
-          this._handleClose(event);
+          this._handleClose(event, expected);
+        } else if (expected) {
+          this._handleClose(event, true);
         } else {
           this._cleanup(new Error("WebSocket closed during connect"));
         }
@@ -224,7 +252,7 @@ export class PhoenixClient {
       this.channels.delete(topic);
       return response;
     } catch (error) {
-      channel.state = "joined";
+      this.channels.delete(topic);
       throw error;
     }
   }
@@ -250,6 +278,7 @@ export class PhoenixClient {
 
   close(code = NORMAL_CLOSE, reason = "normal", timeoutMs = this.config.leaveTimeoutMs) {
     if (this.state === "idle" || this.state === "closed") {
+      this._closeSocket(this.socket, code, reason);
       this._cleanup(new Error("client closed"));
       return Promise.resolve();
     }
@@ -261,9 +290,13 @@ export class PhoenixClient {
 
     this.state = "closing";
     this._stopHeartbeat();
+    this._cancelPendingHeartbeats(new Error("client closing"));
+    if (this.connectAbort) {
+      this.connectAbort(new Error("connection closed by client"), "connect_cancelled");
+    }
     return new Promise((resolve, reject) => {
       this._addCloseWaiter(resolve, reject, timeoutMs);
-      this._closeSocket(code, reason);
+      this._closeSocket(this.socket, code, reason);
     });
   }
 
@@ -292,9 +325,23 @@ export class PhoenixClient {
       const startedAt = Date.now();
       const key = String(ref);
       const timer = setTimeout(() => {
+        const socket = this.socket;
+        const expired = this.pending.get(key);
         this.pending.delete(key);
+        if (expired) {
+          this.expiredRefs.set(key, {
+            joinRef: expired.joinRef,
+            topic: expired.topic,
+            event: expired.event,
+            kind: expired.kind,
+          });
+        }
         const error = new PhoenixTimeoutError(topic, event, timeoutMs);
         this.metricSink.timeout(kind, this.tags);
+        if (kind === "heartbeat") {
+          this._cleanup(error);
+          this._closeSocket(socket, NORMAL_CLOSE, "heartbeat timeout");
+        }
         this._observeError(error, `${kind}_timeout`);
         reject(error);
       }, timeoutMs);
@@ -351,6 +398,26 @@ export class PhoenixClient {
     const key = frame.ref === null ? "" : String(frame.ref);
     const pending = this.pending.get(key);
     if (!pending) {
+      const expired = this.expiredRefs.get(key);
+      if (expired) {
+        try {
+          const lateReply = decodeReply(frame);
+          if (
+            lateReply.topic !== expired.topic ||
+            !sameRef(lateReply.joinRef, expired.joinRef)
+          ) {
+            throw new ProtocolError(
+              "late phx_reply topic or join_ref did not match its push",
+            );
+          }
+          this.expiredRefs.delete(key);
+          this.metricSink.lateReply(expired.kind, this.tags);
+        } catch (error) {
+          this.metricSink.protocolError("invalid_late_reply", this.tags);
+          this._observeError(error, "invalid_late_reply");
+        }
+        return;
+      }
       this.metricSink.unmatchedReply(this.tags);
       this.metricSink.protocolError("unmatched_ref", this.tags);
       this._observeError(
@@ -436,14 +503,23 @@ export class PhoenixClient {
     this.heartbeatPending = false;
   }
 
-  _handleClose(event) {
+  _cancelPendingHeartbeats(error) {
+    for (const [ref, pending] of this.pending.entries()) {
+      if (pending.kind !== "heartbeat") continue;
+      clearTimeout(pending.timer);
+      this.pending.delete(ref);
+      pending.reject(error);
+    }
+    this.heartbeatPending = false;
+  }
+
+  _handleClose(event, expected = this.state === "closing") {
     const error =
-      this.state === "closing"
+      expected
         ? new Error("client closed")
         : new Error(`WebSocket closed unexpectedly (code ${event.code})`);
-    const unexpected = this.state !== "closing";
     this._cleanup(error);
-    if (unexpected) {
+    if (!expected) {
       this._observeError(error, "unexpected_close");
     }
     for (const waiter of this.closeWaiters.splice(0)) {
@@ -474,6 +550,7 @@ export class PhoenixClient {
       pending.reject(error);
     }
     this.pending.clear();
+    this.expiredRefs.clear();
     this.channels.clear();
     this.state = "closed";
     this.socket = null;
@@ -490,10 +567,10 @@ export class PhoenixClient {
     }
   }
 
-  _closeSocket(code, reason) {
-    if (this.socket && this.socket.readyState <= OPEN) {
+  _closeSocket(socket, code, reason) {
+    if (socket && socket.readyState <= OPEN) {
       try {
-        this.socket.close(code, reason);
+        socket.close(code, reason);
       } catch (error) {
         this._observeError(error, "close");
       }

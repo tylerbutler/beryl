@@ -219,6 +219,7 @@ fn build(
   |> actor.on_message(handle_message)
 }
 
+// nolint: unused_exports -- package-internal supervised actor constructor
 @internal
 pub fn start_named(
   max_per_ip: Int,
@@ -230,11 +231,13 @@ pub fn start_named(
   |> actor.start
 }
 
+// nolint: unused_exports -- package-internal named actor accessor
 @internal
 pub fn from_name(name: process.Name(Message)) -> ConnectionLimiter {
   ConnectionLimiter(subject: process.named_subject(name))
 }
 
+// nolint: unused_exports -- package-internal optional limiter constructor
 /// Start a limiter only when at least one ceiling is positive.
 ///
 /// `max_per_ip` caps concurrent connections from a single peer; `max_total`
@@ -251,6 +254,7 @@ pub fn start_optional(
   Some(limiter)
 }
 
+// nolint: unused_exports -- package-internal limiter predicate
 @internal
 pub fn enabled(max_per_ip: Int, max_total: Int) -> Bool {
   max_per_ip > 0 || max_total > 0

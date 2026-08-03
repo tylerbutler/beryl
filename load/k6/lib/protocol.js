@@ -28,6 +28,41 @@ export class RefGenerator {
   }
 }
 
+export class BoundedRefTombstones {
+  constructor(limit) {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new TypeError("tombstone limit must be a positive safe integer");
+    }
+    this.limit = limit;
+    this.entries = new Map();
+  }
+
+  get size() {
+    return this.entries.size;
+  }
+
+  set(ref, value) {
+    const key = String(ref);
+    this.entries.delete(key);
+    this.entries.set(key, value);
+    while (this.entries.size > this.limit) {
+      this.entries.delete(this.entries.keys().next().value);
+    }
+  }
+
+  get(ref) {
+    return this.entries.get(String(ref));
+  }
+
+  delete(ref) {
+    return this.entries.delete(String(ref));
+  }
+
+  clear() {
+    this.entries.clear();
+  }
+}
+
 function isRef(value) {
   return (
     value === null ||

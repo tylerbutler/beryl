@@ -1,4 +1,8 @@
 {
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "check": "node check-helpers.mjs && node check-client-lifecycle.mjs && node check-profiles.mjs",
+    "syntax": "find . -type f \\( -name '*.js' -o -name '*.mjs' \\) -exec node --check {} \\;"
+  }
 }

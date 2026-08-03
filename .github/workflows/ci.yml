@@ -168,3 +168,114 @@ jobs:
 
       - name: Test examples
         run: just examples-test
+
+  load-smoke:
+    runs-on: ubuntu-latest
+    name: Protocol smoke (Erlang ${{ matrix.erlang }}, ${{ matrix.transport }})
+    strategy:
+      fail-fast: false
+      matrix:
+        erlang: ["27", "28"]
+        transport: [mist, ewe]
+    env:
+      PORT: "8000"
+      SERVER_LOG: load/results/server-${{ matrix.erlang }}-${{ matrix.transport }}.log
+      SUMMARY_PATH: load/results/protocol-smoke-${{ matrix.erlang }}-${{ matrix.transport }}.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+
+      - name: Setup environment
+        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          erlang-version: ${{ matrix.erlang }}
+          gleam-version: "1.16.0"
+          run-deps: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install rebar3
+        uses: ./.github/actions/install-rebar3
+
+      - name: Install trellis
+        uses: ./.github/actions/install-trellis
+
+      - name: Cache Gleam dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: |
+            gleam-deps-${{ runner.os }}-
+
+      - name: Install Gleam dependencies
+        run: just deps-gleam
+
+      - name: Validate pinned k6 workload
+        run: just load-check protocol-smoke
+
+      - name: Build load-test server
+        run: trellis run build load_test
+
+      # protocol-smoke contains protocol/error thresholds only: this job does
+      # not enforce latency, throughput, or other hardware-dependent gates.
+      - name: Start server and run protocol correctness smoke
+        shell: bash
+        env:
+          HTTP_TARGET_URL: http://127.0.0.1:8000/health
+          GIT_SHA: ${{ github.sha }}
+          RUNTIME: erlang-${{ matrix.erlang }}
+          RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          LOAD_GENERATOR: github-actions
+        run: |
+          mkdir -p load/results
+          (
+            cd examples/load_test
+            exec env PORT="$PORT" gleam run -m "load_test_${{ matrix.transport }}"
+          ) >"$SERVER_LOG" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            if kill -0 "$server_pid" 2>/dev/null; then
+              kill "$server_pid"
+              wait "$server_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "http://127.0.0.1:$PORT/health"; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "::error::Load-test server exited before becoming healthy"
+              sed -n '1,240p' "$SERVER_LOG"
+              exit 1
+            fi
+            if [[ "$attempt" -eq 30 ]]; then
+              echo "::error::Timed out waiting for the load-test server"
+              sed -n '1,240p' "$SERVER_LOG"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          just load-run protocol-smoke \
+            "ws://127.0.0.1:$PORT/socket" \
+            "${{ matrix.transport }}"
+
+      - name: Upload smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # ratchet:actions/upload-artifact@v4
+        with:
+          name: protocol-smoke-erlang-${{ matrix.erlang }}-${{ matrix.transport }}
+          path: |
+            ${{ env.SERVER_LOG }}
+            ${{ env.SUMMARY_PATH }}
+          if-no-files-found: warn
+          retention-days: 7

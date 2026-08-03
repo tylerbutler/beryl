@@ -4,13 +4,17 @@
 //// handler routes WebSocket upgrades versus plain HTTP requests.
 
 import beryl
+import beryl/channel
 import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
+import gleam/bit_array
 import gleam/bytes_tree
+import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
 import gleam/http/response
 import gleam/int
+import gleam/option.{None}
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/result
@@ -45,6 +49,29 @@ fn send_text(
   client: WebsocketClient,
   text: String,
 ) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "send_binary")
+fn send_binary(
+  client: WebsocketClient,
+  data: BitArray,
+) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "attach_transport_events")
+fn attach_transport_events() -> Dynamic
+
+@external(erlang, "beryl_mist_transport_test_ffi", "detach_transport_events")
+fn detach_transport_events(handler_id: Dynamic) -> Nil
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_upgrade_event")
+fn receive_upgrade_event(timeout: Int) -> Result(#(String, String), Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_frame_event")
+fn receive_frame_event(
+  timeout: Int,
+) -> Result(#(String, String, String, Int), Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_message_event")
+fn receive_message_event(timeout: Int) -> Result(#(String, String, String), Nil)
 
 @external(erlang, "beryl_mist_transport_test_ffi", "receive_text")
 fn receive_text(client: WebsocketClient, timeout: Int) -> Result(String, Nil)
@@ -107,6 +134,155 @@ fn start_frame_limited_server() -> #(Int, process.Pid) {
 fn start_channels() -> beryl.Channels {
   let assert Ok(channels) = start_supervised(beryl.config(wire.phoenix_codec()))
   channels
+}
+
+fn register_telemetry_channel(channels: beryl.Channels) -> Nil {
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: None, socket: socket)
+    })
+    |> channel.with_handle_in(fn(_event, _payload, socket) {
+      channel.NoReply(socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+  Nil
+}
+
+pub fn telemetry_preserves_decoded_text_and_binary_message_kinds_test() {
+  let assert Ok(channels) =
+    start_supervised(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_telemetry,
+    )
+  register_telemetry_channel(channels)
+  let #(port, server_pid) = start_server(channels)
+  let handler_id = attach_transport_events()
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  receive_upgrade_event(1000)
+  |> should.equal(Ok(#("mist", "success")))
+
+  let join = "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]"
+  let assert Ok(client) = send_text(client, join)
+  let assert Ok(_) = receive_text(client, 1000)
+  receive_frame_event(1000)
+  |> should.equal(Ok(#("mist", "text", "routed", string.byte_size(join))))
+
+  let text_event = "[\"join-ref\",\"text-ref\",\"room:lobby\",\"ping\",{}]"
+  let assert Ok(client) = send_text(client, text_event)
+  receive_frame_event(1000)
+  |> should.equal(Ok(#("mist", "text", "routed", string.byte_size(text_event))))
+  receive_message_event(1000)
+  |> should.equal(Ok(#("text", "handled", "no_reply")))
+
+  let binary_event = <<
+    0,
+    8,
+    10,
+    10,
+    4,
+    "join-ref":utf8,
+    "binary-ref":utf8,
+    "room:lobby":utf8,
+    "ping":utf8,
+    1,
+  >>
+  let assert Ok(client) = send_binary(client, binary_event)
+  receive_frame_event(1000)
+  |> should.equal(
+    Ok(#("mist", "binary", "routed", bit_array.byte_size(binary_event))),
+  )
+  receive_message_event(1000)
+  |> should.equal(Ok(#("binary", "handled", "no_reply")))
+
+  close(client)
+  detach_transport_events(handler_id)
+  stop_supervisor(server_pid)
+}
+
+pub fn telemetry_reports_matched_upgrades_and_frames_once_test() {
+  let assert Ok(channels) =
+    start_supervised(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_telemetry,
+    )
+  let config =
+    mist_transport.default_config("/socket")
+    |> mist_transport.with_allowed_origins(["https://app.example.com"])
+  let #(port, server_pid) = start_server_with_config(channels, config)
+  let handler_id = attach_transport_events()
+
+  websocket_upgrade_status_with_origin(
+    port,
+    "/socket",
+    "https://evil.example.com",
+  )
+  |> should.equal(Ok(403))
+  receive_upgrade_event(1000)
+  |> should.equal(Ok(#("mist", "origin_rejected")))
+
+  let assert Ok(client) =
+    connect_websocket_with_origin(port, "/socket", "https://app.example.com")
+  receive_upgrade_event(1000)
+  |> should.equal(Ok(#("mist", "success")))
+
+  let heartbeat = "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]"
+  let assert Ok(client) = send_text(client, heartbeat)
+  receive_frame_event(1000)
+  |> should.equal(Ok(#("mist", "text", "routed", string.byte_size(heartbeat))))
+
+  let assert Ok(client) = send_binary(client, <<1, 2, 3>>)
+  receive_frame_event(1000)
+  |> should.equal(Ok(#("mist", "binary", "decode_failed", 3)))
+
+  receive_upgrade_event(0)
+  |> should.equal(Error(Nil))
+  receive_frame_event(0)
+  |> should.equal(Error(Nil))
+
+  close(client)
+  detach_transport_events(handler_id)
+  stop_supervisor(server_pid)
+}
+
+pub fn telemetry_reports_oversized_and_rate_limited_frames_test() {
+  let assert Ok(limited_channels) =
+    start_supervised(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_inbound_frame_bytes(max_bytes: 4)
+      |> beryl.with_telemetry,
+    )
+  let handler_id = attach_transport_events()
+  let #(limited_port, limited_server_pid) = start_server(limited_channels)
+  let assert Ok(limited_client) = connect_websocket(limited_port, "/socket")
+  let assert Ok(#("mist", "success")) = receive_upgrade_event(1000)
+  let assert Ok(_) = send_text(limited_client, "12345")
+  receive_frame_event(1000)
+  |> should.equal(Ok(#("mist", "text", "oversized", 5)))
+  close(limited_client)
+  stop_supervisor(limited_server_pid)
+  detach_transport_events(handler_id)
+
+  let assert Ok(rate_channels) =
+    start_supervised(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 1, burst: 1)
+      |> beryl.with_telemetry,
+    )
+  let handler_id = attach_transport_events()
+  let #(rate_port, rate_server_pid) = start_server(rate_channels)
+  let assert Ok(rate_client) = connect_websocket(rate_port, "/socket")
+  let assert Ok(#("mist", "success")) = receive_upgrade_event(1000)
+  let heartbeat = "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]"
+  let assert Ok(rate_client) = send_text(rate_client, heartbeat)
+  let assert Ok(#("mist", "text", "routed", _)) = receive_frame_event(1000)
+  let assert Ok(rate_client) = send_text(rate_client, heartbeat)
+  receive_frame_event(1000)
+  |> should.equal(
+    Ok(#("mist", "text", "rate_limited", string.byte_size(heartbeat))),
+  )
+  close(rate_client)
+  detach_transport_events(handler_id)
+  stop_supervisor(rate_server_pid)
 }
 
 pub fn handler_routes_websocket_upgrade_to_upgrade_test() {

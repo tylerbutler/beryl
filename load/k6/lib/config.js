@@ -9,6 +9,7 @@ const DEFAULTS = Object.freeze({
   leaveTimeoutMs: 2_000,
   heartbeatIntervalMs: 30_000,
   heartbeatTimeoutMs: 5_000,
+  expiredRefLimit: 256,
 });
 
 function integer(env, name, fallback, minimum) {
@@ -80,7 +81,37 @@ export function buildWebSocketUrl(config) {
       config.token,
     )}`;
   }
-  return url;
+
+  const queryIndex = url.indexOf("?");
+  if (queryIndex === -1) {
+    return `${url}?vsn=2.0.0`;
+  }
+
+  const query = url.slice(queryIndex + 1);
+  let hasVersion = false;
+  for (const part of query.split("&")) {
+    if (part === "") continue;
+    const [rawKey, ...rawValueParts] = part.split("=");
+    let key;
+    let value;
+    try {
+      key = decodeURIComponent(rawKey);
+      value = decodeURIComponent(rawValueParts.join("="));
+    } catch {
+      throw new Error("TARGET_URL contains an invalid query encoding");
+    }
+    if (key === "vsn") {
+      hasVersion = true;
+      if (value !== "2.0.0") {
+        throw new Error("TARGET_URL vsn must be 2.0.0");
+      }
+    }
+  }
+
+  if (hasVersion) {
+    return url;
+  }
+  return query === "" ? `${url}vsn=2.0.0` : `${url}&vsn=2.0.0`;
 }
 
 export function loadConfig(env = globalThis.__ENV ?? {}) {
@@ -116,6 +147,12 @@ export function loadConfig(env = globalThis.__ENV ?? {}) {
       DEFAULTS.heartbeatTimeoutMs,
       1,
     ),
+    expiredRefLimit: integer(
+      env,
+      "EXPIRED_REF_LIMIT",
+      DEFAULTS.expiredRefLimit,
+      1,
+    ),
   };
 
   if (!config.tokenParam) {
@@ -133,6 +170,7 @@ export function loadConfig(env = globalThis.__ENV ?? {}) {
     );
   }
 
+  buildWebSocketUrl(config);
   return Object.freeze({ ...config, topics: Object.freeze(config.topics) });
 }
 

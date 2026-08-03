@@ -13,14 +13,45 @@ pub type Transport {
   Ewe
 }
 
-/// Terminal outcomes shared by telemetry events.
-pub type Outcome {
-  Success
-  Rejected
-  Dropped
-  RateLimited
-  Invalid
-  Failed
+/// Terminal outcomes for a channel join.
+pub type JoinOutcome {
+  JoinAccepted
+  JoinHandlerRejected
+  JoinNoHandler
+  JoinInvalidTopic
+  JoinTopicLimit
+  JoinRateLimited
+  JoinCallbackFailed
+  JoinSocketMissing
+}
+
+/// Terminal outcomes for an inbound channel message.
+pub type MessageOutcome {
+  MessageHandled
+  MessageUnjoined
+  MessageStale
+  MessageInvalid
+  MessageRateLimited
+  MessageCallbackFailed
+  MessageSocketMissing
+}
+
+/// Terminal outcomes for a matched WebSocket upgrade.
+pub type TransportUpgradeOutcome {
+  UpgradeSucceeded
+  OriginRejected
+  VersionRejected
+  AuthRejected
+  CapacityRejected
+  HandshakeFailed
+}
+
+/// Terminal outcomes for one inbound WebSocket data frame.
+pub type TransportFrameOutcome {
+  FrameRouted
+  FrameOversized
+  FrameRateLimited
+  FrameDecodeFailed
 }
 
 /// WebSocket frame kinds.
@@ -39,6 +70,7 @@ pub type MessageKind {
 
 /// Closed callback-result vocabulary.
 pub type CallbackResult {
+  NotApplicable
   NoReply
   Reply
   ReplyError
@@ -49,11 +81,10 @@ pub type CallbackResult {
 
 /// Closed socket-disconnect reason vocabulary.
 pub type DisconnectReason {
-  ClientClosed
-  TransportClosed
+  NormalDisconnect
   HeartbeatTimeout
-  ServerShutdown
-  DisconnectFailed
+  ShutdownDisconnect
+  CallbackDisconnect
 }
 
 /// Whether a broadcast originated on this node or a remote node.
@@ -64,13 +95,17 @@ pub type BroadcastOrigin {
 
 /// Stable, low-cardinality beryl telemetry events.
 pub type Event {
-  TransportUpgradeStop(duration: Int, transport: Transport, outcome: Outcome)
+  TransportUpgradeStop(
+    duration: Int,
+    transport: Transport,
+    outcome: TransportUpgradeOutcome,
+  )
   TransportFrameStop(
     duration: Int,
     bytes: Int,
     transport: Transport,
     kind: FrameKind,
-    outcome: Outcome,
+    outcome: TransportFrameOutcome,
   )
   SocketConnected
   SocketDisconnected(
@@ -78,11 +113,11 @@ pub type Event {
     joined_channels: Int,
     reason: DisconnectReason,
   )
-  ChannelJoinStop(duration: Int, outcome: Outcome)
+  ChannelJoinStop(duration: Int, outcome: JoinOutcome)
   ChannelMessageStop(
     duration: Int,
     kind: MessageKind,
-    outcome: Outcome,
+    outcome: MessageOutcome,
     callback_result: CallbackResult,
   )
   BroadcastStop(

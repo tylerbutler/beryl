@@ -33,6 +33,7 @@ pub fn mailbox_length_is_non_negative_test() {
 pub fn enabled_emit_executes_typed_event_test() {
   let handler_id = attach_socket_connected()
   telemetry.emit(True, telemetry.SocketConnected)
+  |> should.equal(Nil)
   let received = received_socket_connected()
   detach(handler_id)
 

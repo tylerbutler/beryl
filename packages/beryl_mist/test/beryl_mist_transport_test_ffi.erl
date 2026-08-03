@@ -2,7 +2,95 @@
 -export([connect_websocket/2, connect_websocket_with_origin/3,
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, send_binary/2, receive_text/2, receive_binary/2,
-         close/1, http_get/2, stop_supervisor/1]).
+         close/1, http_get/2, stop_supervisor/1,
+         attach_transport_events/0, detach_transport_events/1,
+         receive_upgrade_event/1, receive_frame_event/1,
+         receive_message_event/1]).
+
+attach_transport_events() ->
+    HandlerId = {beryl_mist_transport_test, make_ref()},
+    Self = self(),
+    ok = telemetry:attach_many(
+        HandlerId,
+        [[beryl, transport, upgrade, stop],
+         [beryl, transport, frame, stop],
+         [beryl, channel, message, stop]],
+        fun(Event, Measurements, Metadata, _Config) ->
+            Self ! {beryl_transport_test, Event, Measurements, Metadata}
+        end,
+        nil
+    ),
+    HandlerId.
+
+detach_transport_events(HandlerId) ->
+    ok = telemetry:detach(HandlerId),
+    flush_transport_events(),
+    nil.
+
+receive_upgrade_event(Timeout) ->
+    receive
+        {
+            beryl_transport_test,
+            [beryl, transport, upgrade, stop],
+            #{count := 1, duration := Duration},
+            #{transport := Transport, outcome := Outcome} = Metadata
+        } when is_integer(Duration), Duration >= 0, map_size(Metadata) =:= 2 ->
+            {ok, {atom_to_binary(Transport), atom_to_binary(Outcome)}}
+    after
+        Timeout -> {error, nil}
+    end.
+
+receive_frame_event(Timeout) ->
+    receive
+        {
+            beryl_transport_test,
+            [beryl, transport, frame, stop],
+            #{count := 1, duration := Duration, bytes := Bytes},
+            #{
+                transport := Transport,
+                frame_type := FrameType,
+                outcome := Outcome
+            } = Metadata
+        } when is_integer(Duration), Duration >= 0, is_integer(Bytes),
+               map_size(Metadata) =:= 3 ->
+            {ok, {
+                atom_to_binary(Transport),
+                atom_to_binary(FrameType),
+                atom_to_binary(Outcome),
+                Bytes
+            }}
+    after
+        Timeout -> {error, nil}
+    end.
+
+receive_message_event(Timeout) ->
+    receive
+        {
+            beryl_transport_test,
+            [beryl, channel, message, stop],
+            #{count := 1, duration := Duration},
+            #{
+                kind := Kind,
+                outcome := Outcome,
+                callback_result := CallbackResult
+            } = Metadata
+        } when is_integer(Duration), Duration >= 0, map_size(Metadata) =:= 3 ->
+            {ok, {
+                atom_to_binary(Kind),
+                atom_to_binary(Outcome),
+                atom_to_binary(CallbackResult)
+            }}
+    after
+        Timeout -> {error, nil}
+    end.
+
+flush_transport_events() ->
+    receive
+        {beryl_transport_test, _Event, _Measurements, _Metadata} ->
+            flush_transport_events()
+    after
+        0 -> ok
+    end.
 
 %% Stop a supervisor process cleanly.
 %% Unlinks first so the calling process is not affected, then sends
