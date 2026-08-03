@@ -17,7 +17,7 @@
 import beryl/presence.{type PresenceEntry}
 import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
-import gleam/option.{type Option}
+import gleam/option.{type Option, None, Some}
 
 /// A reply correlation handle.
 ///
@@ -189,6 +189,18 @@ pub type Effect {
   /// Close this socket's subscription to a topic. The topic receives a
   /// `Closed(topic, Shutdown)` input and the client a terminal frame.
   KickTopic(topic: String)
+}
+
+/// A `ReplyOk` when the client supplied a ref; no effects otherwise.
+///
+/// `Message` inputs carry `Option(Ref)` (refless messages expect no
+/// reply) while the `ReplyOk` effect demands a `Ref`, so every handler
+/// that replies conditionally needs this gate.
+pub fn reply_ok(ref: Option(Ref), payload: Json) -> List(Effect) {
+  case ref {
+    Some(r) -> [ReplyOk(r, payload)]
+    None -> []
+  }
 }
 
 /// Connection metadata assembled by the transport before the WebSocket

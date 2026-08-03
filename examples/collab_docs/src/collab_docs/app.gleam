@@ -13,11 +13,10 @@
 //// `token` HMAC-signed for the tenant whose document is being joined.
 
 import beryl/socket.{type Effect, type Ref}
+import beryl/socket/router
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
 import example_helpers/payload
-import example_helpers/reply
-import example_helpers/router
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/io
@@ -47,15 +46,17 @@ pub fn build_document_key(tenant: String, document: String) -> String {
 }
 
 /// Handle a join for a `document:*:*` topic. Returns `None` when rejected.
+/// `match.params` carries the tenant and document captured by the
+/// pattern's wildcards.
 pub fn join(
   ctx: Ctx,
   _socket_id: String,
-  topic_name: String,
+  match: router.Match,
   payload: Dynamic,
   ref: Ref,
 ) -> #(Option(Model), List(Effect)) {
-  case string.split(topic_name, ":") {
-    ["document", tenant, document] ->
+  case match.params {
+    [tenant, document] ->
       // Topic-level auth: the join payload must carry a `token`
       // HMAC-signed for the tenant whose document is being joined.
       case payload.string_field(payload, "token") {
@@ -129,17 +130,17 @@ pub fn namespace(
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
   router.stateful(
-    matches: string.starts_with(_, "document:"),
+    pattern: "document:*:*",
     socket_id:,
     get:,
     put:,
-    join: fn(socket_id, topic, payload, ref) {
-      join(ctx, socket_id, topic, payload, ref)
+    join: fn(socket_id, match, payload, ref) {
+      join(ctx, socket_id, match, payload, ref)
     },
-    message: fn(socket_id, topic, model, event_name, payload, ref) {
-      update(ctx, socket_id, topic, model, event_name, payload, ref)
+    message: fn(socket_id, match: router.Match, model, event_name, payload, ref) {
+      update(ctx, socket_id, match.topic, model, event_name, payload, ref)
     },
-    closed: fn(_socket_id, _topic, _model) { [] },
+    closed: fn(_socket_id, _match, _model) { [] },
   )
 }
 
@@ -191,7 +192,7 @@ fn sync_state(
 /// The channel-module API sent state errors as an ok-status reply with an
 /// error payload (and dropped them without a ref); mirror that.
 fn reply_error(code: String, ref: Option(Ref)) -> List(Effect) {
-  reply.ok(ref, error_payload(code))
+  socket.reply_ok(ref, error_payload(code))
 }
 
 fn error_payload(code: String) -> json.Json {

@@ -1,12 +1,12 @@
 import beryl
 import beryl/presence
+import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import cursors/app as cursors_app
 import cursors/router
 import envoy
-import example_helpers/router as topic_router
 import gleam/erlang/process
 import gleam/int
 import gleam/io

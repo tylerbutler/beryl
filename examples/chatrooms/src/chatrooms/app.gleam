@@ -15,11 +15,10 @@
 import beryl/group.{type Groups}
 import beryl/presence.{type Presence}
 import beryl/socket.{type Effect, type Ref}
+import beryl/socket/router
 import example_helpers/color
 import example_helpers/payload
 import example_helpers/presence as presence_helpers
-import example_helpers/reply
-import example_helpers/router
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/int
@@ -44,15 +43,18 @@ pub type Ctx {
 }
 
 /// Handle a join for a `room:*` topic. Returns `None` when rejected.
+/// `match` carries the topic plus the room name captured by the pattern's
+/// wildcard.
 pub fn join(
   ctx: Ctx,
   socket_id: String,
-  topic: String,
+  match: router.Match,
   payload: Dynamic,
   ref: Ref,
 ) -> #(Option(Model), List(Effect)) {
-  let room_name = case string.split(topic, ":") {
-    [_, name] -> name
+  let router.Match(topic:, params:) = match
+  let room_name = case params {
+    [name] -> name
     _ -> "unknown"
   }
 
@@ -134,7 +136,7 @@ pub fn update(
       case string.trim(text) {
         "" -> #(
           model,
-          reply.ok(ref, error_with_code(422, "Message cannot be empty")),
+          socket.reply_ok(ref, error_with_code(422, "Message cannot be empty")),
         )
         trimmed -> {
           let msg_payload =
@@ -148,7 +150,7 @@ pub fn update(
             ])
           #(model, [
             socket.Broadcast(topic, "new_msg", msg_payload),
-            ..reply.ok(
+            ..socket.reply_ok(
               ref,
               json.object([
                 #("status", json.string("ok")),
@@ -201,15 +203,19 @@ pub fn namespace(
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
   router.stateful(
-    matches: string.starts_with(_, "room:"),
+    pattern: "room:*",
     socket_id:,
     get:,
     put:,
-    join: fn(socket_id, topic, payload, ref) {
-      join(ctx, socket_id, topic, payload, ref)
+    join: fn(socket_id, match, payload, ref) {
+      join(ctx, socket_id, match, payload, ref)
     },
-    message: update,
-    closed: closed,
+    message: fn(socket_id, match: router.Match, model, event_name, payload, ref) {
+      update(socket_id, match.topic, model, event_name, payload, ref)
+    },
+    closed: fn(socket_id, match: router.Match, model) {
+      closed(socket_id, match.topic, model)
+    },
   )
 }
 

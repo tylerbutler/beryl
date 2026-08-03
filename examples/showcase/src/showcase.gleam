@@ -11,6 +11,7 @@ import beryl
 import beryl/group
 import beryl/presence
 import beryl/socket.{type Input, type Next}
+import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
@@ -23,7 +24,6 @@ import collab_docs/router as collab_docs_router
 import cursors/app as cursors_app
 import cursors/router as cursors_router
 import envoy
-import example_helpers/router as topic_router
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
@@ -162,7 +162,7 @@ pub fn main() {
 /// Build the socket-wide router: register each embedded app's topic
 /// namespace, projecting this app's `Model` onto the `Dict` that namespace
 /// owns. The namespace list is built once here rather than per delivered
-/// input; the dispatch itself lives in `example_helpers/router`, shared
+/// input; the dispatch itself lives in `beryl/socket/router`, shared
 /// with each example's standalone server.
 fn update(ctx: Ctx) -> fn(Model, Input(Nil)) -> Next(Model, Nil) {
   let namespaces = [

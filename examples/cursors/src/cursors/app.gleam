@@ -10,16 +10,15 @@
 ////   `beryl.start`, reusing the same per-topic surface.
 
 import beryl/socket.{type Effect, type Ref}
+import beryl/socket/router
 import example_helpers/color
 import example_helpers/payload
 import example_helpers/presence as presence_helpers
-import example_helpers/router
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/string
 
 /// Per-topic state for one socket in a cursor room.
 pub type Model {
@@ -128,15 +127,26 @@ pub fn namespace(
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
   router.stateful(
-    matches: string.starts_with(_, "cursor:"),
+    pattern: "cursor:*",
     socket_id:,
     get:,
     put:,
-    join:,
-    message: fn(socket_id, topic, model, event_name, payload, _ref) {
-      update(socket_id, topic, model, event_name, payload)
+    join: fn(socket_id, match: router.Match, payload, ref) {
+      join(socket_id, match.topic, payload, ref)
     },
-    closed:,
+    message: fn(
+      socket_id,
+      match: router.Match,
+      model,
+      event_name,
+      payload,
+      _ref,
+    ) {
+      update(socket_id, match.topic, model, event_name, payload)
+    },
+    closed: fn(socket_id, match: router.Match, model) {
+      closed(socket_id, match.topic, model)
+    },
   )
 }
 

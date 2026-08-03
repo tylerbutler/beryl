@@ -1,4 +1,5 @@
 import beryl
+import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
@@ -6,7 +7,6 @@ import collab_docs/app as docs_app
 import collab_docs/auth
 import collab_docs/doc_store
 import collab_docs/router
-import example_helpers/router as topic_router
 import gleam/erlang/process
 import gleam/io
 import mist

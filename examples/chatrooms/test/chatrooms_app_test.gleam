@@ -1,8 +1,8 @@
 import beryl/group
 import beryl/presence
 import beryl/socket
+import beryl/socket/router
 import chatrooms/app
-import example_helpers/router
 import gleam/dict
 import gleam/dynamic
 import gleam/json
@@ -112,7 +112,7 @@ pub fn accepted_room_join_invalidates_lobby_after_presence_track_test() {
     app.join(
       context(),
       "socket-1",
-      "room:general",
+      router.Match(topic: "room:general", params: ["general"]),
       dynamic.properties([
         #(dynamic.string("username"), dynamic.string("Alice")),
       ]),
@@ -135,7 +135,7 @@ pub fn rejected_room_join_does_not_invalidate_lobby_test() {
     app.join(
       context(),
       "socket-1",
-      "room:missing",
+      router.Match(topic: "room:missing", params: ["missing"]),
       empty_payload(),
       room_ref("room:missing"),
     )

@@ -1,12 +1,12 @@
 import beryl
 import beryl/group
 import beryl/presence
+import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
 import chatrooms/router
-import example_helpers/router as topic_router
 import gleam/erlang/process
 import gleam/http/request
 import gleam/io
