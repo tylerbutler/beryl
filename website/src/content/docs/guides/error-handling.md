@@ -190,6 +190,13 @@ case beryl.start(config, init: init, update: update) {
 
 `beryl.child_spec` fails only with `beryl.ConfigError`, because it validates before any child process starts.
 
+`beryl.ConfigError` has two variants:
+
+- `beryl.HeartbeatTimeoutTooLow(minimum)` — `heartbeat_timeout_ms` was below `minimum`,
+- `beryl.InvalidTopicPattern(pattern, reason)` — a per-topic rate limit used an invalid pattern; `reason` is the core `beryl/topic.TopicError` nested, not flattened to a string, so it stays matchable.
+
+New `beryl/topic.TopicError` variants may be added in a minor release. Match `topic.EmptyTopic` and `topic.InvalidFormat(detail)` only where you act on them differently, and otherwise use a catch-all such as `beryl.InvalidTopicPattern(pattern, _)`.
+
 `beryl.stop(sockets)` returns:
 
 - `Ok(Nil)` when the Beryl subtree stopped cleanly,

@@ -85,7 +85,7 @@ pub type ConfigError {
   HeartbeatTimeoutTooLow(minimum: Int)
   InvalidTopicPattern(
     pattern: String,
-    reason: String
+    reason: topic.TopicError
   )
 }
 ```
@@ -102,12 +102,18 @@ pub type ConfigError {
 
 ##### `InvalidTopicPattern(
   pattern: String,
-  reason: String
+  reason: topic.TopicError
 )`
 
 A per-topic-pattern rate limit used a pattern string that is not a valid
- topic pattern. `pattern` is the offending pattern and `reason` describes
- the problem.
+ topic pattern. `pattern` is the offending pattern and `reason` is the
+ [`beryl/topic`](https://hexdocs.pm/beryl/beryl/topic.html) error nested
+ rather than flattened to a string, so it stays matchable.
+
+ New [`topic.TopicError`](https://hexdocs.pm/beryl/beryl/topic.html#TopicError)
+ variants may be added in a minor release. Match the exact variants only
+ when you act on them differently, and keep a catch-all arm (for example
+ `InvalidTopicPattern(pattern, _)`) otherwise.
 
 ### `ConnectionPermit`
 
@@ -609,7 +615,25 @@ pub fn with_max_event_length(
 
 ### `with_max_inbound_frame_bytes`
 
+Configure the maximum allowed inbound WebSocket frame size in bytes.
 
+ The limit is enforced **post-assembly**: the transport (Mist/gramps)
+ buffers and assembles a complete frame first, and only then does Beryl
+ measure it and close the connection if it exceeds `max_bytes`. This bounds
+ per-message processing cost (decode, routing, rate-limit accounting), but
+ it does **not** by itself bound transport memory. A hostile client can
+ declare a huge payload and stream it slowly, or send many fragmented
+ continuation frames, and the transport's receive buffer grows before this
+ check ever runs — so this setting alone does not stop a single connection
+ from exhausting node memory.
+
+ For a true transport memory bound you **must** place an edge proxy or load
+ balancer in front of Beryl and configure a WebSocket frame-size limit
+ there (and a matching request/body size limit). Beryl's per-IP connection
+ limit and per-socket message-rate limit do not mitigate this vector. See
+ the README's "Security" section for deployment guidance.
+
+ Values <= 0 disable the cap. The default is 1 MiB.
 
 ```gleam
 pub fn with_max_inbound_frame_bytes(

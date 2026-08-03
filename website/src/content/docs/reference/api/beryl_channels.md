@@ -114,6 +114,11 @@ A handler used a pattern string that is not a valid topic pattern.
  [`beryl/topic`](https://hexdocs.pm/beryl/beryl/topic.html) error
  nested rather than flattened to a string, so it stays matchable.
 
+ New [`topic.TopicError`](https://hexdocs.pm/beryl/beryl/topic.html#TopicError)
+ variants may be added in a minor release. Match the exact variants only
+ when you act on them differently, and keep a catch-all arm (for example
+ `InvalidPattern(pattern, _)`) otherwise.
+
 ##### `DuplicatePattern(pattern: String)`
 
 Two handlers were registered with the same pattern string. The

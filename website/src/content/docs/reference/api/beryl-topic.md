@@ -48,6 +48,11 @@ The topic does not match the pattern.
 
 Errors returned when validating a topic or topic pattern.
 
+ New variants may be added in a minor release as validation gets stricter,
+ so this type is not treated as closed for exhaustive matching. Match the
+ exact variants only where you act on them differently, and otherwise keep
+ a catch-all arm (`_ -> ...`) so future variants do not break your code.
+
 ```gleam
 pub type TopicError {
   EmptyTopic

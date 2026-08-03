@@ -422,6 +422,7 @@ pub fn with_max_event_length(
   Config(..config, max_event_length: max_length)
 }
 
+// nolint: unused_exports -- enforced and covered in the transport packages (see beryl_mist/beryl_ewe handler tests)
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
 /// The limit is enforced **post-assembly**: the transport (Mist/gramps)
@@ -441,8 +442,6 @@ pub fn with_max_event_length(
 /// the README's "Security" section for deployment guidance.
 ///
 /// Values <= 0 disable the cap. The default is 1 MiB.
-// nolint: unused_exports -- enforced and covered in the transport packages (see beryl_mist/beryl_ewe handler tests)
-
 pub fn with_max_inbound_frame_bytes(
   config: Config,
   max_bytes max_bytes: Int,
@@ -610,9 +609,15 @@ pub type ConfigError {
   /// smallest accepted timeout.
   HeartbeatTimeoutTooLow(minimum: Int)
   /// A per-topic-pattern rate limit used a pattern string that is not a valid
-  /// topic pattern. `pattern` is the offending pattern and `reason` describes
-  /// the problem.
-  InvalidTopicPattern(pattern: String, reason: String)
+  /// topic pattern. `pattern` is the offending pattern and `reason` is the
+  /// [`beryl/topic`](https://hexdocs.pm/beryl/beryl/topic.html) error nested
+  /// rather than flattened to a string, so it stays matchable.
+  ///
+  /// New [`topic.TopicError`](https://hexdocs.pm/beryl/beryl/topic.html#TopicError)
+  /// variants may be added in a minor release. Match the exact variants only
+  /// when you act on them differently, and keep a catch-all arm (for example
+  /// `InvalidTopicPattern(pattern, _)`) otherwise.
+  InvalidTopicPattern(pattern: String, reason: topic.TopicError)
 }
 
 /// Errors when starting a Beryl system.
@@ -651,17 +656,8 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   list.try_each(config.topic_rates, fn(entry) {
     let #(pattern, _limits) = entry
     topic.validate_pattern(pattern)
-    |> result.map_error(fn(error) {
-      InvalidTopicPattern(pattern, topic_error_reason(error))
-    })
+    |> result.map_error(fn(error) { InvalidTopicPattern(pattern, error) })
   })
-}
-
-fn topic_error_reason(error: topic.TopicError) -> String {
-  case error {
-    topic.EmptyTopic -> "pattern cannot be empty"
-    topic.InvalidFormat(reason) -> reason
-  }
 }
 
 /// Stop a Beryl system.

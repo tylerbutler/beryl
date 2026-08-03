@@ -211,6 +211,19 @@ pub fn check_handlers() -> Nil {
 flattened string, so the reason stays matchable — the same nesting rule
 `StartError` and `ChildSpecError` follow for core errors.
 
+The example above matches every `topic.TopicError` variant that exists
+today, which is what you want when each one gets its own message. **New
+`TopicError` variants may be added in a minor release**, so where you do not
+need the exact variant, prefer a catch-all instead:
+
+```gleam
+    Error(beryl_channels.InvalidPattern(pattern, _reason)) ->
+      panic as { "invalid channel pattern " <> pattern }
+```
+
+The same applies to the core `beryl.InvalidTopicPattern(pattern, reason)`,
+which nests the identical `topic.TopicError`.
+
 Validation is deterministic and two-phase: every pattern's syntax is
 checked in registration order first, then duplicate pattern strings are
 looked for in registration order. `start` and `child_spec` run exactly

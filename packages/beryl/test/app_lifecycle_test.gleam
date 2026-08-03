@@ -6,6 +6,7 @@
 
 import app_test_helpers as h
 import beryl
+import beryl/topic
 import beryl/wire
 import gleam/otp/static_supervisor
 import gleam/string
@@ -49,11 +50,22 @@ pub fn validate_config_rejects_invalid_topic_pattern_test() {
     |> beryl.with_topic_rate(pattern: bad, per_second: 5, burst: 10)
     |> beryl.validate_config
 
-  case result {
-    Error(beryl.InvalidTopicPattern(pattern, _reason)) ->
-      pattern |> should.equal(bad)
-    _ -> should.fail()
-  }
+  // The reason is the core `beryl/topic` error nested rather than flattened
+  // to a string, so callers can match on it.
+  result
+  |> should.equal(
+    Error(beryl.InvalidTopicPattern(
+      bad,
+      topic.InvalidFormat("pattern contains control characters"),
+    )),
+  )
+}
+
+pub fn validate_config_rejects_empty_topic_pattern_test() {
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_topic_rate(pattern: "", per_second: 5, burst: 10)
+  |> beryl.validate_config
+  |> should.equal(Error(beryl.InvalidTopicPattern("", topic.EmptyTopic)))
 }
 
 // ── start / child_spec config validation parity ────────────────────────
