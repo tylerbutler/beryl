@@ -1,0 +1,48 @@
+name = "beryl_channels"
+version = "0.0.1"
+description = "Composable channel layer for beryl real-time sockets"
+licences = ["MIT"]
+repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl_channels" }
+gleam = ">= 1.13.0"
+target = "erlang"
+
+[dependencies]
+beryl = { path = "../beryl" }
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
+glinter = ">= 2.19.0 and < 3.0.0"
+
+[tools.licence_audit]
+allow = ["Apache-2.0", "MIT"]
+deny = []
+
+[tools.glinter]
+# Promote enabled-rule warnings to errors so any violation fails the lint.
+warnings_as_errors = true
+
+[tools.glinter.rules]
+# --- Same rule set as packages/beryl ---
+thrown_away_error = "error"
+discarded_result = "error"
+unused_exports = "error"
+deep_nesting = "error"
+prefer_guard_clause = "error"
+error_context_lost = "error"
+unqualified_import = "error"
+stringly_typed_error = "error"
+short_variable_name = "error"
+string_inspect = "error"
+assert_ok_pattern = "off"
+echo = "off"
+panic_without_message = "off"
+todo_without_message = "off"
+unnecessary_variable = "off"
+redundant_case = "off"
+trailing_underscore = "off"
+unnecessary_string_concatenation = "off"
+missing_type_annotation = "off"
+label_possible = "off"
+missing_labels = "off"
+duplicate_import = "off"
