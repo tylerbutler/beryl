@@ -20,12 +20,23 @@ Even with no extra configuration, Beryl enforces:
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  |> beryl.with_frame_rate(per_second: 150, burst: 300)
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   |> beryl.with_join_rate(per_second: 10, burst: 20)
   |> beryl.with_channel_rate(per_second: 50, burst: 100)
   |> beryl.with_max_connections_per_ip(max_connections: 100)
   |> beryl.with_max_connections(max_connections: 10_000)
 ```
+
+`with_frame_rate` and `with_message_rate` are independent buckets: the
+former is enforced by the transport at the edge, per connection, before any
+decoding happens (every frame counts — malformed ones included); the latter
+is enforced by the runtime, per socket, after a frame decodes successfully
+(joins never count against it — see `with_join_rate`). Configure both so a
+flood is shed at the edge before it costs a decode, *and* so decoded traffic
+is still capped per socket. Size `with_frame_rate` a little above
+`with_message_rate` since a socket's frames also include joins, leaves, and
+heartbeats that only the frame bucket counts.
 
 Optionally, add `with_topic_rate(pattern:, per_second:, burst:)` when some topic patterns need tighter limits than the global per-topic ceiling.
 

@@ -128,7 +128,22 @@ pub opaque type Config {
     max_connections: Int,
     /// Optional PubSub for distributed broadcasts across nodes
     pubsub: Option(PubSub(json.Json)),
-    /// Per-socket message rate limit (messages/sec, 0 = unlimited)
+    /// Per-connection inbound frame rate limit (frames/sec, 0 = unlimited).
+    /// Enforced by the transport at the edge, before wire decoding: every
+    /// complete inbound text or binary frame counts against this bucket,
+    /// including malformed frames, joins, leaves, heartbeats, decoded
+    /// events (valid or invalid), and raw binary. Independent from
+    /// `message_rate` — the two buckets share no tokens.
+    frame_rate: Int,
+    /// Per-connection frame burst capacity (0 = defaults to frame_rate)
+    frame_burst: Int,
+    /// Per-socket message rate limit (messages/sec, 0 = unlimited).
+    /// Enforced by the runtime after decoding: every successfully decoded
+    /// non-join inbound envelope counts against this bucket (leaves,
+    /// heartbeats, decoded events including semantically invalid
+    /// topic/event ones, decoded binary, and raw binary delivered as
+    /// application `Binary` input). Joins never consume this bucket; see
+    /// `with_join_rate`. Independent from `frame_rate`.
     message_rate: Int,
     /// Per-socket message burst capacity (0 = defaults to message_rate)
     message_burst: Int,
@@ -196,6 +211,8 @@ pub fn config(codec: codec.Codec) -> Config {
     max_connections_per_ip: 0,
     max_connections: 0,
     pubsub: None,
+    frame_rate: 0,
+    frame_burst: 0,
     message_rate: 0,
     message_burst: 0,
     join_rate: 0,
@@ -338,7 +355,42 @@ pub fn with_payload_preview_bytes(
   LoggingConfig(..logging, payload_preview_bytes: int.max(bytes, 0))
 }
 
-/// Configure per-socket message rate limiting
+/// Configure the per-connection inbound frame rate limit, enforced by the
+/// transport at the edge before wire decoding.
+///
+/// This bucket counts every complete inbound text or binary frame a
+/// connection sends, regardless of what the frame contains: malformed
+/// frames, joins, leaves, heartbeats, decoded events (valid or invalid), and
+/// raw binary all consume a token. Frames over the rate are shed silently
+/// before they are decoded or reach the runtime, so a flooding connection
+/// cannot fill the runtime's mailbox or spend decode/routing cost.
+///
+/// This is independent from `with_message_rate`: the two buckets do not
+/// share tokens or fall back to one another. Configure both when you want
+/// edge-level flood shedding *and* a runtime-level cap on decoded traffic —
+/// valid non-join messages then consume one token from each bucket.
+pub fn with_frame_rate(
+  config: Config,
+  per_second rate: Int,
+  burst burst: Int,
+) -> Config {
+  Config(..config, frame_rate: rate, frame_burst: burst)
+}
+
+/// Configure the per-socket message rate limit, enforced by the runtime
+/// after a frame has been successfully decoded.
+///
+/// This bucket counts every successfully decoded non-join inbound envelope
+/// before it reaches the app's `update` function: leaves, heartbeats,
+/// decoded events — including ones with a semantically invalid topic or
+/// event name once decode itself succeeds — decoded binary, and raw binary
+/// delivered as an application `Binary` input. Joins never consume this
+/// bucket; use `with_join_rate` for join traffic.
+///
+/// This is independent from `with_frame_rate`: the two buckets do not share
+/// tokens or fall back to one another. Direct callers of
+/// `beryl/transport.route_decoded` (e.g. custom transports) also go through
+/// this enforcement.
 pub fn with_message_rate(
   config: Config,
   per_second rate: Int,
@@ -420,8 +472,9 @@ pub fn with_max_event_length(
 /// For a true transport memory bound you **must** place an edge proxy or load
 /// balancer in front of Beryl and configure a WebSocket frame-size limit
 /// there (and a matching request/body size limit). Beryl's per-IP connection
-/// limit and per-socket message-rate limit do not mitigate this vector. See
-/// the README's "Security" section for deployment guidance.
+/// limit, per-connection frame-rate limit, and per-socket message-rate limit
+/// all run post-assembly and so do not mitigate this vector. See the
+/// README's "Security" section for deployment guidance.
 ///
 /// Values <= 0 disable the cap. The default is 1 MiB.
 pub fn with_max_inbound_frame_bytes(
@@ -451,6 +504,7 @@ fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
     config.max_connections_per_ip <= 0
     && config.max_connections <= 0
+    && config.frame_rate <= 0
     && config.message_rate <= 0
     && config.join_rate <= 0
     && config.channel_rate <= 0
@@ -460,9 +514,9 @@ fn warn_if_unprotected(config: Config) -> Nil {
     #(
       "hint",
       "rate and connection limits are all disabled; fine for development, "
-        <> "but for production configure with_message_rate, with_join_rate, "
-        <> "with_max_connections_per_ip, and with_max_connections (see the "
-        <> "production hardening guide)",
+        <> "but for production configure with_frame_rate, with_message_rate, "
+        <> "with_join_rate, with_max_connections_per_ip, and "
+        <> "with_max_connections (see the production hardening guide)",
     ),
   ])
 }
@@ -477,14 +531,16 @@ fn optional_limits(
 }
 
 // nolint: unused_exports -- package-internal accessor for transports; hidden from public docs with @internal
-/// Per-socket message rate limits for transports, `None` when unlimited.
+/// Per-connection frame rate limits for transports, `None` when unlimited.
 ///
 /// Transports enforce this with a local token bucket per connection so
-/// flooded sockets are shed at the edge, before frames are decoded or
-/// enqueued on the runtime.
+/// flooded connections are shed at the edge, before frames are decoded or
+/// enqueued on the runtime. This is the edge counterpart to the runtime's
+/// `with_message_rate` bucket; the two are independent and neither falls
+/// back to the other.
 @internal
-pub fn message_limits(channels: Sockets) -> Option(rate_limit.RateLimitConfig) {
-  optional_limits(channels.config.message_rate, channels.config.message_burst)
+pub fn frame_limits(channels: Sockets) -> Option(rate_limit.RateLimitConfig) {
+  optional_limits(channels.config.frame_rate, channels.config.frame_burst)
 }
 
 /// Runtime system handle.

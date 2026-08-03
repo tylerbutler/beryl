@@ -63,7 +63,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 2. **Does your `update` branch match both topic and event name?** `socket.Message(topic, event_name, payload, ref)` carries the raw topic and event string. Verify the branch you expect actually matches.
 
-3. **Rate limits dropping messages.** If `with_message_rate`, `with_channel_rate`, or `with_topic_rate` is configured and the client sends faster than the limit, excess messages are dropped before your application logic sees them.
+3. **Rate limits dropping messages.** If `with_frame_rate`, `with_message_rate`, `with_channel_rate`, or `with_topic_rate` is configured and the client sends faster than the limit, excess frames/messages are dropped before your application logic sees them. `with_frame_rate` sheds at the transport edge, pre-decode; the others are enforced by the runtime after decoding.
 
 4. **Event name limits.** If you configured `with_max_event_length`, overlong event names are dropped before they reach `update`.
 
@@ -180,9 +180,11 @@ let logging =
 
 1. **Check burst values.** The `burst` parameter sets the token bucket capacity. If burst is too small, a legitimate burst of messages (for example right after reconnect) can exceed the limit.
 
-2. **Global vs. per-topic limits.** `message_rate` is per socket overall; `channel_rate` is per socket per joined topic; `topic_rate` overrides `channel_rate` for the first matching topic pattern.
+2. **Global vs. per-topic limits.** `message_rate` is per socket overall (decoded, non-join traffic); `channel_rate` is per socket per joined topic; `topic_rate` overrides `channel_rate` for the first matching topic pattern.
 
-3. **No client error is sent automatically.** Over-limit messages are dropped before your `update` function runs. If clients need explicit feedback, design that at the application protocol level.
+3. **Frame rate vs. message rate.** `frame_rate` and `message_rate` are independent buckets — neither falls back to the other. `frame_rate` counts every inbound frame at the transport edge (including malformed frames, joins, leaves, and heartbeats); `message_rate` counts only successfully decoded non-join envelopes at the runtime. A frame-rate limit set too low can shed traffic before `message_rate` ever sees it.
+
+4. **No client error is sent automatically.** Over-limit frames/messages are dropped before your `update` function runs. If clients need explicit feedback, design that at the application protocol level.
 
 ---
 

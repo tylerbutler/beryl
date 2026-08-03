@@ -10,7 +10,7 @@ Server-agnostic WebSocket transport infrastructure.
  its builders, the upgrade admission pipeline (path matching, origin
  policy, `?vsn` negotiation, connection limits, `on_connect`
  authentication), per-connection lifecycle choreography, and the inbound
- frame pipeline (size caps, rate limiting, decoding, routing).
+ frame pipeline (size caps, frame-rate limiting, decoding, routing).
 
  Transport packages such as `beryl_mist` and `beryl_ewe` supply only the
  server-specific glue: the WebSocket upgrade call, frame sending, and peer
@@ -145,12 +145,13 @@ pub fn default_config(String) -> TransportConfig(a)
 
 ### `handle_binary_frame`
 
-Size-check, rate-check, and decode an inbound binary frame in the
+Size-check, frame-rate-check, and decode an inbound binary frame in the
  connection process. Codecs without a binary decoder keep the raw
  `transport.route_binary` fan-out, routed through the runtime.
 
  Oversized frames return `Stop` (close the connection); over-rate frames
- are shed silently; undecodable frames are logged and dropped.
+ are shed silently before decode; undecodable frames are logged and
+ dropped.
 
 ```gleam
 pub fn handle_binary_frame(
@@ -161,12 +162,14 @@ pub fn handle_binary_frame(
 
 ### `handle_text_frame`
 
-Size-check, rate-check, and decode an inbound text frame in the
- connection process, so parse cost stays there and only valid,
- rate-admitted messages reach the shared runtime.
+Size-check, frame-rate-check, and decode an inbound text frame in the
+ connection process, so parse cost stays there and only size- and
+ rate-admitted frames reach the shared runtime for message-rate
+ enforcement and dispatch.
 
  Oversized frames return `Stop` (close the connection); over-rate frames
- are shed silently; undecodable frames are logged and dropped.
+ are shed silently before decode; undecodable frames are logged and
+ dropped.
 
 ```gleam
 pub fn handle_text_frame(

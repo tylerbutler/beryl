@@ -476,6 +476,31 @@ pub fn with_channel_rate_max_keys_per_socket(
 ) -> Config
 ```
 
+### `with_frame_rate`
+
+Configure the per-connection inbound frame rate limit, enforced by the
+ transport at the edge before wire decoding.
+
+ This bucket counts every complete inbound text or binary frame a
+ connection sends, regardless of what the frame contains: malformed
+ frames, joins, leaves, heartbeats, decoded events (valid or invalid), and
+ raw binary all consume a token. Frames over the rate are shed silently
+ before they are decoded or reach the runtime, so a flooding connection
+ cannot fill the runtime's mailbox or spend decode/routing cost.
+
+ This is independent from `with_message_rate`: the two buckets do not
+ share tokens or fall back to one another. Configure both when you want
+ edge-level flood shedding *and* a runtime-level cap on decoded traffic —
+ valid non-join messages then consume one token from each bucket.
+
+```gleam
+pub fn with_frame_rate(
+  Config,
+  per_second: Int,
+  burst: Int
+) -> Config
+```
+
 ### `with_heartbeat`
 
 Configure the server-side heartbeat staleness window.
@@ -618,8 +643,9 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
  For a true transport memory bound you **must** place an edge proxy or load
  balancer in front of Beryl and configure a WebSocket frame-size limit
  there (and a matching request/body size limit). Beryl's per-IP connection
- limit and per-socket message-rate limit do not mitigate this vector. See
- the README's "Security" section for deployment guidance.
+ limit, per-connection frame-rate limit, and per-socket message-rate limit
+ all run post-assembly and so do not mitigate this vector. See the
+ README's "Security" section for deployment guidance.
 
  Values <= 0 disable the cap. The default is 1 MiB.
 
@@ -661,7 +687,20 @@ pub fn with_max_topic_length(
 
 ### `with_message_rate`
 
-Configure per-socket message rate limiting
+Configure the per-socket message rate limit, enforced by the runtime
+ after a frame has been successfully decoded.
+
+ This bucket counts every successfully decoded non-join inbound envelope
+ before it reaches the app's `update` function: leaves, heartbeats,
+ decoded events — including ones with a semantically invalid topic or
+ event name once decode itself succeeds — decoded binary, and raw binary
+ delivered as an application `Binary` input. Joins never consume this
+ bucket; use `with_join_rate` for join traffic.
+
+ This is independent from `with_frame_rate`: the two buckets do not share
+ tokens or fall back to one another. Direct callers of
+ `beryl/transport.route_decoded` (e.g. custom transports) also go through
+ this enforcement.
 
 ```gleam
 pub fn with_message_rate(

@@ -139,18 +139,23 @@ Crash behavior depends on which event was being processed:
 
 ## Rate limiting
 
-When a client exceeds a configured rate limit, the offending message is **dropped**. No automatic error is sent back to the client.
+When a client exceeds a configured rate limit, the offending frame or message is **dropped**. No automatic error is sent back to the client.
 
-| Limit | Scope | Config function |
-|-------|-------|-----------------|
-| `message_rate` | Per socket, all topics | `beryl.with_message_rate` |
-| `join_rate` | Per socket, join attempts | `beryl.with_join_rate` |
-| `channel_rate` | Per socket plus topic | `beryl.with_channel_rate` |
-| `topic_rate` | First matching topic pattern | `beryl.with_topic_rate` |
+| Limit | Scope | Enforced | Config function |
+|-------|-------|----------|-----------------|
+| `frame_rate` | Per connection, every inbound frame (pre-decode, including malformed ones) | Transport edge | `beryl.with_frame_rate` |
+| `message_rate` | Per socket, decoded non-join traffic | Runtime | `beryl.with_message_rate` |
+| `join_rate` | Per socket, join attempts | Runtime | `beryl.with_join_rate` |
+| `channel_rate` | Per socket plus topic | Runtime | `beryl.with_channel_rate` |
+| `topic_rate` | First matching topic pattern | Runtime | `beryl.with_topic_rate` |
+
+`frame_rate` and `message_rate` are independent: neither falls back to the
+other, and joins consume only `join_rate` regardless of either setting.
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  |> beryl.with_frame_rate(per_second: 150, burst: 300)
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   |> beryl.with_join_rate(per_second: 5, burst: 10)
   |> beryl.with_channel_rate(per_second: 50, burst: 100)

@@ -59,7 +59,7 @@ pub fn main() {
 The transport serves WebSocket upgrades and regular HTTP from a single Mist
 listener, runs an optional `on_connect` authentication hook before the
 upgrade, validates the `Origin` header (same-origin by default, allow-list,
-or allow-all), and enforces beryl's frame-size, message-rate, and connection
+or allow-all), and enforces beryl's frame-size, frame-rate, and connection
 limits at the edge.
 
 ## Documentation

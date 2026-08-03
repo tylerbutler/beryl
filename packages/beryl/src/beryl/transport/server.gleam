@@ -5,7 +5,7 @@
 //// its builders, the upgrade admission pipeline (path matching, origin
 //// policy, `?vsn` negotiation, connection limits, `on_connect`
 //// authentication), per-connection lifecycle choreography, and the inbound
-//// frame pipeline (size caps, rate limiting, decoding, routing).
+//// frame pipeline (size caps, frame-rate limiting, decoding, routing).
 ////
 //// Transport packages such as `beryl_mist` and `beryl_ewe` supply only the
 //// server-specific glue: the WebSocket upgrade call, frame sending, and peer
@@ -363,10 +363,13 @@ pub opaque type ConnectionState {
     /// process, so parse cost and malformed input never reach the shared
     /// runtime.
     codec: Codec,
-    /// Per-connection message-rate limiter (`None` = unlimited).
-    /// Enforced at the edge: frames over the rate are shed before decode,
-    /// so a flooding socket cannot fill the runtime's mailbox.
-    message_limiter: Option(rate_limit.Bucket),
+    /// Per-connection frame-rate limiter (`None` = unlimited).
+    /// Enforced at the edge: every complete inbound frame counts against
+    /// this bucket before decoding, so a flooding connection cannot fill
+    /// the runtime's mailbox or spend decode/routing cost. Independent
+    /// from the runtime's message-rate limiter (`beryl.with_message_rate`);
+    /// the two buckets do not share tokens.
+    frame_limiter: Option(rate_limit.Bucket),
     logger: log.Logger,
   )
 }
@@ -391,7 +394,6 @@ pub fn connect_seed(
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Initialize a newly upgraded WebSocket connection in its connection
 /// process.
 ///
@@ -472,7 +474,7 @@ pub fn init_connection(
       connection_permit: connection_permit,
       max_inbound_frame_bytes: beryl.max_inbound_frame_bytes(sockets),
       codec: transport.active_codec(sockets),
-      message_limiter: beryl.message_limits(sockets)
+      frame_limiter: beryl.frame_limits(sockets)
         |> option.map(rate_limit.new_bucket),
       logger: internal.logger(logger_name),
     )
@@ -499,13 +501,14 @@ pub type FrameOutcome {
   Stop
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Size-check, rate-check, and decode an inbound text frame in the
-/// connection process, so parse cost stays there and only valid,
-/// rate-admitted messages reach the shared runtime.
+/// Size-check, frame-rate-check, and decode an inbound text frame in the
+/// connection process, so parse cost stays there and only size- and
+/// rate-admitted frames reach the shared runtime for message-rate
+/// enforcement and dispatch.
 ///
 /// Oversized frames return `Stop` (close the connection); over-rate frames
-/// are shed silently; undecodable frames are logged and dropped.
+/// are shed silently before decode; undecodable frames are logged and
+/// dropped.
 pub fn handle_text_frame(state: ConnectionState, text: String) -> FrameOutcome {
   use state <- admit_frame(state, string.byte_size(text))
   route_or_warn(
@@ -516,12 +519,13 @@ pub fn handle_text_frame(state: ConnectionState, text: String) -> FrameOutcome {
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Size-check, rate-check, and decode an inbound binary frame in the
+/// Size-check, frame-rate-check, and decode an inbound binary frame in the
 /// connection process. Codecs without a binary decoder keep the raw
 /// `transport.route_binary` fan-out, routed through the runtime.
 ///
 /// Oversized frames return `Stop` (close the connection); over-rate frames
-/// are shed silently; undecodable frames are logged and dropped.
+/// are shed silently before decode; undecodable frames are logged and
+/// dropped.
 pub fn handle_binary_frame(
   state: ConnectionState,
   data: BitArray,
@@ -539,8 +543,10 @@ pub fn handle_binary_frame(
 }
 
 /// Shared admission for inbound frames: close the connection on oversized
-/// frames, silently shed over-rate frames, and hand admitted frames to
-/// `route`.
+/// frames, silently shed over-frame-rate frames, and hand admitted frames to
+/// `route`. Every complete frame counts against the frame-rate bucket here,
+/// before decoding — malformed frames, joins, leaves, heartbeats, and
+/// decoded events/binary all pay this edge cost the same way.
 fn admit_frame(
   state: ConnectionState,
   frame_bytes: Int,
@@ -550,13 +556,14 @@ fn admit_frame(
     when: frame_too_large(state.max_inbound_frame_bytes, frame_bytes),
     return: Stop,
   )
-  let #(state, allowed) = take_message_token(state)
+  let #(state, allowed) = take_frame_token(state)
   use <- bool.guard(when: !allowed, return: Continue(state))
   route(state)
   Continue(state)
 }
 
 /// Route a decoded message, or log `warning` and drop an undecodable one.
+/// The runtime enforces `with_message_rate` on whatever reaches it here.
 fn route_or_warn(
   state: ConnectionState,
   decoded: Result(codec.Inbound, codec.DecodeError),
@@ -572,15 +579,15 @@ fn route_or_warn(
   }
 }
 
-/// Take a token from the connection's message limiter; always allowed when
-/// no message rate is configured.
-fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
-  case state.message_limiter {
+/// Take a token from the connection's frame limiter; always allowed when no
+/// frame rate is configured.
+fn take_frame_token(state: ConnectionState) -> #(ConnectionState, Bool) {
+  case state.frame_limiter {
     None -> #(state, True)
     Some(bucket) -> {
       let #(bucket, taken) = rate_limit.take(bucket)
       #(
-        ConnectionState(..state, message_limiter: Some(bucket)),
+        ConnectionState(..state, frame_limiter: Some(bucket)),
         result.is_ok(taken),
       )
     }

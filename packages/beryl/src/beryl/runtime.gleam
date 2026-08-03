@@ -473,13 +473,17 @@ fn dispatch_inbound(
       handle_heartbeat(state, socket_id, msg_ref)
     }
     codec.Event(event_name) -> {
+      use state <- with_message_rate_limit(state, socket_id, [
+        #("topic", topic.sanitize_for_log(msg_topic)),
+        #("event", topic.sanitize_for_log(event_name)),
+      ])
       let resolved = resolve_event_topic(state, socket_id, msg_topic)
       case
         is_valid_topic(resolved, state.config),
         is_valid_event(event_name, state.config)
       {
         True, True ->
-          handle_in(
+          handle_in_subscribed(
             state,
             socket_id,
             resolved,
@@ -552,9 +556,12 @@ fn is_valid_event(event_name: String, config: Config) -> Bool {
   && result.is_ok(topic.validate_event(event_name))
 }
 
-/// Apply the per-socket message limiter, dropping the frame with a warning
-/// when the socket is over rate. `metadata` is appended to the warning's
-/// `socket_id` entry.
+/// Apply the per-socket message limiter (`beryl.with_message_rate`),
+/// dropping the decoded, non-join envelope with a warning when the socket is
+/// over rate. Every leave, heartbeat, and event — valid or semantically
+/// invalid — consumes one token here before any further validity check or
+/// dispatch; joins never pass through this gate (see `with_join_rate`
+/// instead). `metadata` is appended to the warning's `socket_id` entry.
 fn with_message_rate_limit(
   state: State(model, msg),
   socket_id: String,
@@ -814,29 +821,6 @@ fn joined_ref(
 }
 
 // ── Client messages ─────────────────────────────────────────────────────────
-
-fn handle_in(
-  state: State(model, msg),
-  socket_id: String,
-  topic_name: String,
-  event_name: String,
-  payload: Dynamic,
-  msg_join_ref: Option(String),
-  ref: Option(String),
-) -> actor.Next(State(model, msg), Msg(msg)) {
-  use state <- with_message_rate_limit(state, socket_id, [
-    #("topic", topic_name),
-  ])
-  handle_in_subscribed(
-    state,
-    socket_id,
-    topic_name,
-    event_name,
-    payload,
-    msg_join_ref,
-    ref,
-  )
-}
 
 fn handle_in_subscribed(
   state: State(model, msg),

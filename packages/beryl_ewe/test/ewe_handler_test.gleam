@@ -294,7 +294,33 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_sheds_message_flood_at_the_edge_test() {
+pub fn handler_sheds_frame_flood_at_the_edge_test() {
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_frame_rate(per_second: 1, burst: 2),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  // Flood heartbeats: only the burst allowance may produce replies. The
+  // rest are shed by the connection process, pre-decode, before reaching
+  // the runtime — `with_frame_rate` alone accomplishes this with no
+  // `with_message_rate` configured.
+  send_heartbeats(client, 10)
+  let replies = count_replies(client, 0)
+  { replies <= 2 } |> should.be_true
+  { replies >= 1 } |> should.be_true
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() {
+  // Regression: `with_message_rate` governs the runtime bucket only. A
+  // heartbeat flood still gets shed (the runtime's message limiter catches
+  // it after decode), but the two settings are independent — this proves
+  // `with_message_rate` is not silently doing edge-level frame shedding.
   let channels =
     start_app_system(
       beryl.config(wire.phoenix_codec())
@@ -303,13 +329,33 @@ pub fn handler_sheds_message_flood_at_the_edge_test() {
   let #(port, server_pid) = start_server(channels)
   let assert Ok(client) = connect_websocket(port, "/socket")
 
-  // Flood heartbeats: only the burst allowance may produce replies. The
-  // rest are shed by the connection process before reaching the
-  // runtime.
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)
   { replies <= 2 } |> should.be_true
   { replies >= 1 } |> should.be_true
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_frame_rate_counts_malformed_frames_test() {
+  // Regression: the frame-rate bucket counts every complete inbound frame
+  // before decoding, so a malformed frame consumes a token the same as a
+  // well-formed one — a single-token burst spent on garbage leaves no
+  // token for a following valid heartbeat.
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_frame_rate(per_second: 1, burst: 1),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  let assert Ok(_) = send_text(client, "not-valid-json")
+  let assert Ok(_) =
+    send_text(client, "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]")
+
+  receive_text(client, 200) |> should.equal(Error(Nil))
 
   close(client)
   stop_supervisor(server_pid)

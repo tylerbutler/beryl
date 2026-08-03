@@ -161,16 +161,27 @@ let config =
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  |> beryl.with_frame_rate(per_second: 150, burst: 300)
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   |> beryl.with_join_rate(per_second: 5, burst: 10)
   |> beryl.with_channel_rate(per_second: 50, burst: 100)
 ```
 
-| Limiter | Scope |
-|---------|-------|
-| `message_rate` | Per socket |
-| `join_rate` | Per socket |
-| `channel_rate` | Per socket plus topic |
+| Limiter | Scope | Enforced |
+|---------|-------|----------|
+| `frame_rate` | Per connection, every inbound frame (pre-decode) | Transport edge |
+| `message_rate` | Per socket, decoded non-join traffic | Runtime |
+| `join_rate` | Per socket, join attempts only | Runtime |
+| `channel_rate` | Per socket plus topic | Runtime |
+
+`frame_rate` and `message_rate` are independent buckets that do not fall
+back to one another. `frame_rate` counts every complete frame a connection
+sends — malformed ones, joins, leaves, heartbeats, and decoded events all
+count — and sheds excess before a frame is even decoded. `message_rate`
+counts every successfully decoded non-join envelope (leaves, heartbeats,
+decoded events including semantically invalid ones, and binary) right
+before app dispatch; joins never consume it, only `join_rate` does. When
+both are configured, valid non-join traffic spends one token from each.
 
 ## Connection limits
 
