@@ -10,7 +10,7 @@ page so they can be deployed together as one Railway service:
 - `/healthz`  — health check
 - `/socket/websocket` — shared WebSocket endpoint (one `beryl.Sockets` app
   with a `beryl_channels` handler per topic namespace: `cursor:*`,
-  `room:*`, and `document:*:*`)
+  `room:*`, and `document:`)
 
 ## Channels
 
@@ -25,11 +25,15 @@ The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay on
 raw `beryl.start` dispatch on purpose: each serves a single topic
 namespace, which the core API already handles directly.
 
-Two things a topic-scoped channel cannot express itself go through
-`showcase/hub`, a small actor holding the `beryl.Sockets` handle (the
-equivalent of Phoenix's `Endpoint.broadcast/3`): the `lobby` room-list
-announcement, which targets another topic, and the leave-time
-`presence_list` snapshot, because `on_terminate` returns no actions.
+Presence tracking is part of accepting a join, and the departure
+announcement plus the post-leave `presence_list` are the channel's
+termination actions — both encoded when they are applied, so a leave and a
+join that race cannot publish a stale roster.
+
+One announcement is genuinely outside any channel's topic: the `lobby`
+room list. It goes through `showcase/hub`, a small actor holding the
+`beryl.Sockets` handle — the equivalent of Phoenix's
+`Endpoint.broadcast/3`.
 
 ## Tests
 

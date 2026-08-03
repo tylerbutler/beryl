@@ -86,7 +86,7 @@ fn rendered(actions: List(channel.Action)) -> String {
 }
 
 fn accepted_channel(outcome: channel.JoinOutcome) -> channel.LiveChannel {
-  let assert channel.Accepted(_reply, live) = outcome
+  let assert channel.Accepted(_reply, _actions, live) = outcome
     as "expected the join to be accepted"
   live
 }
@@ -152,7 +152,7 @@ pub fn handler_exposes_its_pattern_test() {
 
 pub fn join_accepts_without_a_reply_test() {
   case channel.open(counter_handler("room:*"), quiet_context("room:lobby")) {
-    channel.Accepted(reply, _live) -> reply |> should.be_none
+    channel.Accepted(reply, _actions, _live) -> reply |> should.be_none
     channel.Rejected(_) -> should.fail()
   }
 }
@@ -167,7 +167,7 @@ pub fn join_accepts_with_a_reply_payload_test() {
     })
 
   case channel.open(handler, quiet_context("room:lobby")) {
-    channel.Accepted(reply, _live) ->
+    channel.Accepted(reply, _actions, _live) ->
       reply
       |> should.be_some
       |> json.to_string
@@ -183,7 +183,7 @@ pub fn join_can_be_rejected_test() {
     })
 
   case channel.open(handler, quiet_context("secret:vault")) {
-    channel.Accepted(_, _) -> should.fail()
+    channel.Accepted(_, _, _) -> should.fail()
     channel.Rejected(reason) ->
       reason
       |> json.to_string
@@ -217,7 +217,7 @@ pub fn join_receives_the_topic_and_payload_test() {
     )
 
   case outcome {
-    channel.Accepted(reply, _live) ->
+    channel.Accepted(reply, _actions, _live) ->
       reply
       |> should.be_some
       |> json.to_string
@@ -323,13 +323,14 @@ pub fn terminate_runs_the_terminate_callback_test() {
         channel.callbacks()
         |> channel.on_terminate(fn(_state, reason) {
           process.send(observed, reason)
+          channel.actions()
         })
       channel.accept(channel.joined(Nil, callbacks))
     })
 
   let live =
     channel.open(handler, quiet_context("room:lobby")) |> accepted_channel
-  live.on_terminate(socket.Shutdown)
+  let _actions = live.on_terminate(socket.Shutdown)
 
   process.receive(observed, 100) |> should.equal(Ok(socket.Shutdown))
 }

@@ -1,11 +1,14 @@
-//// The `document:*:*` channel: one joined collaborative document per
-//// topic.
+//// The `document:` channel: one joined collaborative document per topic.
 ////
 //// The same behavior the standalone collab_docs server implements with
 //// raw app-side dispatch (`collab_docs/app`), written as a
 //// `beryl_channels` channel. Join-level tenant-token auth is preserved:
 //// the join payload must carry a `token` HMAC-signed for the tenant whose
 //// document is being joined.
+////
+//// It claims the whole `document:` prefix, like the router it replaced,
+//// and answers a topic that is not `document:<tenant>:<document>` itself
+//// with `invalid_topic`.
 
 import beryl/topic as beryl_topic
 import beryl_channels/channel
@@ -25,6 +28,16 @@ const max_state_bytes = 65_536
 /// Topic pattern for document channels: `document:<tenant>:<document>`.
 const document_topic_pattern = "document:*:*"
 
+/// The pattern this channel is *registered* under: every `document:`
+/// topic, not only well-formed three-segment ones.
+///
+/// The old app-side router claimed the whole `document:` prefix and
+/// answered a wrong-shaped topic with `invalid_topic`. Registering the
+/// narrower `document:*:*` here would instead leave those topics unowned
+/// and answer `unmatched topic`, so the prefix is claimed here and the
+/// segment check stays in the join callback, where it was.
+const document_registration_pattern = "document:*"
+
 /// Dependencies the document channel needs: the doc store and the shared
 /// HMAC secret for tenant token verification.
 pub type Ctx {
@@ -36,9 +49,9 @@ type State {
   State(document_key: String)
 }
 
-/// The `document:*:*` channel.
+/// The `document:` channel.
 pub fn channel(ctx: Ctx) -> channel.Handler {
-  channel.handler(document_topic_pattern, fn(_info, topic, join_payload) {
+  channel.handler(document_registration_pattern, fn(_info, topic, join_payload) {
     let pattern = beryl_topic.parse_pattern(document_topic_pattern)
 
     case beryl_topic.extract_wildcards(pattern, topic) {

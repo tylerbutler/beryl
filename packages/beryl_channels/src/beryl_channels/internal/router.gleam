@@ -200,13 +200,15 @@ fn open(
     // with no channel on this topic.
     channel.Rejected(reason) ->
       socket.Next(router, [socket.RejectJoin(ref, reason)])
-    channel.Accepted(reply: reply, channel: live) -> {
+    channel.Accepted(reply: reply, actions: actions, channel: live) -> {
       let instance = Instance(generation: generation, channel: live)
       socket.Next(
         Router(..router, live: dict.insert(router.live, name, instance)),
-        // The acknowledgment is ordered ahead of anything the join asked
-        // for, so a push can never precede its own join reply.
-        [socket.AcceptJoin(ref, reply)],
+        // The acknowledgment is ordered ahead of the join's own actions,
+        // so a push can never precede its own join reply and the
+        // subscription the accept creates is already in place when they
+        // run. Same turn, so nothing can interleave between them.
+        [socket.AcceptJoin(ref, reply), ..effects(name, actions)],
       )
     }
   }
@@ -304,6 +306,12 @@ fn advance(
 /// callback can neither be re-entered for this instance nor observe it as
 /// live, and `Closed` is the only place termination happens — exactly
 /// once per accepted join.
+///
+/// Termination actions are lowered inside this same `Closed` turn. Core
+/// has already dropped the subscription by then, so it drops pushes to
+/// the closing topic (and the presence snapshots pushed to this socket)
+/// while broadcasts and presence track/untrack still take effect — see
+/// `channel.on_terminate`.
 fn closed(
   router: Router,
   name: String,
@@ -313,10 +321,7 @@ fn closed(
     Error(Nil) -> socket.Next(router, [])
     Ok(instance) -> {
       let router = Router(..router, live: dict.delete(router.live, name))
-      instance.channel.on_terminate(reason)
-      // Termination produces no actions: the topic is already closing, so
-      // frames pushed to it would be dropped by the core anyway.
-      socket.Next(router, [])
+      socket.Next(router, effects(name, instance.channel.on_terminate(reason)))
     }
   }
 }

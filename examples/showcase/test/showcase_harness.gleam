@@ -206,6 +206,19 @@ pub fn expect(frames: Frames, fragments: List(String)) -> String {
   matched
 }
 
+/// Collect every frame that arrives until the socket goes quiet for
+/// 200ms. Use it when what matters is the *last* frame of a sequence.
+pub fn drain_all(frames: Frames) -> List(String) {
+  collect(frames, [])
+}
+
+fn collect(frames: Frames, seen: List(String)) -> List(String) {
+  case process.receive(frames, 200) {
+    Error(Nil) -> seen
+    Ok(frame) -> collect(frames, list.append(seen, [frame]))
+  }
+}
+
 /// Assert no frame arrives within 100ms.
 pub fn expect_silence(frames: Frames) -> Nil {
   process.receive(frames, 100) |> should.be_error

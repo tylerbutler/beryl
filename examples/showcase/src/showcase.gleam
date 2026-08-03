@@ -2,7 +2,7 @@
 //// `beryl_channels`.
 ////
 //// Each example's topic namespace is a channel handler here — `cursor:*`,
-//// `room:*`, and `document:*:*` — and the layer routes every socket event
+//// `room:*`, and `document:` — and the layer routes every socket event
 //// to the handler that owns its topic. There is no socket-wide model, no
 //// message union, and no hand-written router: a channel keeps its own
 //// private state per joined topic and the layer prunes it when the topic
@@ -59,10 +59,7 @@ pub type Deps {
 /// `lobby`, for instance — is refused by the layer.
 pub fn handlers(deps: Deps) -> List(channel.Handler) {
   [
-    cursors_channel.channel(cursors_channel.Ctx(
-      presence: deps.presence,
-      hub: deps.hub,
-    )),
+    cursors_channel.channel(),
     rooms_channel.channel(rooms_channel.Ctx(
       presence: deps.presence,
       groups: deps.groups,
@@ -93,8 +90,8 @@ pub fn main() {
   let assert Ok(docs_store) = doc_store.start()
 
   // The showcase's broadcast hub: bound to the running system below, and
-  // used by the channels for the few things a topic-scoped channel cannot
-  // address itself (the `lobby` room list, leave-time presence rosters).
+  // used for the one announcement no channel's own topic can carry (the
+  // `lobby` room list).
   let assert Ok(hub) = hub.start()
 
   // Per-topic-pattern rate limits replace the old single global

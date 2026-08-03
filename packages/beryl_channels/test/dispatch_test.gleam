@@ -101,6 +101,7 @@ fn room_callbacks(
         <> ":"
         <> int.to_string(count),
     )
+    channel.actions()
   })
 }
 

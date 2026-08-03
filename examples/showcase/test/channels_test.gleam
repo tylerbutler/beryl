@@ -6,6 +6,8 @@
 //// tenant-token gate — through the transport SPI, i.e. exactly the frames
 //// the Playwright suite drives over a real socket.
 
+import gleam/int
+import gleam/list
 import gleam/string
 import gleeunit/should
 import showcase_harness as h
@@ -105,6 +107,35 @@ pub fn a_disconnect_republishes_the_cursor_roster_test() {
   // The channel that terminated publishes a roster it is no longer in.
   let roster = h.expect(bob, ["presence_list", "bob"])
   string.contains(roster, "ada") |> should.be_false
+}
+
+pub fn a_leave_racing_a_join_never_publishes_a_stale_roster_test() {
+  let system = h.start("cursor-leave-join")
+  let ada = h.connect(system, "s1")
+  let bob = h.connect(system, "s2")
+  let _cleo = h.connect(system, "s3")
+
+  h.join(system, "s1", "cursor:main", "1", "{\"username\":\"ada\"}")
+  h.join(system, "s2", "cursor:main", "1", "{\"username\":\"bob\"}")
+  h.expect(ada, ["presence_list", "bob"])
+  h.expect(bob, ["presence_list", "bob"])
+
+  // A leave and a join enqueued back to back, with nothing read in
+  // between. Both rosters are encoded when their action is applied, so
+  // neither can carry a snapshot taken before the other one landed.
+  h.leave(system, "s1", "cursor:main", "1", "7")
+  h.join(system, "s3", "cursor:main", "1", "{\"username\":\"cleo\"}")
+
+  let assert Ok(final) =
+    h.drain_all(bob)
+    |> list.filter(string.contains(_, "presence_list"))
+    |> list.last
+    as "bob received a roster"
+
+  // The roster that settles is the one that reflects both changes.
+  string.contains(final, "cleo") |> should.be_true
+  string.contains(final, "bob") |> should.be_true
+  string.contains(final, "ada") |> should.be_false
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +258,43 @@ pub fn leaving_a_room_announces_the_departure_test() {
   h.expect(ada, ["phx_close", "room:general"])
 }
 
+/// `[1, 2, ..., count]`.
+fn seats(count: Int) -> List(Int) {
+  case count {
+    0 -> []
+    _ -> list.append(seats(count - 1), [count])
+  }
+}
+
+pub fn a_full_room_rejects_the_next_join_test() {
+  let system = h.start("room-capacity")
+
+  // Twenty joins enqueued back to back, then the twenty-first — nothing
+  // is read in between, so every join turn runs before the next one is
+  // routed. The capacity check and the presence track that satisfies it
+  // are part of the same accept, so the cap holds without a settling
+  // delay.
+  list.each(seats(20), fn(index) {
+    let socket_id = "s" <> int.to_string(index)
+    let _frames = h.connect(system, socket_id)
+    h.join(
+      system,
+      socket_id,
+      "room:general",
+      "1",
+      "{\"username\":\"user" <> int.to_string(index) <> "\"}",
+    )
+  })
+
+  let overflow = h.connect(system, "s21")
+  h.join(system, "s21", "room:general", "1", "{\"username\":\"late\"}")
+
+  h.contains(h.recv(overflow), [
+    "phx_reply", "\"status\":\"error\"", "\"code\":403", "Room is full (max 20)",
+  ])
+  |> should.be_true
+}
+
 // ---------------------------------------------------------------------------
 // document:*:*
 // ---------------------------------------------------------------------------
@@ -315,6 +383,21 @@ pub fn document_state_errors_keep_their_ok_status_replies_test() {
 
   h.push(system, "s1", "document:demo:welcome", "nope", "11", "{}")
   h.contains(h.recv(frames), ["phx_reply", "\"status\":\"ok\"", "unknown_event"])
+  |> should.be_true
+}
+
+pub fn a_document_topic_with_the_wrong_shape_is_rejected_by_the_channel_test() {
+  let system = h.start("docs-wrong-shape")
+  let frames = h.connect(system, "s1")
+
+  // The channel claims the whole `document:` prefix, as the old app-side
+  // router did, so a wrong-shaped topic is answered by the document
+  // channel with `invalid_topic` rather than left unowned.
+  h.join(system, "s1", "document:welcome", "1", "{}")
+
+  h.contains(h.recv(frames), [
+    "phx_reply", "\"status\":\"error\"", "invalid_topic",
+  ])
   |> should.be_true
 }
 

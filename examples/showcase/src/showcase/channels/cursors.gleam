@@ -4,9 +4,9 @@
 //// app-side dispatch (`cursors/app`), written as a `beryl_channels`
 //// channel: the per-topic state is this channel's own private state
 //// instead of an entry in a socket-wide `Dict`, and every effect is an
-//// action on this channel's topic.
+//// action on this channel's topic — including the join-time presence
+//// track and the leave-time roster.
 
-import beryl/presence.{type Presence}
 import beryl_channels/channel
 import example_helpers/color
 import example_helpers/payload
@@ -15,72 +15,55 @@ import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import showcase/hub.{type Hub}
-import showcase/roster
-
-/// Dependencies the cursor channel reads. Presence writes go through
-/// actions; the handle is only needed for the leave-time snapshot.
-pub type Ctx {
-  Ctx(presence: Presence, hub: Hub)
-}
 
 /// Private state of one joined cursor room.
 type State {
-  State(topic: String, socket_id: String, username: String, color: String)
+  State(socket_id: String, username: String, color: String)
 }
 
-/// Server-side messages this channel sends itself.
-type Note {
-  /// Run the post-acknowledgment work: track presence, publish the roster.
-  Joined
-}
+/// This channel schedules no server-side messages for itself, so its
+/// `info` type is `Nil`: joining, moving, and leaving are each handled in
+/// the turn that carries them.
+type Note =
+  Nil
 
 const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
 /// The `cursor:*` channel.
-pub fn channel(ctx: Ctx) -> channel.Handler {
-  channel.handler("cursor:*", fn(info, topic, join_payload) {
+pub fn channel() -> channel.Handler {
+  channel.handler("cursor:*", fn(info, _topic, join_payload) {
     let username = payload.string_or(join_payload, "username", "Anonymous")
     let state =
       State(
-        topic: topic,
         socket_id: info.socket_id,
         username: username,
         color: color.pastel_for(info.socket_id),
       )
 
-    // Presence tracking and the roster broadcast happen after the join
-    // acknowledgment, which is what this self-notification schedules.
-    channel.notify(info.self, Joined)
-
     channel.accept_with(
-      channel.joined(state, callbacks(ctx)),
+      channel.joined(state, callbacks()),
       json.object([
         #("socket_id", json.string(state.socket_id)),
         #("username", json.string(state.username)),
         #("color", json.string(state.color)),
       ]),
     )
+    // Applied right after the acknowledgment, in the same turn.
+    // `broadcast_presence` encodes when it is applied, after the track
+    // before it, so the roster already includes the joining user.
+    |> channel.with_actions(
+      channel.actions()
+      |> channel.presence_track(state.username, meta(state))
+      |> channel.broadcast_presence(
+        "presence_list",
+        presence_helpers.encode_users,
+      ),
+    )
   })
 }
 
-fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
+fn callbacks() -> channel.Callbacks(State, Note) {
   channel.callbacks()
-  |> channel.on_info(fn(state: State, note: Note) {
-    let Joined = note
-    // `broadcast_presence` encodes at apply time, after the
-    // `presence_track` before it — so the roster already includes the
-    // joining user.
-    channel.continue_with(
-      state,
-      channel.actions()
-        |> channel.presence_track(state.username, meta(state))
-        |> channel.broadcast_presence(
-          "presence_list",
-          presence_helpers.encode_users,
-        ),
-    )
-  })
   |> channel.on_message(fn(state: State, message: channel.Message) {
     case message.event {
       "cursor_move" ->
@@ -107,13 +90,14 @@ fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
     }
   })
   |> channel.on_terminate(fn(state: State, _reason) {
-    // A channel has no actions left by the time it terminates, so the
-    // roster the leaver is no longer part of is published through the hub.
-    hub.publish(
-      ctx.hub,
-      state.topic,
+    // Untrack first, then snapshot: the roster is encoded when the action
+    // is applied, so it reflects this leave *and* any join that landed in
+    // between — a snapshot built here in Gleam could go stale.
+    channel.actions()
+    |> channel.presence_untrack(state.username)
+    |> channel.broadcast_presence(
       "presence_list",
-      roster.without(ctx.presence, state.topic, state.socket_id, state.username),
+      presence_helpers.encode_users,
     )
   })
 }

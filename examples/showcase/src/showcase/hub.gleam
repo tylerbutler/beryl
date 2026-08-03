@@ -1,14 +1,10 @@
 //// A late-bound handle to the running socket system.
 ////
 //// A `beryl_channels` channel acts on its **own** topic: its actions are
-//// scoped to the topic it is joined to, and `on_terminate` runs when that
-//// topic is already closing, so it returns no actions at all. Two things
-//// the showcase apps do fall outside that scope:
-////
-//// - the chat channel announces room membership changes on the
-////   application-wide `lobby` topic, and
-//// - both presence-backed channels broadcast a fresh `presence_list`
-////   snapshot as a member leaves.
+//// scoped to the topic it is joined to, at join time, on every message,
+//// and again as it terminates. One showcase announcement falls outside
+//// that scope — the chat channel publishes room membership changes on the
+//// application-wide `lobby` topic, which no channel owns.
 ////
 //// Phoenix does this with the endpoint (`MyAppWeb.Endpoint.broadcast/3`);
 //// beryl does it with `beryl.broadcast` on the `Sockets` handle. That

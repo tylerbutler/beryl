@@ -9,7 +9,7 @@
 //// | `join` | that join is rejected; the socket survives |
 //// | `on_message` / `on_binary` | that topic closes; other topics survive |
 //// | `on_info` | the whole socket is torn down |
-//// | `on_terminate` | teardown still completes |
+//// | `on_terminate` | teardown still completes; sibling channels still run their termination actions |
 ////
 //// Every assertion runs against a real system through beryl's public
 //// transport SPI.
@@ -53,6 +53,10 @@ fn ok_handler(trace: process.Subject(String)) -> channel.Handler {
           trace,
           "terminate:" <> topic <> ":" <> helper.reason_name(reason),
         )
+        // Termination actions of a channel that does *not* panic must
+        // survive a sibling channel's panic in the same teardown.
+        channel.actions()
+        |> channel.broadcast("farewell", json.string(topic))
       })
     channel.accept_with(
       channel.joined(Nil, callbacks),
@@ -80,6 +84,7 @@ fn callback_panics(trace: process.Subject(String)) -> channel.Handler {
           trace,
           "terminate:" <> topic <> ":" <> helper.reason_name(reason),
         )
+        channel.actions()
       })
     channel.accept(channel.joined(Nil, callbacks))
   })
@@ -100,6 +105,7 @@ fn info_panics(
           trace,
           "terminate:" <> topic <> ":" <> helper.reason_name(reason),
         )
+        channel.actions()
       })
     channel.accept(channel.joined(Nil, callbacks))
   })
@@ -316,6 +322,28 @@ pub fn a_panic_while_terminating_does_not_prevent_teardown_test() {
   // The socket survived, so the topic can be joined again.
   helper.join(channels, "s1", "crash_term:a", "jr-2", "r-3")
   helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+}
+
+pub fn a_terminate_panic_does_not_swallow_a_siblings_farewell_test() {
+  let trace = process.new_subject()
+  let channels = start([terminate_panics(trace), ok_handler(trace)])
+  let leaving = helper.connect(channels, "s1")
+  let peer = helper.connect(channels, "s2")
+  helper.join(channels, "s1", "crash_term:a", "jr-1", "r-1")
+  let _join_a = helper.recv(leaving)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _join_b = helper.recv(leaving)
+  helper.join(channels, "s2", "room:b", "jr-1", "r-1")
+  let _peer_join = helper.recv(peer)
+
+  helper.disconnect(channels, "s1")
+
+  helper.next_trace(trace) |> should.equal("terminating:crash_term:a")
+  helper.next_trace(trace) |> should.equal("terminate:room:b:normal")
+
+  // Each `Closed` is its own update turn, so the panic in the first one
+  // cannot discard the second channel's termination actions.
+  helper.recv(peer) |> string.contains("farewell") |> should.be_true
 }
 
 pub fn a_panic_while_terminating_does_not_stop_other_channels_closing_test() {
