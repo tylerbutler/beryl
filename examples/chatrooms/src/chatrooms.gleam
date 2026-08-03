@@ -30,6 +30,7 @@ pub fn main() {
   // Rate limiting matches the previous channel-module deployment.
   let config =
     beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 30, burst: 60)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
     |> beryl.with_join_rate(per_second: 5, burst: 10)
     |> beryl.with_channel_rate(per_second: 10, burst: 20)

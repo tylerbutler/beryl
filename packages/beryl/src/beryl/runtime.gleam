@@ -680,7 +680,14 @@ fn dispatch_inbound(
       }
     }
     codec.Leave -> {
-      use state <- with_message_rate_limit(state, socket_id, "leave")
+      let started_at = telemetry_start(state)
+      use state <- with_message_rate_limit(
+        state,
+        socket_id,
+        [#("kind", "leave")],
+        started_at,
+        message_kind,
+      )
       case is_valid_topic(msg_topic, state.config) {
         False -> {
           state.logger
@@ -702,35 +709,34 @@ fn dispatch_inbound(
     }
     codec.Heartbeat -> {
       let started_at = telemetry_start(state)
-      let #(state, allowed) = check_message_rate(state, socket_id)
-      case allowed {
-        False -> {
-          state.logger
-          |> log.warn("Message rate limited", [
-            #("socket_id", socket_id),
-            #("kind", "heartbeat"),
-          ])
-          emit_message_stop(
-            state,
-            started_at,
-            telemetry.HeartbeatMessage,
-            telemetry.MessageRateLimited,
-            telemetry.NotApplicable,
-          )
-          actor.continue(state)
-        }
-        True -> handle_heartbeat(state, socket_id, msg_ref, started_at)
-      }
+      use state <- with_message_rate_limit(
+        state,
+        socket_id,
+        [#("kind", "heartbeat")],
+        started_at,
+        telemetry.HeartbeatMessage,
+      )
+      handle_heartbeat(state, socket_id, msg_ref, started_at)
     }
     codec.Event(event_name) -> {
       let started_at = telemetry_start(state)
+      use state <- with_message_rate_limit(
+        state,
+        socket_id,
+        [
+          #("topic", topic.sanitize_for_log(msg_topic)),
+          #("event", topic.sanitize_for_log(event_name)),
+        ],
+        started_at,
+        message_kind,
+      )
       let resolved = resolve_event_topic(state, socket_id, msg_topic)
       case
         is_valid_topic(resolved, state.config),
         is_valid_event(event_name, state.config)
       {
         True, True ->
-          handle_in(
+          handle_in_subscribed(
             state,
             socket_id,
             resolved,
@@ -819,12 +825,13 @@ fn is_valid_event(event_name: String, config: Config) -> Bool {
   && result.is_ok(topic.validate_event(event_name))
 }
 
-/// Apply the per-socket message limiter to protocol frames (heartbeat,
-/// leave) so flooding them cannot bypass `with_message_rate`.
+/// Apply the per-socket decoded-message limiter before semantic validation.
 fn with_message_rate_limit(
   state: State(model, msg),
   socket_id: String,
-  kind: String,
+  metadata: List(#(String, String)),
+  started_at: Int,
+  kind: telemetry.MessageKind,
   next: fn(State(model, msg)) -> actor.Next(State(model, msg), Msg(msg)),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let #(state, allowed) = check_message_rate(state, socket_id)
@@ -833,8 +840,15 @@ fn with_message_rate_limit(
       state.logger
       |> log.warn("Message rate limited", [
         #("socket_id", socket_id),
-        #("kind", kind),
+        ..metadata
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageRateLimited,
+        telemetry.NotApplicable,
+      )
       actor.continue(state)
     }
     True -> next(state)
@@ -1099,49 +1113,6 @@ fn joined_ref(
 }
 
 // ── Client messages ─────────────────────────────────────────────────────────
-
-fn handle_in(
-  state: State(model, msg),
-  socket_id: String,
-  topic_name: String,
-  event_name: String,
-  payload: Dynamic,
-  msg_join_ref: Option(String),
-  ref: Option(String),
-  started_at: Int,
-  kind: telemetry.MessageKind,
-) -> actor.Next(State(model, msg), Msg(msg)) {
-  let #(state, allowed) = check_message_rate(state, socket_id)
-  case allowed {
-    False -> {
-      state.logger
-      |> log.warn("Message rate limited", [
-        #("socket_id", socket_id),
-        #("topic", topic_name),
-      ])
-      emit_message_stop(
-        state,
-        started_at,
-        kind,
-        telemetry.MessageRateLimited,
-        telemetry.NotApplicable,
-      )
-      actor.continue(state)
-    }
-    True ->
-      handle_in_subscribed(
-        state,
-        socket_id,
-        topic_name,
-        event_name,
-        payload,
-        msg_join_ref,
-        ref,
-        started_at,
-        kind,
-      )
-  }
-}
 
 fn handle_in_subscribed(
   state: State(model, msg),

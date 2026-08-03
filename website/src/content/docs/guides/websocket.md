@@ -217,17 +217,22 @@ Protect against flood attacks with built-in rate limiting:
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  |> beryl.with_frame_rate(per_second: 150, burst: 300)
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   |> beryl.with_join_rate(per_second: 5, burst: 10)
   |> beryl.with_channel_rate(per_second: 50, burst: 100)
 ```
 
-| Limiter | Scope | Description |
-|---------|-------|-------------|
-| `message_rate` | Per socket | Total messages per second across all topics |
-| `join_rate` | Per socket | Join attempts per second |
-| `channel_rate` | Per socket+topic | Messages per second on a single topic |
-| `topic_rates` | Per socket+topic | Pattern-scoped override of `channel_rate` (`with_topic_rate`) |
+| Limiter | Scope | Enforced |
+|---------|-------|----------|
+| `frame_rate` | Per connection, all complete frames | Transport edge |
+| `message_rate` | Per socket, decoded non-join traffic | Runtime |
+| `join_rate` | Per socket, joins | Runtime |
+| `channel_rate` | Per socket+topic | Runtime |
+| `topic_rates` | Pattern-scoped override of `channel_rate` | Runtime |
+
+Frame and message buckets are independent. Malformed frames and joins consume
+frame tokens; joins do not consume message tokens.
 
 ## Per-IP connection limits
 

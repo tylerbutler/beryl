@@ -462,6 +462,22 @@ pub fn with_channel_rate_max_keys_per_socket(
 ) -> Config
 ```
 
+### `with_frame_rate`
+
+Configure per-connection frame-rate limiting at the transport edge.
+
+ Every complete inbound text or binary frame consumes this independent
+ bucket before decoding. Configure it alongside `with_message_rate` to
+ combine edge shedding with a runtime cap on decoded non-join traffic.
+
+```gleam
+pub fn with_frame_rate(
+  Config,
+  per_second: Int,
+  burst: Int
+) -> Config
+```
+
 ### `with_heartbeat`
 
 Configure the server-side heartbeat staleness window.
@@ -600,9 +616,9 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
 
  For a true transport memory bound you **must** place an edge proxy or load
  balancer in front of Beryl and configure a WebSocket frame-size limit
- there (and a matching request/body size limit). Beryl's per-IP connection
- limit and per-socket message-rate limit do not mitigate this vector. See
- the README's "Security" section for deployment guidance.
+ there (and a matching request/body size limit). Beryl's connection,
+ frame-rate, and message-rate limits all run after frame assembly and do not
+ mitigate this vector. See the README's "Security" section.
 
  Values <= 0 disable the cap. The default is 1 MiB.
 
@@ -644,7 +660,11 @@ pub fn with_max_topic_length(
 
 ### `with_message_rate`
 
-Configure per-socket message rate limiting
+Configure per-socket decoded message-rate limiting in the runtime.
+
+ Joins use `with_join_rate`; decoded leaves, heartbeats, events, decoded
+ binary, and raw `Binary` inputs consume this bucket. It is independent of
+ `with_frame_rate`.
 
 ```gleam
 pub fn with_message_rate(
