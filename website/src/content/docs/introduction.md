@@ -110,9 +110,10 @@ and leaves automatically, even across distributed Erlang nodes.
 The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`,
 `gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres` — all standard
 BEAM ecosystem packages. A WebSocket transport such as `beryl_mist` adds `mist`
-and `gleam_http`, but the core library pulls in neither. `beryl_channels` adds
-nothing beyond `beryl` itself. No external message brokers or databases
-required.
+and `gleam_http`, but the core library pulls in neither. `beryl_channels`
+depends on `beryl` and the same shared Gleam libraries beryl already uses, so
+it adds no new transitive dependencies of its own. No external message brokers
+or databases required.
 
 ### Phoenix wire protocol compatibility
 

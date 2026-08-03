@@ -33,7 +33,11 @@ gleam add beryl beryl_channels beryl_mist
 gleam add beryl beryl_mist
 ```
 
-`beryl_channels` depends only on `beryl`, so it adds no transitive dependencies of its own. See [Choose an API](/choosing-an-api/) if you are deciding between the two layers.
+`beryl_channels` depends on `beryl` plus the shared Gleam libraries beryl
+already pulls in (`gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`),
+so adding it introduces no new transitive runtime dependencies beyond beryl's
+existing graph. See [Choose an API](/choosing-an-api/) if you are deciding
+between the two layers.
 
 ## Requirements
 

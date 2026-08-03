@@ -55,6 +55,8 @@ fn http_handler(_req: Request(mist.Connection)) -> Response(mist.ResponseData) {
 
 The transport upgrades matching WebSocket requests, assembles `socket.ConnectInfo`, and forwards frames into your `init` / `update` app. For the routing model itself, see [App-Side Dispatch](/guides/dispatch/).
 
+The transport is layer-agnostic. `beryl_channels.start` returns the same `beryl.Sockets` handle, so the wiring above is byte-for-byte identical for a channel system — only the `beryl.start(...)` call changes. See [Channels](/guides/channels/#starting-a-channel-system).
+
 :::tip[Phoenix JS clients]
 Phoenix JS connects to `/socket/websocket` by default when you write `new Socket("/socket", ...)`, so set the Mist transport path to match.
 :::
@@ -115,6 +117,28 @@ fn init(info: socket.ConnectInfo(Nil)) -> #(Model, List(socket.Effect)) {
 ```
 
 `ConnectInfo.seed` also includes the request path, query parameters, and headers seen during the upgrade.
+
+#### With the channel layer
+
+A channel system has no app-level `init`. The same `ConnectSeed` is handed to every **`join` callback** as `JoinInfo.seed`, so connect metadata is read per join rather than once per connection:
+
+```gleam
+import beryl_channels/channel
+import gleam/list
+import gleam/result
+
+pub fn room() -> channel.Handler {
+  channel.handler("room:*", fn(info: channel.JoinInfo(Nil), _topic, _payload) {
+    let user_id =
+      list.key_find(info.seed.metadata, "user_id")
+      |> result.unwrap("anonymous")
+
+    channel.accept(channel.joined(user_id, channel.callbacks()))
+  })
+}
+```
+
+`JoinInfo` is a per-join view built by the layer — `socket_id`, `seed`, and this channel instance's typed sender — not beryl's core `socket.ConnectInfo`. For a full token-verification flow on the layer, see [Authentication](/guides/authentication/#with-the-channel-layer).
 
 ## Direct upgrade
 
@@ -211,5 +235,6 @@ When a peer is already over the limit, the transport rejects the upgrade with HT
 ## Next steps
 
 - [Authentication](/guides/authentication/) — a complete token-verification flow
+- [Channels](/guides/channels/) — the same transport in front of the channel layer
 - [Error Handling](/guides/error-handling/) — join rejection, malformed frames, and client-visible error shapes
 - [Supervision](/guides/supervision/) — what happens when the runtime stops or restarts

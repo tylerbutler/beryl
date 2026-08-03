@@ -13,6 +13,8 @@ This guide shows a common flow:
 4. turn the returned metadata into typed model state in `init`,
 5. authorize each topic by matching on `socket.Join` in `update`.
 
+Steps 1–3 are transport-level and identical for both of beryl's layers. Steps 4 and 5 are written here in raw app-side dispatch; with the [channel layer](/guides/channels/) both collapse into each channel's `join` callback — see [With the channel layer](#with-the-channel-layer).
+
 For transport mechanics and origin policy, see [WebSocket Transport](/guides/websocket/#authentication).
 
 ## 1. Model your claims
@@ -197,8 +199,53 @@ fn has_role(claims: Claims, role: String) -> Bool {
 }
 ```
 
+## With the channel layer
+
+Steps 1–3 above are unchanged: `with_on_connect` belongs to the transport, so it runs the same way whichever layer starts the system, and it still rejects the upgrade with HTTP 403 or seeds `ConnectSeed.metadata`.
+
+What changes is where you read that metadata. A channel system has no app-level `init`: the verified metadata arrives as **`JoinInfo.seed.metadata`, inside each handler's `join` callback**, once per join rather than once per connection. Steps 4 and 5 therefore collapse into that one callback — decode the claims, then accept or `channel.reject`.
+
+```gleam
+// src/my_app/room_channel.gleam
+import beryl_channels/channel
+import gleam/json
+import gleam/list
+import gleam/result
+import gleam/string
+
+type Note =
+  Nil
+
+pub fn room() -> channel.Handler {
+  channel.handler("room:*", fn(info: channel.JoinInfo(Note), topic, _payload) {
+    // The transport's `on_connect` metadata arrives here, once per join.
+    case claims_from_metadata(info.seed.metadata) {
+      Error(_) ->
+        channel.reject(
+          json.object([#("reason", json.string("unauthenticated"))]),
+        )
+
+      Ok(claims) ->
+        case authorized_for_topic(claims, topic) {
+          False ->
+            channel.reject(json.object([#("reason", json.string("forbidden"))]))
+          True -> channel.accept(channel.joined(claims, channel.callbacks()))
+        }
+    }
+  })
+}
+```
+
+Notes on the differences:
+
+- **`JoinInfo` is not `socket.ConnectInfo`.** It carries `socket_id`, the same `seed` the transport assembled, and this channel instance's typed sender. There is no shared socket model to hang claims on, so the decoded `Claims` value becomes that channel's private state via `channel.joined`.
+- **Decoding runs per join, not per connection.** For an expensive check, keep the expensive part in `with_on_connect` — as above — so `join` only reads already-verified string pairs.
+- **Rejections are explicit.** `channel.reject(reason)` produces the same `phx_reply` error payload as `socket.RejectJoin`. A topic no handler matches is refused with `{"reason": "unmatched topic"}`.
+
+See [Channels](/guides/channels/#joininfo-and-the-typed-sender) for the full `JoinInfo` contract.
+
 ## Notes
 
-- Verify signatures and expiry in `with_on_connect`; keep `update` focused on topic-specific authorization rules.
+- Verify signatures and expiry in `with_on_connect`; keep `update` — or a channel's `join` — focused on topic-specific authorization rules.
 - Pair cookie-based authentication with origin validation to prevent Cross-Site WebSocket Hijacking.
 - A refused connection becomes HTTP 403. A refused topic join becomes a `phx_reply` error payload. See [Error Handling](/guides/error-handling/#rejected-joins).

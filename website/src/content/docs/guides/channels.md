@@ -30,6 +30,7 @@ callback answers with a rejection, or with a joined channel: a set of
 callbacks bound to that channel's own private state.
 
 ```gleam
+// src/my_app/room_channel.gleam
 import beryl_channels/channel
 import gleam/json
 
@@ -92,15 +93,22 @@ codec, rate limits, presence handle, PubSub, logging — plus the handler
 table, and returns the same `beryl.Sockets` handle.
 
 ```gleam
+// src/my_app.gleam
 import beryl
 import beryl/transport/server
 import beryl/wire
 import beryl_channels
 import beryl_channels/channel
 import beryl_mist as mist_transport
+import gleam/bytes_tree
+import gleam/erlang/process
+import gleam/http/request
+import gleam/http/response
+import mist
+import my_app/room_channel
 
 pub fn handlers() -> List(channel.Handler) {
-  [lobby.channel(), rooms.channel(), documents.channel()]
+  [room_channel.room()]
 }
 
 pub fn main() {
@@ -108,8 +116,7 @@ pub fn main() {
     beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(sockets) =
-    beryl_channels.start(config, handlers: handlers())
+  let assert Ok(sockets) = beryl_channels.start(config, handlers: handlers())
 
   // `sockets` is an ordinary core handle: hand it to a transport, to
   // `beryl.broadcast`, and to `beryl.stop`.
@@ -125,7 +132,19 @@ pub fn main() {
 
   process.sleep_forever()
 }
+
+fn handle_http(
+  _req: request.Request(mist.Connection),
+) -> response.Response(mist.ResponseData) {
+  response.new(404)
+  |> response.set_body(mist.Bytes(bytes_tree.new()))
+}
 ```
+
+`handle_http` is the plain HTTP fallback: `mist_transport.handler` routes
+WebSocket upgrades on the configured path into beryl and hands every other
+request to it. The [Quick Start](/quick-start/#2-start-the-channel-system-and-wire-the-transport)
+serves real pages from the same function.
 
 Everything downstream of `start` is unchanged from raw dispatch: the same
 runtime, the same wire codec, the same presence and abuse controls, the
@@ -144,12 +163,15 @@ Patterns use beryl's topic pattern syntax — `"room:lobby"`, `"room:*"`,
 `"document:*:ops"`, `"*"` — and are matched in **registration order**.
 The first pattern that matches a topic owns it.
 
+A bigger `handlers()` returns one entry per channel module:
+
 ```gleam
+// A fragment of `handlers()` — see "Starting a channel system" above.
 [
   // Special-case one topic by putting it ahead of the wildcard.
-  lobby.channel(),      // "room:lobby"
-  rooms.channel(),      // "room:*"
-  documents.channel(),  // "document:*"
+  lobby_channel.lobby(),        // "room:lobby"
+  room_channel.room(),          // "room:*"
+  document_channel.document(),  // "document:*"
 ]
 ```
 
@@ -166,12 +188,18 @@ The first pattern that matches a topic owns it.
 Validate a table without starting anything:
 
 ```gleam
+// src/my_app/handler_check.gleam
 import beryl_channels
+import my_app
 
-case beryl_channels.validate_handlers(handlers()) {
-  Ok(Nil) -> Nil
-  Error(beryl_channels.InvalidPattern(pattern, reason)) -> panic
-  Error(beryl_channels.DuplicatePattern(pattern)) -> panic
+pub fn check_handlers() -> Nil {
+  case beryl_channels.validate_handlers(my_app.handlers()) {
+    Ok(Nil) -> Nil
+    Error(beryl_channels.InvalidPattern(pattern, reason)) ->
+      panic as { "invalid channel pattern " <> pattern <> ": " <> reason }
+    Error(beryl_channels.DuplicatePattern(pattern)) ->
+      panic as { "duplicate channel pattern " <> pattern }
+  }
 }
 ```
 
@@ -191,6 +219,7 @@ type State {
   State(room_id: String, username: String, sent: Int)
 }
 
+// Inside the `join` callback:
 channel.joined(State(room_id: topic, username: name, sent: 0), callbacks())
 ```
 
@@ -477,21 +506,27 @@ handle. See [Runtime & Effect Interpreter](/architecture/runtime/).
 that own their supervision tree:
 
 ```gleam
+// src/my_app/supervised.gleam
 import beryl
 import beryl/wire
 import beryl_channels
 import gleam/otp/static_supervisor
+import my_app
 
-let assert Ok(#(sockets, spec)) =
-  beryl_channels.child_spec(
-    beryl.config(wire.phoenix_codec()),
-    handlers: handlers(),
-  )
+pub fn start_supervised() -> beryl.Sockets {
+  let assert Ok(#(sockets, spec)) =
+    beryl_channels.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      handlers: my_app.handlers(),
+    )
 
-let assert Ok(_root) =
-  static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(spec)
-  |> static_supervisor.start()
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+
+  sockets
+}
 ```
 
 It reports only what can be detected before the tree starts, as
