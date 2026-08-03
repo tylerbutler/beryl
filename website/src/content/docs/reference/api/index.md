@@ -3,10 +3,10 @@ title: API Reference
 description: Generated API reference from Gleam docs metadata.
 ---
 
-This reference is generated from Gleam's docs metadata for `beryl` and `beryl_ewe` and `beryl_mist`.
+This reference is generated from Gleam's docs metadata for `beryl` and `beryl_channels` and `beryl_ewe` and `beryl_mist`.
 
 :::note[Generated content]
-Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: [beryl](https://hexdocs.pm/beryl/), [beryl_ewe](https://hexdocs.pm/beryl_ewe/), [beryl_mist](https://hexdocs.pm/beryl_mist/).
+Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. The canonical, hosted API docs live on HexDocs: [beryl](https://hexdocs.pm/beryl/), [beryl_channels](https://hexdocs.pm/beryl_channels/), [beryl_ewe](https://hexdocs.pm/beryl_ewe/), [beryl_mist](https://hexdocs.pm/beryl_mist/).
 :::
 
 ## `beryl` `0.0.1`
@@ -27,6 +27,13 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/transport/server`](/reference/api/beryl-transport-server/) | Server-agnostic WebSocket transport infrastructure. |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
+
+## `beryl_channels` `0.0.1`
+
+| Module | Description |
+|---|---|
+| [`beryl_channels`](/reference/api/beryl_channels/) | Composable channels for beryl real-time sockets. |
+| [`beryl_channels/channel`](/reference/api/beryl_channels-channel/) | The channel composition surface: a channel is a topic pattern paired |
 
 ## `beryl_ewe` `0.0.1`
 

@@ -1,0 +1,3 @@
+project = "beryl_channels"
+kind = "Added"
+body = "Public channel API: an opaque non-generic Handler, closure-sealed JoinedChannel and Callbacks that keep each channel state and server-side message type private, a generation-scoped typed Sender, ordered current-topic Actions, join accept/reject and continue/close/stop-socket results, plus validate_handlers with deterministic pattern-syntax and exact-duplicate detection and StartError/ChildSpecError types that preserve nested beryl errors."
