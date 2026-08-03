@@ -409,3 +409,18 @@ pub fn notify(
   a
 ) -> Nil
 ```
+
+### `reply_ok`
+
+A `ReplyOk` when the client supplied a ref; no effects otherwise.
+
+ `Message` inputs carry `Option(Ref)` (refless messages expect no
+ reply) while the `ReplyOk` effect demands a `Ref`, so every handler
+ that replies conditionally needs this gate.
+
+```gleam
+pub fn reply_ok(
+  option.Option(Ref),
+  json.Json
+) -> List(Effect)
+```

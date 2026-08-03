@@ -1,0 +1,160 @@
+---
+title: beryl/socket/router
+description: Topic-namespace routing for app-side dispatch.
+---
+
+Topic-namespace routing for app-side dispatch.
+
+ An app built on `beryl.start` receives every wire event for a socket in
+ one `update` function. This module supplies the conventional shape of
+ that function: decide which topic namespace owns an input, hand it to
+ that namespace's `join`/`message`/`closed` handlers, and store the
+ returned state back into the socket-wide model.
+
+ Namespaces are keyed on `beryl/topic` patterns — the same pattern
+ language used by `beryl.with_topic_rate` — and the values captured by a
+ pattern's wildcards are delivered to handlers in `Match`, so apps never
+ re-split topic strings by hand.
+
+ Each `Namespace` callback takes and returns the whole socket-wide model,
+ which is what lets namespaces with different per-topic state types share
+ one list. `stateful` builds that adaptation from three projections for
+ the common Dict-per-topic shape, and `Standalone` is the canonical
+ socket-wide model for a server built around a single namespace.
+
+ Routing fails closed: a `Join` for a topic no namespace claims is
+ rejected, while other inputs for unclaimed topics are ignored.
+
+## Types
+
+### `Match`
+
+A topic claimed by a namespace: the concrete topic plus the values
+ captured by the pattern's wildcards, in order. For `"room:*"` matching
+ `"room:lobby"`, `params` is `["lobby"]`; for `"document:*:*"` matching
+ `"document:acme:readme"`, it is `["acme", "readme"]`; exact patterns
+ capture nothing.
+
+```gleam
+pub type Match {
+  Match(
+    topic: String,
+    params: List(String)
+  )
+}
+```
+
+### `Namespace`
+
+One topic namespace's handlers, adapted to the app's socket-wide model.
+
+ Build with `namespace` (full control over the model), `stateful` (state
+ in a Dict keyed by topic), or `accept_only` (no state at all). Opaque so
+ namespaces can grow new capabilities without breaking existing code.
+
+```gleam
+pub type Namespace(a)
+```
+
+### `Standalone`
+
+Socket-wide model for a standalone server built around one stateful
+ namespace: the socket id plus one per-topic sub-model per joined topic.
+
+```gleam
+pub type Standalone(a) {
+  Standalone(
+    socket_id: String,
+    topics: dict.Dict(String, a)
+  )
+}
+```
+
+## Functions
+
+### `accept_only`
+
+A namespace that accepts joins and ignores everything else — for
+ read-only topics carrying no per-socket state.
+
+```gleam
+pub fn accept_only(String) -> Namespace(a)
+```
+
+### `namespace`
+
+Build a namespace from a topic pattern (`beryl/topic` syntax, e.g.
+ `"lobby"`, `"room:*"`, or `"document:*:*"`) and handlers over the
+ socket-wide model.
+
+```gleam
+pub fn namespace(
+  pattern: String,
+  join: fn(a, Match, dynamic.Dynamic, socket.Ref) -> #(a, List(socket.Effect)),
+  message: fn(a, Match, String, dynamic.Dynamic, option.Option(socket.Ref)) -> #(a, List(socket.Effect)),
+  closed: fn(a, Match) -> #(a, List(socket.Effect))
+) -> Namespace(a)
+```
+
+### `route`
+
+Route one input to the first namespace whose pattern matches its topic.
+
+ Joins for a topic no namespace claims are rejected with
+ `reject_unknown`, so an app fails closed; other inputs for unclaimed
+ topics are ignored, and `Binary`/`Info` inputs pass through unchanged.
+
+```gleam
+pub fn route(
+  List(Namespace(a)),
+  json.Json,
+  a,
+  socket.Input(b)
+) -> socket.Next(a, b)
+```
+
+### `standalone_init`
+
+`init` for a standalone `beryl.start` runtime whose model is
+ `Standalone`.
+
+```gleam
+pub fn standalone_init(socket.ConnectInfo(a)) -> #(Standalone(b), List(socket.Effect))
+```
+
+### `standalone_namespace`
+
+Adapt a projection-taking namespace factory to the canonical
+ `Standalone` model: the factory receives the `socket_id`/`get`/`put`
+ projections `stateful` expects.
+
+```gleam
+pub fn standalone_namespace(fn(fn(Standalone(a)) -> String, fn(Standalone(a)) -> dict.Dict(String, a), fn(Standalone(a), dict.Dict(String, a)) -> Standalone(a)) -> Namespace(Standalone(a))) -> Namespace(Standalone(a))
+```
+
+### `stateful`
+
+A namespace whose per-topic state lives in a `Dict` keyed by topic
+ inside the socket-wide model. `socket_id`, `get`, and `put` project the
+ model onto the pieces the namespace owns; `join`/`message`/`closed` are
+ the per-topic handlers (a join returning `None` leaves no state behind).
+
+```gleam
+pub fn stateful(
+  pattern: String,
+  socket_id: fn(a) -> String,
+  get: fn(a) -> dict.Dict(String, b),
+  put: fn(a, dict.Dict(String, b)) -> a,
+  join: fn(String, Match, dynamic.Dynamic, socket.Ref) -> #(option.Option(b), List(socket.Effect)),
+  message: fn(String, Match, b, String, dynamic.Dynamic, option.Option(socket.Ref)) -> #(b, List(socket.Effect)),
+  closed: fn(String, Match, b) -> List(socket.Effect)
+) -> Namespace(a)
+```
+
+### `unknown_topic`
+
+The conventional rejection payload for a topic no namespace claims.
+
+```gleam
+pub fn unknown_topic() -> json.Json
+```

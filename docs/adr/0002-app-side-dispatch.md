@@ -67,6 +67,11 @@ the generated [API reference](https://beryl.tylerbutler.com/reference/api/);
   (`beryl/transport`), independent of this ADR.
 - Union-and-router boilerplate scales with channel count: zero for
   single-channel apps (use your types directly), linear otherwise.
+  This cost was later absorbed by the library: after the routing shape
+  proved generic across all four example apps, it was promoted into
+  `beryl/socket/router` (pattern-keyed namespaces, wildcard captures via
+  `Match`, fail-closed dispatch), so multi-channel apps register
+  namespaces instead of hand-writing the router.
 - The effects type carried the main design risk (join-ack ordering,
   presence interplay). Both were resolved: effects apply strictly in list
   order within one runtime actor turn (so list order is wire order), and
