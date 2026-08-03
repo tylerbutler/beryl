@@ -174,6 +174,18 @@ pub type Effect {
   KickTopic(topic: String)
 }
 
+/// A `ReplyOk` when the client supplied a ref; no effects otherwise.
+///
+/// `Message` inputs carry `Option(Ref)` (refless messages expect no
+/// reply) while the `ReplyOk` effect demands a `Ref`, so every handler
+/// that replies conditionally needs this gate.
+pub fn reply_ok(ref: Option(Ref), payload: Json) -> List(Effect) {
+  case ref {
+    Some(r) -> [ReplyOk(r, payload)]
+    None -> []
+  }
+}
+
 /// Connection metadata assembled by the transport before the WebSocket
 /// upgrade, delivered to the app's `init` via `ConnectInfo`.
 pub type ConnectSeed {

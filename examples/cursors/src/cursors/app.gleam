@@ -10,16 +10,15 @@
 ////   through a `beryl.child_spec` runtime, reusing the same per-topic surface.
 
 import beryl/socket.{type Effect, type Ref}
+import beryl/socket/router
 import example_helpers/color
 import example_helpers/payload
-import example_helpers/router
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/string
 
 /// Per-topic state for one socket in a cursor room.
 pub type Model {
@@ -121,17 +120,19 @@ pub fn namespace(
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
   router.stateful(
-    matches: string.starts_with(_, "cursor:"),
+    pattern: "cursor:*",
     socket_id:,
     get:,
     put:,
-    join: fn(socket_id, topic, payload, ref) {
-      join(ctx, socket_id, topic, payload, ref)
+    join: fn(socket_id, match, payload, ref) {
+      join(ctx, socket_id, match.topic, payload, ref)
     },
-    message: fn(socket_id, topic, model, event_name, payload, _ref) {
-      update(ctx, socket_id, topic, model, event_name, payload)
+    message: fn(socket_id, match, model, event_name, payload, _ref) {
+      update(ctx, socket_id, match.topic, model, event_name, payload)
     },
-    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
+    closed: fn(socket_id, match, model) {
+      closed(ctx, socket_id, match.topic, model)
+    },
   )
 }
 
