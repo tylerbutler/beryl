@@ -48,6 +48,10 @@ pub fn main() {
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
+
+  // `sockets` is an ordinary beryl handle: hand it to a transport
+  // (`beryl_mist`, `beryl_ewe`), to `beryl.broadcast`, or to `beryl.stop`.
+  beryl.broadcast(sockets, "room:lobby", "announce", json.string("hello"))
 }
 ```
 
@@ -57,8 +61,8 @@ single `List(channel.Handler)` holds channels that agree on nothing. No
 value is erased to `Dynamic` and no unchecked coercion is involved.
 
 `child_spec` returns an ordinary `beryl.Sockets` handle plus a child
-specification for the application's supervision tree. The handle works
-with the `beryl_mist` and `beryl_ewe` transports, `beryl.broadcast`, and
+specification for the application's supervision tree. The handle works with
+the `beryl_mist` and `beryl_ewe` transports, `beryl.broadcast`, and
 `beryl.stop`.
 
 Handlers are consulted in registration order and the first matching

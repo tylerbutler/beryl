@@ -5,6 +5,14 @@ licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl_channels" }
 gleam = ">= 1.13.0"
 target = "erlang"
+# Same as Gleam's default for this package name, declared explicitly so the
+# router adapter stays out of the published package interface and the docs
+# even if the default ever changes. `beryl_channels` and
+# `beryl_channels/channel` are the only public modules.
+internal_modules = [
+  "beryl_channels/internal",
+  "beryl_channels/internal/*",
+]
 
 [dependencies]
 beryl = { path = "../beryl" }

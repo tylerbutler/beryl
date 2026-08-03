@@ -70,9 +70,10 @@ import gleam/set
 /// is the one reported.
 pub type HandlerError {
   /// A handler used a pattern string that is not a valid topic pattern.
-  /// `pattern` is the offending pattern and `reason` describes the
-  /// problem.
-  InvalidPattern(pattern: String, reason: String)
+  /// `pattern` is the offending pattern and `reason` is the
+  /// [`beryl/topic`](https://hexdocs.pm/beryl/beryl/topic.html) error
+  /// nested rather than flattened to a string, so it stays matchable.
+  InvalidPattern(pattern: String, reason: topic.TopicError)
   /// Two handlers were registered with the same pattern string. The
   /// second one could never receive a join, because routing takes the
   /// first match.
@@ -168,15 +169,8 @@ fn initialise(
 fn validate_pattern(pattern: String) -> Result(String, HandlerError) {
   topic.validate_pattern(pattern)
   |> result.map_error(fn(error) {
-    InvalidPattern(pattern: pattern, reason: reason(error))
+    InvalidPattern(pattern: pattern, reason: error)
   })
-}
-
-fn reason(error: topic.TopicError) -> String {
-  case error {
-    topic.EmptyTopic -> "pattern cannot be empty"
-    topic.InvalidFormat(detail) -> detail
-  }
 }
 
 fn check_duplicates(

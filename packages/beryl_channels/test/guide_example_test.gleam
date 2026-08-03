@@ -1,8 +1,8 @@
 //// Compiles the flagship channel-layer guide example from
 //// `website/src/content/docs/guides/channels.md` — the room channel from
-//// "The shape" plus the `start` and transport wiring from "Starting a
-//// channel system" — so the guide's start shape cannot drift from the
-//// real API.
+//// "The shape", the `start` and transport wiring from "Starting a
+//// channel system", and the handler-table check from "Routing rules" —
+//// so the guide's start shape cannot drift from the real API.
 ////
 //// Two deliberate deviations from the published text: the guide splits the
 //// two snippets across `src/my_app/room_channel.gleam` and
@@ -12,6 +12,7 @@
 //// a live listener. Real listeners are covered by `wire_matrix_test`.
 
 import beryl
+import beryl/topic
 import beryl/transport/server
 import beryl/wire
 import beryl_channels
@@ -21,6 +22,7 @@ import gleam/bytes_tree
 import gleam/http/request
 import gleam/http/response
 import gleam/json
+import gleam/otp/static_supervisor
 import gleeunit
 import gleeunit/should
 import mist
@@ -95,15 +97,21 @@ fn handle_http(
   |> response.set_body(mist.Bytes(bytes_tree.new()))
 }
 
-/// The guide's `start` call, its config, and the transport wiring it hands
+/// The guide's `child_spec` call, its config, and the transport wiring it hands
 /// the returned handle to, compiled and run.
-pub fn documented_guide_start_example_compiles_and_starts_test() {
+pub fn documented_guide_child_spec_example_compiles_and_starts_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(sockets) = beryl_channels.start(config, handlers: handlers())
-    as "the guide's handler table starts"
+  let assert Ok(#(sockets, spec)) =
+    beryl_channels.child_spec(config, handlers: handlers())
+    as "the guide's handler table builds"
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+    as "the guide's supervision tree starts"
 
   // `sockets` is an ordinary core handle: the guide hands it straight to
   // `mist_transport.handler` alongside the guide's `handle_http` fallback.
@@ -120,4 +128,23 @@ pub fn documented_guide_start_example_compiles_and_starts_test() {
 /// The guide's `validate_handlers` check, run over the guide's own table.
 pub fn documented_guide_handler_table_validates_test() {
   beryl_channels.validate_handlers(handlers()) |> should.equal(Ok(Nil))
+  check_handlers() |> should.equal(Nil)
+}
+
+// ---------------------------------------------------------------------------
+// guides/channels.md — "Routing rules" (src/my_app/handler_check.gleam)
+// ---------------------------------------------------------------------------
+
+/// The guide's handler-table check, pinning the `HandlerError` match it
+/// documents. The guide reads `my_app.handlers()`; the table is local here.
+pub fn check_handlers() -> Nil {
+  case beryl_channels.validate_handlers(handlers()) {
+    Ok(Nil) -> Nil
+    Error(beryl_channels.InvalidPattern(pattern, topic.EmptyTopic)) ->
+      panic as { "channel pattern " <> pattern <> " is empty" }
+    Error(beryl_channels.InvalidPattern(pattern, topic.InvalidFormat(detail))) ->
+      panic as { "invalid channel pattern " <> pattern <> ": " <> detail }
+    Error(beryl_channels.DuplicatePattern(pattern)) ->
+      panic as { "duplicate channel pattern " <> pattern }
+  }
 }

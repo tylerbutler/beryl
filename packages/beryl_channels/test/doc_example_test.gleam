@@ -71,5 +71,7 @@ pub fn documented_child_spec_example_compiles_and_starts_test() {
     |> static_supervisor.start()
     as "the documented supervision tree starts"
 
+  beryl.broadcast(sockets, "room:lobby", "announce", json.string("hi"))
+
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
