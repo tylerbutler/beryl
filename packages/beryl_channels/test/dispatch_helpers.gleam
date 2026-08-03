@@ -8,6 +8,7 @@
 import beryl
 import beryl/socket
 import beryl/transport
+import beryl/wire
 import beryl/wire/codec
 import beryl_channels
 import beryl_channels/channel
@@ -15,6 +16,10 @@ import gleam/erlang/process
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleeunit/should
+
+/// The captured outbound text frames of one connected socket.
+pub type Frames =
+  process.Subject(String)
 
 /// Build and start a supervised channel system for integration tests.
 pub fn start(
@@ -34,6 +39,9 @@ pub fn start(
 
 /// Connect a socket, returning the subject that captures its outbound
 /// text frames.
+///
+/// No settling delay is needed: admission is acknowledged by the exact
+/// runtime owner before this function returns.
 pub fn connect(
   channels: beryl.Sockets,
   socket_id: String,
@@ -55,6 +63,30 @@ pub fn connect(
   )
   |> should.equal(Ok(Nil))
   sent
+}
+
+/// The Phoenix framing minus its binary decoder, so raw binary frames take
+/// the per-topic fan-out path and arrive as `Binary` inputs instead of
+/// being rejected at decode.
+pub fn text_only_codec() -> codec.Codec {
+  codec.new(
+    decode_text: wire.decode_message,
+    encode_reply: wire.reply_json,
+    encode_push: wire.push,
+    encode_heartbeat_reply: wire.heartbeat_reply,
+  )
+  |> codec.with_close_encoder(wire.channel_close)
+  |> codec.with_error_encoder(wire.channel_error)
+}
+
+/// A stable string for a stop reason, for trace assertions.
+pub fn reason_name(reason: socket.StopReason) -> String {
+  case reason {
+    socket.Normal -> "normal"
+    socket.Shutdown -> "shutdown"
+    socket.HeartbeatTimeout -> "heartbeat_timeout"
+    socket.Errored(detail) -> "errored:" <> detail
+  }
 }
 
 /// Announce that a socket's connection closed.
@@ -88,6 +120,18 @@ pub fn join(
   join_ref: String,
   ref: String,
 ) -> Nil {
+  join_with(channels, socket_id, topic_name, join_ref, ref, "{}")
+}
+
+/// Send a `phx_join` carrying a raw JSON payload.
+pub fn join_with(
+  channels: beryl.Sockets,
+  socket_id: String,
+  topic_name: String,
+  join_ref: String,
+  ref: String,
+  payload: String,
+) -> Nil {
   route(
     channels,
     socket_id,
@@ -97,7 +141,30 @@ pub fn join(
       <> ref
       <> "\",\""
       <> topic_name
-      <> "\",\"phx_join\",{}]",
+      <> "\",\"phx_join\","
+      <> payload
+      <> "]",
+  )
+}
+
+/// Send a `phx_leave` for a topic.
+pub fn leave(
+  channels: beryl.Sockets,
+  socket_id: String,
+  topic_name: String,
+  join_ref: String,
+  ref: String,
+) -> Nil {
+  route(
+    channels,
+    socket_id,
+    "[\""
+      <> join_ref
+      <> "\",\""
+      <> ref
+      <> "\",\""
+      <> topic_name
+      <> "\",\"phx_leave\",{}]",
   )
 }
 
