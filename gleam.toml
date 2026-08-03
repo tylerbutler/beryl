@@ -11,9 +11,10 @@ members = ["packages/*", "examples/**"]
 "@release" = ["examples/**"]
 lint = ["examples/**"]
 docs = ["examples/**"]
-# Examples without a test/ directory (gleam test fails when the
-# <package>_test module is missing). collab_docs, its client, and showcase
-# have tests and stay in.
+# Examples excluded from `trellis run test`: example_helpers has no test/
+# directory (gleam test fails when the <package>_test module is missing), and
+# chatrooms/cursors have tests that are not wired into the workspace run yet.
+# collab_docs, its client, and showcase run here.
 test = [
   "examples/chatrooms",
   "examples/cursors",

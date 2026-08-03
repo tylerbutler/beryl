@@ -30,9 +30,16 @@
 ////           channel.actions() |> channel.push("announce", json.string(text)),
 ////         )
 ////       })
+////       |> channel.on_terminate(fn(_count, _reason) {
+////         channel.actions()
+////         |> channel.broadcast("left", json.string(topic))
+////       })
 ////
-////     channel.notify(info.self, Announce("welcome to " <> topic))
+////     channel.notify(info.self, Announce("later, on this topic"))
 ////     channel.accept(channel.joined(0, callbacks))
+////     |> channel.with_actions(
+////       channel.actions() |> channel.push("welcome", json.string(topic)),
+////     )
 ////   })
 //// }
 //// ```
@@ -56,6 +63,19 @@
 //// added, and they always target the channel's own topic. They lower onto
 //// beryl's core `Effect` values, which the runtime applies in list order
 //// inside a single actor turn — so action order is wire order.
+////
+//// A join's actions (see [`with_actions`](#with_actions)) are lowered in
+//// the same turn as the join acknowledgment, immediately after it: the
+//// socket is already subscribed, so a push cannot precede its own join
+//// reply and a presence check and its `presence_track` cannot be
+//// interleaved with another turn.
+////
+//// [`on_terminate`](#on_terminate) actions are lowered in the turn that
+//// closes the topic, after the channel instance is gone. The topic is
+//// already unsubscribed by then, so core **drops pushes** (and presence
+//// snapshots pushed to this socket) on it; broadcasts, presence tracking,
+//// and untracking still take effect and still reach the topic's remaining
+//// subscribers.
 
 import beryl/presence
 import beryl/socket
@@ -103,8 +123,9 @@ pub fn notify(sender: Sender(info), message: info) -> Nil {
 ///
 /// `socket_id` and `seed` come straight from the transport's connect
 /// information; `self` is this channel's own generation-scoped
-/// [`Sender`](#sender), which is the supported way to schedule work for
-/// just after the join acknowledgment.
+/// [`Sender`](#sender), for scheduling a *later* turn — including from
+/// another process. Work that has to be part of the join itself belongs
+/// in [`with_actions`](#with_actions) instead.
 pub type JoinInfo(info) {
   JoinInfo(
     /// Unique id of the socket that is joining.
@@ -247,6 +268,11 @@ fn add(actions: Actions, action: Action) -> Actions {
   Actions(reversed: [action, ..actions.reversed])
 }
 
+/// `first` followed by `second`, preserving both orders.
+fn concat(first: Actions, second: Actions) -> Actions {
+  Actions(reversed: list.append(second.reversed, first.reversed))
+}
+
 // ---------------------------------------------------------------------------
 // Callback results
 // ---------------------------------------------------------------------------
@@ -306,7 +332,7 @@ pub opaque type Callbacks(state, info) {
     message: fn(state, Message) -> Next(state),
     binary: fn(state, BitArray) -> Next(state),
     info: fn(state, info) -> Next(state),
-    terminate: fn(state, socket.StopReason) -> Nil,
+    terminate: fn(state, socket.StopReason) -> Actions,
   )
 }
 
@@ -316,7 +342,7 @@ pub fn callbacks() -> Callbacks(state, info) {
     message: fn(state, _message) { continue(state) },
     binary: fn(state, _data) { continue(state) },
     info: fn(state, _message) { continue(state) },
-    terminate: fn(_state, _reason) { Nil },
+    terminate: fn(_state, _reason) { actions() },
   )
 }
 
@@ -347,9 +373,23 @@ pub fn on_info(
 
 /// Run cleanup when the channel ends, for any reason: client leave, a
 /// [`close`](#close) result, a socket teardown, or a disconnect.
+///
+/// The returned [`Actions`](#Actions) are applied in the turn that closes
+/// this topic, right after the channel instance is gone — which is why a
+/// leave announcement or a post-leave presence roster belongs here rather
+/// than in an out-of-band broadcast.
+///
+/// The topic is already unsubscribed at that point, so core drops
+/// [`push`](#push) and [`push_presence`](#push_presence) actions on it
+/// (they would have nowhere to land) while
+/// [`broadcast`](#broadcast), [`broadcast_from`](#broadcast_from),
+/// [`broadcast_presence`](#broadcast_presence),
+/// [`presence_track`](#presence_track), and
+/// [`presence_untrack`](#presence_untrack) still take effect and still
+/// reach the topic's remaining subscribers.
 pub fn on_terminate(
   callbacks: Callbacks(state, info),
-  handle: fn(state, socket.StopReason) -> Nil,
+  handle: fn(state, socket.StopReason) -> Actions,
 ) -> Callbacks(state, info) {
   Callbacks(..callbacks, terminate: handle)
 }
@@ -363,7 +403,7 @@ pub opaque type JoinedChannel(info) {
     on_message: fn(Message) -> Continuation(info),
     on_binary: fn(BitArray) -> Continuation(info),
     on_info: fn(info) -> Continuation(info),
-    on_terminate: fn(socket.StopReason) -> Nil,
+    on_terminate: fn(socket.StopReason) -> Actions,
   )
 }
 
@@ -415,17 +455,17 @@ fn continuation(
 
 /// A `join` callback's answer: join this channel, or refuse.
 pub opaque type JoinResult(info) {
-  JoinAccepted(channel: JoinedChannel(info), reply: option.Option(json.Json))
+  JoinAccepted(
+    channel: JoinedChannel(info),
+    reply: option.Option(json.Json),
+    actions: Actions,
+  )
   JoinRejected(reason: json.Json)
 }
 
 /// Accept the join with an empty acknowledgment.
-///
-/// To do work right after the acknowledgment — tracking presence, loading
-/// history — send yourself a message with `notify(info.self, ...)` from
-/// the `join` callback and act on it in `on_info`.
 pub fn accept(channel: JoinedChannel(info)) -> JoinResult(info) {
-  JoinAccepted(channel: channel, reply: option.None)
+  JoinAccepted(channel: channel, reply: option.None, actions: actions())
 }
 
 /// Accept the join, returning `reply` in the join acknowledgment.
@@ -433,7 +473,38 @@ pub fn accept_with(
   channel: JoinedChannel(info),
   reply: json.Json,
 ) -> JoinResult(info) {
-  JoinAccepted(channel: channel, reply: option.Some(reply))
+  JoinAccepted(channel: channel, reply: option.Some(reply), actions: actions())
+}
+
+/// Add ordered actions to run as part of accepting this join.
+///
+/// They are applied in the same update turn as the acknowledgment and
+/// strictly after it, so the socket is already subscribed to the topic:
+/// a [`push`](#push) here cannot overtake its own join reply, and a
+/// presence check made in the `join` callback and the
+/// [`presence_track`](#presence_track) that acts on it cannot be split by
+/// another turn.
+///
+/// This is what to reach for instead of notifying yourself from `join`:
+/// [`notify`](#notify) schedules a *later* turn, which is right for work
+/// that may block or wait, but it cannot be atomic with the join.
+///
+/// Actions already attached stay ahead of the ones added here. A refused
+/// join has no topic to act on, so this returns [`reject`](#reject)
+/// results unchanged.
+pub fn with_actions(
+  result: JoinResult(info),
+  actions: Actions,
+) -> JoinResult(info) {
+  case result {
+    JoinRejected(_) -> result
+    JoinAccepted(channel: channel, reply: reply, actions: existing) ->
+      JoinAccepted(
+        channel: channel,
+        reply: reply,
+        actions: concat(existing, actions),
+      )
+  }
 }
 
 /// Refuse the join, returning `reason` to the client.
@@ -493,8 +564,12 @@ pub fn handler(
 
     case join(info, context.topic, context.payload) {
       JoinRejected(reason) -> Rejected(reason: reason)
-      JoinAccepted(channel, reply) ->
-        Accepted(reply: reply, channel: live(channel, handoff, join_id))
+      JoinAccepted(channel, reply, actions) ->
+        Accepted(
+          reply: reply,
+          actions: action_list(actions),
+          channel: live(channel, handoff, join_id),
+        )
     }
   })
 }
@@ -559,7 +634,10 @@ pub type LiveChannel {
     /// here: its value goes to the join that sealed it, so this returns
     /// an unchanged channel with no actions instead.
     on_mail: fn(Mail) -> Step,
-    on_terminate: fn(socket.StopReason) -> Nil,
+    /// Run this channel's termination callback, returning the actions it
+    /// asked for. The router runs them in the turn that closes the topic,
+    /// after this instance has been removed.
+    on_terminate: fn(socket.StopReason) -> List(Action),
   )
 }
 
@@ -595,9 +673,8 @@ pub type Step {
 ///
 /// Bind `deliver` to the topic and generation this join is *about* to be
 /// given, before calling [`open`](#open): a `join` callback may use its
-/// own `Sender` (that is the documented way to schedule work for just
-/// after the join acknowledgment), and the mail it enqueues has to be
-/// addressed to the join being opened rather than to the previous one.
+/// own `Sender` to schedule a later turn, and the mail it enqueues has to
+/// be addressed to the join being opened rather than to the previous one.
 @internal
 pub type JoinContext {
   JoinContext(
@@ -610,9 +687,17 @@ pub type JoinContext {
 }
 
 /// The non-generic form of a `JoinResult`.
+///
+/// `actions` are the join's accept-time actions, already in order. The
+/// router must lower them **after** the accept effect and in the same
+/// update turn.
 @internal
 pub type JoinOutcome {
-  Accepted(reply: option.Option(json.Json), channel: LiveChannel)
+  Accepted(
+    reply: option.Option(json.Json),
+    actions: List(Action),
+    channel: LiveChannel,
+  )
   Rejected(reason: json.Json)
 }
 
@@ -654,7 +739,7 @@ fn live(
         }
       }
     },
-    on_terminate: channel.on_terminate,
+    on_terminate: fn(reason) { action_list(channel.on_terminate(reason)) },
   )
 }
 

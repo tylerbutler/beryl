@@ -41,8 +41,9 @@ gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **Channel composition** | One `beryl_channels.child_spec` handler table owns `cursor:*`, `room:*`, and `document:*:*` |
+| **Channel composition** | One `beryl_channels.child_spec` handler table owns `cursor:*`, `room:*`, and the `document:` prefix |
 | **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
+| **Lifecycle actions** | Join and termination callbacks lower ordered actions without leaving the runtime turn |
 | **Per-pattern rate limits** | `with_topic_rate` gives cursors, chat, and docs different limits |
 | **Shared presence** | One session-presence tracker is reused across the embedded apps that need it |
 | **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
@@ -54,7 +55,7 @@ Browser (Phoenix JS clients across /cursors, /chat, /docs)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves the landing page and each example UI
-  ├── beryl_channels — handler table owning cursor:*, room:*, document:*:*
+  ├── beryl_channels — handler table owning cursor:*, room:*, document:
   ├── per-channel state — private to each joined topic
   ├── session presence — shared across cursors and chat
   └── groups + doc store — example-specific state

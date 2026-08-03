@@ -124,7 +124,7 @@ fn open_generation(
       },
     )
 
-  let assert channel.Accepted(_reply, live) =
+  let assert channel.Accepted(_reply, _actions, live) =
     channel.open(build(replies), context)
     as "the test handler always accepts"
   live
@@ -177,7 +177,7 @@ fn handle_envelope(
     }
 
     Rejoin(reply) -> {
-      state.live.on_terminate(socket.Shutdown)
+      let _terminate_actions = state.live.on_terminate(socket.Shutdown)
       let generation = state.generation + 1
       let live =
         open_generation(state.build, state.topic, generation, state.self, reply)
