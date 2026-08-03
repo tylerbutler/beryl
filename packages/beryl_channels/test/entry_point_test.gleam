@@ -7,6 +7,7 @@ import beryl/wire
 import beryl_channels
 import beryl_channels/channel
 import dispatch_helpers as helper
+import gleam/erlang/process
 import gleam/json
 import gleam/otp/static_supervisor
 import gleam/string
@@ -116,4 +117,78 @@ pub fn child_spec_dispatches_once_its_supervisor_runs_test() {
   helper.recv(frames)
   |> string.contains("\"handler\":\"room:*\"")
   |> should.be_true
+}
+
+/// The same handler table must behave identically whichever entry point
+/// started it: `child_spec` differs only in who owns the process.
+pub fn a_supervised_system_runs_the_same_lifecycle_as_a_started_one_test() {
+  let started = process.new_subject()
+  let supervised = process.new_subject()
+
+  let assert Ok(direct) =
+    beryl_channels.start(beryl.config(wire.phoenix_codec()), handlers: [
+      lifecycle_handler(started),
+    ])
+    as "the handler table is valid"
+
+  let assert Ok(#(channels, spec)) =
+    beryl_channels.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+      lifecycle_handler(supervised),
+    ])
+    as "the handler table and config are valid"
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+    as "the supervision tree starts"
+
+  let direct_frames = drive_lifecycle(direct)
+  let supervised_frames = drive_lifecycle(channels)
+
+  supervised_frames |> should.equal(direct_frames)
+  collect(supervised) |> should.equal(collect(started))
+}
+
+/// Join, exchange a message, then disconnect — the whole lifecycle, as a
+/// list of the frame shapes it produced.
+fn drive_lifecycle(channels: beryl.Sockets) -> List(String) {
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let join_reply = helper.recv(frames)
+  helper.push(channels, "s1", "room:a", "ping", "r-2")
+  let pong = helper.recv(frames)
+  helper.disconnect(channels, "s1")
+  let close = helper.recv(frames)
+  helper.recv_none(frames)
+  [join_reply, pong, close]
+}
+
+/// A channel that traces its whole lifecycle.
+fn lifecycle_handler(trace: process.Subject(String)) -> channel.Handler {
+  channel.handler("room:*", fn(_info, topic, _payload) {
+    let callbacks =
+      channel.callbacks()
+      |> channel.on_message(fn(state, message) {
+        process.send(trace, "message:" <> message.event)
+        channel.continue_with(
+          state,
+          channel.actions() |> channel.push("pong", json.int(1)),
+        )
+      })
+      |> channel.on_terminate(fn(_state, reason) {
+        process.send(trace, "terminate:" <> helper.reason_name(reason))
+      })
+    process.send(trace, "join:" <> topic)
+    channel.accept_with(
+      channel.joined(Nil, callbacks),
+      json.object([#("handler", json.string("room:*"))]),
+    )
+  })
+}
+
+fn collect(trace: process.Subject(String)) -> List(String) {
+  case process.receive(trace, 100) {
+    Error(Nil) -> []
+    Ok(line) -> [line, ..collect(trace)]
+  }
 }

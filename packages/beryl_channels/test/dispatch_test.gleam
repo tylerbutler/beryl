@@ -7,11 +7,11 @@ import beryl
 import beryl/socket
 import beryl/transport
 import beryl/wire
-import beryl/wire/codec
 import beryl_channels
 import beryl_channels/channel
 import dispatch_helpers as helper
 import gleam/bit_array
+import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
 import gleam/json
@@ -24,6 +24,8 @@ import gleeunit/should
 pub type Note {
   Announce(String)
   Farewell
+  /// Ask the channel to stop the whole socket from `on_info`.
+  Halt
   /// Report the process the `on_info` callback runs in.
   WhereAmI(process.Subject(process.Pid))
 }
@@ -83,7 +85,7 @@ fn room_callbacks(
   |> channel.on_message(on_message)
   |> channel.on_binary(fn(count, data) {
     channel.continue_with(
-      count,
+      count + 1,
       channel.actions()
         |> channel.push("binary", json.int(bit_array.byte_size(data))),
     )
@@ -154,6 +156,7 @@ fn on_info(count: Int, note: Note) -> channel.Next(Int) {
       channel.close_with(
         channel.actions() |> channel.push("farewell", json.int(count)),
       )
+    Halt -> channel.stop_socket(socket.Normal)
     WhereAmI(reply) -> {
       process.send(reply, process.self())
       channel.continue(count)
@@ -202,6 +205,23 @@ fn next_sender(wiring: Wiring) -> channel.Sender(Note) {
   sender
 }
 
+/// A system on the Phoenix framing *minus* its binary decoder, with one
+/// socket joined to `room:a`, so raw binary frames take the per-topic
+/// fan-out path and arrive as `Binary` inputs.
+fn joined_binary_room() -> #(beryl.Sockets, Wiring, process.Subject(String)) {
+  let wiring = new_wiring()
+  let assert Ok(channels) =
+    beryl_channels.start(beryl.config(helper.text_only_codec()), handlers: [
+      room_handler(wiring),
+    ])
+    as "the handler table is valid"
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _join_reply = helper.recv(frames)
+  helper.next_trace(wiring.trace) |> should.equal("join:room:a")
+  #(channels, wiring, frames)
+}
+
 // --- handler selection -----------------------------------------------------
 
 pub fn join_selects_the_first_matching_handler_test() {
@@ -237,6 +257,49 @@ pub fn registration_order_decides_overlapping_patterns_test() {
   |> should.be_true
 }
 
+pub fn a_multi_segment_pattern_only_matches_its_own_shape_test() {
+  let channels =
+    start([
+      labelled_handler("document:*:ops", "ops"),
+      labelled_handler("*", "catch_all"),
+    ])
+  let frames = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "document:42:ops", "jr-1", "r-1")
+  helper.recv(frames)
+  |> string.contains("\"handler\":\"ops\"")
+  |> should.be_true
+
+  // A topic of a different shape falls through to the next pattern in
+  // registration order rather than being forced onto the first.
+  helper.join(channels, "s1", "document:42", "jr-2", "r-2")
+  helper.recv(frames)
+  |> string.contains("\"handler\":\"catch_all\"")
+  |> should.be_true
+
+  helper.join(channels, "s1", "anything", "jr-3", "r-3")
+  helper.recv(frames)
+  |> string.contains("\"handler\":\"catch_all\"")
+  |> should.be_true
+}
+
+pub fn a_join_can_be_accepted_without_a_reply_payload_test() {
+  let channels =
+    start([
+      channel.handler("room:*", fn(_info, _topic, _payload) {
+        channel.accept(channel.joined(Nil, channel.callbacks()))
+      }),
+    ])
+  let frames = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+
+  // The join is still acknowledged; it simply carries no response body.
+  let reply = helper.recv(frames)
+  reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+  reply |> string.contains("\"response\":{}") |> should.be_true
+}
+
 pub fn unmatched_topic_is_rejected_with_the_documented_reason_test() {
   let #(channels, wiring, frames) = start_room()
 
@@ -266,6 +329,30 @@ pub fn a_rejecting_handler_reports_its_own_reason_test() {
   let reply = helper.recv(frames)
   reply |> string.contains("\"status\":\"error\"") |> should.be_true
   reply |> string.contains("forbidden") |> should.be_true
+}
+
+pub fn a_rejected_join_leaves_no_live_channel_test() {
+  let events = process.new_subject()
+  let channels =
+    start([
+      channel.handler("room:*", fn(_info, _topic, _payload) {
+        process.send(events, "join")
+        channel.reject(json.object([#("reason", json.string("forbidden"))]))
+      }),
+    ])
+  let frames = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _rejection = helper.recv(frames)
+  let assert Ok("join") = process.receive(events, 500) as "the handler ran"
+
+  // Nothing was stored for the topic, so a later message reaches no
+  // channel and the core answers it as an unjoined topic.
+  helper.push(channels, "s1", "room:a", "echo", "r-2")
+  helper.recv(frames)
+  |> string.contains("{\"reason\":\"unmatched topic\"}")
+  |> should.be_true
+  process.receive(events, 100) |> should.be_error
 }
 
 // --- client messages -------------------------------------------------------
@@ -331,32 +418,30 @@ pub fn actions_are_applied_in_order_on_the_channel_topic_test() {
 }
 
 pub fn binary_frames_reach_the_live_channel_test() {
-  // The Phoenix framing minus its binary decoder, so raw binary frames
-  // take the per-topic fan-out path and arrive as `Binary` inputs.
-  let text_only =
-    codec.new(
-      decode_text: wire.decode_message,
-      encode_reply: wire.reply_json,
-      encode_push: wire.push,
-      encode_heartbeat_reply: wire.heartbeat_reply,
-    )
-    |> codec.with_close_encoder(wire.channel_close)
-    |> codec.with_error_encoder(wire.channel_error)
-
-  let wiring = new_wiring()
-  let assert Ok(channels) =
-    beryl_channels.start(beryl.config(text_only), handlers: [
-      room_handler(wiring),
-    ])
-    as "the handler table is valid"
-  let frames = helper.connect(channels, "s1")
-  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _join_reply = helper.recv(frames)
-  helper.next_trace(wiring.trace) |> should.equal("join:room:a")
+  let #(channels, _wiring, frames) = joined_binary_room()
 
   helper.route_binary(channels, "s1", <<1, 2, 3, 4, 5>>)
 
   helper.recv(frames) |> string.contains("\"binary\",5") |> should.be_true
+}
+
+pub fn channel_state_advances_across_binary_frames_test() {
+  let #(channels, wiring, frames) = joined_binary_room()
+
+  helper.push(channels, "s1", "room:a", "count", "r-2")
+  helper.recv(frames) |> string.contains("\"count\",1") |> should.be_true
+
+  // A binary frame evolves the same assigns every other callback sees.
+  helper.route_binary(channels, "s1", <<1, 2, 3>>)
+  helper.recv(frames) |> string.contains("\"binary\",3") |> should.be_true
+
+  helper.push(channels, "s1", "room:a", "count", "r-3")
+  helper.recv(frames) |> string.contains("\"count\",3") |> should.be_true
+
+  // ...and the state a binary frame produced is the state `on_terminate`
+  // is handed.
+  helper.disconnect(channels, "s1")
+  helper.next_trace(wiring.trace) |> should.equal("terminate:room:a:normal:3")
 }
 
 // --- termination -----------------------------------------------------------
@@ -376,7 +461,7 @@ pub fn close_applies_actions_then_kicks_the_topic_test() {
 pub fn a_client_leave_terminates_the_channel_once_test() {
   let #(channels, wiring, frames) = joined_room("room:a")
 
-  helper.route(channels, "s1", "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]")
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
 
   let _leave_reply = helper.recv(frames)
   helper.recv(frames) |> string.contains("phx_close") |> should.be_true
@@ -396,6 +481,28 @@ pub fn a_disconnect_terminates_every_channel_once_test() {
   helper.disconnect(channels, "s1")
 
   helper.next_trace(wiring.trace) |> should.equal("terminate:room:a:normal:0")
+  helper.next_trace(wiring.trace) |> should.equal("terminate:room:b:normal:0")
+  helper.no_trace(wiring.trace)
+}
+
+pub fn a_disconnect_after_a_leave_does_not_terminate_twice_test() {
+  let #(channels, wiring, frames) = start_room()
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _join_a = helper.recv(frames)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _join_b = helper.recv(frames)
+  helper.next_trace(wiring.trace) |> should.equal("join:room:a")
+  helper.next_trace(wiring.trace) |> should.equal("join:room:b")
+
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-3")
+  let _leave_reply = helper.recv(frames)
+  let _close = helper.recv(frames)
+  helper.next_trace(wiring.trace) |> should.equal("terminate:room:a:normal:0")
+
+  helper.disconnect(channels, "s1")
+
+  // Only the topic that is still joined terminates: termination happens
+  // exactly once per accepted join, never once per teardown path.
   helper.next_trace(wiring.trace) |> should.equal("terminate:room:b:normal:0")
   helper.no_trace(wiring.trace)
 }
@@ -499,6 +606,59 @@ pub fn a_stale_generations_send_is_never_delivered_test() {
   helper.recv(frames) |> string.contains("\"fresh#1\"") |> should.be_true
 }
 
+/// A rejected join still consumes a generation. If it did not, the next
+/// join on the same topic would reuse the rejected join's generation and
+/// its `Sender` would deliver into a channel that never admitted it.
+pub fn a_rejected_joins_sender_cannot_reach_a_later_accepted_join_test() {
+  let senders = process.new_subject()
+  let channels =
+    start([
+      channel.handler("room:*", fn(info, _topic, payload) {
+        process.send(senders, info.self)
+        case decode.run(payload, decode.at(["admit"], decode.bool)) {
+          Ok(True) ->
+            channel.accept(channel.joined(
+              0,
+              channel.callbacks()
+                |> channel.on_info(fn(count, note) {
+                  let assert Announce(text) = note as "only announcements"
+                  channel.continue_with(
+                    count + 1,
+                    channel.actions() |> channel.push("note", json.string(text)),
+                  )
+                }),
+            ))
+          _ -> channel.reject(json.object([#("reason", json.string("no"))]))
+        }
+      }),
+    ])
+  let frames = helper.connect(channels, "s1")
+
+  helper.join_with(channels, "s1", "room:a", "jr-1", "r-1", "{\"admit\":false}")
+  helper.recv(frames)
+  |> string.contains("\"status\":\"error\"")
+  |> should.be_true
+  let rejected_sender = next_sender_of(senders)
+
+  helper.join_with(channels, "s1", "room:a", "jr-2", "r-2", "{\"admit\":true}")
+  helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  let live_sender = next_sender_of(senders)
+
+  channel.notify(rejected_sender, Announce("ghost"))
+  helper.recv_none(frames)
+
+  channel.notify(live_sender, Announce("real"))
+  helper.recv(frames) |> string.contains("\"real\"") |> should.be_true
+}
+
+fn next_sender_of(
+  senders: process.Subject(channel.Sender(Note)),
+) -> channel.Sender(Note) {
+  let assert Ok(sender) = process.receive(senders, 500)
+    as "a join reported its sender"
+  sender
+}
+
 pub fn a_send_to_a_closed_channel_is_never_delivered_test() {
   let #(channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
@@ -523,6 +683,30 @@ pub fn an_info_result_can_close_the_channel_test() {
   helper.recv(frames) |> string.contains("phx_close") |> should.be_true
   helper.next_trace(wiring.trace)
   |> should.equal("terminate:room:a:shutdown:0")
+}
+
+pub fn an_info_result_can_stop_the_socket_test() {
+  let #(channels, wiring, frames) = start_room()
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _join_a = helper.recv(frames)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _join_b = helper.recv(frames)
+  helper.next_trace(wiring.trace) |> should.equal("join:room:a")
+  helper.next_trace(wiring.trace) |> should.equal("join:room:b")
+  let sender = next_sender(wiring)
+
+  channel.notify(sender, Halt)
+
+  // `stop_socket` from `on_info` ends every channel on the socket, not
+  // just the one that asked.
+  helper.next_trace(wiring.trace) |> should.equal("terminate:room:a:normal:0")
+  helper.next_trace(wiring.trace) |> should.equal("terminate:room:b:normal:0")
+  helper.no_trace(wiring.trace)
+
+  let _close_a = helper.recv(frames)
+  let _close_b = helper.recv(frames)
+  helper.push(channels, "s1", "room:a", "count", "r-3")
+  helper.recv_none(frames)
 }
 
 /// The join callback and `on_info` must run in the *same* process: the

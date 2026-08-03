@@ -8,7 +8,6 @@ import beryl/wire
 import beryl_channels
 import beryl_channels/channel
 import dispatch_helpers as helper
-import gleam/erlang/process
 import gleam/json
 import gleam/list
 import gleam/string
@@ -84,7 +83,9 @@ pub fn presence_actions_target_the_channels_own_topic_test() {
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("alice") |> should.be_true
 
-  process.sleep(20)
+  // No settling delay is needed: the runtime applies presence effects with
+  // synchronous calls to the presence actor, and the snapshot frame above
+  // was encoded *after* the track committed.
   let assert [entry] = presence.list(handle, "room:a")
     as "the presence actor holds one entry for the topic"
   entry.key |> should.equal("alice")
@@ -110,6 +111,7 @@ pub fn presence_snapshots_see_earlier_actions_in_the_same_list_test() {
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("alice") |> should.be_false
 
-  process.sleep(20)
+  // Same ordering argument as above: the snapshot frame is only sent once
+  // the untrack call has returned.
   presence.list(handle, "room:a") |> should.equal([])
 }
