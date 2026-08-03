@@ -139,7 +139,9 @@ When a client exceeds a configured rate limit, the offending frame or message is
 | `channel_rate` | Per socket+topic | Runtime | `beryl.with_channel_rate` |
 | `topic_rates` | First matching pattern | Runtime | `beryl.with_topic_rate` |
 
-The frame and message buckets are independent; joins consume only join tokens.
+The frame and message buckets are independent. Joins consume frame tokens like
+every inbound frame, never message tokens, and use `join_rate` for runtime
+accounting.
 
 ```gleam
 let config =
