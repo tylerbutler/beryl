@@ -18,9 +18,10 @@ beryl is not yet 1.0. The API is unstable and features may be removed in minor r
 
 **Source**: [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
 
-One socket runtime, three topic families, and one top-level `update` function.
-This demo composes the cursors, chatrooms, and collab-docs apps into a single
-app-side dispatch system.
+One socket runtime and three topic families, composed with `beryl_channels`.
+The cursors, chatrooms, and collab-docs behaviors are each a channel handler
+registered on one socket system — no socket-wide model and no hand-written
+router.
 
 ```bash
 cd examples/showcase
@@ -32,8 +33,8 @@ gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **App-side dispatch composition** | One socket-wide `update` routes `cursor:*`, `room:*`, and `document:*:*` topics |
-| **Per-topic models** | `Dict`s store each embedded app's model by topic, then prune on `Closed` |
+| **Channel composition** | One `beryl_channels.start` handler table owns `cursor:*`, `room:*`, and `document:*:*` |
+| **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
 | **Per-pattern rate limits** | `with_topic_rate` gives cursors, chat, and docs different limits |
 | **Shared presence** | One presence actor is reused across the embedded apps that need it |
 | **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
@@ -45,8 +46,8 @@ Browser (Phoenix JS clients across /cursors, /chat, /docs)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves the landing page and each example UI
-  ├── beryl app-side dispatch — one update routes cursor:*, room:*, document:*:*
-  ├── per-topic models — Dicts keyed by topic namespace
+  ├── beryl_channels — handler table owning cursor:*, room:*, document:*:*
+  ├── per-channel state — private to each joined topic
   ├── beryl presence — shared across cursors and chat
   └── groups + doc store — example-specific state
 ```

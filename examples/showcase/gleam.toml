@@ -6,6 +6,7 @@ target = "erlang"
 
 [dependencies]
 beryl = { path = "../../packages/beryl" }
+beryl_channels = { path = "../../packages/beryl_channels" }
 beryl_mist = { path = "../../packages/beryl_mist" }
 example_helpers = { path = "../example_helpers" }
 cursors = { path = "../cursors" }

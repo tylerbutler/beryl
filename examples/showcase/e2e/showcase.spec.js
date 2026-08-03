@@ -1,12 +1,12 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
 
-// The showcase is the acceptance gate for beryl's app-side dispatch model
-// (ADR 0002): three independent channel apps (cursors, chatrooms,
-// collab_docs) composed onto ONE WebSocket through a single app-owned
-// update function. These tests drive all three flows over a single raw
-// Phoenix-framed socket and assert the ordering guarantees the design
-// depends on (join ack before subsequent frames, per-channel isolation).
+// The showcase is the acceptance gate for composing independent channels
+// onto ONE WebSocket: cursors, chatrooms, and collab_docs are three
+// `beryl_channels` handlers on a single socket system. These tests drive
+// all three flows over a single raw Phoenix-framed socket and assert the
+// ordering guarantees the design depends on (join ack before subsequent
+// frames, per-channel isolation).
 
 /**
  * Drive a raw Phoenix V2 socket from inside the page. Returns a transcript
@@ -79,7 +79,7 @@ const replyStatus = (frame) => frame[4]?.response !== undefined
   ? frame[4].status
   : frame[4]?.status;
 
-test.describe("Showcase (app-side dispatch)", () => {
+test.describe("Showcase (beryl_channels)", () => {
   test("landing page and health check respond", async ({ page }) => {
     await page.goto("/");
     await expect(page).toHaveTitle(/beryl/);
@@ -116,8 +116,8 @@ test.describe("Showcase (app-side dispatch)", () => {
     // Both real joins accepted, on one socket.
     expect(replyStatus(repliesFor(frames, "1")[0])).toBe("ok");
     expect(replyStatus(repliesFor(frames, "2")[0])).toBe("ok");
-    // Docs join rejected for the missing token — the union router reached
-    // the docs app and its channel-level auth.
+    // Docs join rejected for the missing token — routing reached the
+    // documents channel and its join-level auth.
     const docsReply = repliesFor(frames, "3")[0];
     expect(replyStatus(docsReply)).toBe("error");
     expect(JSON.stringify(docsReply[4])).toContain("missing_token");
@@ -142,9 +142,10 @@ test.describe("Showcase (app-side dispatch)", () => {
       { waitEvent: "presence_list", topic: "room:general" },
     ]);
 
-    // The chat join's effect list is [AcceptJoin, PresenceTrack,
-    // Broadcast(new_msg), Broadcast(presence_list)] — the ack must hit the
-    // wire before every frame those later effects produce.
+    // The room channel acknowledges the join, then does its
+    // presence_track / new_msg / presence_list work in the turn its own
+    // self-notification schedules — so the ack must hit the wire before
+    // every frame that later work produces.
     const ackIndex = frames.findIndex(
       (f) => f[3] === "phx_reply" && f[1] === "1"
     );

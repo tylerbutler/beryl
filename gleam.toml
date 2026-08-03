@@ -19,13 +19,12 @@ members = ["packages/*", "examples/*", "examples/collab_docs/client"]
 lint = ["examples/**"]
 docs = ["examples/**"]
 # Examples without a test/ directory (gleam test fails when the
-# <package>_test module is missing). collab_docs and its client have tests
-# and stay in.
+# <package>_test module is missing). collab_docs, its client, and showcase
+# have tests and stay in.
 test = [
   "examples/chatrooms",
   "examples/cursors",
   "examples/example_helpers",
-  "examples/showcase",
 ]
 
 [tools.trellis.tasks.lint]
