@@ -2,7 +2,7 @@ const DEFAULTS = Object.freeze({
   path: "",
   token: "",
   tokenParam: "token",
-  topics: ["bench:default"],
+  topics: [],
   transport: "unknown",
   connectTimeoutMs: 10_000,
   replyTimeoutMs: 5_000,
@@ -53,6 +53,9 @@ function path(value) {
 }
 
 function topics(value) {
+  if (value.trim() === "") {
+    return [];
+  }
   const parsed = value
     .split(",")
     .map((topic) => topic.trim())
@@ -91,7 +94,7 @@ export function loadConfig(env = globalThis.__ENV ?? {}) {
     path: path(text(env, "WS_PATH", DEFAULTS.path)),
     token: text(env, "TOKEN", DEFAULTS.token),
     tokenParam: text(env, "TOKEN_PARAM", DEFAULTS.tokenParam),
-    topics: topics(text(env, "TOPICS", DEFAULTS.topics.join(","))),
+    topics: topics(text(env, "TOPICS", "")),
     transport: text(env, "TRANSPORT", DEFAULTS.transport),
     connectTimeoutMs: integer(
       env,

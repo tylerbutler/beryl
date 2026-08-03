@@ -9,3 +9,24 @@
 - No blocking GitHub issue applies to this isolated load-client work.
 - `PROJECT_BRIEF.md` and an in-repository sprint plan are not present; the
   Producer-provided saved plan is the source of scope.
+
+## Phase 2: k6 client lifecycle and metrics
+
+- Added a `k6/websockets` client with correlated joins, pushes, replies, leaves,
+  and graceful shutdown.
+- Added heartbeat scheduling and reply tracking, operation timeouts, and
+  complete interval/timeout cleanup on leave or close.
+- Added observable decode, protocol, unmatched-ref, rejection, timeout, socket,
+  and callback errors.
+- Added tagged k6 Trend, Counter, Rate, and Gauge metrics without target-specific
+  behavior or remote imports.
+
+## Telemetry foundation
+
+- Added the Erlang `telemetry` runtime dependency through Gleam tooling.
+- Added disabled-by-default public `beryl.with_telemetry` configuration and
+  propagated the flag into coordinator configuration without instrumenting
+  coordinator or transport paths.
+- Added typed internal event helpers, closed metadata vocabularies, monotonic
+  duration and mailbox helpers, and the Erlang `telemetry:execute/3` FFI.
+- Added focused config, helper, enabled-emission, and disabled-emission tests.
