@@ -12,7 +12,7 @@ import beryl/telemetry
 import beryl/wire/codec
 import gleam/bool
 import gleam/erlang/process
-import gleam/option.{type Option, Some}
+import gleam/option.{type Option}
 
 /// Runtime handle accepted by transport implementations.
 pub type Sockets =
@@ -138,7 +138,7 @@ pub fn socket_disconnected(
   sockets sockets: Sockets,
   socket_id socket_id: String,
 ) -> Nil {
-  beryl.transport_socket_disconnected(sockets, socket_id)
+  beryl.app_dispatch(sockets).socket_disconnected(socket_id)
 }
 
 // --- Inbound routing ---
@@ -151,7 +151,7 @@ pub fn route_decoded(
   socket_id socket_id: String,
   message message: codec.Inbound,
 ) -> Nil {
-  beryl.transport_route_decoded(sockets, socket_id, message)
+  beryl.app_dispatch(sockets).route_decoded(socket_id, message)
 }
 
 /// Route a transport-decoded binary message while preserving its binary
@@ -164,7 +164,7 @@ pub fn route_decoded_binary(
   socket_id socket_id: String,
   message message: codec.Inbound,
 ) -> Nil {
-  beryl.transport_route_decoded_binary(sockets, socket_id, message)
+  beryl.app_dispatch(sockets).route_decoded_binary(socket_id, message)
 }
 
 /// Route a raw binary frame, for codecs without a binary decoder (fans out
@@ -174,7 +174,7 @@ pub fn route_binary(
   socket_id socket_id: String,
   data data: BitArray,
 ) -> Nil {
-  beryl.transport_route_binary(sockets, socket_id, data)
+  beryl.app_dispatch(sockets).route_binary(socket_id, data)
 }
 
 // --- Configuration ---
@@ -213,9 +213,8 @@ pub fn admit_socket(
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
   use <- bool.lazy_guard(
-    when: !beryl.transport_admit_socket(
-      sockets,
-      Some(owner),
+    when: !beryl.app_dispatch(sockets).admit_socket(
+      owner,
       socket_id,
       send,
       send_binary,
