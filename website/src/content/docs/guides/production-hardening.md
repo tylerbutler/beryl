@@ -45,10 +45,10 @@ let config =
   |> beryl.with_max_connections(max_connections: 10_000)
 ```
 
-`with_frame_rate` and `with_message_rate` are independent. The frame bucket
-counts malformed frames, joins, leaves, heartbeats, and messages before decode;
-the message bucket counts decoded non-join envelopes in the runtime. Configure
-both, with frame capacity slightly higher to leave room for protocol traffic.
+`with_frame_rate` and `with_message_rate` are independent. Joins consume frame
+and join quota, but not message quota; leaves and heartbeats consume both frame
+and message quota. Configure both, with frame capacity slightly higher for
+protocol traffic and malformed frames that never reach the runtime.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
