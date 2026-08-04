@@ -1,7 +1,5 @@
 import beryl/presence
 import beryl/pubsub
-import gleam/dynamic.{type Dynamic}
-import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/json
 import gleam/list
@@ -12,18 +10,6 @@ import test_helpers
 
 pub fn main() {
   gleeunit.main()
-}
-
-// ── Monotonic clock (test-only) ──────────────────────────────────────
-//
-// Used only by the mailbox-responsiveness regression below, to measure
-// elapsed wall time without adding any timing dependency to production code.
-
-@external(erlang, "erlang", "monotonic_time")
-fn ffi_monotonic_time(unit: Dynamic) -> Int
-
-fn monotonic_ms() -> Int {
-  ffi_monotonic_time(atom.create("millisecond") |> atom.to_dynamic)
 }
 
 // ── Helper ──────────────────────────────────────────────────────────
@@ -537,54 +523,112 @@ pub fn restart_prune_updates_read_model_count_test() {
 }
 
 // ── Reads stay responsive while the actor mailbox is busy ────────────
+//
+// Both tests below hold the actor busy from *inside* a test-supplied
+// `with_on_diff` callback rather than any production-only message or API:
+// `on_diff` already runs synchronously, on the actor process, before the
+// read model is published and before the triggering call replies, so a
+// callback that blocks is a legitimate (if deliberately slow) user of the
+// existing public API. Synchronization uses subjects exclusively -- the
+// test always waits on an `entered` signal sent from inside the callback
+// before it reads or asserts anything, so there is no sleep-and-hope: the
+// assertions run only once the actor is deterministically known to be
+// parked inside the callback.
 
 pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() {
-  let assert Ok(p) = presence.start(presence.default_config("node1"))
+  // Fires only for user:2's join, so tracking user:1 below completes and
+  // publishes normally; only the second track call blocks the actor.
+  let entered = process.new_subject()
+  let config =
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) {
+      let joined_user2 =
+        presence.diff_joins(diff, "room:lobby")
+        |> list.any(fn(entry) { entry.key == "user:2" })
+      case joined_user2 {
+        False -> Nil
+        True -> {
+          let release = process.new_subject()
+          process.send(entered, release)
+          let assert Ok(_) = process.receive(release, 5000)
+          Nil
+        }
+      }
+    })
+  let assert Ok(p) = presence.start(config)
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
 
-  // Hold the actor's mailbox busy well past any reasonable read latency.
-  // `block_for_test` is a safe, test-only hook (see `presence.gleam`): it
-  // sends a message the actor processes by sleeping, never invoked by
-  // production code.
-  let done = presence.block_for_test(p, 300)
+  // Track user:2 from another process: this call blocks (behind on_diff)
+  // until we release it below, so it must not run on the test process.
+  let track_done = process.new_subject()
+  process.spawn_unlinked(fn() {
+    let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+    process.send(track_done, Nil)
+  })
 
-  let started = monotonic_ms()
+  // Deterministically wait until the actor is parked inside the blocked
+  // callback for user:2's diff -- it is now busy in its message handler,
+  // ahead of both that diff's read-model publish and its own reply.
+  let assert Ok(release) = process.receive(entered, 1000)
+
+  // Reads must stay responsive, and still see the already-published
+  // user:1 state, even though the actor's mailbox is busy handling the
+  // still-blocked second track call.
   presence.count(p, "room:lobby") |> should.equal(1)
   list.length(presence.list(p, "room:lobby")) |> should.equal(1)
   list.length(presence.get_by_key(p, "room:lobby", "user:1"))
   |> should.equal(1)
-  let elapsed = monotonic_ms() - started
 
-  // Reads must return long before the block elapses, proving they never
-  // waited on the (currently blocked) actor mailbox.
-  { elapsed < 150 } |> should.be_true
+  // The second track call genuinely has not returned yet: this is a
+  // present-tense check on a fixed synchronization point, not a timing
+  // race, since the actor cannot have replied while parked above.
+  process.receive(track_done, 0) |> should.equal(Error(Nil))
 
-  // Drain the block so it can't bleed into a later test's timing.
-  let assert Ok(_) = process.receive(done, 1000)
+  // Release the callback and drain completion so it can't bleed into a
+  // later test.
+  process.send(release, Nil)
+  let assert Ok(_) = process.receive(track_done, 1000)
 }
 
 // ── track/untrack reply only after the read model is published ───────
 
 pub fn actor_reply_is_ordered_after_read_model_publication_test() {
-  let assert Ok(p) = presence.start(presence.default_config("node1"))
+  let entered = process.new_subject()
+  let config =
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(_diff) {
+      let release = process.new_subject()
+      process.send(entered, release)
+      let assert Ok(_) = process.receive(release, 5000)
+      Nil
+    })
+  let assert Ok(p) = presence.start(config)
 
-  // Queue a slow Block ahead of the Track in the actor's mailbox, so
-  // `track`'s reply cannot arrive until the actor has processed both,
-  // in order.
-  let done = presence.block_for_test(p, 150)
+  // `track` blocks (behind on_diff) until released below, so it must run
+  // on another process while the test drives the synchronization.
+  let track_done = process.new_subject()
+  process.spawn_unlinked(fn() {
+    let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+    process.send(track_done, ref)
+  })
 
-  let started = monotonic_ms()
-  let _ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
-  let elapsed = monotonic_ms() - started
+  // Deterministically wait until the actor is parked inside the blocked
+  // callback -- it has not yet published the read model or replied.
+  let assert Ok(release) = process.receive(entered, 1000)
 
-  // `track` is still a synchronous actor call: its reply had to wait
-  // behind the blocking message ahead of it in the mailbox.
-  { elapsed >= 100 } |> should.be_true
+  // While the callback is blocked, neither the publish nor the reply has
+  // happened yet: the tracking call has not returned, and the read model
+  // still reports the pre-track state.
+  process.receive(track_done, 0) |> should.equal(Error(Nil))
+  presence.count(p, "room:lobby") |> should.equal(0)
+
+  // Release the callback so the actor finishes handling `Track`: publish
+  // the read model, then reply.
+  process.send(release, Nil)
+  let assert Ok(_ref) = process.receive(track_done, 1000)
 
   // The moment `track` returns, its read-model snapshot is already
   // published -- this is a reply-ordering guarantee, not eventual
   // consistency, so no polling is needed here.
   presence.count(p, "room:lobby") |> should.equal(1)
-
-  let assert Ok(_) = process.receive(done, 1000)
 }
