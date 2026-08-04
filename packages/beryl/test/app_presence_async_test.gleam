@@ -185,7 +185,17 @@ fn app_update(
             PresenceUntrack(topic, "user:" <> model),
             BroadcastPresence(topic, "presence_list", encode_users),
           ])
-        False, False -> Next(model, [AcceptJoin(ref, None)])
+        False, False ->
+          case string.starts_with(topic, "reclose:") {
+            // Tracks a key on join so a `Closed` on this topic has a
+            // previous ref to (attempt to) replace.
+            True ->
+              Next(model, [
+                AcceptJoin(ref, None),
+                PresenceTrack(topic, "user:" <> model, meta("online")),
+              ])
+            False -> Next(model, [AcceptJoin(ref, None)])
+          }
       }
     Message(topic, "promote", _payload, _ref) ->
       Next(model, [
@@ -205,7 +215,18 @@ fn app_update(
     }
     Closed(topic, _reason) -> {
       process.send(events, "closed:" <> topic)
-      Next(model, [])
+      // Simulates an app that re-tracks the same key from `Closed` (e.g.
+      // to record a "left at" status) — including a socket that never
+      // tracked it at all on `reclose-fresh:*`, where the replacement has
+      // no previous ref to speak of.
+      case
+        string.starts_with(topic, "reclose:")
+        || string.starts_with(topic, "reclose-fresh:")
+      {
+        True ->
+          Next(model, [PresenceTrack(topic, "user:" <> model, meta("closing"))])
+        False -> Next(model, [])
+      }
     }
     _ -> Next(model, [])
   }
@@ -785,6 +806,61 @@ pub fn shutdown_sweeps_sessions_owed_a_stale_track_test() {
   presence.untrack(handle, "no-such-ref")
   presence.count(handle, "room:a") |> should.equal(0)
   presence.list(handle, "room:a") |> should.equal([])
+}
+
+/// A `Closed` handler running during `beryl.stop` may return a
+/// `PresenceTrack` that replaces the key the socket already holds. The
+/// runtime is stopping, so the track itself can never be completed (there
+/// is no runtime left to receive an acknowledgement) and stays dropped —
+/// but the previous ref must not be orphaned in the presence actor. This
+/// topic's automatic close cleanup runs immediately after `Closed`, in the
+/// same actor turn, still finds the previous ref in the socket's
+/// bookkeeping (untouched by the dropped track), and is what actually
+/// untracks it from presence and broadcasts its leave. The presence actor
+/// itself is never stopped by `beryl.stop` and must still be responsive
+/// afterwards, holding no stray entry for this socket.
+pub fn closed_presence_track_replacement_during_stop_does_not_orphan_entry_test() {
+  let assert Ok(handle) = presence.start(presence.default_config("node1"))
+  let events = process.new_subject()
+  let channels = start_system(handle, events, identity_config)
+
+  let frames = h.connect(channels, "s1")
+  h.join(channels, "s1", "reclose:room", "jr-1", "r-1")
+  let _reply = h.recv(frames)
+  let _join_diff = h.recv(frames)
+  presence.count(handle, "reclose:room") |> should.equal(1)
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  process.receive(events, 500) |> should.equal(Ok("closed:reclose:room"))
+
+  // Barrier: any fire-and-forget presence message the runtime sent while
+  // tearing down is already in the actor's mailbox by the time this
+  // synchronous call returns.
+  presence.untrack(handle, "no-such-ref")
+  presence.count(handle, "reclose:room") |> should.equal(0)
+  presence.list(handle, "reclose:room") |> should.equal([])
+}
+
+/// The same scenario, but the socket never held the key `Closed` tries to
+/// (re-)track: with no previous ref, the dropped track must stay dropped
+/// and create no entry at all.
+pub fn closed_presence_track_with_no_previous_ref_during_stop_creates_no_entry_test() {
+  let assert Ok(handle) = presence.start(presence.default_config("node1"))
+  let events = process.new_subject()
+  let channels = start_system(handle, events, identity_config)
+
+  let frames = h.connect(channels, "s1")
+  h.join(channels, "s1", "reclose-fresh:room", "jr-1", "r-1")
+  let _reply = h.recv(frames)
+  presence.count(handle, "reclose-fresh:room") |> should.equal(0)
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  process.receive(events, 500)
+  |> should.equal(Ok("closed:reclose-fresh:room"))
+
+  presence.untrack(handle, "no-such-ref")
+  presence.count(handle, "reclose-fresh:room") |> should.equal(0)
+  presence.list(handle, "reclose-fresh:room") |> should.equal([])
 }
 
 /// Graceful shutdown deliberately dispatches its batch presence cleanup
