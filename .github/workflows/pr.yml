@@ -38,8 +38,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
       - name: Check workspace invariants
         run: trellis doctor

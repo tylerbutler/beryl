@@ -30,8 +30,8 @@ jobs:
       - name: Install rebar3
         uses: ./.github/actions/install-rebar3
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
       # Caches Hex tarballs plus each package's build/packages dir, which
       # holds the config_fingerprint files Gleam uses to decide whether to
@@ -75,8 +75,8 @@ jobs:
         with:
           run-deps: false
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
       - name: Cache Gleam dependencies
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
@@ -142,8 +142,8 @@ jobs:
       - name: Install rebar3
         uses: ./.github/actions/install-rebar3
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
       - name: Cache Gleam dependencies
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
