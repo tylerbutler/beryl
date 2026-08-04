@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Fixed"
+body = "During beryl.stop, a Closed handler's PresenceTrack that replaces a key the socket already holds could not be completed (there is no runtime left to receive the acknowledgement) and was correctly dropped, but the previous ref was stripped from the socket's bookkeeping and a leave was broadcast for it without ever telling the presence actor to untrack it -- stranding the entry in presence forever while clients were told it had left. The dropped track now leaves the previous ref exactly where it was, so this topic's automatic close cleanup (which runs immediately after Closed) is what actually untracks it and broadcasts its leave; a dropped track with no previous ref still creates nothing."

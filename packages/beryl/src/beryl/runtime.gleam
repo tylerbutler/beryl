@@ -2750,12 +2750,25 @@ fn start_presence_track(
         dict.get(socket.presence_refs, topic_name)
         |> result.unwrap(dict.new())
       let previous = dict.get(topic_refs, key)
+      // `begin_presence_op` drops a track fire-and-forget under this exact
+      // condition (running actor, stopping runtime): the mutation can never
+      // reach the presence actor as a replace, so the previous ref must
+      // stay exactly where it is — both in this socket's bookkeeping and,
+      // untouched, in the presence actor's CRDT — rather than being
+      // stripped here and forgotten. Left in place, it is picked up like
+      // any other still-held ref by this topic's automatic close cleanup
+      // (immediately following, in the same turn, when this `PresenceTrack`
+      // came from `Closed`; otherwise whenever teardown later closes the
+      // topic), which is what actually untracks it from presence and
+      // broadcasts its leave, in that order.
+      let dropping_for_stop = state.stopping && presence.is_running(handle)
       // The old entry is handed to the presence actor now; nothing else
       // for this socket runs before the acknowledgement, so dropping it
       // here cannot expose an intermediate view.
-      let state = case previous {
-        Error(Nil) -> state
-        Ok(_) ->
+      let state = case previous, dropping_for_stop {
+        _, True -> state
+        Error(Nil), False -> state
+        Ok(_), False ->
           store_socket(
             state,
             SocketState(
@@ -2769,16 +2782,21 @@ fn start_presence_track(
           )
       }
       let op =
-        TrackOp(topic: topic_name, key: key, replaced: case previous {
-          Ok(#(_ref, old_meta)) -> [
-            presence.PresenceEntry(
-              session_id: socket_id,
-              key: key,
-              meta: old_meta,
-            ),
-          ]
-          Error(Nil) -> []
-        })
+        TrackOp(
+          topic: topic_name,
+          key: key,
+          replaced: case previous, dropping_for_stop {
+            _, True -> []
+            Ok(#(_ref, old_meta)), False -> [
+              presence.PresenceEntry(
+                session_id: socket_id,
+                key: key,
+                meta: old_meta,
+              ),
+            ]
+            Error(Nil), False -> []
+          },
+        )
       begin_presence_op(
         state,
         socket_id,
