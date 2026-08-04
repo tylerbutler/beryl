@@ -1,5 +1,7 @@
 import beryl/presence
 import beryl/pubsub
+import gleam/dynamic.{type Dynamic}
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/json
 import gleam/list
@@ -10,6 +12,18 @@ import test_helpers
 
 pub fn main() {
   gleeunit.main()
+}
+
+// ── Monotonic clock (test-only) ──────────────────────────────────────
+//
+// Used only by the mailbox-responsiveness regression below, to measure
+// elapsed wall time without adding any timing dependency to production code.
+
+@external(erlang, "erlang", "monotonic_time")
+fn ffi_monotonic_time(unit: Dynamic) -> Int
+
+fn monotonic_ms() -> Int {
+  ffi_monotonic_time(atom.create("millisecond") |> atom.to_dynamic)
 }
 
 // ── Helper ──────────────────────────────────────────────────────────
@@ -155,6 +169,32 @@ pub fn remote_state_triggers_merge_via_pubsub_test() {
 
   let assert [entry] = entries
   entry.key |> should.equal("user:2")
+}
+
+pub fn remote_merge_updates_read_model_count_test() {
+  let ps = test_pubsub("remote_merge_count")
+
+  let config1 =
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
+    |> presence.with_broadcast_interval(0)
+  let assert Ok(p1) = presence.start(config1)
+
+  let config2 = test_config(ps, "node2", 50)
+  let assert Ok(p2) = presence.start(config2)
+
+  presence.count(p1, "room:lobby") |> should.equal(0)
+
+  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
+
+  // `count` is served from the read model too -- confirm the merge
+  // republishes it, not just `list`.
+  test_helpers.wait_until(
+    fn() { presence.count(p1, "room:lobby") == 1 },
+    2000,
+    20,
+  )
+  presence.count(p1, "room:lobby") |> should.equal(1)
 }
 
 // ── Multi-replica convergence ───────────────────────────────────────
@@ -337,6 +377,44 @@ pub fn survives_exception_in_processing_path_test() {
   presence.list(p1, "room:poison") |> should.equal([])
 }
 
+pub fn merge_failure_leaves_read_model_unchanged_test() {
+  let ps = test_pubsub("merge_failure_read_model")
+
+  let config1 =
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
+    |> presence.with_on_diff(fn(diff) {
+      case presence.diff_joins(diff, "room:poison") {
+        [] -> Nil
+        _ -> panic as "poisoned diff"
+      }
+    })
+  let assert Ok(p1) = presence.start(config1)
+
+  // Snapshot the read model for an unrelated topic before the poisoned sync.
+  let _ =
+    presence.track(p1, "room:lobby", "user:safe", "socket-safe", json.null())
+  let before_entries = presence.list(p1, "room:lobby")
+  let before_count = presence.count(p1, "room:lobby")
+
+  let config2 = test_config(ps, "node2", 50)
+  let assert Ok(p2) = presence.start(config2)
+  let _ =
+    presence.track(p2, "room:poison", "user:boom", "socket-boom", json.null())
+
+  // Give node1 time to receive and reject the poisoned broadcast.
+  process.sleep(200)
+
+  // The read model for the untouched topic is byte-for-byte unchanged.
+  presence.list(p1, "room:lobby") |> should.equal(before_entries)
+  presence.count(p1, "room:lobby") |> should.equal(before_count)
+  // The poisoned topic's read model was never published in the first
+  // place -- it reads empty because the merge was rejected before any
+  // ETS write happened, not because of a later prune or partial write.
+  presence.list(p1, "room:poison") |> should.equal([])
+  presence.count(p1, "room:poison") |> should.equal(0)
+}
+
 // ── Helper to drain stray messages ──────────────────────────────────
 
 fn drain_mailbox() -> Nil {
@@ -440,4 +518,85 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() {
   presence.list(p1b, "room:lobby")
   |> list.map(fn(entry) { entry.key })
   |> should.equal(["user:live"])
+}
+
+pub fn restart_prune_updates_read_model_count_test() {
+  let ps = test_pubsub("restart_prune_count")
+  let assert Ok(p1) = presence.start(test_config(ps, "node1", 30))
+  let assert Ok(p2) = presence.start(test_config(ps, "node2", 30))
+
+  let _ =
+    presence.track(p1, "room:lobby", "user:ghost", "socket-dead", json.null())
+  test_helpers.wait_until(
+    fn() { presence.count(p2, "room:lobby") == 1 },
+    2000,
+    10,
+  )
+
+  kill_presence(p1)
+  let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
+  let _ =
+    presence.track(p1b, "room:lobby", "user:live", "socket-live", json.null())
+
+  // The pruned ghost must not inflate the peer's count once it converges
+  // on the restarted incarnation.
+  test_helpers.wait_until(
+    fn() { presence.count(p2, "room:lobby") == 1 },
+    3000,
+    10,
+  )
+  presence.count(p2, "room:lobby") |> should.equal(1)
+}
+
+// ── Reads stay responsive while the actor mailbox is busy ────────────
+
+pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() {
+  let assert Ok(p) = presence.start(presence.default_config("node1"))
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+
+  // Hold the actor's mailbox busy well past any reasonable read latency.
+  // `block_for_test` is a safe, test-only hook (see `presence.gleam`): it
+  // sends a message the actor processes by sleeping, never invoked by
+  // production code.
+  let done = presence.block_for_test(p, 300)
+
+  let started = monotonic_ms()
+  presence.count(p, "room:lobby") |> should.equal(1)
+  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  list.length(presence.get_by_key(p, "room:lobby", "user:1"))
+  |> should.equal(1)
+  let elapsed = monotonic_ms() - started
+
+  // Reads must return long before the block elapses, proving they never
+  // waited on the (currently blocked) actor mailbox.
+  { elapsed < 150 } |> should.be_true
+
+  // Drain the block so it can't bleed into a later test's timing.
+  let assert Ok(_) = process.receive(done, 1000)
+}
+
+// ── track/untrack reply only after the read model is published ───────
+
+pub fn actor_reply_is_ordered_after_read_model_publication_test() {
+  let assert Ok(p) = presence.start(presence.default_config("node1"))
+
+  // Queue a slow Block ahead of the Track in the actor's mailbox, so
+  // `track`'s reply cannot arrive until the actor has processed both,
+  // in order.
+  let done = presence.block_for_test(p, 150)
+
+  let started = monotonic_ms()
+  let _ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let elapsed = monotonic_ms() - started
+
+  // `track` is still a synchronous actor call: its reply had to wait
+  // behind the blocking message ahead of it in the mailbox.
+  { elapsed >= 100 } |> should.be_true
+
+  // The moment `track` returns, its read-model snapshot is already
+  // published -- this is a reply-ordering guarantee, not eventual
+  // consistency, so no polling is needed here.
+  presence.count(p, "room:lobby") |> should.equal(1)
+
+  let assert Ok(_) = process.receive(done, 1000)
 }

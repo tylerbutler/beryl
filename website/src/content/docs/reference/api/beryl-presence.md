@@ -71,7 +71,10 @@ pub type Message
 A running Presence instance.
 
  This handle is intentionally opaque so callers cannot forge actor subjects
- or depend on the runtime representation.
+ or depend on the runtime representation. It carries both the actor's
+ subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
+ reference to the actor-owned ETS read model that `list`, `get_by_key`,
+ and `count` read directly, without going through the actor mailbox.
 
 ```gleam
 pub type Presence
@@ -111,6 +114,27 @@ pub type PresenceError {
 The presence actor failed to start.
 
 ## Functions
+
+### `count`
+
+Count presences in a topic.
+
+ Equivalent to `list(presence, topic) |> list.length`, but reads the
+ materialized count directly without building the entry list.
+
+ Reads the actor-owned read model directly (an ETS snapshot materialized
+ after each mutation, merge, or prune) rather than calling the actor, so
+ this never waits on the actor mailbox.
+
+ Panics if the presence read model is unavailable (the presence actor is
+ not running).
+
+```gleam
+pub fn count(
+  Presence,
+  String
+) -> Int
+```
 
 ### `default_config`
 
@@ -171,9 +195,14 @@ pub fn diff_topics(Diff) -> List(String)
 
 ### `get_by_key`
 
-Get presences for a specific key within a topic
+Get presences for a specific key within a topic.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Reads the actor-owned read model directly (an ETS snapshot materialized
+ after each mutation, merge, or prune) rather than calling the actor, so
+ this never waits on the actor mailbox.
+
+ Panics if the presence read model is unavailable (the presence actor is
+ not running).
 
 ```gleam
 pub fn get_by_key(
@@ -185,9 +214,14 @@ pub fn get_by_key(
 
 ### `list`
 
-List all presences for a topic
+List all presences for a topic.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Reads the actor-owned read model directly (an ETS snapshot materialized
+ after each mutation, merge, or prune) rather than calling the actor, so
+ this never waits on the actor mailbox.
+
+ Panics if the presence read model is unavailable (the presence actor is
+ not running).
 
 ```gleam
 pub fn list(

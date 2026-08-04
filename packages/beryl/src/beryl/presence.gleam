@@ -32,6 +32,7 @@ import gleam/bit_array
 import gleam/bool
 import gleam/crypto
 import gleam/dict.{type Dict}
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode as gdecode
 import gleam/erlang/process.{type Subject}
 import gleam/int
@@ -53,9 +54,12 @@ const sync_event = "presence_sync"
 /// A running Presence instance.
 ///
 /// This handle is intentionally opaque so callers cannot forge actor subjects
-/// or depend on the runtime representation.
+/// or depend on the runtime representation. It carries both the actor's
+/// subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
+/// reference to the actor-owned ETS read model that `list`, `get_by_key`,
+/// and `count` read directly, without going through the actor mailbox.
 pub opaque type Presence {
-  Presence(subject: Subject(Message))
+  Presence(subject: Subject(Message), read_table: Dynamic)
 }
 
 type State =
@@ -201,15 +205,87 @@ pub opaque type Message {
   )
   Untrack(ref: String, reply: Subject(Nil))
   UntrackAll(pid: String, reply: Subject(Nil))
-  List(topic: String, reply: Subject(List(PresenceEntry)))
-  GetByKey(
-    topic: String,
-    key: String,
-    reply: Subject(List(#(String, json.Json))),
-  )
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
   RemoteSync(pubsub_msg: pubsub.Message(SyncPayload))
+  /// Test-only: holds the mailbox busy (see `block_for_test`) so tests can
+  /// prove `list`/`get_by_key`/`count` stay responsive without touching it.
+  /// Never sent by production code.
+  Block(ms: Int, reply: Subject(Nil))
+}
+
+// ── Read model (ETS) ─────────────────────────────────────────────────────────
+//
+// `list`, `get_by_key`, and `count` read a materialized snapshot per topic
+// from an ETS table the actor owns, rather than calling the actor. Only the
+// actor process ever writes to this table, and only after a local mutation,
+// remote merge, or replica-pruning operation has produced a complete new
+// CRDT state — so readers never observe a partially updated topic. The
+// table's lifetime is tied to the actor process: it is destroyed
+// automatically when the actor stops, so a dead actor's reads fail
+// explicitly (via `TableGone`) instead of silently returning stale or empty
+// data.
+
+/// The outcome of looking up a topic's materialized snapshot. Constructed
+/// directly by `beryl_presence_read_ffi` (its runtime representation must
+/// match this type's constructors exactly: `Found(x)` as `{found, x}`,
+/// `NotFound` as `not_found`, `TableGone` as `table_gone`).
+type TopicLookup {
+  Found(List(PresenceEntry))
+  NotFound
+  TableGone
+}
+
+@external(erlang, "beryl_presence_read_ffi", "new_table")
+fn ffi_new_read_table() -> Dynamic
+
+@external(erlang, "beryl_presence_read_ffi", "put_topic")
+fn ffi_put_topic(
+  table: Dynamic,
+  topic: String,
+  entries: List(PresenceEntry),
+) -> Nil
+
+@external(erlang, "beryl_presence_read_ffi", "delete_topic")
+fn ffi_delete_topic(table: Dynamic, topic: String) -> Nil
+
+@external(erlang, "beryl_presence_read_ffi", "get_topic")
+fn ffi_get_topic(table: Dynamic, topic: String) -> TopicLookup
+
+/// Materialize a topic's current entries from `crdt` into the read model,
+/// or remove its snapshot entirely once it has no entries left, so a
+/// missing topic is only ever "no snapshot recorded", never a stale empty
+/// leftover.
+fn publish_topic(table: Dynamic, crdt: State, topic: String) -> Nil {
+  let entries =
+    state.get_by_topic(crdt, topic)
+    |> list.map(fn(t) { PresenceEntry(session_id: t.0, key: t.1, meta: t.2) })
+  case entries {
+    [] -> ffi_delete_topic(table, topic)
+    _ -> ffi_put_topic(table, topic, entries)
+  }
+}
+
+/// Republish every topic named in `topics` from `crdt`. Used after
+/// operations (remote merges, replica pruning) that can touch several
+/// topics at once.
+fn publish_topics(table: Dynamic, crdt: State, topics: List(String)) -> Nil {
+  list.each(topics, fn(topic) { publish_topic(table, crdt, topic) })
+}
+
+/// Read a topic's materialized entries directly from the read model.
+///
+/// Panics if the read model table is unavailable, i.e. the presence actor
+/// that owns it is no longer running.
+fn read_entries(presence: Presence, topic: String) -> List(PresenceEntry) {
+  case ffi_get_topic(presence.read_table, topic) {
+    Found(entries) -> entries
+    NotFound -> []
+    TableGone -> {
+      // nolint: avoid_panic -- read storage being gone means the owning actor died; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
+      panic as "presence read storage is unavailable: the presence actor is not running"
+    }
+  }
 }
 
 /// A tracked presence's location within the CRDT, keyed by tracking ref.
@@ -231,6 +307,9 @@ type ActorState {
     /// `untrack` can locate the correct CRDT entry to leave. Populated on
     /// `Track` and pruned on `Untrack`/`UntrackAll`.
     refs: Dict(String, TrackedPresence),
+    /// The ETS table backing the read model that `list`, `get_by_key`, and
+    /// `count` read directly. Owned by this actor process; see `publish_topic`.
+    read_table: Dynamic,
   )
 }
 
@@ -271,11 +350,21 @@ pub fn subject(presence: Presence) -> Subject(Message) {
   presence.subject
 }
 
+@internal
+pub fn block_for_test(presence: Presence, ms: Int) -> Subject(Nil) {
+  let reply = process.new_subject()
+  process.send(presence.subject, Block(ms, reply))
+  reply
+}
+
 /// Start the presence actor
 pub fn start(config: Config) -> Result(Presence, PresenceError) {
   build_presence(config)
   |> actor.start
-  |> result.map(fn(started) { Presence(subject: started.data) })
+  |> result.map(fn(started) {
+    let #(subject, read_table) = started.data
+    Presence(subject: subject, read_table: read_table)
+  })
   |> result.map_error(fn(error) {
     PresenceStartFailed(beryl_error.from_actor_start_error(error))
   })
@@ -283,7 +372,7 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
 
 fn build_presence(
   config: Config,
-) -> actor.Builder(ActorState, Message, Subject(Message)) {
+) -> actor.Builder(ActorState, Message, #(Subject(Message), Dynamic)) {
   // Each actor start is a fresh CRDT incarnation. Reusing the bare replica
   // name after a restart would reset its clocks while peers still remember
   // the old ones: new joins would be silently filtered as already-seen,
@@ -293,6 +382,11 @@ fn build_presence(
   let crdt = state.new(incarnate_replica(config.replica))
 
   actor.new_with_initialiser(5000, fn(subject) {
+    // Created here, in the actor process itself, so the read model's
+    // lifetime is tied to the actor: it is destroyed automatically if this
+    // process stops or crashes, matching the "actor unavailable" failure
+    // mode readers already get from a dead actor.
+    let read_table = ffi_new_read_table()
     let initial =
       ActorState(
         crdt: crdt,
@@ -300,6 +394,7 @@ fn build_presence(
         self_subject: Some(subject),
         dirty: False,
         refs: dict.new(),
+        read_table: read_table,
       )
 
     case config.pubsub {
@@ -325,7 +420,7 @@ fn build_presence(
 
         actor.initialised(initial)
         |> actor.selecting(selector)
-        |> actor.returning(subject)
+        |> actor.returning(#(subject, read_table))
         |> Ok
       }
       None -> {
@@ -336,9 +431,10 @@ fn build_presence(
             self_subject: None,
             dirty: False,
             refs: dict.new(),
+            read_table: read_table,
           )
         actor.initialised(no_pubsub_initial)
-        |> actor.returning(subject)
+        |> actor.returning(#(subject, read_table))
         |> Ok
       }
     }
@@ -418,7 +514,14 @@ fn base_replica(replica: String) -> String {
 /// it. A lagging peer can briefly resurrect pruned entries until it
 /// observes the live incarnation itself; the prune re-applies on every
 /// sync, so the cluster converges within about one broadcast interval.
-fn prune_superseded(config: Config, crdt: State, live: List(String)) -> State {
+///
+/// Returns the pruned CRDT along with every topic its pruning touched, so
+/// the caller can republish exactly those topics' read-model snapshots.
+fn prune_superseded(
+  config: Config,
+  crdt: State,
+  live: List(String),
+) -> #(State, List(String)) {
   let stale =
     dict.keys(state.compacted_clocks(crdt))
     |> list.filter(fn(replica) {
@@ -427,10 +530,15 @@ fn prune_superseded(config: Config, crdt: State, live: List(String)) -> State {
         && base_replica(replica) == base_replica(live_replica)
       })
     })
-  list.fold(stale, crdt, fn(crdt, replica) {
+  list.fold(stale, #(crdt, []), fn(acc, replica) {
+    let #(crdt, touched_topics) = acc
     let #(crdt, down_diff) = state.replica_down(crdt, replica)
-    maybe_invoke_on_diff(config, wrap_state_diff(down_diff))
-    state.remove_down_replica(crdt, replica)
+    let diff = wrap_state_diff(down_diff)
+    maybe_invoke_on_diff(config, diff)
+    let crdt = state.remove_down_replica(crdt, replica)
+    let newly_touched =
+      list.append(dict.keys(diff.joins), dict.keys(diff.leaves))
+    #(crdt, list.append(touched_topics, newly_touched))
   })
 }
 
@@ -498,22 +606,49 @@ pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
   })
 }
 
-/// List all presences for a topic
+/// List all presences for a topic.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Reads the actor-owned read model directly (an ETS snapshot materialized
+/// after each mutation, merge, or prune) rather than calling the actor, so
+/// this never waits on the actor mailbox.
+///
+/// Panics if the presence read model is unavailable (the presence actor is
+/// not running).
 pub fn list(presence: Presence, topic: String) -> List(PresenceEntry) {
-  process.call(presence.subject, 5000, fn(reply) { List(topic, reply) })
+  read_entries(presence, topic)
 }
 
-/// Get presences for a specific key within a topic
+/// Get presences for a specific key within a topic.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Reads the actor-owned read model directly (an ETS snapshot materialized
+/// after each mutation, merge, or prune) rather than calling the actor, so
+/// this never waits on the actor mailbox.
+///
+/// Panics if the presence read model is unavailable (the presence actor is
+/// not running).
 pub fn get_by_key(
   presence: Presence,
   topic: String,
   key: String,
 ) -> List(#(String, json.Json)) {
-  process.call(presence.subject, 5000, fn(reply) { GetByKey(topic, key, reply) })
+  read_entries(presence, topic)
+  |> list.filter(fn(entry) { entry.key == key })
+  |> list.map(fn(entry) { #(entry.session_id, entry.meta) })
+}
+
+/// Count presences in a topic.
+///
+/// Equivalent to `list(presence, topic) |> list.length`, but reads the
+/// materialized count directly without building the entry list.
+///
+/// Reads the actor-owned read model directly (an ETS snapshot materialized
+/// after each mutation, merge, or prune) rather than calling the actor, so
+/// this never waits on the actor mailbox.
+///
+/// Panics if the presence read model is unavailable (the presence actor is
+/// not running).
+pub fn count(presence: Presence, topic: String) -> Int {
+  read_entries(presence, topic) |> list.length
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
@@ -545,6 +680,9 @@ fn handle_message(
           ref,
           TrackedPresence(topic: topic, key: key, session_id: pid),
         )
+      // Publish the read model before replying, so a `track(); list()`
+      // caller always observes the entry it just tracked.
+      publish_topic(actor_state.read_table, new_crdt, topic)
       process.send(reply, ref)
       actor.continue(
         ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs),
@@ -569,6 +707,9 @@ fn handle_message(
             #("session_id", session_id),
             #("ref", ref),
           ])
+          // Publish before replying, so a `untrack(); list()` caller always
+          // observes the removal.
+          publish_topic(actor_state.read_table, new_crdt, topic)
           process.send(reply, Nil)
           actor.continue(
             ActorState(
@@ -592,26 +733,14 @@ fn handle_message(
         dict.filter(actor_state.refs, fn(_ref, tracked) {
           tracked.session_id != pid
         })
+      // A single session can hold presences in several topics; republish
+      // every topic the leave touched (from the pre-mutation diff) before
+      // replying.
+      publish_topics(actor_state.read_table, new_crdt, dict.keys(diff.leaves))
       process.send(reply, Nil)
       actor.continue(
         ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs),
       )
-    }
-
-    List(topic, reply) -> {
-      let entries =
-        state.get_by_topic(actor_state.crdt, topic)
-        |> list.map(fn(t) {
-          PresenceEntry(session_id: t.0, key: t.1, meta: t.2)
-        })
-      process.send(reply, entries)
-      actor.continue(actor_state)
-    }
-
-    GetByKey(topic, key, reply) -> {
-      let entries = state.get_by_key(actor_state.crdt, topic, key)
-      process.send(reply, entries)
-      actor.continue(actor_state)
     }
 
     BroadcastTick -> {
@@ -634,6 +763,13 @@ fn handle_message(
         False -> actor.continue(actor_state)
         True -> handle_sync_payload(actor_state, pubsub_msg.payload)
       }
+    }
+
+    Block(ms, reply) -> {
+      // Test-only: deliberately holds the mailbox busy. See `block_for_test`.
+      process.sleep(ms)
+      process.send(reply, Nil)
+      actor.continue(actor_state)
     }
   }
 }
@@ -736,12 +872,15 @@ fn merge_remote_sync(
   sender: String,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
-  // Merge, diff, on_diff, and prune all run inside a crash boundary. The
-  // remote state originates from another cluster node (possibly a mixed
-  // version, a compromised peer, or a malformed dynamic value coerced from
-  // the wire); an exception here must not terminate the shared presence
-  // actor. On failure we return the previous, unchanged `actor_state` so
-  // invalid sync input cannot partially mutate presence state.
+  // Merge, diff, on_diff, prune, and the read-model publication that follows
+  // all run inside a crash boundary. The remote state originates from
+  // another cluster node (possibly a mixed version, a compromised peer, or a
+  // malformed dynamic value coerced from the wire); an exception here must
+  // not terminate the shared presence actor. On failure we return the
+  // previous, unchanged `actor_state` so invalid sync input cannot partially
+  // mutate presence state or its read model: the read model is only
+  // republished once merge, on_diff, and prune have all completed
+  // successfully below.
   let processed =
     internal.rescue(fn() {
       let #(new_crdt, state_diff) =
@@ -753,11 +892,19 @@ fn merge_remote_sync(
       // the sender's predecessors, or our own pre-restart self echoed back
       // by a peer. Prune anything superseded by the two incarnations known
       // to be live right now: the sender and ourselves.
-      let new_crdt =
+      let #(new_crdt, pruned_topics) =
         prune_superseded(actor_state.config, new_crdt, [
           sender,
           state.replica(new_crdt),
         ])
+      // Republish every topic touched by either the merge or the prune,
+      // from the final crdt, in one pass — readers only ever see the
+      // fully-merged-and-pruned snapshot, never an intermediate one.
+      let touched_topics =
+        list.append(dict.keys(diff.joins), dict.keys(diff.leaves))
+        |> list.append(pruned_topics)
+        |> unique_strings(set.new(), [])
+      publish_topics(actor_state.read_table, new_crdt, touched_topics)
       ActorState(
         ..actor_state,
         crdt: new_crdt,
