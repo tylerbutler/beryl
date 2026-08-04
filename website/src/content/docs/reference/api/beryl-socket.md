@@ -13,11 +13,22 @@ Types for building app-side dispatch systems with `beryl.start`.
 
  ## Effect ordering guarantee
 
- Effects are applied strictly in list order, inside a single runtime
- actor turn, and every frame for a socket is written by that single
- actor — so list order is wire order. An `AcceptJoin` followed by a
- `Push` in the same list is guaranteed to arrive as the join
- acknowledgment first and the push second.
+ Effects are applied strictly in list order, and every frame for a
+ socket is written by the single runtime actor — so list order is wire
+ order. An `AcceptJoin` followed by a `Push` in the same list is
+ guaranteed to arrive as the join acknowledgment first and the push
+ second.
+
+ Most effects are applied in one actor turn. `PresenceTrack` and
+ `PresenceUntrack` are the exception: they are applied by the presence
+ actor, so beryl holds the rest of the list — and every later input for
+ that socket — until the mutation has been applied, then continues
+ exactly where it left off. The visible order is unchanged (a
+ `PushPresence` after a `PresenceTrack` still sees the track), and the
+ socket's own inputs still arrive in the order the client sent them.
+ What it buys is that no other socket, broadcast, or heartbeat waits on
+ that mutation — and, because those keep flowing, a broadcast from
+ elsewhere may land between two of this socket's effects.
 
 ## Types
 
@@ -180,8 +191,13 @@ Broadcast to every subscriber of a topic except this socket.
 Track this socket's presence under a key in a topic and broadcast the
  corresponding `presence_diff` join. Requires a presence handle on the
  config (`beryl.with_presence_handle`); dropped with a warning
- otherwise. Tracking an already-tracked key replaces the previous
- entry.
+ otherwise.
+
+ Tracking an already-tracked key replaces the previous entry
+ atomically: the key is never momentarily absent, and the replacement
+ is published as one `presence_diff` carrying both the leave and the
+ join. Effects after this one wait for the mutation (see the module
+ docs) but no other socket does.
 
 ##### `PresenceUntrack(
   topic: String,
@@ -190,7 +206,10 @@ Track this socket's presence under a key in a topic and broadcast the
 
 Untrack a presence previously tracked with `PresenceTrack` and
  broadcast the corresponding `presence_diff` leave. Remaining tracked
- keys are untracked automatically when their topic closes.
+ keys are untracked automatically when their topic closes — as one
+ batch, producing a single aggregate leave diff. Effects after this
+ one wait for the mutation (see the module docs) but no other socket
+ does.
 
 ##### `PushPresence(
   topic: String,
@@ -201,8 +220,8 @@ Untrack a presence previously tracked with `PresenceTrack` and
 Push a presence snapshot for a topic to this socket. Unlike a payload
  built inside `update` (which sees presence as it was *before* this
  effects list), `encode` runs when the effect is applied — after any
- earlier `PresenceTrack`/`PresenceUntrack` in the same list — so the
- entries already reflect them. Requires a presence handle
+ earlier `PresenceTrack`/`PresenceUntrack` in the same list has
+ actually been applied — so the entries already reflect them. Requires a presence handle
  (`beryl.with_presence_handle`); dropped with a warning otherwise.
  Like `Push`, dropped when the topic is not joined at that point.
 

@@ -25,9 +25,11 @@ When a transport announces a new socket, the runtime calls your `init` once with
 
 ## Effect ordering
 
-Effects are applied strictly in list order inside one actor turn. Because the same actor both interprets the list and writes frames for that socket, list order is wire order.
+Effects are applied strictly in list order. Because the same actor both interprets the list and writes frames for that socket, list order is wire order.
 
 That guarantee is load-bearing. For example, `AcceptJoin(ref, ...)` followed by `Push(topic, event, payload)` sends the join reply first and the push second.
+
+Most lists are applied in a single actor turn. `PresenceTrack` and `PresenceUntrack` are applied by the presence actor instead, so the runtime holds the rest of that socket's list — and queues that socket's later inbound messages — until the mutation is acknowledged, then resumes exactly where it left off. Ordering for the socket is unchanged; what changes is that only that socket waits. Every other socket, broadcast, heartbeat check, and shutdown keeps being processed, which also means an unrelated broadcast can land between two of the waiting socket's effects.
 
 ## Supervision shapes
 

@@ -21,6 +21,8 @@ From there, presence changes are driven by effects returned from your app's `upd
 
 The runtime applies those effects after `update` returns. `PushPresence` and `BroadcastPresence` read presence at apply time, so earlier track/untrack effects in the same list are already reflected in the snapshot they encode.
 
+Mutations are asynchronous end to end: the runtime sends `PresenceTrack`/`PresenceUntrack` to the presence actor and holds the rest of that socket's effect list (and any further input from that socket) until presence confirms the change — it never blocks its own actor waiting. Other sockets, broadcasts, and heartbeats keep being served throughout, so one slow `on_diff` callback can no longer stall the whole runtime. Re-tracking a key is a single atomic replacement, and the automatic cleanup when a topic closes untracks every key the socket still held in one batch, producing one aggregate leave diff.
+
 ## API surface
 
 ### Starting presence
@@ -85,7 +87,9 @@ sequenceDiagram
   participant PS as pubsub
   participant Remote as remote replica
   App->>Runtime: PresenceTrack / PresenceUntrack / PushPresence / BroadcastPresence
-  Runtime->>Pres: track / untrack / list
+  Runtime->>Pres: track / untrack (async, acknowledged)
+  Pres-->>Runtime: mutation ack
+  Runtime->>Pres: list (direct ETS read)
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end
