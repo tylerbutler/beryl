@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node check-helpers.mjs && node check-client-lifecycle.mjs && node check-profiles.mjs",
+    "check": "node check-helpers.mjs && node check-client-lifecycle.mjs && node check-profiles.mjs && node check-smoke-comment.mjs",
     "syntax": "find . -type f \\( -name '*.js' -o -name '*.mjs' \\) -exec node --check {} \\;"
   }
 }

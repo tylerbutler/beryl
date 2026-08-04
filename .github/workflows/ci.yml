@@ -292,3 +292,59 @@ jobs:
             ${{ env.SUMMARY_PATH }}
           if-no-files-found: warn
           retention-days: 7
+
+  load-smoke-report:
+    name: Protocol smoke report
+    needs: load-smoke
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+
+      - name: Download smoke artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p smoke-artifacts
+          gh run download "$GITHUB_RUN_ID" \
+            --pattern "protocol-smoke-*" \
+            --dir smoke-artifacts || true
+
+      - name: Render smoke report
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node load/k6/render-smoke-comment.mjs smoke-artifacts "$RUN_URL" > smoke-comment.md
+
+      - name: Update sticky PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- beryl-protocol-smoke -->"
+          comment_id="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --paginate \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" \
+              | head -n 1
+          )"
+          if [[ -n "$comment_id" ]]; then
+            gh api \
+              --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+              --raw-field body="$(cat smoke-comment.md)"
+          else
+            gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --raw-field body="$(cat smoke-comment.md)"
+          fi

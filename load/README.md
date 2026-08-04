@@ -336,3 +336,10 @@ Every matrix leg uploads, even on failure:
 The artifact is named
 `protocol-smoke-erlang-<erlang>-<transport>`, warns rather than fails if files
 are missing, and is retained for 7 days.
+
+For same-repository pull requests, a final report job downloads the four
+artifacts and creates or updates one marker-based PR comment. The comment
+shows each runtime/transport result, diagnostic lifecycle timings, the combined
+client/protocol error count, the smoke test's correctness scope, and concise
+instructions for running repeatable throughput and latency tests. Fork pull
+requests do not receive the comment because their `GITHUB_TOKEN` is read-only.
