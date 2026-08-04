@@ -443,6 +443,202 @@ pub fn unacknowledged_mutation_times_out_and_late_ack_is_ignored_test() {
   process.receive(events, 1000) |> should.equal(Ok("pong"))
 }
 
+/// The presence actor can still apply a track and acknowledge it after the
+/// runtime has already given up on it (timed out) and resumed the socket.
+/// Nobody is waiting on that acknowledgement any more, but the entry it
+/// just created is real: left alone it would sit in presence forever,
+/// with nothing ever holding the ref needed to remove it. The runtime must
+/// untrack exactly that ref instead.
+pub fn late_tracked_ack_after_timeout_is_compensated_test() {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let events = process.new_subject()
+  let channels =
+    start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
+
+  let frames = h.connect(channels, "s1")
+  arm(gate)
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  await_entered(entered)
+
+  // The runtime gives up before the actor replies: no ref was recorded,
+  // so presence itself is still empty from this side's point of view.
+  let snapshot = h.recv(frames)
+  snapshot |> string.contains("presence_list") |> should.be_true
+  presence.count(handle, "room:a") |> should.equal(0)
+
+  // The actor finally applies the track and acknowledges it. The runtime
+  // drops the acknowledgement (nobody is parked on it any more) but must
+  // still compensate: presence settles back to empty rather than keeping
+  // a ghost entry nothing can ever remove.
+  release(gate)
+  h.recv_none(frames)
+  test_helpers.wait_until(
+    fn() { presence.count(handle, "room:a") == 0 },
+    2000,
+    20,
+  )
+  presence.list(handle, "room:a") |> should.equal([])
+}
+
+/// After a track times out, the app may reasonably retry it. The first
+/// attempt's stale acknowledgement is still going to show up; it must not
+/// leave its ref coexisting with the retry's, or presence would show the
+/// same session twice under the same key.
+pub fn retrack_after_timeout_does_not_double_count_test() {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let events = process.new_subject()
+  let channels =
+    start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
+
+  let frames = h.connect(channels, "s1")
+  arm(gate)
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  await_entered(entered)
+
+  let snapshot = h.recv(frames)
+  snapshot |> string.contains("presence_list") |> should.be_true
+
+  // Let the stale first attempt land and be compensated before retrying,
+  // so the retry starts from a genuinely empty topic.
+  release(gate)
+  h.recv_none(frames)
+  test_helpers.wait_until(
+    fn() { presence.count(handle, "room:a") == 0 },
+    2000,
+    20,
+  )
+
+  // The app retries the same track.
+  h.push(channels, "s1", "room:a", "promote", "r-2")
+  h.recv(frames) |> string.contains("presence_diff") |> should.be_true
+  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+
+  // Exactly one entry, and it is the retry's — not a leftover from the
+  // timed-out first attempt plus the retry.
+  presence.count(handle, "room:a") |> should.equal(1)
+  let assert [entry] = presence.list(handle, "room:a")
+  json.to_string(entry.meta) |> string.contains("away") |> should.be_true
+}
+
+/// A stale acknowledgement can arrive for an operation the runtime has
+/// already replaced with a newer one for the same socket: a track on one
+/// topic times out, and a track on a *different* topic for the same
+/// socket is still pending when the first attempt's stale acknowledgement
+/// shows up. The stale entry must be cleaned up without disturbing the
+/// still-pending newer operation in any way.
+///
+/// (The two operations are deliberately on different topics/keys: the
+/// presence CRDT's removal primitive matches by `(session, topic, key)`,
+/// not by ref, so the compensating untrack below would otherwise also
+/// remove a second, unrelated live entry that happened to share the same
+/// topic and key.)
+pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let events = process.new_subject()
+  let channels =
+    start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
+
+  let frames = h.connect(channels, "s1")
+  arm(gate)
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  await_entered(entered)
+
+  // Queued behind the parked socket: it cannot start until the timeout
+  // resumes it below.
+  h.join(channels, "s1", "room:b", "jr-2", "r-2")
+
+  // The runtime gives up on the first track (room:a). Its own remaining
+  // effect (the join's snapshot) runs, and only then does the queued join
+  // on room:b start its own track — while the first attempt's
+  // acknowledgement is still outstanding at the (still gate-blocked)
+  // presence actor.
+  let snapshot_a = h.recv(frames)
+  snapshot_a |> string.contains("presence_list") |> should.be_true
+  snapshot_a |> string.contains("room:a") |> should.be_true
+  snapshot_a |> string.contains("presence_diff") |> should.be_false
+
+  let reply_b = h.recv(frames)
+  reply_b |> string.contains("\"status\":\"ok\"") |> should.be_true
+
+  // Let both the stale room:a track and the pending room:b track resolve
+  // at the actor.
+  release(gate)
+
+  // room:b's own join diff and snapshot land, in order: it completed on
+  // its own terms, untouched by the stale room:a acknowledgement arriving
+  // around the same time.
+  let diff_b = h.recv(frames)
+  diff_b |> string.contains("presence_diff") |> should.be_true
+  diff_b |> string.contains("room:b") |> should.be_true
+  diff_b |> string.contains("user:s1") |> should.be_true
+  let snapshot_b = h.recv(frames)
+  snapshot_b |> string.contains("presence_list") |> should.be_true
+  snapshot_b |> string.contains("room:b") |> should.be_true
+
+  // room:b's track is intact — not corrupted by the stale room:a
+  // acknowledgement — and room:a's stale entry is cleaned up rather than
+  // left stranded.
+  test_helpers.wait_until(
+    fn() { presence.count(handle, "room:b") == 1 },
+    2000,
+    20,
+  )
+  presence.count(handle, "room:b") |> should.equal(1)
+  test_helpers.wait_until(
+    fn() { presence.count(handle, "room:a") == 0 },
+    2000,
+    20,
+  )
+}
+
+/// Graceful shutdown deliberately dispatches its batch presence cleanup
+/// fire-and-forget, without waiting for an acknowledgement — there is no
+/// runtime left to receive one. That is not a failure and must not be
+/// logged as one.
+pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() {
+  let assert Ok(handle) = presence.start(presence.default_config("node1"))
+  let events = process.new_subject()
+  let channels =
+    start_system(handle, events, fn(config) {
+      config
+      |> beryl.with_logging(beryl.logging_config(
+        level: beryl.DebugLevel,
+        include_payloads: False,
+      ))
+    })
+
+  let selector = test_helpers.begin_capture()
+
+  let frames = h.connect(channels, "s1")
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = h.recv(frames)
+  let _diff = h.recv(frames)
+  let _snapshot = h.recv(frames)
+
+  let _ = beryl.stop(channels)
+
+  let logs = drain_captured_logs(selector)
+  logs
+  |> list.any(fn(l) {
+    l.message == "Presence cleanup dispatched: runtime stopping"
+  })
+  |> should.be_true
+  logs
+  |> list.any(fn(l) { l.message == "Presence cleanup failed: not acknowledged" })
+  |> should.be_false
+
+  test_helpers.stop_capture()
+}
+
 /// A disconnect that arrives while a track is in flight is queued behind
 /// it, so the socket first completes the track and then tears down —
 /// leaving no tracked entry behind and emitting no duplicate diffs.
@@ -545,6 +741,18 @@ pub fn public_presence_api_keeps_read_after_write_test() {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Drain every log captured so far into a list, so a test can assert on
+/// presence/absence across the whole stream without risking a message
+/// being consumed (and discarded) by an earlier, unrelated check.
+fn drain_captured_logs(
+  selector: process.Selector(test_helpers.CapturedLog),
+) -> List(test_helpers.CapturedLog) {
+  case process.selector_receive(selector, 300) {
+    Ok(captured) -> [captured, ..drain_captured_logs(selector)]
+    Error(Nil) -> []
+  }
+}
 
 /// The single `phx_ref` under `joins`/`leaves` of a `presence_diff` frame.
 fn phx_ref_of(frame: String, side: String) -> String {
