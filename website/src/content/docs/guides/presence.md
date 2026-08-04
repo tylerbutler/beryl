@@ -73,9 +73,13 @@ let online_count = presence.count(p, "room:lobby")
 
 That table's lifetime is tied to the owning actor process: if the actor stops or crashes, `list`, `get_by_key`, and `count` all panic rather than silently returning an empty list or a zero count, since either result would be indistinguishable from a topic with no presences. Reads against a live presence handle for a *different*, still-running actor are unaffected — each actor owns its own independent table.
 
+The read model's ETS table is node-local: a `Presence` handle must stay on the node where `presence.start` created it. Sending the handle to (or otherwise calling `list`/`get_by_key`/`count` from) a process on a different BEAM node looks up a table reference that names nothing on that node, so those calls panic there too (`track`/`untrack`/`untrack_all` still work remotely, since they only need to reach the owning actor's process). Use PubSub replication (`with_pubsub`) to share presence state across nodes instead of moving the handle itself.
+
 ## Diff callbacks
 
 Use `with_on_diff` when you want to react to local changes or remote merges immediately.
+
+The callback runs synchronously on the presence actor — for both local mutations and remote merges, identically — before the affected topics' read-model snapshots are (re)published and before the triggering call replies. So if the callback reads presence state through the same handle (`list`, `get_by_key`, `count`) for a topic the diff touches, it sees the *previous* snapshot, not the one this diff is about to produce; read what you need from the `Diff` argument itself (`diff_joins`/`diff_leaves`) rather than re-reading through the handle inside the callback. Keep the callback fast: it runs on the actor process, so a slow callback delays that topic's publish, the reply to the mutating call, and anything else queued behind it in the actor's mailbox.
 
 ```gleam
 import gleam/list

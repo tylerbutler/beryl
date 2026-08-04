@@ -54,6 +54,20 @@ const sync_event = "presence_sync"
 /// subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
 /// reference to the actor-owned ETS read model that `list`, `get_by_key`,
 /// and `count` read directly, without going through the actor mailbox.
+///
+/// ## Node affinity
+///
+/// `list`, `get_by_key`, and `count` read the ETS read model directly
+/// in-process, which only works for ETS tables local to the calling node.
+/// Do not send this handle to, or otherwise use it from, a process on a
+/// different BEAM node: `track`/`untrack`/`untrack_all` would still reach
+/// the owning actor over distribution (they go through its `Subject`), but
+/// the read functions would be looking up a table reference that names
+/// nothing on that node (or, if the identifier happens to collide with an
+/// unrelated local table, something else entirely), so they would panic or
+/// read the wrong data. Keep a Presence handle on the node where `start`
+/// created it, and use PubSub replication (`with_pubsub`) to share presence
+/// state across nodes instead.
 pub opaque type Presence {
   Presence(subject: Subject(Message), read_table: Dynamic)
 }
@@ -181,6 +195,8 @@ pub opaque type Config {
     broadcast_interval_ms: Int,
     /// Optional callback invoked immediately when a merge produces a non-empty diff.
     /// This ensures no diffs are lost when multiple merges occur in rapid succession.
+    /// Runs synchronously on the actor, strictly before the read model is
+    /// republished for the topics the diff touches -- see `with_on_diff`.
     on_diff: Option(fn(Diff) -> Nil),
   )
 }
@@ -205,10 +221,6 @@ pub opaque type Message {
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
   RemoteSync(pubsub_msg: pubsub.Message(SyncPayload))
-  /// Test-only: holds the mailbox busy (see `block_for_test`) so tests can
-  /// prove `list`/`get_by_key`/`count` stay responsive without touching it.
-  /// Never sent by production code.
-  Block(ms: Int, reply: Subject(Nil))
 }
 
 // ── Read model (ETS) ─────────────────────────────────────────────────────────
@@ -221,7 +233,10 @@ pub opaque type Message {
 // table's lifetime is tied to the actor process: it is destroyed
 // automatically when the actor stops, so a dead actor's reads fail
 // explicitly (via `TableGone`) instead of silently returning stale or empty
-// data.
+// data. ETS tables (and this raw table reference) are node-local, so those
+// same reads also fail explicitly if a `Presence` handle is ever used from a
+// process on a different BEAM node than the one that started it — see the
+// node affinity note on `Presence`.
 //
 // Each topic's row stores its entry count alongside its entry list (rather
 // than deriving the count from the list on read) so `count` can fetch just
@@ -295,15 +310,17 @@ fn publish_topics(table: Dynamic, crdt: State, topics: List(String)) -> Nil {
 
 /// Read a topic's materialized entries directly from the read model.
 ///
-/// Panics if the read model table is unavailable, i.e. the presence actor
-/// that owns it is no longer running.
+/// Panics if the read model table is unavailable -- either because the
+/// presence actor that owns it is no longer running, or because this
+/// handle is being used from a process on a different BEAM node than the
+/// one `start` was called on (see the node affinity note on `Presence`).
 fn read_entries(presence: Presence, topic: String) -> List(PresenceEntry) {
   case ffi_get_topic(presence.read_table, topic) {
     Found(entries) -> entries
     NotFound -> []
     TableGone -> {
-      // nolint: avoid_panic -- read storage being gone means the owning actor died; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
-      panic as "presence read storage is unavailable: the presence actor is not running"
+      // nolint: avoid_panic -- read storage being gone means either the owning actor died or this handle is being read from another node; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
+      panic as "presence read storage is unavailable: either the presence actor is not running, or this handle was used from a process on another BEAM node than the one it was started on"
     }
   }
 }
@@ -361,6 +378,27 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 }
 
 /// Set the callback invoked when local changes or remote merges produce a diff.
+///
+/// The callback runs synchronously on the presence actor, for both local
+/// mutations (`track`/`untrack`/`untrack_all`) and remote merges, before the
+/// affected topics' read-model snapshots are (re)published and before the
+/// triggering call replies. This ordering is identical for local and remote
+/// diffs -- there is no divergent local-vs-remote behavior.
+///
+/// One consequence: if the callback reads presence state through the same
+/// `Presence` handle (`list`, `get_by_key`, `count`) for a topic this diff
+/// touches, it observes the *previous* snapshot -- the one from before this
+/// diff -- not the one the diff itself is about to produce. Read the
+/// entries and counts you need directly from the `Diff` argument (via
+/// `diff_joins`/`diff_leaves`) instead of re-reading through `presence`
+/// inside the callback.
+///
+/// Keep the callback fast and non-blocking: it runs on the actor process,
+/// so a slow or blocking callback delays that topic's read-model publish,
+/// the reply to the mutating call, and every other message queued behind it
+/// in the actor's mailbox (though concurrent `list`/`get_by_key`/`count`
+/// reads from other processes are unaffected, since those bypass the
+/// mailbox entirely).
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
@@ -369,14 +407,6 @@ pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
 @internal
 pub fn subject(presence: Presence) -> Subject(Message) {
   presence.subject
-}
-
-// nolint: unused_exports -- test-only hook (see `block_for_test`), hidden from public docs with @internal; never sent by production code
-@internal
-pub fn block_for_test(presence: Presence, ms: Int) -> Subject(Nil) {
-  let reply = process.new_subject()
-  process.send(presence.subject, Block(ms, reply))
-  reply
 }
 
 /// Start the presence actor
@@ -634,8 +664,10 @@ pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
 /// after each mutation, merge, or prune) rather than calling the actor, so
 /// this never waits on the actor mailbox.
 ///
-/// Panics if the presence read model is unavailable (the presence actor is
-/// not running).
+/// Panics if the presence read model is unavailable -- either the presence
+/// actor is not running, or this handle is being used from a process on
+/// another BEAM node than the one it was started on (see the node affinity
+/// note on `Presence`).
 pub fn list(presence: Presence, topic: String) -> List(PresenceEntry) {
   read_entries(presence, topic)
 }
@@ -646,8 +678,10 @@ pub fn list(presence: Presence, topic: String) -> List(PresenceEntry) {
 /// after each mutation, merge, or prune) rather than calling the actor, so
 /// this never waits on the actor mailbox.
 ///
-/// Panics if the presence read model is unavailable (the presence actor is
-/// not running).
+/// Panics if the presence read model is unavailable -- either the presence
+/// actor is not running, or this handle is being used from a process on
+/// another BEAM node than the one it was started on (see the node affinity
+/// note on `Presence`).
 pub fn get_by_key(
   presence: Presence,
   topic: String,
@@ -669,14 +703,16 @@ pub fn get_by_key(
 /// after each mutation, merge, or prune) rather than calling the actor, so
 /// this never waits on the actor mailbox.
 ///
-/// Panics if the presence read model is unavailable (the presence actor is
-/// not running).
+/// Panics if the presence read model is unavailable -- either the presence
+/// actor is not running, or this handle is being used from a process on
+/// another BEAM node than the one it was started on (see the node affinity
+/// note on `Presence`).
 pub fn count(presence: Presence, topic: String) -> Int {
   case ffi_get_count(presence.read_table, topic) {
     CountFound(count) -> count
     CountTableGone -> {
-      // nolint: avoid_panic -- read storage being gone means the owning actor died; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
-      panic as "presence read storage is unavailable: the presence actor is not running"
+      // nolint: avoid_panic -- read storage being gone means either the owning actor died or this handle is being read from another node; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
+      panic as "presence read storage is unavailable: either the presence actor is not running, or this handle was used from a process on another BEAM node than the one it was started on"
     }
   }
 }
@@ -793,13 +829,6 @@ fn handle_message(
         False -> actor.continue(actor_state)
         True -> handle_sync_payload(actor_state, pubsub_msg.payload)
       }
-    }
-
-    Block(ms, reply) -> {
-      // Test-only: deliberately holds the mailbox busy. See `block_for_test`.
-      process.sleep(ms)
-      process.send(reply, Nil)
-      actor.continue(actor_state)
     }
   }
 }
