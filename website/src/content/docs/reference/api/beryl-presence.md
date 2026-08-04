@@ -109,8 +109,10 @@ The presence actor failed to start.
 
 Count presences in a topic.
 
- Equivalent to `list(presence, topic) |> list.length`, but reads the
- materialized count directly without building the entry list.
+ Equivalent to `list(presence, topic) |> list.length`, but O(1): it reads
+ the materialized count directly from the read model via
+ `ets:lookup_element/4` instead of building (and copying) the entry list
+ just to measure it.
 
  Reads the actor-owned read model directly (an ETS snapshot materialized
  after each mutation, merge, or prune) rather than calling the actor, so

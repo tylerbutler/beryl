@@ -64,9 +64,14 @@ presence.untrack_all(p, "socket-1")
 ```gleam
 let entries = presence.list(p, "room:lobby")
 let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
+let online_count = presence.count(p, "room:lobby")
 ```
 
-`presence.list` returns full `PresenceEntry` values. `presence.get_by_key` narrows the query to one key.
+`presence.list` returns full `PresenceEntry` values. `presence.get_by_key` narrows the query to one key. `presence.count` returns just the number of tracked presences in a topic — use it instead of `presence.list(p, topic) |> list.length` when you only need the count, since it reads a materialized count directly rather than building (and measuring) the entry list.
+
+`list`, `get_by_key`, and `count` all read a snapshot the presence actor materializes into an ETS table after every mutation, remote merge, or replica-pruning operation — they never send a message to the actor and never block on its mailbox, so they stay responsive even while the actor is busy processing something else. Because each `track`/`untrack`/`untrack_all` call only returns after its snapshot has already been published, a read that happens right after one of those calls is guaranteed to reflect it immediately, with no polling or eventual-consistency window.
+
+That table's lifetime is tied to the owning actor process: if the actor stops or crashes, `list`, `get_by_key`, and `count` all panic rather than silently returning an empty list or a zero count, since either result would be indistinguishable from a topic with no presences. Reads against a live presence handle for a *different*, still-running actor are unaffected — each actor owns its own independent table.
 
 ## Diff callbacks
 
