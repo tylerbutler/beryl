@@ -465,7 +465,6 @@ fn enqueue_socket_msg(
   state.logger
   |> log.debug("Socket message queued: presence mutation in flight", [
     #("socket_id", socket_id),
-    #("queue_depth", int.to_string(list.length(queue) + 1)),
   ])
   State(
     ..state,
@@ -2258,6 +2257,24 @@ fn apply_push(
 // presence actor publishes before acknowledging — so a snapshot ordered
 // after a mutation still sees it.
 
+/// Why a presence mutation resolved without a normal, in-time
+/// acknowledgement.
+///
+/// This is distinct from `Ok`/`Error` on the mutation itself: it lets
+/// `finish_presence_op` tell an intentional, expected non-wait (`Stopping`)
+/// apart from an actual failure (`NotRunning`, `TimedOut`), so only the
+/// latter two are logged as failures.
+type PresenceGiveUp {
+  /// No presence actor is running; the mutation can never be acknowledged.
+  PresenceNotRunning
+  /// The runtime is shutting down: there is no runtime left to wait for or
+  /// receive an acknowledgement, so the mutation was dispatched (or, for a
+  /// track, deliberately not attempted) fire-and-forget. Not a failure.
+  PresenceStopping
+  /// The presence actor did not acknowledge within `presence_op_timeout_ms`.
+  PresenceTimedOut
+}
+
 /// Send a presence mutation and park the socket on its acknowledgement.
 ///
 /// Three things can prevent the park: no presence actor is running (the
@@ -2280,7 +2297,10 @@ fn begin_presence_op(
         #("socket_id", socket_id),
         #("topic", presence_op_topic(op)),
       ])
-      Continue(finish_presence_op(state, socket_id, op, Error(Nil)), resume)
+      Continue(
+        finish_presence_op(state, socket_id, op, Error(PresenceNotRunning)),
+        resume,
+      )
     }
     True, True -> {
       // Shutting down: fire and forget. A track cannot be completed at all
@@ -2295,7 +2315,10 @@ fn begin_presence_op(
           ])
         UntrackOp(_, _, _) -> send(0, state.presence_ack)
       }
-      Continue(finish_presence_op(state, socket_id, op, Error(Nil)), resume)
+      Continue(
+        finish_presence_op(state, socket_id, op, Error(PresenceStopping)),
+        resume,
+      )
     }
     True, False -> {
       let op_id = state.next_op_id
@@ -2322,17 +2345,21 @@ fn presence_op_topic(op: PresenceOp) -> String {
 /// bookkeeping and broadcast the `presence_diff` for it, at exactly the
 /// position in the effect list where the mutation was issued.
 ///
-/// `Error(Nil)` means the mutation was not acknowledged (timed out, or the
-/// presence actor was gone). A failed track records no ref and broadcasts
-/// no join — it is not reported as a success. A failed untrack still
-/// broadcasts its leave: the entry has already been dropped from this
-/// runtime's bookkeeping, so leaving clients showing a presence nobody can
-/// ever remove would be strictly worse.
+/// `Error(reason)` means the mutation did not resolve with a normal, in-time
+/// acknowledgement. A failed track records no ref and broadcasts no join —
+/// it is not reported as a success. A failed untrack still broadcasts its
+/// leave: the entry has already been dropped from this runtime's
+/// bookkeeping, so leaving clients showing a presence nobody can ever
+/// remove would be strictly worse. `PresenceStopping` is not a failure —
+/// the mutation was intentionally dispatched (or, for a track, dropped)
+/// fire-and-forget because the runtime is shutting down and has already
+/// logged that decision — so it is the only reason that skips the
+/// "failed"/"not acknowledged" error log.
 fn finish_presence_op(
   state: State(model, msg),
   socket_id: String,
   op: PresenceOp,
-  outcome: Result(presence.MutationOutcome, Nil),
+  outcome: Result(presence.MutationOutcome, PresenceGiveUp),
 ) -> State(model, msg) {
   case op, outcome {
     TrackOp(topic_name, key, replaced), Ok(presence.Tracked(ref, meta)) -> {
@@ -2344,6 +2371,15 @@ fn finish_presence_op(
         [presence.PresenceEntry(session_id: socket_id, key: key, meta: meta)],
         replaced,
       )
+      state
+    }
+    TrackOp(topic_name, _key, replaced), Error(PresenceStopping) -> {
+      // Already logged (as a warning) where the drop was decided, in
+      // `begin_presence_op`; nothing more to log here.
+      case replaced {
+        [] -> Nil
+        _ -> broadcast_presence_diff(state, topic_name, [], replaced)
+      }
       state
     }
     TrackOp(topic_name, key, replaced), _ -> {
@@ -2366,7 +2402,24 @@ fn finish_presence_op(
       broadcast_presence_diff(state, topic_name, [], leaves)
       state
     }
-    UntrackOp(topic_name, leaves, automatic), Error(Nil) -> {
+    UntrackOp(topic_name, leaves, automatic), Error(PresenceStopping) -> {
+      // The batch untrack was actually dispatched to the presence actor
+      // above (fire-and-forget); this is not a failure, just shutdown
+      // choosing not to wait for its acknowledgement.
+      state.logger
+      |> log.debug(
+        case automatic {
+          True -> "Presence cleanup dispatched: runtime stopping"
+          False -> "PresenceUntrack dispatched: runtime stopping"
+        },
+        [#("socket_id", socket_id), #("topic", topic_name)],
+      )
+      broadcast_presence_diff(state, topic_name, [], leaves)
+      state
+    }
+    UntrackOp(topic_name, leaves, automatic), Error(PresenceNotRunning)
+    | UntrackOp(topic_name, leaves, automatic), Error(PresenceTimedOut)
+    -> {
       state.logger
       |> log.error(
         case automatic {
@@ -2418,7 +2471,10 @@ fn store_presence_ref(
 /// (timed out, or abandoned during shutdown) matches no suspension, or
 /// matches one with a different operation id, and is dropped — it can
 /// never disturb a newer operation, because operation ids only ever
-/// increase.
+/// increase. If that dropped acknowledgement is a `Tracked`, though, the
+/// presence actor really did apply it: nothing else will ever learn that
+/// ref, so it is compensated with a precise untrack rather than left to
+/// leak (or to double up should the socket retry the same track).
 fn handle_presence_ack(
   state: State(model, msg),
   ack: presence.MutationAck,
@@ -2430,7 +2486,7 @@ fn handle_presence_ack(
         #("socket_id", ack.tag),
         #("op_id", int.to_string(ack.op_id)),
       ])
-      state
+      compensate_stale_ack(state, ack)
     }
     Ok(suspension) ->
       case suspension.op_id == ack.op_id {
@@ -2441,12 +2497,60 @@ fn handle_presence_ack(
             #("op_id", int.to_string(ack.op_id)),
             #("awaiting_op_id", int.to_string(suspension.op_id)),
           ])
-          state
+          compensate_stale_ack(state, ack)
         }
         True -> {
           let _cancelled = process.cancel_timer(suspension.timer)
           resume_socket(state, ack.tag, suspension, Ok(ack.outcome))
         }
+      }
+  }
+}
+
+/// Compensate a stale/unmatched acknowledgement that turns out to have
+/// applied a track. The socket it was for has already moved on (timed
+/// out, superseded by a newer operation, or abandoned another way), so
+/// nothing else will ever store this ref or ever ask presence to remove
+/// it — left alone, the entry would sit there forever, or sit there
+/// twice over if the socket retried the same track after the timeout.
+///
+/// Untracking exactly this ref (never the session's other presences) nets
+/// the stale mutation out to a no-op without disturbing anything a live
+/// operation is doing. An `Untracked` acknowledgement needs no
+/// compensation — nothing was left behind — and this itself never
+/// reaches a live suspension: the op id it is sent under is freshly drawn
+/// from the same monotonic counter as every real operation and never
+/// recorded against one, so it cannot collide with a suspension for any
+/// socket, including this one.
+fn compensate_stale_ack(
+  state: State(model, msg),
+  ack: presence.MutationAck,
+) -> State(model, msg) {
+  case ack.outcome {
+    presence.Untracked -> state
+    presence.Tracked(ref, _meta) ->
+      case state.config.presence {
+        None -> state
+        Some(handle) ->
+          case presence.is_running(handle) {
+            False -> state
+            True -> {
+              let op_id = state.next_op_id
+              presence.untrack_async(
+                presence: handle,
+                refs: [ref],
+                tag: ack.tag,
+                op_id: op_id,
+                reply: state.presence_ack,
+              )
+              state.logger
+              |> log.debug(
+                "Presence acknowledgement compensated: untracking stale entry",
+                [#("socket_id", ack.tag), #("ref", ref)],
+              )
+              State(..state, next_op_id: op_id + 1)
+            }
+          }
       }
   }
 }
@@ -2469,7 +2573,7 @@ fn handle_presence_timeout(
             #("op_id", int.to_string(op_id)),
             #("timeout_ms", int.to_string(state.config.presence_op_timeout_ms)),
           ])
-          resume_socket(state, socket_id, suspension, Error(Nil))
+          resume_socket(state, socket_id, suspension, Error(PresenceTimedOut))
         }
       }
   }
@@ -2479,7 +2583,7 @@ fn resume_socket(
   state: State(model, msg),
   socket_id: String,
   suspension: Suspension(msg),
-  outcome: Result(presence.MutationOutcome, Nil),
+  outcome: Result(presence.MutationOutcome, PresenceGiveUp),
 ) -> State(model, msg) {
   let state = State(..state, suspended: dict.delete(state.suspended, socket_id))
   let state = finish_presence_op(state, socket_id, suspension.op, outcome)
