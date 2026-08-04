@@ -19,6 +19,8 @@ application actor, send it nonblocking commands from `update`, and broadcast
 diffs or snapshots after the presence operation completes. This keeps a slow
 presence callback or mailbox from stalling unrelated sockets and heartbeats.
 
+Mutations are asynchronous end to end: the runtime sends `PresenceTrack`/`PresenceUntrack` to the presence actor and holds the rest of that socket's effect list (and any further input from that socket) until presence confirms the change — it never blocks its own actor waiting. Other sockets, broadcasts, and heartbeats keep being served throughout, so one slow `on_diff` callback can no longer stall the whole runtime. Re-tracking a key is a single atomic replacement, and the automatic cleanup when a topic closes untracks every key the socket still held in one batch, producing one aggregate leave diff.
+
 ## API surface
 
 ### Starting presence
@@ -78,14 +80,14 @@ Setting `broadcast_interval_ms` to `0` (the default in `default_config`) disable
 ```mermaid
 sequenceDiagram
   participant App as app update
-  participant Worker as app presence worker
   participant Runtime as runtime
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Worker: nonblocking track/untrack command
-  Worker->>Pres: track / untrack / list
-  Worker->>Runtime: broadcast or typed Info after completion
+  App->>Runtime: PresenceTrack / PresenceUntrack / PushPresence / BroadcastPresence
+  Runtime->>Pres: track / untrack (async, acknowledged)
+  Pres-->>Runtime: mutation ack
+  Runtime->>Pres: list (direct ETS read)
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end

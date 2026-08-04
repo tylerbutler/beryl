@@ -331,10 +331,12 @@ pub fn with_broadcast_interval(
 Set the callback invoked when local changes or remote merges produce a diff.
 
  The callback runs synchronously on the presence actor, for both local
- mutations (`track`/`untrack`/`untrack_all`) and remote merges, before the
- affected topics' read-model snapshots are (re)published and before the
- triggering call replies. This ordering is identical for local and remote
- diffs -- there is no divergent local-vs-remote behavior.
+ mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
+ mutations the runtime issues for presence effects) and remote merges,
+ before the affected topics' read-model snapshots are (re)published and
+ before the triggering call replies or the mutation is acknowledged.
+ This ordering is identical for local and remote diffs -- there is no
+ divergent local-vs-remote behavior.
 
  One consequence: if the callback reads presence state through the same
  `Presence` handle (`list`, `get_by_key`, `count`) for a topic this diff
@@ -346,10 +348,12 @@ Set the callback invoked when local changes or remote merges produce a diff.
 
  Keep the callback fast and non-blocking: it runs on the actor process,
  so a slow or blocking callback delays that topic's read-model publish,
- the reply to the mutating call, and every other message queued behind it
- in the actor's mailbox (though concurrent `list`/`get_by_key`/`count`
- reads from other processes are unaffected, since those bypass the
- mailbox entirely).
+ the reply to (or acknowledgement of) the mutating operation, and every
+ other message queued behind it in the actor's mailbox (though concurrent
+ `list`/`get_by_key`/`count` reads from other processes are unaffected,
+ since those bypass the mailbox entirely). It no longer stalls a Beryl
+ runtime wholesale: only the socket whose presence effect is in flight
+ waits on it.
 
 ```gleam
 pub fn with_on_diff(
