@@ -32,10 +32,11 @@ pub fn main() {
   // Rate limiting matches the previous channel-module deployment; the
   // presence handle is required for the app's presence effects to apply.
   // with_frame_rate covers the transport edge (every inbound frame,
-  // pre-decode) since with_message_rate alone no longer sheds floods there.
+  // pre-decode) and sized modestly above with_message_rate to account for
+  // join frames and malformed data.
   let config =
     beryl.config(wire.phoenix_codec())
-    |> beryl.with_frame_rate(per_second: 30, burst: 60)
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
     |> beryl.with_join_rate(per_second: 5, burst: 10)
     |> beryl.with_channel_rate(per_second: 10, burst: 20)

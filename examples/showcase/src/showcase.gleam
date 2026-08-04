@@ -74,10 +74,11 @@ pub fn main() {
   // Per-topic-pattern rate limits replace the old single global
   // channel-rate compromise: cursors stream fast, chat and docs do not.
   // with_frame_rate covers the transport edge (every inbound frame,
-  // pre-decode) since with_message_rate alone no longer sheds floods there.
+  // pre-decode) and sized modestly above with_message_rate to account for
+  // join frames and malformed data.
   let config =
     beryl.config(wire.phoenix_codec())
-    |> beryl.with_frame_rate(per_second: 30, burst: 60)
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
     |> beryl.with_join_rate(per_second: 5, burst: 10)
     |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
