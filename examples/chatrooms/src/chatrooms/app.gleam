@@ -23,7 +23,6 @@ import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/int
 import gleam/json
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/set
 import gleam/string
@@ -69,8 +68,7 @@ pub fn join(
       socket.RejectJoin(ref, error("Room not found: " <> room_name)),
     ])
     True -> {
-      let current_users = presence.list(ctx.presence, topic)
-      case list.length(current_users) >= max_room_users {
+      case presence.count(ctx.presence, topic) >= max_room_users {
         True -> #(None, [
           socket.RejectJoin(
             ref,

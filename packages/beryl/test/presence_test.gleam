@@ -165,6 +165,93 @@ pub fn presence_empty_list_test() {
   list.length(entries) |> should.equal(0)
 }
 
+// ── count ────────────────────────────────────────────────────────────────
+
+pub fn presence_count_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+
+  presence.count(p, "room:lobby") |> should.equal(2)
+}
+
+pub fn presence_count_matches_list_length_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+  let _ = presence.track(p, "room:lobby", "user:3", "socket-3", json.null())
+
+  presence.count(p, "room:lobby")
+  |> should.equal(list.length(presence.list(p, "room:lobby")))
+}
+
+pub fn presence_count_missing_topic_is_zero_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  presence.count(p, "room:never-touched") |> should.equal(0)
+}
+
+pub fn presence_count_empty_after_untrack_all_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  presence.untrack_all(p, "socket-1")
+
+  presence.count(p, "room:lobby") |> should.equal(0)
+}
+
+// ── get_by_key on a missing topic ───────────────────────────────────────────
+
+pub fn presence_get_by_key_missing_topic_returns_empty_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  presence.get_by_key(p, "room:never-touched", "user:1")
+  |> should.equal([])
+}
+
+// ── track/untrack/untrack_all read-after-write consistency ─────────────────
+//
+// `list`, `get_by_key`, and `count` read a materialized snapshot from an
+// ETS table, not the actor's CRDT directly. These calls check for immediate
+// (not eventual) consistency: no `wait_until` polling, proving `track` only
+// replies after its read-model snapshot has already been published.
+
+pub fn track_is_immediately_visible_to_all_readers_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let meta = json.object([#("status", json.string("online"))])
+  let _ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
+
+  presence.count(p, "room:lobby") |> should.equal(1)
+  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  list.length(presence.get_by_key(p, "room:lobby", "user:1")) |> should.equal(1)
+}
+
+pub fn untrack_is_immediately_visible_to_all_readers_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  presence.untrack(p, ref)
+
+  presence.count(p, "room:lobby") |> should.equal(0)
+  presence.list(p, "room:lobby") |> should.equal([])
+  presence.get_by_key(p, "room:lobby", "user:1") |> should.equal([])
+}
+
+pub fn untrack_all_is_immediately_visible_across_topics_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:general", "user:1", "socket-1", json.null())
+
+  presence.untrack_all(p, "socket-1")
+
+  presence.count(p, "room:lobby") |> should.equal(0)
+  presence.count(p, "room:general") |> should.equal(0)
+}
+
 pub fn presence_default_config_test() {
   let assert Ok(p) = presence.start(presence.default_config("my-node"))
   let _ = presence.track(p, "room:default", "user:1", "socket-1", json.null())

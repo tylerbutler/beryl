@@ -46,7 +46,7 @@ fn rooms_api(ctx: Context) -> Response(ResponseData) {
           [_, name] -> name
           _ -> topic
         }
-        let user_count = list.length(presence.list(ctx.presence, topic))
+        let user_count = presence.count(ctx.presence, topic)
         json.object([
           #("topic", json.string(topic)),
           #("name", json.string(room_name)),
