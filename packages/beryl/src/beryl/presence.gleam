@@ -225,8 +225,15 @@ pub opaque type Message {
 // automatically when the actor stops, so a dead actor's reads fail
 // explicitly (via `TableGone`) instead of silently returning stale or empty
 // data.
+//
+// Each topic's row stores its entry count alongside its entry list (rather
+// than deriving the count from the list on read) so `count` can fetch just
+// the count field via `ets:lookup_element/4` -- O(1) and without copying the
+// entry list out of the table -- instead of paying `list.length` (and a full
+// list copy) on every call the way `list(presence, topic) |> list.length`
+// would.
 
-/// The outcome of looking up a topic's materialized snapshot. Constructed
+/// The outcome of looking up a topic's materialized entries. Constructed
 /// directly by `beryl_presence_read_ffi` (its runtime representation must
 /// match this type's constructors exactly: `Found(x)` as `{found, x}`,
 /// `NotFound` as `not_found`, `TableGone` as `table_gone`).
@@ -236,6 +243,18 @@ type TopicLookup {
   TableGone
 }
 
+/// The outcome of looking up a topic's materialized count. Constructed
+/// directly by `beryl_presence_read_ffi` (its runtime representation must
+/// match this type's constructors exactly: `CountFound(n)` as
+/// `{count_found, n}`, `CountTableGone` as `count_table_gone`). A missing
+/// topic reads as `CountFound(0)`, not an error -- the count field defaults
+/// to `0` in the FFI, since "never tracked" and "empty" mean the same thing
+/// to a caller of `count`.
+type CountLookup {
+  CountFound(Int)
+  CountTableGone
+}
+
 @external(erlang, "beryl_presence_read_ffi", "new_table")
 fn ffi_new_read_table() -> Dynamic
 
@@ -243,6 +262,7 @@ fn ffi_new_read_table() -> Dynamic
 fn ffi_put_topic(
   table: Dynamic,
   topic: String,
+  count: Int,
   entries: List(PresenceEntry),
 ) -> Nil
 
@@ -252,17 +272,20 @@ fn ffi_delete_topic(table: Dynamic, topic: String) -> Nil
 @external(erlang, "beryl_presence_read_ffi", "get_topic")
 fn ffi_get_topic(table: Dynamic, topic: String) -> TopicLookup
 
-/// Materialize a topic's current entries from `crdt` into the read model,
-/// or remove its snapshot entirely once it has no entries left, so a
-/// missing topic is only ever "no snapshot recorded", never a stale empty
-/// leftover.
+@external(erlang, "beryl_presence_read_ffi", "get_count")
+fn ffi_get_count(table: Dynamic, topic: String) -> CountLookup
+
+/// Materialize a topic's current entries (and their count) from `crdt` into
+/// the read model, or remove its snapshot entirely once it has no entries
+/// left, so a missing topic is only ever "no snapshot recorded", never a
+/// stale empty leftover.
 fn publish_topic(table: Dynamic, crdt: State, topic: String) -> Nil {
   let entries =
     state.get_by_topic(crdt, topic)
     |> list.map(fn(t) { PresenceEntry(session_id: t.0, key: t.1, meta: t.2) })
   case entries {
     [] -> ffi_delete_topic(table, topic)
-    _ -> ffi_put_topic(table, topic, entries)
+    _ -> ffi_put_topic(table, topic, list.length(entries), entries)
   }
 }
 
@@ -638,8 +661,10 @@ pub fn get_by_key(
 
 /// Count presences in a topic.
 ///
-/// Equivalent to `list(presence, topic) |> list.length`, but reads the
-/// materialized count directly without building the entry list.
+/// Equivalent to `list(presence, topic) |> list.length`, but O(1): it reads
+/// the materialized count directly from the read model via
+/// `ets:lookup_element/4` instead of building (and copying) the entry list
+/// just to measure it.
 ///
 /// Reads the actor-owned read model directly (an ETS snapshot materialized
 /// after each mutation, merge, or prune) rather than calling the actor, so
@@ -648,7 +673,13 @@ pub fn get_by_key(
 /// Panics if the presence read model is unavailable (the presence actor is
 /// not running).
 pub fn count(presence: Presence, topic: String) -> Int {
-  read_entries(presence, topic) |> list.length
+  case ffi_get_count(presence.read_table, topic) {
+    CountFound(count) -> count
+    CountTableGone -> {
+      // nolint: avoid_panic -- read storage being gone means the owning actor died; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
+      panic as "presence read storage is unavailable: the presence actor is not running"
+    }
+  }
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────

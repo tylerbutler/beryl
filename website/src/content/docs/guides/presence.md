@@ -80,7 +80,19 @@ let entries = presence.list(p, "room:lobby")
 // Get presences for a specific key
 let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
 // Returns: [#("socket_1", meta), #("socket_2", meta)]
+
+// Count without materializing the entry list
+let online_count = presence.count(p, "room:lobby")
 ```
+
+`list`, `get_by_key`, and `count` read an actor-owned ETS snapshot rather than
+calling through the actor mailbox, so reads remain nonblocking while the actor
+is busy. Synchronous mutations publish before replying, giving immediate
+read-after-write consistency. `count` reads a materialized count in O(1).
+
+The table lifetime follows the actor: reads panic after that actor stops rather
+than returning a misleading empty result. Other presence actors own independent
+tables and remain unaffected.
 
 ## Diff callbacks
 

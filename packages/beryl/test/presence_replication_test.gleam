@@ -430,18 +430,6 @@ fn drain_mailbox() -> Nil {
 
 // ── Restart safety: incarnation-unique replicas ───────────────────────
 
-/// Kill a presence actor's process, simulating a crash without cleanup.
-fn kill_presence(p: presence.Presence) -> Nil {
-  let assert Ok(pid) = process.subject_owner(presence.subject(p))
-  // The actor is linked to this (test) process; unlink before killing so
-  // the exit signal does not take the test runner down with it.
-  process.unlink(pid)
-  process.kill(pid)
-  // Wait for the process to actually be gone.
-  test_helpers.wait_until(fn() { !process.is_alive(pid) }, 1000, 5)
-  Nil
-}
-
 pub fn restarted_node_presences_replicate_to_peers_test() {
   let ps = test_pubsub("restart_join")
   let assert Ok(p1) = presence.start(test_config(ps, "node1", 30))
@@ -457,7 +445,7 @@ pub fn restarted_node_presences_replicate_to_peers_test() {
   )
 
   // Crash node1 and restart it under the same configured base name.
-  kill_presence(p1)
+  test_helpers.kill_presence(p1)
   let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
 
   // A presence tracked by the restarted incarnation must become visible on
@@ -492,7 +480,7 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() {
     10,
   )
 
-  kill_presence(p1)
+  test_helpers.kill_presence(p1)
   let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
   // Give the new incarnation something to gossip so peers observe it.
   let _ =
@@ -533,7 +521,7 @@ pub fn restart_prune_updates_read_model_count_test() {
     10,
   )
 
-  kill_presence(p1)
+  test_helpers.kill_presence(p1)
   let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
   let _ =
     presence.track(p1b, "room:lobby", "user:live", "socket-live", json.null())

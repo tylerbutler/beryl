@@ -1,5 +1,5 @@
 -module(beryl_presence_read_ffi).
--export([new_table/0, put_topic/3, delete_topic/2, get_topic/2]).
+-export([new_table/0, put_topic/4, delete_topic/2, get_topic/2, get_count/2]).
 
 %% Create the materialized presence read-model table.
 %%
@@ -15,9 +15,12 @@ new_table() ->
 
 %% Replace the materialized snapshot for a topic. Overwrites atomically:
 %% `ets:insert/2` replaces any prior entry for the same key in one step, so
-%% readers never observe a partial topic snapshot.
-put_topic(Table, Topic, Entries) ->
-    true = ets:insert(Table, {Topic, Entries}),
+%% readers never observe a partial topic snapshot. The count is stored
+%% alongside the entries (rather than derived from them on read) so
+%% `get_count/2` can fetch it in isolation via `ets:lookup_element/4`,
+%% without copying the entry list out of the table.
+put_topic(Table, Topic, Count, Entries) ->
+    true = ets:insert(Table, {Topic, Count, Entries}),
     nil.
 
 %% Remove a topic's snapshot entirely (used once a topic has no entries
@@ -27,7 +30,7 @@ delete_topic(Table, Topic) ->
     catch ets:delete(Table, Topic),
     nil.
 
-%% Look up a topic's materialized snapshot.
+%% Look up a topic's materialized entries.
 %%
 %% Returns `{found, Entries}` / `not_found` / `table_gone`, matching the
 %% Gleam `TopicLookup` type's runtime representation exactly, so no
@@ -37,8 +40,27 @@ delete_topic(Table, Topic) ->
 %% a topic with no presences.
 get_topic(Table, Topic) ->
     try ets:lookup(Table, Topic) of
-        [{_, Entries}] -> {found, Entries};
+        [{_, _Count, Entries}] -> {found, Entries};
         [] -> not_found
     catch
         error:badarg -> table_gone
+    end.
+
+%% Look up a topic's materialized count only, without touching its entry
+%% list. `ets:lookup_element/4` reads (and copies) just the count field of
+%% the `{Topic, Count, Entries}` row, so this stays O(1) with respect to the
+%% number of entries in the topic, unlike `get_topic/2` followed by
+%% `length/1`. The 4-arity form's default (`0`) covers a topic with no
+%% recorded snapshot -- "never tracked" and "empty" both mean zero -- while
+%% a missing *table* (the owning actor is gone) still raises `badarg`
+%% regardless of that default, which is how `table_gone` is distinguished
+%% from an ordinary zero count.
+%%
+%% Returns `{count_found, Count}` / `count_table_gone`, matching the Gleam
+%% `CountLookup` type's runtime representation exactly.
+get_count(Table, Topic) ->
+    try ets:lookup_element(Table, Topic, 2, 0) of
+        Count -> {count_found, Count}
+    catch
+        error:badarg -> count_table_gone
     end.
