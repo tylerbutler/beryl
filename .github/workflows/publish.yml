@@ -38,8 +38,8 @@ jobs:
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
       - name: Tag and create GitHub releases
         run: trellis tag create --push --github-release

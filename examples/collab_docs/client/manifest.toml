@@ -3,13 +3,13 @@
 
 packages = [
   { name = "gleam_json", version = "3.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleam_json", source = "hex", outer_checksum = "44FDAA8847BE8FC48CA7A1C089706BD54BADCC4C45B237A992EDDF9F2CDB2836" },
-  { name = "gleam_stdlib", version = "1.0.0", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "960090C2FB391784BB34267B099DC9315CC1B1F6013E7415BC763CEF1905D7D3" },
-  { name = "gleeunit", version = "1.10.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "254B697FE72EEAD7BF82E941723918E421317813AC49923EE76A18C788C61E72" },
+  { name = "gleam_stdlib", version = "1.0.3", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "1F543AFBA5D33DA493E6087F4E4C4F20D899411343512686C98A8ABB2963CF22" },
+  { name = "gleeunit", version = "1.11.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "EC31ABA74256AEA531EDF8169931D775BBB384FED0A8A1BDC4DD9354E3E21826" },
   { name = "lattice_core", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib"], otp_app = "lattice_core", source = "hex", outer_checksum = "E0A7CC27CB58795D10DF4B7186891FDBF90F10A5FBF34C5862E5E936814A2CD5" },
-  { name = "lattice_counters", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_counters", source = "hex", outer_checksum = "28F3662014B5667F30CE8167BB75DB1FCD0A91D447F074EE45B521481287CB4F" },
-  { name = "lattice_maps", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core", "lattice_counters", "lattice_registers", "lattice_sets"], otp_app = "lattice_maps", source = "hex", outer_checksum = "7C0E20C6FF61E732B433AE34AE843B10E4B849571AE1EDE5EB9E4BC1F684ADDF" },
-  { name = "lattice_registers", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_registers", source = "hex", outer_checksum = "6B62A7687D5D138BC36B00090BF1A4BA03E40183550040018B69652204B158A4" },
-  { name = "lattice_sets", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_sets", source = "hex", outer_checksum = "C73BDB01ED288E326AADE8BD37B88C63750915692E736CF0E968B37C9E69F28E" },
+  { name = "lattice_counters", version = "1.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_counters", source = "hex", outer_checksum = "1F5FA78BC2E516A025D63E7DE2E4A9FE898950BD6E835812E50AECB4FB9E1F8A" },
+  { name = "lattice_maps", version = "1.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core", "lattice_counters", "lattice_registers", "lattice_sets"], otp_app = "lattice_maps", source = "hex", outer_checksum = "12219BAA64C96949966FDBDDA0ADB228451C8DBC29AB8B0EC04D875E76D911DD" },
+  { name = "lattice_registers", version = "1.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_registers", source = "hex", outer_checksum = "727CE644A64DD9A1E29441DA243EB52B0CE4959F5782B569FA97DF6793E2B06D" },
+  { name = "lattice_sets", version = "1.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_sets", source = "hex", outer_checksum = "BA81DF518B2A25D9E77012262D08D06B959BD7A6C22B98D4F82550823A1E98AF" },
 ]
 
 [requirements]
