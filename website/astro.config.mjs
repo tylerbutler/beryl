@@ -118,6 +118,10 @@ export default defineConfig({
 							label: "Production Hardening",
 							slug: "guides/production-hardening",
 						},
+						{
+							label: "Observability",
+							slug: "guides/observability",
+						},
 					],
 				},
 				{

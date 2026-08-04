@@ -3,6 +3,7 @@ import beryl/channel
 import beryl/coordinator
 import beryl/group
 import beryl/presence
+import beryl/stats
 import beryl/supervisor
 import beryl/wire
 import gleam/dynamic
@@ -280,6 +281,77 @@ pub fn registrations_survive_coordinator_restart_test() {
   let assert Ok(reply) = process.receive(sent, 1000)
   reply |> string.contains("phx_reply") |> should.be_true
   reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+}
+
+pub fn stats_survive_coordinator_restart_test() {
+  let config = supervisor.config(beryl.config(wire.phoenix_codec()))
+  let assert Ok(#(supervised, _root)) = start_supervised(config)
+  let channels = supervisor.channels(supervised)
+  let handler =
+    channel.new(fn(_topic, _payload, socket) {
+      channel.JoinOk(reply: None, socket: socket)
+    })
+  let assert Ok(_) = beryl.register(channels, "stats-survivor:*", handler)
+
+  let coordinator_subject = beryl.coordinator_subject(channels)
+  let assert Ok(old_pid) = get_subject_pid(coordinator_subject)
+  let race_results = process.new_subject()
+  spawn_stats_requests(channels, race_results, 20)
+  process.send_abnormal_exit(old_pid, crash_reason())
+
+  // Concurrent requests make the unregister-between-check-and-send race
+  // feasible. Every worker must return a typed result rather than crashing.
+  receive_stats_results(race_results, 20)
+
+  test_helpers.wait_until(
+    fn() {
+      case get_subject_pid(coordinator_subject) {
+        Ok(new_pid) -> new_pid != old_pid && process.is_alive(new_pid)
+        Error(_) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  let assert Ok(snapshot) = stats.snapshot(channels)
+  stats.registered_channel_handlers(snapshot) |> should.equal(1)
+  stats.connected_sockets(snapshot) |> should.equal(0)
+}
+
+fn spawn_stats_requests(
+  channels: beryl.Channels,
+  results: process.Subject(Result(stats.Snapshot, stats.SnapshotError)),
+  remaining: Int,
+) -> Nil {
+  case remaining <= 0 {
+    True -> Nil
+    False -> {
+      let _worker =
+        process.spawn_unlinked(fn() {
+          process.send(results, stats.snapshot(channels))
+        })
+      spawn_stats_requests(channels, results, remaining - 1)
+    }
+  }
+}
+
+fn receive_stats_results(
+  results: process.Subject(Result(stats.Snapshot, stats.SnapshotError)),
+  remaining: Int,
+) -> Nil {
+  case remaining <= 0 {
+    True -> Nil
+    False -> {
+      let assert Ok(result) = process.receive(results, 2000)
+      let Nil = case result {
+        Ok(_)
+        | Error(stats.CoordinatorUnavailable)
+        | Error(stats.RequestTimedOut) -> Nil
+      }
+      receive_stats_results(results, remaining - 1)
+    }
+  }
 }
 
 // ── RestForOne cascading restart tests ─────────────────────────────────────

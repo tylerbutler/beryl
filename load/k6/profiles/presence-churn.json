@@ -1,0 +1,31 @@
+{
+  "name": "presence-churn",
+  "exec": "presenceChurn",
+  "executor": {
+    "executor": "constant-vus",
+    "vus": 10,
+    "duration": "1m",
+    "gracefulStop": "15s"
+  },
+  "thresholds": {
+    "checks": ["rate==1"],
+    "phoenix_scenario_operation_rate": ["rate==1"],
+    "phoenix_client_errors": ["count==0"],
+    "phoenix_unexpected_client_errors": ["count==0"],
+    "phoenix_protocol_errors": ["count==0"],
+    "phoenix_decode_errors": ["count==0"],
+    "phoenix_ws_failure_rate": ["rate==0"],
+    "phoenix_join_rejection_rate": ["rate==0"],
+    "phoenix_push_timeout_rate": ["rate==0"],
+    "phoenix_presence_delivery_rate": ["rate==1"]
+  },
+  "parameters": {
+    "TOPIC": "bench:presence",
+    "PRESENCE_TRACK_EVENT": "presence_track",
+    "PRESENCE_UNTRACK_EVENT": "presence_untrack",
+    "PRESENCE_DELIVERY_EVENT": "presence_diff",
+    "DELIVERY_TIMEOUT_MS": 5000,
+    "SESSION_DURATION_MS": 10000,
+    "OPERATION_INTERVAL_MS": 250
+  }
+}

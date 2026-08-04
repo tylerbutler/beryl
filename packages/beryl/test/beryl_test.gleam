@@ -632,6 +632,9 @@ pub fn default_config_test() {
 
   beryl.config_max_connections_per_ip(config)
   |> should.equal(0)
+
+  beryl.config_telemetry(config)
+  |> should.be_false
 }
 
 pub fn with_heartbeat_sets_interval_and_timeout_test() {
@@ -653,6 +656,19 @@ pub fn with_max_connections_per_ip_sets_limit_test() {
 
   beryl.config_max_connections_per_ip(config)
   |> should.equal(5)
+}
+
+pub fn with_telemetry_enables_telemetry_test() {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_telemetry
+
+  beryl.config_telemetry(config)
+  |> should.be_true
+
+  let coordinator_config = beryl.to_coordinator_config(config)
+  coordinator_config.telemetry
+  |> should.be_true
 }
 
 pub fn send_info_routes_message_to_joined_channel_test() {

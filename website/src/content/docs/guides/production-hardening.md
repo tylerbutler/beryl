@@ -173,8 +173,22 @@ for the full trust-boundary and distribution-hardening reference.
   sheds oversized frames and (when configured) rate-limited traffic before
   it, but extreme fan-out workloads may want multiple channels systems
   sharded by topic space.
+- Enable and export Beryl's bounded telemetry taxonomy, and poll local
+  coordinator snapshots, as described in the
+  [Observability guide](/guides/observability/). Monitor the coordinator
+  mailbox, connection count, BEAM ports/processes, and edge saturation
+  together. The benchmark server's
+  [`/stats` endpoint](https://github.com/tylerbutler/beryl/blob/main/examples/load_test/README.md#health-and-stats)
+  demonstrates the JSON shape; it is not a production exporter, and telemetry
+  handlers remain application-owned and synchronous.
 - beryl always runs inside your own supervision tree via `supervisor.start`.
   The subtree has a one-for-one parent wrapping a rest-for-one channel
   supervisor, and restarts are bounded at 3 per 5 seconds before the beryl
   supervisor shuts down and defers to its parent. See the
   [Supervision guide](/guides/supervision/) for the full tree.
+
+Before setting production limits, establish a controlled capacity baseline on
+representative topology. The repository's
+[load-testing guide](https://github.com/tylerbutler/beryl/blob/main/load/README.md)
+covers Mist/Ewe parity, multi-source execution, OS and BEAM limits, NAT/proxy
+constraints, repeatability, and promotion of measured baselines to thresholds.

@@ -26,6 +26,30 @@ Transport SPI — the contract between beryl core and WebSocket transport
 
 ## Types
 
+### `FrameKind`
+
+WebSocket data frame kinds.
+
+```gleam
+pub type FrameKind {
+  TextFrame
+  BinaryFrame
+}
+```
+
+### `FrameOutcome`
+
+Closed terminal outcomes for inbound frame processing.
+
+```gleam
+pub type FrameOutcome {
+  FrameRouted
+  FrameOversized
+  FrameRateLimited
+  FrameDecodeFailed
+}
+```
+
 ### `Logger`
 
 A named logger for transport diagnostics, routed through beryl's
@@ -43,6 +67,41 @@ A per-connection token bucket enforcing the configured message rate at
 
 ```gleam
 pub type RateLimiter
+```
+
+### `Telemetry`
+
+Cheap transport telemetry context. When disabled, starting and stopping an
+ operation avoid VM clock calls and event construction.
+
+```gleam
+pub type Telemetry
+```
+
+### `TelemetryTransport`
+
+WebSocket transport implementations in beryl's telemetry schema.
+
+```gleam
+pub type TelemetryTransport {
+  Mist
+  Ewe
+}
+```
+
+### `UpgradeOutcome`
+
+Closed terminal outcomes for a matched WebSocket upgrade.
+
+```gleam
+pub type UpgradeOutcome {
+  UpgradeSucceeded
+  OriginRejected
+  VersionRejected
+  AuthRejected
+  CapacityRejected
+  HandshakeFailed
+}
 ```
 
 ## Functions
@@ -126,6 +185,21 @@ pub fn route_decoded(
 ) -> Nil
 ```
 
+### `route_decoded_binary`
+
+Route a transport-decoded binary message to the coordinator.
+
+ This is additive to `route_decoded`, whose text semantics are retained for
+ third-party transport compatibility.
+
+```gleam
+pub fn route_decoded_binary(
+  channels: beryl.Channels,
+  socket_id: String,
+  message: codec.Inbound
+) -> Nil
+```
+
 ### `socket_connected`
 
 Announce a newly connected socket. `send`/`send_binary` deliver outbound
@@ -161,4 +235,49 @@ Take one token; returns the updated limiter and whether the frame is
 
 ```gleam
 pub fn take_token(RateLimiter) -> #(RateLimiter, Bool)
+```
+
+### `telemetry`
+
+Create a telemetry context from the channels configuration.
+
+```gleam
+pub fn telemetry(
+  beryl.Channels,
+  TelemetryTransport
+) -> Telemetry
+```
+
+### `telemetry_frame_stop`
+
+Emit exactly one terminal inbound-frame event.
+
+```gleam
+pub fn telemetry_frame_stop(
+  Telemetry,
+  Int,
+  Int,
+  FrameKind,
+  FrameOutcome
+) -> Nil
+```
+
+### `telemetry_start`
+
+Start a timed transport operation. Returns a zero sentinel when disabled.
+
+```gleam
+pub fn telemetry_start(Telemetry) -> Int
+```
+
+### `telemetry_upgrade_stop`
+
+Emit exactly one terminal matched-upgrade event.
+
+```gleam
+pub fn telemetry_upgrade_stop(
+  Telemetry,
+  Int,
+  UpgradeOutcome
+) -> Nil
 ```

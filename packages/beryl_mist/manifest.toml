@@ -32,6 +32,7 @@ packages = [
   { name = "roost", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib"], source = "git", repo = "https://github.com/tylerbutler/roost.git", commit = "7e4dc7c327ec233c9dc22a9d2037a620e700e127" },
   { name = "simplifile", version = "2.6.0", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], otp_app = "simplifile", source = "hex", outer_checksum = "A33C345F0A4FFB91DCCD4220114534A58C387964A5F17B3E472CEBD1ADA9FFB4" },
   { name = "splitter", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "splitter", source = "hex", outer_checksum = "3DFD6B6C49E61EDAF6F7B27A42054A17CFF6CA2135FF553D0CB61C234D281DD0" },
+  { name = "telemetry", version = "1.4.2", build_tools = ["rebar3"], requirements = [], otp_app = "telemetry", source = "hex", outer_checksum = "928F6495066506077862C0D1646609EED891A4326BEE3126BA54B60AF61FEBB1" },
   { name = "tom", version = "2.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "gleam_time"], otp_app = "tom", source = "hex", outer_checksum = "DCF04CB7AB35D58CFC598C66EA2E1816D160759802C89B2BA6238780D59BC256" },
 ]
 

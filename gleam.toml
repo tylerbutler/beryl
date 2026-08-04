@@ -39,6 +39,7 @@ command = "gleam run -m glinter"
 needs_deps = true
 
 [tools.trellis.changelog]
+strictness = "warn"
 kinds = [
   { label = "Initial Release", bump = "major" },
   { label = "Added", bump = "minor" },
