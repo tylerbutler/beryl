@@ -221,10 +221,15 @@ pub opaque type Message {
   )
   Untrack(ref: String, reply: Subject(Nil))
   UntrackAll(pid: String, reply: Subject(Nil))
-  /// Asynchronous track used by the runtime's effect interpreter. When
-  /// `replace` names a ref, that ref is removed and the new entry added in
-  /// this same actor turn, so the topic never materializes an intermediate
-  /// snapshot without the key.
+  /// Asynchronous track used by the runtime's effect interpreter. The new
+  /// entry supersedes every ref this actor still holds for the same logical
+  /// `(pid, topic, key)` — `replace`, when the caller knows the previous
+  /// ref, plus any ref the caller has lost track of (an earlier operation
+  /// it timed out on, say). All of that happens in this one actor turn, so
+  /// the topic never materializes an intermediate snapshot without the key,
+  /// and the tuple never carries two live refs at once. See the
+  /// `SupersedeSameKey` docs for why the sweep, not just `replace`, is
+  /// what makes a late compensating untrack safe.
   TrackAsync(
     topic: String,
     key: String,
@@ -725,9 +730,15 @@ pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
 // points produce identical CRDT state, diffs, and read-model publications.
 
 // nolint: unused_exports -- package-internal async mutation protocol for the runtime; hidden from public docs with @internal
-/// Track a presence asynchronously, optionally replacing `replace` (a ref
-/// from a previous `track` of the same key) atomically in the same actor
-/// turn. The acknowledgement carries the generated ref and the stored meta.
+/// Track a presence asynchronously. The new entry supersedes, atomically in
+/// the same actor turn, both `replace` (a ref from a previous track of this
+/// key, when the caller still knows it) and any *other* ref the actor still
+/// holds for the same `(session_id, topic, key)` — including one from an
+/// operation the caller timed out on and whose acknowledgement it has not
+/// seen yet. A logical `(session_id, topic, key)` therefore never has two
+/// live refs, so a late `untrack` of a superseded ref cannot remove the
+/// newer entry (the CRDT removes by tuple, not by ref). The
+/// acknowledgement carries the generated ref and the stored meta.
 @internal
 pub fn track_async(
   presence presence: Presence,
@@ -864,7 +875,7 @@ fn handle_message(
   case message {
     Track(topic, key, pid, meta, reply) -> {
       let #(new_state, ref, _meta) =
-        do_track(actor_state, topic, key, pid, meta, None)
+        do_track(actor_state, topic, key, pid, meta, SupersedeNothing)
       log_tracked(logger, topic, key, pid, ref)
       // The read model was published inside `do_track`, before this reply,
       // so a `track(); list()` caller always observes the entry it just
@@ -875,7 +886,14 @@ fn handle_message(
 
     TrackAsync(topic, key, pid, meta, replace, tag, op_id, reply) -> {
       let #(new_state, ref, stored_meta) =
-        do_track(actor_state, topic, key, pid, meta, replace)
+        do_track(
+          actor_state,
+          topic,
+          key,
+          pid,
+          meta,
+          SupersedeSameKey(explicit: replace),
+        )
       log_tracked(logger, topic, key, pid, ref)
       process.send(reply, MutationAck(tag, op_id, Tracked(ref, stored_meta)))
       actor.continue(new_state)
@@ -1000,27 +1018,87 @@ fn remove_refs(
   )
 }
 
-/// Track one key, optionally replacing a previous ref for it in the same
-/// turn. Returns the new actor state, the generated ref, and the meta as
-/// stored (the caller's meta with `phx_ref` merged in).
+/// Which refs a track supersedes in its own turn.
+type Supersede {
+  /// The public synchronous `track`: supersede nothing. Callers of the
+  /// public API own their refs and remove them explicitly with `untrack`,
+  /// and several refs for one key (each with its own `phx_ref` meta) is a
+  /// meaningful, supported shape there.
+  SupersedeNothing
+  /// The runtime's asynchronous track: supersede `explicit` (the previous
+  /// ref, when the caller still knows it) *and* every other ref this actor
+  /// holds for the same `(pid, topic, key)`.
+  ///
+  /// The sweep is what keeps runtime-owned presence single-valued when the
+  /// caller has *lost* a ref — an operation it timed out on and gave up,
+  /// whose acknowledgement is still in flight. Because the CRDT removes by
+  /// `(pid, topic, key)` and not by ref, two coexisting refs for one tuple
+  /// would make the later, compensating untrack of the older ref remove
+  /// the newer entry as well. Superseding here means the older ref is gone
+  /// from the ref map by the time that compensation arrives, so it lands
+  /// as a harmless no-op.
+  SupersedeSameKey(explicit: Option(String))
+}
+
+/// The refs a track must remove before joining: none for the public API,
+/// and for the runtime the explicit replacement plus every ref still held
+/// for the same logical `(pid, topic, key)`, deduplicated.
+fn superseded_refs(
+  refs: Dict(String, TrackedPresence),
+  topic: String,
+  key: String,
+  pid: String,
+  supersede: Supersede,
+) -> List(String) {
+  case supersede {
+    SupersedeNothing -> []
+    SupersedeSameKey(explicit) -> {
+      let same_key =
+        refs
+        |> dict.filter(fn(_ref, tracked) {
+          tracked.topic == topic
+          && tracked.key == key
+          && tracked.session_id == pid
+        })
+        |> dict.keys
+      case explicit {
+        // An explicit ref the map no longer holds is kept in the list and
+        // skipped by `remove_refs`; dropping it here would be equivalent.
+        Some(old_ref) ->
+          case list.contains(same_key, old_ref) {
+            True -> same_key
+            False -> [old_ref, ..same_key]
+          }
+        None -> same_key
+      }
+    }
+  }
+}
+
+/// Track one key, superseding previous refs for it (see `Supersede`) in the
+/// same turn. Returns the new actor state, the generated ref, and the meta
+/// as stored (the caller's meta with `phx_ref` merged in).
 fn do_track(
   actor_state: ActorState,
   topic: String,
   key: String,
   pid: String,
   meta: json.Json,
-  replace: Option(String),
+  supersede: Supersede,
 ) -> #(ActorState, String, json.Json) {
   let ref = generate_ref()
   let stored_meta = meta_with_phx_ref(meta, ref)
-  // Replacement removes the old entry and adds the new one before anything
-  // is published, so the topic's snapshot moves straight from the old meta
-  // to the new one — never through an intermediate state without the key.
+  // Superseding removes the old entries and adds the new one before
+  // anything is published, so the topic's snapshot moves straight from the
+  // old meta to the new one — never through an intermediate state without
+  // the key — and one `on_diff` carries the whole leave-plus-join
+  // transition.
   let removed =
-    remove_refs(actor_state.crdt, actor_state.refs, case replace {
-      Some(old_ref) -> [old_ref]
-      None -> []
-    })
+    remove_refs(
+      actor_state.crdt,
+      actor_state.refs,
+      superseded_refs(actor_state.refs, topic, key, pid, supersede),
+    )
   let new_crdt = state.join(removed.crdt, pid, topic, key, stored_meta)
   maybe_invoke_on_diff(
     actor_state.config,

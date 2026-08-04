@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Fixed"
-body = "Late/timed-out presence track acknowledgements no longer leak: when a Tracked acknowledgement arrives with no matching (or a superseded) suspension, the runtime issues a precise untrack for that exact ref instead of leaving the entry stranded or discarding the acknowledgement outright. Graceful shutdown's fire-and-forget batch untrack is no longer logged as a failure. enqueue_socket_msg no longer computes the queue depth on every call, keeping per-message queueing O(1)."

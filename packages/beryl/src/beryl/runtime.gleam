@@ -178,6 +178,13 @@ type State(model, msg) {
     /// suspended, newest first. Delivered in arrival order once the socket
     /// resumes.
     queued: Dict(String, List(Msg(msg))),
+    /// How many tracks per socket the runtime gave up on (timed out) while
+    /// their acknowledgement could still arrive — the entries whose refs
+    /// this runtime does not know and only learns from the late
+    /// acknowledgement it compensates. Decremented as each one is
+    /// compensated, and swept wholesale at shutdown, when no
+    /// acknowledgement can be received any more.
+    unacked_tracks: Dict(String, Int),
     /// Set while the runtime is draining for shutdown. Presence mutations
     /// are then fire-and-forget: there is no longer a runtime to deliver
     /// the acknowledgement to.
@@ -461,6 +468,7 @@ pub fn start_named(
         next_op_id: 1,
         suspended: dict.new(),
         queued: dict.new(),
+        unacked_tracks: dict.new(),
         stopping: False,
       )
     schedule_heartbeat_check(subject, config)
@@ -816,6 +824,15 @@ fn handle_stop(
   let state =
     dict.keys(state.suspended)
     |> list.fold(state, abandon_suspension)
+  // Tracks this runtime already gave up on can still be applied by the
+  // presence actor, and their acknowledgements can no longer be
+  // compensated once this actor stops — so their sessions are swept now,
+  // while there is still something to sweep them with. The sweep is
+  // ordered behind the in-flight tracks themselves (same sender, same
+  // mailbox), so it removes them rather than racing them.
+  let state =
+    dict.keys(state.unacked_tracks)
+    |> list.fold(state, sweep_unacked_track)
   dict.keys(state.sockets)
   |> list.fold(state, fn(st, socket_id) {
     run(st, socket_id, [StepTeardown(sock.Shutdown)])
@@ -849,9 +866,32 @@ fn abandon_suspension(
         ..state,
         suspended: dict.delete(state.suspended, socket_id),
         queued: dict.delete(state.queued, socket_id),
+        // The session sweep just dispatched also removes anything an
+        // earlier, already-timed-out track of this socket could still add.
+        unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
       )
     }
   }
+}
+
+/// Sweep a session whose earlier, timed-out track may still land at the
+/// presence actor after this runtime is gone. Same reasoning as
+/// `abandon_suspension`: the ref was never learned here, and after
+/// shutdown never will be, so the session is removed wholesale instead of
+/// leaving an entry nothing can remove.
+fn sweep_unacked_track(
+  state: State(model, msg),
+  socket_id: String,
+) -> State(model, msg) {
+  state.logger
+  |> log.warn("Presence track abandoned: runtime stopping", [
+    #("socket_id", socket_id),
+  ])
+  case state.config.presence {
+    Some(handle) -> presence.untrack_all_async(handle, socket_id)
+    None -> Nil
+  }
+  State(..state, unacked_tracks: dict.delete(state.unacked_tracks, socket_id))
 }
 
 // ── Heartbeats ──────────────────────────────────────────────────────────────
@@ -3006,22 +3046,20 @@ fn finish_presence_op(
       }
       state
     }
-    TrackOp(topic_name, key, replaced), _ -> {
-      state.logger
-      |> log.error("PresenceTrack failed: not acknowledged", [
-        #("socket_id", socket_id),
-        #("topic", topic_name),
-        #("key", key),
-      ])
-      // A replacement handed its previous ref to the presence actor before
-      // the failure, so publish its leave rather than leave clients with a
-      // presence this runtime can no longer untrack.
-      case replaced {
-        [] -> Nil
-        _ -> broadcast_presence_diff(state, topic_name, [], replaced)
-      }
-      state
+    TrackOp(topic_name, key, replaced), Error(PresenceTimedOut) -> {
+      let state = failed_track(state, socket_id, topic_name, key, replaced)
+      // The mutation did reach the presence actor and may still be
+      // applied: remember that an acknowledgement — and with it a ref only
+      // the compensation will ever learn — is still owed for this socket.
+      note_unacked_track(state, socket_id)
     }
+    // `PresenceNotRunning` never reached the actor, and an `Untracked`
+    // acknowledgement for a track is a protocol impossibility (an
+    // acknowledgement only ever reaches the operation it was minted for).
+    // Neither can leave an entry behind, so neither is owed compensation.
+    TrackOp(topic_name, key, replaced), Error(PresenceNotRunning)
+    | TrackOp(topic_name, key, replaced), Ok(presence.Untracked)
+    -> failed_track(state, socket_id, topic_name, key, replaced)
     UntrackOp(topic_name, leaves, _), Ok(_) -> {
       broadcast_presence_diff(state, topic_name, [], leaves)
       state
@@ -3055,6 +3093,74 @@ fn finish_presence_op(
       broadcast_presence_diff(state, topic_name, [], leaves)
       state
     }
+  }
+}
+
+/// A track that resolved without a usable acknowledgement: log it, and
+/// publish the leave of any entry it had already handed to the presence
+/// actor as its replacement, rather than leave clients showing a presence
+/// this runtime can no longer untrack. Nothing is recorded as tracked.
+fn failed_track(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  key: String,
+  replaced: List(presence.PresenceEntry),
+) -> State(model, msg) {
+  state.logger
+  |> log.error("PresenceTrack failed: not acknowledged", [
+    #("socket_id", socket_id),
+    #("topic", topic_name),
+    #("key", key),
+  ])
+  case replaced {
+    [] -> Nil
+    _ -> broadcast_presence_diff(state, topic_name, [], replaced)
+  }
+  state
+}
+
+/// Record that a track the runtime gave up on may still be applied by the
+/// presence actor, so shutdown knows this socket can still be owed an
+/// entry whose ref nobody here will ever hold.
+fn note_unacked_track(
+  state: State(model, msg),
+  socket_id: String,
+) -> State(model, msg) {
+  let outstanding =
+    dict.get(state.unacked_tracks, socket_id)
+    |> result.unwrap(0)
+  State(
+    ..state,
+    unacked_tracks: dict.insert(
+      state.unacked_tracks,
+      socket_id,
+      outstanding + 1,
+    ),
+  )
+}
+
+/// One of a socket's outstanding acknowledgements has now arrived (and been
+/// compensated), so it no longer needs sweeping at shutdown.
+fn clear_unacked_track(
+  state: State(model, msg),
+  socket_id: String,
+) -> State(model, msg) {
+  case dict.get(state.unacked_tracks, socket_id) {
+    Error(Nil) | Ok(1) ->
+      State(
+        ..state,
+        unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
+      )
+    Ok(outstanding) ->
+      State(
+        ..state,
+        unacked_tracks: dict.insert(
+          state.unacked_tracks,
+          socket_id,
+          outstanding - 1,
+        ),
+      )
   }
 }
 
@@ -3145,36 +3251,61 @@ fn handle_presence_ack(
 /// reaches a live suspension: the op id it is sent under is freshly drawn
 /// from the same monotonic counter as every real operation and never
 /// recorded against one, so it cannot collide with a suspension for any
-/// socket, including this one.
+/// socket, including this one. A duplicate or repeated stale
+/// acknowledgement is therefore self-limiting: its own acknowledgement is
+/// an `Untracked`, which compensates nothing further.
+///
+/// ## Why this cannot remove a newer entry for the same key
+///
+/// Presence removes by `(session_id, topic, key)`, not by ref, so this
+/// untrack would take a *newer* entry for the same key with it if both
+/// refs could coexist. They cannot: an asynchronous track supersedes every
+/// ref the presence actor still holds for that logical tuple in the turn
+/// that adds the new one (see `presence.track_async`), and this runtime
+/// sends both messages, so the actor's mailbox orders the retrack strictly
+/// before this compensation. By the time it is handled, the stale ref is
+/// gone from the actor's ref map and removing it is a no-op.
 fn compensate_stale_ack(
   state: State(model, msg),
   ack: presence.MutationAck,
 ) -> State(model, msg) {
   case ack.outcome {
     presence.Untracked -> state
+    // The acknowledgement this socket was still owed has now arrived, so
+    // shutdown no longer has to sweep its session — whether or not a
+    // presence actor is still around to act on the ref it carries.
     presence.Tracked(ref, _meta) ->
-      case state.config.presence {
-        None -> state
-        Some(handle) ->
-          case presence.is_running(handle) {
-            False -> state
-            True -> {
-              let op_id = state.next_op_id
-              presence.untrack_async(
-                presence: handle,
-                refs: [ref],
-                tag: ack.tag,
-                op_id: op_id,
-                reply: state.presence_ack,
-              )
-              state.logger
-              |> log.debug(
-                "Presence acknowledgement compensated: untracking stale entry",
-                [#("socket_id", ack.tag), #("ref", ref)],
-              )
-              State(..state, next_op_id: op_id + 1)
-            }
-          }
+      untrack_stale_ref(clear_unacked_track(state, ack.tag), ack.tag, ref)
+  }
+}
+
+/// Ask presence to remove exactly the ref a stale acknowledgement carried.
+fn untrack_stale_ref(
+  state: State(model, msg),
+  socket_id: String,
+  ref: String,
+) -> State(model, msg) {
+  case state.config.presence {
+    None -> state
+    Some(handle) ->
+      case presence.is_running(handle) {
+        False -> state
+        True -> {
+          let op_id = state.next_op_id
+          presence.untrack_async(
+            presence: handle,
+            refs: [ref],
+            tag: socket_id,
+            op_id: op_id,
+            reply: state.presence_ack,
+          )
+          state.logger
+          |> log.debug(
+            "Presence acknowledgement compensated: untracking stale entry",
+            [#("socket_id", socket_id), #("ref", ref)],
+          )
+          State(..state, next_op_id: op_id + 1)
+        }
       }
   }
 }
