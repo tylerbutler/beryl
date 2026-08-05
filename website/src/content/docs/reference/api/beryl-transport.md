@@ -16,7 +16,9 @@ Transport SPI — the contract between beryl core and WebSocket transport
  1. Admits a connection (origin/auth policy is the transport's concern),
     acquiring a slot with `beryl.acquire_connection_slot` and binding it
     with `beryl.bind_connection_slot`.
- 2. Announces the socket with `socket_connected` then `register_closer`.
+ 2. Announces the socket with `socket_connected` — or
+    `socket_connected_with_codec` when the connection speaks a framing
+    other than the configured codec — then `register_closer`.
  3. Decodes inbound frames with the codec from `active_codec` (see
     `beryl/wire/codec`) and routes them with `route_decoded` /
     `route_binary`, shedding over-rate frames via `new_message_limiter` /
@@ -213,6 +215,25 @@ pub fn socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
+  assigns: a
+) -> Nil
+```
+
+### `socket_connected_with_codec`
+
+Announce a newly connected socket that negotiates its own wire format.
+ `Some(codec)` frames this connection's outbound messages with `codec`
+ instead of the configured one, so a single coordinator — sharing channels,
+ pubsub and presence — can serve transports speaking different framings.
+ `None` is equivalent to `socket_connected`.
+
+```gleam
+pub fn socket_connected_with_codec(
+  channels: beryl.Channels,
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec: option.Option(codec.Codec),
   assigns: a
 ) -> Nil
 ```
