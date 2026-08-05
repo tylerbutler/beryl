@@ -140,11 +140,13 @@ pub fn logging_level(logging: LoggingConfig) -> LogLevel {
   logging.level
 }
 
+// nolint: unused_exports -- package-internal logging accessor
 @internal
 pub fn logging_include_payloads(logging: LoggingConfig) -> Bool {
   logging.include_payloads
 }
 
+// nolint: unused_exports -- package-internal logging accessor
 @internal
 pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
   logging.payload_preview_bytes
@@ -203,6 +205,8 @@ pub opaque type Config {
     /// Maximum joined topics per socket (default: 1000).
     /// Values <= 0 disable the cap.
     max_joined_topics_per_socket: Int,
+    /// Whether beryl emits `:telemetry` events (default: false).
+    telemetry: Bool,
     /// Logging configuration for beryl diagnostics
     logging: LoggingConfig,
   )
@@ -248,6 +252,7 @@ pub fn config(codec: codec.Codec) -> Config {
     max_event_length: 64,
     max_inbound_frame_bytes: 1_048_576,
     max_joined_topics_per_socket: 1000,
+    telemetry: False,
     logging: logging_config(level: InfoLevel, include_payloads: False),
   )
 }
@@ -255,6 +260,15 @@ pub fn config(codec: codec.Codec) -> Config {
 /// Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(ps))
+}
+
+/// Enable beryl's `:telemetry` events.
+///
+/// Telemetry is disabled by default. Handlers run synchronously in the
+/// process emitting an event, so handlers should enqueue or aggregate work
+/// quickly to avoid adding latency to channel and transport operations.
+pub fn with_telemetry(config: Config) -> Config {
+  Config(..config, telemetry: True)
 }
 
 /// Configure heartbeat timing.
@@ -485,76 +499,97 @@ pub fn config_heartbeat_interval_ms(config: Config) -> Int {
   config.heartbeat_interval_ms
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_heartbeat_timeout_ms(config: Config) -> Int {
   config.heartbeat_timeout_ms
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_max_connections_per_ip(config: Config) -> Int {
   config.max_connections_per_ip
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_max_connections(config: Config) -> Int {
   config.max_connections
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_pubsub(config: Config) -> Option(PubSub(json.Json)) {
   config.pubsub
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_logging(config: Config) -> LoggingConfig {
   config.logging
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_join_rate(config: Config) -> Int {
   config.join_rate
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_join_burst(config: Config) -> Int {
   config.join_burst
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_channel_rate(config: Config) -> Int {
   config.channel_rate
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_channel_burst(config: Config) -> Int {
   config.channel_burst
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_channel_rate_max_keys_per_socket(config: Config) -> Int {
   config.channel_rate_max_keys_per_socket
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_max_topic_length(config: Config) -> Int {
   config.max_topic_length
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_max_event_length(config: Config) -> Int {
   config.max_event_length
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_max_inbound_frame_bytes(config: Config) -> Int {
   config.max_inbound_frame_bytes
 }
 
+// nolint: unused_exports -- package-internal configuration accessor
 @internal
 pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
   config.max_joined_topics_per_socket
 }
 
+// nolint: unused_exports -- package-internal accessor for instrumentation/tests; hidden from public docs with @internal
+@internal
+pub fn config_telemetry(config: Config) -> Bool {
+  config.telemetry
+}
+
+// nolint: unused_exports -- package-internal startup helper
 /// Warn when a channels system starts with every abuse control disabled.
 ///
 /// beryl ships with rate and connection limits off (like Phoenix) because
@@ -605,6 +640,7 @@ pub fn message_limits(
   optional_limits(channels.config.message_rate, channels.config.message_burst)
 }
 
+// nolint: unused_exports -- package-internal coordinator configuration
 /// Build a coordinator config from a `Config`.
 /// Shared by `start` and the supervisor so the mapping lives in one place.
 @internal
@@ -624,6 +660,7 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
     max_topic_length: config.max_topic_length,
     max_event_length: config.max_event_length,
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
+    telemetry: config.telemetry,
     logging: coordinator_logging(config.logging),
     registry: None,
   )
@@ -666,6 +703,7 @@ pub fn channels_from_coordinator(
   )
 }
 
+// nolint: unused_exports -- package-internal supervised constructor
 @internal
 pub fn channels_from_supervised_parts(
   coordinator coordinator: Subject(coordinator.Message),
@@ -700,12 +738,13 @@ fn channels_from_parts(
   )
 }
 
-// nolint: unused_exports -- package-internal accessor for transports/tests; hidden from public docs with @internal
+// nolint: unused_exports -- package-internal coordinator accessor
 @internal
 pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
   channels.coordinator
 }
 
+// nolint: unused_exports -- package-internal codec accessor
 @internal
 pub fn configured_codec(channels: Channels) -> codec.Codec {
   channels.config.codec
@@ -762,6 +801,12 @@ pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
 /// Return the configured inbound frame size cap for transports.
 pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
   channels.config.max_inbound_frame_bytes
+}
+
+// nolint: unused_exports -- consumed by the public transport SPI
+@internal
+pub fn channels_telemetry_enabled(channels: Channels) -> Bool {
+  channels.config.telemetry
 }
 
 // nolint: unused_exports -- package-internal accessor for beryl/internal/unsupervised; hidden from public docs with @internal

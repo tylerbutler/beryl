@@ -110,6 +110,8 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 
 - **Website & guides**: <https://beryl.tylerbutler.com>
 - **Generated API reference**: <https://beryl.tylerbutler.com/reference/api/>
+- **Observability guide**: <https://beryl.tylerbutler.com/guides/observability/>
+- **Load-testing guide**: [`load/README.md`](load/README.md)
 
 beryl is not on Hex yet, so there is no `hexdocs.pm` listing; the reference
 above is generated from the same Gleam docs metadata.
@@ -157,6 +159,7 @@ flowchart TD
 - **Actor bridge** — forward an external OTP actor's stream to a socket with `beryl/bridge`
 - **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
 - **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds initial assigns
+- **Observability** — Opt-in stable telemetry events and local coordinator snapshots, with export owned by the host application
 
 ## Examples
 

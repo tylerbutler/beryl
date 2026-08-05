@@ -1,7 +1,5 @@
 [tools]
-erlang = "28"
-rebar = "latest"
-"github:tylerbutler/trellis" = "0.4.1"
+"github:tylerbutler/trellis" = "0.10.1"
 
 [env]
 LC_ALL = "en_US.UTF-8"

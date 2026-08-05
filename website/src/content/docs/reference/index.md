@@ -34,8 +34,13 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | `beryl/wire` | Phoenix-compatible codec and JSON helpers | Phoenix clients, custom transports, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
 | `beryl/transport` | Transport SPI: socket lifecycle, inbound routing, edge rate limiting | Writing a custom WebSocket transport |
+| `beryl/stats` | Point-in-time local coordinator snapshots and typed availability/timeout errors | Operational polling and application metrics |
 | `beryl_mist` | Mist WebSocket upgrade and dispatch (separate `beryl_mist` package) | Wiring beryl to a Mist server |
 | `beryl_ewe` | Ewe WebSocket upgrade and dispatch (separate `beryl_ewe` package); mirrors the `beryl_mist` API | Wiring beryl to an Ewe server |
+
+For the stable `:telemetry` event taxonomy, snapshot semantics, and
+application-owned Prometheus/Grafana export pattern, see the
+[Observability guide](/guides/observability/).
 
 ---
 

@@ -664,3 +664,15 @@ pub fn with_pubsub(
   pubsub.PubSub(json.Json)
 ) -> Config
 ```
+
+### `with_telemetry`
+
+Enable beryl's `:telemetry` events.
+
+ Telemetry is disabled by default. Handlers run synchronously in the
+ process emitting an event, so handlers should enqueue or aggregate work
+ quickly to avoid adding latency to channel and transport operations.
+
+```gleam
+pub fn with_telemetry(Config) -> Config
+```

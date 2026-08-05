@@ -179,6 +179,7 @@ type ConnectionState {
     /// process, so parse cost and malformed input never reach the shared
     /// coordinator.
     codec: codec.Codec,
+    telemetry: transport.Telemetry,
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
     /// so a flooding socket cannot fill the coordinator's mailbox.
@@ -257,19 +258,47 @@ fn handle_matched_upgrade(
   channels: Channels,
   config: TransportConfig(assigns),
 ) -> Response(ResponseBody) {
+  let telemetry = transport.telemetry(channels, transport.Ewe)
+  let started_at = transport.telemetry_start(telemetry)
   use <- bool.lazy_guard(
     when: !origin_allowed(request, config.origin_policy),
-    return: forbidden,
+    return: fn() {
+      reject_upgrade(telemetry, started_at, transport.OriginRejected)
+    },
   )
-  use <- bool.lazy_guard(when: !vsn_supported(request), return: forbidden)
+  use <- bool.lazy_guard(when: !vsn_supported(request), return: fn() {
+    reject_upgrade(telemetry, started_at, transport.VersionRejected)
+  })
   let ip = request_ip(request)
   case beryl.acquire_connection_slot(channels, ip) {
-    Error(Nil) ->
+    Error(Nil) -> {
+      transport.telemetry_upgrade_stop(
+        telemetry,
+        started_at,
+        transport.CapacityRejected,
+      )
       response.new(429)
       |> response.set_body(ewe.Empty)
+    }
     Ok(connection_permit) ->
-      run_connect_and_upgrade(request, channels, config, connection_permit)
+      run_connect_and_upgrade(
+        request,
+        channels,
+        config,
+        connection_permit,
+        telemetry,
+        started_at,
+      )
   }
+}
+
+fn reject_upgrade(
+  telemetry: transport.Telemetry,
+  started_at: Int,
+  outcome: transport.UpgradeOutcome,
+) -> Response(ResponseBody) {
+  transport.telemetry_upgrade_stop(telemetry, started_at, outcome)
+  forbidden()
 }
 
 /// Check the client's requested wire protocol version (`?vsn=` query
@@ -363,20 +392,42 @@ fn run_connect_and_upgrade(
   channels: Channels,
   config: TransportConfig(assigns),
   connection_permit: beryl.ConnectionPermit,
+  telemetry: transport.Telemetry,
+  started_at: Int,
 ) -> Response(ResponseBody) {
   // Run on_connect callback if configured
   case config.on_connect {
     Some(callback) ->
       case callback(request) {
         Ok(assigns) ->
-          do_upgrade(request, channels, assigns, Some(connection_permit))
+          do_upgrade(
+            request,
+            channels,
+            assigns,
+            Some(connection_permit),
+            telemetry,
+            started_at,
+          )
         Error(ConnectRejected) -> {
           beryl.release_connection_slot(connection_permit)
+          transport.telemetry_upgrade_stop(
+            telemetry,
+            started_at,
+            transport.AuthRejected,
+          )
           response.new(403)
           |> response.set_body(ewe.Empty)
         }
       }
-    None -> do_upgrade(request, channels, Nil, Some(connection_permit))
+    None ->
+      do_upgrade(
+        request,
+        channels,
+        Nil,
+        Some(connection_permit),
+        telemetry,
+        started_at,
+      )
   }
 }
 
@@ -444,7 +495,15 @@ pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
 ) -> Response(ResponseBody) {
-  do_upgrade(request, channels, Nil, None)
+  let telemetry = transport.telemetry(channels, transport.Ewe)
+  do_upgrade(
+    request,
+    channels,
+    Nil,
+    None,
+    telemetry,
+    transport.telemetry_start(telemetry),
+  )
 }
 
 /// Perform the actual WebSocket upgrade
@@ -453,6 +512,8 @@ fn do_upgrade(
   channels: Channels,
   connect_assigns: assigns,
   connection_permit: Option(beryl.ConnectionPermit),
+  telemetry: transport.Telemetry,
+  started_at: Int,
 ) -> Response(ResponseBody) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
   let active_codec = transport.active_codec(channels)
@@ -468,6 +529,7 @@ fn do_upgrade(
           connection_permit,
           max_inbound_frame_bytes,
           active_codec,
+          telemetry,
         )
       },
       handler: on_message,
@@ -482,9 +544,21 @@ fn do_upgrade(
         Some(permit) -> beryl.release_connection_slot(permit)
         None -> Nil
       }
+      transport.telemetry_upgrade_stop(
+        telemetry,
+        started_at,
+        transport.HandshakeFailed,
+      )
       response
     }
-    False -> response
+    False -> {
+      transport.telemetry_upgrade_stop(
+        telemetry,
+        started_at,
+        transport.UpgradeSucceeded,
+      )
+      response
+    }
   }
 }
 
@@ -497,6 +571,7 @@ fn on_init(
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
   active_codec: codec.Codec,
+  telemetry: transport.Telemetry,
 ) -> #(ConnectionState, Selector(SendRequest)) {
   // Bind the per-IP slot to this WebSocket process so it is reclaimed even
   // if the process dies without running on_close.
@@ -547,6 +622,7 @@ fn on_init(
       connection_permit: connection_permit,
       max_inbound_frame_bytes: max_inbound_frame_bytes,
       codec: active_codec,
+      telemetry: telemetry,
       message_limiter: transport.new_message_limiter(channels),
     )
 
@@ -564,22 +640,37 @@ fn on_message(
 ) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
   case message {
     ewe.Text(text) -> {
-      case
-        frame_too_large(state.max_inbound_frame_bytes, string.byte_size(text))
-      {
-        True -> ewe.websocket_stop()
-        False -> handle_inbound_text(state, text)
+      let bytes = string.byte_size(text)
+      let started_at = transport.telemetry_start(state.telemetry)
+      case frame_too_large(state.max_inbound_frame_bytes, bytes) {
+        True -> {
+          transport.telemetry_frame_stop(
+            state.telemetry,
+            started_at,
+            bytes,
+            transport.TextFrame,
+            transport.FrameOversized,
+          )
+          ewe.websocket_stop()
+        }
+        False -> handle_inbound_text(state, text, bytes, started_at)
       }
     }
     ewe.Binary(data) -> {
-      case
-        frame_too_large(
-          state.max_inbound_frame_bytes,
-          bit_array.byte_size(data),
-        )
-      {
-        True -> ewe.websocket_stop()
-        False -> handle_inbound_binary(state, data)
+      let bytes = bit_array.byte_size(data)
+      let started_at = transport.telemetry_start(state.telemetry)
+      case frame_too_large(state.max_inbound_frame_bytes, bytes) {
+        True -> {
+          transport.telemetry_frame_stop(
+            state.telemetry,
+            started_at,
+            bytes,
+            transport.BinaryFrame,
+            transport.FrameOversized,
+          )
+          ewe.websocket_stop()
+        }
+        False -> handle_inbound_binary(state, data, bytes, started_at)
       }
     }
     ewe.User(Close) -> ewe.websocket_stop()
@@ -602,12 +693,30 @@ fn on_message(
 fn handle_inbound_text(
   state: ConnectionState,
   text: String,
+  bytes: Int,
+  started_at: Int,
 ) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
   let #(state, allowed) = take_message_token(state)
-  use <- bool.guard(when: !allowed, return: ewe.websocket_continue(state))
+  use <- bool.lazy_guard(when: !allowed, return: fn() {
+    transport.telemetry_frame_stop(
+      state.telemetry,
+      started_at,
+      bytes,
+      transport.TextFrame,
+      transport.FrameRateLimited,
+    )
+    ewe.websocket_continue(state)
+  })
   case codec.decode_text(state.codec)(text) {
     Ok(msg) -> {
       transport.route_decoded(state.channels, state.socket_id, msg)
+      transport.telemetry_frame_stop(
+        state.telemetry,
+        started_at,
+        bytes,
+        transport.TextFrame,
+        transport.FrameRouted,
+      )
       ewe.websocket_continue(state)
     }
     Error(err) -> {
@@ -618,6 +727,13 @@ fn handle_inbound_text(
           #("socket_id", state.socket_id),
           #("error", codec.format_decode_error(err)),
         ],
+      )
+      transport.telemetry_frame_stop(
+        state.telemetry,
+        started_at,
+        bytes,
+        transport.TextFrame,
+        transport.FrameDecodeFailed,
       )
       ewe.websocket_continue(state)
     }
@@ -630,18 +746,43 @@ fn handle_inbound_text(
 fn handle_inbound_binary(
   state: ConnectionState,
   data: BitArray,
+  bytes: Int,
+  started_at: Int,
 ) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
   let #(state, allowed) = take_message_token(state)
-  use <- bool.guard(when: !allowed, return: ewe.websocket_continue(state))
+  use <- bool.lazy_guard(when: !allowed, return: fn() {
+    transport.telemetry_frame_stop(
+      state.telemetry,
+      started_at,
+      bytes,
+      transport.BinaryFrame,
+      transport.FrameRateLimited,
+    )
+    ewe.websocket_continue(state)
+  })
   case codec.decode_binary(state.codec) {
     None -> {
       transport.route_binary(state.channels, state.socket_id, data)
+      transport.telemetry_frame_stop(
+        state.telemetry,
+        started_at,
+        bytes,
+        transport.BinaryFrame,
+        transport.FrameRouted,
+      )
       ewe.websocket_continue(state)
     }
     Some(decode_binary) ->
       case decode_binary(data) {
         Ok(msg) -> {
-          transport.route_decoded(state.channels, state.socket_id, msg)
+          transport.route_decoded_binary(state.channels, state.socket_id, msg)
+          transport.telemetry_frame_stop(
+            state.telemetry,
+            started_at,
+            bytes,
+            transport.BinaryFrame,
+            transport.FrameRouted,
+          )
           ewe.websocket_continue(state)
         }
         Error(err) -> {
@@ -652,6 +793,13 @@ fn handle_inbound_binary(
               #("socket_id", state.socket_id),
               #("error", codec.format_decode_error(err)),
             ],
+          )
+          transport.telemetry_frame_stop(
+            state.telemetry,
+            started_at,
+            bytes,
+            transport.BinaryFrame,
+            transport.FrameDecodeFailed,
           )
           ewe.websocket_continue(state)
         }

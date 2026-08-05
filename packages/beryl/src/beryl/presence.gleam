@@ -573,6 +573,7 @@ fn handle_message(
 
     Untrack(ref, reply) -> {
       case dict.get(actor_state.refs, ref) {
+        // nolint: thrown_away_error
         Error(_) -> {
           // Unknown or already-removed ref: nothing to do.
           process.send(reply, Nil)

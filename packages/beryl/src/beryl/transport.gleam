@@ -20,11 +20,128 @@ import beryl/coordinator
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
+import beryl/telemetry
 import beryl/wire/codec.{type Codec, type Inbound}
+import gleam/bool
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
 import gleam/option.{type Option, None}
 import gleam/result
+
+// --- Telemetry ---
+
+/// WebSocket transport implementations in beryl's telemetry schema.
+pub type TelemetryTransport {
+  Mist
+  Ewe
+}
+
+/// Closed terminal outcomes for a matched WebSocket upgrade.
+pub type UpgradeOutcome {
+  UpgradeSucceeded
+  OriginRejected
+  VersionRejected
+  AuthRejected
+  CapacityRejected
+  HandshakeFailed
+}
+
+/// WebSocket data frame kinds.
+pub type FrameKind {
+  TextFrame
+  BinaryFrame
+}
+
+/// Closed terminal outcomes for inbound frame processing.
+pub type FrameOutcome {
+  FrameRouted
+  FrameOversized
+  FrameRateLimited
+  FrameDecodeFailed
+}
+
+/// Cheap transport telemetry context. When disabled, starting and stopping an
+/// operation avoid VM clock calls and event construction.
+pub opaque type Telemetry {
+  Telemetry(enabled: Bool, transport: telemetry.Transport)
+}
+
+// nolint: unused_exports -- transport SPI
+/// Create a telemetry context from the channels configuration.
+pub fn telemetry(
+  channels: Channels,
+  transport: TelemetryTransport,
+) -> Telemetry {
+  Telemetry(
+    enabled: beryl.channels_telemetry_enabled(channels),
+    transport: case transport {
+      Mist -> telemetry.Mist
+      Ewe -> telemetry.Ewe
+    },
+  )
+}
+
+// nolint: unused_exports -- transport SPI
+/// Start a timed transport operation. Returns a zero sentinel when disabled.
+pub fn telemetry_start(context: Telemetry) -> Int {
+  use <- bool.guard(when: !context.enabled, return: 0)
+  telemetry.start_time()
+}
+
+// nolint: unused_exports -- transport SPI
+/// Emit exactly one terminal matched-upgrade event.
+pub fn telemetry_upgrade_stop(
+  context: Telemetry,
+  started_at: Int,
+  outcome: UpgradeOutcome,
+) -> Nil {
+  use <- bool.guard(when: !context.enabled, return: Nil)
+  telemetry.emit(
+    True,
+    telemetry.TransportUpgradeStop(
+      duration: telemetry.duration_since(started_at),
+      transport: context.transport,
+      outcome: case outcome {
+        UpgradeSucceeded -> telemetry.UpgradeSucceeded
+        OriginRejected -> telemetry.OriginRejected
+        VersionRejected -> telemetry.VersionRejected
+        AuthRejected -> telemetry.AuthRejected
+        CapacityRejected -> telemetry.CapacityRejected
+        HandshakeFailed -> telemetry.HandshakeFailed
+      },
+    ),
+  )
+}
+
+// nolint: unused_exports -- transport SPI
+/// Emit exactly one terminal inbound-frame event.
+pub fn telemetry_frame_stop(
+  context: Telemetry,
+  started_at: Int,
+  bytes: Int,
+  kind: FrameKind,
+  outcome: FrameOutcome,
+) -> Nil {
+  use <- bool.guard(when: !context.enabled, return: Nil)
+  telemetry.emit(
+    True,
+    telemetry.TransportFrameStop(
+      duration: telemetry.duration_since(started_at),
+      bytes: bytes,
+      transport: context.transport,
+      kind: case kind {
+        TextFrame -> telemetry.TextFrame
+        BinaryFrame -> telemetry.BinaryFrame
+      },
+      outcome: case outcome {
+        FrameRouted -> telemetry.FrameRouted
+        FrameOversized -> telemetry.FrameOversized
+        FrameRateLimited -> telemetry.FrameRateLimited
+        FrameDecodeFailed -> telemetry.FrameDecodeFailed
+      },
+    ),
+  )
+}
 
 // --- Socket lifecycle ---
 
@@ -114,6 +231,23 @@ pub fn route_decoded(
   message message: Inbound,
 ) -> Nil {
   coordinator.route_decoded(
+    beryl.coordinator_subject(channels),
+    socket_id,
+    message,
+  )
+}
+
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+/// Route a transport-decoded binary message to the coordinator.
+///
+/// This is additive to `route_decoded`, whose text semantics are retained for
+/// third-party transport compatibility.
+pub fn route_decoded_binary(
+  channels channels: Channels,
+  socket_id socket_id: String,
+  message message: Inbound,
+) -> Nil {
+  coordinator.route_decoded_binary(
     beryl.coordinator_subject(channels),
     socket_id,
     message,
