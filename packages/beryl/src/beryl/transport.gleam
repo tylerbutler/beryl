@@ -5,7 +5,9 @@
 //// 1. Admits a connection (origin/auth policy is the transport's concern),
 ////    acquiring a slot with `beryl.acquire_connection_slot` and binding it
 ////    with `beryl.bind_connection_slot`.
-//// 2. Announces the socket with `socket_connected` then `register_closer`.
+//// 2. Announces the socket with `socket_connected` — or
+////    `socket_connected_with_codec` when the connection speaks a framing
+////    other than the configured codec — then `register_closer`.
 //// 3. Decodes inbound frames with the codec from `active_codec` (see
 ////    `beryl/wire/codec`) and routes them with `route_decoded` /
 ////    `route_binary`, shedding over-rate frames via `new_message_limiter` /
@@ -38,13 +40,36 @@ pub fn socket_connected(
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   assigns assigns: assigns,
 ) -> Nil {
+  socket_connected_with_codec(
+    channels: channels,
+    socket_id: socket_id,
+    send: send,
+    send_binary: send_binary,
+    codec: None,
+    assigns: assigns,
+  )
+}
+
+/// Announce a newly connected socket that negotiates its own wire format.
+/// `Some(codec)` frames this connection's outbound messages with `codec`
+/// instead of the configured one, so a single coordinator — sharing channels,
+/// pubsub and presence — can serve transports speaking different framings.
+/// `None` is equivalent to `socket_connected`.
+pub fn socket_connected_with_codec(
+  channels channels: Channels,
+  socket_id socket_id: String,
+  send send: fn(String) -> Result(Nil, Nil),
+  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec codec: Option(Codec),
+  assigns assigns: assigns,
+) -> Nil {
   process.send(
     beryl.coordinator_subject(channels),
     coordinator.SocketConnected(
       socket_id,
       send,
       send_binary,
-      None,
+      codec,
       erase(assigns),
     ),
   )
