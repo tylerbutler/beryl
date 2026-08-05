@@ -2830,18 +2830,25 @@ var MVRegister = class extends CustomType {
 function new$6(replica_id) {
   return new MVRegister(replica_id, make(), new$2());
 }
-function set(register, val) {
+function set_with_delta(register, val) {
   let new_vclock = increment(
     register.vclock,
     register.replica_id
   );
   let new_counter = get2(new_vclock, register.replica_id);
   let tag = new Tag(register.replica_id, new_counter);
-  return new MVRegister(
+  let new_state = new MVRegister(
     register.replica_id,
     insert(make(), tag, val),
     new_vclock
   );
+  return [new_state, new_state];
+}
+function set(register, val) {
+  let $ = set_with_delta(register, val);
+  let updated;
+  updated = $[0];
+  return updated;
 }
 function value2(register) {
   return values(register.entries);
@@ -3221,7 +3228,7 @@ function new$9(replica_id) {
     new$2()
   );
 }
-function add2(orset, element) {
+function add_with_delta(orset, element) {
   let new_counter = orset.counter + 1;
   let tag = new Tag2(orset.replica_id, new_counter);
   let existing_tags = unwrap(
@@ -3229,13 +3236,46 @@ function add2(orset, element) {
     new$7()
   );
   let new_tags = insert2(existing_tags, tag);
-  return new ORSet(
+  let updated = new ORSet(
     orset.replica_id,
     new_counter,
     insert(orset.entries, element, new_tags),
     orset.tombstones,
     orset.pruned
   );
+  let delta = new ORSet(
+    orset.replica_id,
+    new_counter,
+    from_list(toList([[element, from_list2(toList([tag]))]])),
+    new$7(),
+    new$2()
+  );
+  return [updated, delta];
+}
+function remove_with_delta(orset, element) {
+  let removed_tags = unwrap(
+    get(orset.entries, element),
+    new$7()
+  );
+  let updated = new ORSet(
+    orset.replica_id,
+    orset.counter,
+    delete$(orset.entries, element),
+    union(orset.tombstones, removed_tags),
+    orset.pruned
+  );
+  let delta = new ORSet(
+    orset.replica_id,
+    orset.counter,
+    make(),
+    removed_tags,
+    new$2()
+  );
+  return [updated, delta];
+}
+function value3(orset) {
+  let _pipe = keys(orset.entries);
+  return from_list2(_pipe);
 }
 function contains2(orset, element) {
   let $ = get(orset.entries, element);
@@ -3245,10 +3285,6 @@ function contains2(orset, element) {
   } else {
     return false;
   }
-}
-function value3(orset) {
-  let _pipe = keys(orset.entries);
-  return from_list2(_pipe);
 }
 function pruned_on_side_without_live_tag(tag, live_tags, pruned) {
   let rid;
@@ -3944,6 +3980,16 @@ var ORMap = class extends CustomType {
     this.remove_bounds = remove_bounds;
   }
 };
+var ORMapDelta = class extends CustomType {
+  constructor(replica_id, crdt_spec, key_set_delta, value_deltas, remove_bounds_delta) {
+    super();
+    this.replica_id = replica_id;
+    this.crdt_spec = crdt_spec;
+    this.key_set_delta = key_set_delta;
+    this.value_deltas = value_deltas;
+    this.remove_bounds_delta = remove_bounds_delta;
+  }
+};
 function spec_to_string(spec) {
   if (spec instanceof GCounterSpec) {
     return "g_counter";
@@ -3989,6 +4035,23 @@ function new$11(replica_id, crdt_spec) {
     make()
   );
 }
+function put_value(map4, key, value4) {
+  let $ = add_with_delta(map4.key_set, key);
+  let updated_key_set;
+  let key_set_delta;
+  updated_key_set = $[0];
+  key_set_delta = $[1];
+  return [
+    new ORMap(
+      map4.replica_id,
+      map4.crdt_spec,
+      updated_key_set,
+      insert(map4.values, key, value4),
+      delete$(map4.remove_bounds, key)
+    ),
+    key_set_delta
+  ];
+}
 function matches_spec(value4, spec) {
   if (spec instanceof GCounterSpec) {
     if (value4 instanceof CrdtGCounter) {
@@ -4032,32 +4095,31 @@ function matches_spec(value4, spec) {
     return false;
   }
 }
-function update(map4, key, f) {
-  let _block;
+function current_value(map4, key) {
   let $ = contains2(map4.key_set, key);
   let $1 = get(map4.values, key);
   if ($ && $1 instanceof Ok) {
     let crdt_val = $1[0];
-    _block = crdt_val;
+    return crdt_val;
   } else {
-    _block = default_crdt(map4.crdt_spec, map4.replica_id);
+    return default_crdt(map4.crdt_spec, map4.replica_id);
   }
-  let current = _block;
-  let _block$1;
-  let $2 = matches_spec(f(current), map4.crdt_spec);
-  if ($2) {
-    _block$1 = f(current);
+}
+function update(map4, key, f) {
+  let current = current_value(map4, key);
+  let new_value = f(current);
+  let _block;
+  let $ = matches_spec(new_value, map4.crdt_spec);
+  if ($) {
+    _block = new_value;
   } else {
-    _block$1 = current;
+    _block = current;
   }
-  let updated = _block$1;
-  return new ORMap(
-    map4.replica_id,
-    map4.crdt_spec,
-    add2(map4.key_set, key),
-    insert(map4.values, key, updated),
-    delete$(map4.remove_bounds, key)
-  );
+  let safe_value = _block;
+  let $1 = put_value(map4, key, safe_value);
+  let updated;
+  updated = $1[0];
+  return updated;
 }
 function get3(map4, key) {
   let $ = contains2(map4.key_set, key);
@@ -4072,27 +4134,51 @@ function get3(map4, key) {
     return new Error(void 0);
   }
 }
-function remove(map4, key) {
-  let $ = remove_with_bound(map4.key_set, key);
+function remove_with_delta2(map4, key) {
+  let $ = remove_with_delta(map4.key_set, key);
   let updated_key_set;
-  let bound;
+  let key_set_delta;
   updated_key_set = $[0];
-  bound = $[1];
+  key_set_delta = $[1];
+  let $1 = remove_with_bound(map4.key_set, key);
+  let bound;
+  bound = $1[1];
   let _block;
-  let $1 = is_empty2(bound);
-  if ($1) {
-    _block = map4.remove_bounds;
+  let $3 = is_empty2(bound);
+  if ($3) {
+    _block = [map4.remove_bounds, make()];
   } else {
-    _block = insert(map4.remove_bounds, key, bound);
+    _block = [
+      insert(map4.remove_bounds, key, bound),
+      from_list(toList([[key, bound]]))
+    ];
   }
-  let updated_bounds = _block;
-  return new ORMap(
+  let $2 = _block;
+  let updated_bounds;
+  let bounds_delta;
+  updated_bounds = $2[0];
+  bounds_delta = $2[1];
+  let updated = new ORMap(
     map4.replica_id,
     map4.crdt_spec,
     updated_key_set,
     map4.values,
     updated_bounds
   );
+  let delta = new ORMapDelta(
+    map4.replica_id,
+    map4.crdt_spec,
+    key_set_delta,
+    make(),
+    bounds_delta
+  );
+  return [updated, delta];
+}
+function remove(map4, key) {
+  let $ = remove_with_delta2(map4, key);
+  let updated;
+  updated = $[0];
+  return updated;
 }
 function keys2(map4) {
   return to_list2(value3(map4.key_set));
@@ -4152,7 +4238,7 @@ function merge11(a, b) {
             "panic",
             FILEPATH,
             "lattice_maps/or_map",
-            205,
+            199,
             "merge",
             "unreachable: key must exist in at least one map",
             {}

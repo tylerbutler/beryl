@@ -5,15 +5,17 @@
 //// which layers the upgrade admission pipeline, connection lifecycle, and
 //// inbound frame pipeline on top of this module. The functions here are the
 //// low-level contract that pipeline is built on: announce sockets
-//// (`socket_connected`, `register_closer`, `socket_disconnected`), route
-//// inbound frames (`route_decoded`, `route_binary`) decoded with the codec
-//// from `active_codec` (see `beryl/wire/codec`), and tie connection
-//// lifetimes to the owning runtime (`runtime_pid`).
+//// (`socket_connected`, `socket_connected_with_codec`, `register_closer`,
+//// `socket_disconnected`), route inbound frames (`route_decoded`,
+//// `route_binary`) decoded with the codec from `active_codec` (see
+//// `beryl/wire/codec`), and tie connection lifetimes to the owning runtime
+//// (`runtime_pid`).
 
 import beryl.{type Sockets}
 import beryl/socket.{type ConnectSeed}
 import beryl/wire/codec.{type Codec, type Inbound}
 import gleam/erlang/process
+import gleam/option.{type Option, None}
 
 // --- Socket lifecycle ---
 
@@ -29,10 +31,32 @@ pub fn socket_connected(
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   seed seed: ConnectSeed,
 ) -> Nil {
+  socket_connected_with_codec(
+    sockets: sockets,
+    socket_id: socket_id,
+    send: send,
+    send_binary: send_binary,
+    codec: None,
+    seed: seed,
+  )
+}
+
+/// Announce a newly connected socket that negotiates its own wire format.
+/// `Some(codec)` frames this connection's outbound messages with `codec`
+/// instead of the configured one. `None` is equivalent to `socket_connected`.
+pub fn socket_connected_with_codec(
+  sockets sockets: Sockets,
+  socket_id socket_id: String,
+  send send: fn(String) -> Result(Nil, Nil),
+  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec codec: Option(Codec),
+  seed seed: ConnectSeed,
+) -> Nil {
   beryl.app_dispatch(sockets).socket_connected(
     socket_id,
     send,
     send_binary,
+    codec,
     seed,
   )
 }

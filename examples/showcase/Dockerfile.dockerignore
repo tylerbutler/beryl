@@ -1,0 +1,18 @@
+# Build-context excludes for examples/showcase/Dockerfile.
+#
+# This file MUST sit next to the Dockerfile and be named
+# `<dockerfile>.dockerignore`: the build context is the *repository root*
+# (see the Dockerfile header), and Docker resolves a bare `.dockerignore`
+# relative to the context, not to the Dockerfile. A plain
+# `examples/showcase/.dockerignore` is silently ignored by this build.
+#
+# Everything not listed here is sent to the daemon; these are the large
+# regenerable trees the Gleam build does not need.
+**/build/
+**/_build/
+**/node_modules/
+**/.git/
+**/test-results/
+**/playwright-report/
+*.log
+erl_crash.dump

@@ -21,8 +21,8 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
       # Toolchain needed to regenerate the website API reference after the
       # version bump (mirrors the Docs job in ci.yml).

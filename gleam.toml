@@ -5,17 +5,10 @@
 [tools.trellis]
 # examples/ also holds a pnpm workspace (node_modules, package.json);
 # glob matches without a gleam.toml are skipped by trellis.
-# NOTE: can't use "examples/**" here — a `**` in members recurses into each
-# example's build/packages/* vendored deps and errors on duplicate members.
-# See https://github.com/tylerbutler/trellis/issues/21. Enumerate single-level
-# globs plus the nested client instead. (`**` is fine in exclude keys below.)
-members = ["packages/*", "examples/*", "examples/collab_docs/client"]
+members = ["packages/*", "examples/**"]
 
 [tools.trellis.exclude]
-# beryl_ewe is not yet ready to publish; the reserved "@release" key keeps it
-# built/tested/linted while excluding it from changelog, versioning, tagging,
-# publishing, and release CI.
-"@release" = ["examples/**", "packages/beryl_ewe"]
+"@release" = ["examples/**"]
 lint = ["examples/**"]
 docs = ["examples/**"]
 # Examples without a test/ directory (gleam test fails when the
@@ -28,14 +21,25 @@ test = [
   "examples/showcase",
 ]
 
+# Publish a series tag for the whole repo
+[tools.trellis.publish.repository_series]
+package = "beryl"
+format = "v{series}"
+
+# Tag individual package versions in addition to repository series tags,
+# but not package level series tags.
+[tools.trellis.publish]
+tag_mode = "exact"
+
+[tools.trellis.publish.lifecycle]
+default = "git_only"
+
 [tools.trellis.tasks.lint]
 command = "gleam run -m glinter"
-needs-deps = true
-
-[tools.trellis.publish]
-tag-format = "{name}-v{version}"
+needs_deps = true
 
 [tools.trellis.changelog]
+strictness = "warn"
 kinds = [
   { label = "Initial Release", bump = "major" },
   { label = "Added", bump = "minor" },

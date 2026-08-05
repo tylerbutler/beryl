@@ -18,6 +18,7 @@
   let isTyping = false;
   let lobbyChannel = null;
   let lobbyJoined = false;
+  let roomCountsRefreshId = 0;
 
   // --- Username prompt ---
   const username = prompt("Choose a display name:", "User" + Math.floor(Math.random() * 1000)) || "Anonymous";
@@ -41,12 +42,16 @@
   const userList = document.getElementById("user-list");
 
   async function refreshRoomCounts() {
+    const refreshId = ++roomCountsRefreshId;
     try {
       const response = await fetch("/api/rooms");
       if (!response.ok) {
         throw new Error(`Room refresh failed with ${response.status}`);
       }
-      updateRoomCounts(await response.json());
+      const rooms = await response.json();
+      if (refreshId === roomCountsRefreshId) {
+        updateRoomCounts(rooms);
+      }
     } catch (error) {
       console.warn("Could not refresh room counts", error);
     }

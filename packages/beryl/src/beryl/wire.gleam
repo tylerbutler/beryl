@@ -30,7 +30,7 @@ const expected_array_message = "Expected array of 5 elements [join_ref, ref, top
 
 const max_json_nesting_depth = 64
 
-/// The canonical Phoenix wire codec. Pass to `beryl.config/1`.
+/// The canonical Phoenix wire codec. Pass to `beryl.config`.
 ///
 /// Handles both the JSON array framing on text frames and the Phoenix V2
 /// binary framing on binary frames (see `decode_binary_message`). Binary

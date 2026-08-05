@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "profile": "protocol-smoke",
+  "git": "git-commit-sha",
+  "transport": "mist-or-ewe",
+  "runtime": "erlang-otp-and-gleam-versions",
+  "hardware": "provider-neutral-instance-description",
+  "source_ip": "load-generator-egress-ip-or-range",
+  "cluster": "node-count-and-topology",
+  "load_generator": "host-label",
+  "load_generator_index": "0",
+  "segmentation": {
+    "execution_segment": "0:1",
+    "execution_segment_sequence": "0,1",
+    "load_generator_index": "0",
+    "load_generator_count": "1"
+  },
+  "target_label": "non-secret-target-label",
+  "run_id": "unique-run-id",
+  "target_count": 1,
+  "executor": {
+    "executor": "per-vu-iterations",
+    "vus": 1,
+    "iterations": 1,
+    "maxDuration": "30s",
+    "exec": "protocolSmoke"
+  },
+  "workload": {
+    "exec": "protocolSmoke",
+    "topic": "bench:smoke",
+    "broadcast_topic": "bench:broadcast",
+    "guardrail_topic": "guardrail:forbidden",
+    "topic_group_size": 5,
+    "expected_broadcast_recipients": 1,
+    "broadcast_warmup_ms": 2000,
+    "event": "echo",
+    "broadcast_event": "broadcast",
+    "broadcast_delivery_event": "broadcast",
+    "broadcast_ack_event": "broadcast_ack",
+    "presence_track_event": "presence_track",
+    "presence_untrack_event": "presence_untrack",
+    "presence_delivery_event": "presence_diff"
+  },
+  "session": {
+    "duration_ms": 10000,
+    "operation_interval_ms": 250,
+    "delivery_timeout_ms": 5000,
+    "connect_timeout_ms": 10000,
+    "reply_timeout_ms": 5000,
+    "leave_timeout_ms": 2000,
+    "heartbeat_interval_ms": 30000,
+    "heartbeat_timeout_ms": 5000
+  }
+}

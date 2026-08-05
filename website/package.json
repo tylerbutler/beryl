@@ -17,7 +17,7 @@
 	},
 	"scripts": {
 		"astro": "astro",
-		"build:site": "pnpm run generate:og && astro build",
+		"build:site": "astro build",
 		"check:astro": "astro check",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
 		"dev": "astro dev",

@@ -4,7 +4,8 @@
 
 Type-safe real-time channels and presence for Gleam, targeting the Erlang
 (BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
-monorepo with three publishable packages:
+monorepo with three packages (two currently publishable — `beryl_ewe` is
+excluded from release via the `@release` key in the root `gleam.toml`):
 
 - **`packages/beryl`** — core channels library (channels, presence, PubSub,
   wire protocol, abuse controls, transport SPI)
@@ -139,12 +140,16 @@ cd packages/beryl && gleam test   # Directly
 
 ## Tool Versions
 
-Managed via `.tool-versions` (source of truth for CI):
+Managed via `.tool-versions` (the floor, and what CI's version-file
+resolution uses):
 - Erlang 27.2.1
 - Gleam 1.16.0
 - just 1.50.0
 
-trellis (>= 0.3.0) is pinned in `.mise.toml` for local development and
+CI matrix-tests Erlang 27 and 28. `.mise.toml` pins `erlang = "28"` for local
+development, deliberately overriding `.tool-versions` for mise users.
+
+trellis (0.4.1) is pinned in `.mise.toml` for local development and
 installed in CI via `.github/actions/install-trellis`.
 
 ## CI/CD

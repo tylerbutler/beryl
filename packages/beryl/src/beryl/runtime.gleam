@@ -24,6 +24,7 @@ import beryl/socket.{
   type ConnectInfo, type ConnectSeed, type Effect, type Input, type Next,
   type Ref, type StopReason,
 } as sock
+import beryl/telemetry
 import beryl/topic.{type TopicPattern}
 import beryl/wire/codec.{type Codec}
 import gleam/bool
@@ -73,6 +74,7 @@ pub type Msg(msg) {
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    codec: Option(Codec),
     seed: ConnectSeed,
   )
   SocketDisconnected(socket_id: String)
@@ -93,7 +95,17 @@ pub type Msg(msg) {
   /// A presence mutation was not acknowledged in time. Ignored unless the
   /// socket is still waiting on exactly that operation.
   PresenceOpTimedOut(socket_id: String, op_id: Int)
+  GetStats(reply: Subject(StatsSnapshot))
   Stop(reply: Subject(Nil))
+}
+
+pub type StatsSnapshot {
+  StatsSnapshot(
+    connected_sockets: Int,
+    joined_socket_topic_pairs: Int,
+    active_topics: Int,
+    runtime_mailbox_length: Int,
+  )
 }
 
 /// Erlang monotonic time in milliseconds
@@ -278,6 +290,7 @@ type SocketState(model, msg) {
     id: String,
     send: fn(String) -> Result(Nil, Nil),
     send_binary: fn(BitArray) -> Result(Nil, Nil),
+    codec: Option(Codec),
     close: fn() -> Nil,
     /// The app's per-socket model, threaded through `update`.
     model: model,
@@ -399,7 +412,7 @@ fn handle_message(
     // Socket-scoped work. A socket parked on a presence acknowledgement
     // queues its own messages instead of dispatching them, so its inbound
     // order survives the suspension; every other socket is unaffected.
-    SocketConnected(socket_id, _, _, _)
+    SocketConnected(socket_id, _, _, _, _)
     | SocketDisconnected(socket_id)
     | RegisterCloser(socket_id, _)
     | RouteDecoded(socket_id, _)
@@ -433,8 +446,26 @@ fn handle_message(
     PresenceAcknowledged(ack) -> actor.continue(handle_presence_ack(state, ack))
     PresenceOpTimedOut(socket_id, op_id) ->
       actor.continue(handle_presence_timeout(state, socket_id, op_id))
+    GetStats(reply) -> {
+      process.send(
+        reply,
+        StatsSnapshot(
+          connected_sockets: dict.size(state.sockets),
+          joined_socket_topic_pairs: joined_socket_topic_pairs(state),
+          active_topics: dict.size(state.topics),
+          runtime_mailbox_length: telemetry.mailbox_length(),
+        ),
+      )
+      actor.continue(state)
+    }
     Stop(reply) -> handle_stop(state, reply)
   }
+}
+
+fn joined_socket_topic_pairs(state: State(model, msg)) -> Int {
+  state.sockets
+  |> dict.values
+  |> list.fold(0, fn(total, socket) { total + dict.size(socket.join_refs) })
 }
 
 /// Dispatch one socket-scoped message. Called directly when the socket is
@@ -445,8 +476,8 @@ fn dispatch_socket_msg(
   message: Msg(msg),
 ) -> State(model, msg) {
   case message {
-    SocketConnected(socket_id, send, send_binary, seed) ->
-      handle_socket_connected(state, socket_id, send, send_binary, seed)
+    SocketConnected(socket_id, send, send_binary, codec, seed) ->
+      handle_socket_connected(state, socket_id, send, send_binary, codec, seed)
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
     RegisterCloser(socket_id, close) ->
@@ -531,6 +562,7 @@ fn handle_socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
+  socket_codec: Option(Codec),
   seed: ConnectSeed,
 ) -> State(model, msg) {
   let sender = make_socket_sender(state, socket_id)
@@ -551,6 +583,7 @@ fn handle_socket_connected(
           id: socket_id,
           send: send,
           send_binary: send_binary,
+          codec: socket_codec,
           close: fn() { Nil },
           model: model,
           join_refs: dict.new(),
@@ -712,7 +745,7 @@ fn handle_heartbeat(
           state,
           SocketState(..socket, last_heartbeat: monotonic_time_ms()),
         )
-      let reply = codec.encode_heartbeat_reply(state.config.codec)(ref)
+      let reply = codec.encode_heartbeat_reply(socket_codec(state, socket))(ref)
       let _send_result =
         send_frame_logged(state, socket, "__heartbeat__", reply)
       state.logger
@@ -865,7 +898,7 @@ fn resolve_event_topic(
       case dict.get(state.sockets, socket_id) {
         Ok(socket) ->
           case
-            codec.topicless_events(state.config.codec),
+            codec.topicless_events(socket_codec(state, socket)),
             dict.keys(socket.join_refs)
           {
             True, [only] -> only
@@ -941,7 +974,7 @@ fn reject_invalid_join(
     Error(Nil) -> state
     Ok(socket) -> {
       let reply =
-        codec.encode_reply(state.config.codec)(
+        codec.encode_reply(socket_codec(state, socket))(
           codec.inbound_join_ref(msg),
           codec.inbound_ref(msg),
           codec.inbound_topic(msg),
@@ -1084,7 +1117,7 @@ fn handle_leave(
       case ref {
         Some(r) -> {
           let reply =
-            codec.encode_reply(state.config.codec)(
+            codec.encode_reply(socket_codec(state, socket))(
               joined_ref(socket, topic_name),
               Some(r),
               topic_name,
@@ -1204,7 +1237,7 @@ fn reject_unjoined_event(
   case ref {
     Some(r) -> {
       let reply =
-        codec.encode_reply(state.config.codec)(
+        codec.encode_reply(socket_codec(state, socket))(
           None,
           Some(r),
           topic_name,
@@ -1283,20 +1316,24 @@ fn handle_binary_in(
   socket_id: String,
   data: BitArray,
 ) -> State(model, msg) {
-  case codec.decode_binary(state.config.codec) {
-    Some(decode_binary) ->
-      case decode_binary(data) {
-        Error(err) -> {
-          state.logger
-          |> log.warn("Failed to decode binary wire protocol message", [
-            #("socket_id", socket_id),
-            #("error", codec.format_decode_error(err)),
-          ])
-          state
-        }
-        Ok(msg) -> dispatch_inbound(state, socket_id, msg)
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket) ->
+      case codec.decode_binary(socket_codec(state, socket)) {
+        Some(decode_binary) ->
+          case decode_binary(data) {
+            Error(err) -> {
+              state.logger
+              |> log.warn("Failed to decode binary wire protocol message", [
+                #("socket_id", socket_id),
+                #("error", codec.format_decode_error(err)),
+              ])
+              state
+            }
+            Ok(msg) -> dispatch_inbound(state, socket_id, msg)
+          }
+        None -> handle_undecoded_binary_in(state, socket_id, data)
       }
-    None -> handle_undecoded_binary_in(state, socket_id, data)
   }
 }
 
@@ -1804,9 +1841,9 @@ fn send_terminal_frame(
     Error(Nil) -> Nil
     Ok(socket) -> {
       let encoder = case reason {
-        sock.Errored(_) -> codec.encode_error(state.config.codec)
+        sock.Errored(_) -> codec.encode_error(socket_codec(state, socket))
         sock.Normal | sock.Shutdown | sock.HeartbeatTimeout ->
-          codec.encode_close(state.config.codec)
+          codec.encode_close(socket_codec(state, socket))
       }
       case encoder {
         Some(encode) -> {
@@ -2053,7 +2090,7 @@ fn apply_accept_join(
     Ok(socket) -> {
       let response = option.unwrap(reply, json.object([]))
       let frame =
-        codec.encode_reply(state.config.codec)(
+        codec.encode_reply(socket_codec(state, socket))(
           p.join_ref,
           p.msg_ref,
           p.topic,
@@ -2211,7 +2248,7 @@ fn apply_reply(
             }
             True -> {
               let frame =
-                codec.encode_reply(state.config.codec)(
+                codec.encode_reply(socket_codec(state, socket))(
                   sock.ref_join_ref(ref),
                   sock.ref_msg_ref(ref),
                   sock.ref_topic(ref),
@@ -2274,7 +2311,7 @@ fn apply_push(
           ])
         True -> {
           let frame =
-            codec.encode_push(state.config.codec)(
+            codec.encode_push(socket_codec(state, socket))(
               topic_name,
               event_name,
               payload,
@@ -3090,12 +3127,16 @@ fn local_broadcast(
     #("recipient_count", int.to_string(set.size(subscriber_set))),
     #("except", optional_string(except)),
   ])
-  let frame =
-    codec.encode_push(state.config.codec)(topic_name, event_name, payload)
   set.to_list(subscriber_set)
   |> list.each(fn(socket_id) {
     case dict.get(state.sockets, socket_id) {
-      Ok(socket) ->
+      Ok(socket) -> {
+        let frame =
+          codec.encode_push(socket_codec(state, socket))(
+            topic_name,
+            event_name,
+            payload,
+          )
         case send_frame(socket, frame) {
           Ok(Nil) -> Nil
           Error(Nil) ->
@@ -3106,6 +3147,7 @@ fn local_broadcast(
               #("frame_kind", frame_kind(frame)),
             ])
         }
+      }
       Error(Nil) -> Nil
     }
   })
@@ -3366,7 +3408,7 @@ fn send_error_reply(
     Error(Nil) -> Nil
     Ok(socket) -> {
       let frame =
-        codec.encode_reply(state.config.codec)(
+        codec.encode_reply(socket_codec(state, socket))(
           join_ref,
           msg_ref,
           topic_name,
@@ -3377,6 +3419,13 @@ fn send_error_reply(
       Nil
     }
   }
+}
+
+fn socket_codec(
+  state: State(model, msg),
+  socket: SocketState(model, msg),
+) -> Codec {
+  option.unwrap(socket.codec, state.config.codec)
 }
 
 fn send_frame(

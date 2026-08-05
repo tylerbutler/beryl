@@ -26,7 +26,7 @@ deps-gleam:
 
 # Build all packages (Erlang target)
 build *ARGS:
-    trellis run build {{ARGS}}
+    trellis run build {{ ARGS }}
 
 # Build with warnings as errors
 build-strict:
@@ -36,7 +36,7 @@ build-strict:
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
 test *ARGS:
-    trellis run test {{ARGS}}
+    trellis run test {{ ARGS }}
 
 # === CODE QUALITY ===
 
@@ -78,7 +78,7 @@ deck:
 
 # Create a new changelog entry, e.g. `just change beryl Fixed "handle X"`
 change PACKAGE KIND BODY:
-    trellis changelog new --package {{PACKAGE}} --kind {{KIND}} --body "{{BODY}}"
+    trellis changelog new --package {{ PACKAGE }} --kind {{ KIND }} --body "{{ BODY }}"
 
 # Check fragments against changes since main
 changelog-check:
@@ -125,7 +125,7 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build chatrooms collab_docs cursors example_helpers showcase collab_docs_client
+    trellis run build chatrooms collab_docs cursors example_helpers showcase load_test collab_docs_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
@@ -144,7 +144,18 @@ examples-test: examples-build
 
 # Build the cursors example Docker image (must run from repo root for path-based beryl dep)
 examples-cursors-docker tag="beryl-cursors":
-    docker build -f examples/cursors/Dockerfile -t {{tag}} .
+    docker build -f examples/cursors/Dockerfile -t {{ tag }} .
+
+# Run the headless benchmark target with Mist or Ewe.
+load-server-mist:
+    cd examples/load_test && gleam run -m load_test_mist
+
+load-server-ewe:
+    cd examples/load_test && gleam run -m load_test_ewe
+
+# Build the benchmark image from the repository root. Select SERVER=mist|ewe.
+load-server-docker server="mist" tag="beryl-load-test":
+    docker build -f examples/load_test/Dockerfile --build-arg SERVER={{ server }} -t {{ tag }} .
 
 # === MAINTENANCE ===
 
@@ -163,3 +174,24 @@ alias pr := ci
 
 # Run extended checks for main branch
 main: ci docs
+
+# === LOAD TESTING ===
+
+# Parse every local k6 JavaScript file without contacting a target
+load-syntax:
+    npm --prefix load/k6 run syntax
+
+# Run pure client, configuration, profile, and lifecycle checks
+load-helpers:
+    npm --prefix load/k6 run check
+
+# Validate local helpers and inspect the selected script with official k6
+load-check profile="protocol-smoke":
+    just load-syntax
+    just load-helpers
+    docker run --rm -v "$PWD:/work" -w /work grafana/k6:2.1.0 inspect -e PROFILE="{{ profile }}" -e TARGET_URL="ws://example.invalid/socket" -e HTTP_TARGET_URL="http://example.invalid/health" load/k6/run.js
+
+# Run a profile; target may be one URL or comma-separated cluster URLs
+load-run profile target transport="unknown":
+    mkdir -p load/results
+    docker run --rm --network host --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work -e PROFILE="{{ profile }}" -e TARGET_URLS="{{ target }}" -e TRANSPORT="{{ transport }}" -e VUS -e RATE -e DURATION -e PREALLOCATED_VUS -e MAX_VUS -e WS_PATH -e TOKEN -e TOKEN_PARAM -e TOPICS -e CONNECT_TIMEOUT_MS -e REPLY_TIMEOUT_MS -e LEAVE_TIMEOUT_MS -e HEARTBEAT_INTERVAL_MS -e HEARTBEAT_TIMEOUT_MS -e EXPIRED_REF_LIMIT -e TOPIC -e EVENT -e HTTP_TARGET_URL -e SESSION_DURATION_MS -e OPERATION_INTERVAL_MS -e DELIVERY_TIMEOUT_MS -e BROADCAST_TOPIC -e BROADCAST_EVENT -e BROADCAST_DELIVERY_EVENT -e BROADCAST_ACK_EVENT -e BROADCAST_GROUP_SIZE -e BROADCAST_EXPECTED_RECIPIENTS -e BROADCAST_WARMUP_MS -e PRESENCE_TRACK_EVENT -e PRESENCE_UNTRACK_EVENT -e PRESENCE_DELIVERY_EVENT -e GUARDRAIL_TOPIC -e GIT_SHA -e RUNTIME -e HARDWARE -e SOURCE_IP -e CLUSTER -e LOAD_GENERATOR -e LOAD_GENERATOR_INDEX -e LOAD_GENERATOR_COUNT -e EXECUTION_SEGMENT -e EXECUTION_SEGMENT_SEQUENCE -e TARGET_LABEL -e RUN_ID -e SUMMARY_PATH grafana/k6:2.1.0 run load/k6/run.js

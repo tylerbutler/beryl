@@ -592,6 +592,7 @@ pub type AppHandle {
       String,
       fn(String) -> Result(Nil, Nil),
       fn(BitArray) -> Result(Nil, Nil),
+      Option(codec.Codec),
       socket.ConnectSeed,
     ) -> Nil,
     register_closer: fn(String, fn() -> Nil) -> Nil,
@@ -603,6 +604,7 @@ pub type AppHandle {
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
+    stats: fn() -> Result(#(Int, Int, Int, Int), Bool),
   )
 }
 
@@ -1058,10 +1060,10 @@ fn start_app_supervisor(
 /// window or after `stop` degrades to a no-op instead of a crash.
 fn app_handle(subject: Subject(runtime.Msg(msg))) -> AppHandle {
   AppHandle(
-    socket_connected: fn(socket_id, send, send_binary, seed) {
+    socket_connected: fn(socket_id, send, send_binary, codec, seed) {
       send_runtime(
         subject,
-        runtime.SocketConnected(socket_id, send, send_binary, seed),
+        runtime.SocketConnected(socket_id, send, send_binary, codec, seed),
       )
     },
     register_closer: fn(socket_id, close) {
@@ -1103,6 +1105,25 @@ fn app_handle(subject: Subject(runtime.Msg(msg))) -> AppHandle {
       }
     },
     runtime_owner: fn() { process.subject_owner(subject) },
+    stats: fn() {
+      case process.subject_owner(subject) {
+        Error(Nil) -> Error(False)
+        Ok(_) -> {
+          let reply = process.new_subject()
+          send_runtime(subject, runtime.GetStats(reply))
+          case process.receive(reply, 1000) {
+            Error(Nil) -> Error(True)
+            Ok(snapshot) ->
+              Ok(#(
+                snapshot.connected_sockets,
+                snapshot.joined_socket_topic_pairs,
+                snapshot.active_topics,
+                snapshot.runtime_mailbox_length,
+              ))
+          }
+        }
+      }
+    },
   )
 }
 

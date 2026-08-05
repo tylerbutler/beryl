@@ -11,6 +11,7 @@ internal_modules = [
   "beryl/log",
   "beryl/rate_limit",
   "beryl/runtime",
+  "beryl/telemetry",
 ]
 
 [dependencies]
@@ -22,6 +23,7 @@ gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_crypto = ">= 1.6.0 and < 2.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"
 lattice_presence = ">= 1.0.0 and < 2.0.0"
+telemetry = ">= 1.4.2 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
