@@ -112,14 +112,14 @@ case beryl.child_spec(config, init: init, update: update) {
 
 `beryl.stop(channels)` drains sockets gracefully: every joined topic
 receives a `Closed` event, transport connections are closed, and the
-runtime exits without being restarted. Calling `stop` again — or using the
-handle after `stop` — is a quiet no-op.
+runtime exits without being restarted. Calling `stop` again returns
+`Error(NotRunning)`. Other operations using the handle after `stop` are
+quiet no-ops.
 
 ## Production checklist
 
 - Add the returned specification to your long-lived application supervisor.
-- Start presence and groups before `child_spec` so the config can carry the
-  presence handle.
+- Start application-owned presence and group actors alongside the Beryl child.
 - Configure PubSub when running more than one BEAM node.
 - Configure rate limits to protect against runaway clients — see
   [Production Hardening](/guides/production-hardening/).
