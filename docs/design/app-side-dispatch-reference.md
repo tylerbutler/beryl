@@ -48,10 +48,6 @@ pub type Effect {
   Push(topic: String, event: String, payload: Json)
   Broadcast(topic: String, event: String, payload: Json)
   BroadcastFrom(topic: String, event: String, payload: Json)
-  PresenceTrack(topic: String, key: String, meta: Json)
-  PresenceUntrack(topic: String, key: String)
-  PushPresence(topic: String, event: String, encode: fn(List(PresenceEntry)) -> Json)
-  BroadcastPresence(topic: String, event: String, encode: fn(List(PresenceEntry)) -> Json)
   KickTopic(topic: String)
 }
 ```
@@ -163,11 +159,10 @@ the shipped API:
    at the socket: a crashing `update` takes down that socket's model and
    all its joined topics, matching prior channel-module behavior, and does
    not affect other sockets.
-4. **Presence delivery.** Presence stays runtime-side: `PresenceTrack`/
-   `PresenceUntrack` effects update the CRDT and broadcast
-   `presence_diff`; `PushPresence`/`BroadcastPresence` read presence state
-   at apply time (after earlier `PresenceTrack`/`PresenceUntrack` effects
-   in the same list) rather than as `Event`s the app must react to.
+4. **Presence delivery.** Lane B does not put synchronous presence calls in
+   the shared runtime. Applications use a separate worker/actor and publish
+   results back with broadcasts or typed `Info`; the async read-model/effect
+   bundle is deferred together.
 5. **Reply-outside-update.** `Ref` is an ordinary value that can be stored
    in the model and used from a later `update` turn (e.g. replying from an
    `Info` event once an async lookup completes), so no legitimate

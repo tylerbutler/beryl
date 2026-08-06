@@ -10,16 +10,14 @@ Every tracked entry is stamped with a **replica name** (the `replica` argument t
 
 ## How Beryl apps use it
 
-The presence actor is still a standalone process that your app starts and supervises itself. To let the runtime drive presence, attach that handle to `beryl.Config` with `beryl.with_presence_handle`.
+The presence actor is a standalone process that the application starts and
+supervises. It is not attached to the shared socket runtime in Lane B.
 
-From there, presence changes are driven by effects returned from your app's `update`:
-
-- `PresenceTrack(topic, key, meta)`
-- `PresenceUntrack(topic, key)`
-- `PushPresence(topic, event, encode)`
-- `BroadcastPresence(topic, event, encode)`
-
-The runtime applies those effects after `update` returns. `PushPresence` and `BroadcastPresence` read presence at apply time, so earlier track/untrack effects in the same list are already reflected in the snapshot they encode.
+Public presence reads and mutations are synchronous. Applications that
+combine presence with app-side dispatch should put those calls in a separate
+application actor, send it nonblocking commands from `update`, and broadcast
+diffs or snapshots after the presence operation completes. This keeps a slow
+presence callback or mailbox from stalling unrelated sockets and heartbeats.
 
 ## API surface
 
@@ -80,12 +78,14 @@ Setting `broadcast_interval_ms` to `0` (the default in `default_config`) disable
 ```mermaid
 sequenceDiagram
   participant App as app update
+  participant Worker as app presence worker
   participant Runtime as runtime
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Runtime: PresenceTrack / PresenceUntrack / PushPresence / BroadcastPresence
-  Runtime->>Pres: track / untrack / list
+  App->>Worker: nonblocking track/untrack command
+  Worker->>Pres: track / untrack / list
+  Worker->>Runtime: broadcast or typed Info after completion
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end
@@ -99,7 +99,5 @@ sequenceDiagram
 
 | File | Role |
 |---|---|
-| `packages/beryl/src/beryl.gleam` | `with_presence_handle` attaches a borrowed presence actor to the runtime config |
-| `packages/beryl/src/beryl/event.gleam` | Presence-related effects: `PresenceTrack`, `PresenceUntrack`, `PushPresence`, `BroadcastPresence` |
 | `packages/beryl/src/beryl/presence.gleam` | OTP actor, public API, CRDT wiring, PubSub subscription and broadcast |
 | `packages/beryl/src/beryl/presence/wire.gleam` | Wire helpers for encoding and decoding presence diffs over the channel protocol |

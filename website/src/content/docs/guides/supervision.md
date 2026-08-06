@@ -67,8 +67,7 @@ pub fn main() {
 
   let assert Ok(#(channels, spec)) =
     beryl.child_spec(
-      beryl.config(wire.phoenix_codec())
-        |> beryl.with_presence_handle(presence_actor),
+      beryl.config(wire.phoenix_codec()),
       init: init,
       update: update,
     )
@@ -80,6 +79,10 @@ pub fn main() {
   // ... start the transport, run forever
 }
 ```
+
+Presence is a separate application-owned actor. If socket updates drive it,
+send nonblocking commands to another application worker rather than calling
+the synchronous presence API inside Beryl's shared runtime.
 
 Both also offer `start_named` variants that register the actor under a
 `process.Name` for callers integrating them into their own supervision

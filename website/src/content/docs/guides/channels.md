@@ -94,8 +94,6 @@ One update may return several effects; they are applied in list order:
 | `Push(topic, event, payload)` | Server-initiated message to this socket |
 | `Broadcast(topic, event, payload)` | Message to every subscriber of a topic |
 | `BroadcastFrom(topic, event, payload)` | Broadcast excluding this socket |
-| `PresenceTrack(topic, key, meta)` / `PresenceUntrack(topic, key)` | Presence writes (see the [Presence guide](/guides/presence/)) |
-| `PushPresence(topic, event, encode)` / `BroadcastPresence(topic, event, encode)` | Apply-time presence snapshots |
 | `KickTopic(topic)` | Close this socket's subscription to a topic |
 
 A `Join` left unanswered by the end of the update is rejected automatically

@@ -45,7 +45,7 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | Broadcast to all sockets on a topic | `event.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
 | Broadcast, excluding sender | `event.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
 | Send a typed server-side message to one socket | `event.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `event.Info(message)` |
-| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; `PresenceTrack` / `PresenceUntrack` already emit standard diffs |
+| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; perform synchronous presence mutations in an application-owned worker |
 
 ---
 

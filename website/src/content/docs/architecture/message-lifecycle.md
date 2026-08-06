@@ -16,7 +16,7 @@ sequenceDiagram
   participant App as your init
   Client->>Mist: WebSocket upgrade
   Mist->>Mist: generate socket id, build ConnectSeed
-  Mist->>RT: socket_connected(id, send fns, seed)
+  Mist->>RT: capture owner pid + admit_socket(...)
   RT->>App: init(ConnectInfo)
   App-->>RT: #(model, effects)
 ```

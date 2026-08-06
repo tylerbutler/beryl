@@ -156,32 +156,34 @@ Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process th
 
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
-## Integration with channels
+## Integration with app-side dispatch
 
-Inside `update`, prefer the presence **effects** over direct actor calls: they
-are applied in order with the rest of the effects list, and apply-time
-snapshots (`PushPresence`/`BroadcastPresence`) see the writes that precede
-them. Pass the presence handle to the config with
-`beryl.with_presence_handle`, then track on join and untrack on close:
+Presence remains a standalone actor. Its public mutation and read calls are
+synchronous and can wait up to five seconds, so do **not** call them from the
+shared socket runtime's `init` or `update`.
+
+Instead, send a command to an application-owned worker/actor from `update`.
+That worker performs `presence.track` or `presence.untrack`, then publishes
+the resulting `presence_diff`/snapshot with `beryl.broadcast` (or sends a
+typed message back with `event.notify`):
 
 ```gleam
 event.Join(topic, _payload, ref) ->
-  event.Next(model, [
-    event.AcceptJoin(ref, option.None),
-    event.PresenceTrack(topic, "user:" <> model.user_id, meta),
-    event.BroadcastPresence(topic, "presence_list", encode_users),
-  ])
+  {
+    process.send(presence_worker, Track(topic, model.user_id, meta))
+    event.Next(model, [event.AcceptJoin(ref, option.None)])
+  }
 
 event.Closed(topic, _reason) ->
-  event.Next(model, [
-    event.PresenceUntrack(topic, "user:" <> model.user_id),
-    event.BroadcastPresence(topic, "presence_list", encode_users),
-  ])
+  {
+    process.send(presence_worker, Untrack(topic, model.presence_ref))
+    event.Next(model, [])
+  }
 ```
 
-Presence entries left when a topic closes without an explicit untrack are
-cleaned up automatically. Direct calls (`presence.track`, `presence.list`,
-…) remain available for code outside `update`.
+The application owns the tracking refs and cleanup. Lane B intentionally does
+not expose partial synchronous presence effects on the shared runtime; the
+indivisible async presence/read-model work is deferred.
 
 ## Next steps
 

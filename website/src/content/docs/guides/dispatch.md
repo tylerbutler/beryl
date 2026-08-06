@@ -306,14 +306,13 @@ event.Next(model, [
 
 The client sees the join acknowledgment first and the `ready` push second.
 
-The same rule matters for presence and replies:
+The same rule matters for replies:
 
 - order `event.Push` after the `event.AcceptJoin` it depends on,
-- order `event.ReplyOk` / `event.ReplyError` where you want them emitted,
-- order `event.PushPresence` / `event.BroadcastPresence` after the earlier presence changes they should reflect.
+- order `event.ReplyOk` / `event.ReplyError` where you want them emitted.
 
 ## Next steps
 
 - [WebSocket Transport](/guides/websocket/) — connect browsers and seed `ConnectInfo.seed.metadata`
-- [Presence](/guides/presence/) — use `PresenceTrack`, `PresenceUntrack`, and snapshot effects
+- [Presence](/guides/presence/) — keep synchronous presence work outside the shared runtime
 - [Runtime & Effect Interpreter](/architecture/runtime/) — runtime behavior, effect ordering, and teardown details
