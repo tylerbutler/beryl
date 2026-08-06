@@ -1,8 +1,11 @@
 -module(beryl_ffi).
--export([monotonic_time_ms/0, monotonic_time_ns/0,
+-export([identity/1, monotonic_time_ms/0, monotonic_time_ns/0,
          string_starts_with/2, stop_supervisor/1, rescue/1,
          admission_token_new/0, admission_token_cancel/1,
          admission_token_pending/1, admission_token_claim/1]).
+
+%% Used only after a selector validates the frozen raw PubSub record shape.
+identity(X) -> X.
 
 %% Run a callback, converting any crash (error/exit/throw) into an
 %% {error, Description} result so a crashing callback cannot take down the
