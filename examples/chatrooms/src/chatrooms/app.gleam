@@ -7,9 +7,10 @@
 ////   through, storing the returned model per topic.
 //// - A socket-wide `Standalone` model plus `standalone_init`/
 ////   `standalone_update` wrappers that drive the standalone chatrooms
-////   server through `beryl.start`, reusing the same per-topic surface.
+////   server through a `beryl.child_spec` runtime, reusing the same per-topic
+////   surface.
 ////
-//// Wire behavior matches the original per-topic handler, including its
+//// Wire behavior preserves the established room contract, including its
 //// replies (an ok-status reply carrying an error payload).
 
 import beryl/event.{type Effect, type Ref}
@@ -176,17 +177,17 @@ pub type Standalone {
   Standalone(socket_id: String, rooms: Dict(String, Model))
 }
 
-/// `init` for the standalone chatrooms `beryl.start` runtime.
+/// `init` for the standalone chatrooms app-dispatch runtime.
 pub fn standalone_init(
   info: event.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
   #(Standalone(socket_id: info.socket_id, rooms: dict.new()), [])
 }
 
-/// `update` for the standalone chatrooms `beryl.start` runtime: route
+/// `update` for the standalone chatrooms app-dispatch runtime: route
 /// each event to the embeddable `join`/`update`/`closed` surface, keyed by
-/// topic. Non-`room:*` joins are rejected (fail closed), mirroring the old
-/// `room:*` handler registration.
+/// topic. Non-`room:*` joins are rejected (fail closed), preserving the
+/// example's topic-namespace boundary.
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,

@@ -19,9 +19,9 @@ Transport SPI — the contract between beryl core and WebSocket transport
  2. Captures `connection_owner`, installs its monitor, and atomically
     registers the socket and closer with `admit_socket`.
  3. Decodes inbound frames with the codec from `active_codec` and routes
-    them with `route_decoded` /
-    `route_binary`, shedding over-rate frames via `new_message_limiter` /
-    `take_token` and oversized frames via `max_inbound_frame_bytes`.
+    them with `route_decoded`, `route_decoded_binary`, or `route_binary`,
+    shedding over-rate frames via `new_message_limiter` / `take_token` and
+    oversized frames via `max_inbound_frame_bytes`.
  4. Announces disconnects with `socket_disconnected` and releases the
     slot with `release_connection_slot`.
 
@@ -360,7 +360,8 @@ pub fn route_decoded(
 
 ### `route_decoded_binary`
 
-Route a transport-decoded binary message to the runtime.
+Route a transport-decoded binary message while preserving its binary
+ frame classification for runtime telemetry and rate accounting.
 
  This is additive to `route_decoded`, whose text semantics are retained for
  third-party transport compatibility.

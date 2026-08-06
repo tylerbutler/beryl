@@ -73,8 +73,8 @@ pub fn child_spec(
 `Sockets` is opaque and non-generic: `child_spec` captures
 `model`/`msg` in closures, so transports keep receiving an unparameterized
 handle through the frame-level `beryl/transport` SPI — closure capture by a
-generic function, plain Gleam, no identity FFI. Per-topic-pattern abuse
-config (rate limits, join caps) lives on `Config`, built with
+generic function, plain Gleam, with no identity FFI in this dispatch handle.
+Per-topic-pattern abuse config (rate limits, join caps) lives on `Config`, built with
 `beryl.config` and its `with_*` builders.
 
 `child_spec` is the only runtime entry point. It validates `Config` and
@@ -155,10 +155,14 @@ the shipped API:
    a single runtime actor turn, and every frame for a socket is written by
    that one actor — so list order is wire order. A `Push` ordered after an
    `AcceptJoin` in the same list is guaranteed to arrive after the join ack.
-3. **Crash blast radius.** One `update` per socket keeps the blast radius
-   at the socket: a crashing `update` takes down that socket's model and
-   all its joined topics, matching prior channel-module behavior, and does
-   not affect other sockets.
+3. **Crash blast radius.** The runtime rescues app callbacks and attributes
+   failures to the event being handled. A crashing `Join` is rejected and
+   the socket survives. A crashing topic-scoped `Message` (including decoded
+   or raw binary delivery) closes only that topic. A crashing `Info`, which
+   has no topic to attribute, tears down the whole socket. A crashing
+   `Closed` callback is logged while teardown continues with the last good
+   model; a crashing `init` rejects admission before the socket is registered.
+   Other sockets are unaffected in every case.
 4. **Presence delivery.** Lane B does not put synchronous presence calls in
    the shared runtime. Applications use a separate worker/actor and publish
    results back with broadcasts or typed `Info`; the async read-model/effect

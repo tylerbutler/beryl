@@ -1,8 +1,8 @@
 //// Beryl - Type-safe real-time communication
 ////
 //// A standalone Gleam library for building real-time applications on the BEAM.
-//// Provides WebSocket channels, distributed presence tracking, pub/sub
-//// messaging, and channel groups.
+//// Provides app-side WebSocket dispatch, distributed presence tracking,
+//// pub/sub messaging, and topic groups.
 ////
 //// ## Features
 ////
@@ -122,7 +122,7 @@ pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
   logging.payload_preview_bytes
 }
 
-/// Configuration for the channels system.
+/// Configuration for an app-side socket runtime.
 ///
 /// This type is opaque: construct it with `config` and adjust it with the
 /// `with_*` builder functions. Keeping it opaque lets Beryl add configuration
@@ -231,8 +231,8 @@ pub fn config(codec: codec.Codec) -> Config {
   )
 }
 
-/// Configure a per-topic-pattern message rate limit for app-dispatch
-/// systems (`start`).
+/// Configure a per-topic-pattern message rate limit for an app-dispatch
+/// runtime built with `child_spec`.
 ///
 /// Patterns use the same syntax as topic routing (`"room:*"`,
 /// `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
@@ -273,9 +273,10 @@ pub fn with_telemetry(config: Config) -> Config {
 /// `timeout_ms` is the server-side staleness window — a socket that sends no
 /// heartbeat within this window is evicted. The server derives its internal
 /// check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
-/// be at least 2; smaller values are rejected by `start` with
-/// `InvalidHeartbeatTimeout` because a check interval of 0 would disable
-/// eviction. The defaults are 30000 ms and 60000 ms respectively.
+/// be at least 2; smaller values are rejected by `child_spec` and
+/// `validate_config` with `HeartbeatTimeoutTooLow` because a check interval
+/// of 0 would disable eviction. The defaults are 30000 ms and 60000 ms
+/// respectively.
 pub fn with_heartbeat(
   config: Config,
   interval_ms interval_ms: Int,
@@ -542,12 +543,13 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
   config.max_joined_topics_per_socket
 }
 
-/// Warn when a channels system starts with every abuse control disabled.
+/// Warn when an app-side socket runtime starts with every abuse control
+/// disabled.
 ///
 /// Beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
-/// should be a visible one. Called by both `start` and `supervisor.start`.
+/// should be a visible one. Called while building the `child_spec` subtree.
 @internal
 pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
@@ -770,9 +772,9 @@ fn topic_error_reason(error: topic.TopicError) -> String {
 /// Stop a Beryl system.
 ///
 /// This drains the supervised runtime and stops it, delivering `Closed` to
-/// joined sockets and cleaning up presence before the runtime exits. The
-/// runtime is a `Transient` child, so it is not restarted after a graceful
-/// stop.
+/// every joined topic before closing each transport connection. Presence is
+/// application-owned and is not stopped by this function. The runtime is a
+/// `Transient` child, so it is not restarted after a graceful stop.
 ///
 /// `stop` is safe to call more than once and on a handle whose system was
 /// never started: in those cases it returns `Error(NotRunning)` rather than
@@ -811,8 +813,8 @@ fn stop_app_subtree(
           option.from_result(app_limiter_owner(connection_limiter)),
           process.monitor,
         )
-      // Drain sockets (deliver `Closed`, presence cleanup, close transports)
-      // and stop the runtime; this triggers the subtree auto-shutdown.
+      // Drain sockets (deliver `Closed` and close transports) and stop the
+      // runtime; this triggers the subtree auto-shutdown.
       case app.stop() {
         Error(error) -> {
           drop_monitor(runtime_monitor)
@@ -1233,7 +1235,7 @@ pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
 fn to_runtime_config(config: Config) -> runtime.Config {
   runtime.Config(
     codec: config.codec,
-    // Server checks at half the timeout interval, matching `start`.
+    // Server checks at half the timeout interval validated by `child_spec`.
     heartbeat_check_interval_ms: config.heartbeat_timeout_ms / 2,
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
     message_limits: optional_limits(config.message_rate, config.message_burst),

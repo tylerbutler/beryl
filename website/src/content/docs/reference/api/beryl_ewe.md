@@ -11,8 +11,8 @@ description: Ewe WebSocket Transport - Direct Ewe integration for beryl
 
 Ewe WebSocket Transport - Direct Ewe integration for beryl
 
- This module provides the bridge between Ewe's native WebSocket handling
- and the beryl runtime using Ewe request and response types directly.
+ This module bridges Ewe's native WebSocket handling to the beryl runtime
+ using Ewe request and response types directly.
 
  It mirrors the `beryl_mist` package: the two transports expose the same
  config-builder and handler API, so an integrator can run beryl sockets on
@@ -137,6 +137,8 @@ Build a combined request handler that serves both WebSocket upgrades and
  by hand:
 
  ```gleam
+ import beryl_ewe as ewe_transport
+
  ewe_transport.handler(sockets, ewe_transport.default_config("/socket"), http_handler)
  |> ewe.new
  |> ewe.listening(port: 8000)
@@ -157,6 +159,8 @@ Upgrade a request to WebSocket if it matches the configured path
 
  Usage in your Ewe handler:
  ```gleam
+ import beryl_ewe as ewe_transport
+
  fn handle_request(req: Request(Connection), sockets: Sockets) -> Response(ResponseBody) {
    use <- ewe_transport.upgrade(req, sockets, ewe_transport.default_config("/socket"))
    // Fall through to regular HTTP routing
@@ -227,7 +231,7 @@ pub fn upgrade_connection(
 Disable `Origin` checking, allowing WebSocket upgrades from any origin.
 
  This is an explicit opt-out of the default [`SameOrigin`](#originpolicy)
- CSWSH protection and restores the pre-1.0 allow-all behaviour. Only use it
+ CSWSH protection. Only use it
  for sockets that do not rely on ambient browser credentials (cookies,
  sessions) for authorization, or that authenticate every message
  independently. For cookie/session-authenticated apps, prefer the default

@@ -12,8 +12,8 @@ description: Beryl - Type-safe real-time communication
 Beryl - Type-safe real-time communication
 
  A standalone Gleam library for building real-time applications on the BEAM.
- Provides WebSocket channels, distributed presence tracking, pub/sub
- messaging, and channel groups.
+ Provides app-side WebSocket dispatch, distributed presence tracking,
+ pub/sub messaging, and topic groups.
 
  ## Features
 
@@ -71,7 +71,7 @@ Beryl - Type-safe real-time communication
 
 ### `Config`
 
-Configuration for the channels system.
+Configuration for an app-side socket runtime.
 
  This type is opaque: construct it with `config` and adjust it with the
  `with_*` builder functions. Keeping it opaque lets Beryl add configuration
@@ -408,9 +408,9 @@ pub fn release_connection_slot(ConnectionPermit) -> Nil
 Stop a Beryl system.
 
  This drains the supervised runtime and stops it, delivering `Closed` to
- joined sockets and cleaning up presence before the runtime exits. The
- runtime is a `Transient` child, so it is not restarted after a graceful
- stop.
+ every joined topic before closing each transport connection. Presence is
+ application-owned and is not stopped by this function. The runtime is a
+ `Transient` child, so it is not restarted after a graceful stop.
 
  `stop` is safe to call more than once and on a handle whose system was
  never started: in those cases it returns `Error(NotRunning)` rather than
@@ -474,9 +474,10 @@ Configure heartbeat timing.
  `timeout_ms` is the server-side staleness window — a socket that sends no
  heartbeat within this window is evicted. The server derives its internal
  check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
- be at least 2; smaller values are rejected by `start` with
- `InvalidHeartbeatTimeout` because a check interval of 0 would disable
- eviction. The defaults are 30000 ms and 60000 ms respectively.
+ be at least 2; smaller values are rejected by `child_spec` and
+ `validate_config` with `HeartbeatTimeoutTooLow` because a check interval
+ of 0 would disable eviction. The defaults are 30000 ms and 60000 ms
+ respectively.
 
 ```gleam
 pub fn with_heartbeat(
@@ -695,8 +696,8 @@ pub fn with_telemetry(Config) -> Config
 
 ### `with_topic_rate`
 
-Configure a per-topic-pattern message rate limit for app-dispatch
- systems (`start`).
+Configure a per-topic-pattern message rate limit for an app-dispatch
+ runtime built with `child_spec`.
 
  Patterns use the same syntax as topic routing (`"room:*"`,
  `"document:*:ops"`, `"*"`). Limits are consulted in the order they were

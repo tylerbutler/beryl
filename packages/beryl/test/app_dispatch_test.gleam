@@ -1,4 +1,4 @@
-//// Core app-side dispatch tests (`beryl.start`): join accept/reject,
+//// Core app-side dispatch tests (`beryl.child_spec`): join accept/reject,
 //// fail-closed unanswered joins, replies, typed `Info` via `Sender`,
 //// duplicate-join replacement, and `Closed` delivery on leave/disconnect.
 

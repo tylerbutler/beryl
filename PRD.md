@@ -107,29 +107,28 @@ When PubSub is configured, broadcasts are distributed across the BEAM cluster.
 
 #### FR-2.1: Tracking
 
-- **`track(presence, topic, key, pid, meta)`** — Register a process as present on a topic with a key and arbitrary metadata.
-- **`untrack(presence, topic, key, pid)`** — Remove a specific presence entry.
-- **`untrack_all(presence, pid)`** — Remove all presence entries for a process.
+- **`track(presence, topic, key, session_id, meta) -> String`** — Register one presence and return the actor-minted tracking ref for that exact entry. For object metadata, the ref is also written as `phx_ref` for Phoenix client compatibility.
+- **`untrack(presence, ref)`** — Remove the exact entry identified by a ref returned from `track`; unknown or already-removed refs are harmless no-ops.
+- **`untrack_all(presence, session_id)`** — Remove every presence owned by a session (for example, when a socket disconnects).
 
 #### FR-2.2: Querying
 
-- **`list(presence, topic)`** — All presence entries for a topic.
-- **`get_by_key(presence, topic, key)`** — Entries matching a specific key.
-- **`get_diff(presence, topic)`** — Current diff (joins/leaves) since last query.
+- **`list(presence, topic) -> List(PresenceEntry)`** — All entries for a topic, including `session_id`, key, and metadata.
+- **`get_by_key(presence, topic, key) -> List(#(String, Json))`** — Session IDs and metadata matching one key.
+- **`with_on_diff(config, callback)`** — Receive each non-empty local-change or remote-merge diff immediately. Diffs are callback events, not a mutable “since last query” buffer.
 
 #### FR-2.3: CRDT Semantics
 
 Presence state uses an **add-wins observed-remove set** with causal context:
 
 - Concurrent joins and leaves resolve deterministically: **adds win**.
-- Vector clocks track causality per replica.
-- Cloud sets handle out-of-order delivery.
-- Merge produces a diff (joins/leaves) for efficient notification.
-- Replica lifecycle (up/down/remove) supports graceful cluster membership changes.
+- Replica clocks and causal context make merge order-independent and idempotent.
+- Local mutations and remote merges produce topic-grouped join/leave diffs for `on_diff`.
+- Every actor start gets a unique replica incarnation; sync processing prunes superseded incarnations so a restart does not reuse stale CRDT clocks.
 
 #### FR-2.4: Distributed Replication
 
-When PubSub is configured, presence state replicates across nodes via periodic broadcast ticks. Each node maintains a full replica; merges are crdt-convergent.
+When PubSub is configured, each presence actor subscribes to a well-known sync topic. A periodic tick broadcasts the **full CRDT state when local state is dirty** in a versioned native-BEAM `SyncPayload`; peers validate the envelope version, merge the state, prune superseded incarnations, and invoke `on_diff` for non-empty changes. Replication is full-state CRDT gossip rather than an incremental change stream.
 
 ### FR-3: PubSub
 
@@ -187,14 +186,16 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 ### NFR-2: Reliability
 
 - Built on OTP actors with supervision-ready design.
-- CRDT-based presence is partition-tolerant and convergent — nodes that temporarily lose connectivity will reconcile state on reconnection.
+- CRDT-based presence merges are commutative, associative, and idempotent: replicas converge once they exchange the same states.
 - Socket IDs generated with `gleam/crypto` for uniqueness.
 
 ### NFR-3: Observability
 
 - Configurable heartbeat interval for connection health monitoring.
 - Subscriber counts queryable via PubSub API.
-- Presence diffs available for change tracking.
+- Opt-in `beryl.with_telemetry` emits stable, low-cardinality transport-upgrade/frame, socket lifecycle, join, message, and broadcast events with durations and closed outcome vocabularies.
+- `beryl/stats.snapshot` reports connected sockets, joined socket/topic pairs, active topics, and runtime mailbox length.
+- Presence exposes immediate local/merge diffs through `with_on_diff`; it does not currently emit presence-specific `:telemetry` events.
 
 ### NFR-4: Developer Experience
 
@@ -223,22 +224,23 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 | Feature | Status | Notes |
 |---------|--------|-------|
 | App-side dispatch | **Complete** | Typed `init`/`update`, effect list, full socket lifecycle |
-| Wire protocol | **Complete** | Phoenix-compatible JSON format |
+| Wire protocol | **Complete** | Explicit codec selection; built-in Phoenix JSON and V2 binary framing |
 | PubSub | **Complete** | pg-backed, local + distributed broadcast, typed `Subscriber` |
 | Presence CRDT | **Complete** | Pure state module, property-based tested |
-| Presence actor | **Complete** | Actor wraps CRDT; periodic delta replication via PubSub |
+| Presence actor | **Complete** | Actor wraps CRDT; dirty full-state replication and merge diffs via PubSub |
 | Supervision | **Complete** | `beryl.child_spec` returns a OneForOne subtree for the application supervisor |
 | Groups | **Complete** | Named topic collections with broadcast |
 | Mist/Ewe transport | **Complete** | WebSocket upgrade + lifecycle management, no Wisp dependency |
 | Binary transport | **Complete** | Codec-decoded frames become normal `Join`/`Message` events; only undecoded raw frames use `Binary` |
 | Rate limiting | **Complete** | Token bucket per socket/topic/join; configurable rate+burst |
+| Telemetry and stats | **Complete** | Opt-in runtime/transport events plus point-in-time runtime snapshots |
 
 ## Future Considerations
 
-- **Presence replication via PubSub**: The `BroadcastTick` message in the presence actor is a placeholder. Full implementation would periodically extract deltas and broadcast via PubSub for cross-node convergence.
+- **Presence/runtime integration**: Keep synchronous presence work out of the shared runtime while designing an asynchronous, scope-aware integration that preserves ordering and cleanup semantics.
 - **Transport plugins**: Additional adapters beyond Mist, such as raw TCP.
 - **Authentication middleware**: Composable auth hooks that run before a `Join` event reaches `update`.
-- **Telemetry/metrics integration**: Structured event emission for connection counts, message rates, presence changes.
+- **Observability integrations**: Application-owned Prometheus/OpenTelemetry exporters and optional presence-specific events on top of the existing telemetry taxonomy.
 - **Long-polling fallback**: For environments where WebSockets are unavailable.
 
 ## Glossary

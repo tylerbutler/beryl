@@ -9,11 +9,15 @@ Accepted (2026-07-21). Supersedes [ADR 0001](0001-type-erased-channel-registry.m
 ADR 0001 chose type erasure given library-side dispatch, and its analysis
 surfaced two facts that motivate revisiting that premise:
 
-- App-side dispatch (ADR 0001's design 2) is the only considered design
-  with no unchecked casts anywhere — including the two residual coercions
-  ADR 0001 documents, which close structurally: `send_info` becomes an
-  ordinary typed `Subject(msg)` send, and connect-time assigns disappear
-  because the app's `init` produces the model.
+- App-side dispatch (ADR 0001's design 2) removes unchecked casts from the
+  application dispatch path. The two residual coercions ADR 0001 documents
+  close structurally: `send_info` becomes an ordinary typed `Subject(msg)`
+  send, and connect-time assigns disappear because the app's `init` produces
+  the model. A separate package-internal boundary remains in PubSub:
+  `pg` delivers frozen raw `Message(payload)` records to a process mailbox,
+  so `pubsub.selecting` first validates the record tag and four-field arity,
+  then uses the retained identity FFI to recover the subscriber's
+  compile-time payload type.
 - Nearly all library infrastructure keys on topic strings and wire data,
   not app types: rate limiting, connection limits, presence, pubsub, and
   the wire codec stay library-side under either model. The transport SPI
@@ -40,7 +44,9 @@ Replace the channel-module API entirely with app-side dispatch:
   push, broadcast, and topic kick), replacing the old channel API's
   one-action `HandleResult`. Presence effects are deferred to the later
   async presence slice; stopping a socket remains a `Next` result.
-- Channel modules, the registry, and all identity-FFI erasure are removed.
+- Channel modules and the registry are removed, along with identity-FFI
+  erasure from socket dispatch. The validated raw PubSub coercion boundary described
+  above remains because Erlang `pg` delivers untyped mailbox terms.
 - Third-party functionality ships as embeddable `model`/`msg`/`update`
   triples that apps wire in with a wrapper variant — the composition
   pattern established by the Elm/Lustre ecosystem.

@@ -1,7 +1,7 @@
-//// Showcase: all three example channels on one socket, composed through
+//// Showcase: all three real-time examples on one socket, composed through
 //// app-side dispatch.
 ////
-//// This demonstrates composition with the `beryl.start` API: the cursors,
+//// This demonstrates composition with the `beryl.child_spec` API: the cursors,
 //// chatrooms, and collab_docs packages each export an embeddable
 //// `Model`/`join`/`update`/`closed` triple (`<example>/app`), and this app
 //// owns the socket-wide model and router — one `Dict` of sub-models per
