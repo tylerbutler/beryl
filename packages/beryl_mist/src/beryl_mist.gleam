@@ -16,8 +16,7 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import gleam/option.{type Option, None, Some}
-import gleam/result
+import gleam/option.{None, Some}
 import mist.{type Connection, type ResponseData, type WebsocketConnection}
 
 /// Upgrade a request to WebSocket if it matches the configured path
@@ -55,13 +54,7 @@ pub fn upgrade(
     request_ip: request_ip,
     reject: reject,
     accept: fn(metadata, connection_permit) {
-      do_upgrade(
-        request,
-        channels,
-        metadata,
-        Some(connection_permit),
-        telemetry,
-      )
+      do_upgrade(request, channels, metadata, connection_permit, telemetry)
     },
     next: next,
   )
@@ -102,30 +95,10 @@ pub fn handler(
   config: server.TransportConfig(Connection),
   http_fallback: fn(Request(Connection)) -> Response(ResponseData),
 ) -> fn(Request(Connection)) -> Response(ResponseData) {
-  fn(request) {
-    case server.is_websocket_request(request) {
-      True ->
-        upgrade(request, channels, config, fn() { http_fallback(request) })
-      False -> http_fallback(request)
-    }
-  }
-}
-
-/// Alternative: upgrade any request to WebSocket (caller handles path matching)
-///
-/// Note: This function does not invoke the `on_connect` callback from
-/// `server.TransportConfig`. Sockets upgraded this way start with empty (`[]`)
-/// `ConnectSeed.metadata`. If you need authentication or seeded metadata,
-/// either use `upgrade` with a full config or call your auth check before
-/// this function.
-pub fn upgrade_connection(
-  request: Request(Connection),
-  channels: Sockets,
-) -> Response(ResponseData) {
-  let telemetry = transport.telemetry(channels, transport.Mist)
-  let started_at = transport.telemetry_start(telemetry)
-  do_upgrade(request, channels, [], None, telemetry)
-  |> server.finish_upgrade(None, telemetry, started_at)
+  server.handler(
+    upgrade: fn(request, next) { upgrade(request, channels, config, next) },
+    http_fallback: http_fallback,
+  )
 }
 
 /// Perform the actual WebSocket upgrade
@@ -133,7 +106,7 @@ fn do_upgrade(
   request: Request(Connection),
   channels: Sockets,
   connect_metadata: List(#(String, String)),
-  connection_permit: Option(transport.ConnectionPermit),
+  connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
 ) -> Response(ResponseData) {
   let seed = server.connect_seed(request, connect_metadata)
@@ -172,14 +145,12 @@ fn on_message(
     mist.Closed | mist.Shutdown -> mist.stop()
     mist.Custom(server.Close) -> mist.stop()
     mist.Custom(server.SendText(text)) -> {
-      mist.send_text_frame(connection, text)
-      |> result.replace(mist.continue(state))
-      |> result.unwrap(mist.continue(state))
+      let _ = mist.send_text_frame(connection, text)
+      mist.continue(state)
     }
     mist.Custom(server.SendBinary(data)) -> {
-      mist.send_binary_frame(connection, data)
-      |> result.replace(mist.continue(state))
-      |> result.unwrap(mist.continue(state))
+      let _ = mist.send_binary_frame(connection, data)
+      mist.continue(state)
     }
   }
 }

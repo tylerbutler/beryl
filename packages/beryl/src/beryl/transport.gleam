@@ -1,30 +1,18 @@
 //// Transport SPI — the contract between beryl core and WebSocket transport
 //// implementations such as the `beryl_mist` package.
 ////
-//// A transport implementation:
-//// 1. Admits a connection (origin/auth policy is the transport's concern),
-////    acquiring a slot with `acquire_connection_slot` and binding it with
-////    `bind_connection_slot`.
-//// 2. Captures `runtime_pid`, installs its monitor, and atomically
-////    registers the socket and closer with `admit_socket`.
-//// 3. Decodes inbound frames with the codec from `active_codec` and routes
-////    them with `route_decoded`, `route_decoded_binary`, or `route_binary`,
-////    shedding over-rate frames via `new_message_limiter` / `take_token` and
-////    oversized frames via `max_inbound_frame_bytes`.
-//// 4. Announces disconnects with `socket_disconnected` and releases the
-////    slot with `release_connection_slot`.
+//// `beryl/transport/server` owns the shared admission, connection, rate,
+//// decode, and telemetry pipeline. This low-level SPI keeps only the hooks a
+//// transport implementation needs: exact-owner atomic admission, disconnect,
+//// text/binary routing, the configured codec, and transport telemetry.
 
 import beryl
-import beryl/internal
-import beryl/log
-import beryl/rate_limit
 import beryl/socket
 import beryl/telemetry
 import beryl/wire/codec
 import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option, Some}
-import gleam/result
 
 /// Runtime handle accepted by transport implementations.
 pub type Sockets =
@@ -33,77 +21,6 @@ pub type Sockets =
 /// Connection slot permit held by a transport connection.
 pub type ConnectionPermit =
   beryl.ConnectionPermit
-
-/// Connection metadata delivered to the app's `init`.
-pub type ConnectSeed =
-  socket.ConnectSeed
-
-/// Wire codec used by a transport connection.
-pub type Codec =
-  codec.Codec
-
-/// Decoded inbound wire message.
-pub type Inbound =
-  codec.Inbound
-
-/// Wire decode failure.
-pub type DecodeError =
-  codec.DecodeError
-
-/// Build connection metadata for a WebSocket upgrade.
-pub fn connect_seed(
-  path path: String,
-  query query: List(#(String, String)),
-  headers headers: List(#(String, String)),
-  metadata metadata: List(#(String, String)),
-) -> ConnectSeed {
-  socket.ConnectSeed(
-    path: path,
-    query: query,
-    headers: headers,
-    metadata: metadata,
-  )
-}
-
-/// Decode an inbound text frame with a codec.
-pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
-  codec.decode_text(codec)
-}
-
-/// Return the codec's optional binary decoder.
-pub fn decode_binary(
-  codec: Codec,
-) -> Option(fn(BitArray) -> Result(Inbound, DecodeError)) {
-  codec.decode_binary(codec)
-}
-
-/// Format a wire decode failure for transport logging.
-pub fn format_decode_error(error: DecodeError) -> String {
-  codec.format_decode_error(error)
-}
-
-/// Acquire a configured connection slot.
-pub fn acquire_connection_slot(
-  sockets: Sockets,
-  ip: String,
-) -> Result(ConnectionPermit, Nil) {
-  beryl.acquire_connection_slot(sockets, ip)
-}
-
-/// Bind a connection slot to the current transport process.
-pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
-  beryl.bind_connection_slot(permit)
-}
-
-/// Release a held connection slot.
-pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
-  beryl.release_connection_slot(permit)
-}
-
-/// Return the configured maximum inbound frame size.
-pub fn max_inbound_frame_bytes(sockets: Sockets) -> Int {
-  beryl.max_inbound_frame_bytes(sockets)
-}
 
 // --- Telemetry ---
 
@@ -232,7 +149,7 @@ pub fn socket_disconnected(
 pub fn route_decoded(
   sockets sockets: Sockets,
   socket_id socket_id: String,
-  message message: Inbound,
+  message message: codec.Inbound,
 ) -> Nil {
   beryl.transport_route_decoded(sockets, socket_id, message)
 }
@@ -245,7 +162,7 @@ pub fn route_decoded(
 pub fn route_decoded_binary(
   sockets sockets: Sockets,
   socket_id socket_id: String,
-  message message: Inbound,
+  message message: codec.Inbound,
 ) -> Nil {
   beryl.transport_route_decoded_binary(sockets, socket_id, message)
 }
@@ -264,53 +181,8 @@ pub fn route_binary(
 
 /// The wire codec configured for these sockets. Transports decode inbound
 /// frames with it in the connection process.
-pub fn active_codec(sockets: Sockets) -> Codec {
+pub fn active_codec(sockets: Sockets) -> codec.Codec {
   beryl.configured_codec(sockets)
-}
-
-// --- Per-connection message rate limiting ---
-
-/// A per-connection token bucket enforcing the configured message rate at
-/// the transport edge, so a flooding socket is shed before frames are
-/// decoded or enqueued on the runtime.
-pub opaque type RateLimiter {
-  RateLimiter(bucket: rate_limit.Bucket)
-}
-
-/// Create a fresh per-connection message limiter, `None` when no message
-/// rate is configured.
-pub fn new_message_limiter(sockets: Sockets) -> Option(RateLimiter) {
-  beryl.message_limits(sockets)
-  |> option.map(fn(config) { RateLimiter(rate_limit.new_bucket(config)) })
-}
-
-/// Take one token; returns the updated limiter and whether the frame is
-/// admitted. Transports drop the frame when `False`.
-pub fn take_token(limiter: RateLimiter) -> #(RateLimiter, Bool) {
-  let #(bucket, taken) = rate_limit.take(limiter.bucket)
-  #(RateLimiter(bucket), result.is_ok(taken))
-}
-
-// --- Logging ---
-
-/// A named logger for transport diagnostics, routed through beryl's
-/// configured logging backend.
-pub opaque type Logger {
-  Logger(inner: log.Logger)
-}
-
-/// Create a named transport logger (e.g. `"beryl.transport.mist"`).
-pub fn logger(name: String) -> Logger {
-  Logger(internal.logger(name))
-}
-
-/// Log a warning with structured metadata.
-pub fn log_warning(
-  logger logger: Logger,
-  message message: String,
-  metadata metadata: List(#(String, String)),
-) -> Nil {
-  log.warn(logger.inner, message, metadata)
 }
 
 // --- Connection ownership ---
@@ -336,8 +208,8 @@ pub fn admit_socket(
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
-  codec codec: Option(Codec),
-  seed seed: ConnectSeed,
+  codec codec: Option(codec.Codec),
+  seed seed: socket.ConnectSeed,
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
   use <- bool.lazy_guard(

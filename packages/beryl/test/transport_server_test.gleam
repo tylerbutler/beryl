@@ -1,12 +1,13 @@
 import app_test_helpers as h
 import beryl
+import beryl/socket
 import beryl/transport
 import beryl/transport/server
 import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
 import gleam/json
-import gleam/option.{None, Some}
+import gleam/option.{Some}
 import gleeunit/should
 
 fn tagged_codec() -> codec.Codec {
@@ -39,16 +40,18 @@ pub fn shared_server_preserves_negotiated_socket_codec_test() {
       update: h.accepting_update,
     )
   let telemetry = transport.telemetry(sockets, transport.Mist)
+  let assert Ok(connection_permit) =
+    beryl.acquire_connection_slot(sockets, "127.0.0.1")
   let #(state, selector) =
     server.init_connection(
       sockets: sockets,
-      seed: transport.connect_seed(
+      seed: socket.ConnectSeed(
         path: "/socket",
         query: [],
         headers: [],
         metadata: [],
       ),
-      connection_permit: None,
+      connection_permit: connection_permit,
       base_selector: process.new_selector(),
       logger_name: "beryl.transport.server.test",
       telemetry: telemetry,

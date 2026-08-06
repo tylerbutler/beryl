@@ -29,14 +29,6 @@ pub fn config_builders_instantiate_for_ewe_test() {
   should.be_true(True)
 }
 
-// `upgrade_connection` is a public entry point for callers that do their own
-// path matching. Reference it here so the export stays covered and remains part
-// of the documented public API.
-pub fn upgrade_connection_is_exported_test() {
-  let _upgrade = ewe_transport.upgrade_connection
-  should.be_true(True)
-}
-
 // `upgrade` is the path-matching entry point used by callers that compose their
 // own request handler. Reference it here so the export stays covered.
 pub fn upgrade_is_exported_test() {
