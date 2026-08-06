@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Changed"
+body = "Runtime stats now expose runtime_mailbox_length and RuntimeUnavailable terminology and no longer report the fabricated registered_channel_handlers gauge."

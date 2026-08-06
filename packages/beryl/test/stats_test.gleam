@@ -35,8 +35,7 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   stats.connected_sockets(initial) |> should.equal(0)
   stats.joined_socket_topic_pairs(initial) |> should.equal(0)
   stats.active_topics(initial) |> should.equal(0)
-  stats.registered_channel_handlers(initial) |> should.equal(1)
-  should.be_true(stats.coordinator_mailbox_length(initial) >= 0)
+  should.be_true(stats.runtime_mailbox_length(initial) >= 0)
 
   let first = h.connect(sockets, "socket-1")
   let second = h.connect(sockets, "socket-2")
@@ -65,7 +64,7 @@ pub fn snapshot_returns_unavailable_after_stop_test() {
   let sockets = start_sockets()
   let assert Ok(Nil) = beryl.stop(sockets)
   stats.snapshot(sockets)
-  |> should.equal(Error(stats.CoordinatorUnavailable))
+  |> should.equal(Error(stats.RuntimeUnavailable))
 }
 
 pub fn snapshot_times_out_while_runtime_is_busy_test() {
