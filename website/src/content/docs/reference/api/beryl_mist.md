@@ -109,7 +109,7 @@ pub type TransportConfig
 Create a default transport config with no connect hook.
 
  The resulting config seeds empty (`[]`) `ConnectSeed.metadata` and applies
- [`SameOrigin`](#originpolicy) origin policy, which rejects cross-site
+ the [`SameOrigin`](#originpolicy) origin policy, which rejects cross-site
  WebSocket upgrades before the handshake (CSWSH protection). Same-origin
  upgrades and non-browser clients (no `Origin` header) are admitted without
  configuration.
