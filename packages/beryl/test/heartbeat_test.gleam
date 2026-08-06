@@ -6,7 +6,6 @@
 import app_test_helpers as h
 import beryl
 import beryl/event.{AcceptJoin, Join, Next}
-import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
@@ -167,12 +166,11 @@ pub fn periodic_check_runs_repeatedly_test() {
 pub fn heartbeat_eviction_closes_the_transport_connection_test() {
   let events = process.new_subject()
   let channels = start_hb_app(100, events)
-  let _frames = h.connect(channels, "hb-zombie")
-
   let closed = process.new_subject()
-  transport.register_closer(channels, "hb-zombie", fn() {
-    process.send(closed, Nil)
-  })
+  let _frames =
+    h.connect_with_close(channels, "hb-zombie", fn() {
+      process.send(closed, Nil)
+    })
 
   let assert Ok(Nil) = process.receive(closed, 1000)
 
