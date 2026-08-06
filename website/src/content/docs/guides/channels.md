@@ -1,5 +1,5 @@
 ---
-title: Channels
+title: Sockets and Topics
 ---
 
 Beryl delivers every WebSocket event to a single pair of functions your app
@@ -16,7 +16,7 @@ import beryl/wire
 import gleam/otp/static_supervisor
 
 pub fn main() {
-  let assert Ok(#(channels, spec)) =
+  let assert Ok(#(sockets, spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(initial_model(), []) },
@@ -26,7 +26,7 @@ pub fn main() {
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
-  // Hand `channels` to a transport (beryl_mist / beryl_ewe) and to any
+  // Hand `sockets` to a transport (beryl_mist / beryl_ewe) and to any
   // code that broadcasts.
 }
 ```
@@ -104,7 +104,7 @@ to reach the wire before a `Push` later in the same list.
 To end the whole socket instead of returning effects, return
 `event.Stop(reason)`.
 
-## A minimal channel
+## A minimal topic app
 
 A single-topic-namespace app needs no routing machinery — your model and
 message types are used directly:
@@ -125,7 +125,7 @@ pub type Model {
 }
 
 pub fn main() {
-  let assert Ok(#(channels, spec)) =
+  let assert Ok(#(sockets, spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Model(username: "anonymous", joined: False), []) },
@@ -286,13 +286,13 @@ torn down.
 
 ## Broadcasting from outside update
 
-Code that holds the `Channels` handle can broadcast without going through
+Code that holds the `Sockets` handle can broadcast without going through
 `update`:
 
 ```gleam
 // Broadcast to everyone on a topic
 beryl.broadcast(
-  channels,
+  sockets,
   "room:lobby",
   "new_message",
   json.object([#("text", json.string("Hello!"))]),
@@ -300,7 +300,7 @@ beryl.broadcast(
 
 // Broadcast to everyone except one socket
 beryl.broadcast_from(
-  channels,
+  sockets,
   socket_id,
   "room:lobby",
   "user_typing",
