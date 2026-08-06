@@ -19,11 +19,14 @@ import example_helpers/payload
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/set
 import gleam/string
+
+const max_room_users = 20
 
 /// Per-topic state for one socket in a chat room.
 pub type Model {
@@ -59,22 +62,38 @@ pub fn join(
       event.RejectJoin(ref, error("Room not found: " <> room_name)),
     ])
     True -> {
-      let username = payload.string_or(payload, "username", "Anonymous")
-      let color = color.pastel_for(socket_id)
-      let meta = presence_meta(username, color, typing: False)
-      session_presence.track(ctx.presence, topic, socket_id, meta)
-      let sys_payload = system_message(username <> " joined the room")
-      let reply =
-        json.object([
-          #("socket_id", json.string(socket_id)),
-          #("username", json.string(username)),
-          #("color", json.string(color)),
-          #("room", json.string(room_name)),
+      case session_presence.count(ctx.presence, topic) >= max_room_users {
+        True -> #(None, [
+          event.RejectJoin(
+            ref,
+            error_with_code(
+              403,
+              "Room is full (max " <> int.to_string(max_room_users) <> ")",
+            ),
+          ),
         ])
-      #(Some(Model(username: username, color: color, room_name: room_name)), [
-        event.AcceptJoin(ref, Some(reply)),
-        event.Broadcast(topic, "new_msg", sys_payload),
-      ])
+        False -> {
+          let username = payload.string_or(payload, "username", "Anonymous")
+          let color = color.pastel_for(socket_id)
+          let meta = presence_meta(username, color, typing: False)
+          session_presence.track(ctx.presence, topic, socket_id, meta)
+          let sys_payload = system_message(username <> " joined the room")
+          let reply =
+            json.object([
+              #("socket_id", json.string(socket_id)),
+              #("username", json.string(username)),
+              #("color", json.string(color)),
+              #("room", json.string(room_name)),
+            ])
+          #(
+            Some(Model(username: username, color: color, room_name: room_name)),
+            [
+              event.AcceptJoin(ref, Some(reply)),
+              event.Broadcast(topic, "new_msg", sys_payload),
+            ],
+          )
+        }
+      }
     }
   }
 }
