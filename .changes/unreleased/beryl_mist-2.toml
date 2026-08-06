@@ -1,3 +1,3 @@
-package = "beryl_mist"
+project = "beryl_mist"
 kind = "Dependencies"
 body = "Update locked Gleam dependencies."
