@@ -3,6 +3,14 @@ import gleam/erlang/process
 import gleeunit
 import gleeunit/should
 
+@external(erlang, "beryl_pubsub_test_ffi", "is_raw_wire_message")
+fn is_raw_wire_message(
+  topic: String,
+  event: String,
+  payload: String,
+  timeout: Int,
+) -> Bool
+
 pub fn main() {
   gleeunit.main()
 }
@@ -76,6 +84,23 @@ pub fn pubsub_broadcast_delivers_message_test() {
 
   // Cleanup
   pubsub.leave(sub, "room:lobby")
+}
+
+pub fn pubsub_broadcast_preserves_raw_wire_shape_test() {
+  let config = pubsub.config_with_scope("test_pubsub_raw_wire_shape")
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
+  let topic = "wire:raw"
+  let event = "shape"
+  let payload = "four-fields"
+
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, topic)
+  pubsub.broadcast(ps, topic, event, payload)
+
+  is_raw_wire_message(topic, event, payload, 100)
+  |> should.be_true
+
+  pubsub.leave(sub, topic)
 }
 
 pub fn pubsub_broadcast_from_excludes_sender_test() {

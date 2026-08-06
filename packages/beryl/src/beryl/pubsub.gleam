@@ -33,7 +33,8 @@
 //// ```
 
 import gleam/dynamic.{type Dynamic}
-import gleam/erlang/process.{type Pid, type Selector, type Subject}
+import gleam/erlang/atom
+import gleam/erlang/process.{type Pid, type Selector}
 import gleam/list
 
 /// A PubSub message delivered to subscribers.
@@ -43,21 +44,18 @@ import gleam/list
 ///
 /// ## Frozen wire contract
 ///
-/// A broadcast delivers this record to each subscriber via a typed
-/// `Subject` whose tag is the statically-known atom shared by every PubSub
-/// instance (see `subscriber`). The delivered term is therefore
-/// `#(pubsub_tag, Message(...))` — the record tag and its four fields, in
-/// this order, wrapped by that subject tag — and is a frozen wire contract,
-/// not just a source-level API, for any given `payload` type: a rolling
-/// cluster upgrade must never mis-parse a frame from an older node running
-/// the same payload type. The same applies to `PubSubFrom`.
+/// `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
+/// the record tag and its four fields, in this order — is a frozen wire
+/// contract, not just a source-level API, for any given `payload` type: a
+/// rolling cluster upgrade must never mis-parse a frame from an older node
+/// running the same payload type. The same applies to `PubSubFrom`.
 ///
 /// Because payloads travel as native terms rather than a self-describing
 /// format like JSON, evolving the *shape* of your own `payload` type is also
 /// a wire change — version it yourself (e.g. an explicit `v` field) if it
 /// needs to change across a rolling upgrade. Receive broadcasts with
-/// `selecting`, which folds a `subscriber`'s typed `Subject` into a
-/// `Selector`; never match on the raw process message yourself.
+/// `selecting`, which safely folds the subscriber's raw mailbox messages into
+/// a typed `Selector`; never match on the raw process message yourself.
 pub type Message(payload) {
   Message(topic: String, event: String, payload: payload, from: PubSubFrom)
 }
@@ -111,25 +109,22 @@ fn ffi_get_members(scope: Dynamic, group: String) -> List(Pid)
 @external(erlang, "beryl_pubsub_ffi", "get_local_members")
 fn ffi_get_local_members(scope: Dynamic, group: String) -> List(Pid)
 
+@external(erlang, "beryl_pubsub_ffi", "send_to_pid")
+fn ffi_send_to_pid(pid: Pid, msg: Message(payload)) -> Nil
+
 @external(erlang, "erlang", "binary_to_atom")
 fn binary_to_atom(name: String) -> Dynamic
 
-/// The single, statically-known subject tag every PubSub broadcast is
-/// delivered under. Shared by every PubSub instance regardless of scope or
-/// payload type, so it never grows the atom table beyond this one entry, and
-/// identical on every node so cross-node sends and receives agree.
-fn pubsub_tag() -> Dynamic {
-  binary_to_atom("beryl_pubsub_message")
-}
+/// Recover a `Message(payload)` from the raw process message `selecting`
+/// matched on. Safe only because `selecting` first confirms the message has
+/// the `message` tag and exactly four fields, matching the frozen shape all
+/// broadcast functions construct.
+@external(erlang, "beryl_ffi", "identity")
+fn unsafe_coerce_to_message(value: Dynamic) -> Message(payload)
 
-/// Deliver a message to a subscriber pid through a typed `Subject`.
-///
-/// Reconstructs the receiver's subject from its pid and the shared
-/// `pubsub_tag`, then sends with the ordinary typed `process.send`. This is
-/// the send counterpart of `selecting`: both sides agree on the tag and the
-/// `payload` type, so no value is ever coerced.
-fn deliver(pid: Pid, msg: Message(payload)) -> Nil {
-  process.send(process.unsafely_create_subject(pid, pubsub_tag()), msg)
+/// The frozen record tag for raw PubSub messages.
+fn message_tag() -> atom.Atom {
+  atom.create("message")
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -181,34 +176,29 @@ pub fn start(config: PubSubConfig) -> PubSub(payload) {
 
 /// A typed subscription handle owned by a single process.
 ///
-/// A `Subscriber` bundles the pg scope with a typed `Subject(Message(payload))`
-/// owned by the process that created it. Join it to any number of topics with
-/// `join`; every topic delivers through the one subject, so a single
-/// `selecting` fold receives them all. This is the typed replacement for
-/// recovering a raw `Pid` mailbox message: broadcasts arrive as ordinary
-/// typed sends, never as an unchecked coercion.
+/// A `Subscriber` bundles the pg scope and owning process while carrying the
+/// payload type at compile time. Join it to any number of topics with `join`;
+/// a single `selecting` fold receives their frozen raw `Message(payload)`
+/// records as typed values.
 ///
 /// Create it in the process that will receive (e.g. an actor's initialiser),
 /// since a `Subject` only delivers to its owner.
 pub opaque type Subscriber(payload) {
-  Subscriber(scope: Dynamic, subject: Subject(Message(payload)))
+  Subscriber(scope: Dynamic, owner: Pid)
 }
 
 /// Create a subscription handle owned by the current process.
 ///
-/// The returned `Subscriber` owns a typed subject keyed by the shared
-/// `pubsub_tag`. Call it from the process that will receive broadcasts (its
-/// own actor initialiser or test process), then `join` topics and fold
-/// `selecting` into that process's `Selector`.
+/// Call it from the process that will receive broadcasts (its own actor
+/// initialiser or test process), then `join` topics and fold `selecting` into
+/// that process's `Selector`.
 ///
 /// **Important:** A single process should create only one `Subscriber` for a
-/// given `payload` type. Multiple subscribers in the same process would share
-/// the same subject tag and cannot multiplex different payload types safely.
+/// given `payload` type. Raw PubSub records do not carry runtime payload type
+/// information, so one mailbox cannot safely multiplex different payload
+/// types.
 pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
-  Subscriber(
-    scope: ps.scope,
-    subject: process.unsafely_create_subject(process.self(), pubsub_tag()),
-  )
+  Subscriber(scope: ps.scope, owner: process.self())
 }
 
 /// Join a topic so this subscriber receives broadcasts sent to it.
@@ -216,28 +206,27 @@ pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
 /// A subscriber may join many topics; they all deliver through its one
 /// subject. Joining is idempotent per topic.
 pub fn join(sub: Subscriber(payload), topic: String) -> Nil {
-  let assert Ok(pid) = process.subject_owner(sub.subject)
-  let _join_result = ffi_join_group(sub.scope, topic, pid)
+  let _join_result = ffi_join_group(sub.scope, topic, sub.owner)
   Nil
 }
 
 /// Leave a topic previously joined with `join`.
 pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
-  let assert Ok(pid) = process.subject_owner(sub.subject)
-  let _leave_result = ffi_leave_group(sub.scope, topic, pid)
+  let _leave_result = ffi_leave_group(sub.scope, topic, sub.owner)
   Nil
 }
 
 /// Add a subscriber's PubSub message delivery to a `Selector`, alongside a
 /// process's own subjects.
 ///
-/// Broadcasts arrive through the subscriber's typed `Subject`, so this is an
-/// ordinary `select_map` — the `payload` type is checked by the compiler and
-/// nothing is coerced. Fold it once per subscriber; every joined topic is
-/// delivered through the same subject.
+/// `pg` tracks bare pids, so broadcasts arrive as raw process messages.
+/// `selecting` is the one place that validates the frozen `Message` tag and
+/// four-field arity before recovering the subscriber's compile-time payload
+/// type. Fold it once; every joined topic is delivered through the same
+/// mailbox.
 ///
 /// Each `Subscriber` should be created with one `payload` type per process,
-/// since the shared subject tag cannot safely multiplex different payload types.
+/// since one raw mailbox cannot safely multiplex different payload types.
 ///
 /// ```gleam
 /// let sub = pubsub.subscriber(ps)
@@ -252,7 +241,10 @@ pub fn selecting(
   sub: Subscriber(payload),
   transform: fn(Message(payload)) -> message,
 ) -> Selector(message) {
-  process.select_map(selector, sub.subject, transform)
+  let Subscriber(..) = sub
+  process.select_record(selector, message_tag(), 4, fn(raw) {
+    transform(unsafe_coerce_to_message(raw))
+  })
 }
 
 /// Broadcast a message to all subscribers of a topic (all nodes)
@@ -264,7 +256,7 @@ pub fn broadcast(
 ) -> Nil {
   let msg = Message(topic: topic, event: event, payload: payload, from: System)
   let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) { deliver(pid, msg) })
+  list.each(members, fn(pid) { ffi_send_to_pid(pid, msg) })
 }
 
 /// Broadcast a message to all subscribers except those from a specific pid
@@ -281,7 +273,7 @@ pub fn broadcast_from(
   list.each(members, fn(pid) {
     case pid == from {
       True -> Nil
-      False -> deliver(pid, msg)
+      False -> ffi_send_to_pid(pid, msg)
     }
   })
 }
@@ -307,7 +299,7 @@ pub fn broadcast_from_socket(
   list.each(members, fn(pid) {
     case pid == from {
       True -> Nil
-      False -> deliver(pid, msg)
+      False -> ffi_send_to_pid(pid, msg)
     }
   })
 }
@@ -322,7 +314,7 @@ pub fn local_broadcast(
 ) -> Nil {
   let msg = Message(topic: topic, event: event, payload: payload, from: System)
   let members = ffi_get_local_members(ps.scope, topic)
-  list.each(members, fn(pid) { deliver(pid, msg) })
+  list.each(members, fn(pid) { ffi_send_to_pid(pid, msg) })
 }
 
 /// Get all subscribers for a topic (all nodes)
