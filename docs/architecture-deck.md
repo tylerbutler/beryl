@@ -70,7 +70,7 @@ test) on its own, and the runtime is the seam where they meet.
 
 | Module | Responsibility |
 |---|---|
-| `beryl` | Public entry-point: `config`, `start`, `child_spec`, `stop`, `broadcast` |
+| `beryl` | Public entry-point: `config`, `child_spec`, `stop`, `broadcast` |
 | `beryl/event` | App dispatch contract: `Event`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
 | `beryl/runtime` | Internal OTP actor: socket tracking, dispatch, effect interpretation, heartbeat |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` |
@@ -129,23 +129,18 @@ scale across nodes via pg, not by adding runtime threads.
 
 ---
 
-## Supervision: standalone vs. embedded
+## Supervision: one supervised entry point
 
 ```mermaid
 flowchart LR
-  subgraph Standalone["beryl.child_spec"]
-    Caller["caller process"] -->|starts, unlinks| Sup1["Beryl subtree supervisor<br/>OneForOne"]
-    Sup1 --> Rt1["runtime<br/>Transient · significant"]
-    Sup1 --> Lim1["connection limiter (optional)"]
-  end
-  subgraph Embedded["beryl.child_spec"]
-    AppSup["your app supervisor"] --> Sup2["Beryl subtree supervisor<br/>OneForOne"]
-    Sup2 --> Rt2["runtime<br/>Transient · significant"]
-    Sup2 --> Lim2["connection limiter (optional)"]
+  subgraph App["your application supervision tree"]
+    AppSup["application supervisor"] --> Sup["Beryl subtree supervisor<br/>OneForOne"]
+    Sup --> Rt["runtime<br/>Transient · significant"]
+    Sup --> Lim["connection limiter (optional)"]
   end
 ```
 
-- `child_spec` returns the runtime subtree and stable handle
+- `child_spec` returns a child spec for the runtime subtree and a stable handle
 - Add the subtree to *your* application supervisor
 - PubSub, presence, and groups are **borrowed** — never children of this subtree
 
@@ -482,7 +477,7 @@ the codebase, so it's worth the slide.
 
 | Start here | Module | Purpose |
 |---|---|---|
-| 💡 Public surface | `src/beryl.gleam` | `config`, `start`, `child_spec`, `stop`, broadcast helpers |
+| 💡 Public surface | `src/beryl.gleam` | `config`, `child_spec`, `stop`, broadcast helpers |
 | 🔌 Dispatch contract | `src/beryl/event.gleam` | `Event`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
 | ⚙️ Heart of beryl | `src/beryl/runtime.gleam` | Actor, dispatch, effect interpreter, heartbeat (internal) |
 | 📨 Message flow | `packages/beryl_mist/src/beryl_mist.gleam` | Connect → decode → route |

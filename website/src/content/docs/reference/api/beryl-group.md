@@ -15,9 +15,9 @@ Channel Groups - Named collections of topics for multi-topic broadcasting
  Useful for scenarios like broadcasting to all channels in a "team" or
  sending a system-wide notification.
 
- When running beryl under `beryl/supervisor`, enable groups with
- `supervisor.with_groups` and obtain the handle from `supervisor.groups`
- instead of calling `start` directly.
+ Groups are independent of the Beryl runtime. Start the actor from a
+ long-lived application process and include it in the application's
+ supervision arrangement as appropriate.
 
  ## Example
 

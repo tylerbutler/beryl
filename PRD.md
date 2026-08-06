@@ -77,7 +77,7 @@ Developers supply one `init`/`update` pair per app:
 - **`init(info: ConnectInfo(msg))`** — Called once when a socket connects. Returns the initial `#(model, List(Effect))`.
 - **`update(model, event: Event(msg))`** — Called for every event on the socket: `Join`, `Message`, `Binary`, `Closed`, or `Info`. Returns `Next(model, effects)` to continue, or `Stop(reason)` to tear the socket down.
 
-An `update` call returns a `List(Effect)` — `AcceptJoin`/`RejectJoin`, `ReplyOk`/`ReplyError`, `Push`, `Broadcast`/`BroadcastFrom`, presence effects, or `KickTopic` — applied strictly in list order by the runtime.
+An `update` call returns a `List(Effect)` — `AcceptJoin`/`RejectJoin`, `ReplyOk`/`ReplyError`, `Push`, `Broadcast`/`BroadcastFrom`, or `KickTopic` — applied strictly in list order by the runtime. Lane B intentionally keeps synchronous presence work outside the shared runtime; the indivisible async presence read-model/effect bundle is planned for a later slice.
 
 #### FR-1.2: Topic Pattern Matching
 
@@ -199,8 +199,8 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 ### NFR-4: Developer Experience
 
 - Type-safe app dispatch catches `model`/`msg` type mismatches at compile time.
-- Builder-pattern `Config` API (`beryl.config` → `with_*` builders) for abuse controls and subsystem wiring.
-- Sensible defaults (e.g. `default_config()`) with opt-in configuration.
+- Builder-pattern `Config` API (`beryl.config(codec)` → `with_*` builders) for explicit wire-codec selection, abuse controls, and subsystem wiring.
+- No implicit wire codec; callers choose `wire.phoenix_codec()` or construct a custom codec.
 - Errors modeled as Result types throughout.
 
 ## Dependencies
@@ -230,7 +230,7 @@ The adapter manages the full WebSocket lifecycle: connection, message routing to
 | Supervision | **Complete** | `beryl.child_spec` returns a OneForOne subtree for the application supervisor |
 | Groups | **Complete** | Named topic collections with broadcast |
 | Mist/Ewe transport | **Complete** | WebSocket upgrade + lifecycle management, no Wisp dependency |
-| Binary transport | **Complete** | Raw BitArray frames via the `Binary` event |
+| Binary transport | **Complete** | Codec-decoded frames become normal `Join`/`Message` events; only undecoded raw frames use `Binary` |
 | Rate limiting | **Complete** | Token bucket per socket/topic/join; configurable rate+burst |
 
 ## Future Considerations

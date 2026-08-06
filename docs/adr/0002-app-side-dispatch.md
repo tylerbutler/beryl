@@ -36,14 +36,16 @@ Replace the channel-module API entirely with app-side dispatch:
   supplies `init: fn(ConnectInfo(msg)) -> #(model, List(Effect))` and
   `update: fn(model, Event(msg)) -> Next(model, msg)` per socket, and
   routes topics itself.
-- Callback returns are an effects list (reply, push, broadcast, presence
-  ops, stop), replacing the old channel API's one-action `HandleResult`.
+- Callback returns are an effects list (join acceptance/rejection, reply,
+  push, broadcast, and topic kick), replacing the old channel API's
+  one-action `HandleResult`. Presence effects are deferred to the later
+  async presence slice; stopping a socket remains a `Next` result.
 - Channel modules, the registry, and all identity-FFI erasure are removed.
 - Third-party functionality ships as embeddable `model`/`msg`/`update`
   triples that apps wire in with a wrapper variant — the composition
   pattern established by the Elm/Lustre ecosystem.
 - Abuse controls are declarative per-topic-pattern config on `Config`,
-  supplied at `start`/`child_spec`.
+  supplied to `child_spec`.
 - Server-side sends to a joined socket go through a typed `Sender(msg)`
   (`beryl/event.notify`), obtained from `ConnectInfo.self` — an ordinary
   typed send, no erasure.
@@ -67,13 +69,13 @@ question below: [socket API reference](../design/app-side-dispatch-reference.md)
   strictly in list order within one runtime actor turn, so list order is
   wire order. Presence integration is deliberately separate in Lane B:
   synchronous presence work stays outside the shared runtime, while the
-  indivisible async read-model/effect bundle is deferred.
-- Supervision is explicit at each entry point: `start` owns a standalone,
-  detached Beryl subtree (runtime plus an optional connection limiter);
-  `child_spec` embeds the same subtree as a child of the caller's own
-  supervisor. Either way Beryl owns only its own subtree — supplied
+  indivisible async read-model/effect bundle is deferred to a later slice.
+- Supervision is explicit through the sole runtime entry point:
+  `child_spec` returns the Beryl subtree (runtime plus an optional
+  connection limiter) for the caller's own supervisor. Beryl owns only
+  that subtree — supplied
   presence/PubSub handles and separately started groups are borrowed, and
   `stop` drains and terminates only the Beryl subtree, never the
   application's root or siblings. See
-  [Supervision](/guides/supervision/) for the full contract, including
-  what state is lost on an unsupervised runtime crash.
+  [Supervision](/guides/supervision/) for the full contract, including what
+  state is lost when the supervised runtime restarts.

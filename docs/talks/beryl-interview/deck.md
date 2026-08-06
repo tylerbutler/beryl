@@ -358,8 +358,8 @@ Walk it line by line — this is the whole server, not an excerpt:
    request falls through to `http_fallback`. One server, one port,
    both jobs.
 4. `process.sleep_forever()` — keeps main alive for a demo. In a real
-   app you'd skip this and put beryl under your OTP supervision tree
-   via `beryl/supervisor.start` — there's a supervision guide.
+   app you'd skip this, build Beryl with `beryl.child_spec`, and add the
+   returned child specification to your OTP supervision tree.
 
 Caveat to say out loud so nobody copies it blindly: `let assert Ok(..)`
 is demo-grade "crash if startup fails" — which, per the supervision
