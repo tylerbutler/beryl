@@ -47,7 +47,7 @@ Policy for validating the browser `Origin` header before a WebSocket
  always send `Origin` on WebSocket handshakes, so an absent header signals a
  non-browser client (native app, server-to-server, CLI) that is not subject
  to the browser same-origin model and cannot be tricked into a cross-site
- upgrade. The one exception is [`AllowList`](#OriginPolicy), which requires a
+ upgrade. The one exception is [`AllowList`](#originpolicy), which requires a
  matching `Origin` and therefore rejects absent ones.
 
 ```gleam
@@ -72,7 +72,7 @@ Allow an upgrade only when the request `Origin` authority (host plus any
 
  Behind a reverse proxy this compares against the `Host` header as the app
  sees it: ensure the proxy forwards the public `Host` unchanged, or use
- [`AllowList`](#OriginPolicy) with the public origins instead. Forwarded
+ [`AllowList`](#originpolicy) with the public origins instead. Forwarded
  headers such as `X-Forwarded-Host` are not trusted, because clients can
  spoof them.
 
@@ -104,7 +104,7 @@ pub type TransportConfig
 Create a default transport config with no connect hook.
 
  The resulting config seeds empty (`[]`) `ConnectSeed.metadata` and applies
- the [`SameOrigin`](#OriginPolicy) origin policy, which rejects cross-site
+ the [`SameOrigin`](#originpolicy) origin policy, which rejects cross-site
  WebSocket upgrades before the handshake (CSWSH protection). Same-origin
  upgrades and non-browser clients (no `Origin` header) are admitted without
  configuration.
@@ -221,7 +221,7 @@ pub fn upgrade_connection(
 
 Disable `Origin` checking, allowing WebSocket upgrades from any origin.
 
- This is an explicit opt-out of the default [`SameOrigin`](#OriginPolicy)
+ This is an explicit opt-out of the default [`SameOrigin`](#originpolicy)
  CSWSH protection and restores the pre-1.0 allow-all behaviour. Only use it
  for sockets that do not rely on ambient browser credentials (cookies,
  sessions) for authorization, or that authenticate every message
@@ -237,8 +237,8 @@ pub fn with_allow_all_origins(TransportConfig) -> TransportConfig
 Restrict WebSocket upgrades to requests whose `Origin` header exactly
  matches one of the given values.
 
- This replaces the default [`SameOrigin`](#OriginPolicy) policy with an
- [`AllowList`](#OriginPolicy). Values are matched exactly against the full
+ This replaces the default [`SameOrigin`](#originpolicy) policy with an
+ [`AllowList`](#originpolicy). Values are matched exactly against the full
  `Origin` header, including scheme and host (and port when present), such as
  `"https://app.example.com"`. Missing or non-matching origins are rejected
  with `403 Forbidden` before the WebSocket handshake.

@@ -731,7 +731,7 @@ pub type StopError {
   StopTimeout
 }
 
-/// Eagerly validate a [`Config`](#Config) without starting anything.
+/// Eagerly validate a [`Config`](#config) without starting anything.
 ///
 /// This checks that `heartbeat_timeout_ms` is at least 2 and that every
 /// per-topic rate-limit pattern is valid.
