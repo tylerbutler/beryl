@@ -65,8 +65,10 @@ flowchart TB
   S["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
   S --> RT["runtime actor (Transient)"]
   PR["presence (app-started)"]
+  PW["app presence worker"]
   GR["groups (app-started)"]
-  RT -. "presence effects" .-> PR
+  RT -. "nonblocking command" .-> PW
+  PW --> PR
   RT -. "group broadcasts" .-> GR
 ```
 

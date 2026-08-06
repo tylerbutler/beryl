@@ -1,3 +1,3 @@
 project = "beryl"
 kind = "Added"
-body = "Added `transport.socket_connected_with_codec`, letting a transport announce a socket that frames its outbound messages with its own codec instead of the configured one. The coordinator already stored a per-socket codec; the transport SPI previously hardcoded `None`, so the only way to reach it was the internal `beryl/coordinator` module. This lets one coordinator — sharing channels, pubsub and presence — serve transports speaking different wire formats. `socket_connected` is unchanged and now delegates with `None`."
+body = "Added the `codec` argument to `transport.admit_socket`, letting one runtime serve connections with different wire formats while sharing topics and PubSub. Passing `None` uses the configured codec."

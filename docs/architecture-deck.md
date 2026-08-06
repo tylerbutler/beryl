@@ -173,7 +173,7 @@ sequenceDiagram
   participant App as app init
   Client->>Transport: WebSocket upgrade
   Transport->>Transport: generate socket id + build ConnectSeed
-  Transport->>Runtime: socket_connected(socket_id, send fns, seed)
+  Transport->>Runtime: capture owner pid + admit_socket(...)
   Runtime->>App: init(ConnectInfo)
   App-->>Runtime: #(model, init effects)
 ```
@@ -374,12 +374,14 @@ never garbage collected.
 ```mermaid
 sequenceDiagram
   participant App as app update
+  participant Worker as app presence worker
   participant Runtime as runtime
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Runtime: PresenceTrack / PresenceUntrack effect
-  Runtime->>Pres: track / untrack
+  App->>Worker: nonblocking track / untrack command
+  Worker->>Pres: track / untrack / list
+  Worker->>Runtime: broadcast after completion
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end
@@ -390,8 +392,8 @@ sequenceDiagram
 ```
 
 - Add-wins OR-set CRDT via `lattice_presence/presence_state`
-- App-owned actor: started separately, attached with `beryl.with_presence_handle`
-- `PresenceTrack`/`PresenceUntrack`/`PushPresence`/`BroadcastPresence` effects drive it from `update`
+- App-owned actor: started and supervised separately
+- Synchronous presence calls stay outside the shared runtime
 
 <!--
 Speaker notes:
@@ -399,19 +401,16 @@ Presence answers "who is here right now" across the cluster, and the
 diagram shows how it stays consistent without a central coordinator or a
 database. Each node runs a presence actor holding its own replica of an
 add-wins OR-set CRDT (from `lattice_presence`) — and that actor is started
-and supervised by the *application*, not by Beryl's own subtree; the app
-attaches it to `Config` with `beryl.with_presence_handle` and the runtime
-just borrows the handle. When the app's `update` returns a `PresenceTrack`
-effect (typically alongside `AcceptJoin`), the runtime updates the local
-replica; `PresenceUntrack` typically follows a `Closed` event. On a timer
+and supervised by the *application*, not by Beryl's own subtree. Public
+presence calls are synchronous, so an application-owned worker performs
+them outside the shared socket runtime and broadcasts the result afterward.
+On a timer
 the actor broadcasts its state over pubsub and merges states it receives
 from remote replicas. Stress the CRDT property: merges are commutative and
 idempotent, so replicas *converge* regardless of message order or
 duplication — no locking, no leader, no conflict resolution code.
-`PushPresence`/`BroadcastPresence` effects read presence state at apply
-time — after any earlier `PresenceTrack`/`PresenceUntrack` in the same
-effects list — which is the modern equivalent of manually wiring `on_diff`
-to `beryl.broadcast_presence_diff` (still available for advanced cases).
+The async presence read-model/effect work is deferred as one bundle rather
+than exposing a partial blocking runtime feature.
 -->
 
 ---
@@ -445,9 +444,10 @@ the framing (today it's the Phoenix `[join_ref, ref, topic, event,
 payload]` format) without touching the runtime or any app code.
 `phoenix_codec()` is the default you pass to `beryl.config`. One new detail
 worth a beat: transports monitor the runtime's pid via
-`transport.connection_owner` and close the WebSocket connection if the
-runtime goes down (crash or restart) rather than leaving a zombie
-connection pointed at an empty, freshly restarted runtime.
+`transport.connection_owner`, then pass that exact identity to
+`transport.admit_socket`. A restart, identity mismatch, or failed
+registration closes the WebSocket instead of attaching it to the successor
+runtime.
 -->
 
 ---

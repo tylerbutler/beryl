@@ -136,7 +136,7 @@ flowchart TD
 
 ## Features
 
-- **App-side dispatch** — one typed `init`/`update` pair per socket handles every topic; effects express replies, pushes, broadcasts, presence, and kicks
+- **App-side dispatch** — one typed `init`/`update` pair per socket handles every topic; effects express replies, pushes, broadcasts, and kicks
 - **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
 - **Groups** — Named channel groups for multi-topic broadcasting
 - **PubSub** — pg-based distributed publish/subscribe
@@ -156,44 +156,57 @@ Three runnable demos are included in the `examples/` directory:
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 
-## Recipe: push server-side events to a socket
+## Recipe: bridge an external actor to a socket
 
 A long-lived domain actor (for example a per-document session) often emits
-updates that need to be pushed to each joined socket. Every socket's `init`
-receives a typed `Sender(msg)` (`ConnectInfo.self`); hand it to the domain
-actor as a subscriber, and each emitted value arrives in `update` as a typed
-`Info` event — no `Dynamic`, no forwarder boilerplate. If the socket has
-disconnected, `event.notify` is a quiet no-op.
+updates that need to be pushed to each joined socket. `beryl/bridge` owns the
+small forwarder process, translates the actor's messages, and delivers typed
+`Info` events through the socket's `Sender`.
 
 ```gleam
-import beryl/event.{Info, Join, Next, Push}
+import beryl/bridge.{type Bridge}
+import beryl/event.{Closed, Info, Next, Push}
 import gleam/json
 
-// Messages emitted by your domain actor.
 pub type DocEvent {
   Updated(version: Int)
 }
 
-fn init(info: event.ConnectInfo(DocEvent)) -> #(Model, List(event.Effect)) {
-  // Hand the sender to the domain actor as this socket's subscriber.
-  doc.subscribe(doc_actor, info.self)
-  #(initial_model(), [])
+pub type Msg {
+  DocUpdated(version: Int)
 }
 
-fn update(model: Model, ev: event.Event(DocEvent)) -> event.Next(Model, DocEvent) {
+pub type Model {
+  Model(bridge: Bridge(DocEvent))
+}
+
+fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
+  let assert Ok(forwarder) =
+    bridge.start(to: info.self, with: fn(event: DocEvent) {
+      let Updated(version) = event
+      DocUpdated(version)
+    })
+  doc.subscribe(doc_actor, bridge.subject(forwarder))
+  #(Model(bridge: forwarder), [])
+}
+
+fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
   case ev {
-    // `Info` receives the typed `DocEvent` directly — no decode step.
-    Info(Updated(version)) ->
+    Info(DocUpdated(version)) ->
       Next(model, [
         Push("doc:1", "doc_updated", json.object([#("version", json.int(version))])),
       ])
+    Closed(_, _) -> {
+      bridge.stop(model.bridge)
+      Next(model, [])
+    }
     _ -> Next(model, [])
   }
 }
-
-// In the domain actor, emit with:
-// event.notify(subscriber, Updated(version))
 ```
+
+Call `bridge.stop` when the owning socket/topic closes. The bridge also
+monitors the process that created it as a leak-prevention backstop.
 
 ## Releases & changelog
 

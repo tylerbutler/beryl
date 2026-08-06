@@ -57,7 +57,7 @@ The `join_ref` and `ref` fields are nullable strings used for reply correlation.
 The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's native WebSocket handling to the beryl runtime through the frame-level SPI in `beryl/transport`. It is responsible for:
 
 1. **Generating a unique socket id** — `crypto.strong_random_bytes` produces a 16-byte random id encoded as base16.
-2. **Announcing the socket** — on connection init, the transport calls `transport.socket_connected` with a text send fn, a binary send fn, and the `ConnectSeed` assembled from the upgrade request (delivered to the app's `init`).
+2. **Admitting the socket atomically** — the transport captures `transport.connection_owner`, installs a monitor for that exact pid, then calls `transport.admit_socket` with the send functions, closer, codec, and `ConnectSeed`. A restart or registration failure closes the connection instead of registering it with a successor runtime.
 3. **Routing text frames** — `mist.Text` frames are decoded in the connection process with the codec from `transport.active_codec` and routed with `transport.route_decoded`.
 4. **Routing binary frames** — `mist.Binary` frames are routed with `transport.route_binary`; the runtime passes them through the codec's `decode_binary` when present, otherwise delivers the raw `BitArray` to the app as `Binary` events.
 5. **Notifying on close** — `mist.Closed` and `mist.Shutdown` call `transport.socket_disconnected` so the runtime can clean up subscriptions.
@@ -67,7 +67,7 @@ The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's n
 
 **`default_config(path)`** — creates a `TransportConfig` with no connect hook. Accepts all (same-origin) connections.
 
-**`with_on_connect(config, callback)`** — attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(Nil)` to allow the connection, `Error(ConnectRejected)` to reject with 403. Connect-time request data reaches the app's `init` via the `ConnectSeed`.
+**`with_on_connect(config, callback)`** — attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(metadata)` to allow the connection and append ordered string pairs to `ConnectSeed.metadata`, or `Error(ConnectRejected)` to reject with 403.
 
 **`with_allowed_origins(config, origins)`** — attaches an exact-match allow-list for browser `Origin` headers, such as `["https://app.example.com"]`. Use this when cookie-authenticated WebSockets need CSWSH protection.
 

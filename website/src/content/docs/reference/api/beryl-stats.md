@@ -91,7 +91,7 @@ Request a point-in-time snapshot from the local runtime.
  runtime restart this returns `RuntimeUnavailable` or
  `RequestTimedOut`; an overloaded runtime returns `RequestTimedOut`.
  Neither condition panics. This API reports only the node represented by
- `channels`; aggregate multi-node statistics outside Beryl.
+ `sockets`; aggregate multi-node statistics outside Beryl.
 
  Poll no more frequently than roughly once per second.
 
