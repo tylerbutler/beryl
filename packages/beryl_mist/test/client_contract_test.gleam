@@ -1,7 +1,7 @@
+import app_test_helpers as h
 import aquamarine
 import aquamarine/error as aquamarine_error
 import aquamarine/phoenix
-import app_test_helpers as h
 import beryl
 import beryl/event
 import beryl/wire
