@@ -33,7 +33,7 @@ gleam run
 |---|---|
 | **Channels** | `cursor:*` topics handled by the embeddable cursors app (`join`/`update`/`closed`) |
 | **Topic routing** | The update function routes `"cursor:" <> _` topics to the cursors app |
-| **Presence (CRDT)** | Tracks connected users with username + color metadata |
+| **Session presence (ETS)** | The example-local `session_presence` tracker stores connected users and their username + color metadata in ETS |
 | **`broadcast_from`** | Fans out cursor moves to all *other* clients, excluding the sender |
 | **Rate limiting** | `beryl.with_message_rate` throttles high-frequency cursor events |
 | **WebSocket transport** | `mist_transport.upgrade` handles Phoenix-compatible WebSocket requests |
@@ -47,7 +47,7 @@ Browser (vanilla JS + Phoenix JS client)
 Server (Gleam)
   ├── Mist HTTP — serves HTML + static files
   ├── beryl app dispatch — cursor:* topics
-  ├── beryl presence — CRDT-backed user tracking
+  ├── example session_presence — ETS-backed user tracking
   └── beryl pubsub — broadcast_from cursor positions
 ```
 
@@ -78,7 +78,7 @@ slice of the beryl API:
 | **`ReplyOk` effect** | Delivery of `new_msg` confirmed with an ok-status `phx_reply` |
 | **Coded error replies** | Empty messages rejected with HTTP-style code 422 in the reply payload |
 | **Groups** | Three rooms (`general`, `random`, `help`) organised in a named group |
-| **Presence (typing indicators)** | Typing state stored in presence meta; updated on `typing`/`stop_typing` events |
+| **Session presence (ETS)** | The example-local `session_presence` tracker stores online users and typing metadata in ETS |
 | **System messages** | "user joined" / "user left" broadcast via `beryl.broadcast` on join/terminate |
 | **Multiple topics** | Each room is a separate `room:*` topic; one chat model per topic in the socket model |
 | **Rate limiting** | `with_join_rate` (5/sec) and `with_channel_rate` (10/sec/channel) |
@@ -93,7 +93,7 @@ Server (Gleam)
   ├── Mist WebSocket transport — on_connect validates token
   ├── beryl app dispatch — room:* topics
   ├── beryl groups — "public" group → general, random, help
-  └── beryl presence — online users + typing indicators
+  └── example session_presence — ETS-backed online users + typing indicators
 ```
 
 ### Channel events
