@@ -64,6 +64,8 @@ per second, and string limits are bytes.
 | `BERYL_HEARTBEAT_TIMEOUT_MS` | `60000` | Server staleness/eviction window, in ms |
 | `BERYL_MAX_CONNECTIONS_PER_IP` | `0` | Concurrent connections per real peer IP; `<= 0` is unlimited |
 | `BERYL_MAX_CONNECTIONS` | `0` | Concurrent connections on this BEAM node; `<= 0` is unlimited |
+| `BERYL_FRAME_RATE` | `0` | Per-connection inbound frame rate before decoding; `<= 0` disables it |
+| `BERYL_FRAME_BURST` | `0` | Burst capacity used when the frame rate is enabled |
 | `BERYL_MESSAGE_RATE` | `0` | Per-socket message rate; `<= 0` disables it |
 | `BERYL_MESSAGE_BURST` | `0` | Burst capacity used when the message rate is enabled |
 | `BERYL_JOIN_RATE` | `0` | Per-socket join rate; `<= 0` disables it |

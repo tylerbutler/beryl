@@ -53,6 +53,10 @@ fn environment_config() -> beryl.Config {
       "BERYL_MAX_CONNECTIONS",
       0,
     ))
+    |> beryl.with_frame_rate(
+      per_second: env_int("BERYL_FRAME_RATE", 0),
+      burst: env_int("BERYL_FRAME_BURST", 0),
+    )
     |> beryl.with_message_rate(
       per_second: env_int("BERYL_MESSAGE_RATE", 0),
       burst: env_int("BERYL_MESSAGE_BURST", 0),

@@ -4,13 +4,15 @@ import beryl/stats
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import envoy
 import example_helpers/session_presence
 import gleam/erlang/process
-import gleam/option
+import gleam/option.{type Option, None, Some}
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit
 import gleeunit/should
+import load_test/app as load_app
 import load_test/channel
 import load_test/ewe as ewe_http
 import load_test/http
@@ -53,7 +55,7 @@ fn connect(
       Ok(Nil)
     },
     send_binary: fn(_) { Ok(Nil) },
-    codec: option.None,
+    codec: None,
     seed: socket.empty_seed(),
     close: fn() { Nil },
   )
@@ -106,8 +108,14 @@ pub fn health_endpoint_test() {
 }
 
 pub fn stats_errors_have_typed_http_statuses_test() {
-  http.stats_error(stats.RuntimeUnavailable).status |> should.equal(503)
-  http.stats_error(stats.RequestTimedOut).status |> should.equal(504)
+  let unavailable = http.stats_error(stats.RuntimeUnavailable)
+  unavailable.status |> should.equal(503)
+  unavailable.body
+  |> should.equal("{\"error\":\"runtime_unavailable\"}")
+
+  let timed_out = http.stats_error(stats.RequestTimedOut)
+  timed_out.status |> should.equal(504)
+  timed_out.body |> should.equal("{\"error\":\"runtime_timeout\"}")
 }
 
 pub fn stats_include_beryl_and_beam_snapshots_test() {
@@ -115,6 +123,9 @@ pub fn stats_include_beryl_and_beam_snapshots_test() {
   endpoint.status |> should.equal(200)
   endpoint.body |> string.contains("\"beryl\"") |> should.be_true
   endpoint.body |> string.contains("\"beam\"") |> should.be_true
+  endpoint.body
+  |> string.contains("\"runtime_mailbox_length\"")
+  |> should.be_true
 }
 
 pub fn forbidden_topic_rejects_join_test() {
@@ -159,4 +170,30 @@ pub fn broadcast_fans_out_full_payload_test() {
   let publisher_messages = recv(publisher) <> recv(publisher)
   publisher_messages |> string.contains("fanout-1") |> should.be_true
   recv(peer) |> string.contains("fanout-1") |> should.be_true
+}
+
+pub fn app_configures_frame_rate_from_environment_test() {
+  with_env_value("BERYL_FRAME_RATE", Some("10"), fn() {
+    with_env_value("BERYL_FRAME_BURST", Some("20"), fn() {
+      let load_app.App(sockets) = load_app.start()
+      beryl.frame_limits(sockets) |> should.be_some
+    })
+  })
+}
+
+fn with_env_value(name: String, value: Option(String), run: fn() -> a) -> a {
+  let previous = envoy.get(name)
+  case value {
+    Some(value) -> envoy.set(name, value)
+    None -> envoy.unset(name)
+  }
+
+  let output = run()
+
+  case previous {
+    Ok(value) -> envoy.set(name, value)
+    Error(Nil) -> envoy.unset(name)
+  }
+
+  output
 }
