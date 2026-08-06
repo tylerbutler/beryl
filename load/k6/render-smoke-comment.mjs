@@ -94,7 +94,7 @@ This smoke test starts the real load-test application and verifies the Phoenix V
    - Request latency under concurrency: \`VUS=100 DURATION=2m just load-run push-round-trip <url> <transport>\`
    - Fan-out or presence delivery: use \`broadcast-fanout\` or \`presence-churn\`.
 4. Increase one variable at a time. Throughput is the highest sustained successful operation or connection rate before errors, timeouts, dropped iterations, or target saturation increase. Compare repeated-run medians and spread, not the best run.
-5. Track p50/p95/p99 latency, operation success and timeout rates, \`dropped_iterations\`, generator CPU/FD/port headroom, and target CPU, BEAM run queue, coordinator mailbox, connections, and transport telemetry.
+5. Track p50/p95/p99 latency, operation success and timeout rates, \`dropped_iterations\`, generator CPU/FD/port headroom, and target CPU, BEAM run queue, runtime mailbox, connections, and transport telemetry.
 
 See [the load-testing guide](https://github.com/${process.env.GITHUB_REPOSITORY ?? "tylerbutler/beryl"}/blob/main/load/README.md) for profile contracts, metadata, baseline discipline, and interpretation.
 </details>

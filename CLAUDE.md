@@ -7,8 +7,9 @@ Type-safe real-time channels and presence for Gleam, targeting the Erlang
 monorepo with three packages (two currently publishable — `beryl_ewe` is
 excluded from release via the `@release` key in the root `gleam.toml`):
 
-- **`packages/beryl`** — core channels library (channels, presence, PubSub,
-  wire protocol, abuse controls, transport SPI)
+- **`packages/beryl`** — core app-dispatch library (runtime, typed
+  events/effects, presence, PubSub, wire protocol, abuse controls, transport
+  SPI)
 - **`packages/beryl_mist`** — Mist WebSocket transport (module `beryl_mist`),
   built on the public `beryl/transport` SPI
 - **`packages/beryl_ewe`** — Ewe WebSocket transport (module `beryl_ewe`),
@@ -60,23 +61,23 @@ packages/
 ├── beryl/                         # Core library package
 │   ├── gleam.toml
 │   ├── src/
-│   │   ├── beryl.gleam            # Main public API (channels, config, start/register)
-│   │   ├── beryl_ffi.erl          # Erlang FFI (identity coercion, timing)
+│   │   ├── beryl.gleam            # Main public API (config, child_spec, stop, broadcast)
+│   │   ├── beryl_ffi.erl          # Erlang FFI (timing, admission atomics, validated PubSub coercion)
 │   │   ├── beryl_pubsub_ffi.erl   # Erlang FFI for pg-based PubSub
 │   │   └── beryl/
-│   │       ├── bridge.gleam       # Bridge between transports and channels
-│   │       ├── channel.gleam      # Channel behaviour/callbacks
+│   │       ├── bridge.gleam       # Forward external actor streams to typed socket Senders
 │   │       ├── connection_limit.gleam  # Connection limit enforcement (internal)
-│   │       ├── coordinator.gleam  # Channel lifecycle coordinator (internal)
 │   │       ├── error.gleam        # Shared error types/helpers
+│   │       ├── event.gleam        # Typed app-dispatch events, effects, refs, and senders
 │   │       ├── group.gleam        # Named channel groups
 │   │       ├── internal.gleam     # Internal helpers (internal)
 │   │       ├── log.gleam          # Logging helpers (internal)
 │   │       ├── presence.gleam     # Presence tracking (CRDT-backed actor)
 │   │       ├── pubsub.gleam       # PubSub abstraction (pg-based)
 │   │       ├── rate_limit.gleam   # Rate limiting helpers (internal)
-│   │       ├── socket.gleam       # Socket abstraction
-│   │       ├── supervisor.gleam   # OTP supervision helpers
+│   │       ├── runtime.gleam      # App-dispatch socket/topic runtime (internal)
+│   │       ├── stats.gleam        # Runtime statistics API
+│   │       ├── telemetry.gleam    # Internal telemetry schema
 │   │       ├── topic.gleam        # Topic pattern matching
 │   │       ├── transport.gleam    # Public transport SPI (used by beryl_mist/beryl_ewe)
 │   │       ├── wire.gleam         # Wire protocol (JSON encode/decode)
@@ -101,7 +102,7 @@ website/                           # Astro/Starlight docs site (not a member)
 
 ### Core Layers
 
-1. **Channel System** (`beryl`, `beryl/channel`, `beryl/coordinator`)
+1. **App Dispatch Runtime** (`beryl`, `beryl/event`, internal `beryl/runtime`)
 2. **PubSub** (`beryl/pubsub`) - pg-based process groups
 3. **Presence** - CRDT-backed actor using `lattice_presence/presence_state` (`beryl/presence`)
 4. **Groups** (`beryl/group`) - Named channel groups for broadcast
@@ -180,9 +181,9 @@ installed in CI via `.github/actions/mise`.
 - Follow `gleam format` output
 - Keep public API minimal
 - Document public functions with `///` comments
-- beryl's internal modules (`coordinator`, `internal`, `log`, `rate_limit`,
-  `connection_limit`) must not be imported by other packages; transports use
-  the `beryl/transport` SPI
+- beryl's internal modules (`connection_limit`, `internal`, `log`,
+  `rate_limit`, `runtime`, `telemetry`) must not be imported by other
+  packages; transports use the `beryl/transport` SPI
 
 ## Commit Messages
 

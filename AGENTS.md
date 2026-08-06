@@ -28,7 +28,7 @@ Run a single test: `cd packages/beryl && gleam test -- --filter "test_name"`
 
 ```
 packages/
-  beryl/           # core library (channels, presence, pubsub, wire, transport SPI)
+  beryl/           # core library (app dispatch, presence, pubsub, wire, transport SPI)
   beryl_mist/      # Mist WebSocket transport (depends on beryl via path)
   beryl_ewe/       # Ewe WebSocket transport (depends on beryl via path; NOT published)
 examples/          # runnable example apps (workspace members, excluded from release)
@@ -40,11 +40,12 @@ docs/              # ADRs, design docs, architecture deck, security docs
 
 **Transport packages (`beryl_mist`, `beryl_ewe`) MUST only import from the
 public `beryl/transport` SPI module.** They must never import:
-- `beryl/coordinator`
 - `beryl/connection_limit`
 - `beryl/internal`
 - `beryl/log`
 - `beryl/rate_limit`
+- `beryl/runtime`
+- `beryl/telemetry`
 
 These modules are declared as `internal_modules` in `packages/beryl/gleam.toml`
 and are hidden from the public API. Functions in `beryl/transport` that are
@@ -53,32 +54,29 @@ because they appear unused within beryl itself.
 
 ## Architecture (Non-Obvious)
 
-### Type Erasure at the Coordinator Boundary
+### Typed App Dispatch
 
-The public API uses phantom types for compile-time safety:
-- `Channel(assigns, info)` — typed channel definition
-- `RegisteredChannel(assigns, info)` — typed registration handle
-- `Socket(assigns)` — typed socket with assigns
+`beryl.child_spec` captures the app's generic `model`, `msg`, `init`, and
+`update` types in monomorphic closures behind the opaque `Sockets` handle. The
+runtime stores each socket's typed model and delivers `Join`, `Message`,
+`Binary`, `Closed`, and typed `Info` events without socket-dispatch casts or
+`Dynamic` round-trips. `Dynamic` is limited to decoded wire payloads.
 
-Internally, the **coordinator erases all types to `Dynamic`** at the join
-boundary. After a successful join, each socket/topic pair stores a
-`JoinedChannel` whose closures capture the channel's typed assigns. Subsequent
-callbacks (`handle_in`, `handle_binary`, `handle_info`, `terminate`) run
-through these closures — no assigns value ever crosses the type-erasure
-boundary except at join.
-
-The `@internal` accessor functions on `channel.gleam` (e.g.,
-`join_callback`, `handle_in_callback`) exist solely for this erasure layer.
+Join `Ref` values are single-pending-join capabilities with unique runtime
+identity. Never reconstruct or compare their wire fields; return the exact ref
+in `AcceptJoin` or `RejectJoin`.
 
 ### Transport SPI Contract
 
 A transport implementation must follow this lifecycle:
 1. **Admit**: call `beryl.acquire_connection_slot` + `beryl.bind_connection_slot`
-2. **Announce**: `transport.socket_connected` then `transport.register_closer`
-3. **Route**: decode inbound frames with `transport.active_codec`, route via
+2. **Own**: capture `transport.connection_owner` and monitor an `OwnerAlive` pid
+3. **Register atomically**: call `transport.admit_socket` with the captured
+   owner and closer; close on failure
+4. **Route**: decode inbound frames with `transport.active_codec`, route via
    `transport.route_decoded` / `transport.route_binary`, shed over-rate frames
    with `transport.new_message_limiter` / `transport.take_token`
-4. **Disconnect**: `transport.socket_disconnected` + `beryl.release_connection_slot`
+5. **Disconnect**: `transport.socket_disconnected` + `beryl.release_connection_slot`
 
 ### Wire Protocol
 
@@ -98,10 +96,9 @@ cluster upgrade must not mis-parse a frame from an older node.
 
 ### Opaque Types with Builder Pattern
 
-Configuration types (`Config`, `LoggingConfig`, `PubSubConfig`, `TransportConfig`)
-are opaque. Construct with factory functions (`config()`, `default_config()`)
-and adjust with `with_*` builder functions. Never expose or match on their
-internal fields.
+Configuration types (`Config`, `LoggingConfig`, `PubSubConfig`, and presence
+`Config`) are opaque. Construct them with their factory functions and adjust
+them with `with_*` builders. Never expose or match on their internal fields.
 
 ## Testing Gotchas
 
@@ -123,10 +120,8 @@ delivery, etc.).
 ### Test Scope and Framework
 
 - Tests use `gleeunit` (Gleam's test framework)
-- Coordinator-level tests use `test_helpers.noop_instance()` for stateless
-  joined-channel stubs
-- Public channel behavior changes need integration coverage through the
-  coordinator path, not just pure helper tests
+- Public socket/event behavior changes need integration coverage through the
+  runtime and transport paths, not only pure helper tests
 - When replacing WebSocket transports, preserve existing Phoenix/WebSocket
   contract coverage by repurposing tests rather than deleting them
 
