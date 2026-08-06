@@ -23,7 +23,7 @@ import beryl/telemetry
 import beryl/wire/codec
 import gleam/bool
 import gleam/erlang/process
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option, Some}
 import gleam/result
 
 /// Runtime handle accepted by transport implementations.
@@ -218,69 +218,6 @@ pub fn telemetry_frame_stop(
       },
     ),
   )
-}
-
-// --- Socket lifecycle ---
-
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Compatibility registration for coordinator-backed `OwnerUnmonitored`
-/// systems. App-runtime transports must use `connection_owner` and
-/// `admit_socket` so registration and closer installation are tied to one
-/// exact runtime pid.
-pub fn socket_connected(
-  sockets sockets: Sockets,
-  socket_id socket_id: String,
-  send send: fn(String) -> Result(Nil, Nil),
-  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
-  seed seed: ConnectSeed,
-) -> Nil {
-  socket_connected_with_codec(
-    sockets: sockets,
-    socket_id: socket_id,
-    send: send,
-    send_binary: send_binary,
-    codec: None,
-    seed: seed,
-  )
-}
-
-/// Compatibility registration with a connection-specific wire format.
-///
-/// This is for coordinator-backed `OwnerUnmonitored` systems. App-runtime
-/// transports must pass the codec to `admit_socket`.
-///
-/// `Some(codec)` frames this connection's outbound messages with `codec`
-/// instead of the configured one, so a single runtime — sharing channels,
-/// pubsub and presence — can serve transports speaking different framings.
-/// `None` is equivalent to `socket_connected`.
-pub fn socket_connected_with_codec(
-  sockets sockets: Sockets,
-  socket_id socket_id: String,
-  send send: fn(String) -> Result(Nil, Nil),
-  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
-  codec codec: Option(Codec),
-  seed seed: ConnectSeed,
-) -> Nil {
-  beryl.transport_socket_connected(
-    sockets,
-    socket_id,
-    send,
-    send_binary,
-    codec,
-    seed,
-  )
-}
-
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Register a function that force-closes the socket's underlying connection
-/// so the runtime can actively evict it (e.g. heartbeat timeout) instead
-/// of leaving a zombie socket whose frames are silently dropped.
-pub fn register_closer(
-  sockets sockets: Sockets,
-  socket_id socket_id: String,
-  close close: fn() -> Nil,
-) -> Nil {
-  beryl.transport_register_closer(sockets, socket_id, close)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
