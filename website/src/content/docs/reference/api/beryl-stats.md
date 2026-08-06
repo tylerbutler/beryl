@@ -20,7 +20,7 @@ Local runtime statistics.
 
 ### `Snapshot`
 
-A point-in-time snapshot of local coordinator state.
+A point-in-time snapshot of local runtime state.
 
 ```gleam
 pub type Snapshot
@@ -32,14 +32,14 @@ Errors returned while requesting a runtime snapshot.
 
 ```gleam
 pub type SnapshotError {
-  CoordinatorUnavailable
+  RuntimeUnavailable
   RequestTimedOut
 }
 ```
 
 #### Constructors
 
-##### `CoordinatorUnavailable`
+##### `RuntimeUnavailable`
 
 The local socket runtime is not currently running.
 
@@ -65,14 +65,6 @@ Return the number of sockets connected to the local runtime.
 pub fn connected_sockets(Snapshot) -> Int
 ```
 
-### `coordinator_mailbox_length`
-
-Return the runtime mailbox length when it serviced the request.
-
-```gleam
-pub fn coordinator_mailbox_length(Snapshot) -> Int
-```
-
 ### `joined_socket_topic_pairs`
 
 Return the number of joined socket/topic pairs.
@@ -83,12 +75,12 @@ Return the number of joined socket/topic pairs.
 pub fn joined_socket_topic_pairs(Snapshot) -> Int
 ```
 
-### `registered_channel_handlers`
+### `runtime_mailbox_length`
 
-Return the number of app dispatch handlers (one for a running app).
+Return the runtime mailbox length when it serviced the request.
 
 ```gleam
-pub fn registered_channel_handlers(Snapshot) -> Int
+pub fn runtime_mailbox_length(Snapshot) -> Int
 ```
 
 ### `snapshot`
@@ -96,10 +88,10 @@ pub fn registered_channel_handlers(Snapshot) -> Int
 Request a point-in-time snapshot from the local runtime.
 
  The request waits for at most approximately one second. During a
- runtime restart this returns `CoordinatorUnavailable` or
+ runtime restart this returns `RuntimeUnavailable` or
  `RequestTimedOut`; an overloaded runtime returns `RequestTimedOut`.
  Neither condition panics. This API reports only the node represented by
- `channels`; aggregate multi-node statistics outside Beryl.
+ `sockets`; aggregate multi-node statistics outside Beryl.
 
  Poll no more frequently than roughly once per second.
 

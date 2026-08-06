@@ -29,26 +29,35 @@ acceptable only when validated or selected from a fixed bounded set.
 
 ## Subscribing
 
-The calling process receives `pubsub.Message` values when broadcasts are sent to the topic:
+Create one typed subscriber in the process that owns the mailbox, join any
+topics it needs, and fold PubSub delivery into that process's selector:
 
 ```gleam
-// Subscribe the current process
-pubsub.subscribe(ps, "room:lobby")
+let sub = pubsub.subscriber(ps)
+pubsub.join(sub, "room:lobby")
 
-// Unsubscribe
-pubsub.unsubscribe(ps, "room:lobby")
+let selector =
+  process.new_selector()
+  |> process.select(app_subject)
+  |> pubsub.selecting(sub, RemoteBroadcast)
+
+// Later:
+pubsub.leave(sub, "room:lobby")
 ```
+
+Use one `Subscriber(payload)` per payload type in a process. PubSub records
+arrive as raw BEAM messages, so `selecting` is the typed validation boundary.
 
 ## Messages
 
-Subscribers receive `Message` records:
+Subscribers receive transparent `Message(payload)` records:
 
 ```gleam
-pub type Message {
+pub type Message(payload) {
   Message(
     topic: String,
     event: String,
-    payload: json.Json,
+    payload: payload,
     from: PubSubFrom,
   )
 }
@@ -59,6 +68,10 @@ pub type PubSubFrom {
   FromSocket(Pid, String)   // Broadcast from a process, excluding a socket ID
 }
 ```
+
+The raw record tag plus these four fields, in this order, are a frozen
+cross-node wire contract. Version changes to your own payload type explicitly
+when rolling upgrades must accept old and new nodes concurrently.
 
 `FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving runtimes use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
 

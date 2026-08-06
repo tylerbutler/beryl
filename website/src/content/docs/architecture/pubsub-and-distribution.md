@@ -19,14 +19,20 @@ The Gleam module `beryl/pubsub` delegates all low-level pg operations to `src/be
 | Function | Description |
 |---|---|
 | `start(config)` | Start a pg scope (idempotent — safe to call multiple times) |
-| `subscribe(ps, topic)` | Subscribe the calling process to a topic |
-| `unsubscribe(ps, topic)` | Remove the calling process from a topic |
+| `subscriber(ps)` | Create a typed subscriber owned by the calling process |
+| `join(subscriber, topic)` | Join the subscriber to a topic |
+| `leave(subscriber, topic)` | Leave a previously joined topic |
+| `selecting(selector, subscriber, transform)` | Validate raw four-field `Message(payload)` records and fold them into an actor selector |
 | `broadcast(ps, topic, event, payload)` | Deliver to all subscribers on all nodes |
 | `broadcast_from(ps, from, topic, event, payload)` | Deliver to all subscribers **except** `from` pid |
 | `broadcast_from_socket(ps, from, except_socket_id, topic, event, payload)` | Deliver to all subscribers except `from`, carrying a socket exclusion hint |
 | `local_broadcast(ps, topic, event, payload)` | Deliver to local-node subscribers only |
 | `subscribers(ps, topic)` | Return all subscriber pids (all nodes) |
 | `subscriber_count(ps, topic)` | Return subscriber count (all nodes) |
+
+`Message(payload)` is sent raw through `pg`. Its record tag and four fields
+(`topic`, `event`, `payload`, `from`) are a frozen rolling-upgrade contract;
+applications must version payload-shape changes that cross nodes.
 
 The `PubSubFrom` type tags each message with its origin so downstream receivers can inspect whether a message came from the system, a specific process, or a process with an associated socket:
 

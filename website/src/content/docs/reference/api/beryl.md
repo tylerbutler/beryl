@@ -674,19 +674,6 @@ pub fn with_payload_preview_bytes(
 ) -> LoggingConfig
 ```
 
-### `with_presence_handle`
-
-Attach a presence handle for app-dispatch systems (`start`), used
- by the `PresenceTrack`/`PresenceUntrack` effects. Without a handle
- those effects are dropped with a warning.
-
-```gleam
-pub fn with_presence_handle(
-  Config,
-  presence: presence.Presence
-) -> Config
-```
-
 ### `with_pubsub`
 
 Add PubSub to a configuration for distributed broadcasts

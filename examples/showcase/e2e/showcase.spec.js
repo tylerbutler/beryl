@@ -142,9 +142,8 @@ test.describe("Showcase (app-side dispatch)", () => {
       { waitEvent: "presence_list", topic: "room:general" },
     ]);
 
-    // The chat join's effect list is [AcceptJoin, PresenceTrack,
-    // Broadcast(new_msg), Broadcast(presence_list)] — the ack must hit the
-    // wire before every frame those later effects produce.
+    // The join ack is emitted by the runtime turn before the app-owned
+    // presence worker's later snapshot broadcast.
     const ackIndex = frames.findIndex(
       (f) => f[3] === "phx_reply" && f[1] === "1"
     );
@@ -153,11 +152,6 @@ test.describe("Showcase (app-side dispatch)", () => {
     expect(ackIndex).toBeGreaterThanOrEqual(0);
     expect(presenceIndex).toBeGreaterThan(ackIndex);
     expect(sysMsgIndex).toBeGreaterThan(ackIndex);
-    // presence_diff (from PresenceTrack) also lands after the ack.
-    const diffIndex = frames.findIndex((f) => f[3] === "presence_diff");
-    if (diffIndex !== -1) {
-      expect(diffIndex).toBeGreaterThan(ackIndex);
-    }
   });
 
   test("chat page works end to end against the shared socket", async ({

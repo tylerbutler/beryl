@@ -115,12 +115,17 @@ let logging =
 
 **Checks:**
 
-1. **Untrack on `Closed`.** Return a `PresenceUntrack` effect from the `Closed` arm of `update`:
+1. **Untrack on `Closed`.** Send a nonblocking cleanup command to an
+   application-owned presence worker from the `Closed` arm:
    ```gleam
    event.Closed(topic, _reason) ->
-     event.Next(model, [event.PresenceUntrack(topic, presence_key(model))])
+     {
+       process.send(presence_worker, Untrack(topic, model.presence_ref))
+       event.Next(model, [])
+     }
    ```
-   Presence entries tracked through effects are also cleaned up automatically when the topic closes; entries written with direct `presence.track` calls from outside `update` are your responsibility to untrack.
+   The application owns every ref returned by `presence.track` and must
+   untrack it. Do not run synchronous presence calls inside the shared runtime.
 
 2. **Cross-node sync.** If running multiple nodes, each node must be configured with the same PubSub instance and each presence actor needs a unique replica ID. The CRDT merges state over PubSub; without PubSub, nodes have independent state.
 

@@ -16,9 +16,8 @@ Transport SPI — the contract between beryl core and WebSocket transport
  1. Admits a connection (origin/auth policy is the transport's concern),
     acquiring a slot with `acquire_connection_slot` and binding it with
     `bind_connection_slot`.
- 2. Announces the socket with `socket_connected` — or
-    `socket_connected_with_codec` when the connection speaks a framing
-    other than the configured codec — then `register_closer`.
+ 2. Captures `connection_owner`, installs its monitor, and atomically
+    registers the socket and closer with `admit_socket`.
  3. Decodes inbound frames with the codec from `active_codec` and routes
     them with `route_decoded` /
     `route_binary`, shedding over-rate frames via `new_message_limiter` /
@@ -209,6 +208,28 @@ The wire codec configured for these sockets. Transports decode inbound
 pub fn active_codec(beryl.Sockets) -> codec.Codec
 ```
 
+### `admit_socket`
+
+Register a socket and its closer against the captured connection owner.
+
+ For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
+ function. Admission succeeds only if that exact runtime instance processes
+ the registration; a restart cannot redirect it to the successor runtime.
+ On `Error`, close the connection so its bound connection permit is released.
+
+```gleam
+pub fn admit_socket(
+  sockets: beryl.Sockets,
+  owner: ConnectionOwner,
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec: option.Option(codec.Codec),
+  seed: event.ConnectSeed,
+  close: fn() -> Nil
+) -> Result(Nil, Nil)
+```
+
 ### `bind_connection_slot`
 
 Bind a connection slot to the current transport process.
@@ -233,9 +254,9 @@ pub fn connect_seed(
 ### `connection_owner`
 
 Determine how a newly accepted connection is owned. Call this in the
- connection process right after upgrade; on `OwnerAlive(pid)` monitor `pid`
- and close on its `Down`, and on `OwnerUnavailable` close the connection
- immediately.
+ connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
+ exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the
+ connection immediately.
 
 ```gleam
 pub fn connection_owner(beryl.Sockets) -> ConnectionOwner
@@ -302,20 +323,6 @@ Create a fresh per-connection message limiter, `None` when no message
 pub fn new_message_limiter(beryl.Sockets) -> option.Option(RateLimiter)
 ```
 
-### `register_closer`
-
-Register a function that force-closes the socket's underlying connection
- so the runtime can actively evict it (e.g. heartbeat timeout) instead
- of leaving a zombie socket whose frames are silently dropped.
-
-```gleam
-pub fn register_closer(
-  sockets: beryl.Sockets,
-  socket_id: String,
-  close: fn() -> Nil
-) -> Nil
-```
-
 ### `release_connection_slot`
 
 Release a held connection slot.
@@ -360,46 +367,9 @@ Route a transport-decoded binary message to the runtime.
 
 ```gleam
 pub fn route_decoded_binary(
-  channels: beryl.Sockets,
+  sockets: beryl.Sockets,
   socket_id: String,
   message: codec.Inbound
-) -> Nil
-```
-
-### `socket_connected`
-
-Announce a newly connected socket. `send`/`send_binary` deliver outbound
- frames on this connection. `seed` carries the upgrade request's
- connection data (path, query, headers, and any `with_on_connect`
- metadata), delivered to the app's `init` as `ConnectInfo.seed`. Call
- `register_closer` immediately after this.
-
-```gleam
-pub fn socket_connected(
-  sockets: beryl.Sockets,
-  socket_id: String,
-  send: fn(String) -> Result(Nil, Nil),
-  send_binary: fn(BitArray) -> Result(Nil, Nil),
-  seed: event.ConnectSeed
-) -> Nil
-```
-
-### `socket_connected_with_codec`
-
-Announce a newly connected socket that negotiates its own wire format.
- `Some(codec)` frames this connection's outbound messages with `codec`
- instead of the configured one, so a single runtime — sharing channels,
- pubsub and presence — can serve transports speaking different framings.
- `None` is equivalent to `socket_connected`.
-
-```gleam
-pub fn socket_connected_with_codec(
-  sockets: beryl.Sockets,
-  socket_id: String,
-  send: fn(String) -> Result(Nil, Nil),
-  send_binary: fn(BitArray) -> Result(Nil, Nil),
-  codec: option.Option(codec.Codec),
-  seed: event.ConnectSeed
 ) -> Nil
 ```
 

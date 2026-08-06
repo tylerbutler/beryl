@@ -58,19 +58,16 @@ question below: [socket API reference](../design/app-side-dispatch-reference.md)
   migration cost was low and the old channel API (`beryl/channel`,
   `beryl/socket`, `beryl/coordinator`, `beryl/supervisor`) was deleted
   rather than deprecated.
-- Transports were unaffected in shape: the typed core sits behind the
-  existing frame-level SPI via closures captured at `start`/`child_spec`.
-  The SPI itself was later cut to a monomorphic `ConnectSeed` model
-  (`beryl/transport`), independent of this ADR.
+- The typed core stays behind a monomorphic frame-level SPI. Transports
+  capture the exact runtime pid, monitor it, and atomically install the
+  socket, closer, codec, and `ConnectSeed` with `admit_socket`.
 - Union-and-router boilerplate scales with channel count: zero for
   single-channel apps (use your types directly), linear otherwise.
-- The effects type carried the main design risk (join-ack ordering,
-  presence interplay). Both were resolved: effects apply strictly in list
-  order within one runtime actor turn (so list order is wire order), and
-  presence-affecting effects (`PushPresence`/`BroadcastPresence`) read
-  presence state at apply time, after earlier `PresenceTrack`/
-  `PresenceUntrack` effects in the same list. Every example app was
-  rewritten onto app-side dispatch to validate the design at scale.
+- The effects type carried the main join-ack ordering risk. Effects apply
+  strictly in list order within one runtime actor turn, so list order is
+  wire order. Presence integration is deliberately separate in Lane B:
+  synchronous presence work stays outside the shared runtime, while the
+  indivisible async read-model/effect bundle is deferred.
 - Supervision is explicit at each entry point: `start` owns a standalone,
   detached Beryl subtree (runtime plus an optional connection limiter);
   `child_spec` embeds the same subtree as a child of the caller's own
