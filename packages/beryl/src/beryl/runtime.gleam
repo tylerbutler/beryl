@@ -23,6 +23,7 @@ import beryl/internal
 import beryl/log.{type Logger}
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimitConfig}
+import beryl/telemetry
 import beryl/topic.{type TopicPattern}
 import beryl/wire/codec.{type Codec}
 import gleam/bool
@@ -56,6 +57,7 @@ pub type Config {
     max_topic_length: Int,
     max_event_length: Int,
     max_joined_topics_per_socket: Int,
+    telemetry: Bool,
     logging: internal.LoggingConfig,
   )
 }
@@ -144,6 +146,8 @@ type SocketState(model, msg) {
     /// across a leave/rejoin is not replied to).
     pending_reply_refs: Set(Ref),
     last_heartbeat: Int,
+    /// Native monotonic timestamp captured when the socket was accepted.
+    connected_at: Int,
   )
 }
 
@@ -154,10 +158,14 @@ type Pending {
 
 /// Where an event delivered to `update` came from, for crash attribution.
 type Source {
-  JoinSource(topic: String, join_ref: Option(String), msg_ref: Option(String))
-  MessageSource(topic: String)
-  BinarySource(topic: String)
-  InfoSource
+  JoinSource(
+    topic: String,
+    join_ref: Option(String),
+    msg_ref: Option(String),
+    started_at: Int,
+  )
+  MessageSource(topic: String, kind: telemetry.MessageKind, started_at: Int)
+  InfoSource(started_at: Int)
   ClosedSource
 }
 
@@ -169,6 +177,57 @@ type Outcome(model, msg) {
     kicks: List(String),
     stop: Option(StopReason),
   )
+}
+
+/// Start runtime telemetry without touching the VM clock when disabled.
+fn telemetry_start(state: State(model, msg)) -> Int {
+  use <- bool.guard(when: !state.config.telemetry, return: 0)
+  telemetry.start_time()
+}
+
+fn emit_join_stop(
+  state: State(model, msg),
+  started_at: Int,
+  outcome: telemetry.JoinOutcome,
+) -> Nil {
+  use <- bool.guard(when: !state.config.telemetry, return: Nil)
+  telemetry.emit(
+    True,
+    telemetry.ChannelJoinStop(
+      duration: telemetry.duration_since(started_at),
+      outcome: outcome,
+    ),
+  )
+}
+
+fn emit_message_stop(
+  state: State(model, msg),
+  started_at: Int,
+  kind: telemetry.MessageKind,
+  outcome: telemetry.MessageOutcome,
+  callback_result: telemetry.CallbackResult,
+) -> Nil {
+  use <- bool.guard(when: !state.config.telemetry, return: Nil)
+  telemetry.emit(
+    True,
+    telemetry.ChannelMessageStop(
+      duration: telemetry.duration_since(started_at),
+      kind: kind,
+      outcome: outcome,
+      callback_result: callback_result,
+    ),
+  )
+}
+
+fn disconnect_reason_telemetry(
+  reason: StopReason,
+) -> telemetry.DisconnectReason {
+  case reason {
+    event.Normal -> telemetry.NormalDisconnect
+    event.Shutdown -> telemetry.ShutdownDisconnect
+    event.HeartbeatTimeout -> telemetry.HeartbeatTimeout
+    event.Errored(_) -> telemetry.CallbackDisconnect
+  }
 }
 
 /// Start the runtime actor registered under `name`.
@@ -282,12 +341,20 @@ fn handle_message(
       handle_register_closer(state, socket_id, close)
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
-    RouteDecoded(socket_id, msg) -> dispatch_inbound(state, socket_id, msg)
+    RouteDecoded(socket_id, msg) ->
+      dispatch_inbound(state, socket_id, msg, telemetry.TextMessage)
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
     AppInfo(socket_id, app_message) ->
       handle_app_info(state, socket_id, app_message)
     Broadcast(topic_name, event_name, payload, except) -> {
-      local_broadcast(state, topic_name, event_name, payload, except)
+      emit_broadcast(
+        state,
+        topic_name,
+        event_name,
+        payload,
+        except,
+        telemetry.Local,
+      )
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
@@ -400,10 +467,12 @@ fn register_socket(
           join_refs: dict.new(),
           pending_reply_refs: set.new(),
           last_heartbeat: monotonic_time_ms(),
+          connected_at: telemetry_start(state),
         )
       state.logger |> log.info("Socket connected", [#("socket_id", socket_id)])
       let state =
         State(..state, sockets: dict.insert(state.sockets, socket_id, socket))
+      telemetry.emit(state.config.telemetry, telemetry.SocketConnected)
       // Nothing is joined yet, so kicks cannot arise and pushes to
       // unjoined topics are dropped by the interpreter.
       let #(state, _pending, _kicks) =
@@ -475,9 +544,19 @@ fn handle_heartbeat(
   state: State(model, msg),
   socket_id: String,
   ref: Option(String),
+  started_at: Int,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case dict.get(state.sockets, socket_id) {
-    Error(Nil) -> actor.continue(state)
+    Error(Nil) -> {
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.HeartbeatMessage,
+        telemetry.MessageSocketMissing,
+        telemetry.NotApplicable,
+      )
+      actor.continue(state)
+    }
     Ok(socket) -> {
       let state =
         store_socket(
@@ -492,6 +571,13 @@ fn handle_heartbeat(
         #("socket_id", socket_id),
         #("ref", optional_string(ref)),
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.HeartbeatMessage,
+        telemetry.MessageHandled,
+        telemetry.NotApplicable,
+      )
       actor.continue(state)
     }
   }
@@ -554,7 +640,7 @@ fn handle_route_text(
       )
       actor.continue(state)
     }
-    Ok(msg) -> dispatch_inbound(state, socket_id, msg)
+    Ok(msg) -> dispatch_inbound(state, socket_id, msg, telemetry.TextMessage)
   }
 }
 
@@ -562,11 +648,13 @@ fn dispatch_inbound(
   state: State(model, msg),
   socket_id: String,
   msg: codec.Inbound,
+  message_kind: telemetry.MessageKind,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let msg_topic = codec.inbound_topic(msg)
   let msg_ref = codec.inbound_ref(msg)
   case codec.inbound_kind(msg) {
-    codec.Join ->
+    codec.Join -> {
+      let started_at = telemetry_start(state)
       case
         is_valid_topic(msg_topic, state.config) && !is_reserved_topic(msg_topic)
       {
@@ -578,9 +666,11 @@ fn dispatch_inbound(
             codec.inbound_payload(msg),
             codec.inbound_join_ref(msg),
             msg_ref,
+            started_at,
           )
-        False -> reject_invalid_join(state, socket_id, msg)
+        False -> reject_invalid_join(state, socket_id, msg, started_at)
       }
+    }
     codec.Leave -> {
       use state <- with_message_rate_limit(state, socket_id, "leave")
       case is_valid_topic(msg_topic, state.config) {
@@ -603,10 +693,29 @@ fn dispatch_inbound(
       }
     }
     codec.Heartbeat -> {
-      use state <- with_message_rate_limit(state, socket_id, "heartbeat")
-      handle_heartbeat(state, socket_id, msg_ref)
+      let started_at = telemetry_start(state)
+      let #(state, allowed) = check_message_rate(state, socket_id)
+      case allowed {
+        False -> {
+          state.logger
+          |> log.warn("Message rate limited", [
+            #("socket_id", socket_id),
+            #("kind", "heartbeat"),
+          ])
+          emit_message_stop(
+            state,
+            started_at,
+            telemetry.HeartbeatMessage,
+            telemetry.MessageRateLimited,
+            telemetry.NotApplicable,
+          )
+          actor.continue(state)
+        }
+        True -> handle_heartbeat(state, socket_id, msg_ref, started_at)
+      }
     }
     codec.Event(event_name) -> {
+      let started_at = telemetry_start(state)
       let resolved = resolve_event_topic(state, socket_id, msg_topic)
       case
         is_valid_topic(resolved, state.config),
@@ -621,6 +730,8 @@ fn dispatch_inbound(
             codec.inbound_payload(msg),
             codec.inbound_join_ref(msg),
             msg_ref,
+            started_at,
+            message_kind,
           )
         False, _ -> {
           state.logger
@@ -629,6 +740,13 @@ fn dispatch_inbound(
             #("topic", topic.sanitize_for_log(msg_topic)),
             #("event", topic.sanitize_for_log(event_name)),
           ])
+          emit_message_stop(
+            state,
+            started_at,
+            message_kind,
+            telemetry.MessageInvalid,
+            telemetry.NotApplicable,
+          )
           actor.continue(state)
         }
         True, False -> {
@@ -638,6 +756,13 @@ fn dispatch_inbound(
             #("topic", msg_topic),
             #("event", topic.sanitize_for_log(event_name)),
           ])
+          emit_message_stop(
+            state,
+            started_at,
+            message_kind,
+            telemetry.MessageInvalid,
+            telemetry.NotApplicable,
+          )
           actor.continue(state)
         }
       }
@@ -712,6 +837,7 @@ fn reject_invalid_join(
   state: State(model, msg),
   socket_id: String,
   msg: codec.Inbound,
+  started_at: Int,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let safe_topic = topic.sanitize_for_log(codec.inbound_topic(msg))
   state.logger
@@ -720,7 +846,10 @@ fn reject_invalid_join(
     #("topic", safe_topic),
   ])
   case dict.get(state.sockets, socket_id) {
-    Error(Nil) -> actor.continue(state)
+    Error(Nil) -> {
+      emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
+      actor.continue(state)
+    }
     Ok(socket) -> {
       let reply =
         codec.encode_reply(socket.codec)(
@@ -731,6 +860,7 @@ fn reject_invalid_join(
           json.object([#("reason", json.string("invalid_topic"))]),
         )
       let _send_result = send_frame_logged(state, socket, safe_topic, reply)
+      emit_join_stop(state, started_at, telemetry.JoinInvalidTopic)
       actor.continue(state)
     }
   }
@@ -745,6 +875,7 @@ fn handle_join(
   payload: Dynamic,
   join_ref: Option(String),
   ref: Option(String),
+  started_at: Int,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let #(state, join_allowed) = check_join_rate(state, socket_id)
   case join_allowed {
@@ -762,10 +893,19 @@ fn handle_join(
         ref,
         json.object([#("reason", json.string("rate_limited"))]),
       )
+      emit_join_stop(state, started_at, telemetry.JoinRateLimited)
       actor.continue(state)
     }
     True ->
-      handle_join_inner(state, socket_id, topic_name, payload, join_ref, ref)
+      handle_join_inner(
+        state,
+        socket_id,
+        topic_name,
+        payload,
+        join_ref,
+        ref,
+        started_at,
+      )
   }
 }
 
@@ -776,6 +916,7 @@ fn handle_join_inner(
   payload: Dynamic,
   join_ref: Option(String),
   ref: Option(String),
+  started_at: Int,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
@@ -785,6 +926,7 @@ fn handle_join_inner(
         #("topic", topic_name),
         #("reason", "socket_not_found"),
       ])
+      emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
       actor.continue(state)
     }
     Ok(socket) ->
@@ -803,6 +945,7 @@ fn handle_join_inner(
             ref,
             json.object([#("reason", json.string("too_many_topics"))]),
           )
+          emit_join_stop(state, started_at, telemetry.JoinTopicLimit)
           actor.continue(state)
         }
         True -> {
@@ -818,7 +961,15 @@ fn handle_join_inner(
               )
             False -> state
           }
-          deliver_join(state, socket_id, topic_name, payload, join_ref, ref)
+          deliver_join(
+            state,
+            socket_id,
+            topic_name,
+            payload,
+            join_ref,
+            ref,
+            started_at,
+          )
         }
       }
   }
@@ -831,12 +982,13 @@ fn deliver_join(
   payload: Dynamic,
   join_ref: Option(String),
   ref: Option(String),
+  started_at: Int,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   // The Closed delivered for a duplicate join may have stopped the socket.
-  use <- bool.guard(
-    when: !dict.has_key(state.sockets, socket_id),
-    return: actor.continue(state),
-  )
+  use <- bool.guard(when: !dict.has_key(state.sockets, socket_id), return: {
+    emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
+    actor.continue(state)
+  })
   state.logger
   |> log.debug("Join delivered", [
     #("socket_id", socket_id),
@@ -859,7 +1011,7 @@ fn deliver_join(
       state,
       socket_id,
       join_event,
-      JoinSource(topic_name, join_ref, ref),
+      JoinSource(topic_name, join_ref, ref, started_at),
     )
   actor.continue(drive(outcome, socket_id))
 }
@@ -951,6 +1103,8 @@ fn handle_in(
   payload: Dynamic,
   msg_join_ref: Option(String),
   ref: Option(String),
+  started_at: Int,
+  kind: telemetry.MessageKind,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let #(state, allowed) = check_message_rate(state, socket_id)
   case allowed {
@@ -960,6 +1114,13 @@ fn handle_in(
         #("socket_id", socket_id),
         #("topic", topic_name),
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageRateLimited,
+        telemetry.NotApplicable,
+      )
       actor.continue(state)
     }
     True ->
@@ -971,6 +1132,8 @@ fn handle_in(
         payload,
         msg_join_ref,
         ref,
+        started_at,
+        kind,
       )
   }
 }
@@ -983,6 +1146,8 @@ fn handle_in_subscribed(
   payload: Dynamic,
   msg_join_ref: Option(String),
   ref: Option(String),
+  started_at: Int,
+  kind: telemetry.MessageKind,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
@@ -993,6 +1158,13 @@ fn handle_in_subscribed(
         #("event", event_name),
         #("reason", "socket_not_found"),
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageSocketMissing,
+        telemetry.NotApplicable,
+      )
       actor.continue(state)
     }
     Ok(socket) ->
@@ -1005,6 +1177,8 @@ fn handle_in_subscribed(
             topic_name,
             event_name,
             ref,
+            started_at,
+            kind,
           )
         True ->
           case is_stale_join_ref(socket, topic_name, msg_join_ref) {
@@ -1015,6 +1189,13 @@ fn handle_in_subscribed(
                 #("topic", topic_name),
                 #("event", event_name),
               ])
+              emit_message_stop(
+                state,
+                started_at,
+                kind,
+                telemetry.MessageStale,
+                telemetry.NotApplicable,
+              )
               actor.continue(state)
             }
             False ->
@@ -1026,6 +1207,8 @@ fn handle_in_subscribed(
                 event_name,
                 payload,
                 ref,
+                started_at,
+                kind,
               )
           }
       }
@@ -1041,6 +1224,8 @@ fn reject_unjoined_event(
   topic_name: String,
   event_name: String,
   ref: Option(String),
+  started_at: Int,
+  kind: telemetry.MessageKind,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   state.logger
   |> log.debug("Inbound message rejected", [
@@ -1064,6 +1249,13 @@ fn reject_unjoined_event(
     }
     None -> Nil
   }
+  emit_message_stop(
+    state,
+    started_at,
+    kind,
+    telemetry.MessageUnjoined,
+    telemetry.NotApplicable,
+  )
   actor.continue(state)
 }
 
@@ -1075,6 +1267,8 @@ fn handle_in_rate_limited(
   event_name: String,
   payload: Dynamic,
   ref: Option(String),
+  started_at: Int,
+  kind: telemetry.MessageKind,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   let #(state, allowed) = check_channel_rate(state, socket_id, topic_name)
   case allowed {
@@ -1084,6 +1278,13 @@ fn handle_in_rate_limited(
         #("socket_id", socket_id),
         #("topic", topic_name),
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageRateLimited,
+        telemetry.NotApplicable,
+      )
       actor.continue(state)
     }
     True -> {
@@ -1118,7 +1319,7 @@ fn handle_in_rate_limited(
             payload: payload,
             ref: message_ref,
           ),
-          MessageSource(topic_name),
+          MessageSource(topic_name, kind, started_at),
         )
       actor.continue(drive(outcome, socket_id))
     }
@@ -1147,9 +1348,11 @@ fn handle_binary_in(
           ])
           actor.continue(state)
         }
-        Ok(msg) -> dispatch_inbound(state, socket_id, msg)
+        Ok(msg) ->
+          dispatch_inbound(state, socket_id, msg, telemetry.BinaryMessage)
       }
     None -> {
+      let started_at = telemetry_start(state)
       let #(state, allowed) = check_message_rate(state, socket_id)
       case allowed {
         False -> {
@@ -1157,6 +1360,13 @@ fn handle_binary_in(
           |> log.warn("Binary message rate limited", [
             #("socket_id", socket_id),
           ])
+          emit_message_stop(
+            state,
+            started_at,
+            telemetry.BinaryMessage,
+            telemetry.MessageRateLimited,
+            telemetry.NotApplicable,
+          )
           actor.continue(state)
         }
         True ->
@@ -1167,6 +1377,13 @@ fn handle_binary_in(
                 #("socket_id", socket_id),
                 #("reason", "socket_not_found"),
               ])
+              emit_message_stop(
+                state,
+                started_at,
+                telemetry.BinaryMessage,
+                telemetry.MessageSocketMissing,
+                telemetry.NotApplicable,
+              )
               actor.continue(state)
             }
             Ok(socket) -> {
@@ -1175,7 +1392,26 @@ fn handle_binary_in(
               let topics =
                 set.to_list(socket.subscribed_topics)
                 |> list.sort(string.compare)
-              actor.continue(fan_out_binary(state, socket_id, topics, data))
+              case topics {
+                [] -> {
+                  emit_message_stop(
+                    state,
+                    started_at,
+                    telemetry.BinaryMessage,
+                    telemetry.MessageUnjoined,
+                    telemetry.NotApplicable,
+                  )
+                  actor.continue(state)
+                }
+                _ ->
+                  actor.continue(fan_out_binary(
+                    state,
+                    socket_id,
+                    topics,
+                    data,
+                    started_at,
+                  ))
+              }
             }
           }
       }
@@ -1188,6 +1424,7 @@ fn fan_out_binary(
   socket_id: String,
   topics: List(String),
   data: BitArray,
+  started_at: Int,
 ) -> State(model, msg) {
   case topics {
     [] -> state
@@ -1202,12 +1439,12 @@ fn fan_out_binary(
               state,
               socket_id,
               event.Binary(topic: topic_name, data: data),
-              BinarySource(topic_name),
+              MessageSource(topic_name, telemetry.BinaryMessage, started_at),
             ),
             socket_id,
           )
       }
-      fan_out_binary(state, socket_id, rest, data)
+      fan_out_binary(state, socket_id, rest, data, started_at)
     }
   }
 }
@@ -1219,6 +1456,7 @@ fn handle_app_info(
   socket_id: String,
   message: msg,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
+  let started_at = telemetry_start(state)
   case dict.has_key(state.sockets, socket_id) {
     False -> {
       state.logger
@@ -1226,17 +1464,44 @@ fn handle_app_info(
         #("socket_id", socket_id),
         #("reason", "socket_not_found"),
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.InfoMessage,
+        telemetry.MessageSocketMissing,
+        telemetry.NotApplicable,
+      )
       actor.continue(state)
     }
     True ->
       actor.continue(drive(
-        update_once(state, socket_id, event.Info(message), InfoSource),
+        update_once(
+          state,
+          socket_id,
+          event.Info(message),
+          InfoSource(started_at),
+        ),
         socket_id,
       ))
   }
 }
 
 // ── The update engine ───────────────────────────────────────────────────────
+
+fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
+  case effects {
+    [] -> telemetry.NoReply
+    [effect, ..rest] ->
+      case effect {
+        event.ReplyOk(_, _) -> telemetry.Reply
+        event.ReplyError(_, _) -> telemetry.ReplyError
+        event.Push(_, _, _)
+        | event.Broadcast(_, _, _)
+        | event.BroadcastFrom(_, _, _) -> telemetry.Push
+        _ -> effects_callback_result(rest)
+      }
+  }
+}
 
 /// Deliver one event to the app's `update`, store the new model, and apply
 /// the returned effects. Kick and stop follow-ups are returned in the
@@ -1248,7 +1513,30 @@ fn update_once(
   source: Source,
 ) -> Outcome(model, msg) {
   case dict.get(state.sockets, socket_id) {
-    Error(Nil) -> Outcome(state, [], None)
+    Error(Nil) -> {
+      case source {
+        JoinSource(_, _, _, started_at) ->
+          emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
+        MessageSource(_, kind, started_at) ->
+          emit_message_stop(
+            state,
+            started_at,
+            kind,
+            telemetry.MessageSocketMissing,
+            telemetry.NotApplicable,
+          )
+        InfoSource(started_at) ->
+          emit_message_stop(
+            state,
+            started_at,
+            telemetry.InfoMessage,
+            telemetry.MessageSocketMissing,
+            telemetry.NotApplicable,
+          )
+        ClosedSource -> Nil
+      }
+      Outcome(state, [], None)
+    }
     Ok(socket) -> {
       let update = state.update
       let model = socket.model
@@ -1263,12 +1551,33 @@ fn update_once(
           // A join answered with Stop is still unanswered on the wire:
           // fail it closed before the teardown frames.
           reject_unanswered_join(state, socket_id, source)
+          case source {
+            JoinSource(_, _, _, started_at) ->
+              emit_join_stop(state, started_at, telemetry.JoinHandlerRejected)
+            MessageSource(_, kind, started_at) ->
+              emit_message_stop(
+                state,
+                started_at,
+                kind,
+                telemetry.MessageHandled,
+                telemetry.Stop,
+              )
+            InfoSource(started_at) ->
+              emit_message_stop(
+                state,
+                started_at,
+                telemetry.InfoMessage,
+                telemetry.MessageHandled,
+                telemetry.Stop,
+              )
+            ClosedSource -> Nil
+          }
           Outcome(state, [], Some(reason))
         }
         Ok(event.Next(new_model, effects)) -> {
           let state = store_model(state, socket_id, new_model)
           let pending = case source {
-            JoinSource(topic_name, join_ref, msg_ref) ->
+            JoinSource(topic_name, join_ref, msg_ref, _) ->
               Some(Pending(topic_name, join_ref, msg_ref))
             _ -> None
           }
@@ -1295,6 +1604,35 @@ fn update_once(
             }
             None -> Nil
           }
+          case source {
+            JoinSource(topic_name, _, _, started_at) -> {
+              let join_outcome = case
+                pending,
+                socket_subscribed(state, socket_id, topic_name)
+              {
+                None, True -> telemetry.JoinAccepted
+                _, _ -> telemetry.JoinHandlerRejected
+              }
+              emit_join_stop(state, started_at, join_outcome)
+            }
+            MessageSource(_, kind, started_at) ->
+              emit_message_stop(
+                state,
+                started_at,
+                kind,
+                telemetry.MessageHandled,
+                effects_callback_result(effects),
+              )
+            InfoSource(started_at) ->
+              emit_message_stop(
+                state,
+                started_at,
+                telemetry.InfoMessage,
+                telemetry.MessageHandled,
+                effects_callback_result(effects),
+              )
+            ClosedSource -> Nil
+          }
           Outcome(state, kicks, None)
         }
       }
@@ -1313,7 +1651,7 @@ fn handle_update_crash(
   crash: String,
 ) -> Outcome(model, msg) {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref) -> {
+    JoinSource(topic_name, join_ref, msg_ref, started_at) -> {
       state.logger
       |> log.error("Update crashed handling join", [
         #("socket_id", socket_id),
@@ -1328,23 +1666,38 @@ fn handle_update_crash(
         msg_ref,
         json.object([#("reason", json.string("join crashed"))]),
       )
+      emit_join_stop(state, started_at, telemetry.JoinCallbackFailed)
       Outcome(state, [], None)
     }
-    MessageSource(topic_name) | BinarySource(topic_name) -> {
+    MessageSource(topic_name, kind, started_at) -> {
       state.logger
       |> log.error("Update crashed; closing topic", [
         #("socket_id", socket_id),
         #("topic", topic_name),
         #("crash", crash),
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageCallbackFailed,
+        telemetry.CallbackFailed,
+      )
       close_topic(state, socket_id, topic_name, event.Errored(crash))
     }
-    InfoSource -> {
+    InfoSource(started_at) -> {
       state.logger
       |> log.error("Update crashed handling info; closing socket", [
         #("socket_id", socket_id),
         #("crash", crash),
       ])
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.InfoMessage,
+        telemetry.MessageCallbackFailed,
+        telemetry.CallbackFailed,
+      )
       Outcome(teardown_socket(state, socket_id, event.Errored(crash)), [], None)
     }
     ClosedSource -> {
@@ -1366,7 +1719,7 @@ fn reject_unanswered_join(
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref) ->
+    JoinSource(topic_name, join_ref, msg_ref, _) ->
       send_error_reply(
         state,
         socket_id,
@@ -1563,7 +1916,18 @@ fn teardown_socket(
         Ok(socket) -> socket.close()
         Error(Nil) -> Nil
       }
-      State(..state, sockets: dict.delete(state.sockets, socket_id))
+      let new_state =
+        State(..state, sockets: dict.delete(state.sockets, socket_id))
+      use <- bool.guard(when: !state.config.telemetry, return: new_state)
+      telemetry.emit(
+        True,
+        telemetry.SocketDisconnected(
+          duration: telemetry.duration_since(socket.connected_at),
+          joined_channels: set.size(socket.subscribed_topics),
+          reason: disconnect_reason_telemetry(reason),
+        ),
+      )
+      new_state
     }
   }
 }
@@ -1926,7 +2290,7 @@ fn local_broadcast(
   event_name: String,
   payload: Json,
   except: Option(String),
-) -> Nil {
+) -> #(Int, Int) {
   let subscribers =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
@@ -1942,17 +2306,47 @@ fn local_broadcast(
     #("recipient_count", int.to_string(list.length(recipients))),
     #("except", optional_string(except)),
   ])
-  list.each(recipients, fn(socket_id) {
+  list.fold(recipients, #(0, 0), fn(counts, socket_id) {
     case dict.get(state.sockets, socket_id) {
       Ok(socket) -> {
         let frame =
           codec.encode_push(socket.codec)(topic_name, event_name, payload)
-        let _send_result = send_frame_logged(state, socket, topic_name, frame)
-        Nil
+        let send_result = send_frame_logged(state, socket, topic_name, frame)
+        #(
+          counts.0 + 1,
+          counts.1
+            + case send_result {
+            Ok(Nil) -> 0
+            Error(Nil) -> 1
+          },
+        )
       }
-      Error(Nil) -> Nil
+      Error(Nil) -> counts
     }
   })
+}
+
+fn emit_broadcast(
+  state: State(model, msg),
+  topic_name: String,
+  event_name: String,
+  payload: Json,
+  except: Option(String),
+  origin: telemetry.BroadcastOrigin,
+) -> Nil {
+  let started_at = telemetry_start(state)
+  let #(recipients, send_failures) =
+    local_broadcast(state, topic_name, event_name, payload, except)
+  use <- bool.guard(when: !state.config.telemetry, return: Nil)
+  telemetry.emit(
+    True,
+    telemetry.BroadcastStop(
+      duration: telemetry.duration_since(started_at),
+      recipients: recipients,
+      send_failures: send_failures,
+      origin: origin,
+    ),
+  )
 }
 
 /// Local fan-out plus distributed forwarding when PubSub is configured.
@@ -1966,7 +2360,14 @@ fn broadcast_with_pubsub(
   payload: Json,
   except: Option(String),
 ) -> Nil {
-  local_broadcast(state, topic_name, event_name, payload, except)
+  emit_broadcast(
+    state,
+    topic_name,
+    event_name,
+    payload,
+    except,
+    telemetry.Local,
+  )
   case state.pubsub {
     Some(ps) ->
       case except {
@@ -2000,12 +2401,13 @@ fn handle_remote_broadcast(
     pubsub.FromSocket(_, socket_id) -> Some(socket_id)
     pubsub.System | pubsub.FromPid(_) -> None
   }
-  local_broadcast(
+  emit_broadcast(
     state,
     pubsub_msg.topic,
     pubsub_msg.event,
     pubsub_msg.payload,
     except,
+    telemetry.Remote,
   )
   actor.continue(state)
 }
