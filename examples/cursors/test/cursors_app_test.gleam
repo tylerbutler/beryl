@@ -1,15 +1,13 @@
 import beryl/event
-import beryl/presence
 import cursors/app
+import example_helpers/session_presence
 import gleam/dynamic
 import gleam/json
 import gleam/list
 import gleeunit/should
 
 fn context() -> app.Ctx {
-  let assert Ok(handle) =
-    presence.start(presence.default_config("cursors-reaction-test"))
-  app.Ctx(presence: handle)
+  app.Ctx(presence: session_presence.start())
 }
 
 fn model() -> app.Model {
