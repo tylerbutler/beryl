@@ -93,6 +93,7 @@ pub type Msg(msg) {
   RegisterCloser(socket_id: String, close: fn() -> Nil)
   RouteText(socket_id: String, raw_text: String)
   RouteDecoded(socket_id: String, msg: codec.Inbound)
+  RouteDecodedBinary(socket_id: String, msg: codec.Inbound)
   HandleBinary(socket_id: String, data: BitArray)
   /// A typed server-side message for one socket, sent through its
   /// `Sender`. Delivered to `update` as `Info(message)`.
@@ -343,6 +344,8 @@ fn handle_message(
       handle_route_text(state, socket_id, raw_text)
     RouteDecoded(socket_id, msg) ->
       dispatch_inbound(state, socket_id, msg, telemetry.TextMessage)
+    RouteDecodedBinary(socket_id, msg) ->
+      dispatch_inbound(state, socket_id, msg, telemetry.BinaryMessage)
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
     AppInfo(socket_id, app_message) ->
       handle_app_info(state, socket_id, app_message)

@@ -15,7 +15,6 @@
 ////    slot with `beryl.release_connection_slot`.
 
 import beryl.{type Channels}
-import beryl/coordinator
 import beryl/event.{type ConnectSeed}
 import beryl/internal
 import beryl/log
@@ -232,7 +231,8 @@ pub fn route_decoded(
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Route a transport-decoded binary message to the coordinator.
+/// Route a transport-decoded binary message while preserving its binary
+/// frame classification for runtime telemetry and rate accounting.
 ///
 /// This is additive to `route_decoded`, whose text semantics are retained for
 /// third-party transport compatibility.
@@ -241,11 +241,7 @@ pub fn route_decoded_binary(
   socket_id socket_id: String,
   message message: Inbound,
 ) -> Nil {
-  coordinator.route_decoded_binary(
-    beryl.coordinator_subject(channels),
-    socket_id,
-    message,
-  )
+  beryl.transport_route_decoded_binary(channels, socket_id, message)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist

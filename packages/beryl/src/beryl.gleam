@@ -763,6 +763,7 @@ type AppHandle {
     register_closer: fn(String, fn() -> Nil) -> Nil,
     socket_disconnected: fn(String) -> Nil,
     route_decoded: fn(String, codec.Inbound) -> Nil,
+    route_decoded_binary: fn(String, codec.Inbound) -> Nil,
     route_binary: fn(String, BitArray) -> Nil,
     broadcast: fn(String, String, json.Json, Option(String)) -> Nil,
     stop: fn() -> Result(Nil, StopError),
@@ -1300,6 +1301,9 @@ fn app_handle(
     route_decoded: fn(socket_id, msg) {
       send_runtime(subject, runtime.RouteDecoded(socket_id, msg))
     },
+    route_decoded_binary: fn(socket_id, msg) {
+      send_runtime(subject, runtime.RouteDecodedBinary(socket_id, msg))
+    },
     route_binary: fn(socket_id, data) {
       send_runtime(subject, runtime.HandleBinary(socket_id, data))
     },
@@ -1554,6 +1558,19 @@ pub fn transport_route_decoded(
     Channels(coordinator: coordinator_subject, ..) ->
       coordinator.route_decoded(coordinator_subject, socket_id, message)
     AppChannels(app: app, ..) -> app.route_decoded(socket_id, message)
+  }
+}
+
+@internal
+pub fn transport_route_decoded_binary(
+  channels: Channels,
+  socket_id: String,
+  message: codec.Inbound,
+) -> Nil {
+  case channels {
+    Channels(coordinator: coordinator_subject, ..) ->
+      coordinator.route_decoded_binary(coordinator_subject, socket_id, message)
+    AppChannels(app: app, ..) -> app.route_decoded_binary(socket_id, message)
   }
 }
 
