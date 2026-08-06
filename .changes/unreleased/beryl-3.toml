@@ -1,3 +1,3 @@
-package = "beryl"
+project = "beryl"
 kind = "Dependencies"
 body = "Update locked Gleam dependencies."
