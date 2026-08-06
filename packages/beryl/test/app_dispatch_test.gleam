@@ -305,10 +305,10 @@ pub fn delayed_stale_accept_cannot_override_current_replacement_reject_test() {
   let channels = start_join_race(ReplaceWithCurrentReject)
   let frames = h.connect(channels, "s1")
 
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.join(channels, "s1", "room:a", "jr-same", "r-same")
   h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
 
-  h.join(channels, "s1", "room:a", "jr-2", "r-2")
+  h.join(channels, "s1", "room:a", "jr-same", "r-same")
   h.recv(frames) |> string.contains("phx_close") |> should.be_true
   let replacement_reply = h.recv(frames)
   replacement_reply
@@ -317,7 +317,7 @@ pub fn delayed_stale_accept_cannot_override_current_replacement_reject_test() {
   replacement_reply
   |> string.contains("current rejection")
   |> should.be_true
-  replacement_reply |> string.contains("jr-2") |> should.be_true
+  replacement_reply |> string.contains("jr-same") |> should.be_true
   h.recv_none(frames)
 }
 
@@ -325,18 +325,18 @@ pub fn delayed_stale_reject_cannot_override_current_retry_accept_test() {
   let channels = start_join_race(RetryWithCurrentAccept)
   let frames = h.connect(channels, "s1")
 
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.join(channels, "s1", "room:a", "jr-same", "r-same")
   h.recv(frames)
   |> string.contains("initial rejection")
   |> should.be_true
 
-  h.join(channels, "s1", "room:a", "jr-2", "r-2")
+  h.join(channels, "s1", "room:a", "jr-same", "r-same")
   let retry_reply = h.recv(frames)
   retry_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
   retry_reply
   |> string.contains("current completion")
   |> should.be_true
-  retry_reply |> string.contains("jr-2") |> should.be_true
+  retry_reply |> string.contains("jr-same") |> should.be_true
   h.recv_none(frames)
 }
 
