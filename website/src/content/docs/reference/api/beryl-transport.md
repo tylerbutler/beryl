@@ -14,17 +14,17 @@ Transport SPI — the contract between beryl core and WebSocket transport
 
  A transport implementation:
  1. Admits a connection (origin/auth policy is the transport's concern),
-    acquiring a slot with `beryl.acquire_connection_slot` and binding it
-    with `beryl.bind_connection_slot`.
+    acquiring a slot with `acquire_connection_slot` and binding it with
+    `bind_connection_slot`.
  2. Announces the socket with `socket_connected` — or
     `socket_connected_with_codec` when the connection speaks a framing
     other than the configured codec — then `register_closer`.
- 3. Decodes inbound frames with the codec from `active_codec` (see
-    `beryl/wire/codec`) and routes them with `route_decoded` /
+ 3. Decodes inbound frames with the codec from `active_codec` and routes
+    them with `route_decoded` /
     `route_binary`, shedding over-rate frames via `new_message_limiter` /
-    `take_token` and oversized frames via `beryl.max_inbound_frame_bytes`.
+    `take_token` and oversized frames via `max_inbound_frame_bytes`.
  4. Announces disconnects with `socket_disconnected` and releases the
-    slot with `beryl.release_connection_slot`.
+    slot with `release_connection_slot`.
 
 ## Types
 

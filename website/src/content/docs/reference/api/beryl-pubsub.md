@@ -54,21 +54,18 @@ A PubSub message delivered to subscribers.
 
  ## Frozen wire contract
 
- A broadcast delivers this record to each subscriber via a typed
- `Subject` whose tag is the statically-known atom shared by every PubSub
- instance (see `subscriber`). The delivered term is therefore
- `#(pubsub_tag, Message(...))` — the record tag and its four fields, in
- this order, wrapped by that subject tag — and is a frozen wire contract,
- not just a source-level API, for any given `payload` type: a rolling
- cluster upgrade must never mis-parse a frame from an older node running
- the same payload type. The same applies to `PubSubFrom`.
+ `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
+ the record tag and its four fields, in this order — is a frozen wire
+ contract, not just a source-level API, for any given `payload` type: a
+ rolling cluster upgrade must never mis-parse a frame from an older node
+ running the same payload type. The same applies to `PubSubFrom`.
 
  Because payloads travel as native terms rather than a self-describing
  format like JSON, evolving the *shape* of your own `payload` type is also
  a wire change — version it yourself (e.g. an explicit `v` field) if it
  needs to change across a rolling upgrade. Receive broadcasts with
- `selecting`, which folds a `subscriber`'s typed `Subject` into a
- `Selector`; never match on the raw process message yourself.
+ `selecting`, which safely folds the subscriber's raw mailbox messages into
+ a typed `Selector`; never match on the raw process message yourself.
 
 ```gleam
 pub type Message(a) {
@@ -142,12 +139,10 @@ Broadcast originated from a process and should exclude a socket ID
 
 A typed subscription handle owned by a single process.
 
- A `Subscriber` bundles the pg scope with a typed `Subject(Message(payload))`
- owned by the process that created it. Join it to any number of topics with
- `join`; every topic delivers through the one subject, so a single
- `selecting` fold receives them all. This is the typed replacement for
- recovering a raw `Pid` mailbox message: broadcasts arrive as ordinary
- typed sends, never as an unchecked coercion.
+ A `Subscriber` bundles the pg scope and owning process while carrying the
+ payload type at compile time. Join it to any number of topics with `join`;
+ a single `selecting` fold receives their frozen raw `Message(payload)`
+ records as typed values.
 
  Create it in the process that will receive (e.g. an actor's initialiser),
  since a `Subject` only delivers to its owner.
@@ -281,13 +276,14 @@ pub fn local_broadcast(
 Add a subscriber's PubSub message delivery to a `Selector`, alongside a
  process's own subjects.
 
- Broadcasts arrive through the subscriber's typed `Subject`, so this is an
- ordinary `select_map` — the `payload` type is checked by the compiler and
- nothing is coerced. Fold it once per subscriber; every joined topic is
- delivered through the same subject.
+ `pg` tracks bare pids, so broadcasts arrive as raw process messages.
+ `selecting` is the one place that validates the frozen `Message` tag and
+ four-field arity before recovering the subscriber's compile-time payload
+ type. Fold it once; every joined topic is delivered through the same
+ mailbox.
 
  Each `Subscriber` should be created with one `payload` type per process,
- since the shared subject tag cannot safely multiplex different payload types.
+ since one raw mailbox cannot safely multiplex different payload types.
 
  ```gleam
  let sub = pubsub.subscriber(ps)
@@ -324,14 +320,14 @@ pub fn start(PubSubConfig) -> PubSub(a)
 
 Create a subscription handle owned by the current process.
 
- The returned `Subscriber` owns a typed subject keyed by the shared
- `pubsub_tag`. Call it from the process that will receive broadcasts (its
- own actor initialiser or test process), then `join` topics and fold
- `selecting` into that process's `Selector`.
+ Call it from the process that will receive broadcasts (its own actor
+ initialiser or test process), then `join` topics and fold `selecting` into
+ that process's `Selector`.
 
  **Important:** A single process should create only one `Subscriber` for a
- given `payload` type. Multiple subscribers in the same process would share
- the same subject tag and cannot multiplex different payload types safely.
+ given `payload` type. Raw PubSub records do not carry runtime payload type
+ information, so one mailbox cannot safely multiplex different payload
+ types.
 
 ```gleam
 pub fn subscriber(PubSub(a)) -> Subscriber(a)
