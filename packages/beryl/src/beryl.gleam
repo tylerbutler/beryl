@@ -1501,7 +1501,7 @@ pub fn transport_socket_connected(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec: Option(codec.Codec),
-  seed: event.ConnectSeed,
+  _seed: event.ConnectSeed,
 ) -> Nil {
   case channels {
     // Legacy channel-module systems have no public path for connect-time
@@ -1519,8 +1519,7 @@ pub fn transport_socket_connected(
           dynamic.nil(),
         ),
       )
-    AppChannels(app: app, ..) ->
-      app.socket_connected(socket_id, send, send_binary, codec, seed)
+    AppChannels(..) -> Nil
   }
 }
 
@@ -1579,7 +1578,7 @@ pub fn transport_register_closer(
         coordinator_subject,
         coordinator.RegisterCloser(socket_id, close),
       )
-    AppChannels(app: app, ..) -> app.register_closer(socket_id, close)
+    AppChannels(..) -> Nil
   }
 }
 

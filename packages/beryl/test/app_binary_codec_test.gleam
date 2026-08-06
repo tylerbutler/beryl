@@ -56,8 +56,9 @@ fn connect_binary(
 ) -> #(process.Subject(String), process.Subject(BitArray)) {
   let text = process.new_subject()
   let binary = process.new_subject()
-  transport.socket_connected(
+  transport.admit_socket(
     channels: channels,
+    owner: transport.connection_owner(channels),
     socket_id: socket_id,
     send: fn(message) {
       process.send(text, message)
@@ -67,9 +68,11 @@ fn connect_binary(
       process.send(binary, data)
       Ok(Nil)
     },
+    codec: None,
     seed: event.empty_seed(),
+    close: fn() { Nil },
   )
-  process.sleep(10)
+  |> should.equal(Ok(Nil))
   #(text, binary)
 }
 

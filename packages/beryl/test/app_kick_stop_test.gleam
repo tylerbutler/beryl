@@ -6,7 +6,6 @@
 import app_test_helpers as h
 import beryl
 import beryl/event.{AcceptJoin, Closed, Join, KickTopic, Message, Next, Stop}
-import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
@@ -104,11 +103,9 @@ pub fn kick_chain_from_closed_terminates_test() {
 pub fn stop_tears_down_socket_and_calls_closer_test() {
   let events = process.new_subject()
   let channels = start_system(events)
-  let frames = h.connect(channels, "s1")
   let closed = process.new_subject()
-  transport.register_closer(channels: channels, socket_id: "s1", close: fn() {
-    process.send(closed, Nil)
-  })
+  let frames =
+    h.connect_with_close(channels, "s1", fn() { process.send(closed, Nil) })
   join_rooms(channels, events, frames, "s1", ["room:a", "room:b"])
 
   h.push(channels, "s1", "room:a", "stop", "r-2")

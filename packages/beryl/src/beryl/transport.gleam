@@ -223,11 +223,10 @@ pub fn telemetry_frame_stop(
 // --- Socket lifecycle ---
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Announce a newly connected socket. `send`/`send_binary` deliver outbound
-/// frames on this connection. `seed` carries the upgrade request's
-/// connection data (path, query, headers, and any `with_on_connect`
-/// metadata), delivered to the app's `init` as `ConnectInfo.seed`. Call
-/// `register_closer` immediately after this.
+/// Compatibility registration for coordinator-backed `OwnerUnmonitored`
+/// systems. App-runtime transports must use `connection_owner` and
+/// `admit_socket` so registration and closer installation are tied to one
+/// exact runtime pid.
 pub fn socket_connected(
   channels channels: Channels,
   socket_id socket_id: String,
@@ -245,7 +244,11 @@ pub fn socket_connected(
   )
 }
 
-/// Announce a newly connected socket that negotiates its own wire format.
+/// Compatibility registration with a connection-specific wire format.
+///
+/// This is for coordinator-backed `OwnerUnmonitored` systems. App-runtime
+/// transports must pass the codec to `admit_socket`.
+///
 /// `Some(codec)` frames this connection's outbound messages with `codec`
 /// instead of the configured one, so a single coordinator — sharing channels,
 /// pubsub and presence — can serve transports speaking different framings.
@@ -269,9 +272,10 @@ pub fn socket_connected_with_codec(
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Register a function that force-closes the socket's underlying connection
-/// so the coordinator can actively evict it (e.g. heartbeat timeout) instead
-/// of leaving a zombie socket whose frames are silently dropped.
+/// Install a closer for a coordinator-backed `OwnerUnmonitored` socket.
+///
+/// App-runtime transports install the closer atomically with `admit_socket`;
+/// this compatibility function intentionally does nothing for those systems.
 pub fn register_closer(
   channels channels: Channels,
   socket_id socket_id: String,
