@@ -6,29 +6,33 @@ The wire and transport layer sits between raw WebSocket frames and the runtime. 
 
 ## Codec abstraction
 
-A `Codec` is a plain data value that pairs a decoder with a set of encoders. The runtime is framing-agnostic: it only ever sees `Inbound` values and emits `Frame` values; the codec performs every translation.
+A `Codec` is opaque. Use the public factory and builder functions in `beryl/wire/codec`, or use the ready-made `wire.phoenix_codec()`. The runtime is framing-agnostic: it only ever sees `Inbound` values and emits `Frame` values; the codec performs every translation.
 
 ```
 src/beryl/wire/codec.gleam
 ```
 
-The `Codec` type carries five fields:
+The public codec builders configure these behaviors:
 
-| Field | Purpose |
+| Behavior | Purpose |
 |---|---|
 | `decode_text` | Parse a raw text frame into an `Inbound` |
 | `decode_binary` | Parse a binary frame into an `Inbound` (optional) |
 | `encode_reply` | Encode a channel reply back to the client |
 | `encode_push` | Encode a server-initiated push |
 | `encode_heartbeat_reply` | Encode the heartbeat acknowledgement |
+| `encode_close` | Optionally encode graceful topic closure via `with_close_encoder` |
+| `encode_error` | Optionally encode abnormal topic termination via `with_error_encoder` |
 
-The built-in `phoenix_codec()` (from `src/beryl/wire.gleam`) wires the Phoenix JSON framing into all five slots and is the default codec. Pass it to `beryl.config/1` to use it:
+Build a custom text codec with `codec.new(...)`, then add optional behavior with builders such as `codec.with_binary_decoder`, `codec.with_close_encoder`, `codec.with_error_encoder`, and `codec.with_topicless_events`. The built-in `wire.phoenix_codec()` configures Phoenix text and V2 binary framing.
+
+Every Beryl `Config` requires a codec explicitly; there is no implicit default:
 
 ```gleam
 beryl.config(wire.phoenix_codec())
 ```
 
-Custom codecs can be swapped in by constructing a `Codec` value directly, allowing alternative protocols without changing the runtime or your app logic.
+Pass a custom opaque `Codec` to `beryl.config(codec)` to use an alternative protocol without changing the runtime or app logic.
 
 ## Frame shapes
 
@@ -59,7 +63,7 @@ The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's n
 1. **Generating a unique socket id** — `crypto.strong_random_bytes` produces a 16-byte random id encoded as base16.
 2. **Admitting the socket atomically** — the transport captures `transport.connection_owner`, installs a monitor for that exact pid, then calls `transport.admit_socket` with the send functions, closer, codec, and `ConnectSeed`. A restart or registration failure closes the connection instead of registering it with a successor runtime.
 3. **Routing text frames** — `mist.Text` frames are decoded in the connection process with the codec from `transport.active_codec` and routed with `transport.route_decoded`.
-4. **Routing binary frames** — when the active codec supplies `decode_binary`, `mist.Binary` frames are decoded in the connection process and routed with `transport.route_decoded`; without a binary decoder, the transport uses `transport.route_binary` to deliver the raw `BitArray` to the app as a `Binary` event. Ewe follows the same routing contract.
+4. **Routing binary frames** — when the active codec supplies `decode_binary`, `mist.Binary` frames are decoded in the connection process and routed with `transport.route_decoded`, producing normal `Join`/`Message` events according to the decoded inbound kind; without a binary decoder, the transport uses `transport.route_binary` to deliver the raw `BitArray` to the app as a `Binary` event. Ewe follows the same routing contract.
 5. **Notifying on close** — `mist.Closed` and `mist.Shutdown` call `transport.socket_disconnected` so the runtime can clean up subscriptions.
 6. **Rejecting disallowed origins** — when configured, `with_allowed_origins` checks the full `Origin` header before the WebSocket handshake and returns HTTP 403 for missing or non-matching origins.
 
@@ -84,7 +88,7 @@ flowchart LR
   FR["raw WS frame"] --> MI["beryl_mist"]
   MI -->|text| CD["wire/codec"]
   MI -->|binary, no decoder| RB["Binary event"]
-  CD --> RT["runtime"]
+  CD -->|decoded Join / Message| RT["runtime"]
   RB --> RT
   RT --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
 ```

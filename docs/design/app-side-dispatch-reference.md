@@ -18,7 +18,8 @@ pub type Event(msg) {
   /// A client message on a joined topic. `ref` is present for messages
   /// that expect a reply.
   Message(topic: String, event: String, payload: Dynamic, ref: Option(Ref))
-  /// A binary frame on a joined topic.
+  /// An undecoded binary frame on a joined topic (only for codecs without
+  /// a binary decoder).
   Binary(topic: String, data: BitArray)
   /// A joined topic ended (client leave, kick, crash, or socket close).
   /// Delivered on every exit path.
@@ -76,14 +77,13 @@ generic function, plain Gleam, no identity FFI. Per-topic-pattern abuse
 config (rate limits, join caps) lives on `Config`, built with
 `beryl.config` and its `with_*` builders.
 
-`start` owns a standalone, detached Beryl subtree (runtime plus an optional
-connection limiter) and returns a ready-to-use `Sockets`. `child_spec`
-validates the same `Config` and returns a name-backed `Sockets` plus a
-`ChildSpecification` to embed in the caller's own supervision tree; the
-handle works immediately, even before the tree that owns it is started. See
-[Supervision](/guides/supervision/) for the full standalone-vs-embedded
-contract, what happens to a joined socket's model on an unsupervised
-runtime crash, and what `stop` does and does not tear down.
+`child_spec` is the only runtime entry point. It validates `Config` and
+returns a name-backed `Sockets` plus a `ChildSpecification` to embed in the
+caller's own supervision tree. The handle is stable before startup and
+across supervised runtime restarts; admission fails cleanly while the
+runtime is unavailable, and a restart drops per-socket model state. See
+[Supervision](/guides/supervision/) for the full lifecycle contract and
+what `stop` does and does not tear down.
 
 ## Mapping from the deleted channel-module API
 
@@ -92,7 +92,7 @@ runtime crash, and what `stop` does and does not tear down.
 | `join` callback                  | `Join` event + `AcceptJoin`/`RejectJoin`  |
 | `JoinOk(reply, socket)`          | `Next(model, [AcceptJoin(ref, reply)])`   |
 | `handle_in` / `Reply` / `Push`   | `Message` event + `ReplyOk`/`Push`        |
-| `handle_binary`                  | `Binary` event                            |
+| `handle_binary`                  | `Binary` event (raw undecoded path only)  |
 | `handle_info` (erased `Dynamic`) | `Info(msg)` event (typed)                 |
 | `terminate`                      | `Closed` event                            |
 | `Stop(reason)`                   | `Stop(reason)`                            |
