@@ -1386,7 +1386,8 @@ fn request_runtime_stop(
     Error(Nil) -> internal.result_error(StopTimeout)
     Ok(True) ->
       case process.receive(finished, 5000) {
-        Ok(_) -> Ok(Nil)
+        Ok(True) -> Ok(Nil)
+        Ok(False) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
   }
@@ -1395,12 +1396,13 @@ fn request_runtime_stop(
 fn stop_runtime(
   subject: Subject(runtime.Msg(msg)),
   finished: Subject(Nil),
-) -> Bool {
+) -> Result(process.Monitor, Nil) {
   case process.subject_owner(subject) {
-    Error(Nil) -> False
-    Ok(_) -> {
+    Error(Nil) -> Error(Nil)
+    Ok(pid) -> {
+      let monitor = process.monitor(pid)
       process.send(subject, runtime.Stop(finished))
-      True
+      Ok(monitor)
     }
   }
 }

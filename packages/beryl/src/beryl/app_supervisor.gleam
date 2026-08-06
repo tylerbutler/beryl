@@ -10,16 +10,29 @@ import gleam/otp/actor
 import gleam/otp/static_supervisor
 
 pub type Message {
-  StopRuntime(started: process.Subject(Bool), finished: process.Subject(Nil))
+  StopRuntime(started: process.Subject(Bool), finished: process.Subject(Bool))
+  RuntimeStopped
+  RuntimeDown(process.Down)
   LinkedExit(process.ExitMessage)
+}
+
+type StopState {
+  Running
+  Stopping(
+    monitor: process.Monitor,
+    finished: process.Subject(Bool),
+    acknowledged: Bool,
+    supervisor_down: Bool,
+  )
 }
 
 type State {
   State(
     parent: process.Pid,
     supervisor: process.Pid,
-    stopping: Bool,
-    stop_runtime: fn(process.Subject(Nil)) -> Bool,
+    stop_state: StopState,
+    runtime_stopped: process.Subject(Nil),
+    stop_runtime: fn(process.Subject(Nil)) -> Result(process.Monitor, Nil),
   )
 }
 
@@ -27,7 +40,7 @@ type State {
 /// distinction between intentional shutdown and restart-intensity exhaustion.
 pub fn start(
   name: process.Name(Message),
-  stop_runtime: fn(process.Subject(Nil)) -> Bool,
+  stop_runtime: fn(process.Subject(Nil)) -> Result(process.Monitor, Nil),
   start_supervisor: fn() ->
     Result(actor.Started(static_supervisor.Supervisor), actor.StartError),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
@@ -38,15 +51,19 @@ pub fn start(
     case start_supervisor() {
       Error(error) -> Error(start_error_message(error))
       Ok(started) -> {
+        let runtime_stopped = process.new_subject()
         let selector =
           process.new_selector()
           |> process.select(subject)
+          |> process.select_map(runtime_stopped, fn(_) { RuntimeStopped })
+          |> process.select_monitors(RuntimeDown)
           |> process.select_trapped_exits(LinkedExit)
 
         actor.initialised(State(
           parent: parent,
           supervisor: started.pid,
-          stopping: False,
+          stop_state: Running,
+          runtime_stopped: runtime_stopped,
           stop_runtime: stop_runtime,
         ))
         |> actor.selecting(selector)
@@ -65,25 +82,49 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
-    StopRuntime(started, _) if state.stopping -> {
+    StopRuntime(started, _) if state.stop_state != Running -> {
       process.send(started, False)
       actor.continue(state)
     }
     StopRuntime(started, finished) ->
-      case state.stop_runtime(finished) {
-        False -> {
+      case state.stop_runtime(state.runtime_stopped) {
+        Error(Nil) -> {
           process.send(started, False)
           actor.continue(state)
         }
-        True -> {
+        Ok(monitor) -> {
           process.send(started, True)
-          actor.continue(State(..state, stopping: True))
+          actor.continue(
+            State(
+              ..state,
+              stop_state: Stopping(monitor, finished, False, False),
+            ),
+          )
         }
       }
+    RuntimeStopped ->
+      case state.stop_state {
+        Stopping(_, finished, False, True) -> {
+          process.send(finished, True)
+          actor.stop()
+        }
+        Stopping(monitor, finished, False, False) -> {
+          process.send(finished, True)
+          actor.continue(
+            State(..state, stop_state: Stopping(monitor, finished, True, False)),
+          )
+        }
+        _ -> actor.continue(state)
+      }
+    RuntimeDown(down) -> handle_runtime_down(state, down)
     LinkedExit(process.ExitMessage(pid, _)) if pid == state.supervisor ->
-      case state.stopping {
-        True -> actor.stop()
-        False -> {
+      case state.stop_state {
+        Stopping(_, _, True, _) -> actor.stop()
+        Stopping(monitor, finished, False, False) ->
+          actor.continue(
+            State(..state, stop_state: Stopping(monitor, finished, False, True)),
+          )
+        _ -> {
           process.trap_exits(False)
           actor.stop_abnormal("app subtree restart intensity exceeded")
         }
@@ -93,6 +134,28 @@ fn handle_message(
       actor.stop()
     }
     LinkedExit(_) -> actor.continue(state)
+  }
+}
+
+fn handle_runtime_down(
+  state: State,
+  down: process.Down,
+) -> actor.Next(State, Message) {
+  case down, state.stop_state {
+    process.ProcessDown(monitor, _, _),
+      Stopping(expected, finished, False, supervisor_down)
+      if monitor == expected
+    -> {
+      process.send(finished, False)
+      case supervisor_down {
+        False -> actor.continue(State(..state, stop_state: Running))
+        True -> {
+          process.trap_exits(False)
+          actor.stop_abnormal("app subtree restart intensity exceeded")
+        }
+      }
+    }
+    _, _ -> actor.continue(state)
   }
 }
 
