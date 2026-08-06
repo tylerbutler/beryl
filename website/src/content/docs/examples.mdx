@@ -74,7 +74,7 @@ slice of the beryl API:
 | beryl feature | How it's used |
 |---|---|
 | **`on_connect` auth** | Token query param validated before WebSocket upgrade is accepted |
-| **`JoinError`** | Rooms reject joins when full (20-user cap) or when room doesn't exist |
+| **`event.RejectJoin`** | Rooms reject joins when full (20-user cap) or when room doesn't exist |
 | **`ReplyOk` effect** | Delivery of `new_msg` confirmed with an ok-status `phx_reply` |
 | **Coded error replies** | Empty messages rejected with HTTP-style code 422 in the reply payload |
 | **Groups** | Three rooms (`general`, `random`, `help`) organised in a named group |
@@ -104,7 +104,7 @@ Server (Gleam)
 | Client → Server | `typing` | Start typing indicator |
 | Client → Server | `stop_typing` | Stop typing indicator |
 | Server → Client | `new_msg` | Broadcast message `{text, username, color, type, timestamp}` |
-| Server → Client | `phx_reply` (push ref) | Reply to a client push — used for both delivery acknowledgment (`status: "ok"`) and validation errors (`status: "error", response: {code, error}`). Validation errors are returned via a `ReplyOk` effect carrying an error payload, not pushed as a separate event. |
+| Server → Client | `phx_reply` (push ref) | Reply to a client push — used for both delivery acknowledgment and validation errors. The demo returns validation failures with `event.ReplyOk`, so their wire status is still `ok`; the response payload (`{code, error}`) represents the domain validation error. |
 | Server → Client | `presence_list` | Updated online user list |
 | Server → Client | `typing` | Typing indicator update |
 
