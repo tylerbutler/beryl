@@ -166,7 +166,6 @@ pub fn init_crash_leaves_socket_unregistered_test() {
     },
     send_binary: fn(_data) { Ok(Nil) },
     codec: None,
-    assigns: Nil,
     seed: event.empty_seed(),
     close: fn() { Nil },
   )

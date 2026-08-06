@@ -35,7 +35,17 @@ pub fn connect(
   channels: beryl.Channels,
   socket_id: String,
 ) -> process.Subject(String) {
-  connect_with_seed(channels, socket_id, event.empty_seed())
+  connect_with_seed_and_close(channels, socket_id, event.empty_seed(), fn() {
+    Nil
+  })
+}
+
+pub fn connect_with_close(
+  channels: beryl.Channels,
+  socket_id: String,
+  close: fn() -> Nil,
+) -> process.Subject(String) {
+  connect_with_seed_and_close(channels, socket_id, event.empty_seed(), close)
 }
 
 /// Connect a socket with an explicit `ConnectSeed` (e.g. to assert that
@@ -46,6 +56,15 @@ pub fn connect_with_seed(
   channels: beryl.Channels,
   socket_id: String,
   seed: event.ConnectSeed,
+) -> process.Subject(String) {
+  connect_with_seed_and_close(channels, socket_id, seed, fn() { Nil })
+}
+
+fn connect_with_seed_and_close(
+  channels: beryl.Channels,
+  socket_id: String,
+  seed: event.ConnectSeed,
+  close: fn() -> Nil,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
   let owner = transport.connection_owner(channels)
@@ -60,7 +79,7 @@ pub fn connect_with_seed(
     send_binary: fn(_data) { Ok(Nil) },
     codec: None,
     seed: seed,
-    close: fn() { Nil },
+    close: close,
   )
   |> should.equal(Ok(Nil))
   sent
