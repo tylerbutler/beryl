@@ -1,10 +1,10 @@
 import beryl
-import beryl/presence
 import beryl/wire
 import beryl_mist as mist_transport
 import cursors/app as cursors_app
 import cursors/router
 import envoy
+import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/int
 import gleam/io
@@ -13,19 +13,13 @@ import gleam/result
 import mist
 
 pub fn main() {
-  // Start presence tracking.
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
+  let presence_tracker = session_presence.start()
+  let ctx = cursors_app.Ctx(presence: presence_tracker)
 
-  // Dependencies the cursor logic reads (presence writes flow through effects).
-  let ctx = cursors_app.Ctx(presence: presence_actor)
-
-  // Rate limiting for cursor events; the presence handle is required for
-  // the app's presence effects to apply.
+  // Rate limiting for cursor events.
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 30, burst: 60)
-    |> beryl.with_presence_handle(presence_actor)
 
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
@@ -33,6 +27,7 @@ pub fn main() {
       init: cursors_app.standalone_init,
       update: fn(model, ev) { cursors_app.standalone_update(ctx, model, ev) },
     )
+  session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(beryl_spec)
@@ -52,8 +47,7 @@ pub fn main() {
   io.println("")
 
   // Start the HTTP server.
-  let ctx_router =
-    router.Context(channels:, presence: presence_actor, base_path: "")
+  let ctx_router = router.Context(channels:, base_path: "")
 
   let assert Ok(_) =
     fn(req) {
