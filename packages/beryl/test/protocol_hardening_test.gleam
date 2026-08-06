@@ -21,17 +21,13 @@ fn start_observed(
   config: beryl.Config,
 ) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
-      config,
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
-          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
-        }
-      },
-    )
+    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
+      process.send(events, ev)
+      case ev {
+        Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
+        _ -> Next(model, [])
+      }
+    })
   channels
 }
 
