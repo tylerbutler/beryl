@@ -3,28 +3,107 @@
 ////
 //// A transport implementation:
 //// 1. Admits a connection (origin/auth policy is the transport's concern),
-////    acquiring a slot with `beryl.acquire_connection_slot` and binding it
-////    with `beryl.bind_connection_slot`.
+////    acquiring a slot with `acquire_connection_slot` and binding it with
+////    `bind_connection_slot`.
 //// 2. Captures `connection_owner`, installs its monitor, and atomically
 ////    registers the socket and closer with `admit_socket`.
-//// 3. Decodes inbound frames with the codec from `active_codec` (see
-////    `beryl/wire/codec`) and routes them with `route_decoded` /
+//// 3. Decodes inbound frames with the codec from `active_codec` and routes
+////    them with `route_decoded` /
 ////    `route_binary`, shedding over-rate frames via `new_message_limiter` /
-////    `take_token` and oversized frames via `beryl.max_inbound_frame_bytes`.
+////    `take_token` and oversized frames via `max_inbound_frame_bytes`.
 //// 4. Announces disconnects with `socket_disconnected` and releases the
-////    slot with `beryl.release_connection_slot`.
+////    slot with `release_connection_slot`.
 
-import beryl.{type Channels}
-import beryl/event.{type ConnectSeed}
+import beryl
+import beryl/event
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
 import beryl/telemetry
-import beryl/wire/codec.{type Codec, type Inbound}
+import beryl/wire/codec
 import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/result
+
+/// Channel-system handle accepted by transport implementations.
+pub type Channels =
+  beryl.Channels
+
+/// Connection slot permit held by a transport connection.
+pub type ConnectionPermit =
+  beryl.ConnectionPermit
+
+/// Connection metadata delivered to the app's `init`.
+pub type ConnectSeed =
+  event.ConnectSeed
+
+/// Wire codec used by a transport connection.
+pub type Codec =
+  codec.Codec
+
+/// Decoded inbound wire message.
+pub type Inbound =
+  codec.Inbound
+
+/// Wire decode failure.
+pub type DecodeError =
+  codec.DecodeError
+
+/// Build connection metadata for a WebSocket upgrade.
+pub fn connect_seed(
+  path path: String,
+  query query: List(#(String, String)),
+  headers headers: List(#(String, String)),
+  metadata metadata: List(#(String, String)),
+) -> ConnectSeed {
+  event.ConnectSeed(
+    path: path,
+    query: query,
+    headers: headers,
+    metadata: metadata,
+  )
+}
+
+/// Decode an inbound text frame with a codec.
+pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
+  codec.decode_text(codec)
+}
+
+/// Return the codec's optional binary decoder.
+pub fn decode_binary(
+  codec: Codec,
+) -> Option(fn(BitArray) -> Result(Inbound, DecodeError)) {
+  codec.decode_binary(codec)
+}
+
+/// Format a wire decode failure for transport logging.
+pub fn format_decode_error(error: DecodeError) -> String {
+  codec.format_decode_error(error)
+}
+
+/// Acquire a configured connection slot.
+pub fn acquire_connection_slot(
+  channels: Channels,
+  ip: String,
+) -> Result(ConnectionPermit, Nil) {
+  beryl.acquire_connection_slot(channels, ip)
+}
+
+/// Bind a connection slot to the current transport process.
+pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
+  beryl.bind_connection_slot(permit)
+}
+
+/// Release a held connection slot.
+pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
+  beryl.release_connection_slot(permit)
+}
+
+/// Return the configured maximum inbound frame size.
+pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
+  beryl.max_inbound_frame_bytes(channels)
+}
 
 // --- Telemetry ---
 

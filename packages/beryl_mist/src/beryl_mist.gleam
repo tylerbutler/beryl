@@ -8,10 +8,7 @@
 //// either web server by choosing the matching transport package. Both consume
 //// only beryl's public `beryl/transport` SPI.
 
-import beryl.{type Channels}
-import beryl/event
-import beryl/transport
-import beryl/wire/codec
+import beryl/transport.{type Channels}
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -180,12 +177,12 @@ type ConnectionState {
   ConnectionState(
     socket_id: String,
     channels: Channels,
-    connection_permit: Option(beryl.ConnectionPermit),
+    connection_permit: Option(transport.ConnectionPermit),
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
     /// coordinator.
-    codec: codec.Codec,
+    codec: transport.Codec,
     telemetry: transport.Telemetry,
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
@@ -277,7 +274,7 @@ fn handle_matched_upgrade(
     reject_upgrade(telemetry, started_at, transport.VersionRejected)
   })
   let ip = request_ip(request)
-  case beryl.acquire_connection_slot(channels, ip) {
+  case transport.acquire_connection_slot(channels, ip) {
     Error(Nil) -> {
       transport.telemetry_upgrade_stop(
         telemetry,
@@ -398,7 +395,7 @@ fn run_connect_and_upgrade(
   request: Request(Connection),
   channels: Channels,
   config: TransportConfig,
-  connection_permit: beryl.ConnectionPermit,
+  connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
   started_at: Int,
 ) -> Response(ResponseData) {
@@ -416,7 +413,7 @@ fn run_connect_and_upgrade(
             started_at,
           )
         Error(ConnectRejected) -> {
-          beryl.release_connection_slot(connection_permit)
+          transport.release_connection_slot(connection_permit)
           transport.telemetry_upgrade_stop(
             telemetry,
             started_at,
@@ -523,8 +520,8 @@ pub fn upgrade_connection(
 fn connect_seed(
   request: Request(Connection),
   metadata: List(#(String, String)),
-) -> event.ConnectSeed {
-  event.ConnectSeed(
+) -> transport.ConnectSeed {
+  transport.connect_seed(
     path: request.path,
     query: request.get_query(request) |> result.unwrap([]),
     headers: request.headers,
@@ -537,11 +534,11 @@ fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
   connect_metadata: List(#(String, String)),
-  connection_permit: Option(beryl.ConnectionPermit),
+  connection_permit: Option(transport.ConnectionPermit),
   telemetry: transport.Telemetry,
   started_at: Int,
 ) -> Response(ResponseData) {
-  let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
+  let max_inbound_frame_bytes = transport.max_inbound_frame_bytes(channels)
   let active_codec = transport.active_codec(channels)
   let seed = connect_seed(request, connect_metadata)
   let response =
@@ -569,7 +566,7 @@ fn do_upgrade(
   case response.status >= 400 {
     True -> {
       case connection_permit {
-        Some(permit) -> beryl.release_connection_slot(permit)
+        Some(permit) -> transport.release_connection_slot(permit)
         None -> Nil
       }
       transport.telemetry_upgrade_stop(
@@ -594,16 +591,16 @@ fn do_upgrade(
 fn on_init(
   _connection: WebsocketConnection,
   channels: Channels,
-  seed: event.ConnectSeed,
-  connection_permit: Option(beryl.ConnectionPermit),
+  seed: transport.ConnectSeed,
+  connection_permit: Option(transport.ConnectionPermit),
   max_inbound_frame_bytes: Int,
-  active_codec: codec.Codec,
+  active_codec: transport.Codec,
   telemetry: transport.Telemetry,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Bind the per-IP slot to this WebSocket process so it is reclaimed even
   // if the process dies without running on_close.
   case connection_permit {
-    Some(permit) -> beryl.bind_connection_slot(permit)
+    Some(permit) -> transport.bind_connection_slot(permit)
     None -> Nil
   }
 
@@ -763,7 +760,7 @@ fn handle_inbound_text(
     )
     mist.continue(state)
   })
-  case codec.decode_text(state.codec)(text) {
+  case transport.decode_text(state.codec)(text) {
     Ok(msg) -> {
       transport.route_decoded(state.channels, state.socket_id, msg)
       transport.telemetry_frame_stop(
@@ -781,7 +778,7 @@ fn handle_inbound_text(
         "Failed to decode wire protocol message",
         [
           #("socket_id", state.socket_id),
-          #("error", codec.format_decode_error(err)),
+          #("error", transport.format_decode_error(err)),
         ],
       )
       transport.telemetry_frame_stop(
@@ -816,7 +813,7 @@ fn handle_inbound_binary(
     )
     mist.continue(state)
   })
-  case codec.decode_binary(state.codec) {
+  case transport.decode_binary(state.codec) {
     None -> {
       transport.route_binary(state.channels, state.socket_id, data)
       transport.telemetry_frame_stop(
@@ -847,7 +844,7 @@ fn handle_inbound_binary(
             "Failed to decode binary wire protocol message",
             [
               #("socket_id", state.socket_id),
-              #("error", codec.format_decode_error(err)),
+              #("error", transport.format_decode_error(err)),
             ],
           )
           transport.telemetry_frame_stop(
@@ -886,7 +883,7 @@ fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
 /// Cleanup when connection closes
 fn on_close(state: ConnectionState) -> Nil {
   case state.connection_permit {
-    Some(permit) -> beryl.release_connection_slot(permit)
+    Some(permit) -> transport.release_connection_slot(permit)
     None -> Nil
   }
   transport.socket_disconnected(state.channels, state.socket_id)
