@@ -36,9 +36,9 @@ The lobby has no mutable domain state and accepts no client messages. A lobby
 join returns a normal successful join reply. Closing the lobby clears only the
 lobby model.
 
-Successful room joins append a lobby invalidation after `PresenceTrack`.
-Room closes append the same invalidation after `PresenceUntrack`. Strict effect
-ordering ensures the presence mutation completes before lobby subscribers
+Successful room joins mutate the example-local session tracker before returning
+a lobby invalidation. Room closes untrack the session before returning the same
+invalidation. This ordering ensures the count changes before lobby subscribers
 receive the event.
 
 The invalidation event is:
@@ -54,8 +54,8 @@ complete directory.
 
 ## Authoritative Room Counts
 
-The lobby channel does not broadcast computed counts. Beryl's apply-time
-presence effects produce a snapshot only for the topic they target, so a
+The lobby channel does not broadcast computed counts. The example-local session
+tracker publishes a snapshot only for the room topic it mutates, so a
 cross-topic count assembled inside `update` could race with concurrent joins.
 
 The existing `GET /api/rooms` endpoint remains the authoritative count source.
@@ -116,8 +116,8 @@ Gleam tests cover:
 - clearing the lobby model without changing room models;
 - rejecting unrelated topics;
 - emitting `rooms_changed` only after accepted room joins;
-- ordering `PresenceTrack` before join invalidation;
-- ordering `PresenceUntrack` before close invalidation;
+- tracking the session before join invalidation;
+- untracking the session before close invalidation;
 - omitting invalidation for rejected room joins.
 
 Playwright tests cover:

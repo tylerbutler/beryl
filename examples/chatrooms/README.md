@@ -44,7 +44,7 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 | **channel_rate** | `beryl` | 10 msg/sec per channel |
 | **Multiple topics** | `beryl` | Each room is a separate topic |
 | **Multiple channel types** | `beryl/event` | Exact `lobby` topic plus wildcard `room:*` topics on one socket |
-| **Ordered effects** | `beryl/event` | Presence changes apply before lobby invalidations |
+| **Ordered dispatch** | `beryl/event` | Session tracker changes happen before lobby invalidations |
 
 ## Architecture
 

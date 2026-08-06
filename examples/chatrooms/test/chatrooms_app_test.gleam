@@ -1,7 +1,7 @@
 import beryl/event
 import beryl/group
-import beryl/presence
 import chatrooms/app
+import example_helpers/session_presence
 import gleam/dict
 import gleam/dynamic
 import gleam/json
@@ -9,12 +9,11 @@ import gleam/option.{None, Some}
 import gleeunit/should
 
 fn context() -> app.Ctx {
-  let assert Ok(presence_handle) =
-    presence.start(presence.default_config("chatrooms-lobby-test"))
+  let presence_tracker = session_presence.start()
   let assert Ok(groups) = group.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
-  app.Ctx(presence: presence_handle, groups: groups)
+  app.Ctx(presence: presence_tracker, groups: groups)
 }
 
 fn lobby_ref() -> event.Ref {
@@ -128,10 +127,12 @@ pub fn unrelated_topic_is_rejected_test() {
   |> should.equal("{\"reason\":\"unknown_topic\"}")
 }
 
-pub fn accepted_room_join_invalidates_lobby_after_presence_track_test() {
+pub fn accepted_room_join_tracks_session_and_invalidates_lobby_test() {
+  let ctx = context()
+  let app.Ctx(presence: tracker, groups: _) = ctx
   let #(joined, effects) =
     app.join(
-      context(),
+      ctx,
       "socket-1",
       "room:general",
       dynamic.properties([
@@ -143,11 +144,10 @@ pub fn accepted_room_join_invalidates_lobby_after_presence_track_test() {
   joined |> should.be_some
   let assert [
     event.AcceptJoin(_, _),
-    event.PresenceTrack("room:general", "Alice", _),
     event.Broadcast("lobby", "rooms_changed", changed),
     event.Broadcast("room:general", "new_msg", _),
-    event.BroadcastPresence("room:general", "presence_list", _),
   ] = effects
+  session_presence.count(tracker, "room:general") |> should.equal(1)
   json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
 }
 
@@ -165,16 +165,18 @@ pub fn rejected_room_join_does_not_invalidate_lobby_test() {
   let assert [event.RejectJoin(_, _)] = effects
 }
 
-pub fn room_close_invalidates_lobby_after_presence_untrack_test() {
+pub fn room_close_untracks_session_and_invalidates_lobby_test() {
+  let ctx = context()
+  let app.Ctx(presence: tracker, groups: _) = ctx
+  session_presence.track(tracker, "room:general", "socket-1", json.object([]))
   let model =
     app.Model(username: "Alice", color: "#abcdef", room_name: "general")
-  let effects = app.closed(context(), "socket-1", "room:general", model)
+  let effects = app.closed(ctx, "socket-1", "room:general", model)
 
   let assert [
-    event.PresenceUntrack("room:general", "Alice"),
     event.Broadcast("lobby", "rooms_changed", changed),
     event.Broadcast("room:general", "new_msg", _),
-    event.BroadcastPresence("room:general", "presence_list", _),
   ] = effects
+  session_presence.count(tracker, "room:general") |> should.equal(0)
   json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
 }

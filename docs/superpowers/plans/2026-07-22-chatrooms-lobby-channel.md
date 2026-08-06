@@ -6,14 +6,14 @@
 
 **Architecture:** The server routes the exact `lobby` topic beside the existing `room:*` pattern and broadcasts `rooms_changed` only after room presence changes. The browser joins `lobby` once, fetches authoritative counts from the existing `/api/rooms` endpoint, and keeps that subscription while replacing its active room channel.
 
-**Tech Stack:** Gleam 1.16, Beryl app-side dispatch, Beryl presence, vanilla JavaScript, Phoenix JavaScript client, Mist, gleeunit, Playwright
+**Tech Stack:** Gleam 1.16, Beryl app-side dispatch, example-local session presence, vanilla JavaScript, Phoenix JavaScript client, Mist, gleeunit, Playwright
 
 ## Global Constraints
 
 - Use the exact topic `lobby` for the second channel type.
 - Keep `lobby` joined while the browser switches between `room:*` topics.
 - Keep `/api/rooms` as the authoritative source for room counts.
-- Broadcast `rooms_changed` only after `PresenceTrack` or `PresenceUntrack`.
+- Broadcast `rooms_changed` only after the session tracker mutation.
 - Send `rooms_changed` on topic `lobby` with payload `{room: <room name>}`.
 - Accept no client events on `lobby`.
 - Preserve fail-closed rejection for unknown topics.
@@ -70,8 +70,8 @@ Create `examples/chatrooms/test/chatrooms_app_test.gleam`:
 ```gleam
 import beryl/event
 import beryl/group
-import beryl/presence
 import chatrooms/app
+import example_helpers/session_presence
 import gleam/dict
 import gleam/dynamic
 import gleam/json
@@ -79,12 +79,11 @@ import gleam/option.{None, Some}
 import gleeunit/should
 
 fn context() -> app.Ctx {
-  let assert Ok(presence_handle) =
-    presence.start(presence.default_config("chatrooms-lobby-test"))
+  let presence_tracker = session_presence.start()
   let assert Ok(groups) = group.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
-  app.Ctx(presence: presence_handle, groups: groups)
+  app.Ctx(presence: presence_tracker, groups: groups)
 }
 
 fn lobby_ref() -> event.Ref {
@@ -635,10 +634,12 @@ git commit -m "feat(chatrooms): show live room counts"
 Append to `examples/chatrooms/test/chatrooms_app_test.gleam`:
 
 ```gleam
-pub fn accepted_room_join_invalidates_lobby_after_presence_track_test() {
+pub fn accepted_room_join_tracks_session_and_invalidates_lobby_test() {
+  let ctx = context()
+  let app.Ctx(presence: tracker, groups: _) = ctx
   let #(joined, effects) =
     app.join(
-      context(),
+      ctx,
       "socket-1",
       "room:general",
       dynamic.properties([
@@ -650,11 +651,10 @@ pub fn accepted_room_join_invalidates_lobby_after_presence_track_test() {
   joined |> should.be_some
   let assert [
     event.AcceptJoin(_, _),
-    event.PresenceTrack("room:general", "Alice", _),
     event.Broadcast("lobby", "rooms_changed", changed),
     event.Broadcast("room:general", "new_msg", _),
-    event.BroadcastPresence("room:general", "presence_list", _),
   ] = effects
+  session_presence.count(tracker, "room:general") |> should.equal(1)
   json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
 }
 
@@ -672,18 +672,24 @@ pub fn rejected_room_join_does_not_invalidate_lobby_test() {
   let assert [event.RejectJoin(_, _)] = effects
 }
 
-pub fn room_close_invalidates_lobby_after_presence_untrack_test() {
+pub fn room_close_untracks_session_and_invalidates_lobby_test() {
+  let ctx = context()
+  let app.Ctx(presence: tracker, groups: _) = ctx
+  session_presence.track(
+    tracker,
+    "room:general",
+    "socket-1",
+    json.object([]),
+  )
   let model =
     app.Model(username: "Alice", color: "#abcdef", room_name: "general")
-  let effects =
-    app.closed(context(), "socket-1", "room:general", model)
+  let effects = app.closed(ctx, "socket-1", "room:general", model)
 
   let assert [
-    event.PresenceUntrack("room:general", "Alice"),
     event.Broadcast("lobby", "rooms_changed", changed),
     event.Broadcast("room:general", "new_msg", _),
-    event.BroadcastPresence("room:general", "presence_list", _),
   ] = effects
+  session_presence.count(tracker, "room:general") |> should.equal(0)
   json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
 }
 ```
@@ -701,7 +707,8 @@ Expected: the accepted join and room close tests fail because no `rooms_changed`
 
 - [ ] **Step 3: Add ordered room invalidations**
 
-In the successful room join effect list, insert the lobby broadcast immediately after `PresenceTrack`:
+In the successful room join path, call `session_presence.track` before
+constructing the effect list, then include the lobby invalidation:
 
 ```gleam
 event.Broadcast("lobby", "rooms_changed", room_changed(room_name)),
@@ -712,21 +719,17 @@ The complete success effect list must be:
 ```gleam
 [
   event.AcceptJoin(ref, Some(reply)),
-  event.PresenceTrack(topic, username, meta),
   event.Broadcast("lobby", "rooms_changed", room_changed(room_name)),
   event.Broadcast(topic, "new_msg", sys_payload),
-  event.BroadcastPresence(topic, "presence_list", encode_users),
 ]
 ```
 
-In `closed`, place the lobby broadcast immediately after `PresenceUntrack`:
+In `closed`, call `session_presence.untrack` before returning:
 
 ```gleam
 [
-  event.PresenceUntrack(topic, model.username),
   event.Broadcast("lobby", "rooms_changed", room_changed(model.room_name)),
   event.Broadcast(topic, "new_msg", sys_payload),
-  event.BroadcastPresence(topic, "presence_list", encode_users),
 ]
 ```
 
@@ -986,7 +989,7 @@ Add these rows to **beryl Features Exercised**:
 
 ```markdown
 | **Multiple channel types** | `beryl/event` | Exact `lobby` topic plus wildcard `room:*` topics on one socket |
-| **Ordered effects** | `beryl/event` | Presence changes apply before lobby invalidations |
+| **Ordered dispatch** | `beryl/event` | Session tracker changes happen before lobby invalidations |
 ```
 
 Replace the app-side dispatch architecture line with:
