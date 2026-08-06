@@ -7,7 +7,6 @@
 import app_test_helpers as h
 import beryl
 import beryl/event.{AcceptJoin, Closed, Join, Next}
-import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
@@ -41,13 +40,7 @@ fn connect_with_closer(
   socket_id: String,
   closed: process.Subject(Nil),
 ) -> process.Subject(String) {
-  let frames = h.connect(channels, socket_id)
-  transport.register_closer(
-    channels: channels,
-    socket_id: socket_id,
-    close: fn() { process.send(closed, Nil) },
-  )
-  frames
+  h.connect_with_close(channels, socket_id, fn() { process.send(closed, Nil) })
 }
 
 pub fn heartbeat_timeout_evicts_stale_socket_and_runs_closer_test() {

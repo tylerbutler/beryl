@@ -28,29 +28,25 @@ fn start_system() -> beryl.Channels {
 
 fn start_with(config: beryl.Config) -> beryl.Channels {
   let assert Ok(channels) =
-    h.start_app(
-      config,
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
-          Join(_, _, ref) ->
-            Next(model, [
-              AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
-            ])
-          Message(_topic, "ping", _payload, Some(ref)) ->
-            Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
-          Message(topic, "cast", _payload, _ref) ->
-            Next(model, [
-              Broadcast(
-                topic,
-                "announcement",
-                json.object([#("body", json.string("hello"))]),
-              ),
-            ])
-          _ -> Next(model, [])
-        }
-      },
-    )
+    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
+      case ev {
+        Join(_, _, ref) ->
+          Next(model, [
+            AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
+          ])
+        Message(_topic, "ping", _payload, Some(ref)) ->
+          Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
+        Message(topic, "cast", _payload, _ref) ->
+          Next(model, [
+            Broadcast(
+              topic,
+              "announcement",
+              json.object([#("body", json.string("hello"))]),
+            ),
+          ])
+        _ -> Next(model, [])
+      }
+    })
   channels
 }
 
@@ -60,8 +56,9 @@ fn connect_binary(
 ) -> #(process.Subject(String), process.Subject(BitArray)) {
   let text = process.new_subject()
   let binary = process.new_subject()
-  transport.socket_connected(
+  transport.admit_socket(
     channels: channels,
+    owner: transport.connection_owner(channels),
     socket_id: socket_id,
     send: fn(message) {
       process.send(text, message)
@@ -71,9 +68,11 @@ fn connect_binary(
       process.send(binary, data)
       Ok(Nil)
     },
+    codec: None,
     seed: event.empty_seed(),
+    close: fn() { Nil },
   )
-  process.sleep(10)
+  |> should.equal(Ok(Nil))
   #(text, binary)
 }
 
