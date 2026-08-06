@@ -10,7 +10,6 @@
 import beryl
 import beryl/event.{type Event, type Next}
 import beryl/group
-import beryl/presence
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
@@ -22,6 +21,7 @@ import collab_docs/router as collab_docs_router
 import cursors/app as cursors_app
 import cursors/router as cursors_router
 import envoy
+import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
@@ -50,10 +50,7 @@ type Ctx {
 }
 
 pub fn main() {
-  // Shared presence actor — each embedded app scopes presence to its own
-  // topic namespace, so a single actor is safe.
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
+  let presence_tracker = session_presence.start()
 
   // Chatrooms-specific state.
   let assert Ok(groups) = group.start()
@@ -68,8 +65,8 @@ pub fn main() {
 
   let ctx =
     Ctx(
-      cursors: cursors_app.Ctx(presence: presence_actor),
-      rooms: chat_app.Ctx(presence: presence_actor, groups: groups),
+      cursors: cursors_app.Ctx(presence: presence_tracker),
+      rooms: chat_app.Ctx(presence: presence_tracker, groups: groups),
       docs: docs_app.Ctx(store: docs_store, secret: docs_secret),
     )
 
@@ -82,7 +79,6 @@ pub fn main() {
     |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
     |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
     |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
-    |> beryl.with_presence_handle(presence_actor)
 
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
@@ -100,22 +96,18 @@ pub fn main() {
       },
       update: fn(model, ev) { update(ctx, model, ev) },
     )
+  session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(beryl_spec)
     |> static_supervisor.start()
 
   // Build per-example contexts pinned to their URL prefix.
-  let cursors_ctx =
-    cursors_router.Context(
-      channels:,
-      presence: presence_actor,
-      base_path: "/cursors",
-    )
+  let cursors_ctx = cursors_router.Context(channels:, base_path: "/cursors")
   let chatrooms_ctx =
     chatrooms_router.Context(
       channels:,
-      presence: presence_actor,
+      presence: presence_tracker,
       groups:,
       base_path: "/chat",
     )

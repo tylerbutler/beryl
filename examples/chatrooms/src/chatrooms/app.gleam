@@ -14,30 +14,25 @@
 
 import beryl/event.{type Effect, type Ref}
 import beryl/group.{type Groups}
-import beryl/presence.{type Presence}
 import example_helpers/color
 import example_helpers/payload
+import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
-import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/set
 import gleam/string
 
-/// Maximum users per room — join rejected when full
-const max_room_users = 20
-
 /// Per-topic state for one socket in a chat room.
 pub type Model {
   Model(username: String, color: String, room_name: String)
 }
 
-/// Dependencies the chat logic reads: the room group for join validation
-/// and the presence handle for reads (writes go through effects).
+/// Dependencies shared by chat sockets.
 pub type Ctx {
-  Ctx(presence: Presence, groups: Groups)
+  Ctx(presence: session_presence.Tracker, groups: Groups)
 }
 
 /// Handle a join for a `room:*` topic. Returns `None` when rejected.
@@ -64,52 +59,29 @@ pub fn join(
       event.RejectJoin(ref, error("Room not found: " <> room_name)),
     ])
     True -> {
-      let current_users = presence.list(ctx.presence, topic)
-      case list.length(current_users) >= max_room_users {
-        True -> #(None, [
-          event.RejectJoin(
-            ref,
-            error_with_code(
-              403,
-              "Room is full (max " <> int.to_string(max_room_users) <> ")",
-            ),
-          ),
+      let username = payload.string_or(payload, "username", "Anonymous")
+      let color = color.pastel_for(socket_id)
+      let meta = presence_meta(username, color, typing: False)
+      session_presence.track(ctx.presence, topic, socket_id, meta)
+      let sys_payload = system_message(username <> " joined the room")
+      let reply =
+        json.object([
+          #("socket_id", json.string(socket_id)),
+          #("username", json.string(username)),
+          #("color", json.string(color)),
+          #("room", json.string(room_name)),
         ])
-        False -> {
-          let username = payload.string_or(payload, "username", "Anonymous")
-          let color = color.pastel_for(socket_id)
-          let meta = presence_meta(username, color, typing: False)
-
-          let sys_payload = system_message(username <> " joined the room")
-
-          let reply =
-            json.object([
-              #("socket_id", json.string(socket_id)),
-              #("username", json.string(username)),
-              #("color", json.string(color)),
-              #("room", json.string(room_name)),
-            ])
-          // BroadcastPresence encodes at apply time, after the
-          // PresenceTrack before it — the list already includes the
-          // joining user.
-          #(
-            Some(Model(username: username, color: color, room_name: room_name)),
-            [
-              event.AcceptJoin(ref, Some(reply)),
-              event.PresenceTrack(topic, username, meta),
-              event.Broadcast(topic, "new_msg", sys_payload),
-              event.BroadcastPresence(topic, "presence_list", encode_users),
-            ],
-          )
-        }
-      }
+      #(Some(Model(username: username, color: color, room_name: room_name)), [
+        event.AcceptJoin(ref, Some(reply)),
+        event.Broadcast(topic, "new_msg", sys_payload),
+      ])
     }
   }
 }
 
 /// Handle a client message on a joined `room:*` topic.
 pub fn update(
-  _ctx: Ctx,
+  ctx: Ctx,
   socket_id: String,
   topic: String,
   model: Model,
@@ -152,10 +124,13 @@ pub fn update(
       }
     }
 
-    "typing" -> #(model, typing_effects(model, socket_id, topic, typing: True))
+    "typing" -> #(
+      model,
+      typing_effects(ctx, model, socket_id, topic, typing: True),
+    )
     "stop_typing" -> #(
       model,
-      typing_effects(model, socket_id, topic, typing: False),
+      typing_effects(ctx, model, socket_id, topic, typing: False),
     )
 
     _ -> #(model, [])
@@ -164,19 +139,14 @@ pub fn update(
 
 /// Handle the topic closing (leave, kick, crash, or disconnect).
 pub fn closed(
-  _ctx: Ctx,
-  _socket_id: String,
+  ctx: Ctx,
+  socket_id: String,
   topic: String,
   model: Model,
 ) -> List(Effect) {
+  session_presence.untrack(ctx.presence, topic, socket_id)
   let sys_payload = system_message(model.username <> " left the room")
-  // The snapshot encodes after the untrack before it, so the broadcast
-  // list already excludes the leaving user.
-  [
-    event.PresenceUntrack(topic, model.username),
-    event.Broadcast(topic, "new_msg", sys_payload),
-    event.BroadcastPresence(topic, "presence_list", encode_users),
-  ]
+  [event.Broadcast(topic, "new_msg", sys_payload)]
 }
 
 // --- Standalone app-side dispatch wrapper ---
@@ -256,29 +226,26 @@ pub fn standalone_update(
 
 // --- Helpers ---
 
-/// Re-tracking the same key through `PresenceTrack` replaces the entry, so
-/// a typing toggle is a track with updated meta plus the indicator
-/// broadcast to everyone else.
 fn typing_effects(
+  ctx: Ctx,
   model: Model,
   socket_id: String,
   topic: String,
   typing typing: Bool,
 ) -> List(Effect) {
+  session_presence.track(
+    ctx.presence,
+    topic,
+    socket_id,
+    presence_meta(model.username, model.color, typing: typing),
+  )
   let typing_payload =
     json.object([
       #("username", json.string(model.username)),
       #("socket_id", json.string(socket_id)),
       #("typing", json.bool(typing)),
     ])
-  [
-    event.PresenceTrack(
-      topic,
-      model.username,
-      presence_meta(model.username, model.color, typing: typing),
-    ),
-    event.BroadcastFrom(topic, "typing", typing_payload),
-  ]
+  [event.BroadcastFrom(topic, "typing", typing_payload)]
 }
 
 fn presence_meta(
@@ -309,12 +276,6 @@ fn reply_ok(ref: Option(Ref), reply_payload: json.Json) -> List(Effect) {
     Some(r) -> [event.ReplyOk(r, reply_payload)]
     None -> []
   }
-}
-
-/// Encode presence entries as the `presence_list` payload:
-/// `{session_id: meta}`.
-fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
-  json.object(list.map(entries, fn(entry) { #(entry.session_id, entry.meta) }))
 }
 
 fn error(message: String) -> json.Json {

@@ -10,14 +10,13 @@
 ////   through `beryl.start_app`, reusing the same per-topic surface.
 
 import beryl/event.{type Effect, type Ref}
-import beryl/presence.{type Presence}
 import example_helpers/color
 import example_helpers/payload
+import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
-import gleam/list
 import gleam/option.{type Option, None, Some}
 
 /// Per-topic state for one socket in a cursor room.
@@ -25,15 +24,13 @@ pub type Model {
   Model(username: String, color: String)
 }
 
-/// Dependencies the cursor logic reads (presence is written through
-/// effects; the handle is only needed for reads like `presence.list`).
 pub type Ctx {
-  Ctx(presence: Presence)
+  Ctx(presence: session_presence.Tracker)
 }
 
 /// Handle a join for a `cursor:*` topic. Returns `None` when rejected.
 pub fn join(
-  _ctx: Ctx,
+  ctx: Ctx,
   socket_id: String,
   topic: String,
   payload: Dynamic,
@@ -53,12 +50,9 @@ pub fn join(
       #("username", json.string(username)),
       #("color", json.string(color)),
     ])
-  // BroadcastPresence encodes at apply time, after the PresenceTrack
-  // before it — so the list already includes the joining user.
+  session_presence.track(ctx.presence, topic, socket_id, meta)
   #(Some(Model(username: username, color: color)), [
     event.AcceptJoin(ref, Some(reply)),
-    event.PresenceTrack(topic, username, meta),
-    event.BroadcastPresence(topic, "presence_list", encode_users),
   ])
 }
 
@@ -89,17 +83,13 @@ pub fn update(
 
 /// Handle the topic closing (leave, kick, crash, or disconnect).
 pub fn closed(
-  _ctx: Ctx,
-  _socket_id: String,
+  ctx: Ctx,
+  socket_id: String,
   topic: String,
-  model: Model,
+  _model: Model,
 ) -> List(Effect) {
-  // The snapshot encodes after the untrack before it, so the broadcast
-  // list already excludes the leaving user.
-  [
-    event.PresenceUntrack(topic, model.username),
-    event.BroadcastPresence(topic, "presence_list", encode_users),
-  ]
+  session_presence.untrack(ctx.presence, topic, socket_id)
+  []
 }
 
 // --- Standalone app-side dispatch wrapper ---
@@ -178,12 +168,6 @@ pub fn standalone_update(
 
     event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
   }
-}
-
-/// Encode presence entries as the `presence_list` payload:
-/// `{session_id: meta}`.
-fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
-  json.object(list.map(entries, fn(entry) { #(entry.session_id, entry.meta) }))
 }
 
 /// Extract a number from a JSON payload as Json, defaulting to 0.0.

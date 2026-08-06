@@ -1,10 +1,10 @@
 import beryl
 import beryl/group
-import beryl/presence
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
 import chatrooms/router
+import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/http/request
 import gleam/io
@@ -14,9 +14,7 @@ import gleam/result
 import mist
 
 pub fn main() {
-  // Start presence tracking.
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
+  let presence_tracker = session_presence.start()
 
   // Start groups and create default room group.
   let assert Ok(groups) = group.start()
@@ -25,17 +23,14 @@ pub fn main() {
   let assert Ok(_) = group.add(groups, "public", "room:random")
   let assert Ok(_) = group.add(groups, "public", "room:help")
 
-  // Dependencies the chat logic reads (presence writes flow through effects).
-  let ctx = chat_app.Ctx(presence: presence_actor, groups: groups)
+  let ctx = chat_app.Ctx(presence: presence_tracker, groups: groups)
 
-  // Rate limiting matches the previous channel-module deployment; the
-  // presence handle is required for the app's presence effects to apply.
+  // Rate limiting matches the previous channel-module deployment.
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 30, burst: 60)
     |> beryl.with_join_rate(per_second: 5, burst: 10)
     |> beryl.with_channel_rate(per_second: 10, burst: 20)
-    |> beryl.with_presence_handle(presence_actor)
 
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
@@ -43,6 +38,7 @@ pub fn main() {
       init: chat_app.standalone_init,
       update: fn(model, ev) { chat_app.standalone_update(ctx, model, ev) },
     )
+  session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(beryl_spec)
@@ -56,7 +52,12 @@ pub fn main() {
   // without the demo token before the WebSocket handshake; accepted
   // connections carry no extra metadata (`Ok([])`).
   let ctx_router =
-    router.Context(channels:, presence: presence_actor, groups:, base_path: "")
+    router.Context(
+      channels:,
+      presence: presence_tracker,
+      groups:,
+      base_path: "",
+    )
   let ws_config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
