@@ -68,6 +68,16 @@ pub type StartError {
 
 /// Messages the runtime actor handles.
 pub type Msg(msg) {
+  AdmitSocket(
+    owner: process.Pid,
+    socket_id: String,
+    send: fn(String) -> Result(Nil, Nil),
+    send_binary: fn(BitArray) -> Result(Nil, Nil),
+    codec: Option(Codec),
+    seed: ConnectSeed,
+    close: fn() -> Nil,
+    reply: Subject(Bool),
+  )
   SocketConnected(
     socket_id: String,
     send: fn(String) -> Result(Nil, Nil),
@@ -236,6 +246,27 @@ fn handle_message(
   message: Msg(msg),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case message {
+    AdmitSocket(
+      owner,
+      socket_id,
+      send,
+      send_binary,
+      socket_codec,
+      seed,
+      close,
+      reply,
+    ) ->
+      handle_admit_socket(
+        state,
+        owner,
+        socket_id,
+        send,
+        send_binary,
+        socket_codec,
+        seed,
+        close,
+        reply,
+      )
     SocketConnected(socket_id, send, send_binary, socket_codec, seed) ->
       handle_socket_connected(
         state,
@@ -289,6 +320,61 @@ fn handle_socket_connected(
   socket_codec: Option(Codec),
   seed: ConnectSeed,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
+  let #(state, _admitted) =
+    register_socket(
+      state,
+      socket_id,
+      send,
+      send_binary,
+      socket_codec,
+      seed,
+      fn() { Nil },
+    )
+  actor.continue(state)
+}
+
+fn handle_admit_socket(
+  state: State(model, msg),
+  owner: process.Pid,
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  socket_codec: Option(Codec),
+  seed: ConnectSeed,
+  close: fn() -> Nil,
+  reply: Subject(Bool),
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case process.self() == owner {
+    False -> {
+      process.send(reply, False)
+      actor.continue(state)
+    }
+    True -> {
+      let #(state, admitted) =
+        register_socket(
+          state,
+          socket_id,
+          send,
+          send_binary,
+          socket_codec,
+          seed,
+          close,
+        )
+      process.send(reply, admitted)
+      actor.continue(state)
+    }
+  }
+}
+
+fn register_socket(
+  state: State(model, msg),
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  socket_codec: Option(Codec),
+  seed: ConnectSeed,
+  close: fn() -> Nil,
+) -> #(State(model, msg), Bool) {
   let sender = make_socket_sender(state, socket_id)
   let info = event.ConnectInfo(socket_id: socket_id, seed: seed, self: sender)
   let init = state.init
@@ -299,7 +385,7 @@ fn handle_socket_connected(
         #("socket_id", socket_id),
         #("crash", crash),
       ])
-      actor.continue(state)
+      #(state, False)
     }
     Ok(#(model, effects)) -> {
       let socket =
@@ -307,7 +393,7 @@ fn handle_socket_connected(
           id: socket_id,
           send: send,
           send_binary: send_binary,
-          close: fn() { Nil },
+          close: close,
           codec: option.unwrap(socket_codec, state.config.codec),
           model: model,
           subscribed_topics: set.new(),
@@ -322,7 +408,7 @@ fn handle_socket_connected(
       // unjoined topics are dropped by the interpreter.
       let #(state, _pending, _kicks) =
         apply_effects(state, socket_id, effects, None)
-      actor.continue(state)
+      #(state, True)
     }
   }
 }

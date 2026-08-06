@@ -58,6 +58,25 @@ fn limiter_pid(sockets: beryl.Sockets) -> process.Pid {
   pid
 }
 
+fn admit(
+  sockets: beryl.Sockets,
+  owner: transport.ConnectionOwner,
+  socket_id: String,
+  close: fn() -> Nil,
+) -> Result(Nil, Nil) {
+  transport.admit_socket(
+    channels: sockets,
+    owner: owner,
+    socket_id: socket_id,
+    send: fn(_message) { Ok(Nil) },
+    send_binary: fn(_data) { Ok(Nil) },
+    codec: None,
+    assigns: Nil,
+    seed: event.empty_seed(),
+    close: close,
+  )
+}
+
 // ── stop targets only the Beryl subtree ─────────────────────────────────────
 
 pub fn stop_shuts_down_only_beryl_subtree_test() {
@@ -173,9 +192,10 @@ pub fn runtime_crash_closes_owned_connection_test() {
     )
 
   let closed = process.new_subject()
+  let ready = process.new_subject()
 
   // Simulate a transport connection process: it monitors the runtime that
-  // accepted it (via the transport SPI) and closes when that runtime dies.
+  // accepted it before registration and closes when that exact runtime dies.
   let _conn =
     process.spawn(fn() {
       case transport.connection_owner(sockets) {
@@ -184,6 +204,7 @@ pub fn runtime_crash_closes_owned_connection_test() {
           let selector =
             process.new_selector()
             |> process.select_specific_monitor(mon, fn(_down) { Nil })
+          process.send(ready, Nil)
           let _ = process.selector_receive(selector, 2000)
           process.send(closed, Nil)
         }
@@ -191,8 +212,8 @@ pub fn runtime_crash_closes_owned_connection_test() {
       }
     })
 
-  // Give the connection process time to install its monitor, then crash.
-  process.sleep(50)
+  // Wait for the monitor-installation handshake rather than sleeping.
+  process.receive(ready, 1000) |> should.equal(Ok(Nil))
   process.kill(runtime_pid(sockets))
 
   // The owned connection observed the runtime's death and closed itself.
@@ -228,17 +249,9 @@ pub fn update_crash_runs_socket_close_callback_test() {
     )
 
   let closed = process.new_subject()
-  transport.socket_connected(
-    channels: sockets,
-    socket_id: "s1",
-    send: fn(_message) { Ok(Nil) },
-    send_binary: fn(_data) { Ok(Nil) },
-    assigns: Nil,
-    seed: event.empty_seed(),
-  )
-  transport.register_closer(channels: sockets, socket_id: "s1", close: fn() {
-    process.send(closed, Nil)
-  })
+  let owner = transport.connection_owner(sockets)
+  admit(sockets, owner, "s1", fn() { process.send(closed, Nil) })
+  |> should.equal(Ok(Nil))
   let assert Ok(sender) = process.receive(senders, 1000)
 
   // Drive an app-info event into the crashing update; the runtime rescues the
@@ -247,6 +260,63 @@ pub fn update_crash_runs_socket_close_callback_test() {
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   // The runtime itself survives the rescued crash and keeps serving.
+  process.is_alive(runtime_pid(sockets)) |> should.be_true
+}
+
+pub fn failed_registration_closes_connection_test() {
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: event.ConnectInfo(Nil)) { panic as "init failed" },
+      update: accepting_update,
+    )
+  let closed = process.new_subject()
+
+  admit(sockets, transport.connection_owner(sockets), "failed-init", fn() {
+    process.send(closed, Nil)
+  })
+  |> should.be_error
+
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  process.is_alive(runtime_pid(sockets)) |> should.be_true
+}
+
+pub fn stale_runtime_owner_cannot_register_with_successor_test() {
+  let initialized = process.new_subject()
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(info: event.ConnectInfo(Nil)) {
+        process.send(initialized, info.socket_id)
+        #(Nil, [])
+      },
+      update: accepting_update,
+    )
+  let owner = transport.connection_owner(sockets)
+  let assert transport.OwnerAlive(old_runtime) = owner
+  let monitor = process.monitor(old_runtime)
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(_down) { Nil })
+
+  process.kill(old_runtime)
+  process.selector_receive(selector, 2000) |> should.equal(Ok(Nil))
+  test_helpers.wait_until(
+    fn() {
+      case beryl.app_runtime_pid(sockets) {
+        Ok(pid) -> pid != old_runtime
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  let closed = process.new_subject()
+  admit(sockets, owner, "stale-owner", fn() { process.send(closed, Nil) })
+  |> should.be_error
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  process.receive(initialized, 100) |> should.be_error
   process.is_alive(runtime_pid(sockets)) |> should.be_true
 }
 

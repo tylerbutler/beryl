@@ -5,9 +5,8 @@
 //// 1. Admits a connection (origin/auth policy is the transport's concern),
 ////    acquiring a slot with `beryl.acquire_connection_slot` and binding it
 ////    with `beryl.bind_connection_slot`.
-//// 2. Announces the socket with `socket_connected` — or
-////    `socket_connected_with_codec` when the connection speaks a framing
-////    other than the configured codec — then `register_closer`.
+//// 2. Captures `connection_owner`, installs its monitor, and atomically
+////    registers the socket and closer with `admit_socket`.
 //// 3. Decodes inbound frames with the codec from `active_codec` (see
 ////    `beryl/wire/codec`) and routes them with `route_decoded` /
 ////    `route_binary`, shedding over-rate frames via `new_message_limiter` /
@@ -26,7 +25,7 @@ import beryl/wire/codec.{type Codec, type Inbound}
 import gleam/bool
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
-import gleam/option.{type Option, None}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 
 // --- Telemetry ---
@@ -347,10 +346,62 @@ pub type ConnectionOwner {
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+/// Register a socket and its closer against the captured connection owner.
+///
+/// For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
+/// function. Admission succeeds only if that exact runtime instance processes
+/// the registration; a restart cannot redirect it to the successor runtime.
+/// `OwnerUnmonitored` preserves coordinator-backed systems. On `Error`, close
+/// the connection so its bound connection permit is released.
+pub fn admit_socket(
+  channels channels: Channels,
+  owner owner: ConnectionOwner,
+  socket_id socket_id: String,
+  send send: fn(String) -> Result(Nil, Nil),
+  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec codec: Option(Codec),
+  assigns assigns: assigns,
+  seed seed: ConnectSeed,
+  close close: fn() -> Nil,
+) -> Result(Nil, Nil) {
+  let expected_owner = case owner {
+    OwnerAlive(pid) -> Ok(Some(pid))
+    OwnerUnmonitored -> Ok(None)
+    OwnerUnavailable -> {
+      close()
+      Error(Nil)
+    }
+  }
+  case expected_owner {
+    Error(Nil) -> Error(Nil)
+    Ok(expected_owner) ->
+      case
+        beryl.transport_admit_socket(
+          channels,
+          expected_owner,
+          socket_id,
+          send,
+          send_binary,
+          codec,
+          erase(assigns),
+          seed,
+          close,
+        )
+      {
+        True -> Ok(Nil)
+        False -> {
+          close()
+          Error(Nil)
+        }
+      }
+  }
+}
+
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Determine how a newly accepted connection is owned. Call this in the
-/// connection process right after upgrade; on `OwnerAlive(pid)` monitor `pid`
-/// and close on its `Down`, and on `OwnerUnavailable` close the connection
-/// immediately.
+/// connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
+/// exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the
+/// connection immediately.
 pub fn connection_owner(channels: Channels) -> ConnectionOwner {
   use <- bool.guard(
     when: !beryl.is_app_system(channels),

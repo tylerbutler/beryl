@@ -613,40 +613,51 @@ fn on_init(
     Ok(Nil)
   }
 
-  // Register with coordinator, seeding any connect-time assigns
-  transport.socket_connected(
-    channels: channels,
-    socket_id: socket_id,
-    send: send_fn,
-    send_binary: send_binary_fn,
-    assigns: connect_assigns,
-    seed: seed,
-  )
-
-  // Let the coordinator actively close this connection (heartbeat eviction,
-  // server-side disconnects) instead of leaving a zombie socket open.
-  transport.register_closer(
-    channels: channels,
-    socket_id: socket_id,
-    close: fn() { process.send(send_subject, Close) },
-  )
-
-  // Tie this connection's lifetime to the runtime that accepted it. If that
-  // runtime crashes or restarts, its registered closer is lost, so monitor it
-  // here and close the connection on its death rather than leaving a zombie
-  // socket whose frames a restarted runtime would silently drop. When the
-  // app runtime is momentarily unavailable (a restart window) the connection
-  // is refused so no orphaned socket is admitted.
-  let selector = case transport.connection_owner(channels) {
+  let owner = transport.connection_owner(channels)
+  let selector = case owner {
     transport.OwnerAlive(runtime_pid) -> {
       let monitor = process.monitor(runtime_pid)
-      process.select_specific_monitor(selector, monitor, fn(_down) { Close })
+      let selector =
+        process.select_specific_monitor(selector, monitor, fn(_down) { Close })
+      case
+        transport.admit_socket(
+          channels: channels,
+          owner: owner,
+          socket_id: socket_id,
+          send: send_fn,
+          send_binary: send_binary_fn,
+          codec: None,
+          assigns: connect_assigns,
+          seed: seed,
+          close: fn() { process.send(send_subject, Close) },
+        )
+      {
+        Ok(Nil) -> selector
+        Error(Nil) -> selector
+      }
     }
     transport.OwnerUnavailable -> {
       process.send(send_subject, Close)
       selector
     }
-    transport.OwnerUnmonitored -> selector
+    transport.OwnerUnmonitored -> {
+      case
+        transport.admit_socket(
+          channels: channels,
+          owner: owner,
+          socket_id: socket_id,
+          send: send_fn,
+          send_binary: send_binary_fn,
+          codec: None,
+          assigns: connect_assigns,
+          seed: seed,
+          close: fn() { process.send(send_subject, Close) },
+        )
+      {
+        Ok(Nil) -> selector
+        Error(Nil) -> selector
+      }
+    }
   }
 
   let state =
