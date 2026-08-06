@@ -107,17 +107,7 @@ pub type Msg(msg) {
     admission: AdmissionToken,
     reply: Subject(Bool),
   )
-  SocketConnected(
-    socket_id: String,
-    send: fn(String) -> Result(Nil, Nil),
-    send_binary: fn(BitArray) -> Result(Nil, Nil),
-    /// Wire codec negotiated for this connection; `None` falls back to the
-    /// configured codec.
-    codec: Option(Codec),
-    seed: ConnectSeed,
-  )
   SocketDisconnected(socket_id: String)
-  RegisterCloser(socket_id: String, close: fn() -> Nil)
   RouteText(socket_id: String, raw_text: String)
   RouteDecoded(socket_id: String, msg: codec.Inbound)
   RouteDecodedBinary(socket_id: String, msg: codec.Inbound)
@@ -381,19 +371,8 @@ fn handle_message(
         admission,
         reply,
       )
-    SocketConnected(socket_id, send, send_binary, socket_codec, seed) ->
-      handle_socket_connected(
-        state,
-        socket_id,
-        send,
-        send_binary,
-        socket_codec,
-        seed,
-      )
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
-    RegisterCloser(socket_id, close) ->
-      handle_register_closer(state, socket_id, close)
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
     RouteDecoded(socket_id, msg) ->
@@ -452,28 +431,6 @@ fn handle_message(
 }
 
 // ── Socket lifecycle ────────────────────────────────────────────────────────
-
-fn handle_socket_connected(
-  state: State(model, msg),
-  socket_id: String,
-  send: fn(String) -> Result(Nil, Nil),
-  send_binary: fn(BitArray) -> Result(Nil, Nil),
-  socket_codec: Option(Codec),
-  seed: ConnectSeed,
-) -> actor.Next(State(model, msg), Msg(msg)) {
-  let #(state, _admitted) =
-    register_socket(
-      state,
-      socket_id,
-      send,
-      send_binary,
-      socket_codec,
-      seed,
-      fn() { Nil },
-      None,
-    )
-  actor.continue(state)
-}
 
 fn handle_admit_socket(
   state: State(model, msg),
@@ -580,18 +537,6 @@ fn make_socket_sender(
         process.send(subject, AppInfo(socket_id, message))
       })
     None -> event.make_sender(fn(_message) { Nil })
-  }
-}
-
-fn handle_register_closer(
-  state: State(model, msg),
-  socket_id: String,
-  close: fn() -> Nil,
-) -> actor.Next(State(model, msg), Msg(msg)) {
-  case dict.get(state.sockets, socket_id) {
-    Error(Nil) -> actor.continue(state)
-    Ok(socket) ->
-      actor.continue(store_socket(state, SocketState(..socket, close: close)))
   }
 }
 
