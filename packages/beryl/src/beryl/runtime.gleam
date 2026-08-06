@@ -1303,27 +1303,94 @@ fn handle_in_rate_limited(
             msg_ref: Some(r),
           )
         })
-      // Track the reply ref as outstanding so `apply_reply` can enforce
-      // single-use and drop replies to refs whose topic later closes.
-      let state = case message_ref {
-        Some(r) -> register_reply_ref(state, socket_id, r)
-        None -> state
+      case message_ref {
+        Some(message_ref) ->
+          case set.contains(socket.pending_reply_refs, message_ref) {
+            True -> {
+              state.logger
+              |> log.warn(
+                "Inbound message rejected: reply ref already outstanding",
+                [
+                  #("socket_id", socket_id),
+                  #("topic", topic_name),
+                  #("event", event_name),
+                ],
+              )
+              send_error_reply(
+                state,
+                socket_id,
+                topic_name,
+                event.ref_join_ref(message_ref),
+                event.ref_msg_ref(message_ref),
+                json.object([#("reason", json.string("duplicate_ref"))]),
+              )
+              emit_message_stop(
+                state,
+                started_at,
+                kind,
+                telemetry.MessageInvalid,
+                telemetry.NotApplicable,
+              )
+              actor.continue(state)
+            }
+            False ->
+              deliver_client_message(
+                state,
+                socket_id,
+                topic_name,
+                event_name,
+                payload,
+                Some(message_ref),
+                started_at,
+                kind,
+              )
+          }
+        None ->
+          deliver_client_message(
+            state,
+            socket_id,
+            topic_name,
+            event_name,
+            payload,
+            None,
+            started_at,
+            kind,
+          )
       }
-      let outcome =
-        update_once(
-          state,
-          socket_id,
-          event.Message(
-            topic: topic_name,
-            event: event_name,
-            payload: payload,
-            ref: message_ref,
-          ),
-          MessageSource(topic_name, kind, started_at),
-        )
-      actor.continue(drive(outcome, socket_id))
     }
   }
+}
+
+fn deliver_client_message(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  event_name: String,
+  payload: Dynamic,
+  message_ref: Option(Ref),
+  started_at: Int,
+  kind: telemetry.MessageKind,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  // Track the reply ref as outstanding so `apply_reply` can enforce
+  // single-use, reject overlapping reuse, and drop replies to refs whose
+  // topic later closes.
+  let state = case message_ref {
+    Some(message_ref) -> register_reply_ref(state, socket_id, message_ref)
+    None -> state
+  }
+  let outcome =
+    update_once(
+      state,
+      socket_id,
+      event.Message(
+        topic: topic_name,
+        event: event_name,
+        payload: payload,
+        ref: message_ref,
+      ),
+      MessageSource(topic_name, kind, started_at),
+    )
+  actor.continue(drive(outcome, socket_id))
 }
 
 // ── Binary frames ───────────────────────────────────────────────────────────
