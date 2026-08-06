@@ -1,8 +1,9 @@
 import beryl/event.{
   type Effect, type Event, type Next, AcceptJoin, Broadcast, Join, Message,
-  PresenceTrack, PresenceUntrack, RejectJoin, ReplyError, ReplyOk,
+  RejectJoin, ReplyError, ReplyOk,
 }
 import beryl/wire
+import example_helpers/session_presence
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
@@ -13,7 +14,11 @@ pub fn init(_info) {
   #(Nil, [])
 }
 
-pub fn update(model: Nil, input: Event(msg)) -> Next(Nil, msg) {
+pub fn update(
+  presence: session_presence.Tracker,
+  model: Nil,
+  input: Event(msg),
+) -> Next(Nil, msg) {
   case input {
     Join("guardrail:forbidden", _, ref) ->
       event.Next(model, [
@@ -25,12 +30,16 @@ pub fn update(model: Nil, input: Event(msg)) -> Next(Nil, msg) {
         RejectJoin(ref, json.object([#("reason", json.string("unmatched"))])),
       ])
     Message(topic, event_name, payload, ref) ->
-      event.Next(model, message_effects(topic, event_name, payload, ref))
+      event.Next(
+        model,
+        message_effects(presence, topic, event_name, payload, ref),
+      )
     _ -> event.Next(model, [])
   }
 }
 
 pub fn message_effects(
+  presence: session_presence.Tracker,
   topic: String,
   event_name: String,
   payload: Dynamic,
@@ -42,8 +51,8 @@ pub fn message_effects(
       let outgoing = wire.dynamic_to_json(payload)
       [Broadcast(topic, event_name, outgoing), ..reply_ok(ref, outgoing)]
     }
-    "presence_track" -> track(topic, payload, ref)
-    "presence_untrack" -> untrack(topic, payload, ref)
+    "presence_track" -> track(presence, topic, payload, ref)
+    "presence_untrack" -> untrack(presence, topic, payload, ref)
     _ ->
       reply_error(ref, json.object([#("reason", json.string("unknown_event"))]))
   }
@@ -71,6 +80,7 @@ fn key_and_meta(payload: Dynamic) -> Result(#(String, json.Json), Nil) {
 }
 
 fn track(
+  presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
   ref: Option(event.Ref),
@@ -81,14 +91,15 @@ fn track(
         ref,
         json.object([#("reason", json.string("invalid_presence"))]),
       )
-    Ok(#(key, meta)) -> [
-      PresenceTrack(topic, key, meta),
-      ..reply_ok(ref, json.object([#("key", json.string(key))]))
-    ]
+    Ok(#(key, meta)) -> {
+      session_presence.track(presence, topic, key, meta)
+      reply_ok(ref, json.object([#("key", json.string(key))]))
+    }
   }
 }
 
 fn untrack(
+  presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
   ref: Option(event.Ref),
@@ -103,10 +114,10 @@ fn untrack(
         ref,
         json.object([#("reason", json.string("invalid_presence"))]),
       )
-    Ok(key) -> [
-      PresenceUntrack(topic, key),
-      ..reply_ok(ref, json.object([#("key", json.string(key))]))
-    ]
+    Ok(key) -> {
+      session_presence.untrack(presence, topic, key)
+      reply_ok(ref, json.object([#("key", json.string(key))]))
+    }
   }
 }
 

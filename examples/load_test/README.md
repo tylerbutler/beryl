@@ -33,7 +33,7 @@ Both servers bind to `127.0.0.1:8000` by default. They provide:
 | Route | Behavior |
 |---|---|
 | `/health` | `200`, `content-type: application/json`, `{"status":"ok"}` |
-| `/stats` | Local Beryl coordinator and BEAM runtime JSON described below |
+| `/stats` | Local Beryl socket runtime and BEAM runtime JSON described below |
 | WebSocket `/socket` | Phoenix V2 benchmark channels |
 | Any other route | `404` with an empty body |
 
@@ -41,8 +41,9 @@ The handlers route by path and do not inspect the HTTP method.
 
 The WebSocket route accepts `bench:*`. `echo` replies with the unchanged
 payload; `broadcast` and `broadcast_ack` broadcast and reply with the unchanged
-payload; `presence_track` and `presence_untrack` update presence and reply with
-the key. Presence changes are broadcast as `presence_diff`.
+payload; `presence_track` and `presence_untrack` update the example's
+nonblocking session tracker and reply with the key. Changes are broadcast as
+`presence_list` snapshots.
 `guardrail:forbidden` always rejects a join with `{"reason":"forbidden"}`.
 Unknown inbound events return `{"reason":"unknown_event"}`.
 
@@ -86,7 +87,7 @@ they block or do substantial work.
 ## Health and stats
 
 `/health` reports that the HTTP server can answer; it does not query the
-coordinator or dependencies.
+socket runtime or dependencies.
 
 A successful `/stats` response is:
 
@@ -96,8 +97,7 @@ A successful `/stats` response is:
     "connected_sockets": 0,
     "joined_socket_topic_pairs": 0,
     "active_topics": 0,
-    "registered_channel_handlers": 2,
-    "coordinator_mailbox_length": 0
+    "runtime_mailbox_length": 0
   },
   "beam": {
     "process_count": 0,
@@ -116,11 +116,11 @@ The numbers above illustrate the JSON shape, not expected values.
 | Status | Body | Cause |
 |---:|---|---|
 | `200` | Object shown above | Both snapshots succeeded |
-| `503` | `{"error":"coordinator_unavailable"}` | Beryl coordinator unavailable |
+| `503` | `{"error":"runtime_unavailable"}` | Beryl socket runtime unavailable |
 | `503` | `{"error":"runtime_stats_unavailable"}` | BEAM snapshot FFI failed |
-| `504` | `{"error":"coordinator_timeout"}` | Coordinator snapshot request timed out |
+| `504` | `{"error":"runtime_timeout"}` | Socket runtime snapshot request timed out |
 
-Snapshots are local to one coordinator and one BEAM node. Poll no more often
+Snapshots are local to one socket runtime and one BEAM node. Poll no more often
 than roughly once per second; under load, a `504` is a signal rather than a
 zero-valued sample.
 

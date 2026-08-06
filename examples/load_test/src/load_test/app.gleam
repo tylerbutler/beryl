@@ -1,7 +1,7 @@
 import beryl
-import beryl/presence
 import beryl/wire
 import envoy
+import example_helpers/session_presence
 import gleam/int
 import gleam/otp/static_supervisor
 import gleam/result
@@ -13,15 +13,16 @@ pub type App {
 }
 
 pub fn start() -> App {
-  let assert Ok(presence_actor) =
-    presence.start(presence.default_config("load-test"))
+  let presence_tracker = session_presence.start()
   let assert Ok(#(channels, spec)) =
     beryl.child_spec(
-      environment_config()
-        |> beryl.with_presence_handle(presence_actor),
+      environment_config(),
       init: channel.init,
-      update: channel.update,
+      update: fn(model, input) {
+        channel.update(presence_tracker, model, input)
+      },
     )
+  session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)

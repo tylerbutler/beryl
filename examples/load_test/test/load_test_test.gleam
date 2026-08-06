@@ -4,7 +4,9 @@ import beryl/stats
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import example_helpers/session_presence
 import gleam/erlang/process
+import gleam/option
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit
@@ -19,12 +21,16 @@ pub fn main() {
 }
 
 fn start_system() -> beryl.Sockets {
+  let presence_tracker = session_presence.start()
   let assert Ok(#(sockets, spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: channel.init,
-      update: channel.update,
+      update: fn(model, input) {
+        channel.update(presence_tracker, model, input)
+      },
     )
+  session_presence.configure(presence_tracker, sockets)
   let assert Ok(_) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
@@ -37,17 +43,20 @@ fn connect(
   socket_id: String,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
-  transport.socket_connected(
+  transport.admit_socket(
     channels: sockets,
+    owner: transport.connection_owner(sockets),
     socket_id: socket_id,
     send: fn(message) {
       process.send(sent, message)
       Ok(Nil)
     },
     send_binary: fn(_) { Ok(Nil) },
+    codec: option.None,
     seed: event.empty_seed(),
+    close: fn() { Nil },
   )
-  process.sleep(10)
+  |> should.equal(Ok(Nil))
   sent
 }
 
@@ -96,7 +105,7 @@ pub fn health_endpoint_test() {
 }
 
 pub fn stats_errors_have_typed_http_statuses_test() {
-  http.stats_error(stats.CoordinatorUnavailable).status |> should.equal(503)
+  http.stats_error(stats.RuntimeUnavailable).status |> should.equal(503)
   http.stats_error(stats.RequestTimedOut).status |> should.equal(504)
 }
 
