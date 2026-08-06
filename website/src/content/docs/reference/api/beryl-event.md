@@ -272,9 +272,11 @@ A reply correlation handle.
 
  Carried by `Join` and (when the client requested a reply) `Message`
  events. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
- effects. `Ref` is an ordinary value: it may be stored in the model and
- used from a later `update` turn (for example, replying from an `Info`
- event once an async lookup completes).
+ effects. Message refs may be stored in the model and answered from a later
+ `update` turn (for example, after an async lookup completes). Join refs are
+ valid only for their pending join and carry a unique runtime token, so a
+ delayed completion for an older same-topic join cannot answer a replacement
+ or retry.
 
 ```gleam
 pub type Ref
