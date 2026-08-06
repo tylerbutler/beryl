@@ -49,7 +49,7 @@ The Phoenix JS client in `priv/static/app.js` uses a relative `/socket` URL, so 
 |---|---|
 | **App dispatch** | `cursor:*` topics handle join/leave and cursor events |
 | **Topic patterns** | Wildcard `cursor:*` routing matches any cursor room |
-| **Presence (CRDT)** | Tracks connected users with username + color metadata |
+| **Session presence (ETS)** | The example-local `session_presence` tracker stores connected users and their username + color metadata in ETS |
 | **PubSub** | `broadcast_from` fans out cursor moves to all other clients |
 | **Wire protocol** | Phoenix-compatible format — works with the official Phoenix JS client |
 | **WebSocket transport** | `mist_transport.upgrade()` handles Phoenix-compatible WebSocket requests |
@@ -65,7 +65,7 @@ Browser (vanilla JS + Phoenix client)
 Server (Gleam)
   ├── Mist HTTP routing ── serves HTML + static files
   ├── beryl app-side dispatch ── cursor:* topics (cursors/app)
-  ├── beryl presence ── CRDT-backed user tracking
+  ├── example session_presence ── ETS-backed user tracking
   └── beryl pubsub ── broadcast cursor positions
 ```
 
