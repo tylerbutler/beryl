@@ -27,7 +27,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/json
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/otp/static_supervisor
 import gleam/result
 import mist
@@ -40,6 +40,7 @@ type Model {
     socket_id: String,
     cursors: Dict(String, cursors_app.Model),
     rooms: Dict(String, chat_app.Model),
+    lobby: Option(chat_app.Lobby),
     docs: Dict(String, docs_app.Model),
   )
 }
@@ -89,6 +90,7 @@ pub fn main() {
             socket_id: info.socket_id,
             cursors: dict.new(),
             rooms: dict.new(),
+            lobby: None,
             docs: dict.new(),
           ),
           [],
@@ -164,6 +166,10 @@ fn update(ctx: Ctx, model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
   case ev {
     event.Join(topic, payload, ref) ->
       case topic {
+        "lobby" -> {
+          let #(lobby, effects) = chat_app.lobby_join(ref)
+          event.Next(Model(..model, lobby: Some(lobby)), effects)
+        }
         "cursor:" <> _ -> {
           let #(joined, effects) =
             cursors_app.join(ctx.cursors, model.socket_id, topic, payload, ref)
@@ -190,6 +196,15 @@ fn update(ctx: Ctx, model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
 
     event.Message(topic, event_name, payload, ref) ->
       case topic {
+        "lobby" ->
+          case model.lobby {
+            Some(lobby) -> {
+              let #(lobby, effects) =
+                chat_app.lobby_update(lobby, event_name, payload, ref)
+              event.Next(Model(..model, lobby: Some(lobby)), effects)
+            }
+            None -> event.Next(model, [])
+          }
         "cursor:" <> _ ->
           case dict.get(model.cursors, topic) {
             Ok(sub) -> {
@@ -245,6 +260,15 @@ fn update(ctx: Ctx, model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
 
     event.Closed(topic, _reason) ->
       case topic {
+        "lobby" ->
+          case model.lobby {
+            Some(lobby) ->
+              event.Next(
+                Model(..model, lobby: None),
+                chat_app.lobby_closed(lobby),
+              )
+            None -> event.Next(model, [])
+          }
         "cursor:" <> _ ->
           case dict.get(model.cursors, topic) {
             Ok(sub) ->

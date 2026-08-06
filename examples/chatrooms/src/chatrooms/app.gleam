@@ -200,8 +200,8 @@ pub fn lobby_closed(_model: Lobby) -> List(Effect) {
   []
 }
 
-/// Socket-wide state for the standalone chatrooms server: one per-topic
-/// `Model` per joined `room:*` topic, keyed by topic.
+/// Socket-wide state for the standalone chatrooms server: the optional
+/// application lobby plus one `Model` per joined `room:*` topic.
 pub type Standalone {
   Standalone(
     socket_id: String,
@@ -218,9 +218,8 @@ pub fn standalone_init(
 }
 
 /// `update` for the standalone chatrooms app-dispatch runtime: route
-/// each event to the embeddable `join`/`update`/`closed` surface, keyed by
-/// topic. Non-`room:*` joins are rejected (fail closed), preserving the
-/// example's topic-namespace boundary.
+/// lobby events through the lobby callbacks and `room:*` events through the
+/// embeddable `join`/`update`/`closed` surface. Other joins are rejected.
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,

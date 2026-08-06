@@ -101,7 +101,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
   <link rel=\"stylesheet\" href=\"" <> ctx.base_path <> "/static/style.css\">
 </head>
 <body>
-  <div id=\"app\">
+  <div id=\"app\" data-base-path=\"" <> ctx.base_path <> "\">
     <nav id=\"rooms-sidebar\">
       <h2>Rooms</h2>
       <ul id=\"room-list\">" <> room_options <> "</ul>

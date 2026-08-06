@@ -93,6 +93,19 @@ test.describe("Chat Rooms Demo", () => {
   });
 
   test.describe("Lobby channel", () => {
+    test("requests room counts from the standalone mount", async ({ page }) => {
+      const roomRequests = [];
+      page.on("request", (request) => {
+        if (request.url().includes("/api/rooms")) {
+          roomRequests.push(new URL(request.url()).pathname);
+        }
+      });
+
+      await gotoWithUsername(page, "MountUser");
+
+      await expect.poll(() => roomRequests).toContain("/api/rooms");
+    });
+
     test("joins lobby and a room on the same socket", async ({ page }) => {
       const joinedTopics = [];
       page.on("websocket", (ws) => {

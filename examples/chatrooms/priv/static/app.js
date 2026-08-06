@@ -40,12 +40,14 @@
   const msgInput = document.getElementById("msg-input");
   const sendBtn = document.getElementById("send-btn");
   const userList = document.getElementById("user-list");
+  const basePath = document.getElementById("app").dataset.basePath || "";
+  const roomsUrl = `${basePath}/api/rooms`;
 
   async function refreshRoomCounts() {
     const requestSequence = ++roomRefreshSequence;
 
     try {
-      const response = await fetch("/api/rooms");
+      const response = await fetch(roomsUrl);
       if (!response.ok) {
         throw new Error(`Room refresh failed with ${response.status}`);
       }
