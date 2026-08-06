@@ -17,7 +17,7 @@ channel process per joined topic, and it calls your callbacks
 `socket.assigns`.
 
 In beryl, **your app owns the router**. There is no registry and no channel
-module: you pass one `init` and one `update` function to `beryl.start`, and
+module: you pass one `init` and one `update` function to `beryl.child_spec`, and
 every event for a socket — joins, messages, closes, server-side messages,
 across all of its topics — arrives at that `update` as an `event.Event(msg)`
 value. You route topics yourself with pattern matching, and per-socket state
@@ -222,7 +222,7 @@ cross-node replication.
 
 Where you would call `MyAppWeb.Endpoint.broadcast("room:lobby", "notice", %{})`
 from a controller or background job, call `beryl.broadcast` with the `Sockets`
-handle returned by `beryl.start`:
+handle returned alongside the child specification by `beryl.child_spec`:
 
 ```gleam
 beryl.broadcast(sockets, "room:lobby", "notice", json.object([]))
