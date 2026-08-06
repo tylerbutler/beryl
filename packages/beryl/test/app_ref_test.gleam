@@ -105,6 +105,36 @@ pub fn deferred_reply_from_info_is_delivered_test() {
   reply |> string.contains("\"late\":true") |> should.be_true
 }
 
+pub fn duplicate_outstanding_ref_is_rejected_then_reusable_test() {
+  let senders = process.new_subject()
+  let channels = start_system(senders)
+  let frames = h.connect(channels, "s1")
+  let assert Ok(sender) = process.receive(senders, 500)
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _join_reply = h.recv(frames)
+
+  // The first request stays outstanding. An explicit join_ref on the second
+  // frame is the same effective key as the first frame's omitted join_ref.
+  h.push(channels, "s1", "room:a", "stash", "r-2")
+  h.route(channels, "s1", "[\"jr-1\",\"r-2\",\"room:a\",\"stash\",{}]")
+  let duplicate = h.recv(frames)
+  duplicate |> string.contains("\"status\":\"error\"") |> should.be_true
+  duplicate |> string.contains("duplicate_ref") |> should.be_true
+
+  // Completing the original request frees the key.
+  event.notify(sender, ReplyStashed)
+  let first_reply = h.recv(frames)
+  first_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+
+  // The same effective key can be used again after completion.
+  h.push(channels, "s1", "room:a", "stash", "r-2")
+  h.recv_none(frames)
+  event.notify(sender, ReplyStashed)
+  let reused_reply = h.recv(frames)
+  reused_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+  reused_reply |> string.contains("\"later\":true") |> should.be_true
+}
+
 pub fn reply_after_topic_close_is_dropped_test() {
   let #(channels, senders) = start()
   let frames = h.connect(channels, "s1")
