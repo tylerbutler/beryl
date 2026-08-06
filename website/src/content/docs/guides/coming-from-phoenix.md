@@ -184,7 +184,8 @@ Crash isolation follows the event that entered `update`: a crash while handling
 a join rejects only that topic's join, while a crash during a message or topic
 update closes only the affected topic. A crash during `Info` or other
 app-level handling tears down the socket and all of its topics. Other sockets
-are unaffected.
+are unaffected. A crash while handling `Closed` is logged, and teardown
+continues.
 
 ## Presence
 
