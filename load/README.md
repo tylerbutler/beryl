@@ -169,7 +169,7 @@ Interpret the summary in this order:
    the generator could not schedule the requested rate. Generator CPU, event
    loop pressure, FDs, and ephemeral ports can produce client failures while
    `/stats` remains healthy.
-5. Rising coordinator mailbox/run queue, target resource saturation, or
+5. Rising runtime mailbox/run queue, target resource saturation, or
    telemetry latency concurrent with client degradation points toward the
    target. Healthy target signals with saturated generators, NAT, or proxies
    point elsewhere. Telemetry handlers themselves can become the bottleneck.
