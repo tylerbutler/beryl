@@ -1417,6 +1417,7 @@ fn to_runtime_config(config: Config) -> runtime.Config {
     max_topic_length: config.max_topic_length,
     max_event_length: config.max_event_length,
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
+    telemetry: config.telemetry,
     logging: internal_logging_config(config.logging),
   )
 }

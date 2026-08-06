@@ -10,6 +10,7 @@ import beryl/event
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
+import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/result
 import gleeunit/should
@@ -35,18 +36,22 @@ pub fn connect(
   socket_id: String,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
-  transport.socket_connected(
+  let owner = transport.connection_owner(channels)
+  transport.admit_socket(
     channels: channels,
+    owner: owner,
     socket_id: socket_id,
     send: fn(message) {
       process.send(sent, message)
       Ok(Nil)
     },
     send_binary: fn(_data) { Ok(Nil) },
+    codec: None,
     assigns: Nil,
     seed: event.empty_seed(),
+    close: fn() { Nil },
   )
-  process.sleep(10)
+  |> should.equal(Ok(Nil))
   sent
 }
 
