@@ -6,6 +6,7 @@
 import app_test_helpers as h
 import beryl
 import beryl/event.{AcceptJoin, Closed, Info, Join, Message, Next}
+import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
@@ -154,7 +155,22 @@ pub fn init_crash_leaves_socket_unregistered_test() {
       init: fn(_info) { panic as "init crash" },
       update: fn(model: Nil, _ev: event.Event(Msg)) { Next(model, []) },
     )
-  let frames = h.connect(channels, "s1")
+  let frames = process.new_subject()
+  transport.admit_socket(
+    channels: channels,
+    owner: transport.connection_owner(channels),
+    socket_id: "s1",
+    send: fn(message) {
+      process.send(frames, message)
+      Ok(Nil)
+    },
+    send_binary: fn(_data) { Ok(Nil) },
+    codec: None,
+    assigns: Nil,
+    seed: event.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.be_error
 
   // The socket was never registered: joins are ignored, no frames arrive.
   h.join(channels, "s1", "room:a", "jr-1", "r-1")

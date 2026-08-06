@@ -985,10 +985,13 @@ fn deliver_join(
   started_at: Int,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   // The Closed delivered for a duplicate join may have stopped the socket.
-  use <- bool.guard(when: !dict.has_key(state.sockets, socket_id), return: {
-    emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
-    actor.continue(state)
-  })
+  use <- bool.lazy_guard(
+    when: !dict.has_key(state.sockets, socket_id),
+    return: fn() {
+      emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
+      actor.continue(state)
+    },
+  )
   state.logger
   |> log.debug("Join delivered", [
     #("socket_id", socket_id),
