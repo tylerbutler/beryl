@@ -1,6 +1,7 @@
 # Chat Rooms — beryl demo
 
-A multi-room chat application demonstrating beryl's real-time channels, groups, presence, and authentication features.
+A multi-room chat application demonstrating beryl's real-time channels, groups,
+and authentication features with example-local, ETS-backed session presence.
 
 ## Quick Start
 
@@ -36,7 +37,7 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 | **Broadcast** | `beryl/event` | System join/leave messages broadcast to room |
 | **error code** | `chatrooms/app` | Empty message validation returns code 422 |
 | **Topic helpers** | `beryl/topic` | Extract room name from `room:*` pattern |
-| **Presence typing** | `beryl/presence` | Typing indicators via presence meta updates |
+| **Session presence** | `example_helpers/session_presence` | ETS-backed online users and typing metadata |
 | **join_rate** | `beryl` | 5 joins/sec per socket |
 | **channel_rate** | `beryl` | 10 msg/sec per channel |
 | **Multiple topics** | `beryl` | Each room is a separate topic |
@@ -51,7 +52,7 @@ Gleam/BEAM server (port 8001)
   ├── Mist WebSocket transport (on_connect auth)
   ├── beryl app-side dispatch (room:* topics via chatrooms/app)
   ├── beryl groups ("public" → general, random, help)
-  └── beryl presence (online users + typing indicators)
+  └── example session_presence (ETS-backed online users + typing indicators)
 ```
 
 ## Running Tests

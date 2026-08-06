@@ -43,7 +43,7 @@ let ref = presence.track(
   p,
   "room:lobby",   // topic
   "user:alice",    // key (groups multiple connections)
-  socket_id,       // pid (unique per connection)
+  socket_id,       // session ID (unique per connection)
   json.object([    // metadata
     #("status", json.string("online")),
     #("joined_at", json.int(1234567890)),
@@ -51,7 +51,8 @@ let ref = presence.track(
 )
 ```
 
-The **key** groups multiple connections from the same user. The **pid** uniquely identifies each connection (typically the socket ID).
+The **key** groups multiple connections from the same user. The **session ID**
+uniquely identifies each connection (typically the socket ID).
 
 ## Untracking
 
@@ -67,7 +68,7 @@ presence.untrack_all(p, socket_id)
 created. Hold onto that ref if you need to remove one specific presence later
 with `untrack`. To clear every presence for a disconnecting socket, use
 `untrack_all` with the session ID instead. The string `session_id` identifies
-the logical session; it is not a BEAM process PID.
+the logical session; it is not a BEAM process identifier.
 
 ## Listing presences
 
