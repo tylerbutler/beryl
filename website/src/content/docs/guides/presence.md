@@ -59,14 +59,15 @@ The **key** groups multiple connections from the same user. The **pid** uniquely
 // Remove a specific presence, using the ref returned by `track`
 presence.untrack(p, ref)
 
-// Remove all presences for a session id / socket (e.g., on disconnect)
+// Remove all presences for a session ID / socket (e.g., on disconnect)
 presence.untrack_all(p, socket_id)
 ```
 
 `track` returns a server-generated ref that identifies exactly the presence it
 created. Hold onto that ref if you need to remove one specific presence later
 with `untrack`. To clear every presence for a disconnecting socket, use
-`untrack_all` with the session id instead.
+`untrack_all` with the session ID instead. The string `session_id` identifies
+the logical session; it is not a BEAM process PID.
 
 ## Listing presences
 
