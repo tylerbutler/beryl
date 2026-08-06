@@ -218,9 +218,6 @@ pub opaque type Config {
     /// Per-topic-pattern message rate limits (app-dispatch systems only).
     /// Ordered; the first matching pattern wins.
     topic_rates: List(#(String, rate_limit.RateLimitConfig)),
-    /// Presence handle used by the `PresenceTrack`/`PresenceUntrack`
-    /// effects (app-dispatch systems only).
-    presence: Option(presence.Presence),
   )
 }
 
@@ -267,7 +264,6 @@ pub fn config(codec: codec.Codec) -> Config {
     telemetry: False,
     logging: logging_config(level: InfoLevel, include_payloads: False),
     topic_rates: [],
-    presence: None,
   )
 }
 
@@ -291,16 +287,6 @@ pub fn with_topic_rate(
       #(pattern, rate_limit.config(per_second: rate, burst: burst)),
     ]),
   )
-}
-
-/// Attach a presence handle for app-dispatch systems (`start_app`), used
-/// by the `PresenceTrack`/`PresenceUntrack` effects. Without a handle
-/// those effects are dropped with a warning.
-pub fn with_presence_handle(
-  config: Config,
-  presence presence: presence.Presence,
-) -> Config {
-  Config(..config, presence: Some(presence))
 }
 
 /// Add PubSub to a configuration for distributed broadcasts
@@ -1393,7 +1379,6 @@ fn to_runtime_config(config: Config) -> runtime.Config {
     max_event_length: config.max_event_length,
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
     logging: internal_logging_config(config.logging),
-    presence: config.presence,
   )
 }
 
@@ -1431,7 +1416,13 @@ pub fn transport_socket_connected(
     Channels(coordinator: coordinator_subject, ..) ->
       process.send(
         coordinator_subject,
-        coordinator.SocketConnected(socket_id, send, send_binary, codec, assigns),
+        coordinator.SocketConnected(
+          socket_id,
+          send,
+          send_binary,
+          codec,
+          assigns,
+        ),
       )
     AppChannels(app: app, ..) ->
       app.socket_connected(socket_id, send, send_binary, codec, seed)

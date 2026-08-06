@@ -149,16 +149,6 @@ pub type Effect {
   Broadcast(topic: String, event: String, payload: Json)
   /// Broadcast to every subscriber of a topic except this socket.
   BroadcastFrom(topic: String, event: String, payload: Json)
-  /// Track this socket's presence under a key in a topic and broadcast the
-  /// corresponding `presence_diff` join. Requires a presence handle on the
-  /// config (`beryl.with_presence_handle`); dropped with a warning
-  /// otherwise. Tracking an already-tracked key replaces the previous
-  /// entry.
-  PresenceTrack(topic: String, key: String, meta: Json)
-  /// Untrack a presence previously tracked with `PresenceTrack` and
-  /// broadcast the corresponding `presence_diff` leave. Remaining tracked
-  /// keys are untracked automatically when their topic closes.
-  PresenceUntrack(topic: String, key: String)
   /// Close this socket's subscription to a topic. The topic receives a
   /// `Closed(topic, Shutdown)` event and the client a terminal frame.
   KickTopic(topic: String)
