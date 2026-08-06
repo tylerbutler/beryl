@@ -180,9 +180,11 @@ pub type Msg {
 See [Routing many topics from one app](/guides/dispatch/#routing-many-topics-from-one-app)
 for the full pattern.
 
-Crash blast radius matches this granularity and still ends at the socket: a
-crashing `update` takes down that socket's model and its joined topics, and
-does not affect other sockets.
+Crash isolation follows the event that entered `update`: a crash while handling
+a join rejects only that topic's join, while a crash during a message or topic
+update closes only the affected topic. A crash during `Info` or other
+app-level handling tears down the socket and all of its topics. Other sockets
+are unaffected.
 
 ## Presence
 
