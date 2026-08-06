@@ -193,6 +193,93 @@ pub fn limiter_survives_runtime_restart_test() {
   process.is_alive(limiter) |> should.be_false
 }
 
+// ── a runtime crash while stopping does not poison later lifecycle events ──
+
+pub fn runtime_crash_during_stop_recovers_and_second_stop_succeeds_test() {
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: accepting_init,
+      update: accepting_update,
+    )
+
+  let recovered_runtime = crash_runtime_during_stop(sockets)
+  process.is_alive(recovered_runtime) |> should.be_true
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  process.is_alive(recovered_runtime) |> should.be_false
+  beryl.app_runtime_pid(sockets) |> should.be_error
+}
+
+pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() {
+  let assert Ok(#(sockets, beryl_spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(5),
+      init: accepting_init,
+      update: accepting_update,
+    )
+  let assert Ok(root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.start()
+
+  test_helpers.wait_until(
+    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    2000,
+    10,
+  )
+  let original_limiter = limiter_pid(sockets)
+  let runtime2 = crash_runtime_during_stop(sockets)
+
+  // The crash during stop counts as the first failure in the nested
+  // supervisor's restart window. Three more rapid crashes must therefore
+  // exhaust it and restart the whole Beryl subtree under the application root.
+  process.kill(runtime2)
+  let runtime3 = wait_for_new_runtime(sockets, runtime2)
+  process.kill(runtime3)
+  let runtime4 = wait_for_new_runtime(sockets, runtime3)
+  process.kill(runtime4)
+
+  test_helpers.wait_until(
+    fn() {
+      case beryl.app_limiter_pid(sockets), beryl.app_runtime_pid(sockets) {
+        Ok(limiter), Ok(runtime) ->
+          limiter != original_limiter && runtime != runtime4
+        _, _ -> False
+      }
+    },
+    3000,
+    10,
+  )
+
+  process.is_alive(root.pid) |> should.be_true
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+fn crash_runtime_during_stop(sockets: beryl.Sockets) -> process.Pid {
+  let gate = new_gate()
+  let stop_entered = process.new_subject()
+  let stop_result = process.new_subject()
+  let old_runtime = runtime_pid(sockets)
+
+  admit(sockets, transport.connection_owner(sockets), "crash-during-stop", fn() {
+    process.send(stop_entered, Nil)
+    wait_for_gate(gate)
+  })
+  |> should.equal(Ok(Nil))
+
+  let _stopper =
+    process.spawn(fn() { process.send(stop_result, beryl.stop(sockets)) })
+
+  process.receive(stop_entered, 1000) |> should.equal(Ok(Nil))
+  process.kill(old_runtime)
+  process.receive(stop_result, 2000)
+  |> should.equal(Ok(Error(beryl.StopTimeout)))
+
+  wait_for_new_runtime(sockets, old_runtime)
+}
+
 // ── restart-intensity exhaustion is escalated to the application root ──────
 
 pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() {
