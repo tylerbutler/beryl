@@ -51,8 +51,8 @@ PubSub, heartbeats, and the JSON array wire format.
 | `{:stop, reason, socket}` (ends one channel) | `event.KickTopic(topic)` for one topic, `event.Stop(reason)` for the whole socket |
 | `MyAppWeb.Endpoint.broadcast/3` from anywhere | `beryl.broadcast(sockets, topic, event, payload)` |
 | `Phoenix.PubSub` | `beryl/pubsub`, also built on `pg` |
-| `Phoenix.Presence.track/3` / `untrack/3` | `event.PresenceTrack(topic, key, meta)` / `event.PresenceUntrack(topic, key)` effects |
-| `push(socket, "presence_state", Presence.list(socket))` | `event.PushPresence(topic, "presence_state", presence_wire.encode_state)` |
+| `Phoenix.Presence.track/3` / `untrack/3` | send a nonblocking command to an application-owned presence worker |
+| `push(socket, "presence_state", Presence.list(socket))` | have that worker call `beryl.broadcast` after the presence operation completes |
 | `intercept` / `handle_out` | no equivalent — shape payloads before `Broadcast`, or per-socket with `Push` |
 
 ## Side by side: a room channel
@@ -196,27 +196,28 @@ def handle_info(:after_join, socket) do
 end
 ```
 
-— collapses into the `Join` arm, because effect ordering makes "ack first,
-then track, then send the snapshot" a single list:
+— becomes an accepted join plus a command to an application-owned presence
+worker. Presence calls can block, so they do not run in Beryl's shared runtime:
 
 ```gleam
 event.Join(topic_name, _payload, ref) ->
-  event.Next(model, [
-    event.AcceptJoin(ref, None),
-    event.PresenceTrack(
-      topic_name,
-      "user:" <> model.user_id,
-      json.object([#("status", json.string("online"))]),
-    ),
-    event.PushPresence(topic_name, "presence_state", presence_wire.encode_state),
-  ])
+  {
+    process.send(
+      presence_worker,
+      TrackAndBroadcast(
+        topic_name,
+        "user:" <> model.user_id,
+        json.object([#("status", json.string("online"))]),
+      ),
+    )
+    event.Next(model, [event.AcceptJoin(ref, None)])
+  }
 ```
 
-`PushPresence` and `BroadcastPresence` read presence state when the effect is
-applied, so the snapshot already includes the `PresenceTrack` earlier in the
-same list. The wire payloads (`presence_state`, `presence_diff`) match Phoenix
-Presence's shapes. See the [Presence guide](/guides/presence/) for setup and
-cross-node replication.
+The worker performs `presence.track`, builds the Phoenix-shaped state, and
+calls `beryl.broadcast`. That broadcast returns through the runtime mailbox,
+after the current join turn has emitted its acknowledgment. See the
+[Presence guide](/guides/presence/) for setup and cross-node replication.
 
 ## Broadcasting from outside a socket
 
