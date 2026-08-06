@@ -1,5 +1,4 @@
 import beryl
-import beryl/presence
 import example_helpers/static
 import gleam/bytes_tree
 import gleam/http/request.{type Request}
@@ -7,11 +6,7 @@ import gleam/http/response.{type Response}
 import mist.{type Connection, type ResponseData}
 
 pub type Context {
-  Context(
-    channels: beryl.Channels,
-    presence: presence.Presence,
-    base_path: String,
-  )
+  Context(channels: beryl.Channels, base_path: String)
 }
 
 pub fn handle_request(
