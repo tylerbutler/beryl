@@ -207,6 +207,45 @@ pub fn message_rejection_rate_limit_and_crash_are_terminal_test() {
   detach(handler)
 }
 
+pub fn decoded_binary_route_preserves_message_kind_test() {
+  let handler = attach()
+  let sockets = start(telemetry_config())
+  let frames = h.connect(sockets, "decoded-binary")
+  expect_connected(handler) |> should.be_true
+
+  h.join(sockets, "decoded-binary", "room:lobby", "join-ref", "1")
+  let _joined = h.recv(frames)
+  expect_join(handler, "accepted") |> should.be_true
+
+  let text_event = "[\"join-ref\",\"text-ref\",\"room:lobby\",\"noop\",{}]"
+  let assert Ok(text_message) =
+    codec.decode_text(transport.active_codec(sockets))(text_event)
+  transport.route_decoded(sockets, "decoded-binary", text_message)
+  expect_message(handler, "text", "handled", "no_reply") |> should.be_true
+
+  let binary_event = <<
+    0,
+    8,
+    10,
+    10,
+    4,
+    "join-ref":utf8,
+    "binary-ref":utf8,
+    "room:lobby":utf8,
+    "noop":utf8,
+    1,
+  >>
+  let assert Some(decode_binary) =
+    codec.decode_binary(transport.active_codec(sockets))
+  let assert Ok(binary_message) = decode_binary(binary_event)
+  transport.route_decoded_binary(sockets, "decoded-binary", binary_message)
+  expect_message(handler, "binary", "handled", "no_reply") |> should.be_true
+
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  let assert Ok(Nil) = beryl.stop(sockets)
+}
+
 fn raw_binary_codec() -> codec.Codec {
   codec.new(
     decode_text: wire.decode_message,
