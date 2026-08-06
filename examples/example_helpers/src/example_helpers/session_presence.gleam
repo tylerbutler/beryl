@@ -1,49 +1,63 @@
-//// Example-local, actor-owned session snapshots.
+//// Example-local, ETS-backed session snapshots.
 ////
-//// App-side dispatch sends mutations to this actor without blocking the
-//// shared Beryl runtime. The actor publishes full snapshots by enqueueing a
-//// normal Beryl broadcast, which runs after the runtime turn that scheduled
-//// the mutation.
+//// Mutations and counts use constant-time ETS operations, so app-side
+//// dispatch never waits on another actor. A small publisher process enqueues
+//// full snapshots through a normal Beryl broadcast after each mutation.
 
 import beryl
-import gleam/dict.{type Dict}
+import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/json
 import gleam/option.{type Option, None, Some}
-import gleam/result
 
 const start_timeout_ms = 5000
 
 const call_timeout_ms = 1000
 
 pub opaque type Tracker {
-  Tracker(subject: Subject(Command))
+  Tracker(subject: Subject(Command), table: Dynamic)
 }
 
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
-  Track(topic: String, session_id: String, meta: json.Json)
-  Untrack(topic: String, session_id: String)
-  Count(topic: String, reply: Subject(Int))
+  Publish(topic: String)
 }
 
 type State {
-  State(
-    sockets: Option(beryl.Sockets),
-    topics: Dict(String, Dict(String, json.Json)),
-  )
+  State(sockets: Option(beryl.Sockets))
 }
 
+@external(erlang, "example_session_presence_ffi", "new_store")
+fn new_store() -> Dynamic
+
+@external(erlang, "example_session_presence_ffi", "track")
+fn store_track(
+  table: Dynamic,
+  topic: String,
+  session_id: String,
+  meta: json.Json,
+) -> Nil
+
+@external(erlang, "example_session_presence_ffi", "untrack")
+fn store_untrack(table: Dynamic, topic: String, session_id: String) -> Nil
+
+@external(erlang, "example_session_presence_ffi", "count")
+fn store_count(table: Dynamic, topic: String) -> Int
+
+@external(erlang, "example_session_presence_ffi", "snapshot")
+fn store_snapshot(table: Dynamic, topic: String) -> List(#(String, json.Json))
+
 pub fn start() -> Tracker {
+  let table = new_store()
   let ready = process.new_subject()
   let _pid =
     process.spawn_unlinked(fn() {
       let subject = process.new_subject()
       process.send(ready, subject)
-      loop(subject, State(sockets: None, topics: dict.new()))
+      loop(subject, table, State(sockets: None))
     })
   let assert Ok(subject) = process.receive(ready, start_timeout_ms)
-  Tracker(subject)
+  Tracker(subject, table)
 }
 
 pub fn configure(tracker: Tracker, sockets: beryl.Sockets) -> Nil {
@@ -58,70 +72,41 @@ pub fn track(
   session_id: String,
   meta: json.Json,
 ) -> Nil {
-  process.send(tracker.subject, Track(topic, session_id, meta))
+  store_track(tracker.table, topic, session_id, meta)
+  process.send(tracker.subject, Publish(topic))
 }
 
 pub fn untrack(tracker: Tracker, topic: String, session_id: String) -> Nil {
-  process.send(tracker.subject, Untrack(topic, session_id))
+  store_untrack(tracker.table, topic, session_id)
+  process.send(tracker.subject, Publish(topic))
 }
 
 pub fn count(tracker: Tracker, topic: String) -> Int {
-  process.call(tracker.subject, call_timeout_ms, fn(reply) {
-    Count(topic, reply)
-  })
+  store_count(tracker.table, topic)
 }
 
-fn loop(subject: Subject(Command), state: State) -> Nil {
+fn loop(subject: Subject(Command), table: Dynamic, state: State) -> Nil {
   let next = case process.receive_forever(subject) {
     Configure(sockets, reply) -> {
       process.send(reply, Nil)
-      State(..state, sockets: Some(sockets))
+      State(sockets: Some(sockets))
     }
-    Track(topic, session_id, meta) -> {
-      let sessions =
-        dict.get(state.topics, topic)
-        |> result.unwrap(dict.new())
-        |> dict.insert(session_id, meta)
-      publish(state.sockets, topic, sessions)
-      State(..state, topics: dict.insert(state.topics, topic, sessions))
-    }
-    Untrack(topic, session_id) -> {
-      let sessions =
-        dict.get(state.topics, topic)
-        |> result.unwrap(dict.new())
-        |> dict.delete(session_id)
-      publish(state.sockets, topic, sessions)
-      let topics = case dict.is_empty(sessions) {
-        True -> dict.delete(state.topics, topic)
-        False -> dict.insert(state.topics, topic, sessions)
-      }
-      State(..state, topics: topics)
-    }
-    Count(topic, reply) -> {
-      let count =
-        dict.get(state.topics, topic)
-        |> result.map(dict.size)
-        |> result.unwrap(0)
-      process.send(reply, count)
+    Publish(topic) -> {
+      publish(state.sockets, topic, store_snapshot(table, topic))
       state
     }
   }
-  loop(subject, next)
+  loop(subject, table, next)
 }
 
 fn publish(
   sockets: Option(beryl.Sockets),
   topic: String,
-  sessions: Dict(String, json.Json),
+  sessions: List(#(String, json.Json)),
 ) -> Nil {
   case sockets {
     Some(sockets) ->
-      beryl.broadcast(
-        sockets,
-        topic,
-        "presence_list",
-        json.object(dict.to_list(sessions)),
-      )
+      beryl.broadcast(sockets, topic, "presence_list", json.object(sessions))
     None -> Nil
   }
 }
