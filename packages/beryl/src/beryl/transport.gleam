@@ -15,10 +15,10 @@
 ////    slot with `release_connection_slot`.
 
 import beryl
-import beryl/socket
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
+import beryl/socket
 import beryl/telemetry
 import beryl/wire/codec
 import gleam/bool

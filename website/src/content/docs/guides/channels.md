@@ -11,7 +11,7 @@ handler registry and no per-topic callback modules.
 
 ```gleam
 import beryl
-import beryl/event.{type Input, type Next}
+import beryl/socket.{type Input, type Next}
 import beryl/wire
 import gleam/otp/static_supervisor
 
@@ -42,10 +42,10 @@ Topics are colon-delimited string identifiers like `room:lobby` or
 
 ```gleam
 case ev {
-  event.Join("room:" <> room_id, payload, ref) -> // accept or reject
-  event.Join("admin", payload, ref) -> // ...
-  event.Join(_, _, ref) ->
-    event.Next(model, [event.RejectJoin(ref, unknown_topic_error())])
+  socket.Join("room:" <> room_id, payload, ref) -> // accept or reject
+  socket.Join("admin", payload, ref) -> // ...
+  socket.Join(_, _, ref) ->
+    socket.Next(model, [socket.RejectJoin(ref, unknown_topic_error())])
   // ...
 }
 ```
@@ -69,7 +69,7 @@ topic.extract_wildcards(
 
 ## Events
 
-`update` receives one of five inputs (`beryl/event.Input(msg)`):
+`update` receives one of five inputs (`beryl/socket.Input(msg)`):
 
 | Input | When |
 |-------|------|
@@ -102,7 +102,7 @@ accepted yet are dropped. An `AcceptJoin` earlier in the list is guaranteed
 to reach the wire before a `Push` later in the same list.
 
 To end the whole socket instead of returning effects, return
-`event.Stop(reason)`.
+`socket.Stop(reason)`.
 
 ## A minimal topic app
 
@@ -111,7 +111,7 @@ message types are used directly:
 
 ```gleam
 import beryl
-import beryl/event.{
+import beryl/socket.{
   type Input, type Next, AcceptJoin, Broadcast, Join, Message, Next, ReplyOk,
 }
 import beryl/wire
@@ -148,7 +148,7 @@ fn update(model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
     }
     Join(_, _, ref) ->
       Next(model, [
-        event.RejectJoin(
+        socket.RejectJoin(
           ref,
           json.object([#("reason", json.string("unknown_topic"))]),
         ),
@@ -163,7 +163,7 @@ fn update(model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
       // No reply needed
       Next(model, [])
 
-    event.Closed(_topic, _reason) ->
+    socket.Closed(_topic, _reason) ->
       // Clean up anything this topic owned
       Next(Model(..model, joined: False), [])
 
@@ -190,37 +190,37 @@ type Model {
 
 fn update(ctx: chat.Ctx, model: Model, ev: Input(Msg)) -> Next(Model, Msg) {
   case ev {
-    event.Join(topic, payload, ref) ->
+    socket.Join(topic, payload, ref) ->
       case topic {
         "room:" <> _ -> {
           let #(joined, effects) =
             chat.join(ctx, model.socket_id, topic, payload, ref)
-          event.Next(store(model, topic, joined), effects)
+          socket.Next(store(model, topic, joined), effects)
         }
-        _ -> event.Next(model, [event.RejectJoin(ref, unknown_topic())])
+        _ -> socket.Next(model, [socket.RejectJoin(ref, unknown_topic())])
       }
 
-    event.Message(topic, event_name, payload, ref) ->
+    socket.Message(topic, event_name, payload, ref) ->
       case dict.get(model.rooms, topic) {
         Ok(sub) -> {
           let #(sub, effects) =
             chat.update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
-          event.Next(store(model, topic, Some(sub)), effects)
+          socket.Next(store(model, topic, Some(sub)), effects)
         }
-        Error(Nil) -> event.Next(model, [])
+        Error(Nil) -> socket.Next(model, [])
       }
 
-    event.Closed(topic, _reason) ->
+    socket.Closed(topic, _reason) ->
       case dict.get(model.rooms, topic) {
         Ok(sub) ->
-          event.Next(
+          socket.Next(
             Model(..model, rooms: dict.delete(model.rooms, topic)),
             chat.closed(ctx, model.socket_id, topic, sub),
           )
-        Error(Nil) -> event.Next(model, [])
+        Error(Nil) -> socket.Next(model, [])
       }
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
@@ -239,7 +239,7 @@ socket this way.
 time:
 
 ```gleam
-init: fn(info: event.ConnectInfo(Msg)) {
+init: fn(info: socket.ConnectInfo(Msg)) {
   // info.socket_id — unique id for this socket
   // info.seed      — request path, query params, and headers from the upgrade
   // info.self      — typed Sender for server-side messages (see below)
@@ -265,7 +265,7 @@ type Msg {
   Notify(text: String)
 }
 
-init: fn(info: event.ConnectInfo(Msg)) {
+init: fn(info: socket.ConnectInfo(Msg)) {
   // Hand info.self to whatever server-side process needs to reach this
   // socket — a timer, a DB listener, a job runner.
   start_ticker(info.self)
@@ -273,7 +273,7 @@ init: fn(info: event.ConnectInfo(Msg)) {
 }
 
 // Elsewhere, in the ticker process:
-event.notify(sender, Tick(now_ms))
+socket.notify(sender, Tick(now_ms))
 ```
 
 The message arrives in `update` as `Info(Tick(at))` — an ordinary typed

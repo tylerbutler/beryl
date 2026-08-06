@@ -1,4 +1,4 @@
-import beryl/event.{
+import beryl/socket.{
   type Effect, type Input, type Next, AcceptJoin, Broadcast, Join, Message,
   RejectJoin, ReplyError, ReplyOk,
 }
@@ -21,20 +21,20 @@ pub fn update(
 ) -> Next(Nil, msg) {
   case input {
     Join("guardrail:forbidden", _, ref) ->
-      event.Next(model, [
+      socket.Next(model, [
         RejectJoin(ref, json.object([#("reason", json.string("forbidden"))])),
       ])
-    Join("bench:" <> _, _, ref) -> event.Next(model, [AcceptJoin(ref, None)])
+    Join("bench:" <> _, _, ref) -> socket.Next(model, [AcceptJoin(ref, None)])
     Join(_, _, ref) ->
-      event.Next(model, [
+      socket.Next(model, [
         RejectJoin(ref, json.object([#("reason", json.string("unmatched"))])),
       ])
     Message(topic, event_name, payload, ref) ->
-      event.Next(
+      socket.Next(
         model,
         message_effects(presence, topic, event_name, payload, ref),
       )
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 
@@ -43,7 +43,7 @@ pub fn message_effects(
   topic: String,
   event_name: String,
   payload: Dynamic,
-  ref: Option(event.Ref),
+  ref: Option(socket.Ref),
 ) -> List(Effect) {
   case event_name {
     "echo" -> reply_ok(ref, wire.dynamic_to_json(payload))
@@ -83,7 +83,7 @@ fn track(
   presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
-  ref: Option(event.Ref),
+  ref: Option(socket.Ref),
 ) -> List(Effect) {
   case key_and_meta(payload) {
     Error(_) ->
@@ -102,7 +102,7 @@ fn untrack(
   presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
-  ref: Option(event.Ref),
+  ref: Option(socket.Ref),
 ) -> List(Effect) {
   let decoder = {
     use key <- decode.field("key", decode.string)
@@ -121,14 +121,14 @@ fn untrack(
   }
 }
 
-fn reply_error(ref: Option(event.Ref), payload: json.Json) -> List(Effect) {
+fn reply_error(ref: Option(socket.Ref), payload: json.Json) -> List(Effect) {
   case ref {
     Some(value) -> [ReplyError(value, payload)]
     None -> []
   }
 }
 
-fn reply_ok(ref: Option(event.Ref), payload: json.Json) -> List(Effect) {
+fn reply_ok(ref: Option(socket.Ref), payload: json.Json) -> List(Effect) {
   case ref {
     Some(value) -> [ReplyOk(value, payload)]
     None -> []

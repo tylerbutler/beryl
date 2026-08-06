@@ -269,7 +269,10 @@ fn rejected_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
     case ev {
       socket.Join(_topic, _payload, ref) ->
         socket.Next(model, [
-          socket.RejectJoin(ref, json.object([#("reason", json.string("nope"))])),
+          socket.RejectJoin(
+            ref,
+            json.object([#("reason", json.string("nope"))]),
+          ),
         ])
       _ -> socket.Next(model, [])
     }

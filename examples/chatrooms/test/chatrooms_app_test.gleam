@@ -1,5 +1,5 @@
-import beryl/socket
 import beryl/group
+import beryl/socket
 import chatrooms/app
 import example_helpers/session_presence
 import gleam/dict
@@ -100,7 +100,11 @@ pub fn closing_lobby_preserves_room_models_test() {
     )
 
   let next =
-    app.standalone_update(context(), model, socket.Closed("lobby", socket.Normal))
+    app.standalone_update(
+      context(),
+      model,
+      socket.Closed("lobby", socket.Normal),
+    )
 
   let assert socket.Next(
     app.Standalone(socket_id: _, rooms: rooms, lobby: None),

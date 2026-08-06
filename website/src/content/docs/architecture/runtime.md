@@ -21,7 +21,7 @@ The runtime maintains four categories of state:
 
 The runtime actor is generic over the app's `model` and `msg` types. `beryl.child_spec` captures those types in a record of monomorphic closures at construction time, so the public `Sockets` handle — and the frame-level transport SPI behind it — stays unparameterized while the runtime holds fully typed state. This is plain closure capture by a generic function: there are no unchecked casts, `Dynamic` round-trips, or identity FFI in the socket-dispatch path. PubSub separately validates the frozen raw mailbox record before its package-internal payload coercion.
 
-Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `event.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
+Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `socket.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
 ## Input dispatch
 

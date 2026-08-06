@@ -1,9 +1,9 @@
 import app_test_helpers as h
 import beryl
 import beryl/error as beryl_error
-import beryl/socket
 import beryl/group
 import beryl/internal
+import beryl/socket
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec

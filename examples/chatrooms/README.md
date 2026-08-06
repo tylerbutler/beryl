@@ -34,17 +34,17 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 |---|---|---|
 | **Groups** | `beryl/group` | Rooms organized in "public" group |
 | **on_connect auth** | `beryl_mist` | Token query param validated before WS upgrade |
-| **RejectJoin** | `beryl/event` | Room capacity check rejects when full |
-| **ReplyOk** | `beryl/event` | Message delivery confirmed on the client's ref |
-| **Broadcast** | `beryl/event` | System join/leave messages broadcast to room |
+| **RejectJoin** | `beryl/socket` | Room capacity check rejects when full |
+| **ReplyOk** | `beryl/socket` | Message delivery confirmed on the client's ref |
+| **Broadcast** | `beryl/socket` | System join/leave messages broadcast to room |
 | **error code** | `chatrooms/app` | Empty message validation returns code 422 |
 | **Topic helpers** | `beryl/topic` | Extract room name from `room:*` pattern |
 | **Session presence** | `example_helpers/session_presence` | ETS-backed online users and typing metadata |
 | **join_rate** | `beryl` | 5 joins/sec per socket |
 | **channel_rate** | `beryl` | 10 msg/sec per channel |
 | **Multiple topics** | `beryl` | Each room is a separate topic |
-| **Multiple channel types** | `beryl/event` | Exact `lobby` topic plus wildcard `room:*` topics on one socket |
-| **Ordered dispatch** | `beryl/event` | Session tracker changes happen before lobby invalidations |
+| **Multiple channel types** | `beryl/socket` | Exact `lobby` topic plus wildcard `room:*` topics on one socket |
+| **Ordered dispatch** | `beryl/socket` | Session tracker changes happen before lobby invalidations |
 
 ## Architecture
 

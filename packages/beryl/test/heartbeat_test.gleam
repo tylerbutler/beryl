@@ -5,7 +5,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
@@ -18,7 +18,7 @@ import gleeunit/should
 /// that interval).
 fn start_hb_app(
   timeout_ms: Int,
-  events: process.Subject(event.Input(Nil)),
+  events: process.Subject(socket.Input(Nil)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
@@ -190,10 +190,10 @@ pub fn closed_delivered_with_heartbeat_timeout_reason_test() {
   beryl.stop(channels)
 }
 
-fn wait_for_closed(events: process.Subject(event.Input(Nil))) -> Nil {
+fn wait_for_closed(events: process.Subject(socket.Input(Nil))) -> Nil {
   let assert Ok(ev) = process.receive(events, 1000)
   case ev {
-    event.Closed("room:lobby", event.HeartbeatTimeout) -> Nil
+    socket.Closed("room:lobby", socket.HeartbeatTimeout) -> Nil
     _ -> wait_for_closed(events)
   }
 }
@@ -264,7 +264,7 @@ pub fn start_app_accepts_default_timeout_test() {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, _ev) { Next(model, []) },
     )
   beryl.stop(channels)
@@ -274,7 +274,7 @@ fn start_trivial(timeout_ms: Int) -> Result(beryl.Sockets, beryl.ConfigError) {
   h.start_app(
     beryl.config(wire.phoenix_codec())
       |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: timeout_ms),
-    init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+    init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
     update: fn(model, _ev) { Next(model, []) },
   )
 }

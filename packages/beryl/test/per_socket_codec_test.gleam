@@ -1,6 +1,6 @@
 import app_test_helpers as h
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
@@ -41,11 +41,11 @@ fn start_sockets() -> beryl.Sockets {
       init: fn(_info) { #(Nil, []) },
       update: fn(model, input) {
         case input {
-          event.Join(_, _, ref) ->
-            event.Next(model, [event.AcceptJoin(ref, option.None)])
-          event.Message(topic, _, _, _) ->
-            event.Next(model, [event.Push(topic, "echoed", json.object([]))])
-          _ -> event.Next(model, [])
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+          socket.Message(topic, _, _, _) ->
+            socket.Next(model, [socket.Push(topic, "echoed", json.object([]))])
+          _ -> socket.Next(model, [])
         }
       },
     )
@@ -68,7 +68,7 @@ fn connect(
     },
     send_binary: fn(_data) { Ok(Nil) },
     codec: socket_codec,
-    seed: event.empty_seed(),
+    seed: socket.empty_seed(),
     close: fn() { Nil },
   )
   |> should.equal(Ok(Nil))

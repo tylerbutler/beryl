@@ -1,6 +1,6 @@
 import app_test_helpers as h
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/stats
 import beryl/transport
 import beryl/wire
@@ -15,9 +15,9 @@ fn start_sockets() -> beryl.Sockets {
       init: fn(_info) { #(Nil, []) },
       update: fn(model, input) {
         case input {
-          event.Join(_, _, ref) ->
-            event.Next(model, [event.AcceptJoin(ref, None)])
-          _ -> event.Next(model, [])
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, None)])
+          _ -> socket.Next(model, [])
         }
       },
     )
@@ -75,14 +75,14 @@ pub fn snapshot_times_out_while_runtime_is_busy_test() {
       init: fn(_info) { #(Nil, []) },
       update: fn(model, input) {
         case input {
-          event.Join(_, _, ref) ->
-            event.Next(model, [event.AcceptJoin(ref, None)])
-          event.Message(_, "block", _, _) -> {
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, None)])
+          socket.Message(_, "block", _, _) -> {
             process.send(entered, Nil)
             process.sleep(1200)
-            event.Next(model, [])
+            socket.Next(model, [])
           }
-          _ -> event.Next(model, [])
+          _ -> socket.Next(model, [])
         }
       },
     )

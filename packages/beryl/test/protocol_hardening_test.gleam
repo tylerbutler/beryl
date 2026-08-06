@@ -3,7 +3,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Message, Next}
+import beryl/socket.{AcceptJoin, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/option
@@ -17,7 +17,7 @@ pub fn main() {
 
 /// Accepts every join and forwards every event to the observer.
 fn start_observed(
-  events: process.Subject(event.Input(Nil)),
+  events: process.Subject(socket.Input(Nil)),
   config: beryl.Config,
 ) -> beryl.Sockets {
   let assert Ok(channels) =

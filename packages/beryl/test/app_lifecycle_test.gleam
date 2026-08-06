@@ -24,11 +24,16 @@ const control_char = "\u{0001}"
 
 /// A minimal app system that accepts every join. Used to exercise the
 /// lifecycle plumbing without any topic-specific behavior.
-fn accepting_init(_info: socket.ConnectInfo(Nil)) -> #(Nil, List(socket.Effect)) {
+fn accepting_init(
+  _info: socket.ConnectInfo(Nil),
+) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn accepting_update(model: Nil, ev: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+fn accepting_update(
+  model: Nil,
+  ev: socket.Input(Nil),
+) -> socket.Next(Nil, Nil) {
   case ev {
     Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
     _ -> Next(model, [])

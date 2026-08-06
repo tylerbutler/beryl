@@ -1,12 +1,12 @@
 import beryl
-import beryl/event
+import beryl/socket
 import gleam/otp/static_supervisor
 import gleam/result
 
 pub fn start(
   config: beryl.Config,
-  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Input(msg)) -> event.Next(model, msg),
+  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(beryl.Sockets, beryl.ConfigError) {
   use #(sockets, spec) <- result.try(beryl.child_spec(config, init:, update:))
   let assert Ok(_) =

@@ -14,14 +14,14 @@
 //// are applied strictly in order within a single actor turn, so effect
 //// list order is wire order.
 
-import beryl/socket.{
-  type ConnectInfo, type ConnectSeed, type Effect, type Input, type Next,
-  type Ref, type StopReason,
-} as sock
 import beryl/internal
 import beryl/log.{type Logger}
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimitConfig}
+import beryl/socket.{
+  type ConnectInfo, type ConnectSeed, type Effect, type Input, type Next,
+  type Ref, type StopReason,
+} as sock
 import beryl/telemetry
 import beryl/topic.{type TopicPattern}
 import beryl/wire/codec.{type Codec}
@@ -1844,12 +1844,7 @@ fn drive(outcome: Outcome(model, msg), socket_id: String) -> State(model, msg) {
             False -> Outcome(outcome.state, rest, None)
             True -> {
               let closed =
-                close_topic(
-                  outcome.state,
-                  socket_id,
-                  topic_name,
-                  sock.Shutdown,
-                )
+                close_topic(outcome.state, socket_id, topic_name, sock.Shutdown)
               Outcome(
                 closed.state,
                 list.append(rest, closed.kicks),

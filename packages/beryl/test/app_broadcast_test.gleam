@@ -5,8 +5,8 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/socket.{AcceptJoin, Broadcast, BroadcastFrom, Join, Message, Next}
 import beryl/pubsub
+import beryl/socket.{AcceptJoin, Broadcast, BroadcastFrom, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/json

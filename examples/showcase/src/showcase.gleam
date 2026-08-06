@@ -8,8 +8,8 @@
 //// topic namespace, routed by topic prefix, pruned on `Closed`.
 
 import beryl
-import beryl/socket.{type Input, type Next}
 import beryl/group
+import beryl/socket.{type Input, type Next}
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app

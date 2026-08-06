@@ -13,8 +13,8 @@
 //// Wire behavior preserves the established room contract, including its
 //// replies (an ok-status reply carrying an error payload).
 
-import beryl/socket.{type Effect, type Ref}
 import beryl/group.{type Groups}
+import beryl/socket.{type Effect, type Ref}
 import example_helpers/color
 import example_helpers/payload
 import example_helpers/session_presence
@@ -95,7 +95,11 @@ pub fn join(
             Some(Model(username: username, color: color, room_name: room_name)),
             [
               socket.AcceptJoin(ref, Some(reply)),
-              socket.Broadcast("lobby", "rooms_changed", room_changed(room_name)),
+              socket.Broadcast(
+                "lobby",
+                "rooms_changed",
+                room_changed(room_name),
+              ),
               socket.Broadcast(topic, "new_msg", sys_payload),
             ],
           )

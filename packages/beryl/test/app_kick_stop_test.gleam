@@ -31,7 +31,8 @@ fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
           Message(_topic, "kick_b", _payload, _ref) ->
             Next(model, [KickTopic("room:b")])
           Message(_topic, "stop", _payload, _ref) -> Stop(socket.Normal)
-          Closed("room:b", socket.Shutdown) -> Next(model, [KickTopic("room:c")])
+          Closed("room:b", socket.Shutdown) ->
+            Next(model, [KickTopic("room:c")])
           _ -> Next(model, [])
         }
       },
@@ -68,7 +69,8 @@ pub fn kick_closes_topic_and_leaves_others_test() {
   let assert Ok(Message(_, "kick_b", _, _)) = process.receive(events, 500)
   // room:b is kicked, but the Closed for room:b chains a kick of room:c —
   // which is not joined, so the chain ends there.
-  let assert Ok(Closed("room:b", socket.Shutdown)) = process.receive(events, 500)
+  let assert Ok(Closed("room:b", socket.Shutdown)) =
+    process.receive(events, 500)
   let close_frame = h.recv(frames)
   close_frame |> string.contains("phx_close") |> should.be_true
   close_frame |> string.contains("room:b") |> should.be_true
@@ -88,8 +90,10 @@ pub fn kick_chain_from_closed_terminates_test() {
 
   let assert Ok(Message(_, "kick_b", _, _)) = process.receive(events, 500)
   // Kick of room:b delivers Closed, whose handling kicks room:c in turn.
-  let assert Ok(Closed("room:b", socket.Shutdown)) = process.receive(events, 500)
-  let assert Ok(Closed("room:c", socket.Shutdown)) = process.receive(events, 500)
+  let assert Ok(Closed("room:b", socket.Shutdown)) =
+    process.receive(events, 500)
+  let assert Ok(Closed("room:c", socket.Shutdown)) =
+    process.receive(events, 500)
   let close_b = h.recv(frames)
   close_b |> string.contains("room:b") |> should.be_true
   let close_c = h.recv(frames)

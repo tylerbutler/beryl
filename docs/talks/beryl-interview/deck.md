@@ -392,19 +392,19 @@ pub type Msg {
   UserLoaded(String)
 }
 
-fn update(model: Model, ev: event.Input(Msg)) {
+fn update(model: Model, ev: socket.Input(Msg)) {
   case ev {
-    event.Join("room:" <> _, payload, ref) -> {
+    socket.Join("room:" <> _, payload, ref) -> {
       let username = decode_username(payload)
-      event.Next(Model(username: Some(username)), [
-        event.AcceptJoin(ref, None),
+      socket.Next(Model(username: Some(username)), [
+        socket.AcceptJoin(ref, None),
       ])
     }
-    event.Message(topic, "typing", _payload, _ref) ->
-      event.Next(model, [event.BroadcastFrom(topic, "typing", json.null())])
-    event.Info(UserLoaded(username)) ->
-      event.Next(Model(..model, username: Some(username)), [])
-    _ -> event.Next(model, [])
+    socket.Message(topic, "typing", _payload, _ref) ->
+      socket.Next(model, [socket.BroadcastFrom(topic, "typing", json.null())])
+    socket.Info(UserLoaded(username)) ->
+      socket.Next(Model(..model, username: Some(username)), [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
@@ -426,8 +426,8 @@ Walk the flow:
 - `Msg` is also the app's type. Other actors send through the socket's
   `Sender(Msg)` and `update` receives `Info(UserLoaded(...))` with no
   callback-level erasure.
-- Cleanup is an `event.Closed(topic, reason)` branch. Returning
-  `event.Stop(reason)` tears down the whole socket.
+- Cleanup is an `socket.Closed(topic, reason)` branch. Returning
+  `socket.Stop(reason)` tears down the whole socket.
 
 Socket-level `on_connect` remains the Phoenix `UserSocket.connect` analogue:
 it can reject the upgrade and attach validated metadata to `ConnectSeed`

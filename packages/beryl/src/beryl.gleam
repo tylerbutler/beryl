@@ -58,7 +58,6 @@
 
 import beryl/app_supervisor
 import beryl/connection_limit
-import beryl/socket
 import beryl/internal
 import beryl/log
 import beryl/presence.{type Diff}
@@ -66,6 +65,7 @@ import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
 import beryl/runtime
+import beryl/socket
 import beryl/topic
 import beryl/wire/codec
 import gleam/bool
