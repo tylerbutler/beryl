@@ -15,22 +15,26 @@
 //// acknowledgment first and the push second.
 
 import gleam/dynamic.{type Dynamic}
+import gleam/erlang/reference.{type Reference}
 import gleam/json.{type Json}
-import gleam/option.{type Option}
+import gleam/option.{type Option, None, Some}
 
 /// A reply correlation handle.
 ///
 /// Carried by `Join` and (when the client requested a reply) `Message`
 /// events. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
-/// effects. `Ref` is an ordinary value: it may be stored in the model and
-/// used from a later `update` turn (for example, replying from an `Info`
-/// event once an async lookup completes).
+/// effects. Message refs may be stored in the model and answered from a later
+/// `update` turn (for example, after an async lookup completes). Join refs are
+/// valid only for their pending join and carry a unique runtime token, so a
+/// delayed completion for an older same-topic join cannot answer a replacement
+/// or retry.
 pub opaque type Ref {
   Ref(
     kind: RefKind,
     topic: String,
     join_ref: Option(String),
     msg_ref: Option(String),
+    join_token: Option(Reference),
   )
 }
 
@@ -46,7 +50,13 @@ pub fn make_join_ref(
   join_ref join_ref: Option(String),
   msg_ref msg_ref: Option(String),
 ) -> Ref {
-  Ref(kind: JoinRef, topic: topic, join_ref: join_ref, msg_ref: msg_ref)
+  Ref(
+    kind: JoinRef,
+    topic: topic,
+    join_ref: join_ref,
+    msg_ref: msg_ref,
+    join_token: Some(reference.new()),
+  )
 }
 
 @internal
@@ -55,12 +65,23 @@ pub fn make_message_ref(
   join_ref join_ref: Option(String),
   msg_ref msg_ref: Option(String),
 ) -> Ref {
-  Ref(kind: MessageRef, topic: topic, join_ref: join_ref, msg_ref: msg_ref)
+  Ref(
+    kind: MessageRef,
+    topic: topic,
+    join_ref: join_ref,
+    msg_ref: msg_ref,
+    join_token: None,
+  )
 }
 
 @internal
 pub fn ref_is_join(ref: Ref) -> Bool {
   ref.kind == JoinRef
+}
+
+@internal
+pub fn refs_match(first: Ref, second: Ref) -> Bool {
+  first == second
 }
 
 @internal

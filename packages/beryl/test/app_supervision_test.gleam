@@ -25,6 +25,21 @@ pub fn main() {
   gleeunit.main()
 }
 
+type Gate
+
+@external(erlang, "beryl_supervisor_test_ffi", "gate_new")
+fn new_gate() -> Gate
+
+@external(erlang, "beryl_supervisor_test_ffi", "gate_wait")
+fn wait_for_gate(gate: Gate) -> Nil
+
+@external(erlang, "beryl_supervisor_test_ffi", "gate_release")
+fn release_gate(gate: Gate) -> Nil
+
+type AdmissionMsg {
+  BlockRuntime(entered: process.Subject(Nil), gate: Gate)
+}
+
 // A minimal app system that accepts every join.
 fn accepting_init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
   #(Nil, [])
@@ -318,6 +333,86 @@ pub fn stale_runtime_owner_cannot_register_with_successor_test() {
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   process.receive(initialized, 100) |> should.be_error
   process.is_alive(runtime_pid(sockets)) |> should.be_true
+}
+
+pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
+  let initialized = process.new_subject()
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1),
+      init: fn(info: event.ConnectInfo(AdmissionMsg)) {
+        process.send(initialized, #(info.socket_id, info.self))
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          event.Info(BlockRuntime(entered, gate)) -> {
+            process.send(entered, Nil)
+            wait_for_gate(gate)
+            Next(model, [])
+          }
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          _ -> Next(model, [])
+        }
+      },
+    )
+
+  let _blocker_frames = h.connect(sockets, "blocker")
+  let assert Ok(#("blocker", blocker)) = process.receive(initialized, 1000)
+  let entered = process.new_subject()
+  let gate = new_gate()
+  event.notify(blocker, BlockRuntime(entered, gate))
+  process.receive(entered, 1000) |> should.equal(Ok(Nil))
+
+  let admission_result = process.new_subject()
+  let connection_closed = process.new_subject()
+  let late_frames = process.new_subject()
+  let _connection =
+    process.spawn(fn() {
+      let assert Ok(permit) =
+        beryl.acquire_connection_slot(sockets, "203.0.113.10")
+      beryl.bind_connection_slot(permit)
+      let result =
+        transport.admit_socket(
+          channels: sockets,
+          owner: transport.connection_owner(sockets),
+          socket_id: "late",
+          send: fn(frame) {
+            process.send(late_frames, frame)
+            Ok(Nil)
+          },
+          send_binary: fn(_data) { Ok(Nil) },
+          codec: None,
+          assigns: Nil,
+          seed: event.empty_seed(),
+          close: fn() {
+            beryl.release_connection_slot(permit)
+            process.send(connection_closed, Nil)
+          },
+        )
+      process.send(admission_result, result)
+    })
+
+  process.receive(admission_result, 1500)
+  |> should.equal(Ok(Error(Nil)))
+  process.receive(connection_closed, 1000) |> should.equal(Ok(Nil))
+
+  let assert Ok(reclaimed) =
+    beryl.acquire_connection_slot(sockets, "203.0.113.10")
+  beryl.release_connection_slot(reclaimed)
+  process.receive(initialized, 0) |> should.be_error
+
+  release_gate(gate)
+  let _fresh_frames = h.connect(sockets, "fresh")
+  let assert Ok(#(initialized_socket, _fresh_sender)) =
+    process.receive(initialized, 1000)
+  initialized_socket |> should.equal("fresh")
+  process.receive(initialized, 100) |> should.be_error
+
+  h.join(sockets, "late", "room:a", "jr-late", "r-late")
+  process.receive(late_frames, 100) |> should.be_error
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
 // ── transport connection ownership status ───────────────────────────────────

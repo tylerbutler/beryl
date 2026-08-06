@@ -5,13 +5,14 @@
 import app_test_helpers as h
 import beryl
 import beryl/event.{
-  AcceptJoin, Closed, Info, Join, Message, Next, RejectJoin, ReplyError, ReplyOk,
+  type Ref, AcceptJoin, Closed, Info, Join, Message, Next, RejectJoin,
+  ReplyError, ReplyOk,
 }
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
-import gleam/option.{Some}
+import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -23,6 +24,86 @@ pub fn main() {
 
 pub type Msg {
   Note(String)
+}
+
+type JoinRaceMode {
+  ReplaceWithCurrentReject
+  RetryWithCurrentAccept
+}
+
+type JoinRaceModel {
+  JoinRaceModel(previous: Option(Ref), mode: JoinRaceMode)
+}
+
+fn start_join_race(mode: JoinRaceMode) -> beryl.Channels {
+  let assert Ok(channels) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(JoinRaceModel(previous: None, mode: mode), []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, current_ref) ->
+            case model.previous {
+              None -> {
+                let next_model =
+                  JoinRaceModel(..model, previous: Some(current_ref))
+                case model.mode {
+                  ReplaceWithCurrentReject ->
+                    Next(next_model, [AcceptJoin(current_ref, None)])
+                  RetryWithCurrentAccept ->
+                    Next(next_model, [
+                      RejectJoin(
+                        current_ref,
+                        json.object([
+                          #("reason", json.string("initial rejection")),
+                        ]),
+                      ),
+                    ])
+                }
+              }
+              Some(stale_ref) ->
+                case model.mode {
+                  ReplaceWithCurrentReject ->
+                    Next(model, [
+                      AcceptJoin(
+                        stale_ref,
+                        Some(
+                          json.object([
+                            #("source", json.string("stale completion")),
+                          ]),
+                        ),
+                      ),
+                      RejectJoin(
+                        current_ref,
+                        json.object([
+                          #("reason", json.string("current rejection")),
+                        ]),
+                      ),
+                    ])
+                  RetryWithCurrentAccept ->
+                    Next(model, [
+                      RejectJoin(
+                        stale_ref,
+                        json.object([
+                          #("reason", json.string("stale completion")),
+                        ]),
+                      ),
+                      AcceptJoin(
+                        current_ref,
+                        Some(
+                          json.object([
+                            #("source", json.string("current completion")),
+                          ]),
+                        ),
+                      ),
+                    ])
+                }
+            }
+          _ -> Next(model, [])
+        }
+      },
+    )
+  channels
 }
 
 /// A start_app system that accepts `room:*`, rejects `secret:*`, ignores
@@ -218,6 +299,45 @@ pub fn duplicate_join_closes_previous_instance_first_test() {
   let rejoin_reply = h.recv(frames)
   rejoin_reply |> string.contains("phx_reply") |> should.be_true
   rejoin_reply |> string.contains("jr-2") |> should.be_true
+}
+
+pub fn delayed_stale_accept_cannot_override_current_replacement_reject_test() {
+  let channels = start_join_race(ReplaceWithCurrentReject)
+  let frames = h.connect(channels, "s1")
+
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+
+  h.join(channels, "s1", "room:a", "jr-2", "r-2")
+  h.recv(frames) |> string.contains("phx_close") |> should.be_true
+  let replacement_reply = h.recv(frames)
+  replacement_reply
+  |> string.contains("\"status\":\"error\"")
+  |> should.be_true
+  replacement_reply
+  |> string.contains("current rejection")
+  |> should.be_true
+  replacement_reply |> string.contains("jr-2") |> should.be_true
+  h.recv_none(frames)
+}
+
+pub fn delayed_stale_reject_cannot_override_current_retry_accept_test() {
+  let channels = start_join_race(RetryWithCurrentAccept)
+  let frames = h.connect(channels, "s1")
+
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.recv(frames)
+  |> string.contains("initial rejection")
+  |> should.be_true
+
+  h.join(channels, "s1", "room:a", "jr-2", "r-2")
+  let retry_reply = h.recv(frames)
+  retry_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+  retry_reply
+  |> string.contains("current completion")
+  |> should.be_true
+  retry_reply |> string.contains("jr-2") |> should.be_true
+  h.recv_none(frames)
 }
 
 pub fn runtime_is_supervised_and_restarts_with_dispatch_intact_test() {
