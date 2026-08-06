@@ -137,7 +137,68 @@ pub type UpgradeOutcome {
 }
 ```
 
+## Type aliases
+
+### `Codec`
+
+Wire codec used by a transport connection.
+
+```gleam
+pub type Codec = codec.Codec
+```
+
+### `ConnectionPermit`
+
+Connection slot permit held by a transport connection.
+
+```gleam
+pub type ConnectionPermit = beryl.ConnectionPermit
+```
+
+### `ConnectSeed`
+
+Connection metadata delivered to the app's `init`.
+
+```gleam
+pub type ConnectSeed = event.ConnectSeed
+```
+
+### `DecodeError`
+
+Wire decode failure.
+
+```gleam
+pub type DecodeError = codec.DecodeError
+```
+
+### `Inbound`
+
+Decoded inbound wire message.
+
+```gleam
+pub type Inbound = codec.Inbound
+```
+
+### `Sockets`
+
+Runtime handle accepted by transport implementations.
+
+```gleam
+pub type Sockets = beryl.Sockets
+```
+
 ## Functions
+
+### `acquire_connection_slot`
+
+Acquire a configured connection slot.
+
+```gleam
+pub fn acquire_connection_slot(
+  beryl.Sockets,
+  String
+) -> Result(beryl.ConnectionPermit, Nil)
+```
 
 ### `active_codec`
 
@@ -146,6 +207,27 @@ The wire codec configured for these sockets. Transports decode inbound
 
 ```gleam
 pub fn active_codec(beryl.Sockets) -> codec.Codec
+```
+
+### `bind_connection_slot`
+
+Bind a connection slot to the current transport process.
+
+```gleam
+pub fn bind_connection_slot(beryl.ConnectionPermit) -> Nil
+```
+
+### `connect_seed`
+
+Build connection metadata for a WebSocket upgrade.
+
+```gleam
+pub fn connect_seed(
+  path: String,
+  query: List(#(String, String)),
+  headers: List(#(String, String)),
+  metadata: List(#(String, String))
+) -> event.ConnectSeed
 ```
 
 ### `connection_owner`
@@ -157,6 +239,30 @@ Determine how a newly accepted connection is owned. Call this in the
 
 ```gleam
 pub fn connection_owner(beryl.Sockets) -> ConnectionOwner
+```
+
+### `decode_binary`
+
+Return the codec's optional binary decoder.
+
+```gleam
+pub fn decode_binary(codec.Codec) -> option.Option(fn(BitArray) -> Result(codec.Inbound, codec.DecodeError))
+```
+
+### `decode_text`
+
+Decode an inbound text frame with a codec.
+
+```gleam
+pub fn decode_text(codec.Codec) -> fn(String) -> Result(codec.Inbound, codec.DecodeError)
+```
+
+### `format_decode_error`
+
+Format a wire decode failure for transport logging.
+
+```gleam
+pub fn format_decode_error(codec.DecodeError) -> String
 ```
 
 ### `log_warning`
@@ -177,6 +283,14 @@ Create a named transport logger (e.g. `"beryl.transport.mist"`).
 
 ```gleam
 pub fn logger(String) -> Logger
+```
+
+### `max_inbound_frame_bytes`
+
+Return the configured maximum inbound frame size.
+
+```gleam
+pub fn max_inbound_frame_bytes(beryl.Sockets) -> Int
 ```
 
 ### `new_message_limiter`
@@ -200,6 +314,14 @@ pub fn register_closer(
   socket_id: String,
   close: fn() -> Nil
 ) -> Nil
+```
+
+### `release_connection_slot`
+
+Release a held connection slot.
+
+```gleam
+pub fn release_connection_slot(beryl.ConnectionPermit) -> Nil
 ```
 
 ### `route_binary`
