@@ -11,10 +11,11 @@
 //// one list.
 
 import beryl/socket.{type Effect, type Input, type Next, type Ref}
+import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
 import gleam/list
-import gleam/option.{type Option, None}
+import gleam/option.{type Option, None, Some}
 
 /// One topic namespace's handlers, adapted to the app's socket-wide model.
 pub type Namespace(model) {
@@ -38,6 +39,51 @@ pub fn accept_only(topic: String) -> Namespace(model) {
     },
     message: fn(model, _topic, _event, _payload, _ref) { #(model, []) },
     closed: fn(model, _topic) { #(model, []) },
+  )
+}
+
+/// Adapt handlers whose per-topic state lives in a `Dict` inside the
+/// socket-wide model.
+pub fn stateful(
+  matches matches: fn(String) -> Bool,
+  socket_id socket_id: fn(model) -> String,
+  get get: fn(model) -> Dict(String, sub),
+  put put: fn(model, Dict(String, sub)) -> model,
+  join join: fn(String, String, Dynamic, Ref) -> #(Option(sub), List(Effect)),
+  message message: fn(String, String, sub, String, Dynamic, Option(Ref)) ->
+    #(sub, List(Effect)),
+  closed closed: fn(String, String, sub) -> List(Effect),
+) -> Namespace(model) {
+  Namespace(
+    matches:,
+    join: fn(model, topic, payload, ref) {
+      case join(socket_id(model), topic, payload, ref) {
+        #(Some(sub), effects) -> #(
+          put(model, dict.insert(get(model), topic, sub)),
+          effects,
+        )
+        #(None, effects) -> #(model, effects)
+      }
+    },
+    message: fn(model, topic, event, payload, ref) {
+      case dict.get(get(model), topic) {
+        Ok(sub) -> {
+          let #(sub, effects) =
+            message(socket_id(model), topic, sub, event, payload, ref)
+          #(put(model, dict.insert(get(model), topic, sub)), effects)
+        }
+        Error(Nil) -> #(model, [])
+      }
+    },
+    closed: fn(model, topic) {
+      case dict.get(get(model), topic) {
+        Ok(sub) -> #(
+          put(model, dict.delete(get(model), topic)),
+          closed(socket_id(model), topic, sub),
+        )
+        Error(Nil) -> #(model, [])
+      }
+    },
   )
 }
 

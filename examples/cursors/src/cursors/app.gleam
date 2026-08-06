@@ -133,34 +133,18 @@ pub fn namespace(
   get get: fn(model) -> Dict(String, Model),
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
-  router.Namespace(
-    matches: fn(topic) { string.starts_with(topic, "cursor:") },
-    join: fn(model, topic, payload, ref) {
-      let #(joined, effects) = join(ctx, socket_id(model), topic, payload, ref)
-      case joined {
-        Some(sub) -> #(put(model, dict.insert(get(model), topic, sub)), effects)
-        None -> #(model, effects)
-      }
+  router.stateful(
+    matches: string.starts_with(_, "cursor:"),
+    socket_id:,
+    get:,
+    put:,
+    join: fn(socket_id, topic, payload, ref) {
+      join(ctx, socket_id, topic, payload, ref)
     },
-    message: fn(model, topic, event_name, payload, _ref) {
-      case dict.get(get(model), topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            update(ctx, socket_id(model), topic, sub, event_name, payload)
-          #(put(model, dict.insert(get(model), topic, sub)), effects)
-        }
-        Error(Nil) -> #(model, [])
-      }
+    message: fn(socket_id, topic, model, event_name, payload, _ref) {
+      update(ctx, socket_id, topic, model, event_name, payload)
     },
-    closed: fn(model, topic) {
-      case dict.get(get(model), topic) {
-        Ok(sub) -> #(
-          put(model, dict.delete(get(model), topic)),
-          closed(ctx, socket_id(model), topic, sub),
-        )
-        Error(Nil) -> #(model, [])
-      }
-    },
+    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
   )
 }
 
