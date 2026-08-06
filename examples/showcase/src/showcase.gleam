@@ -1,4 +1,4 @@
-//// Showcase: all three example channels on one socket, composed through
+//// Showcase: all three real-time examples on one socket, composed through
 //// app-side dispatch.
 ////
 //// This demonstrates composition with the `beryl.child_spec` API: the cursors,

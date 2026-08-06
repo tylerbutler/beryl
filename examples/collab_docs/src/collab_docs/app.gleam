@@ -7,7 +7,8 @@
 ////   through, storing the returned model per topic.
 //// - A socket-wide `Standalone` model plus `standalone_init`/
 ////   `standalone_update` wrappers that drive the standalone collab-docs
-////   server through `beryl.child_spec`, reusing the same per-topic surface.
+////   server through a `beryl.child_spec` runtime, reusing the same per-topic
+////   surface.
 ////
 //// Join-level tenant-token auth is preserved: the join payload must carry a
 //// `token` HMAC-signed for the tenant whose document is being joined.
@@ -136,17 +137,17 @@ pub type Standalone {
   Standalone(socket_id: String, docs: Dict(String, Model))
 }
 
-/// `init` for the standalone collab-docs `beryl.child_spec` runtime.
+/// `init` for the standalone collab-docs app-dispatch runtime.
 pub fn standalone_init(
   info: event.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
   #(Standalone(socket_id: info.socket_id, docs: dict.new()), [])
 }
 
-/// `update` for the standalone collab-docs `beryl.child_spec` runtime: route
+/// `update` for the standalone collab-docs app-dispatch runtime: route
 /// each event to the embeddable `join`/`update`/`closed` surface, keyed by
-/// topic. Non-`document:*` joins are rejected (fail closed), mirroring the
-/// old `document:*:*` handler registration.
+/// topic. Non-`document:*` joins are rejected (fail closed), preserving the
+/// example's topic-namespace boundary.
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,

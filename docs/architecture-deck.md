@@ -74,7 +74,7 @@ test) on its own, and the runtime is the seam where they meet.
 | `beryl/event` | App dispatch contract: `Event`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
 | `beryl/runtime` | Internal OTP actor: socket tracking, dispatch, effect interpretation, heartbeat |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` |
-| `beryl/presence` | Add-wins OR-set CRDT; track/untrack, cross-node diff broadcast |
+| `beryl/presence` | Add-wins OR-set CRDT; track/untrack, dirty full-state replication |
 | `beryl/wire` | Pluggable codec; ships `phoenix_codec()` |
 | `beryl_mist` / `beryl_ewe` | WebSocket adapters; assign socket ids, route frames |
 | `beryl/group` | Named topic collections; supports grouped broadcast |
@@ -214,9 +214,9 @@ Speaker notes:
 This slide has no prose on purpose — walk the sequence live. A join is the
 first Phoenix-protocol message: the client sends a `phx_join` frame carrying
 a `join_ref`, a `ref`, the target topic, and a payload. Trace each hop: the
-transport decodes nothing itself, it delegates to the wire codec, which
-turns the raw array into a typed decoded message and hands it to the
-runtime. The runtime delivers exactly one `Join` event to the app's
+transport connection invokes the configured wire codec at the edge, which
+turns the raw array into a typed decoded message; the transport then routes
+that value to the runtime. The runtime delivers exactly one `Join` event to the app's
 `update` function — there's no registry lookup, because `update` handles
 every topic itself, typically by pattern-matching the topic string. The
 app answers with `AcceptJoin` (subscribing the socket to the topic's pg
@@ -415,29 +415,32 @@ than exposing a partial blocking runtime feature.
 ```mermaid
 flowchart LR
   FR["raw WS frame"] --> MI["beryl_mist / beryl_ewe"]
-  MI -->|text| CD["wire/codec"]
-  MI -->|binary, no codec| RB["raw binary handler"]
-  CD --> RT["runtime"]
+  MI -->|text| CD["configured wire/codec"]
+  MI -->|binary + decoder| CD
+  MI -->|binary, no decoder| RB["raw Binary event fan-out"]
+  CD -->|route_decoded / route_decoded_binary| RT["runtime"]
+  RB -->|route_binary| RT
   RT --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
 ```
 
 - Phoenix wire format: `[join_ref, ref, topic, event, payload]`
 - `Codec` is a data value — swap framing without touching the runtime or your `update`
-- `phoenix_codec()` is the default; pass to `beryl.config`
+- `beryl.config(codec)` requires an explicit codec; `phoenix_codec()` is the built-in Phoenix option
 - Transports monitor the runtime pid and close the connection if it goes down
 
 <!--
 Speaker notes:
 This slide is about the seam that keeps beryl protocol-agnostic. Follow the
 diagram left to right: a raw frame hits the transport (Mist or Ewe), which
-branches on frame type — text frames go through the wire codec into typed
-messages, while binary frames can take a raw-binary path when no binary
-decoder is configured. On the way out, the runtime's replies and pushes are
-encoded by the same codec and handed to the socket's send fn. The big idea:
+branches on frame type. Text frames use the codec's text decoder. Binary
+frames use its binary decoder when present and retain binary telemetry
+classification through `route_decoded_binary`; only codecs without a binary
+decoder use the raw `Binary` event path. On the way out, the runtime's replies
+and pushes are encoded by the same codec and handed to the socket's send fn. The big idea:
 the `Codec` is just a *data value*, not hardwired logic — so you can swap
-the framing (today it's the Phoenix `[join_ref, ref, topic, event,
-payload]` format) without touching the runtime or any app code.
-`phoenix_codec()` is the default you pass to `beryl.config`. One new detail
+the framing without touching the runtime or any app code. There is no implicit
+wire default: callers pass a codec to `beryl.config`; choose
+`wire.phoenix_codec()` for Phoenix JSON and V2 binary compatibility. One new detail
 worth a beat: transports monitor the runtime's pid via
 `transport.connection_owner`, then pass that exact identity to
 `transport.admit_socket`. A restart, identity mismatch, or failed

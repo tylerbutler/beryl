@@ -2,11 +2,11 @@
 title: Runtime & Supervision
 ---
 
-The runtime is the central OTP actor that owns all per-socket state. Every other part of the system — the transport layer, presence, groups, and PubSub — communicates with it by sending messages, while your application's `init`/`update` functions run inside it during event dispatch.
+The runtime is the central OTP actor for app-side socket dispatch. Transports send admitted, decoded frames to it, and your application's `init`/`update` functions run inside it during event dispatch. Presence and groups are independent application-owned actors; PubSub is an Erlang `pg` wrapper rather than a child of the runtime.
 
 ## Role
 
-The runtime is the single source of truth for connected sockets, per-socket models, topic subscriptions, and heartbeat timestamps. It processes its mailbox sequentially, which gives it a consistent view of all concurrent activity without locks. No socket state lives outside the runtime; your `update` function runs inside it, and the model it returns is the state the next event sees.
+The runtime is the single source of truth for connected socket IDs, app models, topic subscriptions, and heartbeat timestamps. It processes its mailbox sequentially, which gives it a consistent view of app dispatch without locks. Transport connection processes still own edge concerns such as WebSocket state, frame limits, decoding, and the local message-rate bucket; the model returned by `update` is the app state the next event sees.
 
 ## What it tracks
 
@@ -19,7 +19,7 @@ The runtime maintains four categories of state:
 
 ## Typed dispatch without erasure
 
-The runtime actor is generic over the app's `model` and `msg` types. `beryl.child_spec` captures those types in a record of monomorphic closures at start time, so the public `Channels` handle — and the frame-level transport SPI behind it — stays unparameterized while the runtime holds fully typed state. This is plain closure capture by a generic function: there are no unchecked casts, no `Dynamic` round-trips, and no identity FFI anywhere in the dispatch path.
+The runtime actor is generic over the app's `model` and `msg` types. `beryl.child_spec` captures those types in a record of monomorphic closures at construction time, so the public `Sockets` handle — and the frame-level transport SPI behind it — stays unparameterized while the runtime holds fully typed state. This is plain closure capture by a generic function: there are no unchecked casts, `Dynamic` round-trips, or identity FFI in the socket-dispatch path. PubSub separately validates the frozen raw mailbox record before its package-internal payload coercion.
 
 Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `event.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
@@ -33,13 +33,13 @@ Inbound WebSocket frames follow a two-step path:
    - Any other event on a joined topic → `Message(topic, event, payload, ref)`.
    - `heartbeat` → answered directly by the runtime; the app never sees it.
    - `phx_leave` → acks the leave, then delivers `Closed(topic, Normal)`.
-   - Binary frames → decoded through the codec's binary decoder when present; otherwise delivered raw as `Binary(topic, data)` to each joined topic.
+   - Binary frames → decoded through the codec's binary decoder when present and routed with binary message classification; otherwise delivered raw as `Binary(topic, data)` to each joined topic.
 
 Effects returned by `update` are applied in list order; an `AcceptJoin` is guaranteed to reach the wire before a `Push` later in the same list.
 
 ## Crash containment
 
-Crashes in app callbacks are rescued rather than allowed to take down the shared runtime. The blast radius is scoped to what crashed: a crashing `Join` update rejects the join, a crashing `Message` update closes only that topic, and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging.
+Crashes in app callbacks are rescued rather than allowed to take down the shared runtime. The blast radius is scoped to what crashed: a crashing `Join` is rejected; a crashing topic-scoped `Message` or `Binary` closes only that topic; a crashing `Info` tears down the whole socket because it has no topic to attribute; a crashing `Closed` is logged while teardown continues; and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging. Other sockets remain isolated.
 
 ## Heartbeat enforcement
 
@@ -53,11 +53,12 @@ The runtime schedules a recurring self-check at `heartbeat_timeout_ms / 2`. On e
 flowchart TB
   APP["process that called child_spec"]
   APP --- SUP["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
-  SUP --> RT["runtime actor (Transient)<br/>init/update captured in child spec"]
+  SUP --> RT["runtime actor (significant Transient)<br/>init/update captured in child spec"]
+  SUP -. optional .-> LIMITER["connection limiter"]
 ```
 
 - The `init`/`update` closures live in the child specification, so a restart resumes dispatch immediately — there is no registration step to replay.
-- The runtime is registered under a stable name; the `Channels` handle keeps working across restarts, and sends during a restart window degrade to quiet no-ops.
+- The runtime is registered under a stable name; the `Sockets` handle keeps working across restarts, and sends during a restart window degrade to quiet no-ops.
 - A restart drops per-socket state (models, joined topics); clients rejoin exactly as they would after any server restart.
 - The child is `Transient`, so a graceful `beryl.stop` is final.
 
