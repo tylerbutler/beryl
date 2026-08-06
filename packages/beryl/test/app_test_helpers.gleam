@@ -41,7 +41,7 @@ pub fn connect(
 }
 
 pub fn connect_with_close(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
@@ -61,7 +61,7 @@ pub fn connect_with_seed(
 }
 
 fn connect_with_seed_and_close(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   seed: event.ConnectSeed,
   close: fn() -> Nil,
