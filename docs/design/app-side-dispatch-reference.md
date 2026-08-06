@@ -174,6 +174,8 @@ the shipped API:
    an `Info` event once an async lookup completes), so no legitimate
    reply-later use is lost. Join refs are isolated to their `Join` turn,
    expire when it ends, and cannot complete a later same-topic join.
-6. **Groups.** `beryl/group` sends to sockets sharing one app `msg` type
-   through the socket's typed `Sender(msg)` — a typed send, no `Dynamic`
-   anywhere in the public group API.
+6. **Groups.** `beryl/group` is non-generic. Its actor stores named sets of
+   topic strings, and `group.broadcast(groups, sockets, group_name, event,
+   payload)` accepts the shared `Sockets` handle plus a JSON payload. It
+   forwards that event through `beryl.broadcast` once for each topic in the
+   group; it does not use a socket's typed `Sender(msg)`.
