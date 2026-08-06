@@ -392,7 +392,7 @@ pub type Msg {
   UserLoaded(String)
 }
 
-fn update(model: Model, ev: event.Event(Msg)) {
+fn update(model: Model, ev: event.Input(Msg)) {
   case ev {
     event.Join("room:" <> _, payload, ref) -> {
       let username = decode_username(payload)

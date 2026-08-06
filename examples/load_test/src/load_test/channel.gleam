@@ -1,5 +1,5 @@
 import beryl/event.{
-  type Effect, type Event, type Next, AcceptJoin, Broadcast, Join, Message,
+  type Effect, type Input, type Next, AcceptJoin, Broadcast, Join, Message,
   RejectJoin, ReplyError, ReplyOk,
 }
 import beryl/wire
@@ -17,7 +17,7 @@ pub fn init(_info) {
 pub fn update(
   presence: session_presence.Tracker,
   model: Nil,
-  input: Event(msg),
+  input: Input(msg),
 ) -> Next(Nil, msg) {
   case input {
     Join("guardrail:forbidden", _, ref) ->

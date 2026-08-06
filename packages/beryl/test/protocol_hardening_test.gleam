@@ -17,7 +17,7 @@ pub fn main() {
 
 /// Accepts every join and forwards every event to the observer.
 fn start_observed(
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(event.Input(Nil)),
   config: beryl.Config,
 ) -> beryl.Sockets {
   let assert Ok(channels) =

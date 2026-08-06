@@ -18,7 +18,7 @@ import gleeunit/should
 /// that interval).
 fn start_hb_app(
   timeout_ms: Int,
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(event.Input(Nil)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
@@ -190,7 +190,7 @@ pub fn closed_delivered_with_heartbeat_timeout_reason_test() {
   beryl.stop(channels)
 }
 
-fn wait_for_closed(events: process.Subject(event.Event(Nil))) -> Nil {
+fn wait_for_closed(events: process.Subject(event.Input(Nil))) -> Nil {
   let assert Ok(ev) = process.receive(events, 1000)
   case ev {
     event.Closed("room:lobby", event.HeartbeatTimeout) -> Nil

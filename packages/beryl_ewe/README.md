@@ -31,7 +31,7 @@ fn init(_info: ConnectInfo(msg)) -> #(Model, List(event.Effect)) {
   #(Model, [])
 }
 
-fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
+fn update(model: Model, ev: event.Input(msg)) -> event.Next(Model, msg) {
   case ev {
     Join("room:" <> _, _payload, ref) -> Next(model, [AcceptJoin(ref, None)])
     _ -> Next(model, [])

@@ -11,7 +11,7 @@ handler registry and no per-topic callback modules.
 
 ```gleam
 import beryl
-import beryl/event.{type Event, type Next}
+import beryl/event.{type Input, type Next}
 import beryl/wire
 import gleam/otp/static_supervisor
 
@@ -69,9 +69,9 @@ topic.extract_wildcards(
 
 ## Events
 
-`update` receives one of five events (`beryl/event.Event(msg)`):
+`update` receives one of five inputs (`beryl/event.Input(msg)`):
 
-| Event | When |
+| Input | When |
 |-------|------|
 | `Join(topic, payload, ref)` | Client asked to join a topic. Answer with `AcceptJoin` or `RejectJoin`. |
 | `Message(topic, event, payload, ref)` | Client message on a joined topic. `ref` is `Some` when the client expects a reply. |
@@ -112,7 +112,7 @@ message types are used directly:
 ```gleam
 import beryl
 import beryl/event.{
-  type Event, type Next, AcceptJoin, Broadcast, Join, Message, Next, ReplyOk,
+  type Input, type Next, AcceptJoin, Broadcast, Join, Message, Next, ReplyOk,
 }
 import beryl/wire
 import gleam/dynamic/decode
@@ -138,7 +138,7 @@ pub fn main() {
   // ... wire up the transport
 }
 
-fn update(model: Model, ev: Event(Nil)) -> Next(Model, Nil) {
+fn update(model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
   case ev {
     Join("room:" <> _, payload, ref) -> {
       let username = decode_username(payload)
@@ -188,7 +188,7 @@ type Model {
   Model(socket_id: String, rooms: Dict(String, chat.Model))
 }
 
-fn update(ctx: chat.Ctx, model: Model, ev: Event(Msg)) -> Next(Model, Msg) {
+fn update(ctx: chat.Ctx, model: Model, ev: Input(Msg)) -> Next(Model, Msg) {
   case ev {
     event.Join(topic, payload, ref) ->
       case topic {

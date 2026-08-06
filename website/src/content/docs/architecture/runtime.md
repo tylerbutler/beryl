@@ -23,7 +23,7 @@ The runtime actor is generic over the app's `model` and `msg` types. `beryl.chil
 
 Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `event.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
-## Event dispatch
+## Input dispatch
 
 Inbound WebSocket frames follow a two-step path:
 

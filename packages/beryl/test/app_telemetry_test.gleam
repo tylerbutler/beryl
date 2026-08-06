@@ -66,7 +66,7 @@ fn telemetry_config() -> beryl.Config {
   |> beryl.with_telemetry
 }
 
-fn update(model: Nil, input: event.Event(AppMessage)) {
+fn update(model: Nil, input: event.Input(AppMessage)) {
   case input {
     Join("room:reject", _, ref) ->
       Next(model, [RejectJoin(ref, json.object([]))])
