@@ -53,9 +53,11 @@ pub type Effect {
 }
 ```
 
-`Ref` is opaque and single-use per pending join/message; it is scoped to the
-topic it was issued for, so it can be stored in the model and used from a
-later `update` turn (for example, replying once an async lookup completes).
+`Ref` is opaque and single-use. A message ref is scoped to the topic it was
+issued for and may be stored in the model for use from a later `update` turn
+(for example, replying once an async lookup completes). A join ref is valid
+only while handling that `Join` turn: it expires when the turn ends and cannot
+accept or reject a later join, even when the later join uses the same topic.
 
 ## Entry points
 
@@ -167,10 +169,11 @@ the shipped API:
    the shared runtime. Applications use a separate worker/actor and publish
    results back with broadcasts or typed `Info`; the async read-model/effect
    bundle is deferred together.
-5. **Reply-outside-update.** `Ref` is an ordinary value that can be stored
-   in the model and used from a later `update` turn (e.g. replying from an
-   `Info` event once an async lookup completes), so no legitimate
-   reply-later use is lost.
+5. **Reply-outside-update.** A message `Ref` is an ordinary value that can be
+   stored in the model and used from a later `update` turn (e.g. replying from
+   an `Info` event once an async lookup completes), so no legitimate
+   reply-later use is lost. Join refs are isolated to their `Join` turn,
+   expire when it ends, and cannot complete a later same-topic join.
 6. **Groups.** `beryl/group` sends to sockets sharing one app `msg` type
    through the socket's typed `Sender(msg)` — a typed send, no `Dynamic`
    anywhere in the public group API.
