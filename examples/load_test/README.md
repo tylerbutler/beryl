@@ -61,7 +61,6 @@ per second, and string limits are bytes.
 | `BIND_ADDRESS` | `127.0.0.1` | Listener interface |
 | `PORT` | `8000` | Listener TCP port |
 | `SERVER` | Mist | `ewe` selects Ewe in the shipment entry point; every other value selects Mist |
-| `BERYL_HEARTBEAT_INTERVAL_MS` | `30000` | Configured heartbeat interval, in ms |
 | `BERYL_HEARTBEAT_TIMEOUT_MS` | `60000` | Server staleness/eviction window, in ms |
 | `BERYL_MAX_CONNECTIONS_PER_IP` | `0` | Concurrent connections per real peer IP; `<= 0` is unlimited |
 | `BERYL_MAX_CONNECTIONS` | `0` | Concurrent connections on this BEAM node; `<= 0` is unlimited |

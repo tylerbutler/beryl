@@ -181,7 +181,7 @@ pub fn heartbeat_eviction_releases_channel_buckets_test() {
       1,
       events,
       beryl.config(wire.phoenix_codec())
-        |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 40),
+        |> beryl.with_heartbeat(timeout_ms: 40),
     )
 
   let _frames = h.connect(channels, "socket-heartbeat")

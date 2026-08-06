@@ -43,7 +43,6 @@ import gleam/string
 pub type Config {
   Config(
     codec: Codec,
-    heartbeat_check_interval_ms: Int,
     heartbeat_timeout_ms: Int,
     message_limits: Option(RateLimitConfig),
     join_limits: Option(RateLimitConfig),
@@ -58,12 +57,6 @@ pub type Config {
     telemetry: Bool,
     logging: internal.LoggingConfig,
   )
-}
-
-/// Errors when starting the runtime.
-pub type StartError {
-  InvalidHeartbeatTimeout
-  ActorStartFailed(actor.StartError)
 }
 
 pub type AdmissionToken
@@ -281,12 +274,7 @@ pub fn start_named(
   pubsub ps: Option(PubSub(Json)),
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Input(msg)) -> Next(model, msg),
-) -> Result(actor.Started(Subject(Msg(msg))), StartError) {
-  use <- bool.guard(
-    when: config.heartbeat_check_interval_ms > 0
-      && config.heartbeat_timeout_ms <= 0,
-    return: Error(InvalidHeartbeatTimeout),
-  )
+) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
   internal.configure(config.logging)
   let initial_state =
     State(
@@ -329,15 +317,15 @@ pub fn start_named(
   |> actor.on_message(handle_message)
   |> actor.named(name)
   |> actor.start
-  |> result.map_error(ActorStartFailed)
 }
 
+/// Check at half the staleness window; `beryl.validate_config` guarantees the
+/// timeout is at least 2, so the interval is always positive.
 fn schedule_heartbeat_check(subject: Subject(Msg(msg)), config: Config) -> Nil {
-  use <- bool.guard(when: config.heartbeat_check_interval_ms <= 0, return: Nil)
   let _timer =
     process.send_after(
       subject,
-      config.heartbeat_check_interval_ms,
+      config.heartbeat_timeout_ms / 2,
       CheckHeartbeats,
     )
   Nil
@@ -620,12 +608,9 @@ fn handle_check_heartbeats(
   let now = monotonic_time_ms()
   let timeout_ms = state.config.heartbeat_timeout_ms
   let stale_socket_ids =
-    dict.fold(state.sockets, [], fn(acc, socket_id, socket) {
-      case now - socket.last_heartbeat > timeout_ms {
-        True -> [socket_id, ..acc]
-        False -> acc
-      }
-    })
+    state.sockets
+    |> dict.filter(fn(_, socket) { now - socket.last_heartbeat > timeout_ms })
+    |> dict.keys
   list.each(stale_socket_ids, fn(socket_id) {
     state.logger
     |> log.warn("Evicting socket due to heartbeat timeout", [
@@ -1569,8 +1554,6 @@ fn fan_out_binary(
   case topics {
     [] -> state
     [topic_name, ..rest] -> {
-      // Re-check per topic: an earlier delivery may have closed it or
-      // stopped the socket.
       let state = case socket_subscribed(state, socket_id, topic_name) {
         False -> state
         True ->
@@ -2609,12 +2592,11 @@ fn resolve_channel_limits(
   config: Config,
   topic_name: String,
 ) -> Option(RateLimitConfig) {
-  let matched =
+  case
     list.find(config.topic_rates, fn(entry) {
-      let #(pattern, _limits) = entry
-      topic.matches(pattern, topic_name)
+      topic.matches(entry.0, topic_name)
     })
-  case matched {
+  {
     Ok(#(_pattern, limits)) -> Some(limits)
     Error(Nil) -> config.channel_limits
   }

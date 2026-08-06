@@ -116,10 +116,6 @@ pub opaque type Config {
     /// Wire codec used to decode inbound text and encode replies/pushes.
     /// Use `wire.phoenix_codec()` for the historical Phoenix array format.
     codec: codec.Codec,
-    /// Client-advisory heartbeat interval in milliseconds (default: 30000).
-    /// The server does not read this value; it is the interval clients should
-    /// use for their own pings. See `with_heartbeat`.
-    heartbeat_interval_ms: Int,
     /// Server-side heartbeat staleness window in milliseconds (default: 60000).
     /// Sockets that send no heartbeat within this window are evicted. Must be
     /// at least 2 (see `with_heartbeat`).
@@ -193,7 +189,6 @@ pub fn logging_config(
 pub fn config(codec: codec.Codec) -> Config {
   Config(
     codec: codec,
-    heartbeat_interval_ms: 30_000,
     heartbeat_timeout_ms: 60_000,
     max_connections_per_ip: 0,
     max_connections: 0,
@@ -247,30 +242,13 @@ pub fn with_telemetry(config: Config) -> Config {
   Config(..config, telemetry: True)
 }
 
-/// Configure heartbeat timing.
+/// Configure the server-side heartbeat staleness window.
 ///
-/// `interval_ms` is **client-advisory only**: it is the interval clients should
-/// use for their own outbound pings. The server never reads it and does not use
-/// it to schedule anything — it exists purely to communicate a suggested ping
-/// cadence to clients.
-///
-/// `timeout_ms` is the server-side staleness window — a socket that sends no
-/// heartbeat within this window is evicted. The server derives its internal
-/// check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
-/// be at least 2; smaller values are rejected by `child_spec` and
-/// `validate_config` with `HeartbeatTimeoutTooLow` because a check interval
-/// of 0 would disable eviction. The defaults are 30000 ms and 60000 ms
-/// respectively.
-pub fn with_heartbeat(
-  config: Config,
-  interval_ms interval_ms: Int,
-  timeout_ms timeout_ms: Int,
-) -> Config {
-  Config(
-    ..config,
-    heartbeat_interval_ms: interval_ms,
-    heartbeat_timeout_ms: timeout_ms,
-  )
+/// A socket that sends no heartbeat within `timeout_ms` is evicted. The
+/// runtime checks at half this window, so values below 2 are rejected by
+/// `validate_config` with `HeartbeatTimeoutTooLow`. The default is 60000 ms.
+pub fn with_heartbeat(config: Config, timeout_ms timeout_ms: Int) -> Config {
+  Config(..config, heartbeat_timeout_ms: timeout_ms)
 }
 
 /// Configure the maximum number of concurrent connections allowed per client
@@ -905,7 +883,6 @@ fn child_spec_supervisor(
         init: init,
         update: update,
       )
-      |> result.map_error(runtime_start_error)
     })
     |> supervision.restart(supervision.Transient)
     // The runtime is the subtree's significant child: a graceful stop (normal
@@ -936,14 +913,6 @@ fn child_spec_supervisor(
   }
 
   static_supervisor.start(builder)
-}
-
-fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
-  case error {
-    runtime.ActorStartFailed(error) -> error
-    runtime.InvalidHeartbeatTimeout ->
-      actor.InitFailed("invalid heartbeat timeout")
-  }
 }
 
 fn await_admission(
@@ -1138,8 +1107,6 @@ pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
 fn to_runtime_config(config: Config) -> runtime.Config {
   runtime.Config(
     codec: config.codec,
-    // Server checks at half the timeout interval validated by `child_spec`.
-    heartbeat_check_interval_ms: config.heartbeat_timeout_ms / 2,
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
     message_limits: optional_limits(config.message_rate, config.message_burst),
     join_limits: optional_limits(config.join_rate, config.join_burst),

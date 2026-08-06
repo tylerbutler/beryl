@@ -87,18 +87,6 @@ pub fn connect_with_close(
   connect_with_seed_and_close(channels, socket_id, socket.empty_seed(), close)
 }
 
-/// Connect a socket with an explicit `ConnectSeed` (e.g. to assert that
-/// transport-provided metadata reaches the app's `init` via
-/// `ConnectInfo.seed`), returning the subject that captures its outbound
-/// text frames.
-pub fn connect_with_seed(
-  channels: beryl.Sockets,
-  socket_id: String,
-  seed: socket.ConnectSeed,
-) -> process.Subject(String) {
-  connect_with_seed_and_close(channels, socket_id, seed, fn() { Nil })
-}
-
 fn connect_with_seed_and_close(
   channels: beryl.Sockets,
   socket_id: String,
