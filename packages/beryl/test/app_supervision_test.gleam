@@ -547,7 +547,7 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
       beryl.bind_connection_slot(permit)
       let result =
         transport.admit_socket(
-          channels: sockets,
+          sockets: sockets,
           owner: transport.connection_owner(sockets),
           socket_id: "late",
           send: fn(frame) {
@@ -556,7 +556,6 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
           },
           send_binary: fn(_data) { Ok(Nil) },
           codec: None,
-          assigns: Nil,
           seed: event.empty_seed(),
           close: fn() {
             beryl.release_connection_slot(permit)
