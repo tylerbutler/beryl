@@ -35,7 +35,7 @@ type JoinRaceModel {
   JoinRaceModel(previous: Option(Ref), mode: JoinRaceMode)
 }
 
-fn start_join_race(mode: JoinRaceMode) -> beryl.Channels {
+fn start_join_race(mode: JoinRaceMode) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
