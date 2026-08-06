@@ -132,7 +132,7 @@ pub fn duplicate_outstanding_ref_is_rejected_then_reusable_test() {
   event.notify(sender, ReplyStashed)
   let reused_reply = h.recv(frames)
   reused_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
-  reused_reply |> string.contains("\"later\":true") |> should.be_true
+  reused_reply |> string.contains("\"late\":true") |> should.be_true
 }
 
 pub fn reply_after_topic_close_is_dropped_test() {
