@@ -58,8 +58,9 @@ fn connect(
   socket_codec: option.Option(codec.Codec),
 ) -> process.Subject(String) {
   let sent = process.new_subject()
-  transport.socket_connected_with_codec(
+  transport.admit_socket(
     channels: channels,
+    owner: transport.connection_owner(channels),
     socket_id: socket_id,
     send: fn(text) {
       process.send(sent, text)
@@ -68,12 +69,15 @@ fn connect(
     send_binary: fn(_data) { Ok(Nil) },
     codec: socket_codec,
     seed: event.empty_seed(),
+    close: fn() { Nil },
   )
+  |> should.equal(Ok(Nil))
   sent
 }
 
 fn route(channels: beryl.Sockets, socket_id: String, frame: String) -> Nil {
-  let assert Ok(input) = codec.decode_text(transport.active_codec(channels))(frame)
+  let assert Ok(input) =
+    codec.decode_text(transport.active_codec(channels))(frame)
   transport.route_decoded(channels, socket_id, input)
 }
 
