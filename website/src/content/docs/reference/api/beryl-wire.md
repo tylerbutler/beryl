@@ -16,7 +16,7 @@ Phoenix Wire Protocol — encoding/decoding helpers and the canonical
  This module parses and emits that format, and exposes a `Codec` value
  that plugs the Phoenix framing into the runtime.
 
- To use Phoenix framing (the historical default) construct beryl with:
+ Phoenix framing must be selected explicitly when constructing beryl:
 
  ```gleam
  beryl.config(wire.phoenix_codec())
@@ -100,11 +100,12 @@ pub fn channel_error(
 
 Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
 
- The payload is delivered to the app's `update` as a `Binary` event
- (raw bytes as `BitArray` wrapped in `Dynamic` at the wire layer); decode
- it with `gleam/dynamic/decode.bit_array` if needed. Zero-length
- join_ref/ref components decode as `None`. Reserved protocol events are
- classified the same way as on the text framing.
+ The payload remains a `BitArray` wrapped in `Dynamic`, but the decoded
+ frame follows normal event classification and reaches the app as a
+ `Join` or `Message` event rather than `Binary`. Decode the payload with
+ `gleam/dynamic/decode.bit_array` if needed. Zero-length join_ref/ref
+ components decode as `None`. Reserved protocol events are classified the
+ same way as on the text framing.
 
 ```gleam
 pub fn decode_binary_message(BitArray) -> Result(codec.Inbound, codec.DecodeError)
@@ -158,10 +159,11 @@ pub fn heartbeat_reply(option.Option(String)) -> codec.Frame
 The canonical Phoenix wire codec. Pass to `beryl.config`.
 
  Handles both the JSON array framing on text frames and the Phoenix V2
- binary framing on binary frames (see `decode_binary_message`). Binary
- push payloads reach the app's `update` as a `Binary` event (raw bytes as
- `BitArray` wrapped in `Dynamic` at the wire layer); decode with
- `gleam/dynamic/decode.bit_array` if needed.
+ binary framing on binary frames (see `decode_binary_message`). Decoded
+ binary frames follow the normal inbound path, producing `Join` or
+ `Message` events according to their event name. The app receives a
+ `Binary` event only for an undecoded frame from a codec without a binary
+ decoder.
 
 ```gleam
 pub fn phoenix_codec() -> codec.Codec
