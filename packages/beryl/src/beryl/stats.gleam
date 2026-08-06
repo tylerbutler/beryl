@@ -7,21 +7,20 @@
 
 import beryl
 
-/// A point-in-time snapshot of local coordinator state.
+/// A point-in-time snapshot of local runtime state.
 pub opaque type Snapshot {
   Snapshot(
     connected_sockets: Int,
     joined_socket_topic_pairs: Int,
     active_topics: Int,
-    registered_channel_handlers: Int,
-    coordinator_mailbox_length: Int,
+    runtime_mailbox_length: Int,
   )
 }
 
 /// Errors returned while requesting a runtime snapshot.
 pub type SnapshotError {
   /// The local socket runtime is not currently running.
-  CoordinatorUnavailable
+  RuntimeUnavailable
   /// The runtime did not service the request within the bounded timeout.
   RequestTimedOut
 }
@@ -29,7 +28,7 @@ pub type SnapshotError {
 /// Request a point-in-time snapshot from the local runtime.
 ///
 /// The request waits for at most approximately one second. During a
-/// runtime restart this returns `CoordinatorUnavailable` or
+/// runtime restart this returns `RuntimeUnavailable` or
 /// `RequestTimedOut`; an overloaded runtime returns `RequestTimedOut`.
 /// Neither condition panics. This API reports only the node represented by
 /// `channels`; aggregate multi-node statistics outside Beryl.
@@ -37,15 +36,14 @@ pub type SnapshotError {
 /// Poll no more frequently than roughly once per second.
 pub fn snapshot(sockets: beryl.Sockets) -> Result(Snapshot, SnapshotError) {
   case beryl.app_dispatch(sockets).stats() {
-    Error(False) -> Error(CoordinatorUnavailable)
+    Error(False) -> Error(RuntimeUnavailable)
     Error(True) -> Error(RequestTimedOut)
     Ok(#(connected, joined, topics, mailbox)) ->
       Ok(Snapshot(
         connected_sockets: connected,
         joined_socket_topic_pairs: joined,
         active_topics: topics,
-        registered_channel_handlers: 1,
-        coordinator_mailbox_length: mailbox,
+        runtime_mailbox_length: mailbox,
       ))
   }
 }
@@ -67,12 +65,7 @@ pub fn active_topics(snapshot: Snapshot) -> Int {
   snapshot.active_topics
 }
 
-/// Return the number of app dispatch handlers (one for a running app).
-pub fn registered_channel_handlers(snapshot: Snapshot) -> Int {
-  snapshot.registered_channel_handlers
-}
-
 /// Return the runtime mailbox length when it serviced the request.
-pub fn coordinator_mailbox_length(snapshot: Snapshot) -> Int {
-  snapshot.coordinator_mailbox_length
+pub fn runtime_mailbox_length(snapshot: Snapshot) -> Int {
+  snapshot.runtime_mailbox_length
 }
