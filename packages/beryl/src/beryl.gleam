@@ -744,6 +744,15 @@ pub type Channels =
 /// unparameterized while the runtime holds typed per-socket models.
 type AppHandle {
   AppHandle(
+    admit_socket: fn(
+      process.Pid,
+      String,
+      fn(String) -> Result(Nil, Nil),
+      fn(BitArray) -> Result(Nil, Nil),
+      Option(codec.Codec),
+      event.ConnectSeed,
+      fn() -> Nil,
+    ) -> Bool,
     socket_connected: fn(
       String,
       fn(String) -> Result(Nil, Nil),
@@ -1246,6 +1255,36 @@ fn app_handle(
   ps: Option(PubSub(json.Json)),
 ) -> AppHandle {
   AppHandle(
+    admit_socket: fn(
+      owner,
+      socket_id,
+      send,
+      send_binary,
+      socket_codec,
+      seed,
+      close,
+    ) {
+      case process.subject_owner(subject) {
+        Ok(current_owner) if current_owner == owner -> {
+          let reply = process.new_subject()
+          process.send(
+            subject,
+            runtime.AdmitSocket(
+              owner,
+              socket_id,
+              send,
+              send_binary,
+              socket_codec,
+              seed,
+              close,
+              reply,
+            ),
+          )
+          process.receive(reply, 1000) |> result.unwrap(False)
+        }
+        _ -> False
+      }
+    },
     socket_connected: fn(socket_id, send, send_binary, codec, seed) {
       send_runtime(
         subject,
@@ -1426,6 +1465,50 @@ pub fn transport_socket_connected(
       )
     AppChannels(app: app, ..) ->
       app.socket_connected(socket_id, send, send_binary, codec, seed)
+  }
+}
+
+@internal
+pub fn transport_admit_socket(
+  channels: Channels,
+  owner: Option(process.Pid),
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  socket_codec: Option(codec.Codec),
+  assigns: Dynamic,
+  seed: event.ConnectSeed,
+  close: fn() -> Nil,
+) -> Bool {
+  case channels, owner {
+    Channels(coordinator: coordinator_subject, ..), None -> {
+      process.send(
+        coordinator_subject,
+        coordinator.SocketConnected(
+          socket_id,
+          send,
+          send_binary,
+          socket_codec,
+          assigns,
+        ),
+      )
+      process.send(
+        coordinator_subject,
+        coordinator.RegisterCloser(socket_id, close),
+      )
+      True
+    }
+    AppChannels(app: app, ..), Some(runtime_owner) ->
+      app.admit_socket(
+        runtime_owner,
+        socket_id,
+        send,
+        send_binary,
+        socket_codec,
+        seed,
+        close,
+      )
+    _, _ -> False
   }
 }
 
