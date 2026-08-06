@@ -1,6 +1,8 @@
 -module(beryl_ffi).
 -export([identity/1, monotonic_time_ms/0, monotonic_time_ns/0,
-         string_starts_with/2, stop_supervisor/1, rescue/1]).
+         string_starts_with/2, stop_supervisor/1, rescue/1,
+         admission_token_new/0, admission_token_cancel/1,
+         admission_token_pending/1, admission_token_claim/1]).
 
 %% Identity function for type erasure
 identity(X) -> X.
@@ -24,6 +26,20 @@ monotonic_time_ms() -> erlang:monotonic_time(millisecond).
 
 %% Return Erlang monotonic time in nanoseconds
 monotonic_time_ns() -> erlang:monotonic_time(nanosecond).
+
+admission_token_new() ->
+    Token = atomics:new(1, [{signed, false}]),
+    atomics:put(Token, 1, 0),
+    Token.
+
+admission_token_cancel(Token) ->
+    atomics:compare_exchange(Token, 1, 0, 2) =:= ok.
+
+admission_token_pending(Token) ->
+    atomics:get(Token, 1) =:= 0.
+
+admission_token_claim(Token) ->
+    atomics:compare_exchange(Token, 1, 0, 1) =:= ok.
 
 %% Check if a string starts with a prefix
 string_starts_with(String, Prefix) ->

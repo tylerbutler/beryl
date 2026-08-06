@@ -1245,6 +1245,16 @@ fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
   }
 }
 
+fn await_admission(
+  reply: Subject(Bool),
+  admission: runtime.AdmissionToken,
+) -> Bool {
+  case process.receive(reply, 1000) {
+    Ok(admitted) -> admitted
+    Error(Nil) -> !runtime.cancel_admission(admission)
+  }
+}
+
 /// Build the monomorphic closure record over a generic runtime. This is
 /// plain closure capture by a generic function — the `model`/`msg` types
 /// are sealed in here and never appear in any public signature. The
@@ -1268,6 +1278,7 @@ fn app_handle(
       case process.subject_owner(subject) {
         Ok(current_owner) if current_owner == owner -> {
           let reply = process.new_subject()
+          let admission = runtime.new_admission_token()
           process.send(
             subject,
             runtime.AdmitSocket(
@@ -1278,10 +1289,11 @@ fn app_handle(
               socket_codec,
               seed,
               close,
+              admission,
               reply,
             ),
           )
-          process.receive(reply, 1000) |> result.unwrap(False)
+          await_admission(reply, admission)
         }
         _ -> False
       }

@@ -1,17 +1,16 @@
-//// Runtime - the app-side dispatch actor (ADR 0002).
+//// Runtime actor for supervised app-side dispatch systems.
 ////
 //// One runtime actor serves every socket started through
-//// `beryl.start_app`. It is generic over the app's `model` and `msg`
+//// `beryl.child_spec`. It is generic over the app's `model` and `msg`
 //// types: per-socket models live in the actor state, typed `Info`
 //// messages arrive through the actor's own mailbox, and no value is ever
 //// type-erased. Transports reach the runtime through monomorphic closures
-//// captured by `beryl.start_app`, so the frame-level transport SPI stays
+//// captured by `beryl.child_spec`, so the frame-level transport SPI stays
 //// unparameterized.
 ////
-//// The runtime owns everything the coordinator owns under the
-//// channel-module API — inbound decoding and validation, rate limiting,
-//// heartbeat eviction, topic subscriptions, broadcast fan-out — and adds
-//// the effect interpreter: each `update` returns a list of `Effect`s that
+//// The runtime owns inbound decoding and validation, rate limiting,
+//// heartbeat eviction, topic subscriptions, and broadcast fan-out. It
+//// also interprets effects: each `update` returns a list of `Effect`s that
 //// are applied strictly in order within a single actor turn, so effect
 //// list order is wire order.
 
@@ -39,9 +38,8 @@ import gleam/result
 import gleam/set.{type Set}
 import gleam/string
 
-/// Configuration for the runtime actor. Built by `beryl.start_app` from a
-/// `beryl.Config`; the fields mirror the coordinator's configuration plus
-/// per-topic-pattern rate limits.
+/// Configuration for the runtime actor. Built by `beryl.child_spec` from a
+/// `beryl.Config`; the fields cover per-topic-pattern rate limits.
 pub type Config {
   Config(
     codec: Codec,
@@ -68,6 +66,34 @@ pub type StartError {
   ActorStartFailed(actor.StartError)
 }
 
+pub type AdmissionToken
+
+@external(erlang, "beryl_ffi", "admission_token_new")
+pub fn new_admission_token() -> AdmissionToken
+
+@external(erlang, "beryl_ffi", "admission_token_cancel")
+pub fn cancel_admission(token: AdmissionToken) -> Bool
+
+@external(erlang, "beryl_ffi", "admission_token_pending")
+fn admission_pending(token: AdmissionToken) -> Bool
+
+@external(erlang, "beryl_ffi", "admission_token_claim")
+fn claim_admission(token: AdmissionToken) -> Bool
+
+fn admission_is_pending(admission: Option(AdmissionToken)) -> Bool {
+  case admission {
+    Some(token) -> admission_pending(token)
+    None -> True
+  }
+}
+
+fn claim_pending_admission(admission: Option(AdmissionToken)) -> Bool {
+  case admission {
+    Some(token) -> claim_admission(token)
+    None -> True
+  }
+}
+
 /// Messages the runtime actor handles.
 pub type Msg(msg) {
   AdmitSocket(
@@ -78,6 +104,7 @@ pub type Msg(msg) {
     codec: Option(Codec),
     seed: ConnectSeed,
     close: fn() -> Nil,
+    admission: AdmissionToken,
     reply: Subject(Bool),
   )
   SocketConnected(
@@ -154,7 +181,12 @@ type SocketState(model, msg) {
 
 /// A join delivered to `update` that has not been answered yet.
 type Pending {
-  Pending(topic: String, join_ref: Option(String), msg_ref: Option(String))
+  Pending(
+    topic: String,
+    join_ref: Option(String),
+    msg_ref: Option(String),
+    ref: Ref,
+  )
 }
 
 /// Where an event delivered to `update` came from, for crash attribution.
@@ -163,6 +195,7 @@ type Source {
     topic: String,
     join_ref: Option(String),
     msg_ref: Option(String),
+    ref: Ref,
     started_at: Int,
   )
   MessageSource(topic: String, kind: telemetry.MessageKind, started_at: Int)
@@ -233,12 +266,11 @@ fn disconnect_reason_telemetry(
 
 /// Start the runtime actor registered under `name`.
 ///
-/// There is deliberately no unsupervised start: `beryl.start_app` runs
+/// There is deliberately no unsupervised start: `beryl.child_spec` runs
 /// the runtime under a supervisor, and a crash restarts it with dispatch
 /// intact because the `init`/`update` closures live in the child
 /// specification. The registered name keeps transport and broadcast
-/// handles valid across restarts (per-socket state is dropped, matching
-/// coordinator restart semantics).
+/// handles valid across restarts (per-socket state is dropped on restart).
 pub fn start_named(
   config: Config,
   name name: process.Name(Msg(msg)),
@@ -314,6 +346,7 @@ fn handle_message(
       socket_codec,
       seed,
       close,
+      admission,
       reply,
     ) ->
       handle_admit_socket(
@@ -325,6 +358,7 @@ fn handle_message(
         socket_codec,
         seed,
         close,
+        admission,
         reply,
       )
     SocketConnected(socket_id, send, send_binary, socket_codec, seed) ->
@@ -399,6 +433,7 @@ fn handle_socket_connected(
       socket_codec,
       seed,
       fn() { Nil },
+      None,
     )
   actor.continue(state)
 }
@@ -412,9 +447,10 @@ fn handle_admit_socket(
   socket_codec: Option(Codec),
   seed: ConnectSeed,
   close: fn() -> Nil,
+  admission: AdmissionToken,
   reply: Subject(Bool),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  case process.self() == owner {
+  case process.self() == owner && admission_pending(admission) {
     False -> {
       process.send(reply, False)
       actor.continue(state)
@@ -429,6 +465,7 @@ fn handle_admit_socket(
           socket_codec,
           seed,
           close,
+          Some(admission),
         )
       process.send(reply, admitted)
       actor.continue(state)
@@ -444,7 +481,12 @@ fn register_socket(
   socket_codec: Option(Codec),
   seed: ConnectSeed,
   close: fn() -> Nil,
+  admission: Option(AdmissionToken),
 ) -> #(State(model, msg), Bool) {
+  use <- bool.guard(when: !admission_is_pending(admission), return: #(
+    state,
+    False,
+  ))
   let sender = make_socket_sender(state, socket_id)
   let info = event.ConnectInfo(socket_id: socket_id, seed: seed, self: sender)
   let init = state.init
@@ -458,6 +500,10 @@ fn register_socket(
       #(state, False)
     }
     Ok(#(model, effects)) -> {
+      use <- bool.guard(when: !claim_pending_admission(admission), return: #(
+        state,
+        False,
+      ))
       let socket =
         SocketState(
           id: socket_id,
@@ -1002,22 +1048,16 @@ fn deliver_join(
     #("ref", optional_string(ref)),
     #("join_ref", optional_string(join_ref)),
   ])
+  let pending_ref =
+    event.make_join_ref(topic: topic_name, join_ref: join_ref, msg_ref: ref)
   let join_event =
-    event.Join(
-      topic: topic_name,
-      payload: payload,
-      ref: event.make_join_ref(
-        topic: topic_name,
-        join_ref: join_ref,
-        msg_ref: ref,
-      ),
-    )
+    event.Join(topic: topic_name, payload: payload, ref: pending_ref)
   let outcome =
     update_once(
       state,
       socket_id,
       join_event,
-      JoinSource(topic_name, join_ref, ref, started_at),
+      JoinSource(topic_name, join_ref, ref, pending_ref, started_at),
     )
   actor.continue(drive(outcome, socket_id))
 }
@@ -1588,7 +1628,7 @@ fn update_once(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
       case source {
-        JoinSource(_, _, _, started_at) ->
+        JoinSource(_, _, _, _, started_at) ->
           emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
         MessageSource(_, kind, started_at) ->
           emit_message_stop(
@@ -1625,7 +1665,7 @@ fn update_once(
           // fail it closed before the teardown frames.
           reject_unanswered_join(state, socket_id, source)
           case source {
-            JoinSource(_, _, _, started_at) ->
+            JoinSource(_, _, _, _, started_at) ->
               emit_join_stop(state, started_at, telemetry.JoinHandlerRejected)
             MessageSource(_, kind, started_at) ->
               emit_message_stop(
@@ -1650,8 +1690,8 @@ fn update_once(
         Ok(event.Next(new_model, effects)) -> {
           let state = store_model(state, socket_id, new_model)
           let pending = case source {
-            JoinSource(topic_name, join_ref, msg_ref, _) ->
-              Some(Pending(topic_name, join_ref, msg_ref))
+            JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
+              Some(Pending(topic_name, join_ref, msg_ref, ref))
             _ -> None
           }
           let #(state, pending, kicks) =
@@ -1678,7 +1718,7 @@ fn update_once(
             None -> Nil
           }
           case source {
-            JoinSource(topic_name, _, _, started_at) -> {
+            JoinSource(topic_name, _, _, _, started_at) -> {
               let join_outcome = case
                 pending,
                 socket_subscribed(state, socket_id, topic_name)
@@ -1724,7 +1764,7 @@ fn handle_update_crash(
   crash: String,
 ) -> Outcome(model, msg) {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref, started_at) -> {
+    JoinSource(topic_name, join_ref, msg_ref, _, started_at) -> {
       state.logger
       |> log.error("Update crashed handling join", [
         #("socket_id", socket_id),
@@ -1792,7 +1832,7 @@ fn reject_unanswered_join(
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref, _) ->
+    JoinSource(topic_name, join_ref, msg_ref, _, _) ->
       send_error_reply(
         state,
         socket_id,
@@ -1845,8 +1885,7 @@ fn drive(outcome: Outcome(model, msg), socket_id: String) -> State(model, msg) {
 /// `Closed` to the app, and send the terminal frame. Subscription state is
 /// removed *before* the `Closed`
 /// delivery, so pushes to the closing topic drop while broadcasts still
-/// reach the topic's remaining subscribers — the same frames the client
-/// set would see under the channel-module API.
+/// reach the topic's remaining subscribers.
 fn close_topic(
   state: State(model, msg),
   socket_id: String,
@@ -2117,7 +2156,7 @@ fn apply_accept_join(
 ) -> #(State(model, msg), Option(Pending), List(String)) {
   case pending {
     Some(p) ->
-      case event.ref_is_join(ref) && event.ref_topic(ref) == p.topic {
+      case event.ref_is_join(ref) && event.refs_match(ref, p.ref) {
         True -> {
           let state = subscribe_socket(state, socket_id, p)
           case dict.get(state.sockets, socket_id) {
@@ -2166,7 +2205,7 @@ fn apply_reject_join(
 ) -> #(State(model, msg), Option(Pending), List(String)) {
   case pending {
     Some(p) ->
-      case event.ref_is_join(ref) && event.ref_topic(ref) == p.topic {
+      case event.ref_is_join(ref) && event.refs_match(ref, p.ref) {
         True -> {
           state.logger
           |> log.debug("Join rejected", [
