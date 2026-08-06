@@ -622,14 +622,6 @@ pub type AppHandle {
       event.ConnectSeed,
       fn() -> Nil,
     ) -> Bool,
-    socket_connected: fn(
-      String,
-      fn(String) -> Result(Nil, Nil),
-      fn(BitArray) -> Result(Nil, Nil),
-      Option(codec.Codec),
-      event.ConnectSeed,
-    ) -> Nil,
-    register_closer: fn(String, fn() -> Nil) -> Nil,
     socket_disconnected: fn(String) -> Nil,
     route_decoded: fn(String, codec.Inbound) -> Nil,
     route_decoded_binary: fn(String, codec.Inbound) -> Nil,
@@ -1106,21 +1098,6 @@ fn app_handle(
         _ -> False
       }
     },
-    socket_connected: fn(socket_id, send, send_binary, socket_codec, seed) {
-      send_runtime(
-        subject,
-        runtime.SocketConnected(
-          socket_id,
-          send,
-          send_binary,
-          socket_codec,
-          seed,
-        ),
-      )
-    },
-    register_closer: fn(socket_id, close) {
-      send_runtime(subject, runtime.RegisterCloser(socket_id, close))
-    },
     socket_disconnected: fn(socket_id) {
       send_runtime(subject, runtime.SocketDisconnected(socket_id))
     },
@@ -1297,19 +1274,6 @@ pub fn app_dispatch(sockets: Sockets) -> AppHandle {
   sockets.app
 }
 
-// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
-@internal
-pub fn transport_socket_connected(
-  _channels: Sockets,
-  _socket_id: String,
-  _send: fn(String) -> Result(Nil, Nil),
-  _send_binary: fn(BitArray) -> Result(Nil, Nil),
-  _codec: Option(codec.Codec),
-  _seed: event.ConnectSeed,
-) -> Nil {
-  Nil
-}
-
 @internal
 pub fn transport_admit_socket(
   channels: Sockets,
@@ -1334,15 +1298,6 @@ pub fn transport_admit_socket(
       )
     None -> False
   }
-}
-
-@internal
-pub fn transport_register_closer(
-  _channels: Sockets,
-  _socket_id: String,
-  _close: fn() -> Nil,
-) -> Nil {
-  Nil
 }
 
 @internal
