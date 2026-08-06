@@ -62,6 +62,7 @@
 //// }
 //// ```
 
+import beryl/app_supervisor
 import beryl/channel.{type Channel}
 import beryl/connection_limit
 import beryl/coordinator
@@ -1157,6 +1158,7 @@ fn build_app_subtree(
   warn_if_unprotected(config)
 
   let runtime_name = process.new_name("beryl_runtime")
+  let supervisor_name = process.new_name("beryl_app_supervisor")
   let limiter_name = case
     connection_limit.enabled(
       config.max_connections_per_ip,
@@ -1171,11 +1173,21 @@ fn build_app_subtree(
     AppChannels(
       config: config,
       connection_limiter: option_map(limiter_name, connection_limit.from_name),
-      app: app_handle(process.named_subject(runtime_name), config.pubsub),
+      app: app_handle(
+        process.named_subject(runtime_name),
+        process.named_subject(supervisor_name),
+        config.pubsub,
+      ),
     )
 
   AppSubtree(handle: handle, start_supervisor: fn() {
-    start_app_supervisor(config, runtime_name, limiter_name, init, update)
+    app_supervisor.start(
+      supervisor_name,
+      stop_runtime(process.named_subject(runtime_name), _),
+      fn() {
+        start_app_supervisor(config, runtime_name, limiter_name, init, update)
+      },
+    )
   })
 }
 
@@ -1263,6 +1275,7 @@ fn await_admission(
 /// window or after `stop` degrades to a no-op instead of a crash.
 fn app_handle(
   subject: Subject(runtime.Msg(msg)),
+  supervisor: Subject(app_supervisor.Message),
   ps: Option(PubSub(json.Json)),
 ) -> AppHandle {
   AppHandle(
@@ -1350,25 +1363,46 @@ fn app_handle(
         _, _ -> Nil
       }
     },
-    stop: fn() {
-      // Drain sockets gracefully; the Transient child is not restarted
-      // after a normal stop. `NotRunning` when the runtime is already down
-      // (pre-start, restart window, or a prior stop) keeps `stop`
-      // idempotent instead of crashing.
-      case process.subject_owner(subject) {
-        Error(Nil) -> internal.result_error(NotRunning)
-        Ok(_) -> {
-          let reply = process.new_subject()
-          process.send(subject, runtime.Stop(reply))
-          case process.receive(reply, 5000) {
-            Ok(_) -> Ok(Nil)
-            Error(Nil) -> internal.result_error(StopTimeout)
-          }
-        }
-      }
-    },
+    stop: fn() { request_runtime_stop(supervisor) },
     runtime_owner: fn() { process.subject_owner(subject) },
   )
+}
+
+// Record the intentional stop before asking the runtime to drain, so
+// restart-intensity exhaustion remains distinguishable from shutdown.
+fn request_runtime_stop(
+  supervisor: Subject(app_supervisor.Message),
+) -> Result(Nil, StopError) {
+  use _ <- result.try(
+    process.subject_owner(supervisor)
+    |> result.map_error(fn(_) { NotRunning }),
+  )
+  let started = process.new_subject()
+  let finished = process.new_subject()
+  process.send(supervisor, app_supervisor.StopRuntime(started, finished))
+
+  case process.receive(started, 1000) {
+    Ok(False) -> internal.result_error(NotRunning)
+    Error(Nil) -> internal.result_error(StopTimeout)
+    Ok(True) ->
+      case process.receive(finished, 5000) {
+        Ok(_) -> Ok(Nil)
+        Error(Nil) -> internal.result_error(StopTimeout)
+      }
+  }
+}
+
+fn stop_runtime(
+  subject: Subject(runtime.Msg(msg)),
+  finished: Subject(Nil),
+) -> Bool {
+  case process.subject_owner(subject) {
+    Error(Nil) -> False
+    Ok(_) -> {
+      process.send(subject, runtime.Stop(finished))
+      True
+    }
+  }
 }
 
 /// Send to the runtime only while its name is registered, so handle use

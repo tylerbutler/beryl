@@ -193,6 +193,89 @@ pub fn limiter_survives_runtime_restart_test() {
   process.is_alive(limiter) |> should.be_false
 }
 
+// ── restart-intensity exhaustion is escalated to the application root ──────
+
+pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() {
+  let assert Ok(#(sockets, beryl_spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(5),
+      init: accepting_init,
+      update: accepting_update,
+    )
+
+  let assert Ok(root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.start()
+
+  test_helpers.wait_until(
+    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    2000,
+    10,
+  )
+
+  let original_limiter = limiter_pid(sockets)
+  let runtime1 = runtime_pid(sockets)
+  process.kill(runtime1)
+  let runtime2 = wait_for_new_runtime(sockets, runtime1)
+  process.kill(runtime2)
+  let runtime3 = wait_for_new_runtime(sockets, runtime2)
+  process.kill(runtime3)
+  let runtime4 = wait_for_new_runtime(sockets, runtime3)
+
+  // The fourth rapid crash exceeds the nested supervisor's intensity of
+  // three. The lifecycle wrapper converts its `shutdown` into an abnormal
+  // exit, so the application root restarts the whole subtree.
+  process.kill(runtime4)
+  test_helpers.wait_until(
+    fn() {
+      case beryl.app_limiter_pid(sockets), beryl.app_runtime_pid(sockets) {
+        Ok(limiter), Ok(runtime) ->
+          limiter != original_limiter && runtime != runtime4
+        _, _ -> False
+      }
+    },
+    3000,
+    10,
+  )
+
+  let recovered_runtime = runtime_pid(sockets)
+  limiter_pid(sockets) |> should.not_equal(original_limiter)
+
+  // The original name-backed Sockets handle is re-registered and usable.
+  admit(sockets, transport.connection_owner(sockets), "after-exhaustion", fn() {
+    Nil
+  })
+  |> should.equal(Ok(Nil))
+  process.is_alive(recovered_runtime) |> should.be_true
+
+  // Intentional stop still terminates normally, so the outer transient child
+  // stays down instead of undoing beryl.stop.
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  process.sleep(100)
+  beryl.app_runtime_pid(sockets) |> should.be_error
+  beryl.app_limiter_pid(sockets) |> should.be_error
+  process.is_alive(root.pid) |> should.be_true
+}
+
+fn wait_for_new_runtime(
+  sockets: beryl.Sockets,
+  old_runtime: process.Pid,
+) -> process.Pid {
+  test_helpers.wait_until(
+    fn() {
+      case beryl.app_runtime_pid(sockets) {
+        Ok(pid) -> pid != old_runtime
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+  runtime_pid(sockets)
+}
+
 // ── a runtime crash closes connections that monitor the accepting runtime ──
 
 pub fn runtime_crash_closes_owned_connection_test() {
