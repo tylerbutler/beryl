@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Fixed"
-body = "Recover the app runtime subtree after nested supervisor restart-intensity exhaustion."

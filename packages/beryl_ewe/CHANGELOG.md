@@ -1,5 +1,11 @@
 # beryl_ewe changelog
 
+## v0.1.1 - 2026-08-07
+
+### Dependencies
+
+- Updated beryl to 0.2.0
+
 ## v0.1.0 - 2026-08-07
 
 ### Added

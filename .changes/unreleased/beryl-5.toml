@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Fixed"
-body = "Prevent stale same-topic join completions and timed-out admissions from affecting live sockets."
