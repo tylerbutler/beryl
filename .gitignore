@@ -30,3 +30,7 @@ docs/architecture-deck.html
 
 # Local k6 load-test summaries
 /load/results/
+
+
+# APM dependencies
+apm_modules/
