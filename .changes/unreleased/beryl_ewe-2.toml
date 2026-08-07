@@ -1,0 +1,3 @@
+package = "beryl_ewe"
+kind = "Added"
+body = "Initial release: Ewe WebSocket transport for beryl. Mirrors the beryl_mist config-builder and handler API using Ewe request and response types, with socket-level authentication, Origin policies, Phoenix version negotiation, and edge enforcement of frame-size, rate, and connection limits."
