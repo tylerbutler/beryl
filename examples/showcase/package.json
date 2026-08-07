@@ -1,0 +1,13 @@
+{
+  "name": "showcase",
+  "version": "1.0.0",
+  "private": true,
+  "description": "All beryl example channels on one socket via app-side dispatch — the ADR 0002 acceptance-gate demo.",
+  "scripts": {
+    "test": "npx playwright test"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}
