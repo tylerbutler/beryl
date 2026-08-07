@@ -204,10 +204,19 @@ case beryl.child_spec(config, init: init, update: update) {
   Error(beryl.HeartbeatTimeoutTooLow(2)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
-  Error(beryl.InvalidTopicPattern(pattern, reason)) ->
-    panic as pattern <> ": " <> reason
+  Error(beryl.InvalidTopicPattern(pattern, topic.EmptyTopic)) ->
+    panic as { pattern <> " is empty" }
+  Error(beryl.InvalidTopicPattern(pattern, topic.InvalidFormat(detail))) ->
+    panic as { pattern <> ": " <> detail }
+  Error(beryl.InvalidTopicPattern(pattern, _other)) ->
+    panic as { pattern <> " is invalid" }
 }
 ```
+
+`InvalidTopicPattern` nests `beryl/topic.TopicError` rather than flattening it
+to a string. New `TopicError` variants may be added in a minor release, so
+match exact variants only when your handling differs and keep a catch-all
+otherwise.
 
 `beryl_channels.child_spec` validates the handler table first and reports
 `ChildSpecInvalidHandlers(HandlerError)` or
