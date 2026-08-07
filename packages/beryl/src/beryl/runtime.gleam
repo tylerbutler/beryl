@@ -826,8 +826,8 @@ fn handle_stop(
     |> list.fold(state, abandon_suspension)
   // Tracks this runtime already gave up on can still be applied by the
   // presence actor, and their acknowledgements can no longer be
-  // compensated once this actor stops — so their sessions are swept now,
-  // while there is still something to sweep them with. The sweep is
+  // compensated once this actor stops — so their runtime-owned refs are
+  // swept now, while there is still something to sweep them with. The sweep is
   // ordered behind the in-flight tracks themselves (same sender, same
   // mailbox), so it removes them rather than racing them.
   let state =
@@ -844,8 +844,8 @@ fn handle_stop(
 /// Give up on a socket's in-flight presence mutation during shutdown.
 ///
 /// The runtime cannot wait for it, and a track that is still in flight
-/// would leave an entry whose ref this runtime never learned — so the
-/// session is swept wholesale from presence instead.
+/// would leave an entry whose ref this runtime never learned — so this
+/// session's runtime-owned refs are swept from presence instead.
 fn abandon_suspension(
   state: State(model, msg),
   socket_id: String,
@@ -859,14 +859,14 @@ fn abandon_suspension(
         #("socket_id", socket_id),
       ])
       case state.config.presence {
-        Some(handle) -> presence.untrack_all_async(handle, socket_id)
+        Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
         None -> Nil
       }
       State(
         ..state,
         suspended: dict.delete(state.suspended, socket_id),
         queued: dict.delete(state.queued, socket_id),
-        // The session sweep just dispatched also removes anything an
+        // The runtime-owned sweep just dispatched also removes anything an
         // earlier, already-timed-out track of this socket could still add.
         unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
       )
@@ -877,8 +877,8 @@ fn abandon_suspension(
 /// Sweep a session whose earlier, timed-out track may still land at the
 /// presence actor after this runtime is gone. Same reasoning as
 /// `abandon_suspension`: the ref was never learned here, and after
-/// shutdown never will be, so the session is removed wholesale instead of
-/// leaving an entry nothing can remove.
+/// shutdown never will be, so the session's runtime-owned refs are removed
+/// instead of leaving an entry nothing can remove.
 fn sweep_unacked_track(
   state: State(model, msg),
   socket_id: String,
@@ -888,7 +888,7 @@ fn sweep_unacked_track(
     #("socket_id", socket_id),
   ])
   case state.config.presence {
-    Some(handle) -> presence.untrack_all_async(handle, socket_id)
+    Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
     None -> Nil
   }
   State(..state, unacked_tracks: dict.delete(state.unacked_tracks, socket_id))
@@ -3255,16 +3255,10 @@ fn handle_presence_ack(
 /// acknowledgement is therefore self-limiting: its own acknowledgement is
 /// an `Untracked`, which compensates nothing further.
 ///
-/// ## Why this cannot remove a newer entry for the same key
-///
-/// Presence removes by `(session_id, topic, key)`, not by ref, so this
-/// untrack would take a *newer* entry for the same key with it if both
-/// refs could coexist. They cannot: an asynchronous track supersedes every
-/// ref the presence actor still holds for that logical tuple in the turn
-/// that adds the new one (see `presence.track_async`), and this runtime
-/// sends both messages, so the actor's mailbox orders the retrack strictly
-/// before this compensation. By the time it is handled, the stale ref is
-/// gone from the actor's ref map and removing it is a no-op.
+/// Presence resolves the ref to its exact local CRDT tag. Runtime retries
+/// supersede only runtime-owned refs, while public synchronous refs remain
+/// independently addressable, so compensation cannot delete a newer public
+/// track even when session, topic, and key are identical.
 fn compensate_stale_ack(
   state: State(model, msg),
   ack: presence.MutationAck,

@@ -11,15 +11,26 @@ Every tracked entry is stamped with a **replica name** (the `replica` argument t
 ## How Beryl apps use it
 
 The presence actor is a standalone process that the application starts and
-supervises. It is not attached to the shared socket runtime in Lane B.
+supervises, then supplies to `beryl.Config` with `with_presence_handle`.
 
-Public presence reads and mutations are synchronous. Applications that
-combine presence with app-side dispatch should put those calls in a separate
-application actor, send it nonblocking commands from `update`, and broadcast
-diffs or snapshots after the presence operation completes. This keeps a slow
-presence callback or mailbox from stalling unrelated sockets and heartbeats.
+App-side dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
+`BroadcastPresence` effects. Mutations are sent asynchronously to the presence
+actor and acknowledged only after both the CRDT and its ETS read model are
+updated. The runtime suspends the issuing socket's remaining effects and later
+inputs until that acknowledgement arrives; other sockets, broadcasts,
+heartbeats, and shutdown handling continue normally.
 
-Mutations are asynchronous end to end: the runtime sends `PresenceTrack`/`PresenceUntrack` to the presence actor and holds the rest of that socket's effect list (and any further input from that socket) until presence confirms the change — it never blocks its own actor waiting. Other sockets, broadcasts, and heartbeats keep being served throughout, so one slow `on_diff` callback can no longer stall the whole runtime. Re-tracking a key is a single atomic replacement, and the automatic cleanup when a topic closes untracks every key the socket still held in one batch, producing one aggregate leave diff.
+Snapshot effects read the actor-owned ETS model directly, so they do not wait
+on the actor mailbox. Re-tracking a runtime-owned key is one atomic
+leave-plus-join transition, and topic close cleans up that socket's remaining
+runtime refs in one batch. Tracking refs resolve to exact local CRDT tags, so a
+late runtime acknowledgement cannot remove an independently owned public
+`presence.track` entry with the same session, topic, and key.
+
+The public `track`, `untrack`, and `untrack_all` APIs remain synchronous for
+application actors and other out-of-band workflows. Public `list`,
+`get_by_key`, and `count` calls read ETS directly and retain immediate
+read-after-write behavior.
 
 ## API surface
 
@@ -82,12 +93,14 @@ sequenceDiagram
   participant App as app update
   participant Runtime as runtime
   participant Pres as presence actor
+  participant Read as ETS read model
   participant PS as pubsub
   participant Remote as remote replica
   App->>Runtime: PresenceTrack / PresenceUntrack / PushPresence / BroadcastPresence
   Runtime->>Pres: track / untrack (async, acknowledged)
+  Pres->>Read: publish touched topics
   Pres-->>Runtime: mutation ack
-  Runtime->>Pres: list (direct ETS read)
+  Runtime->>Read: list / count (direct read)
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end

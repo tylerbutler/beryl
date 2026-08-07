@@ -771,6 +771,164 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
   presence.count(handle, "room:a") |> should.equal(0)
 }
 
+/// A timed-out runtime track may acknowledge after a newer synchronous public
+/// `presence.track` has claimed the exact same session/topic/key. The stale
+/// compensation must remove only the runtime-owned CRDT tag, survive normal
+/// topic cleanup, and leave neither ref capable of deleting a later entry.
+pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let diffs = process.new_subject()
+  let handle = start_recording_gated_presence(gate, diffs)
+  let events = process.new_subject()
+  let channels =
+    start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
+
+  let frames = h.connect(channels, "s1")
+  arm(gate)
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  await_entered(entered)
+  let #(runtime_joins, runtime_leaves) = next_diff(diffs)
+  runtime_leaves |> should.equal([])
+  let assert [runtime_ref] = runtime_joins
+
+  // The runtime times out while the actor is still inside the first track.
+  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+
+  // Queue the public track behind that in-flight runtime mutation before
+  // releasing it. Mailbox observation makes the ordering deterministic.
+  let public_done = process.new_subject()
+  let assert Ok(presence_pid) = process.subject_owner(presence.subject(handle))
+  let _public_tracker =
+    process.spawn_unlinked(fn() {
+      let ref =
+        presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+      process.send(public_done, ref)
+    })
+  test_helpers.wait_until(
+    fn() { test_helpers.mailbox_length(presence_pid) >= 1 },
+    1000,
+    5,
+  )
+  release(gate)
+
+  let assert Ok(public_ref) = process.receive(public_done, 2000)
+  let #(public_joins, public_leaves) = next_diff(diffs)
+  public_joins |> should.equal([public_ref])
+  public_leaves |> should.equal([])
+
+  // The stale acknowledgement is compensated after the already-queued public
+  // track. Only the runtime ref leaves.
+  let #(compensation_joins, compensation_leaves) = next_diff(diffs)
+  compensation_joins |> should.equal([])
+  compensation_leaves |> should.equal([runtime_ref])
+  presence.untrack(handle, "no-such-ref")
+
+  let assert [public_entry] = presence.list(handle, "room:a")
+  meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
+  json.to_string(public_entry.meta)
+  |> string.contains("public")
+  |> should.be_true
+
+  // Runtime topic cleanup owns no public ref and must leave it intact.
+  h.route(channels, "s1", "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]")
+  process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
+  presence.untrack(handle, "no-such-ref")
+  presence.count(handle, "room:a") |> should.equal(1)
+
+  // Replaying the compensated ref is a no-op, proving it is no longer
+  // dangling in the actor's ref index.
+  presence.untrack(handle, runtime_ref)
+  presence.count(handle, "room:a") |> should.equal(1)
+  process.receive(diffs, 100) |> should.be_error
+
+  presence.untrack(handle, public_ref)
+  let #(cleanup_joins, cleanup_leaves) = next_diff(diffs)
+  cleanup_joins |> should.equal([])
+  cleanup_leaves |> should.equal([public_ref])
+  presence.count(handle, "room:a") |> should.equal(0)
+
+  // A later entry cannot be reached through either old ref.
+  let later_ref =
+    presence.track(handle, "room:a", "user:s1", "s1", meta("later"))
+  let #(later_joins, later_leaves) = next_diff(diffs)
+  later_joins |> should.equal([later_ref])
+  later_leaves |> should.equal([])
+  presence.untrack(handle, runtime_ref)
+  presence.untrack(handle, public_ref)
+  presence.count(handle, "room:a") |> should.equal(1)
+  process.receive(diffs, 100) |> should.be_error
+
+  presence.untrack(handle, later_ref)
+  let #(final_joins, final_leaves) = next_diff(diffs)
+  final_joins |> should.equal([])
+  final_leaves |> should.equal([later_ref])
+  presence.list(handle, "room:a") |> should.equal([])
+}
+
+/// Shutdown cannot wait for a timed-out track's ref, so it queues a
+/// runtime-owned session sweep behind the in-flight mutation. A public track
+/// already queued for the same tuple must survive that cleanup.
+pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let diffs = process.new_subject()
+  let handle = start_recording_gated_presence(gate, diffs)
+  let events = process.new_subject()
+  let channels =
+    start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
+
+  let frames = h.connect(channels, "s1")
+  arm(gate)
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  await_entered(entered)
+  let #(runtime_joins, runtime_leaves) = next_diff(diffs)
+  runtime_leaves |> should.equal([])
+  let assert [runtime_ref] = runtime_joins
+  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+
+  let public_done = process.new_subject()
+  let assert Ok(presence_pid) = process.subject_owner(presence.subject(handle))
+  let _public_tracker =
+    process.spawn_unlinked(fn() {
+      let ref =
+        presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+      process.send(public_done, ref)
+    })
+  test_helpers.wait_until(
+    fn() { test_helpers.mailbox_length(presence_pid) >= 1 },
+    1000,
+    5,
+  )
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
+  release(gate)
+
+  let assert Ok(public_ref) = process.receive(public_done, 2000)
+  let #(public_joins, public_leaves) = next_diff(diffs)
+  public_joins |> should.equal([public_ref])
+  public_leaves |> should.equal([])
+  let #(sweep_joins, sweep_leaves) = next_diff(diffs)
+  sweep_joins |> should.equal([])
+  sweep_leaves |> should.equal([runtime_ref])
+  presence.untrack(handle, "no-such-ref")
+
+  let assert [public_entry] = presence.list(handle, "room:a")
+  meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
+  presence.untrack(handle, runtime_ref)
+  presence.count(handle, "room:a") |> should.equal(1)
+  process.receive(diffs, 100) |> should.be_error
+
+  presence.untrack(handle, public_ref)
+  let #(cleanup_joins, cleanup_leaves) = next_diff(diffs)
+  cleanup_joins |> should.equal([])
+  cleanup_leaves |> should.equal([public_ref])
+  presence.list(handle, "room:a") |> should.equal([])
+}
+
 /// A track the runtime already gave up on can still be applied by the
 /// presence actor afterwards — and once the runtime has stopped there is
 /// nothing left to receive its acknowledgement, so nothing left to
