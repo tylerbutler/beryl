@@ -231,7 +231,7 @@ pub fn config(codec: codec.Codec) -> Config {
 }
 
 /// Configure a per-topic-pattern message rate limit for app-dispatch
-/// systems (`start`).
+/// systems (`child_spec`).
 ///
 /// Patterns use the same syntax as topic routing (`"room:*"`,
 /// `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
@@ -272,8 +272,8 @@ pub fn with_telemetry(config: Config) -> Config {
 /// `timeout_ms` is the server-side staleness window — a socket that sends no
 /// heartbeat within this window is evicted. The server derives its internal
 /// check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
-/// be at least 2; smaller values are rejected by `start` with
-/// `InvalidHeartbeatTimeout` because a check interval of 0 would disable
+/// be at least 2; smaller values are rejected by `child_spec` with
+/// `HeartbeatTimeoutTooLow` because a check interval of 0 would disable
 /// eviction. The defaults are 30000 ms and 60000 ms respectively.
 pub fn with_heartbeat(
   config: Config,
@@ -546,9 +546,8 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 /// Beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
-/// should be a visible one. Called by both `start` and `supervisor.start`.
-@internal
-pub fn warn_if_unprotected(config: Config) -> Nil {
+/// should be a visible one. Called by `child_spec`.
+fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
     config.max_connections_per_ip <= 0
     && config.max_connections <= 0
@@ -610,8 +609,7 @@ pub opaque type Sockets {
 /// Monomorphic closures over a generic runtime actor, captured by
 /// `child_spec`. This is what lets the frame-level transport SPI stay
 /// unparameterized while the runtime holds typed per-socket models.
-@internal
-pub type AppHandle {
+type AppHandle {
   AppHandle(
     admit_socket: fn(
       process.Pid,
@@ -631,8 +629,7 @@ pub type AppHandle {
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
-    /// Errors: `False` when the runtime is down, `True` on request timeout.
-    stats: fn() -> Result(runtime.StatsSnapshot, Bool),
+    stats: fn() -> Result(runtime.StatsSnapshot, runtime.StatsError),
   )
 }
 
@@ -807,7 +804,7 @@ fn stop_app_subtree(
     Ok(runtime_pid) -> {
       let runtime_monitor = process.monitor(runtime_pid)
       let limiter_monitor =
-        option_map(
+        option.map(
           option.from_result(app_limiter_owner(connection_limiter)),
           process.monitor,
         )
@@ -960,7 +957,7 @@ fn build_app_subtree(
   let handle =
     Sockets(
       config: config,
-      connection_limiter: option_map(limiter_name, connection_limit.from_name),
+      connection_limiter: option.map(limiter_name, connection_limit.from_name),
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
@@ -1035,13 +1032,6 @@ fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
     runtime.ActorStartFailed(error) -> error
     runtime.InvalidHeartbeatTimeout ->
       actor.InitFailed("invalid heartbeat timeout")
-  }
-}
-
-fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
-  case option {
-    Some(value) -> Some(transform(value))
-    None -> None
   }
 }
 
@@ -1146,11 +1136,12 @@ fn app_handle(
     runtime_owner: fn() { process.subject_owner(subject) },
     stats: fn() {
       case process.subject_owner(subject) {
-        Error(Nil) -> Error(False)
+        Error(Nil) -> Error(runtime.RuntimeDown)
         Ok(_) -> {
           let reply = process.new_subject()
-          send_runtime(subject, runtime.GetStats(reply))
-          process.receive(reply, 1000) |> result.replace_error(True)
+          process.send(subject, runtime.GetStats(reply))
+          process.receive(reply, 1000)
+          |> result.replace_error(runtime.RequestTimeout)
         }
       }
     },
@@ -1224,7 +1215,7 @@ pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
 fn to_runtime_config(config: Config) -> runtime.Config {
   runtime.Config(
     codec: config.codec,
-    // Server checks at half the timeout interval, matching `start`.
+    // Server checks at half the timeout interval, matching `child_spec`.
     heartbeat_check_interval_ms: config.heartbeat_timeout_ms / 2,
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
     message_limits: optional_limits(config.message_rate, config.message_burst),
@@ -1261,9 +1252,12 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
 // app runtime closures captured by `child_spec`.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Request a stats snapshot from the runtime, waiting at most one second.
 @internal
-pub fn app_dispatch(sockets: Sockets) -> AppHandle {
-  sockets.app
+pub fn runtime_stats(
+  channels: Sockets,
+) -> Result(runtime.StatsSnapshot, runtime.StatsError) {
+  channels.app.stats()
 }
 
 @internal

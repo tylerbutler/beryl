@@ -134,6 +134,14 @@ pub type StatsSnapshot {
   )
 }
 
+/// Errors returned when requesting a stats snapshot.
+pub type StatsError {
+  /// The runtime process is not currently registered.
+  RuntimeDown
+  /// The runtime did not reply within the bounded timeout.
+  RequestTimeout
+}
+
 /// Erlang monotonic time in milliseconds
 @external(erlang, "beryl_ffi", "monotonic_time_ms")
 fn monotonic_time_ms() -> Int
@@ -415,11 +423,13 @@ fn handle_message(
         reply,
         StatsSnapshot(
           connected_sockets: dict.size(state.sockets),
-          joined_socket_topic_pairs: state.sockets
-            |> dict.values
-            |> list.fold(0, fn(total, socket) {
+          joined_socket_topic_pairs: dict.fold(
+            state.sockets,
+            0,
+            fn(total, _socket_id, socket) {
               total + set.size(socket.subscribed_topics)
-            }),
+            },
+          ),
           active_topics: dict.size(state.topics),
           runtime_mailbox_length: telemetry.mailbox_length(),
         ),

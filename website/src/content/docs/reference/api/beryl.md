@@ -1,6 +1,6 @@
 ---
 title: beryl
-description: beryl - Type-safe real-time communication
+description: Beryl - Type-safe real-time communication
 ---
 
 <!--
@@ -9,18 +9,16 @@ description: beryl - Type-safe real-time communication
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-beryl - Type-safe real-time communication
+Beryl - Type-safe real-time communication
 
  A standalone Gleam library for building real-time applications on the BEAM.
- Provides channels, distributed presence tracking, pub/sub messaging, and
- channel groups. Serving those channels over WebSockets is a separate
- package — `beryl_mist` or `beryl_ewe` — built on the `beryl/transport`
- SPI; this package depends on no web server.
+ Provides WebSocket channels, distributed presence tracking, pub/sub
+ messaging, and channel groups.
 
  ## Features
 
- - **Channels** — Topic-based messaging with pattern matching
-   (`beryl`, `beryl/channel`)
+ - **Sockets** — App-side dispatch: topic-based WebSocket messaging
+   routed by your `update` function (`beryl`, `beryl/event`)
  - **PubSub** — Distributed publish/subscribe via Erlang `pg`
    (`beryl/pubsub`)
  - **Presence** — Distributed presence tracking backed by a causal-context
@@ -30,46 +28,42 @@ beryl - Type-safe real-time communication
 
  ## Quick Start
 
- beryl doesn't start an unmanaged process — `beryl/supervisor` builds a
- child specification for your application's own OTP supervisor.
-
  ```gleam
  import beryl
- import beryl/group
- import beryl/presence
+ import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
  import beryl/pubsub
- import beryl/supervisor
  import beryl/wire
- import gleam/option.{Some}
+ import gleam/option
  import gleam/otp/static_supervisor
 
  pub fn main() {
    // Optional: start PubSub for distributed messaging
    let ps = pubsub.start(pubsub.default_config())
 
-   // Configure channels (with presence and groups), then add beryl's
-   // child specification to your application supervisor.
-   let beryl_config =
-     supervisor.config(beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps))
-     |> supervisor.with_presence(presence.default_config("node1"))
-     |> supervisor.with_groups()
-
+   // Build the supervised system. The app supplies `init` (the per-socket
+   // model) and `update` (which routes every event by topic).
+   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
+   let assert Ok(#(sockets, spec)) =
+     beryl.child_spec(
+       config,
+       init: fn(_info) { #(Nil, []) },
+       update: fn(model, ev) {
+         case ev {
+           Join("room:" <> _, _payload, ref) ->
+             Next(model, [AcceptJoin(ref, option.None)])
+           Message(topic, "new_msg", payload, _ref) ->
+             Next(model, [Broadcast(topic, "new_msg", payload)])
+           _ -> Next(model, [])
+         }
+       },
+     )
    let assert Ok(_root) =
      static_supervisor.new(static_supervisor.OneForOne)
-     |> static_supervisor.add(supervisor.start(beryl_config))
+     |> static_supervisor.add(spec)
      |> static_supervisor.start()
 
-   let channels = supervisor.channels(beryl_config)
-   let assert Some(groups) = supervisor.groups(beryl_config)
-
-   // Register a channel handler
-   let _ = beryl.register(channels, "room:*", room_channel.new())
-
-   let assert Ok(Nil) = group.create(groups, "team:eng")
-   let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
-
-   // Broadcast to all topics in a group
-   group.broadcast(groups, channels, "team:eng", "announce", payload)
+   // Broadcast to all subscribers of a topic
+   beryl.broadcast(sockets, "room:lobby", "announce", payload)
  }
  ```
 
@@ -80,7 +74,7 @@ beryl - Type-safe real-time communication
 Configuration for the channels system.
 
  This type is opaque: construct it with `config` and adjust it with the
- `with_*` builder functions. Keeping it opaque lets beryl add configuration
+ `with_*` builder functions. Keeping it opaque lets Beryl add configuration
  options in the future without a breaking change.
 
 ```gleam
@@ -91,8 +85,9 @@ pub type Config
 
 Why an eagerly validated `Config` was rejected before any process started.
 
- [`child_spec`](#child_spec) validates the configuration before allocating
- names or starting the runtime.
+ `child_spec` validates the configuration before allocating names or
+ starting the runtime, so an invalid configuration fails fast instead of
+ crashing a supervised child at init time.
 
 ```gleam
 pub type ConfigError {
@@ -127,7 +122,7 @@ A per-topic-pattern rate limit used a pattern string that is not a valid
 
 A held per-IP connection slot returned by `acquire_connection_slot`.
 
- Opaque so beryl can restructure the connection limiter without breaking
+ Opaque so Beryl can restructure the connection limiter without breaking
  transport authors. Hold it for the lifetime of the connection and pass it
  to `release_connection_slot` when the connection closes. When no per-IP
  limit is configured the permit is an admit-everything placeholder and
@@ -139,10 +134,10 @@ pub type ConnectionPermit
 
 ### `LoggingConfig`
 
-Logging configuration for beryl diagnostics.
+Logging configuration for Beryl diagnostics.
 
  This type is opaque: construct it with `logging_config` and adjust it with
- the `with_*` builder functions so beryl can add logging options without a
+ the `with_*` builder functions so Beryl can add logging options without a
  breaking change.
 
 ```gleam
@@ -151,7 +146,7 @@ pub type LoggingConfig
 
 ### `LogLevel`
 
-Logging verbosity for beryl's internal loggers.
+Logging verbosity for Beryl's internal loggers.
 
  The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
  prelude's `Result` `Error` constructor when imported unqualified.
@@ -165,52 +160,14 @@ pub type LogLevel {
 }
 ```
 
-### `RegisteredChannel`
-
-A typed handle returned when a channel is registered.
-
- Pass this handle to `send_info` so the compiler can prove that the message
- matches the receiving channel's `info` type. The handle also identifies the
- exact registered channel used for a joined socket/topic pair.
-
- The `assigns` and `info` parameters are phantom: they carry the registered
- channel's types so `send_info` is type-checked, while the handle itself
- stores only the coordinator subject and the registration id.
-
-```gleam
-pub type RegisteredChannel(a, b)
-```
-
-### `RegisterError`
-
-Errors when registering a channel handler.
-
-```gleam
-pub type RegisterError {
-  PatternAlreadyRegistered(String)
-  InvalidPattern(String)
-}
-```
-
-#### Constructors
-
-##### `PatternAlreadyRegistered(String)`
-
-A handler is already registered for this exact topic pattern.
-
-##### `InvalidPattern(String)`
-
-The topic pattern is invalid. Patterns must be non-empty and must not
- contain control characters (codepoints 0–31 or 127).
-
 ### `Sockets`
 
 Runtime system handle.
 
- This opaque handle is obtained from `supervisor.channels` and passed to
- registration, broadcast, bridge, group, and transport functions. App-side
- dispatch handles are returned with the child specification from
- [`child_spec`](#child_spec).
+ This opaque handle is returned with the supervised subtree from
+ `child_spec` and passed to broadcast, group, and transport functions. Its
+ internals are intentionally hidden so Beryl can evolve them without
+ breaking application code.
 
  The handle is deliberately non-generic: an app-side dispatch system is
  generic over the application's `model`/`msg`, but those types are sealed
@@ -245,21 +202,6 @@ The handle referred to a system that was not running: it was never
 
 The runtime did not acknowledge the stop request within the shutdown
  window. The system may still be terminating.
-
-## Type aliases
-
-### `Channels`
-
-Transitional alias for the pre-cutover name of [`Sockets`](#Sockets).
-
- The public handle is being renamed from `Channels` to `Sockets` as part
- of the ADR 0002 phase 2 cutover. This alias keeps the channel-module and
- transport call sites compiling while they are migrated; it is removed once
- the legacy channel-module API is deleted.
-
-```gleam
-pub type Channels = Sockets
-```
 
 ## Functions
 
@@ -298,16 +240,17 @@ pub fn bind_connection_slot(ConnectionPermit) -> Nil
 
 ### `broadcast`
 
-Broadcast a message to all sockets subscribed to a topic.
+Broadcast a message to all subscribers of a topic
 
- When the channels system was configured with PubSub, the broadcast also
- fans out to subscribers on other nodes in the cluster.
+ This sends the message to all sockets subscribed to the topic. When the
+ system was started with PubSub, the broadcast is also distributed to
+ subscribers on other nodes.
 
  ## Example
 
  ```gleam
  beryl.broadcast(
-   channels,
+   sockets,
    "room:lobby",
    "new_message",
    json.object([#("text", json.string("Hello!"))]),
@@ -329,15 +272,14 @@ Broadcast a message to all subscribers except one socket
 
  Useful for broadcasting a message to everyone except the sender.
  When PubSub is configured, the excluded socket ID is preserved across
- coordinators so clustered deployments do not echo the event back to that
+ nodes so clustered deployments do not echo the event back to that
  socket on another node.
 
  ## Example
 
  ```gleam
- // In a channel callback, broadcast to others
  beryl.broadcast_from(
-   channels,
+   sockets,
    socket_id,
    "room:lobby",
    "user_typing",
@@ -368,8 +310,8 @@ Broadcast a Phoenix-compatible `presence_diff` event for a topic.
  }
  ```
 
- When the channels system was started with PubSub, the broadcast is
- distributed using the same semantics as `broadcast`.
+ When the system was started with PubSub, the broadcast is distributed
+ using the same semantics as `broadcast`.
 
 ```gleam
 pub fn broadcast_presence_diff(
@@ -419,9 +361,9 @@ pub fn child_spec(
 
 Build a configuration with sensible defaults.
 
- A `codec` is required — there is no implicit default. Pass
- `wire.phoenix_codec()` for Phoenix wire compatibility, or your own
- `Codec` for a custom framing.
+ A `codec` is required — beryl no longer ships an implicit Phoenix
+ default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
+ or your own `Codec` for a custom framing.
 
 ```gleam
 pub fn config(codec.Codec) -> Config
@@ -450,53 +392,6 @@ Return the configured inbound frame size cap for transports.
 pub fn max_inbound_frame_bytes(Sockets) -> Int
 ```
 
-### `register`
-
-Register a channel handler for a topic pattern
-
- Patterns can be exact matches like "room:lobby", prefix wildcards
- like "room:*" which match any topic starting with "room:", or segment
- wildcards like "document:*:ops" where "*" matches one complete segment.
- The bare pattern "*" is a catch-all that matches every topic.
-
- Patterns are validated at registration: they must be non-empty and must
- not contain control characters (codepoints 0–31 or 127). Invalid patterns
- are rejected with `InvalidPattern`.
-
- Panics if the coordinator actor is unavailable or does not reply within
- 5 seconds (e.g. during a supervisor restart window after a crash).
-
- ## Example
-
- ```gleam
- // Create a typed channel
- let chat_channel = channel.new(fn(topic, payload, socket) {
-   // Handle join
-   channel.JoinOk(reply: None, socket: socket)
- })
- |> channel.with_handle_in(fn(event, payload, socket) {
-   // Handle incoming messages
-   channel.NoReply(socket)
- })
-
- // Register it with a prefix wildcard
- let assert Ok(chat) = beryl.register(channels, "chat:*", chat_channel)
-
- // Exact topic
- let assert Ok(lobby) = beryl.register(channels, "room:lobby", lobby_channel)
-
- // Segment wildcard
- let assert Ok(ops) = beryl.register(channels, "document:*:ops", ops_channel)
- ```
-
-```gleam
-pub fn register(
-  Sockets,
-  String,
-  channel.Channel(a, b)
-) -> Result(RegisteredChannel(a, b), RegisterError)
-```
-
 ### `release_connection_slot`
 
 Release a per-IP connection slot acquired by a transport.
@@ -508,33 +403,20 @@ Release a per-IP connection slot acquired by a transport.
 pub fn release_connection_slot(ConnectionPermit) -> Nil
 ```
 
-### `send_info`
-
-Send a typed server-originated OTP message to a joined channel context.
-
- The `registered` handle carries the receiving channel's `info` type, so the
- compiler rejects messages for incompatible channels. The coordinator also
- verifies that the socket/topic pair was joined through that same registered
- channel before dispatching the callback. If the socket is not connected, the
- topic is not joined, or the registered channel does not match the joined
- channel, the message is ignored.
-
-```gleam
-pub fn send_info(
-  RegisteredChannel(a, b),
-  String,
-  String,
-  b
-) -> Nil
-```
-
 ### `stop`
 
 Stop a Beryl system.
 
- App-side dispatch systems own a supervised runtime subtree which can be
- drained through this handle. Legacy channel systems are owned by the
- application's supervisor and return `Error(NotRunning)`.
+ This drains the supervised runtime and stops it, delivering `Closed` to
+ joined sockets and cleaning up presence before the runtime exits. The
+ runtime is a `Transient` child, so it is not restarted after a graceful
+ stop.
+
+ `stop` is safe to call more than once and on a handle whose system was
+ never started: in those cases it returns `Error(NotRunning)` rather than
+ crashing. It returns `Error(StopTimeout)` if the app runtime does not
+ acknowledge the stop within the shutdown window. After a successful stop
+ the handle should no longer be used.
 
 ```gleam
 pub fn stop(Sockets) -> Result(Nil, StopError)
@@ -592,9 +474,9 @@ Configure heartbeat timing.
  `timeout_ms` is the server-side staleness window — a socket that sends no
  heartbeat within this window is evicted. The server derives its internal
  check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
- be at least 2; with smaller values `supervisor.start`'s child specification
- fails to start, because a check interval of 0 would disable eviction. The
- defaults are 30000 ms and 60000 ms respectively.
+ be at least 2; smaller values are rejected by `child_spec` with
+ `HeartbeatTimeoutTooLow` because a check interval of 0 would disable
+ eviction. The defaults are 30000 ms and 60000 ms respectively.
 
 ```gleam
 pub fn with_heartbeat(
@@ -618,7 +500,7 @@ pub fn with_join_rate(
 
 ### `with_logging`
 
-Configure beryl's internal logging.
+Configure Beryl's internal logging.
 
 ```gleam
 pub fn with_logging(
@@ -634,7 +516,7 @@ Configure the maximum number of concurrent connections allowed across the
 
  A value of 0 (the default) means unlimited. When a limit is set, a transport
  admits a new connection only while the node is below the limit and rejects
- it (before allocating any long-lived channel/coordinator state) otherwise;
+ it (before allocating any long-lived per-socket runtime state) otherwise;
  the slot is freed when the connection closes, its process dies, or its
  handshake/setup fails. The check-and-increment is atomic inside the limiter
  actor, so a burst of concurrent opens cannot materially exceed the ceiling.
@@ -646,7 +528,7 @@ Configure the maximum number of concurrent connections allowed across the
  per-IP limit throttles any single abusive peer, while this global ceiling
  bounds the node's total resource use so that many distinct source addresses
  (for example a botnet or IPv6 address rotation) still cannot exhaust the
- node's process, socket, and coordinator budget — a case a per-IP limit alone
+ node's process, socket, and runtime budget — a case a per-IP limit alone
  cannot stop.
 
  ## Composition with external load balancers
@@ -678,11 +560,11 @@ Configure the maximum number of concurrent connections allowed per client
 
  The limit is enforced on the **real socket peer IP** as reported by the
  transport (for the Mist transport, the address of the TCP connection).
- beryl deliberately does **not** trust or parse forwarded headers such as
+ Beryl deliberately does **not** trust or parse forwarded headers such as
  `X-Forwarded-For`, because a client can set them freely and would otherwise
  be able to spoof its address and bypass this limit.
 
- If beryl runs behind a trusted reverse proxy or load balancer, every
+ If Beryl runs behind a trusted reverse proxy or load balancer, every
  connection shares the proxy's address, so a per-IP limit throttles all
  clients as a single IP. In that topology you must resolve the real client
  IP yourself at the proxy layer (for example, by enforcing limits there). A
@@ -715,8 +597,8 @@ pub fn with_max_event_length(
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- The limit is enforced **post-assembly**: the transport's WebSocket layer
- buffers and assembles a complete frame first, and only then does beryl
+ The limit is enforced **post-assembly**: the transport (Mist/gramps)
+ buffers and assembles a complete frame first, and only then does Beryl
  measure it and close the connection if it exceeds `max_bytes`. This bounds
  per-message processing cost (decode, routing, rate-limit accounting), but
  it does **not** by itself bound transport memory. A hostile client can
@@ -726,11 +608,10 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
  from exhausting node memory.
 
  For a true transport memory bound you **must** place an edge proxy or load
- balancer in front of beryl and configure a WebSocket frame-size limit
- there (and a matching request/body size limit). beryl's per-IP connection
+ balancer in front of Beryl and configure a WebSocket frame-size limit
+ there (and a matching request/body size limit). Beryl's per-IP connection
  limit and per-socket message-rate limit do not mitigate this vector. See
- the "Security" section of the README and
- `docs/security/frame-buffering-followup.md` for details.
+ the README's "Security" section for deployment guidance.
 
  Values <= 0 disable the cap. The default is 1 MiB.
 
@@ -759,10 +640,9 @@ pub fn with_max_joined_topics_per_socket(
 Configure the maximum allowed byte length for client-supplied topic
  strings.
 
- Joins to topics longer than `max_length` bytes are rejected with an error
- reply (a `phx_reply` under the Phoenix codec) before reaching a channel
- handler, and other frames naming them are dropped — bounding the size of
- keys stored in the coordinator's topic registry. The default is 256.
+ Topics longer than `max_length` bytes are rejected with a `phx_reply`
+ error before reaching your `update` function, bounding the size of keys
+ tracked per socket. The default is 256.
 
 ```gleam
 pub fn with_max_topic_length(
@@ -809,10 +689,6 @@ pub fn with_pubsub(
 
 Enable beryl's `:telemetry` events.
 
- Telemetry is disabled by default. Handlers run synchronously in the
- process emitting an event, so handlers should enqueue or aggregate work
- quickly to avoid adding latency to channel and transport operations.
-
 ```gleam
 pub fn with_telemetry(Config) -> Config
 ```
@@ -820,7 +696,7 @@ pub fn with_telemetry(Config) -> Config
 ### `with_topic_rate`
 
 Configure a per-topic-pattern message rate limit for app-dispatch
- systems (`start_app`).
+ systems (`child_spec`).
 
  Patterns use the same syntax as topic routing (`"room:*"`,
  `"document:*:ops"`, `"*"`). Limits are consulted in the order they were

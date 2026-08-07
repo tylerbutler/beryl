@@ -31,9 +31,9 @@ pub type SnapshotError {
 ///
 /// Poll no more frequently than roughly once per second.
 pub fn snapshot(sockets: beryl.Sockets) -> Result(Snapshot, SnapshotError) {
-  case beryl.app_dispatch(sockets).stats() {
-    Error(False) -> Error(RuntimeUnavailable)
-    Error(True) -> Error(RequestTimedOut)
+  case beryl.runtime_stats(sockets) {
+    Error(runtime.RuntimeDown) -> Error(RuntimeUnavailable)
+    Error(runtime.RequestTimeout) -> Error(RequestTimedOut)
     Ok(inner) -> Ok(Snapshot(inner))
   }
 }

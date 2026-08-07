@@ -5,10 +5,10 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Closed, Join, Message, Next}
+import beryl/event.{Closed, Join, Message}
 import beryl/wire
 import gleam/erlang/process
-import gleam/option.{None}
+
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -18,19 +18,7 @@ pub fn main() {
 }
 
 fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
-  let assert Ok(channels) =
-    h.start_app(
-      beryl.config(wire.phoenix_codec()),
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
-          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
-        }
-      },
-    )
-  channels
+  h.start_observed(beryl.config(wire.phoenix_codec()), events)
 }
 
 fn event_frame(

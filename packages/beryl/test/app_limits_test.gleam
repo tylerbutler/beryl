@@ -7,10 +7,10 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Message, Next}
+import beryl/event.{Join, Message}
 import beryl/wire
 import gleam/erlang/process
-import gleam/option.{None}
+
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -19,24 +19,9 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_with(
-  config: beryl.Config,
-  events: process.Subject(event.Event(Nil)),
-) -> beryl.Sockets {
-  let assert Ok(channels) =
-    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
-      process.send(events, ev)
-      case ev {
-        Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-        _ -> Next(model, [])
-      }
-    })
-  channels
-}
-
 pub fn join_with_control_character_topic_gets_error_reply_test() {
   let events = process.new_subject()
-  let channels = start_with(beryl.config(wire.phoenix_codec()), events)
+  let channels = h.start_observed(beryl.config(wire.phoenix_codec()), events)
   let frames = h.connect(channels, "s1")
 
   // The topic contains a newline (JSON escape `\n`) — rejected before it
@@ -52,7 +37,7 @@ pub fn join_with_control_character_topic_gets_error_reply_test() {
 pub fn join_with_too_long_topic_gets_error_reply_test() {
   let events = process.new_subject()
   let channels =
-    start_with(
+    h.start_observed(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_topic_length(max_length: 64),
       events,
@@ -71,7 +56,7 @@ pub fn join_with_too_long_topic_gets_error_reply_test() {
 pub fn join_topic_over_byte_limit_but_under_grapheme_limit_gets_error_reply_test() {
   let events = process.new_subject()
   let channels =
-    start_with(
+    h.start_observed(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_topic_length(max_length: 64),
       events,
@@ -92,7 +77,7 @@ pub fn join_topic_over_byte_limit_but_under_grapheme_limit_gets_error_reply_test
 pub fn event_over_byte_limit_but_under_grapheme_limit_is_dropped_test() {
   let events = process.new_subject()
   let channels =
-    start_with(
+    h.start_observed(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_event_length(max_length: 16),
       events,

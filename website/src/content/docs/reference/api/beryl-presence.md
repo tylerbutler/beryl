@@ -17,10 +17,6 @@ Presence - Distributed presence tracking backed by a CRDT
  - Receives remote state from PubSub and merges it internally
  - Invokes `on_diff` callback when merges produce non-empty diffs
 
- When running beryl under `beryl/supervisor`, enable presence with
- `supervisor.with_presence` and obtain the handle from
- `supervisor.presence` instead of calling `start` directly.
-
  ## Example
 
  ```gleam
