@@ -72,7 +72,7 @@ pub fn channel() -> channel.Handler {
         #("socket_id", json.string(info.socket_id)),
       ]),
     )
-    // Applied right after the acknowledgment, in the same turn.
+    // Applied in order immediately after the acknowledgment.
     |> channel.with_actions(
       channel.actions()
       |> channel.broadcast("joined", json.string(info.socket_id)),
@@ -133,7 +133,7 @@ Every action is scoped to the channel's own topic, and they are applied in the o
 
 Register the handler table and pass the returned `beryl.Sockets` handle to the
 Mist transport. That handle is an ordinary core handle — the same one
-`beryl.start` returns.
+`beryl.child_spec` returns.
 
 ```gleam
 // src/my_app.gleam
@@ -147,6 +147,7 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
+import gleam/otp/static_supervisor
 import mist
 import my_app/room_channel
 
@@ -157,10 +158,15 @@ pub fn handlers() -> List(channel.Handler) {
 pub fn main() {
   let config =
     beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(sockets) =
-    beryl_channels.start(config, handlers: handlers())
+  let assert Ok(#(sockets, spec)) =
+    beryl_channels.child_spec(config, handlers: handlers())
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
 
   let assert Ok(_) =
     fn(req) {
@@ -278,7 +284,7 @@ joins fail closed by default.
 ## Alternative: raw app-side dispatch
 
 The same server without the channel layer: one `init`/`update` pair passed to
-`beryl.start`, and you own the routing.
+`beryl.child_spec`, and you own the routing.
 
 ```gleam
 // src/my_app/room_app.gleam
@@ -341,10 +347,12 @@ pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
 }
 ```
 
-Start it with `beryl.start(config, init: room_app.init, update: room_app.update)`
-instead of `beryl_channels.start`; everything else — transport wiring, client
-code, wire format — is identical. A `Join` that reaches the end of the `update`
-turn unanswered is rejected automatically, so joins fail closed here too.
+Build it with
+`beryl.child_spec(config, init: room_app.init, update: room_app.update)`
+instead of `beryl_channels.child_spec`; add the returned child specification
+to the same supervisor. Everything else — transport wiring, client code, and
+wire format — is identical. A `Join` that reaches the end of the `update` turn
+unanswered is rejected automatically, so joins fail closed here too.
 
 The [Dispatch guide](/guides/dispatch/) covers this model in full, including
 routing several topic families from one `update`.

@@ -37,6 +37,10 @@ The client sees:
 
 On rejection the client remains connected but is not subscribed to the topic. If the reject payload carries a `reason` field, Phoenix-style clients surface it directly on the `.join().receive("error", ...)` callback.
 
+With `beryl_channels`, return `channel.reject(reason)` from the handler's
+`join` callback. A topic no handler matches is rejected automatically with
+`{"reason": "unmatched topic"}`.
+
 :::note[Unanswered joins fail closed]
 Every `Join` must be answered with `AcceptJoin` or `RejectJoin` in the same update's effects. A join left unanswered is rejected automatically and logged — a forgotten match arm cannot silently admit a client.
 :::
@@ -127,6 +131,21 @@ Beryl rescues crashes in `init` and `update` rather than letting them take down 
 
 Crash descriptions are depth-limited and truncated before logging so client-triggered crashes cannot bloat log metadata.
 
+The channel layer maps those scopes to callbacks:
+
+| Channel callback | Effect |
+|---|---|
+| `join` | Rejects only that join |
+| `on_message` / `on_binary` | Closes only that topic |
+| `on_info` | Tears down that socket |
+| `on_terminate` | Logs the panic and continues core teardown; the callback's actions are lost |
+
+A terminate panic also discards the router model returned by that `Closed`
+turn. The old instance therefore remains reachable through its own typed
+sender until the topic is rejoined or the socket ends, even though client
+traffic cannot reach the closed topic. Keep `on_terminate` small and
+non-panicking; see [Crash behavior](/guides/channels/#crash-behavior).
+
 ## Rate limiting
 
 When a client exceeds a configured rate limit, the offending frame or message is **dropped**. No error is sent to the client (joins are the exception: an over-rate join gets an error reply with `reason: "rate_limited"`).
@@ -189,6 +208,12 @@ case beryl.child_spec(config, init: init, update: update) {
     panic as pattern <> ": " <> reason
 }
 ```
+
+`beryl_channels.child_spec` validates the handler table first and reports
+`ChildSpecInvalidHandlers(HandlerError)` or
+`ChildSpecInvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
+`beryl/topic.TopicError`; match a catch-all reason unless your code handles a
+specific variant differently.
 
 ## Sender delivery is best-effort
 

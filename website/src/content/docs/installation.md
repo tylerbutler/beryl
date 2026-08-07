@@ -12,6 +12,7 @@ dependency by editing `gleam.toml`:
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
@@ -24,11 +25,11 @@ gleam deps download
 `gleam add` only works with Hex packages, so the dependency has to be written by
 hand.
 
-`beryl` is the core channels library. `beryl_mist` is the
-[Mist](https://hex.pm/packages/mist) WebSocket transport; if you prefer
+`beryl` is the core runtime, `beryl_channels` is the recommended programming
+layer for multi-channel apps, and `beryl_mist` is the
+[Mist](https://hex.pm/packages/mist) WebSocket transport. If you prefer
 [Ewe](https://hex.pm/packages/ewe), use `path = "packages/beryl_ewe"` instead.
-Both transports live in the same repository, so they share the `git` and `ref`
-values.
+All packages share the same `git` and `ref` values.
 
 beryl targets the **Erlang (BEAM)** runtime — it does not support the JavaScript target.
 
@@ -43,13 +44,8 @@ A typical application adds three packages: the core, a programming layer, and a 
 | `beryl_mist` | You serve HTTP with [Mist](https://hex.pm/packages/mist) |
 | `beryl_ewe` | You serve HTTP with [Ewe](https://hex.pm/packages/ewe) |
 
-```bash
-# Channel layer on Mist — the recommended default
-gleam add beryl beryl_channels beryl_mist
-
-# Raw app-side dispatch on Mist
-gleam add beryl beryl_mist
-```
+The dependency block above uses the channel layer on Mist, the recommended
+default. For raw app-side dispatch on Mist, omit `beryl_channels`.
 
 `beryl_channels` depends on `beryl` plus the shared Gleam libraries beryl
 already pulls in (`gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`),
@@ -66,7 +62,8 @@ between the two layers.
 ### Why Gleam 1.18?
 
 beryl is a monorepo: the packages live in subdirectories (`packages/beryl`,
-`packages/beryl_mist`, `packages/beryl_ewe`) rather than at the repository root.
+`packages/beryl_channels`, `packages/beryl_mist`, `packages/beryl_ewe`) rather
+than at the repository root.
 Pointing a git dependency at a subdirectory needs the `path` field, which Gleam
 added in 1.18. Gleam 1.17 and earlier have no way to point a git dependency at
 anything but the repository root, so beryl cannot be used as a dependency from
@@ -102,7 +99,8 @@ Quick Start, the guides, the generated API reference — describes `main`, so
 that is the recommended ref until the next tag lands. Git dependencies resolve
 at the exact ref you name, and `main` moves, so rerun `gleam deps download`
 deliberately when you want to pick up changes. Use the same `ref` for `beryl`
-and its transport package — mixing versions across the two is unsupported.
+`beryl_channels`, and the transport package — mixing versions across them is
+unsupported.
 
 If you'd rather pin an immutable ref, use a commit SHA from
 [`main`'s history](https://github.com/tylerbutler/beryl/commits/main) — you

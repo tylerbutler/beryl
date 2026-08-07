@@ -1,5 +1,5 @@
 ---
-title: beryl_ewe
+title: "beryl_ewe"
 description: "Ewe WebSocket Transport - Direct Ewe integration for beryl"
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: beryl/group
+title: "beryl/group"
 description: "Channel Groups - Named collections of topics for multi-topic broadcasting"
 ---
 

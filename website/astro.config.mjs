@@ -86,6 +86,10 @@ export default defineConfig({
 							slug: "installation",
 						},
 						{
+							label: "Choose an API",
+							slug: "choosing-an-api",
+						},
+						{
 							label: "Quick Start",
 							slug: "quick-start",
 						},

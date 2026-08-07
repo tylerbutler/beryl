@@ -1,5 +1,5 @@
 ---
-title: beryl/wire/codec
+title: "beryl/wire/codec"
 description: "Pluggable wire codec for beryl."
 ---
 

@@ -20,7 +20,9 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 
 | Module | What it does | When to use it |
 |---|---|---|
-| `beryl` | Top-level app-side dispatch lifecycle, config builders, and broadcast helpers | Entry point for starting/stopping a Beryl socket system |
+| `beryl` | Top-level app-side dispatch lifecycle, config builders, and broadcast helpers | Building/stopping a Beryl socket system |
+| `beryl_channels` | Handler-table validation and supervised channel-system entry point | Recommended programming layer for multi-channel apps |
+| `beryl_channels/channel` | Typed handlers, callbacks, senders, actions, and lifecycle results | Defining one topic-pattern channel |
 | `beryl/socket` | `Input`, `Next`, `Effect`, `ConnectInfo`, and `Sender` types | Writing your app's `init` and `update` functions |
 | `beryl/bridge` | Forward an external OTP actor's message stream into `socket.Info(...)` | Bridging domain actors to one socket without hand-rolled forwarders |
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
@@ -31,6 +33,7 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
 | `beryl/transport` | Transport SPI: socket lifecycle, inbound routing, and edge rate limiting | Writing a custom transport package |
 | `beryl_mist` | Mist WebSocket upgrade and request handler integration (separate `beryl_mist` package) | Wiring beryl to a Mist HTTP server |
+| `beryl_ewe` | Ewe WebSocket transport integration (separate `beryl_ewe` package) | Wiring beryl to an Ewe HTTP server |
 
 ---
 
@@ -46,7 +49,11 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | Broadcast to all sockets on a topic | `socket.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
 | Broadcast, excluding sender | `socket.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
 | Send a typed server-side message to one socket | `socket.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `socket.Info(message)` |
-| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; perform synchronous presence mutations in an application-owned worker |
+| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; ordinary socket/channel presence effects are applied asynchronously by the runtime |
+
+The channel layer exposes topic-scoped equivalents through
+`channel.Actions`: `push`, `broadcast`, `broadcast_from`, `reply_ok`,
+`reply_error`, and the presence actions. They lower onto the same core effects.
 
 ---
 
@@ -143,7 +150,8 @@ beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**.
 
 - **Minor version bumps** (`0.x → 0.x+1`) may include breaking changes to the public API.
 - **Patch version bumps** (`0.x.y → 0.x.y+1`) fix bugs without intentional breakage.
-- Public API is defined as the exports of the modules listed in the module map above.
+- Public API is defined as the exports of the modules listed in the module map
+  above, including the two public `beryl_channels` modules.
 - The internal modules `beryl/connection_limit`, `beryl/internal`, `beryl/log`, `beryl/rate_limit`, and `beryl/runtime` are intentionally hidden from downstream packages. Transports integrate through the public `beryl/transport` SPI; `beryl_mist` is the supported Mist WebSocket transport.
 
 Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) before upgrading to a new minor version.

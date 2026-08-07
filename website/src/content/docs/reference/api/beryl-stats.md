@@ -1,5 +1,5 @@
 ---
-title: beryl/stats
+title: "beryl/stats"
 description: "Local runtime statistics."
 ---
 

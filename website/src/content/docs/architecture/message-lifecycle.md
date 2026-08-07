@@ -105,6 +105,34 @@ sequenceDiagram
   RT->>RT: unsubscribe topics, drop socket state
 ```
 
+The same `Closed` path is used for client leaves, heartbeat timeouts,
+`KickTopic`, and graceful `beryl.stop` shutdown.
+
+## Where the channel layer fits
+
+`beryl_channels` supplies the `init`/`update` pair in every diagram above.
+Its `init` builds one router per socket; its `update` maps each input to the
+live channel instance for that topic.
+
+| Runtime input | Router behavior |
+|---|---|
+| `Join(topic, payload, ref)` | First matching handler wins; its join result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` |
+| `Message(topic, ..)` / `Binary(topic, ..)` | Delivered to the live instance for that topic |
+| `Info(envelope)` | Topic and join generation are checked before the sealed typed value is opened; stale mail is dropped |
+| `Closed(topic, reason)` | Calls `on_terminate` and lowers its actions after the topic is already unsubscribed |
+
+Termination has one deliberate edge case. The router removes the instance in
+the model returned by the `Closed` turn. If `on_terminate` panics, core
+discards that returned model and keeps the pre-`Closed` one, so the retained
+instance can still receive its own generation-scoped `channel.notify` mail.
+Client messages cannot reach it because the topic is closed; a rejoin replaces
+it, and ending the socket removes it. See
+[Crash behavior](/guides/channels/#crash-behavior).
+
+Channel actions lower one-to-one onto core effects. Their order is preserved,
+but asynchronous presence effects may park only that socket while other
+sockets continue.
+
 ## Concurrency note
 
 The runtime is a single OTP actor processing its mailbox sequentially; broadcasts arrive as messages, so tests must select the exact message shape and drain queued messages (BEAM mailbox gotcha).

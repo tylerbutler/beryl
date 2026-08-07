@@ -39,6 +39,10 @@ fn handle_request(
 
 The `upgrade` function checks if the request path matches, performs the WebSocket upgrade, and wires the connection to the beryl runtime.
 
+The transport is layer-agnostic. A handle from
+`beryl_channels.child_spec` is the same `beryl.Sockets` type as one from
+`beryl.child_spec`, so this wiring is identical for both.
+
 :::tip[Phoenix JS clients]
 The Phoenix JS client (`new Socket("/socket", ...)`) connects to `/socket/websocket` by default — it appends `/websocket` to the path you pass. Configure the transport path to match:
 
@@ -135,6 +139,10 @@ beryl.child_spec(
   update: update,
 )
 ```
+
+With the channel layer, the same request-derived seed arrives in every
+handler's `join` callback as `channel.JoinInfo.seed`; there is no app-level
+`init`. See [Authentication with the channel layer](/guides/authentication/#with-the-channel-layer).
 
 :::tip[Troubleshooting connections]
 If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
@@ -273,5 +281,6 @@ future release. Until then, treat `X-Forwarded-For` as untrusted input.
 ## Next steps
 
 - [Error Handling guide](/guides/error-handling/) — rejected joins, malformed frames, and client-visible error shapes
+- [Channels guide](/guides/channels/) — the same transport in front of the channel layer
 - [Supervision guide](/guides/supervision/) — the built-in runtime supervision and restart semantics
 - [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for connection, join, and message delivery failures

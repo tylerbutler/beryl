@@ -3,8 +3,11 @@ title: Architecture Overview
 description: How beryl is organized, the major modules, and where to make changes.
 ---
 
-beryl layers a Phoenix-compatible channel system on top of OTP actors and Erlang `pg`, with a pluggable wire codec and WebSocket transport.
-The app supplies an `init`/`update` pair to `beryl.child_spec`; the runtime actor dispatches decoded wire messages to it as typed events and applies the effects it returns.
+beryl layers a Phoenix-compatible socket runtime on top of OTP actors and Erlang `pg`, with a pluggable wire codec and WebSocket transport.
+An app can supply an `init`/`update` pair directly to `beryl.child_spec`, or
+use `beryl_channels.child_spec`, which builds that pair from a typed handler
+table. The runtime dispatches decoded wire messages and applies the effects
+either layer returns.
 Presence and groups are independent domain actors; PubSub is the only cross-node primitive; everything else is local to a node.
 
 ## How to read these docs
@@ -25,7 +28,9 @@ flowchart TB
   W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
   RT["Runtime (OTP actor)<br/>beryl/runtime"]
   subgraph App["Your app"]
+    C["channel handlers<br/>beryl_channels"]
     U["init / update<br/>beryl/socket"]
+    C --> U
   end
   subgraph Domain["Domain actors"]
     P["Presence<br/>beryl/presence"]
@@ -42,6 +47,8 @@ flowchart TB
 | Module | Responsibility | Page |
 |---|---|---|
 | `beryl` | Public entry-point: `config/1`, `child_spec/3`, `broadcast/4`, `broadcast_from/5`, `stop/1` | — |
+| `beryl_channels` | Recommended channel layer: handler validation, typed per-topic state, lifecycle callbacks, and lowering onto the public core | [Channels](/guides/channels/) |
+| `beryl_channels/channel` | Type-safe handler builders, callbacks, senders, actions, join results, and callback results | [Channels](/guides/channels/) |
 | `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `Ref`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
 | `beryl/runtime` | Central OTP actor: per-socket models, event dispatch, effect interpreter, heartbeat enforcement | [Runtime](/architecture/runtime) |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; subscribe, broadcast, and broadcast_from | [PubSub & Distribution](/architecture/pubsub-and-distribution) |

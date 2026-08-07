@@ -38,10 +38,9 @@ pub fn room() -> channel.Handler {
 /// The README's `main`, compiled and run.
 pub fn readme_quick_start_compiles_and_starts_test() {
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(
-      beryl.config(wire.phoenix_codec()),
-      handlers: [room()],
-    )
+    beryl_channels.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+      room(),
+    ])
     as "the README handler table builds"
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)

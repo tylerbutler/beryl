@@ -36,7 +36,7 @@ difference is who writes the router.
 |  | Channel layer | Raw dispatch |
 |---|---|---|
 | Package | `beryl_channels` (adds `beryl`) | `beryl` |
-| Entry point | `beryl_channels.start(config, handlers:)` | `beryl.start(config, init:, update:)` |
+| Entry point | `beryl_channels.child_spec(config, handlers:)` | `beryl.child_spec(config, init:, update:)` |
 | Routing | Handler table, first matching pattern wins | Your `update`, pattern matching on topics |
 | Per-topic state | One private value per joined topic, pruned on close | Your own model; you prune it in the `Closed` branch |
 | Server-side messages | One typed `info` type per channel | One typed `msg` type per socket |

@@ -1,8 +1,8 @@
 //// Compiles the flagship channel-layer guide example from
 //// `website/src/content/docs/guides/channels.md` — the room channel from
-//// "The shape", the `start` and transport wiring from "Starting a
+//// "The shape", the `child_spec` and transport wiring from "Starting a
 //// channel system", and the handler-table check from "Routing rules" —
-//// so the guide's start shape cannot drift from the real API.
+//// so the guide's supervised start shape cannot drift from the real API.
 ////
 //// Two deliberate deviations from the published text: the guide splits the
 //// two snippets across `src/my_app/room_channel.gleam` and
@@ -102,6 +102,7 @@ fn handle_http(
 pub fn documented_guide_child_spec_example_compiles_and_starts_test() {
   let config =
     beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
   let assert Ok(#(sockets, spec)) =

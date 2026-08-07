@@ -201,6 +201,11 @@ rest of the effect list then resumes in order, so the snapshot above sees the
 track or untrack it follows. Other sockets, broadcasts, heartbeats, and
 shutdown handling continue while one socket waits.
 
+With `beryl_channels`, use the corresponding
+`channel.presence_track`, `presence_untrack`, `push_presence`, and
+`broadcast_presence` actions. They lower onto these same effects and keep the
+same ordering and asynchronous suspension semantics.
+
 The runtime owns refs created by `PresenceTrack` and automatically removes any
 remaining refs when the topic closes. Public synchronous `presence.track`
 calls remain available to application actors and other out-of-band workflows;

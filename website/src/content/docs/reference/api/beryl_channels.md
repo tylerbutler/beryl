@@ -1,5 +1,5 @@
 ---
-title: beryl_channels
+title: "beryl_channels"
 description: "Composable channels for beryl real-time sockets."
 ---
 
@@ -103,7 +103,7 @@ Why a handler table was rejected.
 pub type HandlerError {
   InvalidPattern(
     pattern: String,
-    reason: String
+    reason: topic.TopicError
   )
   DuplicatePattern(pattern: String)
 }
@@ -113,12 +113,13 @@ pub type HandlerError {
 
 ##### `InvalidPattern(
   pattern: String,
-  reason: String
+  reason: topic.TopicError
 )`
 
 A handler used a pattern string that is not a valid topic pattern.
- `pattern` is the offending pattern and `reason` describes the
- problem.
+ `pattern` is the offending pattern and `reason` is the
+ [`beryl/topic`](https://hexdocs.pm/beryl/beryl/topic.html) error
+ nested rather than flattened to a string, so it stays matchable.
 
 ##### `DuplicatePattern(pattern: String)`
 

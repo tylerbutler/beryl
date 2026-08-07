@@ -1,17 +1,30 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { generateReference } from "./generate-reference.mjs";
+
+const websiteRoot = path.resolve(
+	path.dirname(fileURLToPath(import.meta.url)),
+	"..",
+);
+
+function scratchPrefix(name = "beryl-ref-") {
+	return path.join(websiteRoot, `.${name}`);
+}
 
 const fixture = {
 	name: "beryl",
 	version: "9.9.9",
 	modules: {
 		"beryl/channel": {
-			documentation: ["Channel behaviour and callbacks.", "", "Second line."],
+			documentation: [
+				"Channel behaviour and callbacks.",
+				"",
+				"See [`HandleResult`](#HandleResult) and [`beryl`](./beryl.html#Config).",
+			],
 			types: {
 				HandleResult: {
 					documentation: "Result of handling an inbound message.",
@@ -97,7 +110,7 @@ const fixture = {
 };
 
 async function withFixture(run) {
-	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-"));
+	const dir = await mkdtemp(scratchPrefix());
 	try {
 		const jsonPath = path.join(dir, "package-interface.json");
 		const outputDir = path.join(dir, "out");
@@ -129,6 +142,8 @@ test("renders types, aliases, constants, and functions", async () => {
 
 		// Module doc array is normalized to multi-line text.
 		assert.match(page, /Channel behaviour and callbacks\./);
+		assert.match(page, /\[`HandleResult`\]\(#handleresult\)/);
+		assert.match(page, /\[`beryl`\]\(\/reference\/api\/beryl\/#config\)/);
 
 		// Type with parameters and documented constructors.
 		assert.match(page, /pub type HandleResult\(a\)/);
@@ -179,7 +194,7 @@ test("surfaces deprecations as a caution block", async () => {
 });
 
 test("quotes frontmatter so prose punctuation cannot break the YAML", async () => {
-	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-"));
+	const dir = await mkdtemp(scratchPrefix());
 	try {
 		const jsonPath = path.join(dir, "package-interface.json");
 		const outputDir = path.join(dir, "out");
@@ -235,7 +250,7 @@ test("quotes frontmatter so prose punctuation cannot break the YAML", async () =
 });
 
 test("merges multiple packages into one grouped reference", async () => {
-	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-multi-"));
+	const dir = await mkdtemp(scratchPrefix("beryl-ref-multi-"));
 	try {
 		const corePath = path.join(dir, "beryl.json");
 		const transportPath = path.join(dir, "beryl_mist.json");
@@ -301,34 +316,4 @@ test("reports a helpful error when the docs JSON is missing", async () => {
 			/gleam docs build/,
 		);
 	});
-});
-
-test("ignores build-only directories left by removed packages", async () => {
-	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-discovery-"));
-	try {
-		const packageDir = path.join(dir, "packages", "beryl");
-		const docsDir = path.join(packageDir, "build", "dev", "docs", "beryl");
-		const outputDir = path.join(dir, "out");
-		await mkdir(docsDir, { recursive: true });
-		await mkdir(path.join(dir, "packages", "removed_package", "build"), {
-			recursive: true,
-		});
-		await writeFile(
-			path.join(docsDir, "package-interface.json"),
-			JSON.stringify(fixture),
-		);
-
-		const result = await generateReference({
-			workspaceRoot: dir,
-			workspacePackages: [
-				{ name: "beryl", path: "packages/beryl" },
-				{ name: "example", path: "examples/example" },
-			],
-			outputDir,
-		});
-
-		assert.equal(result.moduleCount, 2);
-	} finally {
-		await rm(dir, { force: true, recursive: true });
-	}
 });

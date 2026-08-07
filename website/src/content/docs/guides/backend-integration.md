@@ -18,7 +18,9 @@ Browser ──WebSocket──► beryl ◄──HTTP POST /internal/publish─�
                          └── broadcasts to topic subscribers     └── owns auth + DB
 ```
 
-The `beryl.Sockets` handle in this guide can come from either layer — `beryl.start` or `beryl_channels.start` return the same handle type, and `beryl.broadcast` behaves identically for both.
+The `beryl.Sockets` handle in this guide can come from either layer —
+`beryl.child_spec` and `beryl_channels.child_spec` return the same handle
+type, and `beryl.broadcast` behaves identically for both.
 
 ## The internal publish endpoint
 

@@ -18,8 +18,11 @@ instead — it is the core the channel layer is built on.
 The channel layer ships as its own package. Add it alongside beryl and a
 transport:
 
-```bash
-gleam add beryl beryl_channels beryl_mist
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 :::
 
@@ -88,9 +91,10 @@ nothing compose in a single list.
 
 ## Starting a channel system
 
-`beryl_channels.start` takes the same `beryl.Config` as `beryl.start` —
-codec, rate limits, presence handle, PubSub, logging — plus the handler
-table, and returns the same `beryl.Sockets` handle.
+`beryl_channels.child_spec` takes the same `beryl.Config` as
+`beryl.child_spec` — codec, rate limits, presence handle, PubSub, logging —
+plus the handler table. It returns the ordinary `beryl.Sockets` handle and a
+child specification for your application's supervision tree.
 
 ```gleam
 // src/my_app.gleam
@@ -104,6 +108,7 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
+import gleam/otp/static_supervisor
 import mist
 import my_app/room_channel
 
@@ -114,9 +119,15 @@ pub fn handlers() -> List(channel.Handler) {
 pub fn main() {
   let config =
     beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(sockets) = beryl_channels.start(config, handlers: handlers())
+  let assert Ok(#(sockets, spec)) =
+    beryl_channels.child_spec(config, handlers: handlers())
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
 
   // `sockets` is an ordinary core handle: hand it to a transport, to
   // `beryl.broadcast`, and to `beryl.stop`.
@@ -146,16 +157,17 @@ WebSocket upgrades on the configured path into beryl and hands every other
 request to it. The [Quick Start](/quick-start/#2-start-the-channel-system-and-wire-the-transport)
 serves real pages from the same function.
 
-Everything downstream of `start` is unchanged from raw dispatch: the same
+Everything downstream of `child_spec` is unchanged from raw dispatch: the same
 runtime, the same wire codec, the same presence and abuse controls, the
 same transports. The layer only supplies the `init`/`update` pair.
 
-`start` fails with `beryl_channels.StartError`:
+`child_spec` reports eager validation failures as
+`beryl_channels.ChildSpecError`:
 
 | Variant | Meaning |
 |---|---|
-| `InvalidHandlers(HandlerError)` | The handler table was rejected before any process started |
-| `SocketStartFailed(beryl.StartError)` | The core refused to start; the beryl error is nested, not flattened |
+| `ChildSpecInvalidHandlers(HandlerError)` | The handler table failed validation |
+| `ChildSpecInvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
 
 ## Handler patterns and precedence
 
@@ -208,13 +220,13 @@ pub fn check_handlers() -> Nil {
 
 `InvalidPattern` carries the core
 [`topic.TopicError`](/reference/api/beryl-topic/) itself rather than a
-flattened string, so the reason stays matchable — the same nesting rule
-`StartError` and `ChildSpecError` follow for core errors.
+flattened string, so the reason stays matchable. `ChildSpecError` likewise
+nests the core configuration error instead of flattening it.
 
 Validation is deterministic and two-phase: every pattern's syntax is
 checked in registration order first, then duplicate pattern strings are
-looked for in registration order. `start` and `child_spec` run exactly
-this check before starting anything.
+looked for in registration order. `child_spec` runs exactly this check
+before building the supervised subtree.
 
 ## Typed state instead of assigns
 
@@ -345,7 +357,8 @@ warning, exactly as the equivalent core effects are.
 
 Actions are applied strictly in the order they were added. They lower
 one-to-one onto core `socket.Effect` values, which the runtime applies in
-list order inside a single actor turn.
+list order. An asynchronous presence effect can park this socket while other
+sockets continue; the remaining actions resume only after it completes.
 
 The `encode` callbacks of `push_presence` and `broadcast_presence` run
 **when the action is applied**, so a snapshot already reflects any
@@ -360,8 +373,7 @@ channel.actions()
 ## Join actions
 
 `channel.with_actions` attaches ordered actions to an accepted join. They
-are lowered in the **same update turn** as the acknowledgment and strictly
-after it:
+are emitted with the acknowledgment and applied strictly after it:
 
 ```gleam
 channel.accept_with(channel.joined(state, callbacks()), reply)
@@ -378,16 +390,17 @@ Two consequences worth designing around:
 - **The acknowledgment always reaches the wire first.** The socket is
   already subscribed to the topic when the join's own actions run, so a
   `push` cannot overtake its own join reply.
-- **A join is atomic.** A check made inside `join` and the action that
-  acts on it — a capacity check and the `presence_track` that closes it —
-  cannot be split by another socket's turn.
+- **Effect order is per socket, not a cross-socket transaction.** If an
+  action lowers to asynchronous presence work, the runtime may process other
+  sockets while this one waits. Use application-owned synchronous state for
+  an atomic capacity reservation.
 
 `with_actions` appends, so it composes with itself, and it returns
 `channel.reject` results unchanged: a refused join has no topic to act on.
 
 This is what to reach for instead of notifying yourself from `join`.
-`notify` schedules a later turn, which is right for work that may block or
-wait, but it cannot be atomic with the join.
+`notify` schedules a later input; actions preserve their declared position
+immediately after the join acknowledgment.
 
 ## Handling input
 
@@ -597,13 +610,13 @@ edges to know before you design around it:
 - **Actions are topic-scoped.** A `room:general` channel cannot broadcast
   on `lobby`. Cross-topic publishing goes through the external `Sockets`
   APIs — `beryl.broadcast`, `beryl.broadcast_from`, or a `beryl/group`
-  actor — with the handle `beryl_channels.start` returned.
-- **The handle exists only after `start`.** Handlers are built before
-  `start` returns, so a channel cannot capture the `Sockets` handle
-  directly. The usual pattern is a small actor that holds the handle and
-  exposes a `publish(topic, event, payload)` function — the equivalent of
-  Phoenix's `Endpoint.broadcast/3` — bound immediately after `start` and
-  before the transport starts accepting connections.
+  actor — with the handle `beryl_channels.child_spec` returned.
+- **Handlers are built before the handle is returned.** A channel cannot
+  capture the `Sockets` handle directly while constructing its handler.
+  The usual pattern is a small actor that holds the handle and exposes a
+  `publish(topic, event, payload)` function — the equivalent of Phoenix's
+  `Endpoint.broadcast/3` — bound after `child_spec` returns and before the
+  transport starts accepting connections.
   [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
   does exactly this for its `lobby` room list.
 - **Channels do not share state with each other.** Anything two channels

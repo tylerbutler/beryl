@@ -172,13 +172,32 @@ function tableCell(value) {
 }
 
 function normalizeDoc(documentation) {
+	let text;
 	if (Array.isArray(documentation)) {
-		return documentation.map((line) => line.trimEnd()).join("\n").trim();
+		text = documentation.map((line) => line.trimEnd()).join("\n").trim();
+	} else if (typeof documentation === "string") {
+		text = documentation.trim();
+	} else {
+		return "";
 	}
-	if (typeof documentation === "string") {
-		return documentation.trim();
-	}
-	return "";
+	return rewriteDocLinks(text);
+}
+
+// Gleam docs use HexDocs HTML paths and case-preserving type fragments.
+// Rewrite them to this site's generated Markdown routes and Starlight slugs.
+function rewriteDocLinks(documentation) {
+	return documentation
+		.replace(
+			/\]\(\.\/([^)\s]+)\.html(?:#([^)]+))?\)/g,
+			(_match, moduleName, fragment) => {
+				const slug = moduleSlug(moduleName);
+				const hash = fragment ? `#${fragment.toLowerCase()}` : "";
+				return `](${referenceBasePath}/${slug}/${hash})`;
+			},
+		)
+		.replace(/\]\(#([^)]+)\)/g, (_match, fragment) => {
+			return `](#${fragment.toLowerCase()})`;
+		});
 }
 
 function code(value) {

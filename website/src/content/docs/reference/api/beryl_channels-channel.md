@@ -1,5 +1,5 @@
 ---
-title: beryl_channels/channel
+title: "beryl_channels/channel"
 description: "The channel composition surface: a channel is a topic pattern paired"
 ---
 
@@ -86,10 +86,12 @@ The channel composition surface: a channel is a topic pattern paired
 
  [`on_terminate`](#on_terminate) actions are lowered in the turn that
  closes the topic, after the channel instance is gone. The topic is
- already unsubscribed by then, so core **drops pushes** (and presence
- snapshots pushed to this socket) on it; broadcasts, presence tracking,
- and untracking still take effect and still reach the topic's remaining
- subscribers.
+ already unsubscribed and its reply refs are already purged by then,
+ so core **drops pushes** (including presence snapshots pushed to this
+ socket) and **drops replies**, while broadcasts still reach the
+ topic's remaining subscribers. Core's automatic presence untrack for
+ the topic runs straight after that turn, so `presence_untrack` — not
+ `presence_track` — is what a terminating channel wants.
 
 ## Types
 
@@ -209,9 +211,28 @@ A typed handle for sending server-side messages to one joined channel.
 
  A sender is scoped to the join that produced it. Sending is
  asynchronous and never fails, so it cannot report that the channel is
- gone: liveness is decided where the message is delivered. If the
- channel has closed, or the same topic has since been joined again, the
- message is dropped there — it is never handed to a different join.
+ gone: liveness is decided where the message is delivered. After a
+ normal close — a client leave, a [`close`](#close) result, a socket
+ teardown — or after the same topic has been joined again, the message
+ is dropped there and is never handed to a different join.
+
+ The one exception is a panic inside [`on_terminate`](#on_terminate).
+ Core's policy for a crash while closing a topic is to log it and keep
+ the model from before the close, so the channel system keeps that
+ instance: a sender created by it can still reach its `on_info` until
+ the topic is joined again or the socket ends. Nothing is handed to
+ another join in that window either — it is the *same* instance,
+ outliving its own termination.
+
+ ## Cost
+
+ Delivery is cast-free but not free. Each message is carried to the
+ socket's runtime actor as a sealed thunk, and unsealing it does a
+ selective receive on that actor's mailbox in the same turn. A
+ selective receive scans the mailbox, so under a deep backlog on a busy
+ socket the cost of one delivery is O(mailbox depth). It is a
+ non-issue at ordinary depths; it is worth knowing before using
+ `notify` as a high-rate data path.
 
 ```gleam
 pub type Sender(a)
@@ -377,7 +398,8 @@ Send a typed server-side message to the channel that owns `sender`.
  This is a fire-and-forget send: it returns as soon as the message is
  enqueued, whether or not the channel is still joined. A message
  enqueued for a channel that has already ended is discarded on arrival
- (see [`Sender`](#sender)).
+ (see [`Sender`](#sender), which also covers the cost of a delivery and
+ the one case where an ended channel still receives one).
 
 ```gleam
 pub fn notify(
@@ -430,14 +452,32 @@ Run cleanup when the channel ends, for any reason: client leave, a
  leave announcement or a post-leave presence roster belongs here rather
  than in an out-of-band broadcast.
 
- The topic is already unsubscribed at that point, so core drops
- [`push`](#push) and [`push_presence`](#push_presence) actions on it
- (they would have nowhere to land) while
- [`broadcast`](#broadcast), [`broadcast_from`](#broadcast_from),
- [`broadcast_presence`](#broadcast_presence),
- [`presence_track`](#presence_track), and
- [`presence_untrack`](#presence_untrack) still take effect and still
- reach the topic's remaining subscribers.
+ By that point core has unsubscribed the topic and purged its
+ outstanding reply refs, and core's own presence untrack for the topic
+ runs immediately after this turn. That splits the action table:
+
+ - [`broadcast`](#broadcast), [`broadcast_from`](#broadcast_from), and
+   [`broadcast_presence`](#broadcast_presence) take effect and reach
+   the topic's remaining subscribers.
+ - [`presence_untrack`](#presence_untrack) takes effect, and is the
+   presence action a terminating channel wants: put it before a
+   [`broadcast_presence`](#broadcast_presence) so the roster is
+   encoded after the departure.
+ - [`push`](#push) and [`push_presence`](#push_presence) are dropped:
+   this socket has already left the topic, so they have nowhere to
+   land.
+ - [`reply_ok`](#reply_ok) and [`reply_error`](#reply_error) are
+   dropped: the topic's reply refs were purged before this callback
+   ran, so there is no outstanding ref left to answer.
+ - [`presence_track`](#presence_track) is applied and then immediately
+   undone by core's automatic untrack, which can emit a join diff
+   followed at once by the matching leave diff. Use
+   [`presence_untrack`](#presence_untrack) instead.
+
+ A panic here is not fatal, but it is not free either: core keeps the
+ model from before the close, so this instance stays in the channel
+ system's map and its own [`Sender`](#sender) can still reach it until
+ the topic is rejoined or the socket ends.
 
 ```gleam
 pub fn on_terminate(

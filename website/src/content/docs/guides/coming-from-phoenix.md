@@ -43,8 +43,10 @@ Two practical consequences either way:
 - **Long or blocking work belongs in your own process.** A slow callback holds
   up the socket. Hand results back with `channel.notify` (layer) or
   `socket.notify` (core).
-- **Crash blast radius ends at the socket, not the topic.** See
-  [crash behavior](/guides/channels/#crash-behavior).
+- **Crash scope depends on the callback.** A join panic rejects that join;
+  message/binary panics close that topic; an `on_info` panic ends the socket;
+  and a terminate panic loses that callback's actions while core teardown
+  continues. See [crash behavior](/guides/channels/#crash-behavior).
 
 ## Concept map
 
@@ -52,7 +54,7 @@ Two practical consequences either way:
 | --- | --- | --- |
 | `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
 | `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `info.seed` | `init(info)` — request data in `info.seed` |
-| `channel "room:*", RoomChannel` routing table | the handler list passed to `beryl_channels.start` | topic pattern match in `update`, with `beryl/topic` helpers |
+| `channel "room:*", RoomChannel` routing table | the handler list passed to `beryl_channels.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
 | One channel process per joined topic | one private state value per joined topic, in the socket's runtime actor | one `model` per socket, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
 | `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
@@ -66,7 +68,7 @@ Two practical consequences either way:
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
 | `broadcast_from!/3` | `channel.broadcast_from(event, payload)` action | `socket.BroadcastFrom(topic, event, payload)` effect |
 | `handle_info(msg, socket)` + `send(pid, msg)` | `channel.on_info` + `channel.notify(sender, msg)` — typed per channel | `socket.Info(msg)` + `socket.notify(sender, msg)` — typed per socket |
-| `:after_join` self-send | `channel.with_actions` on the accepted join (same turn as the ack) | order the effects after `AcceptJoin` in the same list |
+| `:after_join` self-send | `channel.with_actions` on the accepted join (ordered immediately after the ack) | order the effects after `AcceptJoin` in the same list |
 | `terminate/2` | `channel.on_terminate`, which returns actions | `socket.Closed(topic, reason)` event, delivered on every exit path |
 | `{:stop, reason, socket}` (ends one channel) | `channel.close()` / `channel.close_with(actions)` | `socket.KickTopic(topic)` |
 | ending the whole socket | `channel.stop_socket(reason)` | `socket.Stop(reason)` |
@@ -269,8 +271,8 @@ end
 ```
 
 You do not need the self-send. `channel.with_actions` attaches actions to the
-accepted join; they run in the same turn as the acknowledgment and strictly
-after it, so the socket is already subscribed:
+accepted join; they are applied strictly after the acknowledgment, so the
+socket is already subscribed:
 
 ```gleam
 channel.accept(channel.joined(state, callbacks()))
@@ -286,7 +288,9 @@ channel.accept(channel.joined(state, callbacks()))
 
 Snapshot actions encode when they are applied, so `presence_state` already
 includes the `presence_track` ahead of it. The same holds in raw dispatch,
-where the effects go in one list after `AcceptJoin`.
+where the effects go in one list after `AcceptJoin`. Presence mutations are
+asynchronous in the runtime: this socket resumes in order after the mutation,
+while other sockets may continue in the meantime.
 
 The mirror image — Phoenix's `terminate/2` — is `channel.on_terminate`, which
 returns actions of its own, so a leave announcement and a post-leave roster
@@ -313,7 +317,7 @@ replication.
 
 Where you would call `MyAppWeb.Endpoint.broadcast("room:lobby", "notice", %{})`
 from a controller or background job, call `beryl.broadcast` with the `Sockets`
-handle returned by `beryl_channels.start` or `beryl.start`:
+handle returned by `beryl_channels.child_spec` or `beryl.child_spec`:
 
 ```gleam
 beryl.broadcast(sockets, "room:lobby", "notice", json.object([]))
@@ -324,9 +328,9 @@ same way `Endpoint.broadcast` rides `Phoenix.PubSub`.
 
 This is also how a channel reaches **another** topic. Channel actions are
 scoped to the channel's own topic on purpose, and the `Sockets` handle only
-exists after `start` returns — so an app that needs cross-topic publishing
-keeps the handle in a small actor and calls it from its callbacks. That actor
-is the layer's `Endpoint.broadcast/3`; see
+becomes available after `child_spec` returns — so an app that needs cross-topic
+publishing keeps the handle in a small actor and calls it from its callbacks.
+That actor is the layer's `Endpoint.broadcast/3`; see
 [Limitations](/guides/channels/#limitations).
 
 To message one specific channel (Phoenix: `send(channel_pid, msg)`), keep the

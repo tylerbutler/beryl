@@ -33,25 +33,30 @@ callback — and the layer routes every join, message, binary frame, typed
 server-side message, and close to the channel that owns the topic:
 
 ```gleam
-let assert Ok(sockets) =
-  beryl_channels.start(
+let assert Ok(#(sockets, spec)) =
+  beryl_channels.child_spec(
     beryl.config(wire.phoenix_codec()),
     handlers: [lobby.channel(), rooms.channel(), documents.channel()],
   )
 ```
 
 **Raw app-side dispatch** (`beryl`) is the core underneath. You pass one
-`init`/`update` pair to `beryl.start` and own the router yourself. It is the
-right choice for a single-topic system, or when you want complete control over
-routing and effect ordering:
+`init`/`update` pair to `beryl.child_spec` and own the router yourself. It is
+the right choice for a single-topic system, or when you want complete control
+over routing and effect ordering:
 
 ```gleam
-let assert Ok(sockets) =
-  beryl.start(beryl.config(wire.phoenix_codec()), init: init, update: update)
+let assert Ok(#(sockets, spec)) =
+  beryl.child_spec(
+    beryl.config(wire.phoenix_codec()),
+    init: init,
+    update: update,
+  )
 ```
 
 Both lower to the same runtime, wire codec, presence, PubSub, and abuse
-controls — the channel layer is built entirely on beryl's public API. See
+controls — and both child specifications belong in your application's
+supervision tree. The channel layer is built entirely on beryl's public API. See
 [Choose an API](/choosing-an-api/) for the decision in one table.
 
 ## Design principles

@@ -1,5 +1,5 @@
 ---
-title: beryl/socket/router
+title: "beryl/socket/router"
 description: "Topic-namespace routing for app-side dispatch."
 ---
 

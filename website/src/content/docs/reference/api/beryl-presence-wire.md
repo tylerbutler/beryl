@@ -1,5 +1,5 @@
 ---
-title: beryl/presence/wire
+title: "beryl/presence/wire"
 description: "Phoenix-compatible wire encoding for presence diffs."
 ---
 
