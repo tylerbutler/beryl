@@ -7,10 +7,12 @@ description: Module map, wire protocol, broadcast cheatsheet, and client compati
 beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. See the [stability policy](#pre-10-stability-policy) below.
 :::
 
-The function-level API reference lives in the [Generated API](/reference/api/)
-section of this site, built from the source on `main`. (beryl isn't published
-to Hex yet, so there is no HexDocs page — the generated docs here are the
-reference until then.)
+The canonical function-level API reference is generated from Gleam's docs
+metadata and hosted on this site. Beryl packages are currently distributed
+from GitHub, not Hex:
+
+**[beryl](/reference/api/beryl/)** ·
+**[beryl_channels](/reference/api/beryl_channels/)**
 
 This page provides a module map, broadcast cheatsheet, Phoenix wire protocol reference, and client compatibility notes.
 

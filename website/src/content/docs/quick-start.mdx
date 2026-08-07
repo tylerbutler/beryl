@@ -26,17 +26,8 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 ## Prerequisites
 
 - Gleam >= 1.18 project targeting **Erlang** (`gleam new my_app`)
-- beryl, the channel layer, and the Mist WebSocket transport as git dependencies in `gleam.toml` (beryl isn't on Hex yet):
-
-```toml
-[dependencies]
-beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
-beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
-```
-
-Run `gleam deps download` afterwards. The [Installation guide](/installation/)
-covers version pinning and the Ewe transport alternative.
+- The Git dependencies from the [Installation guide](/installation/) added to
+  `gleam.toml` (`beryl`, `beryl_channels`, and `beryl_mist`)
 
 ## 1. Write a channel
 

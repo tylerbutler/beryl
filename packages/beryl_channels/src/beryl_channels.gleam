@@ -71,7 +71,8 @@ import gleam/set
 pub type HandlerError {
   /// A handler used a pattern string that is not a valid topic pattern.
   /// `pattern` is the offending pattern and `reason` is the
-  /// [`beryl/topic`](https://hexdocs.pm/beryl/beryl/topic.html) error
+  /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
+  /// error
   /// nested rather than flattened to a string, so it stays matchable.
   InvalidPattern(pattern: String, reason: topic.TopicError)
   /// Two handlers were registered with the same pattern string. The

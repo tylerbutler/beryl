@@ -352,7 +352,7 @@ ${GENERATED_MARKER}
 This reference is generated from Gleam's docs metadata for ${packageList}.
 
 :::note[Generated content]
-Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no \`hexdocs.pm\` listing.
+Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference. Beryl packages are currently distributed from GitHub, not Hex.
 :::
 
 ${packageSections}

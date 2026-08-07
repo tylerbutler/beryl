@@ -10,11 +10,18 @@
 
 ## Install
 
+Beryl packages are currently distributed from GitHub, not Hex. Add them to
+`gleam.toml`:
+
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
 beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
+```
+
+```sh
+gleam deps download
 ```
 
 `beryl` is the core runtime, `beryl_channels` is the recommended channel
@@ -96,7 +103,8 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 ## Documentation
 
 - **Website & guides**: <https://beryl.tylerbutler.com>
-- **Generated API docs**: <https://beryl.tylerbutler.com/reference/api/>
+- **Generated API reference**: <https://beryl.tylerbutler.com/reference/api/>
+- **Repository and git releases**: <https://github.com/tylerbutler/beryl>
 
 ## Ecosystem
 

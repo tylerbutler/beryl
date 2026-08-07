@@ -15,8 +15,9 @@ complete control over routing, use [App-Side Dispatch](/guides/dispatch/)
 instead — it is the core the channel layer is built on.
 
 :::note[Separate package]
-The channel layer ships as its own package. Add it alongside beryl and a
-transport:
+The channel layer ships as its own package. Beryl packages are currently
+distributed from GitHub, not Hex, so add it alongside beryl and a transport
+in `gleam.toml`:
 
 ```toml
 [dependencies]
@@ -24,6 +25,8 @@ beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path =
 beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
+
+See [Installation](/installation/) for version and transport choices.
 :::
 
 ## The shape
