@@ -113,7 +113,7 @@ Broadcast a message to all topics in a group
 ```gleam
 pub fn broadcast(
   Groups,
-  beryl.Channels,
+  beryl.Sockets,
   String,
   String,
   json.Json

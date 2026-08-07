@@ -150,7 +150,7 @@ Build a combined request handler that serves both WebSocket channels and
 
 ```gleam
 pub fn handler(
-  beryl.Channels,
+  beryl.Sockets,
   TransportConfig(a),
   fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
 ) -> fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
@@ -206,7 +206,7 @@ Upgrade a request to WebSocket if it matches the configured path
 ```gleam
 pub fn upgrade(
   request.Request(http1.Connection),
-  beryl.Channels,
+  beryl.Sockets,
   TransportConfig(a),
   fn() -> response.Response(ewe.ResponseBody)
 ) -> response.Response(ewe.ResponseBody)
@@ -224,7 +224,7 @@ Alternative: upgrade any request to WebSocket (caller handles path matching)
 ```gleam
 pub fn upgrade_connection(
   request.Request(http1.Connection),
-  beryl.Channels
+  beryl.Sockets
 ) -> response.Response(ewe.ResponseBody)
 ```
 

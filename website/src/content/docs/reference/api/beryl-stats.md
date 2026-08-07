@@ -104,5 +104,5 @@ Request a point-in-time snapshot from the local coordinator.
  Poll no more frequently than roughly once per second.
 
 ```gleam
-pub fn snapshot(beryl.Channels) -> Result(Snapshot, SnapshotError)
+pub fn snapshot(beryl.Sockets) -> Result(Snapshot, SnapshotError)
 ```

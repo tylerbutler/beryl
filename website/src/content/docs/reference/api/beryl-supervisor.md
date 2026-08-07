@@ -62,7 +62,7 @@ The channels handle for this supervised beryl instance.
  handle.
 
 ```gleam
-pub fn channels(SupervisedConfig) -> beryl.Channels
+pub fn channels(SupervisedConfig) -> beryl.Sockets
 ```
 
 ### `config`
