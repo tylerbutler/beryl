@@ -44,9 +44,10 @@ message type, and neither escapes: handlers seal both in closures, so a
 single `List(channel.Handler)` holds channels that agree on nothing. No
 value is erased to `Dynamic` and no unchecked coercion is involved.
 
-The socket entry points that start a system from a handler table land
-together with the event router; until then this package provides the
-handler surface, the error surface, and handler-table validation.
+The supervised socket entry point that builds a child specification from
+a handler table lands together with the dispatch adapter; until then this
+package provides the handler surface, the error surface, and handler-table
+validation.
 
 ## Documentation
 

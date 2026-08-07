@@ -34,10 +34,9 @@
 //// ## Status
 ////
 //// The handler surface, the error surface, and the validation below are
-//// complete. The socket entry points that start a system from a handler
-//// table (`start` and `child_spec`, delegating to `beryl.start` and
-//// `beryl.child_spec`) land together with the event router; they are
-//// deliberately absent rather than present and inert.
+//// complete. The supervised socket entry point that builds a child
+//// specification from a handler table lands together with the dispatch
+//// adapter; it is deliberately absent rather than present and inert.
 
 import beryl
 import beryl/topic
@@ -63,22 +62,7 @@ pub type HandlerError {
   DuplicatePattern(pattern: String)
 }
 
-// nolint: unused_exports -- consumed by `start`, which lands with the event router
-/// Why starting a channel system failed.
-///
-/// The beryl error is nested rather than flattened, so nothing the core
-/// reports is lost on the way through this layer.
-pub type StartError {
-  /// The handler table failed validation. Reported before any process is
-  /// started, and identical to what
-  /// [`validate_handlers`](#validate_handlers) reports.
-  InvalidHandlers(HandlerError)
-  /// The underlying beryl system refused to start. The wrapped value is
-  /// the core error exactly as `beryl.start` returned it.
-  SocketStartFailed(beryl.StartError)
-}
-
-// nolint: unused_exports -- consumed by `child_spec`, which lands with the event router
+// nolint: unused_exports -- consumed by `child_spec`, which lands with the dispatch adapter
 /// Why building a channel-system child specification failed.
 ///
 /// Like `beryl.child_spec`, this reports only the failures that can be
