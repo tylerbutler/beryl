@@ -41,6 +41,8 @@ jobs:
 
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          run-deps: false
 
       - name: Setup mise tools
         uses: ./.github/actions/mise
