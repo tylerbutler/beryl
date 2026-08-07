@@ -23,17 +23,13 @@ fn start_system(
   events: process.Subject(event.Event(Nil)),
 ) -> beryl.Channels {
   let assert Ok(channels) =
-    h.start_app(
-      config,
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
-          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
-        }
-      },
-    )
+    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
+      process.send(events, ev)
+      case ev {
+        Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+        _ -> Next(model, [])
+      }
+    })
   channels
 }
 

@@ -28,29 +28,25 @@ fn start_system() -> beryl.Channels {
 
 fn start_with(config: beryl.Config) -> beryl.Channels {
   let assert Ok(channels) =
-    h.start_app(
-      config,
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
-          Join(_, _, ref) ->
-            Next(model, [
-              AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
-            ])
-          Message(_topic, "ping", _payload, Some(ref)) ->
-            Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
-          Message(topic, "cast", _payload, _ref) ->
-            Next(model, [
-              Broadcast(
-                topic,
-                "announcement",
-                json.object([#("body", json.string("hello"))]),
-              ),
-            ])
-          _ -> Next(model, [])
-        }
-      },
-    )
+    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
+      case ev {
+        Join(_, _, ref) ->
+          Next(model, [
+            AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
+          ])
+        Message(_topic, "ping", _payload, Some(ref)) ->
+          Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
+        Message(topic, "cast", _payload, _ref) ->
+          Next(model, [
+            Broadcast(
+              topic,
+              "announcement",
+              json.object([#("body", json.string("hello"))]),
+            ),
+          ])
+        _ -> Next(model, [])
+      }
+    })
   channels
 }
 

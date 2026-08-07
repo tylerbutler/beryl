@@ -6,8 +6,8 @@
 
 import beryl
 import beryl/channel
-import beryl/supervisor
 import beryl/event
+import beryl/supervisor
 import beryl/wire
 import beryl_ewe as ewe_transport
 import ewe
