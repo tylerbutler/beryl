@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "Abuse controls and hardening: heartbeat-based socket eviction, per-socket message/join/channel token-bucket rate limits, per-IP and node-wide connection ceilings, frame-size/topic-length/event-length caps, callback crash isolation, and a startup warning when no controls are configured."

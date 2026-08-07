@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "Added `transport.socket_connected_with_codec`, letting a transport announce a socket that frames its outbound messages with its own codec instead of the configured one. One coordinator — sharing channels, pubsub, and presence — can serve transports speaking different wire formats. `socket_connected` is unchanged."

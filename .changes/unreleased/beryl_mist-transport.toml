@@ -1,3 +1,0 @@
-project = "beryl_mist"
-kind = "Added"
-body = "Initial release: Mist WebSocket transport for beryl. Single-listener handler composing channels with an HTTP fallback, socket-level on_connect authentication seeding typed assigns, Origin policies (same-origin by default, allow-list, or allow-all) mitigating cross-site WebSocket hijacking, Phoenix ?vsn negotiation at the handshake, upgrade request path/query/headers delivered to app-dispatch (`beryl.start_app`) `init`, and edge enforcement of frame-size limits, message rate limits, and per-IP/node-wide connection ceilings before any coordinator state is allocated."

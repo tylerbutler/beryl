@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "Structured logging through palabres with configurable level and bounded, opt-in payload previews, plus a public transport SPI (beryl/transport) so WebSocket transports such as beryl_mist can be implemented outside the core package."
