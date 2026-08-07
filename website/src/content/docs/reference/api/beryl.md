@@ -685,6 +685,17 @@ pub fn with_payload_preview_bytes(
 ) -> LoggingConfig
 ```
 
+### `with_presence_handle`
+
+Attach the presence actor used by socket presence effects.
+
+```gleam
+pub fn with_presence_handle(
+  Config,
+  presence: presence.Presence
+) -> Config
+```
+
 ### `with_pubsub`
 
 Add PubSub to a configuration for distributed broadcasts

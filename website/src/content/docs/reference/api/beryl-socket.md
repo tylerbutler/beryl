@@ -106,6 +106,25 @@ pub type Effect {
     event: String,
     payload: json.Json
   )
+  PresenceTrack(
+    topic: String,
+    key: String,
+    meta: json.Json
+  )
+  PresenceUntrack(
+    topic: String,
+    key: String
+  )
+  PushPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(presence.PresenceEntry)) -> json.Json
+  )
+  BroadcastPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(presence.PresenceEntry)) -> json.Json
+  )
   KickTopic(topic: String)
 }
 ```
@@ -208,8 +227,9 @@ Push a presence snapshot for a topic to this socket. Unlike a payload
  built inside `update` (which sees presence as it was *before* this
  effects list), `encode` runs when the effect is applied — after any
  earlier `PresenceTrack`/`PresenceUntrack` in the same list has
- actually been applied — so the entries already reflect them. Requires a presence handle
- (`beryl.with_presence_handle`); dropped with a warning otherwise.
+ actually been applied — so the entries already reflect them.
+ Requires a presence handle (`beryl.with_presence_handle`); dropped
+ with a warning otherwise.
  Like `Push`, dropped when the topic is not joined at that point.
 
 ##### `BroadcastPresence(

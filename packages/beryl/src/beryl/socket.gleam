@@ -203,15 +203,19 @@ pub type Effect {
   /// built inside `update` (which sees presence as it was *before* this
   /// effects list), `encode` runs when the effect is applied — after any
   /// earlier `PresenceTrack`/`PresenceUntrack` in the same list has
-  /// actually been applied — so the entries already reflect them. Requires a presence handle
-  /// (`beryl.with_presence_handle`); dropped with a warning otherwise.
+  /// actually been applied — so the entries already reflect them.
+  /// Requires a presence handle (`beryl.with_presence_handle`); dropped
+  /// with a warning otherwise.
   /// Like `Push`, dropped when the topic is not joined at that point.
   PushPresence(
     topic: String,
     event: String,
     encode: fn(List(PresenceEntry)) -> Json,
   )
-  /// Broadcast a presence snapshot encoded when this effect is applied.
+  /// Broadcast a presence snapshot for a topic to all its subscribers,
+  /// with the same apply-time `encode` semantics as `PushPresence`.
+  /// Order it after the `PresenceTrack`/`PresenceUntrack` it should
+  /// reflect.
   BroadcastPresence(
     topic: String,
     event: String,
