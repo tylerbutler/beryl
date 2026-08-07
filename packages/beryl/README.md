@@ -1,6 +1,6 @@
 # beryl
 
-Type-safe real-time channels and presence for Gleam on the BEAM.
+Type-safe app-side real-time sockets and presence for Gleam on the BEAM.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor

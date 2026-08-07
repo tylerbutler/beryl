@@ -1,59 +1,57 @@
 # beryl_mist
 
 [Mist](https://hex.pm/packages/mist) WebSocket transport for
-[beryl](https://github.com/tylerbutler/beryl) real-time channels.
+[beryl](https://hex.pm/packages/beryl) real-time sockets.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
-> releases, and quality should not be considered production-ready. We welcome
-> usage and feedback in the meantime!
+> releases, and quality should not be considered production-ready.
 
-beryl is not yet on Hex. Add it and this transport as git dependencies in your
-`gleam.toml`:
-
-```toml
-[dependencies]
-beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl_mist" }
+```sh
+gleam add beryl beryl_mist
 ```
-
-> [!IMPORTANT]
-> **Gleam 1.18 or later is required.** These packages live in subdirectories of
-> the beryl monorepo, and the `path` field for git dependencies was added in
-> Gleam 1.18.
 
 ## Usage
 
 ```gleam
 import beryl
-import beryl/supervisor
+import beryl/event.{type ConnectInfo, AcceptJoin, Join, Next}
 import beryl/wire
 import beryl_mist as mist_transport
-import gleam/otp/static_supervisor
+import gleam/erlang/process
+import gleam/option.{None}
 import mist
 
+pub type Model {
+  Model
+}
+
+fn init(_info: ConnectInfo(msg)) -> #(Model, List(event.Effect)) {
+  #(Model, [])
+}
+
+fn update(model: Model, ev: event.Event(msg)) -> event.Next(Model, msg) {
+  case ev {
+    Join("room:" <> _, _payload, ref) -> Next(model, [AcceptJoin(ref, None)])
+    _ -> Next(model, [])
+  }
+}
+
 pub fn main() {
-  // beryl doesn't start an unmanaged process; add its child specification to
-  // your own application supervisor.
-  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
-
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(beryl_config))
-    |> static_supervisor.start()
-
-  let channels = supervisor.channels(beryl_config)
-  // register channels...
+  let assert Ok(sockets) =
+    beryl.start(beryl.config(wire.phoenix_codec()), init:, update:)
 
   let assert Ok(_) =
     mist_transport.handler(
-      channels,
-      mist_transport.default_config("/socket/websocket"),
-      http_fallback,
+      sockets,
+      mist_transport.default_config("/socket"),
+      fn(_req) { panic as "not implemented" },
     )
     |> mist.new
     |> mist.port(8000)
     |> mist.start
+
+  process.sleep_forever()
 }
 ```
 
@@ -63,17 +61,13 @@ upgrade, validates the `Origin` header (same-origin by default, allow-list,
 or allow-all), and enforces beryl's frame-size, message-rate, and connection
 limits at the edge.
 
-If you serve HTTP with [Ewe](https://hex.pm/packages/ewe) rather than Mist, use
-[`beryl_ewe`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_ewe)
-instead — it exposes the same config-builder and handler API.
-
 ## Documentation
 
-- Guides: <https://beryl.tylerbutler.com>
-- API reference: <https://beryl.tylerbutler.com/reference/api/>
+- Guides and API reference: <https://beryl.tylerbutler.com>
+- Package docs: <https://hexdocs.pm/beryl_mist>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl_mist`)
 
-## License
+## Licence
 
 MIT

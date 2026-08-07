@@ -11,11 +11,11 @@ description: Mist WebSocket Transport - Direct Mist integration for beryl
 
 Mist WebSocket Transport - Direct Mist integration for beryl
 
- Bridges Mist's native WebSocket handling to the beryl runtime, using
- Mist request and response types directly.
+ This module bridges Mist's native WebSocket handling to the beryl runtime
+ using Mist request and response types directly.
 
  The `beryl_ewe` package mirrors it: the two transports expose the same
- config-builder and handler API, so an integrator can run beryl channels on
+ config-builder and handler API, so an integrator can run beryl sockets on
  either web server by choosing the matching transport package. Both consume
  only beryl's public `beryl/transport` SPI.
 
@@ -124,7 +124,7 @@ pub fn default_config(String) -> TransportConfig
 
 ### `handler`
 
-Build a combined request handler that serves both WebSocket channels and
+Build a combined request handler that serves both WebSocket upgrades and
  regular HTTP from a single Mist listener.
 
  The returned function inspects each request and routes it:
@@ -139,7 +139,7 @@ Build a combined request handler that serves both WebSocket channels and
  ```gleam
  import beryl_mist as mist_transport
 
- mist_transport.handler(channels, mist_transport.default_config("/socket"), http_handler)
+ mist_transport.handler(sockets, mist_transport.default_config("/socket"), http_handler)
  |> mist.new
  |> mist.port(8000)
  |> mist.start
@@ -161,8 +161,8 @@ Upgrade a request to WebSocket if it matches the configured path
  ```gleam
  import beryl_mist as mist_transport
 
- fn handle_request(req: Request(Connection), channels: Sockets) -> Response(ResponseData) {
-   use <- mist_transport.upgrade(req, channels, mist_transport.default_config("/socket"))
+ fn handle_request(req: Request(Connection), sockets: Sockets) -> Response(ResponseData) {
+   use <- mist_transport.upgrade(req, sockets, mist_transport.default_config("/socket"))
    // Fall through to regular HTTP routing
    case request.path_segments(req) {
      [] -> index_page()
@@ -193,7 +193,7 @@ Upgrade a request to WebSocket if it matches the configured path
  When `beryl.with_max_connections` is configured, this transport also
  enforces a node-wide ceiling on concurrent connections across all IPs,
  likewise returning `429` and rejecting the upgrade before allocating any
- long-lived channel/runtime state. The two limits compose: a connection
+ long-lived socket/runtime state. The two limits compose: a connection
  must be under both to be admitted. The node-wide ceiling bounds total
  resource use when a per-IP limit alone cannot (many distributed source
  addresses / IPv6 rotation). It is enforced per BEAM node, so across a
@@ -271,7 +271,7 @@ Set a socket-level connect/authentication callback on the transport config.
  runs once per socket. Return `Ok(metadata)` to allow the connection and
  seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
  the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
- reject the connection with a 403 Forbidden response before any channel
+ reject the connection with a 403 Forbidden response before any topic
  join occurs.
 
  Callback order and duplicate keys are preserved verbatim in

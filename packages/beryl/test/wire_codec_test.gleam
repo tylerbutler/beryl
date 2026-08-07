@@ -41,7 +41,7 @@ pub fn phoenix_codec_decodes_system_events_to_kinds_test() {
   codec.inbound_kind(heartbeat) |> should.equal(codec.Heartbeat)
 
   // "heartbeat" is only reserved on the "phoenix" topic; elsewhere it is an
-  // ordinary application event that must reach the channel's handle_in.
+  // ordinary application event that must reach the app's `update` function.
   let assert Ok(app_heartbeat) =
     codec.decode_text(phoenix)("[null,\"r\",\"room:1\",\"heartbeat\",{}]")
   codec.inbound_kind(app_heartbeat) |> should.equal(codec.Event("heartbeat"))

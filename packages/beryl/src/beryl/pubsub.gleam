@@ -279,7 +279,7 @@ pub fn broadcast_from(
 }
 
 /// Broadcast a message to all subscribers except a process, preserving a socket
-/// ID that receiving channel coordinators should exclude locally.
+/// ID that receiving runtimes should exclude locally.
 pub fn broadcast_from_socket(
   ps: PubSub(payload),
   from: Pid,

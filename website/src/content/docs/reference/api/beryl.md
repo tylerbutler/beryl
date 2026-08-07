@@ -583,8 +583,8 @@ pub fn with_max_connections_per_ip(
 Configure the maximum allowed byte length for client-supplied event name
  strings.
 
- Event names longer than `max_length` bytes are dropped before reaching a
- channel handler. The default is 64.
+ Event names longer than `max_length` bytes are dropped before reaching the
+ app's `update` function. The default is 64.
 
 ```gleam
 pub fn with_max_event_length(

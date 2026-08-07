@@ -1,6 +1,6 @@
 <table><tr>
 <td><img src="website/src/assets/beryl.webp" alt="beryl logo" width="128"></td>
-<td><h1>beryl</h1>Type-safe real-time channels and presence for Gleam on the BEAM.</td>
+<td><h1>beryl</h1>Type-safe app-side real-time sockets and presence for Gleam on the BEAM.</td>
 </tr></table>
 
 > [!IMPORTANT]
@@ -14,7 +14,7 @@
 gleam add beryl beryl_mist
 ```
 
-`beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
+`beryl` is the core real-time sockets library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
 WebSocket transport. An [Ewe](https://hex.pm/packages/ewe) transport is also
 available as `beryl_ewe` (`gleam add beryl beryl_ewe`) and mirrors the
 `beryl_mist` API. All live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
@@ -199,7 +199,7 @@ and changelogs are managed with [trellis](https://trellis.tylerbutler.com) chang
 
 Beryl uses **Erlang distribution** for its distributed PubSub and presence
 replication, which means **every node in your cluster is fully trusted**.
-Application- and channel-level authorization protects you against untrusted
+Application- and socket-level authorization protects you against untrusted
 WebSocket clients; it does **not** protect you against a hostile Erlang
 distribution peer, which can inject internal beryl traffic and presence state.
 
@@ -236,7 +236,8 @@ In both cases the transport's receive buffer grows unbounded *before* Beryl's
 frame-size check ever runs. **Beryl's per-IP connection limit
 (`with_max_connections_per_ip`) and per-socket message-rate limit
 (`with_message_rate`) do not mitigate this vector** — the buffer grows within a
-single admitted connection and before any message is emitted to a channel.
+single admitted connection and before any event reaches a socket's `update`
+function.
 
 To bound transport memory in production you **must** place an edge proxy or
 load balancer (e.g. nginx, HAProxy, Envoy, or your cloud LB) in front of Beryl

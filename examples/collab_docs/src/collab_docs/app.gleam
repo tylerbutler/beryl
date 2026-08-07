@@ -60,7 +60,7 @@ pub fn join(
   let pattern = beryl_topic.parse_pattern(document_topic_pattern_string)
   case beryl_topic.extract_wildcards(pattern, topic_name) {
     Ok([tenant, document]) ->
-      // Channel-level auth: the join payload must carry a `token`
+      // Topic-level auth: the join payload must carry a `token`
       // HMAC-signed for the tenant whose document is being joined.
       case extract_token(payload) {
         Error(_) -> #(None, [
