@@ -215,7 +215,8 @@ Untrack a presence previously tracked with `PresenceTrack` and
  keys are untracked automatically when their topic closes — as one
  batch, producing a single aggregate leave diff. Effects after this
  one wait for the mutation (see the module docs) but no other socket
- does.
+ does. Requires a presence handle (`beryl.with_presence_handle`);
+ dropped with a warning otherwise.
 
 ##### `PushPresence(
   topic: String,
@@ -241,7 +242,8 @@ Push a presence snapshot for a topic to this socket. Unlike a payload
 Broadcast a presence snapshot for a topic to all its subscribers,
  with the same apply-time `encode` semantics as `PushPresence`.
  Order it after the `PresenceTrack`/`PresenceUntrack` it should
- reflect.
+ reflect. Requires a presence handle (`beryl.with_presence_handle`);
+ dropped with a warning otherwise.
 
 ##### `KickTopic(topic: String)`
 

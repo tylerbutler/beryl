@@ -823,7 +823,7 @@ fn handle_stop(
   let state = State(..state, stopping: True)
   let state =
     dict.keys(state.suspended)
-    |> list.fold(state, abandon_suspension)
+    |> list.fold(state, finalize_suspension)
   // Tracks this runtime already gave up on can still be applied by the
   // presence actor, and their acknowledgements can no longer be
   // compensated once this actor stops — so their runtime-owned refs are
@@ -841,12 +841,14 @@ fn handle_stop(
   actor.stop()
 }
 
-/// Give up on a socket's in-flight presence mutation during shutdown.
+/// Finalize a socket's in-flight presence mutation during shutdown.
 ///
-/// The runtime cannot wait for it, and a track that is still in flight
-/// would leave an entry whose ref this runtime never learned — so this
-/// session's runtime-owned refs are swept from presence instead.
-fn abandon_suspension(
+/// The runtime cannot wait for its acknowledgement, but it must still publish
+/// the leave side of a pending replacement or untrack because those refs have
+/// already left the socket's bookkeeping. The mutation is finalized through
+/// the normal stopping path, then every runtime-owned ref for the socket is
+/// swept behind the in-flight mutation in the presence actor's mailbox.
+fn finalize_suspension(
   state: State(model, msg),
   socket_id: String,
 ) -> State(model, msg) {
@@ -855,28 +857,37 @@ fn abandon_suspension(
     Ok(suspension) -> {
       let _cancelled = process.cancel_timer(suspension.timer)
       state.logger
-      |> log.warn("Presence operation abandoned: runtime stopping", [
+      |> log.warn("Presence operation finalized: runtime stopping", [
         #("socket_id", socket_id),
       ])
+      let state =
+        State(
+          ..state,
+          suspended: dict.delete(state.suspended, socket_id),
+          queued: dict.delete(state.queued, socket_id),
+          // The runtime-owned sweep below also removes anything an earlier,
+          // already-timed-out track of this socket could still add.
+          unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
+        )
+      let state =
+        finish_presence_op(
+          state,
+          socket_id,
+          suspension.op,
+          Error(PresenceStopping),
+        )
       case state.config.presence {
         Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
         None -> Nil
       }
-      State(
-        ..state,
-        suspended: dict.delete(state.suspended, socket_id),
-        queued: dict.delete(state.queued, socket_id),
-        // The runtime-owned sweep just dispatched also removes anything an
-        // earlier, already-timed-out track of this socket could still add.
-        unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
-      )
+      state
     }
   }
 }
 
 /// Sweep a session whose earlier, timed-out track may still land at the
 /// presence actor after this runtime is gone. Same reasoning as
-/// `abandon_suspension`: the ref was never learned here, and after
+/// `finalize_suspension`: the ref was never learned here, and after
 /// shutdown never will be, so the session's runtime-owned refs are removed
 /// instead of leaving an entry nothing can remove.
 fn sweep_unacked_track(
@@ -3038,8 +3049,8 @@ fn finish_presence_op(
       state
     }
     TrackOp(topic_name, _key, replaced), Error(PresenceStopping) -> {
-      // Already logged (as a warning) where the drop was decided, in
-      // `begin_presence_op`; nothing more to log here.
+      // Already logged (as a warning) where shutdown decided not to wait;
+      // nothing more to log here.
       case replaced {
         [] -> Nil
         _ -> broadcast_presence_diff(state, topic_name, [], replaced)

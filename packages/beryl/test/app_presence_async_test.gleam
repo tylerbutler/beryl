@@ -1021,6 +1021,127 @@ pub fn closed_presence_track_with_no_previous_ref_during_stop_creates_no_entry_t
   presence.list(handle, "reclose-fresh:room") |> should.equal([])
 }
 
+/// Shutdown cannot simply discard a pending replacement after removing the
+/// previous ref from socket bookkeeping. It must publish that previous entry's
+/// leave, then let the presence actor finish and sweep the replacement ref so
+/// local subscribers and remote presence replicas both converge to empty.
+pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let diffs = process.new_subject()
+  let handle = start_recording_gated_presence(gate, diffs)
+  let events = process.new_subject()
+  let channels = start_system(handle, events, identity_config)
+
+  let watcher = h.connect(channels, "watcher")
+  h.join(channels, "watcher", "room:a", "jr-w", "r-w")
+  let _watcher_reply = h.recv(watcher)
+  let watcher_join = h.recv(watcher)
+  let watcher_ref = phx_ref_of(watcher_join, "joins")
+  let _watcher_snapshot = h.recv(watcher)
+  let _watcher_actor_join = next_diff(diffs)
+
+  let frames = h.connect(channels, "s1")
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = h.recv(frames)
+  let initial_join = h.recv(frames)
+  let previous_ref = phx_ref_of(initial_join, "joins")
+  let _snapshot = h.recv(frames)
+  let _watcher_saw_join = h.recv(watcher)
+  let _watcher_saw_snapshot = h.recv(watcher)
+  let _initial_actor_join = next_diff(diffs)
+
+  arm(gate)
+  h.push(channels, "s1", "room:a", "promote", "r-2")
+  await_entered(entered)
+  let #(replacement_joins, replacement_leaves) = next_diff(diffs)
+  replacement_leaves |> should.equal([previous_ref])
+  let assert [replacement_ref] = replacement_joins
+
+  let assert Ok(Nil) = beryl.stop(channels)
+
+  // The runtime finalizes the pending replacement through PresenceStopping
+  // before tearing sockets down, so the still-subscribed watcher sees the
+  // previous entry leave even though the replacement acknowledgement is held.
+  let local_leave = h.recv(watcher)
+  local_leave |> string.contains("presence_diff") |> should.be_true
+  phx_ref_of(local_leave, "leaves") |> should.equal(previous_ref)
+
+  release(gate)
+  let #(sweep_joins, sweep_leaves) = next_diff(diffs)
+  sweep_joins |> should.equal([])
+  sweep_leaves |> should.equal([replacement_ref])
+  let #(watcher_joins, watcher_leaves) = next_diff(diffs)
+  watcher_joins |> should.equal([])
+  watcher_leaves |> should.equal([watcher_ref])
+
+  // Barrier: the replacement and both shutdown cleanups are now applied.
+  presence.untrack(handle, "no-such-ref")
+  presence.list(handle, "room:a") |> should.equal([])
+
+  // Neither superseded nor swept refs remain capable of touching later state.
+  presence.untrack(handle, previous_ref)
+  presence.untrack(handle, replacement_ref)
+  presence.untrack(handle, watcher_ref)
+  process.receive(diffs, 100) |> should.be_error
+}
+
+/// A pending explicit untrack has already dropped its ref from socket
+/// bookkeeping. Shutdown must still publish its leave instead of relying on
+/// topic cleanup that can no longer see it, while the actor completes the
+/// exact-ref removal for remote convergence.
+pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let diffs = process.new_subject()
+  let handle = start_recording_gated_presence(gate, diffs)
+  let events = process.new_subject()
+  let channels = start_system(handle, events, identity_config)
+
+  let watcher = h.connect(channels, "watcher")
+  h.join(channels, "watcher", "room:a", "jr-w", "r-w")
+  let _watcher_reply = h.recv(watcher)
+  let watcher_join = h.recv(watcher)
+  let watcher_ref = phx_ref_of(watcher_join, "joins")
+  let _watcher_snapshot = h.recv(watcher)
+  let _watcher_actor_join = next_diff(diffs)
+
+  let frames = h.connect(channels, "s1")
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = h.recv(frames)
+  let initial_join = h.recv(frames)
+  let tracked_ref = phx_ref_of(initial_join, "joins")
+  let _snapshot = h.recv(frames)
+  let _watcher_saw_join = h.recv(watcher)
+  let _watcher_saw_snapshot = h.recv(watcher)
+  let _initial_actor_join = next_diff(diffs)
+
+  arm(gate)
+  h.push(channels, "s1", "room:a", "untrack", "r-2")
+  await_entered(entered)
+  let #(actor_joins, actor_leaves) = next_diff(diffs)
+  actor_joins |> should.equal([])
+  actor_leaves |> should.equal([tracked_ref])
+
+  let assert Ok(Nil) = beryl.stop(channels)
+
+  let local_leave = h.recv(watcher)
+  local_leave |> string.contains("presence_diff") |> should.be_true
+  phx_ref_of(local_leave, "leaves") |> should.equal(tracked_ref)
+
+  release(gate)
+  let #(watcher_joins, watcher_leaves) = next_diff(diffs)
+  watcher_joins |> should.equal([])
+  watcher_leaves |> should.equal([watcher_ref])
+
+  presence.untrack(handle, "no-such-ref")
+  presence.list(handle, "room:a") |> should.equal([])
+
+  presence.untrack(handle, tracked_ref)
+  presence.untrack(handle, watcher_ref)
+  process.receive(diffs, 100) |> should.be_error
+}
+
 /// Graceful shutdown deliberately dispatches its batch presence cleanup
 /// fire-and-forget, without waiting for an acknowledgement — there is no
 /// runtime left to receive one. That is not a failure and must not be

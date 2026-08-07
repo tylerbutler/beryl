@@ -197,7 +197,8 @@ pub type Effect {
   /// keys are untracked automatically when their topic closes — as one
   /// batch, producing a single aggregate leave diff. Effects after this
   /// one wait for the mutation (see the module docs) but no other socket
-  /// does.
+  /// does. Requires a presence handle (`beryl.with_presence_handle`);
+  /// dropped with a warning otherwise.
   PresenceUntrack(topic: String, key: String)
   /// Push a presence snapshot for a topic to this socket. Unlike a payload
   /// built inside `update` (which sees presence as it was *before* this
@@ -215,7 +216,8 @@ pub type Effect {
   /// Broadcast a presence snapshot for a topic to all its subscribers,
   /// with the same apply-time `encode` semantics as `PushPresence`.
   /// Order it after the `PresenceTrack`/`PresenceUntrack` it should
-  /// reflect.
+  /// reflect. Requires a presence handle (`beryl.with_presence_handle`);
+  /// dropped with a warning otherwise.
   BroadcastPresence(
     topic: String,
     event: String,
