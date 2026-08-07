@@ -1,5 +1,19 @@
 # beryl_mist changelog
 
+## v0.2.0 - 2026-08-07
+
+### Changed
+
+- Pass the upgrade request's path, query, and headers to beryl as a `ConnectSeed`, so app-dispatch systems (`beryl.start_app`) receive request data in `init`.
+
+### Fixed
+
+- Route codec-decoded binary frames through Beryl's binary-classified runtime path so telemetry distinguishes them from text frames.
+
+### Dependencies
+
+- Updated beryl to 0.2.0
+
 ## v0.1.0 - 2026-08-07
 
 ### Added
