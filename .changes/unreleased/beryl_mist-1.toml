@@ -1,3 +1,0 @@
-project = "beryl_mist"
-kind = "Fixed"
-body = "Clarified transport doc comments: removed the incorrect pre-1.0 reference from with_allow_all_origins and showed the import alias used by the upgrade and handler examples."
