@@ -4,7 +4,7 @@
 //// scoped to the topic it is joined to, at join time, on every message,
 //// and again as it terminates. One showcase announcement falls outside
 //// that scope — the chat channel publishes room membership changes on the
-//// application-wide `lobby` topic, which no channel owns.
+//// application-wide read-only `lobby` channel.
 ////
 //// Phoenix does this with the endpoint (`MyAppWeb.Endpoint.broadcast/3`);
 //// beryl does it with `beryl.broadcast` on the `Sockets` handle. That

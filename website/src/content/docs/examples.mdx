@@ -45,7 +45,7 @@ gleam run
 | **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
 | **Lifecycle actions** | Join and termination callbacks lower ordered actions without leaving the runtime turn |
 | **Per-pattern rate limits** | `with_topic_rate` gives cursors, chat, and docs different limits |
-| **Shared presence** | One session-presence tracker is reused across the embedded apps that need it |
+| **Shared presence** | One ETS-backed session-presence tracker serves cursors and chat, publishing snapshots asynchronously |
 | **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
 
 ### Architecture

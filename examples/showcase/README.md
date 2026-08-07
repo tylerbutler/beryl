@@ -22,18 +22,18 @@ private state per joined topic. There is no socket-wide model, no message
 union, and no hand-written router.
 
 The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay on
-raw `beryl.start` dispatch on purpose: each serves a single topic
+raw `beryl.child_spec` dispatch on purpose: each serves a single topic
 namespace, which the core API already handles directly.
 
-Presence tracking is part of accepting a join, and the departure
-announcement plus the post-leave `presence_list` are the channel's
-termination actions — both encoded when they are applied, so a leave and a
-join that race cannot publish a stale roster.
+Session presence uses the same example-local ETS tracker as the standalone
+apps. Join and leave callbacks mutate it in their runtime turn, while its
+publisher broadcasts the current snapshot asynchronously. The room departure
+announcement remains a channel termination action.
 
-One announcement is genuinely outside any channel's topic: the `lobby`
-room list. It goes through `showcase/hub`, a small actor holding the
-`beryl.Sockets` handle — the equivalent of Phoenix's
-`Endpoint.broadcast/3`.
+The read-only `lobby` channel is mounted so the chat UI keeps receiving room
+list invalidations. A room channel cannot target that other topic directly,
+so the announcement goes through `showcase/hub`, a small actor holding the
+`beryl.Sockets` handle — the equivalent of Phoenix's `Endpoint.broadcast/3`.
 
 ## Tests
 

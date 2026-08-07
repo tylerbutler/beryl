@@ -9,13 +9,12 @@
 //// closes.
 ////
 //// The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay
-//// on raw `beryl.start` dispatch on purpose: each serves a single topic
-//// namespace, which is the case the core API already handles well. This
-//// app is the multi-topic case the channel layer exists for.
+//// on raw `beryl.child_spec` dispatch on purpose: each serves a single
+//// topic namespace, which is the case the core API already handles well.
+//// This app is the multi-topic case the channel layer exists for.
 
 import beryl
 import beryl/group
-import beryl/presence
 import beryl/transport/server
 import beryl/wire
 import beryl_channels
@@ -27,9 +26,11 @@ import collab_docs/doc_store
 import collab_docs/router as collab_docs_router
 import cursors/router as cursors_router
 import envoy
+import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/otp/static_supervisor
 import gleam/result
 import mist
 import showcase/channels/cursors as cursors_channel
@@ -43,7 +44,7 @@ import showcase/router
 /// table and the tested table cannot drift.
 pub type Deps {
   Deps(
-    presence: presence.Presence,
+    presence: session_presence.Tracker,
     groups: group.Groups,
     store: doc_store.Store,
     secret: BitArray,
@@ -51,15 +52,16 @@ pub type Deps {
   )
 }
 
-/// The showcase's channel table: one handler per topic namespace.
+/// The showcase's channel table: one handler per topic namespace plus the
+/// read-only lobby mounted by the standalone chat app.
 ///
 /// Handlers are consulted in list order and the first matching pattern
-/// owns the topic; these three patterns do not overlap, so the order is
-/// documentation rather than resolution. A topic none of them claims —
-/// `lobby`, for instance — is refused by the layer.
+/// owns the topic; these patterns do not overlap, so the order is
+/// documentation rather than resolution.
 pub fn handlers(deps: Deps) -> List(channel.Handler) {
   [
-    cursors_channel.channel(),
+    lobby(),
+    cursors_channel.channel(cursors_channel.Ctx(deps.presence)),
     rooms_channel.channel(rooms_channel.Ctx(
       presence: deps.presence,
       groups: deps.groups,
@@ -72,11 +74,16 @@ pub fn handlers(deps: Deps) -> List(channel.Handler) {
   ]
 }
 
+fn lobby() -> channel.Handler {
+  channel.handler("lobby", fn(_info, _topic, _payload) {
+    channel.accept(channel.joined(Nil, channel.callbacks()))
+  })
+}
+
 pub fn main() {
-  // Shared presence actor — each embedded app scopes presence to its own
-  // topic namespace, so a single actor is safe.
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
+  // Shared example-local session presence. Mutations and capacity reads are
+  // synchronous ETS operations; snapshots publish asynchronously.
+  let presence_tracker = session_presence.start()
 
   // Chatrooms-specific state.
   let assert Ok(groups) = group.start()
@@ -96,41 +103,42 @@ pub fn main() {
 
   // Per-topic-pattern rate limits replace the old single global
   // channel-rate compromise: cursors stream fast, chat and docs do not.
+  // The frame budget sits modestly above the decoded-message budget to
+  // account for joins and malformed frames.
   let config =
     beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
     |> beryl.with_join_rate(per_second: 5, burst: 10)
     |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
     |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
     |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
-    |> beryl.with_presence_handle(presence_actor)
 
   let deps =
     Deps(
-      presence: presence_actor,
+      presence: presence_tracker,
       groups: groups,
       store: docs_store,
       secret: docs_secret,
       hub: hub,
     )
 
-  let assert Ok(channels) =
-    beryl_channels.start(config, handlers: handlers(deps))
+  let assert Ok(#(channels, beryl_spec)) =
+    beryl_channels.child_spec(config, handlers: handlers(deps))
 
-  // Bound before the listener starts, so no channel can run unbound.
+  session_presence.configure(presence_tracker, channels)
   hub.bind(hub, channels)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.start()
 
   // Build per-example contexts pinned to their URL prefix.
-  let cursors_ctx =
-    cursors_router.Context(
-      channels:,
-      presence: presence_actor,
-      base_path: "/cursors",
-    )
+  let cursors_ctx = cursors_router.Context(channels:, base_path: "/cursors")
   let chatrooms_ctx =
     chatrooms_router.Context(
       channels:,
-      presence: presence_actor,
+      presence: presence_tracker,
       groups:,
       base_path: "/chat",
     )

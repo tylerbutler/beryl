@@ -142,10 +142,8 @@ test.describe("Showcase (beryl_channels)", () => {
       { waitEvent: "presence_list", topic: "room:general" },
     ]);
 
-    // The room channel acknowledges the join, then does its
-    // presence_track / new_msg / presence_list work in the turn its own
-    // self-notification schedules — so the ack must hit the wire before
-    // every frame that later work produces.
+    // The runtime applies the join acknowledgment before processing the
+    // session-presence publisher and hub broadcasts queued by the join.
     const ackIndex = frames.findIndex(
       (f) => f[3] === "phx_reply" && f[1] === "1"
     );
@@ -154,11 +152,6 @@ test.describe("Showcase (beryl_channels)", () => {
     expect(ackIndex).toBeGreaterThanOrEqual(0);
     expect(presenceIndex).toBeGreaterThan(ackIndex);
     expect(sysMsgIndex).toBeGreaterThan(ackIndex);
-    // presence_diff (from PresenceTrack) also lands after the ack.
-    const diffIndex = frames.findIndex((f) => f[3] === "presence_diff");
-    if (diffIndex !== -1) {
-      expect(diffIndex).toBeGreaterThan(ackIndex);
-    }
   });
 
   test("chat page works end to end against the shared socket", async ({

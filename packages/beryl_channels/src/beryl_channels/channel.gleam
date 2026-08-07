@@ -61,14 +61,17 @@
 ////
 //// [`Actions`](#actions) are applied strictly in the order they were
 //// added, and they always target the channel's own topic. They lower onto
-//// beryl's core `Effect` values, which the runtime applies in list order
-//// inside a single actor turn — so action order is wire order.
+//// beryl's core `Effect` values, which the runtime applies in list order —
+//// so action order is wire order. An asynchronous presence effect can park
+//// this socket while other sockets continue; the remaining actions resume
+//// only after that effect completes.
 ////
-//// A join's actions (see [`with_actions`](#with_actions)) are lowered in
-//// the same turn as the join acknowledgment, immediately after it: the
-//// socket is already subscribed, so a push cannot precede its own join
-//// reply and a presence check and its `presence_track` cannot be
-//// interleaved with another turn.
+//// A join's actions (see [`with_actions`](#with_actions)) are emitted with
+//// the join acknowledgment, immediately after it: the socket is already
+//// subscribed, so a push cannot precede its own join reply. This ordering
+//// does not make an asynchronous presence mutation a cross-socket
+//// reservation; use application-owned synchronous state for atomic
+//// capacity checks.
 ////
 //// [`on_terminate`](#on_terminate) actions are lowered in the turn that
 //// closes the topic, after the channel instance is gone. The topic is
@@ -478,16 +481,16 @@ pub fn accept_with(
 
 /// Add ordered actions to run as part of accepting this join.
 ///
-/// They are applied in the same update turn as the acknowledgment and
-/// strictly after it, so the socket is already subscribed to the topic:
-/// a [`push`](#push) here cannot overtake its own join reply, and a
-/// presence check made in the `join` callback and the
-/// [`presence_track`](#presence_track) that acts on it cannot be split by
-/// another turn.
+/// They are emitted with the acknowledgment and applied strictly after it,
+/// so the socket is already subscribed to the topic: a [`push`](#push)
+/// here cannot overtake its own join reply. If an action lowers to an
+/// asynchronous presence effect, the runtime may process other sockets
+/// while this socket waits; a check followed by [`presence_track`](#presence_track)
+/// is therefore not an atomic cross-socket capacity reservation.
 ///
 /// This is what to reach for instead of notifying yourself from `join`:
-/// [`notify`](#notify) schedules a *later* turn, which is right for work
-/// that may block or wait, but it cannot be atomic with the join.
+/// [`notify`](#notify) schedules a *later* input, while actions preserve
+/// their declared position immediately after the join acknowledgment.
 ///
 /// Actions already attached stay ahead of the ones added here. A refused
 /// join has no topic to act on, so this returns [`reject`](#reject)

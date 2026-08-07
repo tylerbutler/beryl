@@ -43,8 +43,8 @@ pub fn a_cursor_move_reaches_the_other_socket_only_test() {
   h.join(system, "s1", "cursor:main", "1", "{\"username\":\"ada\"}")
   h.join(system, "s2", "cursor:main", "1", "{\"username\":\"bob\"}")
   // Both sockets settle on the roster that includes bob.
-  h.expect(ada, ["presence_list", "bob"])
-  h.expect(bob, ["presence_list", "bob"])
+  settle_roster(ada, "bob")
+  settle_roster(bob, "bob")
 
   h.push_refless(
     system,
@@ -70,8 +70,8 @@ pub fn an_unsupported_reaction_is_ignored_test() {
 
   h.join(system, "s1", "cursor:main", "1", "{\"username\":\"ada\"}")
   h.join(system, "s2", "cursor:main", "1", "{\"username\":\"bob\"}")
-  h.expect(ada, ["presence_list", "bob"])
-  h.expect(bob, ["presence_list", "bob"])
+  settle_roster(ada, "bob")
+  settle_roster(bob, "bob")
 
   h.push_refless(
     system,
@@ -99,8 +99,8 @@ pub fn a_disconnect_republishes_the_cursor_roster_test() {
 
   h.join(system, "s1", "cursor:main", "1", "{\"username\":\"ada\"}")
   h.join(system, "s2", "cursor:main", "1", "{\"username\":\"bob\"}")
-  h.expect(ada, ["presence_list", "bob"])
-  h.expect(bob, ["presence_list", "bob"])
+  settle_roster(ada, "bob")
+  settle_roster(bob, "bob")
 
   h.disconnect(system, "s1")
 
@@ -117,12 +117,12 @@ pub fn a_leave_racing_a_join_never_publishes_a_stale_roster_test() {
 
   h.join(system, "s1", "cursor:main", "1", "{\"username\":\"ada\"}")
   h.join(system, "s2", "cursor:main", "1", "{\"username\":\"bob\"}")
-  h.expect(ada, ["presence_list", "bob"])
-  h.expect(bob, ["presence_list", "bob"])
+  settle_roster(ada, "bob")
+  settle_roster(bob, "bob")
 
-  // A leave and a join enqueued back to back, with nothing read in
-  // between. Both rosters are encoded when their action is applied, so
-  // neither can carry a snapshot taken before the other one landed.
+  // A leave and a join are enqueued back to back. Both mutate the shared
+  // ETS store in their runtime turns; the publisher reads the current
+  // snapshot when it handles each queued notification.
   h.leave(system, "s1", "cursor:main", "1", "7")
   h.join(system, "s3", "cursor:main", "1", "{\"username\":\"cleo\"}")
 
@@ -166,8 +166,15 @@ pub fn a_room_join_announces_the_member_then_the_roster_test() {
   ])
   |> should.be_true
 
-  h.expect(frames, ["new_msg", "ada joined the room", "\"type\":\"system\""])
-  h.expect(frames, ["presence_list", "ada"])
+  let followups = h.drain_all(frames)
+  followups
+  |> list.any(
+    h.contains(_, ["new_msg", "ada joined the room", "\"type\":\"system\""]),
+  )
+  |> should.be_true
+  followups
+  |> list.any(h.contains(_, ["presence_list", "ada"]))
+  |> should.be_true
 }
 
 pub fn an_empty_chat_message_is_answered_with_the_422_payload_test() {
@@ -225,8 +232,8 @@ pub fn a_typing_indicator_reaches_the_other_members_test() {
   let bob = h.connect(system, "s2")
   h.join(system, "s1", "room:general", "1", "{\"username\":\"ada\"}")
   h.join(system, "s2", "room:general", "1", "{\"username\":\"bob\"}")
-  h.expect(ada, ["presence_list", "bob"])
-  h.expect(bob, ["presence_list", "bob"])
+  settle_roster(ada, "bob")
+  settle_roster(bob, "bob")
 
   h.push_refless(system, "s1", "room:general", "typing", "{}")
 
@@ -234,9 +241,9 @@ pub fn a_typing_indicator_reaches_the_other_members_test() {
     "\"username\":\"ada\"", "\"typing\":true",
   ])
   |> should.be_true
-  // The sender is excluded from the indicator, but not from the presence
-  // update its own re-track produced.
-  h.expect(ada, ["presence_diff"])
+  // The sender is excluded from the indicator, but still receives the
+  // session-presence snapshot its own metadata update produced.
+  h.expect(ada, ["presence_list"])
 }
 
 pub fn leaving_a_room_announces_the_departure_test() {
@@ -245,13 +252,22 @@ pub fn leaving_a_room_announces_the_departure_test() {
   let bob = h.connect(system, "s2")
   h.join(system, "s1", "room:general", "1", "{\"username\":\"ada\"}")
   h.join(system, "s2", "room:general", "1", "{\"username\":\"bob\"}")
-  h.expect(ada, ["presence_list", "bob"])
-  h.expect(bob, ["presence_list", "bob"])
+  settle_roster(ada, "bob")
+  settle_roster(bob, "bob")
 
   h.leave(system, "s1", "room:general", "1", "7")
 
-  h.expect(bob, ["new_msg", "ada left the room", "\"type\":\"system\""])
-  let roster = h.expect(bob, ["presence_list", "bob"])
+  let followups = h.drain_all(bob)
+  followups
+  |> list.any(
+    h.contains(_, ["new_msg", "ada left the room", "\"type\":\"system\""]),
+  )
+  |> should.be_true
+  let assert Ok(roster) =
+    followups
+    |> list.filter(h.contains(_, ["presence_list", "bob"]))
+    |> list.last
+    as "the post-leave roster was published"
   string.contains(roster, "ada") |> should.be_false
 
   // The leaver's own topic is closed.
@@ -402,15 +418,34 @@ pub fn a_document_topic_with_the_wrong_shape_is_rejected_by_the_channel_test() {
 }
 
 // ---------------------------------------------------------------------------
-// Unowned topics
+// Lobby and unowned topics
 // ---------------------------------------------------------------------------
+
+pub fn the_read_only_lobby_receives_room_change_announcements_test() {
+  let system = h.start("lobby")
+  let lobby = h.connect(system, "lobby-socket")
+  h.join(system, "lobby-socket", "lobby", "1", "{}")
+  h.contains(h.recv(lobby), ["phx_reply", "\"status\":\"ok\"", "lobby"])
+  |> should.be_true
+
+  let _room = h.connect(system, "room-socket")
+  h.join(system, "room-socket", "room:general", "1", "{\"username\":\"ada\"}")
+
+  h.expect(lobby, ["rooms_changed", "\"room\":\"general\""])
+}
 
 pub fn a_topic_no_channel_owns_is_refused_test() {
   let system = h.start("unowned")
   let frames = h.connect(system, "s1")
 
-  h.join(system, "s1", "lobby", "1", "{}")
+  h.join(system, "s1", "other", "1", "{}")
 
   h.contains(h.recv(frames), ["phx_reply", "\"status\":\"error\"", "unmatched"])
+  |> should.be_true
+}
+
+fn settle_roster(frames: h.Frames, username: String) -> Nil {
+  h.drain_all(frames)
+  |> list.any(h.contains(_, ["presence_list", username]))
   |> should.be_true
 }

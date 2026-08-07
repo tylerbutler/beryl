@@ -5,7 +5,7 @@
 //// | Property | Why it matters |
 //// |---|---|
 //// | `AcceptJoin` is lowered before the join's actions | a push to a topic the socket has not joined yet is dropped by core |
-//// | a join's `presence_track` runs in the join turn | a capacity check and the track that satisfies it cannot be split |
+//// | join actions retain declared order | async presence may yield, but later actions resume only after it completes |
 //// | termination actions apply in order, once | leave announcements and post-leave rosters are ordinary features |
 //// | pushes to the closing topic are dropped | documented consequence of the topic being unsubscribed first |
 ////
@@ -15,7 +15,6 @@
 import beryl
 import beryl/presence
 import beryl/wire
-import beryl_channels
 import beryl_channels/channel
 import dispatch_helpers as helper
 import gleam/erlang/process
@@ -29,24 +28,17 @@ fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
 }
 
 fn start(handlers: List(channel.Handler)) -> beryl.Sockets {
-  let assert Ok(channels) =
-    beryl_channels.start(beryl.config(wire.phoenix_codec()), handlers: handlers)
-    as "the handler table is valid"
-  channels
+  helper.start(beryl.config(wire.phoenix_codec()), handlers: handlers)
 }
 
 fn start_with_presence(
   handlers: List(channel.Handler),
   handle: presence.Presence,
 ) -> beryl.Sockets {
-  let assert Ok(channels) =
-    beryl_channels.start(
-      beryl.config(wire.phoenix_codec())
-        |> beryl.with_presence_handle(handle),
-      handlers: handlers,
-    )
-    as "the handler table is valid"
-  channels
+  helper.start(
+    beryl.config(wire.phoenix_codec()) |> beryl.with_presence_handle(handle),
+    handlers: handlers,
+  )
 }
 
 fn start_presence(replica: String) -> presence.Presence {
@@ -135,21 +127,21 @@ pub fn a_join_time_presence_track_applies_in_the_join_turn_test() {
   entry.key |> should.equal("s1")
 }
 
-pub fn a_capacity_check_and_its_track_are_not_split_by_another_join_test() {
+pub fn a_capacity_check_observes_a_completed_join_time_track_test() {
   let handle = start_presence("capacity")
   let channels = start_with_presence([capacity_handler(handle)], handle)
   let first = helper.connect(channels, "s1")
   let second = helper.connect(channels, "s2")
 
-  // Both joins are enqueued back to back, with nothing read in between:
-  // the second join's turn runs immediately after the first one's. If the
-  // track had been scheduled for a later turn (a self-notification), the
-  // second join would still see an empty room and the cap would not hold.
+  // Presence effects are asynchronous in the Lane D runtime. The snapshot
+  // fences completion of the first join's track before the second join
+  // performs its capacity read.
   helper.join(channels, "s1", "room:a", "jr-1", "r-1")
-  helper.join(channels, "s2", "room:a", "jr-1", "r-1")
-
   helper.recv(first) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  helper.recv(first) |> string.contains("presence_diff") |> should.be_true
+  helper.recv(first) |> string.contains("presence_list") |> should.be_true
 
+  helper.join(channels, "s2", "room:a", "jr-1", "r-1")
   let refusal = helper.recv(second)
   refusal |> string.contains("\"status\":\"error\"") |> should.be_true
   refusal |> string.contains("full") |> should.be_true
@@ -177,7 +169,8 @@ fn departing_handler(trace: process.Subject(String)) -> channel.Handler {
     channel.accept(channel.joined(Nil, callbacks))
     |> channel.with_actions(
       channel.actions()
-      |> channel.presence_track(info.socket_id, json.object([])),
+      |> channel.presence_track(info.socket_id, json.object([]))
+      |> channel.push_presence("presence_list", encode_users),
     )
   })
 }
@@ -189,13 +182,7 @@ pub fn termination_actions_are_applied_in_order_test() {
   let leaver = helper.connect(channels, "s1")
   let peer = helper.connect(channels, "s2")
 
-  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
-  helper.join(channels, "s2", "room:a", "jr-1", "r-1")
-  // Settle both sockets on the roster that includes the peer.
-  let _ = helper.recv(leaver)
-  let _ = helper.recv(leaver)
-  let _ = helper.recv(peer)
-  let _ = helper.recv(peer)
+  join_pair(channels, leaver, peer)
 
   helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
   helper.next_trace(trace) |> should.equal("terminate:normal")
@@ -219,8 +206,7 @@ pub fn a_push_from_termination_is_dropped_by_core_test() {
   let leaver = helper.connect(channels, "s1")
 
   helper.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _ack = helper.recv(leaver)
-  let _diff = helper.recv(leaver)
+  settle_join(leaver)
 
   helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
   helper.next_trace(trace) |> should.equal("terminate:normal")
@@ -242,12 +228,7 @@ pub fn termination_actions_run_exactly_once_test() {
   let leaver = helper.connect(channels, "s1")
   let peer = helper.connect(channels, "s2")
 
-  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
-  helper.join(channels, "s2", "room:a", "jr-1", "r-1")
-  let _ = helper.recv(leaver)
-  let _ = helper.recv(leaver)
-  let _ = helper.recv(peer)
-  let _ = helper.recv(peer)
+  join_pair(channels, leaver, peer)
 
   helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
   helper.next_trace(trace) |> should.equal("terminate:normal")
@@ -261,6 +242,26 @@ pub fn termination_actions_run_exactly_once_test() {
   helper.disconnect(channels, "s1")
   helper.no_trace(trace)
   helper.recv_none(peer)
+}
+
+fn join_pair(
+  channels: beryl.Sockets,
+  first: helper.Frames,
+  second: helper.Frames,
+) -> Nil {
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  settle_join(first)
+  helper.join(channels, "s2", "room:a", "jr-1", "r-1")
+  settle_join(second)
+  helper.recv(first) |> string.contains("presence_diff") |> should.be_true
+}
+
+fn settle_join(frames: helper.Frames) -> Nil {
+  let frame = helper.recv(frames)
+  case string.contains(frame, "presence_list") {
+    True -> Nil
+    False -> settle_join(frames)
+  }
 }
 
 /// Drain a socket's frames until its terminal frame arrives.

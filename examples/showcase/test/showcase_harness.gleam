@@ -8,7 +8,6 @@
 
 import beryl
 import beryl/group
-import beryl/presence
 import beryl/socket
 import beryl/transport
 import beryl/wire
@@ -16,8 +15,11 @@ import beryl/wire/codec
 import beryl_channels
 import collab_docs/auth
 import collab_docs/doc_store
+import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/list
+import gleam/option.{None}
+import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
 import showcase
@@ -34,14 +36,13 @@ pub type Frames =
   process.Subject(String)
 
 /// Start a showcase system: the deployed handler table over a fresh
-/// presence actor, room group, document store, and broadcast hub.
+/// session-presence tracker, room group, document store, and broadcast hub.
 ///
 /// Rate limits are deliberately left off: the deployed limits exist to
 /// throttle a public demo, and a test that tripped them would be asserting
 /// the limiter rather than the channels.
-pub fn start(replica: String) -> System {
-  let assert Ok(presence_handle) =
-    presence.start(presence.default_config(replica))
+pub fn start(_replica: String) -> System {
+  let presence_tracker = session_presence.start()
   let assert Ok(groups) = group.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
@@ -53,17 +54,16 @@ pub fn start(replica: String) -> System {
   // Errors only: the runtime's info/warn lines would bury the test output.
   let config =
     beryl.config(wire.phoenix_codec())
-    |> beryl.with_presence_handle(presence_handle)
     |> beryl.with_logging(beryl.logging_config(
       level: beryl.ErrorLevel,
       include_payloads: False,
     ))
 
-  let assert Ok(sockets) =
-    beryl_channels.start(
+  let assert Ok(#(sockets, spec)) =
+    beryl_channels.child_spec(
       config,
       handlers: showcase.handlers(showcase.Deps(
-        presence: presence_handle,
+        presence: presence_tracker,
         groups: groups,
         store: store,
         secret: secret,
@@ -71,7 +71,12 @@ pub fn start(replica: String) -> System {
       )),
     )
 
+  session_presence.configure(presence_tracker, sockets)
   hub.bind(broadcast_hub, sockets)
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
 
   System(sockets: sockets, secret: secret)
 }
@@ -85,16 +90,21 @@ pub fn token(system: System, tenant: String) -> String {
 /// frames.
 pub fn connect(system: System, socket_id: String) -> Frames {
   let sent = process.new_subject()
-  transport.socket_connected(
+  let assert Ok(owner) = transport.runtime_pid(system.sockets)
+  transport.admit_socket(
     sockets: system.sockets,
+    owner: owner,
     socket_id: socket_id,
     send: fn(message) {
       process.send(sent, message)
       Ok(Nil)
     },
     send_binary: fn(_data) { Ok(Nil) },
+    codec: None,
     seed: socket.empty_seed(),
+    close: fn() { Nil },
   )
+  |> should.equal(Ok(Nil))
   sent
 }
 
