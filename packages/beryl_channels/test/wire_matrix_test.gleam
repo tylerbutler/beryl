@@ -291,7 +291,7 @@ pub fn an_undecoded_binary_frame_is_handled_identically_test() {
 // === Presence ==============================================================
 
 pub fn presence_tracking_produces_the_same_frames_test() {
-  let #(frames, entries) =
+  let #(diff_shape, snapshot, entries) =
     matrix.compare(
       setup: fn() {
         let assert Ok(handle) = presence.start(presence.default_config("node1"))
@@ -309,14 +309,23 @@ pub fn presence_tracking_produces_the_same_frames_test() {
           presence.list(handle, lobby)
           |> list.map(fn(entry) { entry.key })
         matrix.close(client)
-        #(frames, keys)
+        let assert [diff, snapshot] = frames
+        #(
+          #(
+            diff.topic,
+            diff.event,
+            diff.payload |> string.contains("alice"),
+            diff.payload |> string.contains("online"),
+            diff.payload |> string.contains("\"leaves\":{}"),
+          ),
+          snapshot,
+          keys,
+        )
       },
     )
 
-  let assert [diff, snapshot] = frames
-  diff.event |> should.equal("presence_diff")
-  diff.payload |> string.contains("alice") |> should.be_true
-  diff.payload |> string.contains("online") |> should.be_true
+  diff_shape
+  |> should.equal(#(lobby, "presence_diff", True, True, True))
   snapshot.event |> should.equal("presence_list")
   // The snapshot is encoded after the track in the same action list, so it
   // already contains the key that was just tracked.
