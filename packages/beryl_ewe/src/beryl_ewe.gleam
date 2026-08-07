@@ -149,11 +149,11 @@ fn on_message(
     ewe.Binary(data) -> resume(server.handle_binary_frame(state, data))
     ewe.User(server.Close) -> ewe.websocket_stop()
     ewe.User(server.SendText(text)) -> {
-      let _ = ewe.send_text_frame(connection, text)
+      let _send_result = ewe.send_text_frame(connection, text)
       ewe.websocket_continue(state)
     }
     ewe.User(server.SendBinary(data)) -> {
-      let _ = ewe.send_binary_frame(connection, data)
+      let _send_result = ewe.send_binary_frame(connection, data)
       ewe.websocket_continue(state)
     }
   }

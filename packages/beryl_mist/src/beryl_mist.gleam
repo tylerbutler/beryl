@@ -144,11 +144,11 @@ fn on_message(
     mist.Closed | mist.Shutdown -> mist.stop()
     mist.Custom(server.Close) -> mist.stop()
     mist.Custom(server.SendText(text)) -> {
-      let _ = mist.send_text_frame(connection, text)
+      let _send_result = mist.send_text_frame(connection, text)
       mist.continue(state)
     }
     mist.Custom(server.SendBinary(data)) -> {
-      let _ = mist.send_binary_frame(connection, data)
+      let _send_result = mist.send_binary_frame(connection, data)
       mist.continue(state)
     }
   }
