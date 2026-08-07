@@ -18,10 +18,10 @@ router, third-party channels usable without app-side wiring. That trade
 was framed as either/or because both models competed to *be* the core.
 They need not: the core's entry-point shape — `init:
 fn(ConnectInfo(msg)) -> #(model, List(Effect))` and `update: fn(model,
-Input(msg)) -> Next(model, msg)` (`beryl.start`, `beryl.child_spec`) — is
-expressive enough to host a channel framework *above* the core, as
-ordinary data, using the closure-captured existential encoding ADR 0001
-already validated ("Option B",
+Input(msg)) -> Next(model, msg)` (`beryl.child_spec`) — is expressive
+enough to host a channel framework *above* the core, as ordinary data,
+using the closure-captured existential encoding ADR 0001 already
+validated ("Option B",
 [#217](https://github.com/tylerbutler/beryl/pull/217)).
 
 Interoperation between the two models is a non-goal: an application picks
@@ -35,11 +35,12 @@ surface.)
 Ship a new package, `beryl_channels`, built strictly on beryl's public
 API, with no access to internal modules:
 
-- Entry points mirror the core: `beryl_channels.start(config, handlers)`
-  and `beryl_channels.child_spec(config, handlers)`. Each composes the
-  handler list into an `#(init, update)` pair and delegates to
-  `beryl.start`/`beryl.child_spec`. `Config` — including declarative
-  per-topic abuse controls — is the core's, untouched.
+- The entry point mirrors the supervised core:
+  `beryl_channels.child_spec(config, handlers)`. It composes the handler
+  list into an `#(init, update)` pair and delegates to
+  `beryl.child_spec`. `Config` — including declarative per-topic abuse
+  controls — is the core's, untouched. The layer does not reintroduce an
+  unsupervised start path.
 - A handler pairs a topic pattern with a typed `join` callback receiving
   the `ConnectInfo`, topic, and join payload, and returning either a
   rejection or a `JoinedChannel`: a record of closures (message, binary,
@@ -77,9 +78,9 @@ API, with no access to internal modules:
   workspace.
 - Parity between the two APIs is enforced mechanically, not editorially:
   the `phoenix_channel_fixtures` contract suite runs as a matrix over
-  `beryl.start` and `beryl_channels.start`, since both lower to the same
-  runtime, wire codec, presence, and abuse-control implementations —
-  which continue to exist exactly once.
+  `beryl.child_spec` and `beryl_channels.child_spec`, since both lower to
+  the same runtime, wire codec, presence, and abuse-control
+  implementations — which continue to exist exactly once.
 - The union-and-router boilerplate ADR 0002 accepted (linear in channel
   count) disappears for layer users; raw-dispatch users are unaffected.
   Third-party channels regain a wiring-free distribution shape: a handler
