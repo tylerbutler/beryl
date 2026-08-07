@@ -258,7 +258,6 @@ pub opaque type Message {
   RemoteSync(pubsub_msg: pubsub.Message(SyncPayload))
 }
 
-// nolint: unused_exports -- package-internal async mutation protocol for the runtime; hidden from public docs with @internal
 /// Acknowledgement of an asynchronous presence mutation.
 ///
 /// `tag` and `op_id` are echoed back verbatim from the request so the
@@ -269,7 +268,6 @@ pub type MutationAck {
   MutationAck(tag: String, op_id: Int, outcome: MutationOutcome)
 }
 
-// nolint: unused_exports -- package-internal async mutation protocol for the runtime; hidden from public docs with @internal
 /// What an acknowledged mutation produced.
 @internal
 pub type MutationOutcome {
@@ -729,7 +727,6 @@ pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
 // logic used by the synchronous `track`/`untrack` above, so both entry
 // points produce identical CRDT state, diffs, and read-model publications.
 
-// nolint: unused_exports -- package-internal async mutation protocol for the runtime; hidden from public docs with @internal
 /// Track a presence asynchronously. The new entry supersedes, atomically in
 /// the same actor turn, both `replace` (a ref from a previous track of this
 /// key, when the caller still knows it) and any *other* ref the actor still
@@ -766,7 +763,6 @@ pub fn track_async(
   )
 }
 
-// nolint: unused_exports -- package-internal async mutation protocol for the runtime; hidden from public docs with @internal
 /// Untrack a batch of refs asynchronously. Unknown or already-removed refs
 /// are skipped; the whole batch is one actor turn, one `on_diff`, and one
 /// read-model publication per touched topic.
@@ -784,7 +780,6 @@ pub fn untrack_async(
   )
 }
 
-// nolint: unused_exports -- package-internal async mutation protocol for the runtime; hidden from public docs with @internal
 /// Sweep every presence a session still holds, without acknowledgement.
 /// Used by the runtime while shutting down, when it can no longer wait.
 @internal
@@ -792,7 +787,6 @@ pub fn untrack_all_async(presence: Presence, session_id: String) -> Nil {
   process.send(presence.subject, UntrackAllAsync(session_id))
 }
 
-// nolint: unused_exports -- package-internal liveness probe for the runtime; hidden from public docs with @internal
 /// Whether the presence actor is still running.
 ///
 /// The asynchronous protocol above cannot detect a dead actor (a send to a

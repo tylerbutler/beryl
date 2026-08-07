@@ -264,7 +264,6 @@ pub fn with_presence_handle(
   Config(..config, presence: Some(presence))
 }
 
-// nolint: unused_exports -- package-internal knob used by the presence acknowledgement-timeout tests; hidden from public docs with @internal
 /// Bound how long a socket waits for a presence mutation to be applied.
 ///
 /// Presence effects are asynchronous: the socket that issued one has its
