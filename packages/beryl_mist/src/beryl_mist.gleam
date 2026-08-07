@@ -8,10 +8,7 @@
 //// either web server by choosing the matching transport package. Both consume
 //// only beryl's public `beryl/transport` SPI.
 
-import beryl.{type Channels}
-import beryl/event
-import beryl/transport
-import beryl/wire/codec
+import beryl/transport.{type Channels}
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -26,10 +23,7 @@ import gleam/string
 import mist.{type Connection, type ResponseData, type WebsocketConnection}
 
 /// Configuration for the Mist WebSocket transport
-///
-/// The `assigns` type parameter is the socket-level state produced by the
-/// `on_connect` hook. It defaults to `Nil` when no hook is configured.
-pub opaque type TransportConfig(assigns) {
+pub opaque type TransportConfig {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
     path: String,
@@ -38,11 +32,15 @@ pub opaque type TransportConfig(assigns) {
     ///
     /// Runs the Phoenix `UserSocket.connect/3` analogue: it authenticates the
     /// whole connection a single time and can reject it before any channel
-    /// join. Return `Ok(assigns)` to allow the connection and seed initial
-    /// socket assigns (visible to channels at join), or `Error(ConnectRejected)` to reject
-    /// with a 403 Forbidden response. When None, all connections are allowed
-    /// and assigns start empty (`Nil`).
-    on_connect: Option(fn(Request(Connection)) -> Result(assigns, ConnectError)),
+    /// join. Return `Ok(metadata)` to allow the connection and seed
+    /// `ConnectSeed.metadata` (an ordered list of string pairs, visible to
+    /// the app's `init` via `ConnectInfo.seed`; channel-module systems ignore
+    /// it), or `Error(ConnectRejected)` to reject with a 403 Forbidden
+    /// response. When `None`, all connections are allowed and metadata
+    /// starts empty (`[]`).
+    on_connect: Option(
+      fn(Request(Connection)) -> Result(List(#(String, String)), ConnectError),
+    ),
     /// Policy applied to the request `Origin` header before the WebSocket
     /// handshake. Defaults to [`SameOrigin`](#originpolicy).
     origin_policy: OriginPolicy,
@@ -98,30 +96,36 @@ pub type OriginPolicy {
 
 /// Create a default transport config with no connect hook.
 ///
-/// The resulting config seeds `Nil` assigns and applies the
+/// The resulting config seeds empty (`[]`) `ConnectSeed.metadata` and applies
 /// [`SameOrigin`](#originpolicy) origin policy, which rejects cross-site
 /// WebSocket upgrades before the handshake (CSWSH protection). Same-origin
 /// upgrades and non-browser clients (no `Origin` header) are admitted without
 /// configuration.
 ///
-/// Add `with_on_connect` to authenticate connections and/or seed initial
-/// assigns. Use `with_allowed_origins` to pin an explicit allow-list, or
+/// Add `with_on_connect` to authenticate connections and/or seed connect
+/// metadata. Use `with_allowed_origins` to pin an explicit allow-list, or
 /// `with_allow_all_origins` to opt out of origin checking entirely.
-pub fn default_config(path: String) -> TransportConfig(Nil) {
+pub fn default_config(path: String) -> TransportConfig {
   TransportConfig(path: path, on_connect: None, origin_policy: SameOrigin)
 }
 
 /// Set a socket-level connect/authentication callback on the transport config.
 ///
 /// The callback receives the HTTP request before the WebSocket upgrade and
-/// runs once per socket. Return `Ok(assigns)` to allow the connection and seed
-/// initial socket assigns that channels can read at join time, or
+/// runs once per socket. Return `Ok(metadata)` to allow the connection and
+/// seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
+/// an app-dispatch system's `init` via `ConnectInfo.seed` (see
+/// `ConnectInfo.init`); channel-module systems ignore it — or
 /// `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
 /// response before any channel join occurs.
+///
+/// Callback order and duplicate keys are preserved verbatim in
+/// `ConnectSeed.metadata`; this transport never logs metadata values.
 pub fn with_on_connect(
-  config: TransportConfig(a),
-  callback: fn(Request(Connection)) -> Result(assigns, ConnectError),
-) -> TransportConfig(assigns) {
+  config: TransportConfig,
+  callback: fn(Request(Connection)) ->
+    Result(List(#(String, String)), ConnectError),
+) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: Some(callback),
@@ -142,9 +146,9 @@ pub fn with_on_connect(
 /// that should be allowed (e.g. behind a reverse proxy that rewrites the
 /// `Host` header, where `SameOrigin` cannot see the public host).
 pub fn with_allowed_origins(
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   origins: List(String),
-) -> TransportConfig(assigns) {
+) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: config.on_connect,
@@ -160,9 +164,7 @@ pub fn with_allowed_origins(
 /// sessions) for authorization, or that authenticate every message
 /// independently. For cookie/session-authenticated apps, prefer the default
 /// `SameOrigin` policy or `with_allowed_origins`.
-pub fn with_allow_all_origins(
-  config: TransportConfig(assigns),
-) -> TransportConfig(assigns) {
+pub fn with_allow_all_origins(config: TransportConfig) -> TransportConfig {
   TransportConfig(
     path: config.path,
     on_connect: config.on_connect,
@@ -175,12 +177,12 @@ type ConnectionState {
   ConnectionState(
     socket_id: String,
     channels: Channels,
-    connection_permit: Option(beryl.ConnectionPermit),
+    connection_permit: Option(transport.ConnectionPermit),
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
     /// coordinator.
-    codec: codec.Codec,
+    codec: transport.Codec,
     telemetry: transport.Telemetry,
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
@@ -243,7 +245,7 @@ type SendRequest {
 pub fn upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   next: fn() -> Response(ResponseData),
 ) -> Response(ResponseData) {
   // Check if path matches
@@ -258,7 +260,7 @@ pub fn upgrade(
 fn handle_matched_upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
 ) -> Response(ResponseData) {
   let telemetry = transport.telemetry(channels, transport.Mist)
   let started_at = transport.telemetry_start(telemetry)
@@ -272,7 +274,7 @@ fn handle_matched_upgrade(
     reject_upgrade(telemetry, started_at, transport.VersionRejected)
   })
   let ip = request_ip(request)
-  case beryl.acquire_connection_slot(channels, ip) {
+  case transport.acquire_connection_slot(channels, ip) {
     Error(Nil) -> {
       transport.telemetry_upgrade_stop(
         telemetry,
@@ -392,8 +394,8 @@ fn forbidden() -> Response(ResponseData) {
 fn run_connect_and_upgrade(
   request: Request(Connection),
   channels: Channels,
-  config: TransportConfig(assigns),
-  connection_permit: beryl.ConnectionPermit,
+  config: TransportConfig,
+  connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
   started_at: Int,
 ) -> Response(ResponseData) {
@@ -401,17 +403,17 @@ fn run_connect_and_upgrade(
   case config.on_connect {
     Some(callback) ->
       case callback(request) {
-        Ok(assigns) ->
+        Ok(metadata) ->
           do_upgrade(
             request,
             channels,
-            assigns,
+            metadata,
             Some(connection_permit),
             telemetry,
             started_at,
           )
         Error(ConnectRejected) -> {
-          beryl.release_connection_slot(connection_permit)
+          transport.release_connection_slot(connection_permit)
           transport.telemetry_upgrade_stop(
             telemetry,
             started_at,
@@ -425,7 +427,7 @@ fn run_connect_and_upgrade(
       do_upgrade(
         request,
         channels,
-        Nil,
+        [],
         Some(connection_permit),
         telemetry,
         started_at,
@@ -475,7 +477,7 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// ```
 pub fn handler(
   channels: Channels,
-  config: TransportConfig(assigns),
+  config: TransportConfig,
   http_fallback: fn(Request(Connection)) -> Response(ResponseData),
 ) -> fn(Request(Connection)) -> Response(ResponseData) {
   fn(request) {
@@ -490,9 +492,10 @@ pub fn handler(
 /// Alternative: upgrade any request to WebSocket (caller handles path matching)
 ///
 /// Note: This function does not invoke the `on_connect` callback from
-/// `TransportConfig`. Sockets upgraded this way start with empty (`Nil`)
-/// assigns. If you need authentication or seeded assigns, either use `upgrade`
-/// with a full config or call your auth check before this function.
+/// `TransportConfig`. Sockets upgraded this way start with empty (`[]`)
+/// `ConnectSeed.metadata`. If you need authentication or seeded metadata,
+/// either use `upgrade` with a full config or call your auth check before
+/// this function.
 pub fn upgrade_connection(
   request: Request(Connection),
   channels: Channels,
@@ -501,7 +504,7 @@ pub fn upgrade_connection(
   do_upgrade(
     request,
     channels,
-    Nil,
+    [],
     None,
     telemetry,
     transport.telemetry_start(telemetry),
@@ -510,12 +513,19 @@ pub fn upgrade_connection(
 
 /// Assemble the connection seed delivered to an app-dispatch system's
 /// `init` (`ConnectInfo.seed`). Channel-module systems ignore it.
-fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
-  event.ConnectSeed(
+///
+/// `metadata` is the ordered list of string pairs returned by the
+/// configured `on_connect` callback (empty when none is configured or it
+/// returns no metadata); order and duplicate keys are preserved verbatim.
+fn connect_seed(
+  request: Request(Connection),
+  metadata: List(#(String, String)),
+) -> transport.ConnectSeed {
+  transport.connect_seed(
     path: request.path,
     query: request.get_query(request) |> result.unwrap([]),
     headers: request.headers,
-    metadata: [],
+    metadata: metadata,
   )
 }
 
@@ -523,14 +533,14 @@ fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
 fn do_upgrade(
   request: Request(Connection),
   channels: Channels,
-  connect_assigns: assigns,
-  connection_permit: Option(beryl.ConnectionPermit),
+  connect_metadata: List(#(String, String)),
+  connection_permit: Option(transport.ConnectionPermit),
   telemetry: transport.Telemetry,
   started_at: Int,
 ) -> Response(ResponseData) {
-  let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
+  let max_inbound_frame_bytes = transport.max_inbound_frame_bytes(channels)
   let active_codec = transport.active_codec(channels)
-  let seed = connect_seed(request)
+  let seed = connect_seed(request, connect_metadata)
   let response =
     mist.websocket(
       request: request,
@@ -541,7 +551,6 @@ fn do_upgrade(
         on_init(
           connection,
           channels,
-          connect_assigns,
           seed,
           connection_permit,
           max_inbound_frame_bytes,
@@ -557,7 +566,7 @@ fn do_upgrade(
   case response.status >= 400 {
     True -> {
       case connection_permit {
-        Some(permit) -> beryl.release_connection_slot(permit)
+        Some(permit) -> transport.release_connection_slot(permit)
         None -> Nil
       }
       transport.telemetry_upgrade_stop(
@@ -582,17 +591,16 @@ fn do_upgrade(
 fn on_init(
   _connection: WebsocketConnection,
   channels: Channels,
-  connect_assigns: assigns,
-  seed: event.ConnectSeed,
-  connection_permit: Option(beryl.ConnectionPermit),
+  seed: transport.ConnectSeed,
+  connection_permit: Option(transport.ConnectionPermit),
   max_inbound_frame_bytes: Int,
-  active_codec: codec.Codec,
+  active_codec: transport.Codec,
   telemetry: transport.Telemetry,
 ) -> #(ConnectionState, Option(process.Selector(SendRequest))) {
   // Bind the per-IP slot to this WebSocket process so it is reclaimed even
   // if the process dies without running on_close.
   case connection_permit {
-    Some(permit) -> beryl.bind_connection_slot(permit)
+    Some(permit) -> transport.bind_connection_slot(permit)
     None -> Nil
   }
 
@@ -628,7 +636,6 @@ fn on_init(
           send: send_fn,
           send_binary: send_binary_fn,
           codec: None,
-          assigns: connect_assigns,
           seed: seed,
           close: fn() { process.send(send_subject, Close) },
         )
@@ -650,7 +657,6 @@ fn on_init(
           send: send_fn,
           send_binary: send_binary_fn,
           codec: None,
-          assigns: connect_assigns,
           seed: seed,
           close: fn() { process.send(send_subject, Close) },
         )
@@ -754,7 +760,7 @@ fn handle_inbound_text(
     )
     mist.continue(state)
   })
-  case codec.decode_text(state.codec)(text) {
+  case transport.decode_text(state.codec)(text) {
     Ok(msg) -> {
       transport.route_decoded(state.channels, state.socket_id, msg)
       transport.telemetry_frame_stop(
@@ -772,7 +778,7 @@ fn handle_inbound_text(
         "Failed to decode wire protocol message",
         [
           #("socket_id", state.socket_id),
-          #("error", codec.format_decode_error(err)),
+          #("error", transport.format_decode_error(err)),
         ],
       )
       transport.telemetry_frame_stop(
@@ -807,7 +813,7 @@ fn handle_inbound_binary(
     )
     mist.continue(state)
   })
-  case codec.decode_binary(state.codec) {
+  case transport.decode_binary(state.codec) {
     None -> {
       transport.route_binary(state.channels, state.socket_id, data)
       transport.telemetry_frame_stop(
@@ -838,7 +844,7 @@ fn handle_inbound_binary(
             "Failed to decode binary wire protocol message",
             [
               #("socket_id", state.socket_id),
-              #("error", codec.format_decode_error(err)),
+              #("error", transport.format_decode_error(err)),
             ],
           )
           transport.telemetry_frame_stop(
@@ -877,7 +883,7 @@ fn frame_too_large(max_bytes: Int, actual_bytes: Int) -> Bool {
 /// Cleanup when connection closes
 fn on_close(state: ConnectionState) -> Nil {
   case state.connection_permit {
-    Some(permit) -> beryl.release_connection_slot(permit)
+    Some(permit) -> transport.release_connection_slot(permit)
     None -> Nil
   }
   transport.socket_disconnected(state.channels, state.socket_id)

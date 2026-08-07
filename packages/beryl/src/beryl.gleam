@@ -1501,10 +1501,13 @@ pub fn transport_socket_connected(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec: Option(codec.Codec),
-  assigns: Dynamic,
-  seed: event.ConnectSeed,
+  _seed: event.ConnectSeed,
 ) -> Nil {
   case channels {
+    // Legacy channel-module systems have no public path for connect-time
+    // assigns (the transport SPI is monomorphic over `ConnectSeed`); seed
+    // `Nil` privately rather than let an arbitrary typed value cross the
+    // public SPI.
     Channels(coordinator: coordinator_subject, ..) ->
       process.send(
         coordinator_subject,
@@ -1513,11 +1516,10 @@ pub fn transport_socket_connected(
           send,
           send_binary,
           codec,
-          assigns,
+          dynamic.nil(),
         ),
       )
-    AppChannels(app: app, ..) ->
-      app.socket_connected(socket_id, send, send_binary, codec, seed)
+    AppChannels(..) -> Nil
   }
 }
 
@@ -1529,7 +1531,6 @@ pub fn transport_admit_socket(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   socket_codec: Option(codec.Codec),
-  assigns: Dynamic,
   seed: event.ConnectSeed,
   close: fn() -> Nil,
 ) -> Bool {
@@ -1542,7 +1543,7 @@ pub fn transport_admit_socket(
           send,
           send_binary,
           socket_codec,
-          assigns,
+          dynamic.nil(),
         ),
       )
       process.send(
@@ -1577,7 +1578,7 @@ pub fn transport_register_closer(
         coordinator_subject,
         coordinator.RegisterCloser(socket_id, close),
       )
-    AppChannels(app: app, ..) -> app.register_closer(socket_id, close)
+    AppChannels(..) -> Nil
   }
 }
 
