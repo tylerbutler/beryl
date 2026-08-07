@@ -1,4 +1,5 @@
 import beryl
+import beryl/rate_limit
 import beryl/socket
 import beryl/stats
 import beryl/transport
@@ -17,6 +18,9 @@ import load_test/channel
 import load_test/ewe as ewe_http
 import load_test/http
 import load_test/mist as mist_http
+
+@external(erlang, "load_test_test_ffi", "run_after")
+fn run_after(run: fn() -> value, cleanup: fn() -> Nil) -> value
 
 pub fn main() {
   gleeunit.main()
@@ -173,12 +177,45 @@ pub fn broadcast_fans_out_full_payload_test() {
 }
 
 pub fn app_configures_frame_rate_from_environment_test() {
-  with_env_value("BERYL_FRAME_RATE", Some("10"), fn() {
-    with_env_value("BERYL_FRAME_BURST", Some("20"), fn() {
+  with_env_values(
+    [
+      #("BERYL_HEARTBEAT_TIMEOUT_MS", None),
+      #("BERYL_MAX_CONNECTIONS_PER_IP", None),
+      #("BERYL_MAX_CONNECTIONS", None),
+      #("BERYL_FRAME_RATE", Some("10")),
+      #("BERYL_FRAME_BURST", Some("20")),
+      #("BERYL_MESSAGE_RATE", None),
+      #("BERYL_MESSAGE_BURST", None),
+      #("BERYL_JOIN_RATE", None),
+      #("BERYL_JOIN_BURST", None),
+      #("BERYL_CHANNEL_RATE", None),
+      #("BERYL_CHANNEL_BURST", None),
+      #("BERYL_CHANNEL_RATE_MAX_KEYS_PER_SOCKET", None),
+      #("BERYL_MAX_TOPIC_LENGTH", None),
+      #("BERYL_MAX_EVENT_LENGTH", None),
+      #("BERYL_MAX_INBOUND_FRAME_BYTES", None),
+      #("BERYL_MAX_JOINED_TOPICS_PER_SOCKET", None),
+      #("BERYL_TELEMETRY", None),
+    ],
+    fn() {
       let load_app.App(sockets) = load_app.start()
-      beryl.frame_limits(sockets) |> should.be_some
-    })
-  })
+      beryl.frame_limits(sockets)
+      |> should.equal(
+        Some(rate_limit.RateLimitConfig(per_second: 10, burst: 20)),
+      )
+    },
+  )
+}
+
+fn with_env_values(
+  values: List(#(String, Option(String))),
+  run: fn() -> value,
+) -> value {
+  case values {
+    [] -> run()
+    [#(name, value), ..rest] ->
+      with_env_value(name, value, fn() { with_env_values(rest, run) })
+  }
 }
 
 fn with_env_value(name: String, value: Option(String), run: fn() -> a) -> a {
@@ -188,12 +225,10 @@ fn with_env_value(name: String, value: Option(String), run: fn() -> a) -> a {
     None -> envoy.unset(name)
   }
 
-  let output = run()
-
-  case previous {
-    Ok(value) -> envoy.set(name, value)
-    Error(Nil) -> envoy.unset(name)
-  }
-
-  output
+  run_after(run, fn() {
+    case previous {
+      Ok(value) -> envoy.set(name, value)
+      Error(Nil) -> envoy.unset(name)
+    }
+  })
 }
