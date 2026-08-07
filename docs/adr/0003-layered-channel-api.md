@@ -59,23 +59,28 @@ API, with no access to internal modules:
   handler registration, the sound pairing ADR 0001 documented for
   `send_info`. This is the only erasure in the layer, and it is
   quarantined there.
-- ADR 0001's remaining unchecked coercion — connect-time assigns seeded
-  erased and restored unchecked — closes structurally: `join` receives
-  `ConnectInfo` directly, so there is no pre-join erased seed.
+- ADR 0001's remaining unchecked channel/socket dispatch coercion —
+  connect-time assigns seeded erased and restored unchecked — closes
+  structurally: `join` receives `ConnectInfo` directly, so there is no
+  pre-join erased seed.
 
 ## Consequences
 
-- `packages/beryl` is untouched. Every ADR 0002 claim — single core API,
-  no erasure anywhere in core — remains literally true; ADR 0002's
-  Consequences read unchanged, since restoration happens at a new layer,
-  not by reverting the removal.
+- `packages/beryl` is untouched. ADR 0002's single core API and its
+  channel/socket dispatch soundness guarantees remain unchanged; restoration
+  happens at a new layer, not by reverting the removal. The separate,
+  validated PubSub boundary also remains: `pubsub.selecting` checks the raw
+  `pg` message's record tag and arity before using the retained identity FFI
+  to recover `Message(payload)`.
 - The layer is the first dogfood of ADR 0002's composition story: the
   entire channel framework is an embeddable triple assembled from public
   API. Any capability it needs and cannot reach is a core public-API gap,
   surfaced before third parties hit it.
 - One erase/restore pair returns, of the sound one-registration kind,
-  confined to `beryl_channels`. Zero unchecked coercions anywhere in the
-  workspace.
+  confined to `beryl_channels`. There are zero unchecked coercions in
+  channel/socket dispatch or its type-erasure path. That scoped claim does
+  not include the validated raw-message coercion at the PubSub mailbox
+  boundary described above and in ADR 0002.
 - Parity between the two APIs is enforced mechanically, not editorially:
   the `phoenix_channel_fixtures` contract suite runs as a matrix over
   `beryl.child_spec` and `beryl_channels.child_spec`, since both lower to
