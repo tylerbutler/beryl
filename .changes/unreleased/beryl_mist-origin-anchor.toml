@@ -1,3 +1,0 @@
-project = "beryl_mist"
-kind = "Fixed"
-body = "Fixed broken `#OriginPolicy` anchor links in the generated API reference for `TransportConfig`, `with_allowed_origins`, and `with_allow_all_origins`. Rendered heading slugs are lowercased, so the links resolved to nothing."
