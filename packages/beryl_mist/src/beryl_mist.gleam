@@ -9,6 +9,7 @@
 //// only beryl's public `beryl/transport` SPI.
 
 import beryl.{type Channels}
+import beryl/event
 import beryl/transport
 import beryl/wire/codec
 import gleam/bit_array
@@ -507,6 +508,17 @@ pub fn upgrade_connection(
   )
 }
 
+/// Assemble the connection seed delivered to an app-dispatch system's
+/// `init` (`ConnectInfo.seed`). Channel-module systems ignore it.
+fn connect_seed(request: Request(Connection)) -> event.ConnectSeed {
+  event.ConnectSeed(
+    path: request.path,
+    query: request.get_query(request) |> result.unwrap([]),
+    headers: request.headers,
+    metadata: [],
+  )
+}
+
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
@@ -518,6 +530,7 @@ fn do_upgrade(
 ) -> Response(ResponseData) {
   let max_inbound_frame_bytes = beryl.max_inbound_frame_bytes(channels)
   let active_codec = transport.active_codec(channels)
+  let seed = connect_seed(request)
   let response =
     mist.websocket(
       request: request,
@@ -529,6 +542,7 @@ fn do_upgrade(
           connection,
           channels,
           connect_assigns,
+          seed,
           connection_permit,
           max_inbound_frame_bytes,
           active_codec,
@@ -569,6 +583,7 @@ fn on_init(
   _connection: WebsocketConnection,
   channels: Channels,
   connect_assigns: assigns,
+  seed: event.ConnectSeed,
   connection_permit: Option(beryl.ConnectionPermit),
   max_inbound_frame_bytes: Int,
   active_codec: codec.Codec,
@@ -599,22 +614,52 @@ fn on_init(
     Ok(Nil)
   }
 
-  // Register with coordinator, seeding any connect-time assigns
-  transport.socket_connected(
-    channels: channels,
-    socket_id: socket_id,
-    send: send_fn,
-    send_binary: send_binary_fn,
-    assigns: connect_assigns,
-  )
-
-  // Let the coordinator actively close this connection (heartbeat eviction,
-  // server-side disconnects) instead of leaving a zombie socket open.
-  transport.register_closer(
-    channels: channels,
-    socket_id: socket_id,
-    close: fn() { process.send(send_subject, Close) },
-  )
+  let owner = transport.connection_owner(channels)
+  let selector = case owner {
+    transport.OwnerAlive(runtime_pid) -> {
+      let monitor = process.monitor(runtime_pid)
+      let selector =
+        process.select_specific_monitor(selector, monitor, fn(_down) { Close })
+      case
+        transport.admit_socket(
+          channels: channels,
+          owner: owner,
+          socket_id: socket_id,
+          send: send_fn,
+          send_binary: send_binary_fn,
+          codec: None,
+          assigns: connect_assigns,
+          seed: seed,
+          close: fn() { process.send(send_subject, Close) },
+        )
+      {
+        Ok(Nil) -> selector
+        Error(Nil) -> selector
+      }
+    }
+    transport.OwnerUnavailable -> {
+      process.send(send_subject, Close)
+      selector
+    }
+    transport.OwnerUnmonitored -> {
+      case
+        transport.admit_socket(
+          channels: channels,
+          owner: owner,
+          socket_id: socket_id,
+          send: send_fn,
+          send_binary: send_binary_fn,
+          codec: None,
+          assigns: connect_assigns,
+          seed: seed,
+          close: fn() { process.send(send_subject, Close) },
+        )
+      {
+        Ok(Nil) -> selector
+        Error(Nil) -> selector
+      }
+    }
+  }
 
   let state =
     ConnectionState(

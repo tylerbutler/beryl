@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Changed"
+body = "Transport SPI: transports capture `connection_owner`, monitor the exact app runtime, then atomically register the socket, closer, and `ConnectSeed` with `transport.admit_socket`; channel-module systems remain unmonitored."

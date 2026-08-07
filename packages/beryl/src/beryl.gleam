@@ -62,15 +62,18 @@
 //// }
 //// ```
 
+import beryl/app_supervisor
 import beryl/channel.{type Channel}
 import beryl/connection_limit
 import beryl/coordinator
+import beryl/event
 import beryl/internal
 import beryl/log
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
+import beryl/runtime
 import beryl/socket.{type Socket}
 import beryl/topic
 import beryl/wire/codec
@@ -79,7 +82,11 @@ import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 
 type ChannelHandler =
@@ -209,6 +216,9 @@ pub opaque type Config {
     telemetry: Bool,
     /// Logging configuration for beryl diagnostics
     logging: LoggingConfig,
+    /// Per-topic-pattern message rate limits (app-dispatch systems only).
+    /// Ordered; the first matching pattern wins.
+    topic_rates: List(#(String, rate_limit.RateLimitConfig)),
   )
 }
 
@@ -254,6 +264,29 @@ pub fn config(codec: codec.Codec) -> Config {
     max_joined_topics_per_socket: 1000,
     telemetry: False,
     logging: logging_config(level: InfoLevel, include_payloads: False),
+    topic_rates: [],
+  )
+}
+
+/// Configure a per-topic-pattern message rate limit for app-dispatch
+/// systems (`start_app`).
+///
+/// Patterns use the same syntax as topic routing (`"room:*"`,
+/// `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
+/// added and the first matching pattern wins; topics matching no pattern
+/// fall back to the global `with_channel_rate` limit. The limiter applies
+/// only after a socket has joined the topic.
+pub fn with_topic_rate(
+  config: Config,
+  pattern pattern: String,
+  per_second rate: Int,
+  burst burst: Int,
+) -> Config {
+  Config(
+    ..config,
+    topic_rates: list.append(config.topic_rates, [
+      #(pattern, rate_limit.config(per_second: rate, burst: burst)),
+    ]),
   )
 }
 
@@ -666,22 +699,78 @@ pub fn to_coordinator_config(config: Config) -> coordinator.CoordinatorConfig {
   )
 }
 
-/// Channels system handle.
+/// Runtime system handle.
 ///
 /// This opaque handle is obtained from `supervisor.channels` and passed to
-/// registration, broadcast, bridge, group, and transport functions. Its internal
-/// actor protocol is intentionally hidden so beryl can evolve coordinator
-/// internals without breaking application code.
-pub opaque type Channels {
+/// registration, broadcast, bridge, group, and transport functions. App-side
+/// dispatch handles are returned with the child specification from
+/// [`child_spec`](#child_spec).
+///
+/// The handle is deliberately non-generic: an app-side dispatch system is
+/// generic over the application's `model`/`msg`, but those types are sealed
+/// inside the monomorphic closures captured at construction time, so they
+/// never appear in this handle or in any transport signature.
+pub opaque type Sockets {
   Channels(
-    coordinator: Subject(coordinator.Message),
     config: Config,
-    pubsub: Option(PubSub(json.Json)),
     connection_limiter: Option(connection_limit.ConnectionLimiter),
+    coordinator: Subject(coordinator.Message),
+    pubsub: Option(PubSub(json.Json)),
     /// Crash-survivable handler registry. When present, `register` writes
     /// here and syncs the coordinator, so registrations survive coordinator
     /// restarts.
     registry: Option(coordinator.Registry),
+  )
+  /// A supervised app-side dispatch system. The runtime actor
+  /// is generic over the app's `model`/`msg`; this variant reaches it
+  /// through monomorphic closures captured at start.
+  AppChannels(
+    config: Config,
+    connection_limiter: Option(connection_limit.ConnectionLimiter),
+    app: AppHandle,
+  )
+}
+
+/// Transitional alias for the pre-cutover name of [`Sockets`](#Sockets).
+///
+/// The public handle is being renamed from `Channels` to `Sockets` as part
+/// of the ADR 0002 phase 2 cutover. This alias keeps the channel-module and
+/// transport call sites compiling while they are migrated; it is removed once
+/// the legacy channel-module API is deleted.
+pub type Channels =
+  Sockets
+
+/// Monomorphic closures over a generic runtime actor, captured by
+/// [`child_spec`](#child_spec). This lets the frame-level transport SPI stay
+/// unparameterized while the runtime holds typed per-socket models.
+type AppHandle {
+  AppHandle(
+    admit_socket: fn(
+      process.Pid,
+      String,
+      fn(String) -> Result(Nil, Nil),
+      fn(BitArray) -> Result(Nil, Nil),
+      Option(codec.Codec),
+      event.ConnectSeed,
+      fn() -> Nil,
+    ) -> Bool,
+    socket_connected: fn(
+      String,
+      fn(String) -> Result(Nil, Nil),
+      fn(BitArray) -> Result(Nil, Nil),
+      Option(codec.Codec),
+      event.ConnectSeed,
+    ) -> Nil,
+    register_closer: fn(String, fn() -> Nil) -> Nil,
+    socket_disconnected: fn(String) -> Nil,
+    route_decoded: fn(String, codec.Inbound) -> Nil,
+    route_decoded_binary: fn(String, codec.Inbound) -> Nil,
+    route_binary: fn(String, BitArray) -> Nil,
+    broadcast: fn(String, String, json.Json, Option(String)) -> Nil,
+    stop: fn() -> Result(Nil, StopError),
+    /// Current pid of the supervised runtime, if running (used by tests
+    /// and PubSub sender attribution).
+    runtime_owner: fn() -> Result(process.Pid, Nil),
   )
 }
 
@@ -741,7 +830,9 @@ fn channels_from_parts(
 // nolint: unused_exports -- package-internal coordinator accessor
 @internal
 pub fn coordinator_subject(channels: Channels) -> Subject(coordinator.Message) {
-  channels.coordinator
+  let assert Channels(coordinator: coordinator, ..) = channels
+    as "coordinator_subject requires a channel-module system (beryl.start)"
+  coordinator
 }
 
 // nolint: unused_exports -- package-internal codec accessor
@@ -809,6 +900,71 @@ pub fn channels_telemetry_enabled(channels: Channels) -> Bool {
   channels.config.telemetry
 }
 
+/// Why an eagerly validated `Config` was rejected before any process started.
+///
+/// [`child_spec`](#child_spec) validates the configuration before allocating
+/// names or starting the runtime.
+pub type ConfigError {
+  /// `heartbeat_timeout_ms` was below the minimum. The server derives its
+  /// staleness check interval as `heartbeat_timeout_ms / 2` (integer
+  /// division), so a timeout of 1 would round down to a check interval of 0 —
+  /// which disables heartbeat eviction entirely. The wrapped `Int` is the
+  /// smallest accepted timeout.
+  HeartbeatTimeoutTooLow(minimum: Int)
+  /// A per-topic-pattern rate limit used a pattern string that is not a valid
+  /// topic pattern. `pattern` is the offending pattern and `reason` describes
+  /// the problem.
+  InvalidTopicPattern(pattern: String, reason: String)
+}
+
+/// Errors when stopping a Beryl system with [`stop`](#stop).
+pub type StopError {
+  /// The handle referred to a system that was not running: it was never
+  /// started (for example, a `child_spec` handle whose supervisor was never
+  /// added to a running tree) or it has already been stopped. `stop` is safe
+  /// to call in these cases; it reports `NotRunning` rather than crashing.
+  NotRunning
+  /// The runtime did not acknowledge the stop request within the shutdown
+  /// window. The system may still be terminating.
+  StopTimeout
+}
+
+/// Eagerly validate a [`Config`](#Config) without starting anything.
+///
+/// This checks that `heartbeat_timeout_ms` is at least 2 and that every
+/// per-topic rate-limit pattern is valid.
+pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
+  use <- bool.guard(
+    when: config.heartbeat_timeout_ms < 2,
+    return: internal.result_error(HeartbeatTimeoutTooLow(2)),
+  )
+  validate_topic_patterns(config.topic_rates)
+}
+
+fn validate_topic_patterns(
+  rates: List(#(String, rate_limit.RateLimitConfig)),
+) -> Result(Nil, ConfigError) {
+  case rates {
+    [] -> Ok(Nil)
+    [#(pattern, _limits), ..rest] ->
+      case topic.validate_pattern(pattern) {
+        Ok(_) -> validate_topic_patterns(rest)
+        Error(error) ->
+          internal.result_error(InvalidTopicPattern(
+            pattern,
+            topic_error_reason(error),
+          ))
+      }
+  }
+}
+
+fn topic_error_reason(error: topic.TopicError) -> String {
+  case error {
+    topic.EmptyTopic -> "pattern cannot be empty"
+    topic.InvalidFormat(reason) -> reason
+  }
+}
+
 // nolint: unused_exports -- package-internal accessor for beryl/internal/unsupervised; hidden from public docs with @internal
 @internal
 pub fn channels_connection_limiter(
@@ -820,7 +976,663 @@ pub fn channels_connection_limiter(
 // nolint: unused_exports -- package-internal accessor for beryl/internal/unsupervised; hidden from public docs with @internal
 @internal
 pub fn channels_registry(channels: Channels) -> Option(coordinator.Registry) {
-  channels.registry
+  case channels {
+    Channels(registry: registry, ..) -> registry
+    AppChannels(..) -> None
+  }
+}
+
+/// Stop a Beryl system.
+///
+/// App-side dispatch systems own a supervised runtime subtree which can be
+/// drained through this handle. Legacy channel systems are owned by the
+/// application's supervisor and return `Error(NotRunning)`.
+pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
+  case sockets {
+    Channels(..) -> internal.result_error(NotRunning)
+    // The app-side dispatch limiter is supervised inside the Beryl subtree,
+    // so it is not stopped directly here; it is torn down with the subtree.
+    AppChannels(app: app, connection_limiter: connection_limiter, ..) ->
+      stop_app_subtree(app, connection_limiter)
+  }
+}
+
+/// Gracefully stop only the nested Beryl subtree and wait for it to
+/// terminate.
+///
+/// The runtime is the subtree's significant transient child, so draining and
+/// stopping it (normal termination) auto-shuts down the subtree supervisor and
+/// its sibling limiter. To honour "wait for only the Beryl subtree to
+/// terminate", the runtime and the optional limiter processes are monitored
+/// before the drain and their `Down` messages are awaited afterwards; the
+/// application's parent supervisor and sibling children are never touched.
+///
+/// Idempotent: `Error(NotRunning)` when the runtime is already down (pre-start,
+/// a restart window, or a prior stop); `Error(StopTimeout)` if the runtime does
+/// not acknowledge the drain or the subtree does not terminate in time.
+fn stop_app_subtree(
+  app: AppHandle,
+  connection_limiter: Option(connection_limit.ConnectionLimiter),
+) -> Result(Nil, StopError) {
+  case app.runtime_owner() {
+    Error(Nil) -> internal.result_error(NotRunning)
+    Ok(runtime_pid) -> {
+      let runtime_monitor = process.monitor(runtime_pid)
+      let limiter_monitor =
+        option_map(
+          option.from_result(app_limiter_owner(connection_limiter)),
+          process.monitor,
+        )
+      // Drain sockets (deliver `Closed`, presence cleanup, close transports)
+      // and stop the runtime; this triggers the subtree auto-shutdown.
+      case app.stop() {
+        Error(error) -> {
+          drop_monitor(runtime_monitor)
+          case limiter_monitor {
+            Some(monitor) -> drop_monitor(monitor)
+            None -> Nil
+          }
+          Error(error)
+        }
+        Ok(Nil) -> {
+          let awaited =
+            await_down(runtime_monitor)
+            |> result.try(fn(_) {
+              case limiter_monitor {
+                Some(monitor) -> await_down(monitor)
+                None -> Ok(Nil)
+              }
+            })
+          case awaited {
+            Ok(Nil) -> Ok(Nil)
+            Error(Nil) -> internal.result_error(StopTimeout)
+          }
+        }
+      }
+    }
+  }
+}
+
+/// The pid of the app subtree's optional limiter, if it is running.
+fn app_limiter_owner(
+  connection_limiter: Option(connection_limit.ConnectionLimiter),
+) -> Result(process.Pid, Nil) {
+  case connection_limiter {
+    Some(limiter) -> connection_limit.pid(limiter)
+    None -> Error(Nil)
+  }
+}
+
+/// Wait for a monitored process's `Down` message, returning `Error(Nil)` on
+/// timeout so the caller can report `StopTimeout`.
+fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(_down) { Nil })
+  process.selector_receive(selector, 5000)
+}
+
+fn drop_monitor(monitor: process.Monitor) -> Nil {
+  process.demonitor_process(monitor)
+}
+
+/// Build the app-side dispatch supervision child specification.
+///
+/// Add the returned specification to the application's own supervision tree.
+/// The configuration is validated eagerly, before the application's supervisor
+/// starts, rather than crashing a supervised child at init time.
+///
+/// The returned `Sockets` handle is name-backed and usable immediately, even
+/// before the supervision tree that owns the returned child specification is
+/// started. Before startup, during a runtime restart window, and after
+/// shutdown, fire-and-forget handle operations are no-ops and connection
+/// admission fails cleanly rather than panicking.
+///
+/// ## Example
+///
+/// ```gleam
+/// let assert Ok(#(sockets, spec)) =
+///   beryl.child_spec(beryl.config(wire.phoenix_codec()), init:, update:)
+///
+/// let assert Ok(_root) =
+///   static_supervisor.new(static_supervisor.OneForOne)
+///   |> static_supervisor.add(spec)
+///   |> static_supervisor.start()
+///
+/// // `sockets` is usable once the tree above is running.
+/// ```
+pub fn child_spec(
+  config: Config,
+  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
+) {
+  use subtree <- result.map(build_app_subtree(config, init, update))
+  // The subtree is a `Transient` child of the application's supervisor: a
+  // graceful `beryl.stop` auto-shuts the subtree down with reason `shutdown`,
+  // which a transient child treats as normal, so the parent does not restart
+  // Beryl. A genuine crash (subtree restart intensity exceeded) still gets
+  // restarted by the parent.
+  #(
+    subtree.handle,
+    supervision.supervisor(subtree.start_supervisor)
+      |> supervision.restart(supervision.Transient),
+  )
+}
+
+/// A validated, name-allocated app-side dispatch subtree that has not been
+/// started yet.
+///
+/// `handle` is the stable, non-generic `Sockets` returned to callers before
+/// startup. `start_supervisor` starts the nested Beryl subtree; the generic
+/// `init`/`update` closures are captured inside it, so `AppSubtree` itself
+/// stays non-generic.
+type AppSubtree {
+  AppSubtree(
+    handle: Sockets,
+    start_supervisor: fn() ->
+      Result(actor.Started(static_supervisor.Supervisor), actor.StartError),
+  )
+}
+
+/// Validate the config, allocate the runtime and optional limiter names once,
+/// and build the supervised subtree.
+///
+/// Names are allocated here so the returned `Sockets` handle is stable before
+/// the subtree starts: the runtime is reached through its registered name and
+/// the limiter through `connection_limit.from_name`, so the handle keeps
+/// working across supervised runtime restarts. There is no unsupervised app
+/// runtime — the runtime always runs under the nested Beryl supervisor, with
+/// the `init`/`update` closures captured in the child specification. A runtime
+/// crash therefore restarts dispatch automatically (per-socket state is
+/// dropped, matching coordinator restart semantics). The runtime child is
+/// `Transient` so a graceful `stop` is not resurrected.
+fn build_app_subtree(
+  config: Config,
+  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(AppSubtree, ConfigError) {
+  use _ <- result.map(validate_config(config))
+  warn_if_unprotected(config)
+
+  let runtime_name = process.new_name("beryl_runtime")
+  let supervisor_name = process.new_name("beryl_app_supervisor")
+  let limiter_name = case
+    connection_limit.enabled(
+      config.max_connections_per_ip,
+      config.max_connections,
+    )
+  {
+    True -> Some(process.new_name("beryl_connection_limiter"))
+    False -> None
+  }
+
+  let handle =
+    AppChannels(
+      config: config,
+      connection_limiter: option_map(limiter_name, connection_limit.from_name),
+      app: app_handle(
+        process.named_subject(runtime_name),
+        process.named_subject(supervisor_name),
+        config.pubsub,
+      ),
+    )
+
+  AppSubtree(handle: handle, start_supervisor: fn() {
+    app_supervisor.start(
+      supervisor_name,
+      stop_runtime(process.named_subject(runtime_name), _),
+      fn() {
+        start_app_supervisor(config, runtime_name, limiter_name, init, update)
+      },
+    )
+  })
+}
+
+/// Start the nested Beryl subtree: a one-for-one supervisor owning the runtime
+/// as a transient child, with the optional connection limiter as a sibling.
+fn start_app_supervisor(
+  config: Config,
+  runtime_name: process.Name(runtime.Msg(msg)),
+  limiter_name: Option(process.Name(connection_limit.Message)),
+  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
+  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
+  let runtime_child =
+    supervision.worker(fn() {
+      runtime.start_named(
+        to_runtime_config(config),
+        name: runtime_name,
+        pubsub: config.pubsub,
+        init: init,
+        update: update,
+      )
+      |> result.map_error(runtime_start_error)
+    })
+    |> supervision.restart(supervision.Transient)
+    // The runtime is the subtree's significant child: a graceful stop (normal
+    // termination) auto-shuts down the whole Beryl subtree — including the
+    // sibling limiter — while an abnormal crash is restarted in place under
+    // the same name (dispatch resumes with fresh per-socket state).
+    |> supervision.significant(True)
+
+  let builder =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
+    |> static_supervisor.auto_shutdown(static_supervisor.AnySignificant)
+    |> static_supervisor.add(runtime_child)
+
+  let builder = case limiter_name {
+    Some(name) ->
+      builder
+      |> static_supervisor.add(
+        supervision.worker(fn() {
+          connection_limit.start_named(
+            config.max_connections_per_ip,
+            config.max_connections,
+            name,
+          )
+        }),
+      )
+    None -> builder
+  }
+
+  static_supervisor.start(builder)
+}
+
+fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
+  case error {
+    runtime.ActorStartFailed(error) -> error
+    runtime.InvalidHeartbeatTimeout ->
+      actor.InitFailed("invalid heartbeat timeout")
+  }
+}
+
+fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
+  case option {
+    Some(value) -> Some(transform(value))
+    None -> None
+  }
+}
+
+fn await_admission(
+  reply: Subject(Bool),
+  admission: runtime.AdmissionToken,
+) -> Bool {
+  case process.receive(reply, 1000) {
+    Ok(admitted) -> admitted
+    Error(Nil) -> !runtime.cancel_admission(admission)
+  }
+}
+
+/// Build the monomorphic closure record over a generic runtime. This is
+/// plain closure capture by a generic function — the `model`/`msg` types
+/// are sealed in here and never appear in any public signature. The
+/// subject is name-backed, so the closures keep working across supervised
+/// runtime restarts; sends are owner-guarded so use during a restart
+/// window or after `stop` degrades to a no-op instead of a crash.
+fn app_handle(
+  subject: Subject(runtime.Msg(msg)),
+  supervisor: Subject(app_supervisor.Message),
+  ps: Option(PubSub(json.Json)),
+) -> AppHandle {
+  AppHandle(
+    admit_socket: fn(
+      owner,
+      socket_id,
+      send,
+      send_binary,
+      socket_codec,
+      seed,
+      close,
+    ) {
+      case process.subject_owner(subject) {
+        Ok(current_owner) if current_owner == owner -> {
+          let reply = process.new_subject()
+          let admission = runtime.new_admission_token()
+          process.send(
+            subject,
+            runtime.AdmitSocket(
+              owner,
+              socket_id,
+              send,
+              send_binary,
+              socket_codec,
+              seed,
+              close,
+              admission,
+              reply,
+            ),
+          )
+          await_admission(reply, admission)
+        }
+        _ -> False
+      }
+    },
+    socket_connected: fn(socket_id, send, send_binary, codec, seed) {
+      send_runtime(
+        subject,
+        runtime.SocketConnected(socket_id, send, send_binary, codec, seed),
+      )
+    },
+    register_closer: fn(socket_id, close) {
+      send_runtime(subject, runtime.RegisterCloser(socket_id, close))
+    },
+    socket_disconnected: fn(socket_id) {
+      send_runtime(subject, runtime.SocketDisconnected(socket_id))
+    },
+    route_decoded: fn(socket_id, msg) {
+      send_runtime(subject, runtime.RouteDecoded(socket_id, msg))
+    },
+    route_decoded_binary: fn(socket_id, msg) {
+      send_runtime(subject, runtime.RouteDecodedBinary(socket_id, msg))
+    },
+    route_binary: fn(socket_id, data) {
+      send_runtime(subject, runtime.HandleBinary(socket_id, data))
+    },
+    broadcast: fn(topic_name, event_name, payload, except) {
+      // Local fan-out via the runtime; distributed fan-out via PubSub with
+      // the runtime's pid as sender so it does not echo back to itself.
+      send_runtime(
+        subject,
+        runtime.Broadcast(topic_name, event_name, payload, except),
+      )
+      case ps, process.subject_owner(subject) {
+        Some(ps), Ok(runtime_pid) ->
+          case except {
+            None ->
+              pubsub.broadcast_from(
+                ps,
+                runtime_pid,
+                topic_name,
+                event_name,
+                payload,
+              )
+            Some(socket_id) ->
+              pubsub.broadcast_from_socket(
+                ps,
+                runtime_pid,
+                socket_id,
+                topic_name,
+                event_name,
+                payload,
+              )
+          }
+        _, _ -> Nil
+      }
+    },
+    stop: fn() { request_runtime_stop(supervisor) },
+    runtime_owner: fn() { process.subject_owner(subject) },
+  )
+}
+
+// Record the intentional stop before asking the runtime to drain, so
+// restart-intensity exhaustion remains distinguishable from shutdown.
+fn request_runtime_stop(
+  supervisor: Subject(app_supervisor.Message),
+) -> Result(Nil, StopError) {
+  use _ <- result.try(
+    process.subject_owner(supervisor)
+    |> result.map_error(fn(_) { NotRunning }),
+  )
+  let started = process.new_subject()
+  let finished = process.new_subject()
+  process.send(supervisor, app_supervisor.StopRuntime(started, finished))
+
+  case process.receive(started, 1000) {
+    Ok(False) -> internal.result_error(NotRunning)
+    Error(Nil) -> internal.result_error(StopTimeout)
+    Ok(True) ->
+      case process.receive(finished, 5000) {
+        Ok(True) -> Ok(Nil)
+        Ok(False) -> internal.result_error(StopTimeout)
+        Error(Nil) -> internal.result_error(StopTimeout)
+      }
+  }
+}
+
+fn stop_runtime(
+  subject: Subject(runtime.Msg(msg)),
+  finished: Subject(Nil),
+) -> Result(process.Monitor, Nil) {
+  case process.subject_owner(subject) {
+    Error(Nil) -> Error(Nil)
+    Ok(pid) -> {
+      let monitor = process.monitor(pid)
+      process.send(subject, runtime.Stop(finished))
+      Ok(monitor)
+    }
+  }
+}
+
+/// Send to the runtime only while its name is registered, so handle use
+/// during a supervised restart window or after `stop` is a quiet no-op.
+fn send_runtime(
+  subject: Subject(runtime.Msg(msg)),
+  message: runtime.Msg(msg),
+) -> Nil {
+  case process.subject_owner(subject) {
+    Ok(_) -> process.send(subject, message)
+    Error(Nil) -> Nil
+  }
+}
+
+// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
+@internal
+pub fn app_runtime_pid(channels: Channels) -> Result(process.Pid, Nil) {
+  case channels {
+    AppChannels(app: app, ..) -> app.runtime_owner()
+    Channels(..) -> Error(Nil)
+  }
+}
+
+// nolint: unused_exports -- package-internal accessor for supervision tests and the transport SPI; hidden from public docs with @internal
+/// The pid of the app subtree's optional connection limiter, if running.
+@internal
+pub fn app_limiter_pid(channels: Channels) -> Result(process.Pid, Nil) {
+  case channels {
+    AppChannels(connection_limiter: connection_limiter, ..) ->
+      app_limiter_owner(connection_limiter)
+    Channels(..) -> Error(Nil)
+  }
+}
+
+// nolint: unused_exports -- transport SPI helper for connection ownership; hidden from public docs with @internal
+/// Whether this handle is an app-side dispatch system (`start_app`/`child_spec`)
+/// whose connections are owned by a supervised runtime. Transports use this to
+/// decide whether to monitor the runtime and to refuse connections while the
+/// runtime is unavailable.
+@internal
+pub fn is_app_system(channels: Channels) -> Bool {
+  case channels {
+    AppChannels(..) -> True
+    Channels(..) -> False
+  }
+}
+
+fn to_runtime_config(config: Config) -> runtime.Config {
+  runtime.Config(
+    codec: config.codec,
+    // Server checks at half the timeout interval, matching `start`.
+    heartbeat_check_interval_ms: config.heartbeat_timeout_ms / 2,
+    heartbeat_timeout_ms: config.heartbeat_timeout_ms,
+    message_limits: optional_limits(config.message_rate, config.message_burst),
+    join_limits: optional_limits(config.join_rate, config.join_burst),
+    channel_limits: optional_limits(config.channel_rate, config.channel_burst),
+    channel_limiter_max_keys_per_socket: config.channel_rate_max_keys_per_socket,
+    topic_rates: list.map(config.topic_rates, fn(entry) {
+      let #(pattern, limits) = entry
+      #(topic.parse_pattern(pattern), limits)
+    }),
+    max_topic_length: config.max_topic_length,
+    max_event_length: config.max_event_length,
+    max_joined_topics_per_socket: config.max_joined_topics_per_socket,
+    telemetry: config.telemetry,
+    logging: internal_logging_config(config.logging),
+  )
+}
+
+fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
+  internal.LoggingConfig(
+    level: case logging.level {
+      DebugLevel -> internal.Debug
+      InfoLevel -> internal.Info
+      WarnLevel -> internal.Warn
+      ErrorLevel -> internal.Err
+    },
+    include_payloads: logging.include_payloads,
+    payload_preview_bytes: logging.payload_preview_bytes,
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transport dispatch — branch between the coordinator (channel-module
+// systems) and the app runtime closures, so the frame-level SPI in
+// `beryl/transport` works unchanged with both `start` and `start_app`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// nolint: unused_exports -- package-internal dispatch for beryl/transport; hidden from public docs with @internal
+@internal
+pub fn transport_socket_connected(
+  channels: Channels,
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec: Option(codec.Codec),
+  assigns: Dynamic,
+  seed: event.ConnectSeed,
+) -> Nil {
+  case channels {
+    Channels(coordinator: coordinator_subject, ..) ->
+      process.send(
+        coordinator_subject,
+        coordinator.SocketConnected(
+          socket_id,
+          send,
+          send_binary,
+          codec,
+          assigns,
+        ),
+      )
+    AppChannels(app: app, ..) ->
+      app.socket_connected(socket_id, send, send_binary, codec, seed)
+  }
+}
+
+@internal
+pub fn transport_admit_socket(
+  channels: Channels,
+  owner: Option(process.Pid),
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  socket_codec: Option(codec.Codec),
+  assigns: Dynamic,
+  seed: event.ConnectSeed,
+  close: fn() -> Nil,
+) -> Bool {
+  case channels, owner {
+    Channels(coordinator: coordinator_subject, ..), None -> {
+      process.send(
+        coordinator_subject,
+        coordinator.SocketConnected(
+          socket_id,
+          send,
+          send_binary,
+          socket_codec,
+          assigns,
+        ),
+      )
+      process.send(
+        coordinator_subject,
+        coordinator.RegisterCloser(socket_id, close),
+      )
+      True
+    }
+    AppChannels(app: app, ..), Some(runtime_owner) ->
+      app.admit_socket(
+        runtime_owner,
+        socket_id,
+        send,
+        send_binary,
+        socket_codec,
+        seed,
+        close,
+      )
+    _, _ -> False
+  }
+}
+
+@internal
+pub fn transport_register_closer(
+  channels: Channels,
+  socket_id: String,
+  close: fn() -> Nil,
+) -> Nil {
+  case channels {
+    Channels(coordinator: coordinator_subject, ..) ->
+      process.send(
+        coordinator_subject,
+        coordinator.RegisterCloser(socket_id, close),
+      )
+    AppChannels(app: app, ..) -> app.register_closer(socket_id, close)
+  }
+}
+
+@internal
+pub fn transport_socket_disconnected(
+  channels: Channels,
+  socket_id: String,
+) -> Nil {
+  case channels {
+    Channels(coordinator: coordinator_subject, ..) ->
+      process.send(
+        coordinator_subject,
+        coordinator.SocketDisconnected(socket_id),
+      )
+    AppChannels(app: app, ..) -> app.socket_disconnected(socket_id)
+  }
+}
+
+@internal
+pub fn transport_route_decoded(
+  channels: Channels,
+  socket_id: String,
+  message: codec.Inbound,
+) -> Nil {
+  case channels {
+    Channels(coordinator: coordinator_subject, ..) ->
+      coordinator.route_decoded(coordinator_subject, socket_id, message)
+    AppChannels(app: app, ..) -> app.route_decoded(socket_id, message)
+  }
+}
+
+@internal
+pub fn transport_route_decoded_binary(
+  channels: Channels,
+  socket_id: String,
+  message: codec.Inbound,
+) -> Nil {
+  case channels {
+    Channels(coordinator: coordinator_subject, ..) ->
+      coordinator.route_decoded_binary(coordinator_subject, socket_id, message)
+    AppChannels(app: app, ..) -> app.route_decoded_binary(socket_id, message)
+  }
+}
+
+@internal
+pub fn transport_route_binary(
+  channels: Channels,
+  socket_id: String,
+  data: BitArray,
+) -> Nil {
+  case channels {
+    Channels(coordinator: coordinator_subject, ..) ->
+      coordinator.route_binary(coordinator_subject, socket_id, data)
+    AppChannels(app: app, ..) -> app.route_binary(socket_id, data)
+  }
 }
 
 /// Register a channel handler for a topic pattern
@@ -864,10 +1676,17 @@ pub fn register(
   pattern: String,
   handler: Channel(assigns, info),
 ) -> Result(RegisteredChannel(assigns, info), RegisterError) {
+  let assert Channels(
+    coordinator: coordinator_subject,
+    registry: channels_registry,
+    ..,
+  ) = channels
+    as "beryl.register requires a channel-module system (beryl.start); app-dispatch systems (beryl.start_app) route topics in their update function"
+
   // Convert typed Channel to type-erased ChannelHandler
   let erased_handler = erase_channel_types(pattern, handler)
 
-  let registration = case channels.registry {
+  let registration = case channels_registry {
     // Write to the crash-survivable registry, then sync the live
     // coordinator so the handler is visible before this call returns.
     Some(registry) -> {
@@ -877,21 +1696,21 @@ pub fn register(
         erased_handler,
       ))
       let #(handlers, next_id) = coordinator.registry_snapshot(registry)
-      process.call(channels.coordinator, 5000, fn(reply) {
+      process.call(coordinator_subject, 5000, fn(reply) {
         coordinator.SyncHandlers(handlers, next_id, reply)
       })
       Ok(id)
     }
     // No registry configured: register with the coordinator directly.
     None ->
-      process.call(channels.coordinator, 5000, fn(reply) {
+      process.call(coordinator_subject, 5000, fn(reply) {
         coordinator.RegisterChannel(pattern, erased_handler, reply)
       })
   }
 
   registration
   |> result.map(fn(id) {
-    RegisteredChannel(coordinator: channels.coordinator, id: id)
+    RegisteredChannel(coordinator: coordinator_subject, id: id)
   })
   |> result.map_error(map_register_error)
 }
@@ -925,20 +1744,26 @@ pub fn broadcast(
   event: String,
   payload: json.Json,
 ) -> Nil {
-  // Local broadcast via coordinator
-  process.send(
-    channels.coordinator,
-    coordinator.Broadcast(topic_name, event, payload, None),
-  )
-  // Distributed broadcast via PubSub (if configured)
-  case channels.pubsub, process.subject_owner(channels.coordinator) {
-    Some(ps), Ok(coordinator_pid) ->
-      pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
-    Some(_), _ ->
-      // Coordinator exited between send and pubsub forward — local message
-      // is already enqueued (dead-letters), skip the cluster fanout.
-      Nil
-    None, _ -> Nil
+  case channels {
+    AppChannels(app: app, ..) -> app.broadcast(topic_name, event, payload, None)
+    Channels(coordinator: coordinator_subject, pubsub: ps, ..) -> {
+      // Local broadcast via coordinator
+      process.send(
+        coordinator_subject,
+        coordinator.Broadcast(topic_name, event, payload, None),
+      )
+      // Distributed broadcast via PubSub (if configured)
+      case ps, process.subject_owner(coordinator_subject) {
+        Some(ps), Ok(coordinator_pid) ->
+          pubsub.broadcast_from(ps, coordinator_pid, topic_name, event, payload)
+        Some(_), _ ->
+          // Coordinator exited between send and pubsub forward — local
+          // message is already enqueued (dead-letters), skip the cluster
+          // fanout.
+          Nil
+        None, _ -> Nil
+      }
+    }
   }
 }
 
@@ -994,24 +1819,35 @@ pub fn broadcast_from(
   event: String,
   payload: json.Json,
 ) -> Nil {
-  // Local broadcast via coordinator (excluding sender)
-  process.send(
-    channels.coordinator,
-    coordinator.Broadcast(topic_name, event, payload, Some(except_socket_id)),
-  )
-  // Distributed broadcast via PubSub (if configured)
-  case channels.pubsub, process.subject_owner(channels.coordinator) {
-    Some(ps), Ok(coordinator_pid) ->
-      pubsub.broadcast_from_socket(
-        ps,
-        coordinator_pid,
-        except_socket_id,
-        topic_name,
-        event,
-        payload,
+  case channels {
+    AppChannels(app: app, ..) ->
+      app.broadcast(topic_name, event, payload, Some(except_socket_id))
+    Channels(coordinator: coordinator_subject, pubsub: ps, ..) -> {
+      // Local broadcast via coordinator (excluding sender)
+      process.send(
+        coordinator_subject,
+        coordinator.Broadcast(
+          topic_name,
+          event,
+          payload,
+          Some(except_socket_id),
+        ),
       )
-    Some(_), _ -> Nil
-    None, _ -> Nil
+      // Distributed broadcast via PubSub (if configured)
+      case ps, process.subject_owner(coordinator_subject) {
+        Some(ps), Ok(coordinator_pid) ->
+          pubsub.broadcast_from_socket(
+            ps,
+            coordinator_pid,
+            except_socket_id,
+            topic_name,
+            event,
+            payload,
+          )
+        Some(_), _ -> Nil
+        None, _ -> Nil
+      }
+    }
   }
 }
 

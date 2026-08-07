@@ -16,9 +16,8 @@ Transport SPI — the contract between beryl core and WebSocket transport
  1. Admits a connection (origin/auth policy is the transport's concern),
     acquiring a slot with `beryl.acquire_connection_slot` and binding it
     with `beryl.bind_connection_slot`.
- 2. Announces the socket with `socket_connected` — or
-    `socket_connected_with_codec` when the connection speaks a framing
-    other than the configured codec — then `register_closer`.
+ 2. Captures `connection_owner`, installs its monitor, and atomically
+    registers the socket and closer with `admit_socket`.
  3. Decodes inbound frames with the codec from `active_codec` (see
     `beryl/wire/codec`) and routes them with `route_decoded` /
     `route_binary`, shedding over-rate frames via `new_message_limiter` /
@@ -27,6 +26,44 @@ Transport SPI — the contract between beryl core and WebSocket transport
     slot with `beryl.release_connection_slot`.
 
 ## Types
+
+### `ConnectionOwner`
+
+The lifecycle relationship between a transport connection and the runtime
+ that owns it.
+
+ App-side dispatch systems own their connections through a supervised
+ runtime. A transport should monitor the owning runtime and close the
+ connection when it dies, so a runtime crash or restart never leaves a
+ zombie connection whose frames are silently dropped by a runtime that no
+ longer knows the socket.
+
+```gleam
+pub type ConnectionOwner {
+  OwnerAlive(pid: process.Pid)
+  OwnerUnavailable
+  OwnerUnmonitored
+}
+```
+
+#### Constructors
+
+##### `OwnerAlive(pid: process.Pid)`
+
+The owning runtime is alive at this pid. Monitor it and close the
+ connection when it goes down.
+
+##### `OwnerUnavailable`
+
+This is an app-side dispatch system but its runtime is not currently
+ running (pre-start or a restart window). A new connection cannot be
+ owned, so the transport must refuse it rather than admit a dead socket.
+
+##### `OwnerUnmonitored`
+
+This system does not use runtime-monitored connection ownership (a
+ channel-module/coordinator system). The transport admits the connection
+ without installing an ownership monitor.
 
 ### `FrameKind`
 
@@ -114,7 +151,42 @@ The wire codec configured for these channels. Transports decode inbound
  frames with it in the connection process.
 
 ```gleam
-pub fn active_codec(beryl.Channels) -> codec.Codec
+pub fn active_codec(beryl.Sockets) -> codec.Codec
+```
+
+### `admit_socket`
+
+Register a socket and its closer against the captured connection owner.
+
+ For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
+ function. Admission succeeds only if that exact runtime instance processes
+ the registration; a restart cannot redirect it to the successor runtime.
+ `OwnerUnmonitored` preserves coordinator-backed systems. On `Error`, close
+ the connection so its bound connection permit is released.
+
+```gleam
+pub fn admit_socket(
+  channels: beryl.Sockets,
+  owner: ConnectionOwner,
+  socket_id: String,
+  send: fn(String) -> Result(Nil, Nil),
+  send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec: option.Option(codec.Codec),
+  assigns: a,
+  seed: event.ConnectSeed,
+  close: fn() -> Nil
+) -> Result(Nil, Nil)
+```
+
+### `connection_owner`
+
+Determine how a newly accepted connection is owned. Call this in the
+ connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
+ exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the
+ connection immediately.
+
+```gleam
+pub fn connection_owner(beryl.Sockets) -> ConnectionOwner
 ```
 
 ### `log_warning`
@@ -143,7 +215,7 @@ Create a fresh per-connection message limiter, `None` when no message
  rate is configured.
 
 ```gleam
-pub fn new_message_limiter(beryl.Channels) -> option.Option(RateLimiter)
+pub fn new_message_limiter(beryl.Sockets) -> option.Option(RateLimiter)
 ```
 
 ### `register_closer`
@@ -154,7 +226,7 @@ Register a function that force-closes the socket's underlying connection
 
 ```gleam
 pub fn register_closer(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   close: fn() -> Nil
 ) -> Nil
@@ -167,7 +239,7 @@ Route a raw binary frame, for codecs without a binary decoder (fans out
 
 ```gleam
 pub fn route_binary(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   data: BitArray
 ) -> Nil
@@ -181,7 +253,7 @@ Route a transport-decoded inbound message to the coordinator. Decode in
 
 ```gleam
 pub fn route_decoded(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   message: codec.Inbound
 ) -> Nil
@@ -189,14 +261,15 @@ pub fn route_decoded(
 
 ### `route_decoded_binary`
 
-Route a transport-decoded binary message to the coordinator.
+Route a transport-decoded binary message while preserving its binary
+ frame classification for runtime telemetry and rate accounting.
 
  This is additive to `route_decoded`, whose text semantics are retained for
  third-party transport compatibility.
 
 ```gleam
 pub fn route_decoded_binary(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   message: codec.Inbound
 ) -> Nil
@@ -205,17 +278,20 @@ pub fn route_decoded_binary(
 ### `socket_connected`
 
 Announce a newly connected socket. `send`/`send_binary` deliver outbound
- frames on this connection; `assigns` seeds connect-time socket assigns
- (type-erased internally) that channels see at join. Call `register_closer`
+ frames on this connection. `assigns` seeds connect-time socket assigns
+ (type-erased internally) for channel-module systems; `seed` carries the
+ upgrade request's connection data for app-dispatch systems (delivered to
+ the app's `init` as `ConnectInfo.seed`). Call `register_closer`
  immediately after this.
 
 ```gleam
 pub fn socket_connected(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns: a
+  assigns: a,
+  seed: event.ConnectSeed
 ) -> Nil
 ```
 
@@ -229,12 +305,13 @@ Announce a newly connected socket that negotiates its own wire format.
 
 ```gleam
 pub fn socket_connected_with_codec(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec: option.Option(codec.Codec),
-  assigns: a
+  assigns: a,
+  seed: event.ConnectSeed
 ) -> Nil
 ```
 
@@ -244,7 +321,7 @@ Announce that a socket's connection has closed.
 
 ```gleam
 pub fn socket_disconnected(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String
 ) -> Nil
 ```
@@ -264,7 +341,7 @@ Create a telemetry context from the channels configuration.
 
 ```gleam
 pub fn telemetry(
-  beryl.Channels,
+  beryl.Sockets,
   TelemetryTransport
 ) -> Telemetry
 ```

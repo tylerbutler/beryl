@@ -5,9 +5,8 @@
 //// 1. Admits a connection (origin/auth policy is the transport's concern),
 ////    acquiring a slot with `beryl.acquire_connection_slot` and binding it
 ////    with `beryl.bind_connection_slot`.
-//// 2. Announces the socket with `socket_connected` — or
-////    `socket_connected_with_codec` when the connection speaks a framing
-////    other than the configured codec — then `register_closer`.
+//// 2. Captures `connection_owner`, installs its monitor, and atomically
+////    registers the socket and closer with `admit_socket`.
 //// 3. Decodes inbound frames with the codec from `active_codec` (see
 ////    `beryl/wire/codec`) and routes them with `route_decoded` /
 ////    `route_binary`, shedding over-rate frames via `new_message_limiter` /
@@ -16,7 +15,7 @@
 ////    slot with `beryl.release_connection_slot`.
 
 import beryl.{type Channels}
-import beryl/coordinator
+import beryl/event.{type ConnectSeed}
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
@@ -25,7 +24,7 @@ import beryl/wire/codec.{type Codec, type Inbound}
 import gleam/bool
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
-import gleam/option.{type Option, None}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 
 // --- Telemetry ---
@@ -147,8 +146,10 @@ pub fn telemetry_frame_stop(
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce a newly connected socket. `send`/`send_binary` deliver outbound
-/// frames on this connection; `assigns` seeds connect-time socket assigns
-/// (type-erased internally) that channels see at join. Call `register_closer`
+/// frames on this connection. `assigns` seeds connect-time socket assigns
+/// (type-erased internally) for channel-module systems; `seed` carries the
+/// upgrade request's connection data for app-dispatch systems (delivered to
+/// the app's `init` as `ConnectInfo.seed`). Call `register_closer`
 /// immediately after this.
 pub fn socket_connected(
   channels channels: Channels,
@@ -156,6 +157,7 @@ pub fn socket_connected(
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   assigns assigns: assigns,
+  seed seed: ConnectSeed,
 ) -> Nil {
   socket_connected_with_codec(
     channels: channels,
@@ -164,6 +166,7 @@ pub fn socket_connected(
     send_binary: send_binary,
     codec: None,
     assigns: assigns,
+    seed: seed,
   )
 }
 
@@ -179,16 +182,16 @@ pub fn socket_connected_with_codec(
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec codec: Option(Codec),
   assigns assigns: assigns,
+  seed seed: ConnectSeed,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      socket_id,
-      send,
-      send_binary,
-      codec,
-      erase(assigns),
-    ),
+  beryl.transport_socket_connected(
+    channels,
+    socket_id,
+    send,
+    send_binary,
+    codec,
+    erase(assigns),
+    seed,
   )
 }
 
@@ -201,10 +204,7 @@ pub fn register_closer(
   socket_id socket_id: String,
   close close: fn() -> Nil,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.RegisterCloser(socket_id, close),
-  )
+  beryl.transport_register_closer(channels, socket_id, close)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -213,10 +213,7 @@ pub fn socket_disconnected(
   channels channels: Channels,
   socket_id socket_id: String,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketDisconnected(socket_id),
-  )
+  beryl.transport_socket_disconnected(channels, socket_id)
 }
 
 // --- Inbound routing ---
@@ -230,15 +227,12 @@ pub fn route_decoded(
   socket_id socket_id: String,
   message message: Inbound,
 ) -> Nil {
-  coordinator.route_decoded(
-    beryl.coordinator_subject(channels),
-    socket_id,
-    message,
-  )
+  beryl.transport_route_decoded(channels, socket_id, message)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Route a transport-decoded binary message to the coordinator.
+/// Route a transport-decoded binary message while preserving its binary
+/// frame classification for runtime telemetry and rate accounting.
 ///
 /// This is additive to `route_decoded`, whose text semantics are retained for
 /// third-party transport compatibility.
@@ -247,11 +241,7 @@ pub fn route_decoded_binary(
   socket_id socket_id: String,
   message message: Inbound,
 ) -> Nil {
-  coordinator.route_decoded_binary(
-    beryl.coordinator_subject(channels),
-    socket_id,
-    message,
-  )
+  beryl.transport_route_decoded_binary(channels, socket_id, message)
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -262,7 +252,7 @@ pub fn route_binary(
   socket_id socket_id: String,
   data data: BitArray,
 ) -> Nil {
-  coordinator.route_binary(beryl.coordinator_subject(channels), socket_id, data)
+  beryl.transport_route_binary(channels, socket_id, data)
 }
 
 // --- Configuration ---
@@ -326,3 +316,95 @@ pub fn log_warning(
 /// Type-erase connect-time assigns before handing them to the coordinator.
 @external(erlang, "beryl_ffi", "identity")
 fn erase(value: anything) -> Dynamic
+
+// --- Connection ownership ---
+
+/// The lifecycle relationship between a transport connection and the runtime
+/// that owns it.
+///
+/// App-side dispatch systems own their connections through a supervised
+/// runtime. A transport should monitor the owning runtime and close the
+/// connection when it dies, so a runtime crash or restart never leaves a
+/// zombie connection whose frames are silently dropped by a runtime that no
+/// longer knows the socket.
+pub type ConnectionOwner {
+  /// The owning runtime is alive at this pid. Monitor it and close the
+  /// connection when it goes down.
+  OwnerAlive(pid: process.Pid)
+  /// This is an app-side dispatch system but its runtime is not currently
+  /// running (pre-start or a restart window). A new connection cannot be
+  /// owned, so the transport must refuse it rather than admit a dead socket.
+  OwnerUnavailable
+  /// This system does not use runtime-monitored connection ownership (a
+  /// channel-module/coordinator system). The transport admits the connection
+  /// without installing an ownership monitor.
+  OwnerUnmonitored
+}
+
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+/// Register a socket and its closer against the captured connection owner.
+///
+/// For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
+/// function. Admission succeeds only if that exact runtime instance processes
+/// the registration; a restart cannot redirect it to the successor runtime.
+/// `OwnerUnmonitored` preserves coordinator-backed systems. On `Error`, close
+/// the connection so its bound connection permit is released.
+pub fn admit_socket(
+  channels channels: Channels,
+  owner owner: ConnectionOwner,
+  socket_id socket_id: String,
+  send send: fn(String) -> Result(Nil, Nil),
+  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec codec: Option(Codec),
+  assigns assigns: assigns,
+  seed seed: ConnectSeed,
+  close close: fn() -> Nil,
+) -> Result(Nil, Nil) {
+  let expected_owner = case owner {
+    OwnerAlive(pid) -> Ok(Some(pid))
+    OwnerUnmonitored -> Ok(None)
+    OwnerUnavailable -> {
+      close()
+      Error(Nil)
+    }
+  }
+  case expected_owner {
+    Error(Nil) -> Error(Nil)
+    Ok(expected_owner) ->
+      case
+        beryl.transport_admit_socket(
+          channels,
+          expected_owner,
+          socket_id,
+          send,
+          send_binary,
+          codec,
+          erase(assigns),
+          seed,
+          close,
+        )
+      {
+        True -> Ok(Nil)
+        False -> {
+          close()
+          Error(Nil)
+        }
+      }
+  }
+}
+
+// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+/// Determine how a newly accepted connection is owned. Call this in the
+/// connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
+/// exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the
+/// connection immediately.
+pub fn connection_owner(channels: Channels) -> ConnectionOwner {
+  use <- bool.guard(
+    when: !beryl.is_app_system(channels),
+    return: OwnerUnmonitored,
+  )
+  case beryl.app_runtime_pid(channels) {
+    Ok(pid) -> OwnerAlive(pid)
+    Error(Nil) -> OwnerUnavailable
+  }
+}

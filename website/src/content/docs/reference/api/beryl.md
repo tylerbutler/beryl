@@ -75,19 +75,6 @@ beryl - Type-safe real-time communication
 
 ## Types
 
-### `Channels`
-
-Channels system handle.
-
- This opaque handle is obtained from `supervisor.channels` and passed to
- registration, broadcast, bridge, group, and transport functions. Its internal
- actor protocol is intentionally hidden so beryl can evolve coordinator
- internals without breaking application code.
-
-```gleam
-pub type Channels
-```
-
 ### `Config`
 
 Configuration for the channels system.
@@ -99,6 +86,42 @@ Configuration for the channels system.
 ```gleam
 pub type Config
 ```
+
+### `ConfigError`
+
+Why an eagerly validated `Config` was rejected before any process started.
+
+ [`child_spec`](#child_spec) validates the configuration before allocating
+ names or starting the runtime.
+
+```gleam
+pub type ConfigError {
+  HeartbeatTimeoutTooLow(minimum: Int)
+  InvalidTopicPattern(
+    pattern: String,
+    reason: String
+  )
+}
+```
+
+#### Constructors
+
+##### `HeartbeatTimeoutTooLow(minimum: Int)`
+
+`heartbeat_timeout_ms` was below the minimum. The server derives its
+ staleness check interval as `heartbeat_timeout_ms / 2` (integer
+ division), so a timeout of 1 would round down to a check interval of 0 —
+ which disables heartbeat eviction entirely. The wrapped `Int` is the
+ smallest accepted timeout.
+
+##### `InvalidTopicPattern(
+  pattern: String,
+  reason: String
+)`
+
+A per-topic-pattern rate limit used a pattern string that is not a valid
+ topic pattern. `pattern` is the offending pattern and `reason` describes
+ the problem.
 
 ### `ConnectionPermit`
 
@@ -180,6 +203,64 @@ A handler is already registered for this exact topic pattern.
 The topic pattern is invalid. Patterns must be non-empty and must not
  contain control characters (codepoints 0–31 or 127).
 
+### `Sockets`
+
+Runtime system handle.
+
+ This opaque handle is obtained from `supervisor.channels` and passed to
+ registration, broadcast, bridge, group, and transport functions. App-side
+ dispatch handles are returned with the child specification from
+ [`child_spec`](#child_spec).
+
+ The handle is deliberately non-generic: an app-side dispatch system is
+ generic over the application's `model`/`msg`, but those types are sealed
+ inside the monomorphic closures captured at construction time, so they
+ never appear in this handle or in any transport signature.
+
+```gleam
+pub type Sockets
+```
+
+### `StopError`
+
+Errors when stopping a Beryl system with [`stop`](#stop).
+
+```gleam
+pub type StopError {
+  NotRunning
+  StopTimeout
+}
+```
+
+#### Constructors
+
+##### `NotRunning`
+
+The handle referred to a system that was not running: it was never
+ started (for example, a `child_spec` handle whose supervisor was never
+ added to a running tree) or it has already been stopped. `stop` is safe
+ to call in these cases; it reports `NotRunning` rather than crashing.
+
+##### `StopTimeout`
+
+The runtime did not acknowledge the stop request within the shutdown
+ window. The system may still be terminating.
+
+## Type aliases
+
+### `Channels`
+
+Transitional alias for the pre-cutover name of [`Sockets`](#Sockets).
+
+ The public handle is being renamed from `Channels` to `Sockets` as part
+ of the ADR 0002 phase 2 cutover. This alias keeps the channel-module and
+ transport call sites compiling while they are migrated; it is removed once
+ the legacy channel-module API is deleted.
+
+```gleam
+pub type Channels = Sockets
+```
+
 ## Functions
 
 ### `acquire_connection_slot`
@@ -196,7 +277,7 @@ Try to acquire a configured per-IP connection slot for transports.
 
 ```gleam
 pub fn acquire_connection_slot(
-  Channels,
+  Sockets,
   String
 ) -> Result(ConnectionPermit, Nil)
 ```
@@ -235,7 +316,7 @@ Broadcast a message to all sockets subscribed to a topic.
 
 ```gleam
 pub fn broadcast(
-  Channels,
+  Sockets,
   String,
   String,
   json.Json
@@ -266,7 +347,7 @@ Broadcast a message to all subscribers except one socket
 
 ```gleam
 pub fn broadcast_from(
-  Channels,
+  Sockets,
   String,
   String,
   String,
@@ -292,10 +373,46 @@ Broadcast a Phoenix-compatible `presence_diff` event for a topic.
 
 ```gleam
 pub fn broadcast_presence_diff(
-  Channels,
+  Sockets,
   String,
   presence.Diff
 ) -> Nil
+```
+
+### `child_spec`
+
+Build the app-side dispatch supervision child specification.
+
+ Add the returned specification to the application's own supervision tree.
+ The configuration is validated eagerly, before the application's supervisor
+ starts, rather than crashing a supervised child at init time.
+
+ The returned `Sockets` handle is name-backed and usable immediately, even
+ before the supervision tree that owns the returned child specification is
+ started. Before startup, during a runtime restart window, and after
+ shutdown, fire-and-forget handle operations are no-ops and connection
+ admission fails cleanly rather than panicking.
+
+ ## Example
+
+ ```gleam
+ let assert Ok(#(sockets, spec)) =
+   beryl.child_spec(beryl.config(wire.phoenix_codec()), init:, update:)
+
+ let assert Ok(_root) =
+   static_supervisor.new(static_supervisor.OneForOne)
+   |> static_supervisor.add(spec)
+   |> static_supervisor.start()
+
+ // `sockets` is usable once the tree above is running.
+ ```
+
+```gleam
+pub fn child_spec(
+  Config,
+  init: fn(event.ConnectInfo(a)) -> #(b, List(event.Effect)),
+  update: fn(b, event.Event(a)) -> event.Next(b, a)
+) -> Result(#(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ConfigError)
 ```
 
 ### `config`
@@ -330,7 +447,7 @@ pub fn logging_config(
 Return the configured inbound frame size cap for transports.
 
 ```gleam
-pub fn max_inbound_frame_bytes(Channels) -> Int
+pub fn max_inbound_frame_bytes(Sockets) -> Int
 ```
 
 ### `register`
@@ -374,7 +491,7 @@ Register a channel handler for a topic pattern
 
 ```gleam
 pub fn register(
-  Channels,
+  Sockets,
   String,
   channel.Channel(a, b)
 ) -> Result(RegisteredChannel(a, b), RegisterError)
@@ -409,6 +526,29 @@ pub fn send_info(
   String,
   b
 ) -> Nil
+```
+
+### `stop`
+
+Stop a Beryl system.
+
+ App-side dispatch systems own a supervised runtime subtree which can be
+ drained through this handle. Legacy channel systems are owned by the
+ application's supervisor and return `Error(NotRunning)`.
+
+```gleam
+pub fn stop(Sockets) -> Result(Nil, StopError)
+```
+
+### `validate_config`
+
+Eagerly validate a [`Config`](#Config) without starting anything.
+
+ This checks that `heartbeat_timeout_ms` is at least 2 and that every
+ per-topic rate-limit pattern is valid.
+
+```gleam
+pub fn validate_config(Config) -> Result(Nil, ConfigError)
 ```
 
 ### `with_channel_rate`
@@ -675,4 +815,24 @@ Enable beryl's `:telemetry` events.
 
 ```gleam
 pub fn with_telemetry(Config) -> Config
+```
+
+### `with_topic_rate`
+
+Configure a per-topic-pattern message rate limit for app-dispatch
+ systems (`start_app`).
+
+ Patterns use the same syntax as topic routing (`"room:*"`,
+ `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
+ added and the first matching pattern wins; topics matching no pattern
+ fall back to the global `with_channel_rate` limit. The limiter applies
+ only after a socket has joined the topic.
+
+```gleam
+pub fn with_topic_rate(
+  Config,
+  pattern: String,
+  per_second: Int,
+  burst: Int
+) -> Config
 ```

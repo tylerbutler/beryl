@@ -1,6 +1,7 @@
 import beryl
 import beryl/channel
 import beryl/coordinator
+import beryl/event
 import beryl/internal/unsupervised
 import beryl/transport
 import beryl/wire
@@ -68,6 +69,7 @@ fn connect(
     send_binary: fn(_data) { Ok(Nil) },
     codec: socket_codec,
     assigns: dynamic.nil(),
+    seed: event.empty_seed(),
   )
   sent
 }

@@ -7,9 +7,13 @@
 // hand-written reference index at website/src/content/docs/reference/index.md
 // is intentionally left untouched.
 
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,10 +44,14 @@ export async function generateReference({
 	docsJsonPath,
 	docsJsonPaths,
 	outputDir = defaultOutputDir,
+	workspacePackages,
+	workspaceRoot = repoRoot,
 } = {}) {
 	const jsonPaths =
 		docsJsonPaths ??
-		(docsJsonPath ? [docsJsonPath] : await discoverPackageInterfaces());
+		(docsJsonPath
+			? [docsJsonPath]
+			: await discoverPackageInterfaces(workspaceRoot, workspacePackages));
 	const packages = [];
 	for (const jsonPath of jsonPaths) {
 		packages.push(await readPackageInterface(jsonPath));
@@ -76,43 +84,41 @@ export async function generateReference({
 	return { pageCount: pages.size + 1, moduleCount: pages.size };
 }
 
-// Find every workspace package's package-interface.json under packages/*.
-async function discoverPackageInterfaces() {
-	const packagesDir = path.join(repoRoot, "packages");
-	const entries = await readdir(packagesDir, { withFileTypes: true });
-	const jsonPaths = [];
-	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-		if (!entry.isDirectory()) {
-			continue;
-		}
-		const packageDir = path.join(packagesDir, entry.name);
-		const name = await readPackageName(path.join(packageDir, "gleam.toml"));
-		jsonPaths.push(
+// Find package interfaces under packages/ from Trellis's workspace inventory.
+async function discoverPackageInterfaces(workspaceRoot, workspacePackages) {
+	const packages =
+		workspacePackages ?? (await listWorkspacePackages(workspaceRoot));
+	const jsonPaths = packages
+		.filter((packageInfo) => path.dirname(packageInfo.path) === "packages")
+		.sort((left, right) => left.name.localeCompare(right.name))
+		.map((packageInfo) =>
 			path.join(
-				packageDir,
+				workspaceRoot,
+				packageInfo.path,
 				"build",
 				"dev",
 				"docs",
-				name,
+				packageInfo.name,
 				"package-interface.json",
 			),
 		);
-	}
 	if (jsonPaths.length === 0) {
-		throw new Error(`No packages found under ${path.relative(repoRoot, packagesDir)}`);
+		throw new Error("Trellis reported no packages under packages/");
 	}
 	return jsonPaths;
 }
 
-async function readPackageName(gleamTomlPath) {
-	const gleamToml = await readFile(gleamTomlPath, "utf8");
-	const match = gleamToml.match(/^name\s*=\s*"([^"]+)"/m);
-	if (!match) {
-		throw new Error(
-			`Missing package name in ${path.relative(repoRoot, gleamTomlPath)}`,
-		);
+async function listWorkspacePackages(workspaceRoot) {
+	const { stdout } = await execFileAsync(
+		"trellis",
+		["--no-update-check", "list", "--json"],
+		{ cwd: workspaceRoot },
+	);
+	const parsed = JSON.parse(stdout);
+	if (!parsed || !Array.isArray(parsed.packages)) {
+		throw new Error("Invalid JSON from `trellis list --json`");
 	}
-	return match[1];
+	return parsed.packages;
 }
 
 async function readPackageInterface(docsJsonPath) {
