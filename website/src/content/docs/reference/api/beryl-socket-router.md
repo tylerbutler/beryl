@@ -98,7 +98,7 @@ pub fn namespace(
   pattern: String,
   join: fn(a, Match, dynamic.Dynamic, socket.Ref) -> #(a, List(socket.Effect)),
   message: fn(a, Match, String, dynamic.Dynamic, option.Option(socket.Ref)) -> #(a, List(socket.Effect)),
-  closed: fn(a, Match) -> #(a, List(socket.Effect))
+  closed: fn(a, Match, socket.StopReason) -> #(a, List(socket.Effect))
 ) -> Namespace(a)
 ```
 
@@ -143,7 +143,9 @@ pub fn standalone_namespace(fn(fn(Standalone(a)) -> String, fn(Standalone(a)) ->
 A namespace whose per-topic state lives in a `Dict` keyed by topic
  inside the socket-wide model. `socket_id`, `get`, and `put` project the
  model onto the pieces the namespace owns; `join`/`message`/`closed` are
- the per-topic handlers (a join returning `None` leaves no state behind).
+ the per-topic handlers. A join's `Some(sub)` is committed only when the
+ first matching join answer in its effects is `AcceptJoin`; rejected or
+ unanswered joins leave no state behind.
 
 ```gleam
 pub fn stateful(
@@ -153,7 +155,7 @@ pub fn stateful(
   put: fn(a, dict.Dict(String, b)) -> a,
   join: fn(String, Match, dynamic.Dynamic, socket.Ref) -> #(option.Option(b), List(socket.Effect)),
   message: fn(String, Match, b, String, dynamic.Dynamic, option.Option(socket.Ref)) -> #(b, List(socket.Effect)),
-  closed: fn(String, Match, b) -> List(socket.Effect)
+  closed: fn(String, Match, b, socket.StopReason) -> List(socket.Effect)
 ) -> Namespace(a)
 ```
 
