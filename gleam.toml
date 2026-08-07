@@ -40,6 +40,9 @@ needs_deps = true
 [tools.trellis.changelog]
 strictness = "warn"
 kinds = [
+  # `Initial Release` is a strict major bump: it plans 1.0.0 even for an
+  # unreleased 0.x package. Pre-1.0 packages use `Added` for their first
+  # release and describe that initial release in the fragment body.
   { label = "Initial Release", bump = "major" },
   { label = "Added", bump = "minor" },
   { label = "Changed", bump = "minor" },

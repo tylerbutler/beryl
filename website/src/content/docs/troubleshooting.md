@@ -73,8 +73,8 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 ### `child_spec` returns `ChildSpecInvalidHandlers`
 
 - `InvalidPattern(pattern, reason)` means the pattern is not valid
-  `beryl/topic` syntax. `reason` is the nested `TopicError`; keep a catch-all
-  arm for future variants.
+  `beryl/topic` syntax. `reason` is the nested `TopicError` (`EmptyTopic` or
+  `InvalidFormat(detail)` today); keep a catch-all arm for future variants.
 - `DuplicatePattern(pattern)` means the same pattern string appears twice.
   Overlapping but different patterns are valid; first match wins.
 
