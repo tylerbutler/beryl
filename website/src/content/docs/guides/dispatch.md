@@ -229,7 +229,7 @@ fn update(ctx: Ctx) -> fn(Model, socket.Input(Msg)) -> socket.Next(Model, Msg) {
       message: fn(socket_id, match, doc, event, payload, ref) {
         docs.on_message(ctx, socket_id, match, doc, event, payload, ref)
       },
-      closed: fn(_socket_id, _match, _doc) { [] },
+      closed: fn(_socket_id, _match, _doc, _reason) { [] },
     ),
   ]
   fn(model, input) {
@@ -245,7 +245,9 @@ handlers receive `router.Match(topic:, params:)` with wildcard captures.
 Routing fails closed: unclaimed joins are rejected with the supplied payload,
 other unclaimed inputs are ignored, and `Binary`/`Info` pass through unchanged.
 Use `router.stateful` for per-topic `Dict` state, `router.accept_only` for
-read-only topics, or `router.namespace` for full model control.
+read-only topics, or `router.namespace` for full model control. Close handlers
+receive `socket.StopReason`, so normal closes, shutdown, heartbeat timeouts, and
+crashes can be handled differently.
 
 For a standalone server around one stateful namespace, pair
 `router.standalone_init` with `beryl.child_spec` and adapt the namespace with

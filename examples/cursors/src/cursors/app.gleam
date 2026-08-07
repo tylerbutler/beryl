@@ -130,7 +130,7 @@ pub fn namespace(
     message: fn(socket_id, match, model, event_name, payload, _ref) {
       update(ctx, socket_id, match.topic, model, event_name, payload)
     },
-    closed: fn(socket_id, match, model) {
+    closed: fn(socket_id, match, model, _reason) {
       closed(ctx, socket_id, match.topic, model)
     },
   )

@@ -146,7 +146,7 @@ pub fn namespace(
     message: fn(socket_id, match: router.Match, model, event_name, payload, ref) {
       update(ctx, socket_id, match.topic, model, event_name, payload, ref)
     },
-    closed: fn(_socket_id, _match, _model) { [] },
+    closed: fn(_socket_id, _match, _model, _reason) { [] },
   )
 }
 

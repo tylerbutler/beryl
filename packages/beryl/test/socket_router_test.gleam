@@ -2,8 +2,11 @@ import beryl/socket
 import beryl/socket/router
 import gleam/dict
 import gleam/dynamic
+import gleam/int
 import gleam/json
+import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 
 // --- Fixtures ---
@@ -42,21 +45,37 @@ fn room_namespace() -> router.Namespace(router.Standalone(String)) {
       put:,
       join: fn(_socket_id, match: router.Match, _payload, ref) {
         case match.params {
-          ["forbidden"] -> #(None, [
-            socket.RejectJoin(ref, json.object([])),
-          ])
-          [room] -> #(Some(room), [socket.AcceptJoin(ref, None)])
+          [room] ->
+            case
+              string.starts_with(room, "forbidden"),
+              string.starts_with(room, "silent")
+            {
+              True, _ -> #(Some(room), [
+                socket.RejectJoin(ref, json.object([])),
+              ])
+              _, True -> #(Some(room), [])
+              False, False -> #(Some(room), [socket.AcceptJoin(ref, None)])
+            }
           _ -> #(None, [socket.RejectJoin(ref, json.object([]))])
         }
       },
       message: fn(_socket_id, _match, room, event, _payload, ref) {
         #(room <> ":" <> event, socket.reply_ok(ref, json.object([])))
       },
-      closed: fn(_socket_id, match, _room) {
-        [socket.Broadcast(match.topic, "left", json.object([]))]
+      closed: fn(_socket_id, match, _room, reason) {
+        [socket.Broadcast(match.topic, reason_event(reason), json.object([]))]
       },
     )
   })
+}
+
+fn reason_event(reason: socket.StopReason) -> String {
+  case reason {
+    socket.Normal -> "normal"
+    socket.Shutdown -> "shutdown"
+    socket.HeartbeatTimeout -> "timeout"
+    socket.Errored(message) -> "errored:" <> message
+  }
 }
 
 fn vip_namespace() -> router.Namespace(router.Standalone(String)) {
@@ -66,7 +85,7 @@ fn vip_namespace() -> router.Namespace(router.Standalone(String)) {
       #(model, [socket.AcceptJoin(ref, Some(json.string("vip")))])
     },
     message: fn(model, _match, _event, _payload, _ref) { #(model, []) },
-    closed: fn(model, _match) { #(model, []) },
+    closed: fn(model, _match, _reason) { #(model, []) },
   )
 }
 
@@ -168,8 +187,10 @@ pub fn stateful_join_message_closed_round_trip_test() {
   dict.get(messaged.topics, "room:general")
   |> should.equal(Ok("general:rename"))
 
-  let assert socket.Next(closed, [socket.Broadcast("room:general", "left", _)]) =
-    update(messaged, socket.Closed("room:general", socket.Normal))
+  let assert socket.Next(
+    closed,
+    [socket.Broadcast("room:general", "normal", _)],
+  ) = update(messaged, socket.Closed("room:general", socket.Normal))
   dict.has_key(closed.topics, "room:general") |> should.be_false
 }
 
@@ -181,6 +202,53 @@ pub fn rejected_join_leaves_no_state_test() {
     )
 
   dict.has_key(next.topics, "room:forbidden") |> should.be_false
+}
+
+pub fn unanswered_join_leaves_no_state_test() {
+  let assert socket.Next(next, []) =
+    update(
+      init(),
+      socket.Join("room:silent", empty_payload(), join_ref("room:silent")),
+    )
+
+  dict.has_key(next.topics, "room:silent") |> should.be_false
+}
+
+pub fn rejected_and_unanswered_joins_have_bounded_state_test() {
+  let rejected = route_rejected_joins(init(), 100)
+  let unanswered = route_unanswered_joins(rejected, 100)
+
+  dict.size(unanswered.topics) |> should.equal(0)
+}
+
+fn route_rejected_joins(
+  model: router.Standalone(String),
+  remaining: Int,
+) -> router.Standalone(String) {
+  case remaining <= 0 {
+    True -> model
+    False -> {
+      let topic = "room:forbidden-" <> int.to_string(remaining)
+      let assert socket.Next(next, [socket.RejectJoin(_, _)]) =
+        update(model, socket.Join(topic, empty_payload(), join_ref(topic)))
+      route_rejected_joins(next, remaining - 1)
+    }
+  }
+}
+
+fn route_unanswered_joins(
+  model: router.Standalone(String),
+  remaining: Int,
+) -> router.Standalone(String) {
+  case remaining <= 0 {
+    True -> model
+    False -> {
+      let topic = "room:silent-" <> int.to_string(remaining)
+      let assert socket.Next(next, []) =
+        update(model, socket.Join(topic, empty_payload(), join_ref(topic)))
+      route_unanswered_joins(next, remaining - 1)
+    }
+  }
 }
 
 pub fn message_for_unjoined_claimed_topic_is_ignored_test() {
@@ -200,6 +268,26 @@ pub fn closed_for_unjoined_claimed_topic_is_ignored_test() {
     update(model, socket.Closed("room:general", socket.Normal))
 
   next |> should.equal(model)
+}
+
+pub fn stateful_close_receives_each_stop_reason_test() {
+  [
+    #(socket.Normal, "normal"),
+    #(socket.Shutdown, "shutdown"),
+    #(socket.HeartbeatTimeout, "timeout"),
+    #(socket.Errored("boom"), "errored:boom"),
+  ]
+  |> list.each(fn(reason_and_event) {
+    let #(reason, expected_event) = reason_and_event
+    let topic = "room:" <> expected_event
+    let assert socket.Next(joined, [socket.AcceptJoin(_, None)]) =
+      update(init(), socket.Join(topic, empty_payload(), join_ref(topic)))
+    let assert socket.Next(closed, [socket.Broadcast(_, event, _)]) =
+      update(joined, socket.Closed(topic, reason))
+
+    event |> should.equal(expected_event)
+    dict.has_key(closed.topics, topic) |> should.be_false
+  })
 }
 
 // --- First-match ordering ---
@@ -237,7 +325,7 @@ pub fn segment_wildcards_capture_each_segment_test() {
         #(match.params, [socket.AcceptJoin(ref, None)])
       },
       message: fn(model, _match, _event, _payload, _ref) { #(model, []) },
-      closed: fn(model, _match) { #(model, []) },
+      closed: fn(model, _match, _reason) { #(model, []) },
     )
 
   let topic = "document:acme:readme"
@@ -260,7 +348,7 @@ pub fn segment_wildcard_rejects_wrong_segment_count_test() {
         #(model, [socket.AcceptJoin(ref, None)])
       },
       message: fn(model, _match, _event, _payload, _ref) { #(model, []) },
-      closed: fn(model, _match) { #(model, []) },
+      closed: fn(model, _match, _reason) { #(model, []) },
     )
 
   let assert socket.Next(_, [socket.RejectJoin(_, reason)]) =
@@ -282,7 +370,7 @@ pub fn exact_pattern_captures_nothing_test() {
         #(match.params, [socket.AcceptJoin(ref, None)])
       },
       message: fn(model, _match, _event, _payload, _ref) { #(model, []) },
-      closed: fn(model, _match) { #(model, []) },
+      closed: fn(model, _match, _reason) { #(model, []) },
     )
 
   let assert socket.Next(params, [socket.AcceptJoin(_, None)]) =

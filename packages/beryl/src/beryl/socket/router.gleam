@@ -22,6 +22,7 @@
 
 import beryl/socket.{
   type ConnectInfo, type Effect, type Input, type Next, type Ref,
+  type StopReason,
 }
 import beryl/topic.{type TopicPattern}
 import gleam/dict.{type Dict}
@@ -51,7 +52,7 @@ pub opaque type Namespace(model) {
     join: fn(model, Match, Dynamic, Ref) -> #(model, List(Effect)),
     message: fn(model, Match, String, Dynamic, Option(Ref)) ->
       #(model, List(Effect)),
-    closed: fn(model, Match) -> #(model, List(Effect)),
+    closed: fn(model, Match, StopReason) -> #(model, List(Effect)),
   )
 }
 
@@ -63,7 +64,7 @@ pub fn namespace(
   join join: fn(model, Match, Dynamic, Ref) -> #(model, List(Effect)),
   message message: fn(model, Match, String, Dynamic, Option(Ref)) ->
     #(model, List(Effect)),
-  closed closed: fn(model, Match) -> #(model, List(Effect)),
+  closed closed: fn(model, Match, StopReason) -> #(model, List(Effect)),
 ) -> Namespace(model) {
   Namespace(pattern: topic.parse_pattern(pattern), join:, message:, closed:)
 }
@@ -77,14 +78,16 @@ pub fn accept_only(pattern: String) -> Namespace(model) {
       #(model, [socket.AcceptJoin(ref, None)])
     },
     message: fn(model, _match, _event, _payload, _ref) { #(model, []) },
-    closed: fn(model, _match) { #(model, []) },
+    closed: fn(model, _match, _reason) { #(model, []) },
   )
 }
 
 /// A namespace whose per-topic state lives in a `Dict` keyed by topic
 /// inside the socket-wide model. `socket_id`, `get`, and `put` project the
 /// model onto the pieces the namespace owns; `join`/`message`/`closed` are
-/// the per-topic handlers (a join returning `None` leaves no state behind).
+/// the per-topic handlers. A join's `Some(sub)` is committed only when the
+/// first matching join answer in its effects is `AcceptJoin`; rejected or
+/// unanswered joins leave no state behind.
 pub fn stateful(
   pattern pattern: String,
   socket_id socket_id: fn(model) -> String,
@@ -93,18 +96,18 @@ pub fn stateful(
   join join: fn(String, Match, Dynamic, Ref) -> #(Option(sub), List(Effect)),
   message message: fn(String, Match, sub, String, Dynamic, Option(Ref)) ->
     #(sub, List(Effect)),
-  closed closed: fn(String, Match, sub) -> List(Effect),
+  closed closed: fn(String, Match, sub, StopReason) -> List(Effect),
 ) -> Namespace(model) {
   namespace(
     pattern:,
     join: fn(model, match, payload, ref) {
-      case join(socket_id(model), match, payload, ref) {
-        #(Some(sub), effects) -> #(
-          put(model, dict.insert(get(model), match.topic, sub)),
-          effects,
-        )
-        #(None, effects) -> #(model, effects)
+      let #(sub, effects) = join(socket_id(model), match, payload, ref)
+      let next_model = case sub, join_answer(effects, ref) {
+        Some(sub), Accepted ->
+          put(model, dict.insert(get(model), match.topic, sub))
+        _, _ -> model
       }
+      #(next_model, effects)
     },
     message: fn(model, match, event, payload, ref) {
       case dict.get(get(model), match.topic) {
@@ -116,16 +119,31 @@ pub fn stateful(
         Error(Nil) -> #(model, [])
       }
     },
-    closed: fn(model, match) {
+    closed: fn(model, match, reason) {
       case dict.get(get(model), match.topic) {
         Ok(sub) -> #(
           put(model, dict.delete(get(model), match.topic)),
-          closed(socket_id(model), match, sub),
+          closed(socket_id(model), match, sub, reason),
         )
         Error(Nil) -> #(model, [])
       }
     },
   )
+}
+
+type JoinAnswer {
+  Accepted
+  Rejected
+  Unanswered
+}
+
+fn join_answer(effects: List(Effect), ref: Ref) -> JoinAnswer {
+  case effects {
+    [] -> Unanswered
+    [socket.AcceptJoin(answered_ref, _), ..] if answered_ref == ref -> Accepted
+    [socket.RejectJoin(answered_ref, _), ..] if answered_ref == ref -> Rejected
+    [_, ..rest] -> join_answer(rest, ref)
+  }
 }
 
 /// The conventional rejection payload for a topic no namespace claims.
@@ -190,9 +208,9 @@ pub fn route(
         Error(Nil) -> socket.Next(model, [])
       }
 
-    socket.Closed(topic_name, _reason) ->
+    socket.Closed(topic_name, reason) ->
       case owner(namespaces, topic_name) {
-        Ok(#(ns, match)) -> continue(ns.closed(model, match))
+        Ok(#(ns, match)) -> continue(ns.closed(model, match, reason))
         Error(Nil) -> socket.Next(model, [])
       }
 
