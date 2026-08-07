@@ -28,7 +28,11 @@ import showcase/hub
 /// A running showcase system plus the tenant secret its document channel
 /// verifies join tokens against.
 pub type System {
-  System(sockets: beryl.Sockets, secret: BitArray)
+  System(
+    sockets: beryl.Sockets,
+    secret: BitArray,
+    presence: session_presence.Tracker,
+  )
 }
 
 /// The captured outbound text frames of one connected socket.
@@ -78,7 +82,18 @@ pub fn start(_replica: String) -> System {
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
 
-  System(sockets: sockets, secret: secret)
+  System(sockets: sockets, secret: secret, presence: presence_tracker)
+}
+
+/// Stop the socket runtime and test-only presence publisher.
+pub fn stop(system: System) -> Nil {
+  let assert Ok(Nil) = beryl.stop(system.sockets)
+  session_presence.stop(system.presence)
+}
+
+/// Whether the test-only presence publisher is still running.
+pub fn presence_is_running(system: System) -> Bool {
+  session_presence.is_running(system.presence)
 }
 
 /// A tenant token the document channel accepts.

@@ -33,6 +33,7 @@ pub fn a_cursor_join_is_acknowledged_before_its_roster_test() {
 
   // Presence tracking and the roster follow it.
   h.expect(frames, ["presence_list", "cursor:main", "ada"])
+  h.stop(system)
 }
 
 pub fn a_cursor_move_reaches_the_other_socket_only_test() {
@@ -61,6 +62,7 @@ pub fn a_cursor_move_reaches_the_other_socket_only_test() {
   |> should.be_true
   // `broadcast_from` excludes the sender.
   h.expect_silence(ada)
+  h.stop(system)
 }
 
 pub fn an_unsupported_reaction_is_ignored_test() {
@@ -90,6 +92,7 @@ pub fn an_unsupported_reaction_is_ignored_test() {
     "{\"reaction\":\"\\uD83D\\uDD25\",\"x\":0.5,\"y\":0.5}",
   )
   h.expect(bob, ["reaction", "\"x\":0.5"])
+  h.stop(system)
 }
 
 pub fn a_disconnect_republishes_the_cursor_roster_test() {
@@ -107,6 +110,7 @@ pub fn a_disconnect_republishes_the_cursor_roster_test() {
   // The channel that terminated publishes a roster it is no longer in.
   let roster = h.expect(bob, ["presence_list", "bob"])
   string.contains(roster, "ada") |> should.be_false
+  h.stop(system)
 }
 
 pub fn a_leave_racing_a_join_never_publishes_a_stale_roster_test() {
@@ -136,6 +140,7 @@ pub fn a_leave_racing_a_join_never_publishes_a_stale_roster_test() {
   string.contains(final, "cleo") |> should.be_true
   string.contains(final, "bob") |> should.be_true
   string.contains(final, "ada") |> should.be_false
+  h.stop(system)
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +157,7 @@ pub fn a_join_for_an_unknown_room_is_rejected_test() {
     "phx_reply", "\"status\":\"error\"", "Room not found: nope",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn a_room_join_announces_the_member_then_the_roster_test() {
@@ -175,6 +181,7 @@ pub fn a_room_join_announces_the_member_then_the_roster_test() {
   followups
   |> list.any(h.contains(_, ["presence_list", "ada"]))
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn an_empty_chat_message_is_answered_with_the_422_payload_test() {
@@ -190,6 +197,7 @@ pub fn an_empty_chat_message_is_answered_with_the_422_payload_test() {
     "phx_reply", "\"status\":\"ok\"", "\"code\":422", "Message cannot be empty",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn a_chat_message_is_broadcast_before_its_reply_test() {
@@ -212,6 +220,7 @@ pub fn a_chat_message_is_broadcast_before_its_reply_test() {
     "\"timestamp\":",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn a_refless_chat_message_gets_no_reply_test() {
@@ -224,6 +233,7 @@ pub fn a_refless_chat_message_gets_no_reply_test() {
 
   h.expect(frames, ["new_msg", "hi"])
   h.expect_silence(frames)
+  h.stop(system)
 }
 
 pub fn a_typing_indicator_reaches_the_other_members_test() {
@@ -244,6 +254,7 @@ pub fn a_typing_indicator_reaches_the_other_members_test() {
   // The sender is excluded from the indicator, but still receives the
   // session-presence snapshot its own metadata update produced.
   h.expect(ada, ["presence_list"])
+  h.stop(system)
 }
 
 pub fn leaving_a_room_announces_the_departure_test() {
@@ -272,6 +283,7 @@ pub fn leaving_a_room_announces_the_departure_test() {
 
   // The leaver's own topic is closed.
   h.expect(ada, ["phx_close", "room:general"])
+  h.stop(system)
 }
 
 /// `[1, 2, ..., count]`.
@@ -309,6 +321,7 @@ pub fn a_full_room_rejects_the_next_join_test() {
     "phx_reply", "\"status\":\"error\"", "\"code\":403", "Room is full (max 20)",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +338,7 @@ pub fn a_document_join_without_a_token_is_rejected_test() {
     "phx_reply", "\"status\":\"error\"", "missing_token",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn a_document_join_with_another_tenants_token_is_rejected_test() {
@@ -345,6 +359,7 @@ pub fn a_document_join_with_another_tenants_token_is_rejected_test() {
     "unauthorized",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn a_document_join_with_a_valid_token_is_accepted_test() {
@@ -364,6 +379,7 @@ pub fn a_document_join_with_a_valid_token_is_accepted_test() {
     "\"document\":\"welcome\"", "\"state\":null",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn document_state_errors_keep_their_ok_status_replies_test() {
@@ -400,6 +416,7 @@ pub fn document_state_errors_keep_their_ok_status_replies_test() {
   h.push(system, "s1", "document:demo:welcome", "nope", "11", "{}")
   h.contains(h.recv(frames), ["phx_reply", "\"status\":\"ok\"", "unknown_event"])
   |> should.be_true
+  h.stop(system)
 }
 
 pub fn a_document_topic_with_the_wrong_shape_is_rejected_by_the_channel_test() {
@@ -415,6 +432,7 @@ pub fn a_document_topic_with_the_wrong_shape_is_rejected_by_the_channel_test() {
     "phx_reply", "\"status\":\"error\"", "invalid_topic",
   ])
   |> should.be_true
+  h.stop(system)
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +450,7 @@ pub fn the_read_only_lobby_receives_room_change_announcements_test() {
   h.join(system, "room-socket", "room:general", "1", "{\"username\":\"ada\"}")
 
   h.expect(lobby, ["rooms_changed", "\"room\":\"general\""])
+  h.stop(system)
 }
 
 pub fn a_topic_no_channel_owns_is_refused_test() {
@@ -442,6 +461,7 @@ pub fn a_topic_no_channel_owns_is_refused_test() {
 
   h.contains(h.recv(frames), ["phx_reply", "\"status\":\"error\"", "unmatched"])
   |> should.be_true
+  h.stop(system)
 }
 
 fn settle_roster(frames: h.Frames, username: String) -> Nil {

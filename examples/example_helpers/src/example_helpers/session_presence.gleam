@@ -6,7 +6,7 @@
 
 import beryl
 import gleam/dynamic.{type Dynamic}
-import gleam/erlang/process.{type Subject}
+import gleam/erlang/process.{type Pid, type Selector, type Subject}
 import gleam/json
 import gleam/option.{type Option, None, Some}
 
@@ -15,12 +15,18 @@ const start_timeout_ms = 5000
 const call_timeout_ms = 1000
 
 pub opaque type Tracker {
-  Tracker(subject: Subject(Command), table: Dynamic)
+  Tracker(pid: Pid, subject: Subject(Command), table: Dynamic)
 }
 
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
   Publish(topic: String)
+  Stop(reply: Subject(Nil))
+}
+
+type Event {
+  Message(Command)
+  OwnerDown
 }
 
 type State {
@@ -50,20 +56,45 @@ fn store_snapshot(table: Dynamic, topic: String) -> List(#(String, json.Json))
 pub fn start() -> Tracker {
   let table = new_store()
   let ready = process.new_subject()
-  let _pid =
+  let owner = process.self()
+  let pid =
     process.spawn_unlinked(fn() {
       let subject = process.new_subject()
+      let owner_monitor = process.monitor(owner)
+      let selector =
+        process.new_selector()
+        |> process.select_map(subject, Message)
+        |> process.select_specific_monitor(owner_monitor, fn(_) { OwnerDown })
       process.send(ready, subject)
-      loop(subject, table, State(sockets: None))
+      loop(selector, table, State(sockets: None))
     })
   let assert Ok(subject) = process.receive(ready, start_timeout_ms)
-  Tracker(subject, table)
+  Tracker(pid, subject, table)
 }
 
 pub fn configure(tracker: Tracker, sockets: beryl.Sockets) -> Nil {
   process.call(tracker.subject, call_timeout_ms, fn(reply) {
     Configure(sockets, reply)
   })
+}
+
+/// Stop the snapshot publisher and wait for it to terminate.
+///
+/// The publisher also monitors the process that called [`start`](#start), so
+/// it cannot outlive an owner that exits without an explicit stop.
+pub fn stop(tracker: Tracker) -> Nil {
+  let monitor = process.monitor(tracker.pid)
+  process.call(tracker.subject, call_timeout_ms, fn(reply) { Stop(reply) })
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(_) { Nil })
+  let assert Ok(Nil) = process.selector_receive(selector, call_timeout_ms)
+  Nil
+}
+
+/// Whether the snapshot publisher is still running.
+pub fn is_running(tracker: Tracker) -> Bool {
+  process.is_alive(tracker.pid)
 }
 
 pub fn track(
@@ -85,18 +116,23 @@ pub fn count(tracker: Tracker, topic: String) -> Int {
   store_count(tracker.table, topic)
 }
 
-fn loop(subject: Subject(Command), table: Dynamic, state: State) -> Nil {
-  let next = case process.receive_forever(subject) {
-    Configure(sockets, reply) -> {
+fn loop(selector: Selector(Event), table: Dynamic, state: State) -> Nil {
+  case process.selector_receive_forever(selector) {
+    Message(Configure(sockets, reply)) -> {
       process.send(reply, Nil)
-      State(sockets: Some(sockets))
+      loop(selector, table, State(sockets: Some(sockets)))
     }
-    Publish(topic) -> {
+    Message(Publish(topic)) -> {
       publish(state.sockets, topic, store_snapshot(table, topic))
-      state
+      loop(selector, table, state)
+    }
+    Message(Stop(reply)) -> {
+      process.send(reply, Nil)
+    }
+    OwnerDown -> {
+      Nil
     }
   }
-  loop(subject, table, next)
 }
 
 fn publish(
