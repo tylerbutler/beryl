@@ -22,6 +22,10 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
        github.event.pull_request.head.ref == 'release/pending')
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
     uses: ./.github/workflows/ci.yml
 
   publish:
