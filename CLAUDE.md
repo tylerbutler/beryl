@@ -149,8 +149,8 @@ resolution uses):
 CI matrix-tests Erlang 27 and 28. `.mise.toml` pins `erlang = "28"` for local
 development, deliberately overriding `.tool-versions` for mise users.
 
-trellis (0.4.1) is pinned in `.mise.toml` for local development and
-installed in CI via `.github/actions/install-trellis`.
+trellis (0.10.3) is pinned in `.mise.toml` for local development and
+installed in CI via `.github/actions/mise`.
 
 ## CI/CD
 
