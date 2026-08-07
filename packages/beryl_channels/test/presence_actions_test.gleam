@@ -5,7 +5,6 @@
 import beryl
 import beryl/presence
 import beryl/wire
-import beryl_channels
 import beryl_channels/channel
 import dispatch_helpers as helper
 import gleam/erlang/process

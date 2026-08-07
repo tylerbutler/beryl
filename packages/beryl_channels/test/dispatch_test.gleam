@@ -8,7 +8,6 @@ import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import beryl_channels
 import beryl_channels/channel
 import dispatch_helpers as helper
 import gleam/bit_array

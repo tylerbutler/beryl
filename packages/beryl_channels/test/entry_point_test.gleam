@@ -58,7 +58,7 @@ pub fn child_spec_rejects_an_invalid_handler_table_test() {
 pub fn child_spec_nests_the_core_config_error_verbatim_test() {
   let config =
     beryl.config(wire.phoenix_codec())
-    |> beryl.with_heartbeat(interval_ms: 1000, timeout_ms: 1)
+    |> beryl.with_heartbeat(timeout_ms: 1)
 
   beryl_channels.child_spec(config, handlers: [ok_handler("room:*")])
   |> should.equal(
