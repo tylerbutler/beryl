@@ -1,0 +1,21 @@
+name: beryl
+version: 1.0.0
+description: APM project for beryl
+author: Tyler Butler
+# Which agent platforms to deploy to.
+# Resolution order: --target flag > this field > auto-detect from filesystem.
+# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf
+targets:
+- claude
+- copilot
+
+dependencies:
+  apm:
+    # - tylerbutler/agent-marketplace/plugins/repo-tools
+    # - tylerbutler/agent-marketplace/plugins/specialists
+    - JuliusBrussee/caveman/skills/caveman-commit
+    # - git: https://github.com/obra/superpowers
+    - DietrichGebert/ponytail
+  mcp: []
+includes: auto
+scripts: {}
