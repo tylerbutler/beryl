@@ -1,6 +1,6 @@
 ---
 title: beryl/event
-description: Types for building app-side dispatch systems with `beryl.start`.
+description: Types for building app-side dispatch systems with `beryl.start_app`.
 ---
 
 <!--
@@ -9,7 +9,7 @@ description: Types for building app-side dispatch systems with `beryl.start`.
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-Types for building app-side dispatch systems with `beryl.start`.
+Types for building app-side dispatch systems with `beryl.start_app`.
 
  With app-side dispatch the application owns routing: beryl delivers
  every wire event for a socket to one `update` function, and the
@@ -95,6 +95,25 @@ pub type Effect {
     event: String,
     payload: json.Json
   )
+  PresenceTrack(
+    topic: String,
+    key: String,
+    meta: json.Json
+  )
+  PresenceUntrack(
+    topic: String,
+    key: String
+  )
+  PushPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(presence.PresenceEntry)) -> json.Json
+  )
+  BroadcastPresence(
+    topic: String,
+    event: String,
+    encode: fn(List(presence.PresenceEntry)) -> json.Json
+  )
   KickTopic(topic: String)
 }
 ```
@@ -157,6 +176,52 @@ Broadcast to every subscriber of a topic (including this socket, when
 )`
 
 Broadcast to every subscriber of a topic except this socket.
+
+##### `PresenceTrack(
+  topic: String,
+  key: String,
+  meta: json.Json
+)`
+
+Track this socket's presence under a key in a topic and broadcast the
+ corresponding `presence_diff` join. Requires a presence handle on the
+ config (`beryl.with_presence_handle`); dropped with a warning
+ otherwise. Tracking an already-tracked key replaces the previous
+ entry.
+
+##### `PresenceUntrack(
+  topic: String,
+  key: String
+)`
+
+Untrack a presence previously tracked with `PresenceTrack` and
+ broadcast the corresponding `presence_diff` leave. Remaining tracked
+ keys are untracked automatically when their topic closes.
+
+##### `PushPresence(
+  topic: String,
+  event: String,
+  encode: fn(List(presence.PresenceEntry)) -> json.Json
+)`
+
+Push a presence snapshot for a topic to this socket. Unlike a payload
+ built inside `update` (which sees presence as it was *before* this
+ effects list), `encode` runs when the effect is applied — after any
+ earlier `PresenceTrack`/`PresenceUntrack` in the same list — so the
+ entries already reflect them. Requires a presence handle
+ (`beryl.with_presence_handle`); dropped with a warning otherwise.
+ Like `Push`, dropped when the topic is not joined at that point.
+
+##### `BroadcastPresence(
+  topic: String,
+  event: String,
+  encode: fn(List(presence.PresenceEntry)) -> json.Json
+)`
+
+Broadcast a presence snapshot for a topic to all its subscribers,
+ with the same apply-time `encode` semantics as `PushPresence`.
+ Order it after the `PresenceTrack`/`PresenceUntrack` it should
+ reflect.
 
 ##### `KickTopic(topic: String)`
 
