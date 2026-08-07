@@ -713,7 +713,9 @@ Configure a per-topic-pattern message rate limit for an app-dispatch
  `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
  added and the first matching pattern wins; topics matching no pattern
  fall back to the global `with_channel_rate` limit. The limiter applies
- only after a socket has joined the topic.
+ only after a socket has joined the topic. A non-positive `per_second`
+ explicitly disables limiting for matching topics, including any global
+ channel limit, and allocates no bucket.
 
 ```gleam
 pub fn with_topic_rate(
