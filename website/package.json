@@ -36,7 +36,7 @@
 		"astro": "^6.4.6",
 		"astro-mermaid": "^2.1.0",
 		"astro-tinylytics": "^0.1.0",
-		"mermaid": "^11.16.0",
+		"mermaid": "^11.16.1",
 		"sharp": "^0.34.5",
 		"starlight-links-validator": "^0.24.0",
 		"starlight-llms-txt": "^0.8.1",
