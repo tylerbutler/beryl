@@ -49,8 +49,9 @@ pub type Config {
     channel_limits: Option(RateLimitConfig),
     channel_limiter_max_keys_per_socket: Int,
     /// Per-topic-pattern message rate limits. The first matching pattern
-    /// wins; topics matching no pattern fall back to `channel_limits`.
-    topic_rates: List(#(TopicPattern, RateLimitConfig)),
+    /// wins; `None` disables limiting for a matching pattern, while topics
+    /// matching no pattern fall back to `channel_limits`.
+    topic_rates: List(#(TopicPattern, Option(RateLimitConfig))),
     max_topic_length: Int,
     max_event_length: Int,
     max_joined_topics_per_socket: Int,
@@ -2569,7 +2570,7 @@ fn resolve_channel_limits(
       topic.matches(entry.0, topic_name)
     })
   {
-    Ok(#(_pattern, limits)) -> Some(limits)
+    Ok(#(_pattern, limits)) -> limits
     Error(Nil) -> config.channel_limits
   }
 }

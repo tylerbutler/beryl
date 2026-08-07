@@ -153,7 +153,13 @@ let config =
   |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
 ```
 
-`with_topic_rate` overrides the global `channel_rate` for topics matching its pattern — use it to give a fast-streaming namespace (like live cursors) more headroom than chat. If you need to inform the client that it has been rate-limited, implement application-level tracking in `update` and return an explicit `ReplyError`.
+`with_topic_rate` overrides the global `channel_rate` for topics matching its
+pattern — use it to give a fast-streaming namespace (like live cursors) more
+headroom than chat. A non-positive `per_second` makes matching topics unlimited,
+even when a global channel limit is configured, and allocates no per-topic
+bucket. If you need to inform the client that it has been rate-limited,
+implement application-level tracking in `update` and return an explicit
+`ReplyError`.
 
 ## Group errors
 

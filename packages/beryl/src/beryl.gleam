@@ -167,8 +167,9 @@ pub opaque type Config {
     /// Logging configuration for Beryl diagnostics
     logging: LoggingConfig,
     /// Per-topic-pattern message rate limits (app-dispatch systems only).
-    /// Ordered; the first matching pattern wins.
-    topic_rates: List(#(String, rate_limit.RateLimitConfig)),
+    /// Ordered; the first matching pattern wins. `None` is an explicit
+    /// unlimited override for that pattern.
+    topic_rates: List(#(String, Option(rate_limit.RateLimitConfig))),
   )
 }
 
@@ -226,7 +227,9 @@ pub fn config(codec: codec.Codec) -> Config {
 /// `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
 /// added and the first matching pattern wins; topics matching no pattern
 /// fall back to the global `with_channel_rate` limit. The limiter applies
-/// only after a socket has joined the topic.
+/// only after a socket has joined the topic. A non-positive `per_second`
+/// explicitly disables limiting for matching topics, including any global
+/// channel limit, and allocates no bucket.
 pub fn with_topic_rate(
   config: Config,
   pattern pattern: String,
@@ -236,7 +239,7 @@ pub fn with_topic_rate(
   Config(
     ..config,
     topic_rates: list.append(config.topic_rates, [
-      #(pattern, rate_limit.config(per_second: rate, burst: burst)),
+      #(pattern, optional_limits(rate, burst)),
     ]),
   )
 }

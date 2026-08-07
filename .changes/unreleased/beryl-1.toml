@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Fixed"
+body = "Non-positive with_topic_rate overrides now disable limiting for matching topics without allocating per-topic buckets, while valid positive overrides still take precedence over the global channel rate."
