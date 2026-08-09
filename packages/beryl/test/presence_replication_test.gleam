@@ -44,12 +44,13 @@ pub fn broadcast_tick_sends_state_test() {
     presence.track(p, "room:lobby", "user:1", "socket-1", json.string("meta"))
 
   // Subscribe to the sync topic to observe broadcasts
-  pubsub.subscribe(ps, "beryl:presence:sync")
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "beryl:presence:sync")
 
   // Poll until a PubSub message arrives from the broadcast tick
   let selector =
     process.new_selector()
-    |> process.select_other(fn(_msg) { True })
+    |> pubsub.selecting(sub, fn(_msg) { True })
 
   test_helpers.wait_until(
     fn() {
@@ -62,8 +63,8 @@ pub fn broadcast_tick_sends_state_test() {
     20,
   )
 
-  // Clean up: unsubscribe to avoid polluting other tests
-  pubsub.unsubscribe(ps, "beryl:presence:sync")
+  // Clean up: leave to avoid polluting other tests
+  pubsub.leave(sub, "beryl:presence:sync")
 
   // Drain any remaining messages from the mailbox
   drain_mailbox()

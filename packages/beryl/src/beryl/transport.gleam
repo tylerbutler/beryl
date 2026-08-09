@@ -3,29 +3,107 @@
 ////
 //// A transport implementation:
 //// 1. Admits a connection (origin/auth policy is the transport's concern),
-////    acquiring a slot with `beryl.acquire_connection_slot` and binding it
-////    with `beryl.bind_connection_slot`.
+////    acquiring a slot with `acquire_connection_slot` and binding it with
+////    `bind_connection_slot`.
 //// 2. Captures `connection_owner`, installs its monitor, and atomically
 ////    registers the socket and closer with `admit_socket`.
-//// 3. Decodes inbound frames with the codec from `active_codec` (see
-////    `beryl/wire/codec`) and routes them with `route_decoded` /
+//// 3. Decodes inbound frames with the codec from `active_codec` and routes
+////    them with `route_decoded` /
 ////    `route_binary`, shedding over-rate frames via `new_message_limiter` /
-////    `take_token` and oversized frames via `beryl.max_inbound_frame_bytes`.
+////    `take_token` and oversized frames via `max_inbound_frame_bytes`.
 //// 4. Announces disconnects with `socket_disconnected` and releases the
-////    slot with `beryl.release_connection_slot`.
+////    slot with `release_connection_slot`.
 
-import beryl.{type Channels}
-import beryl/event.{type ConnectSeed}
+import beryl
+import beryl/event
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
 import beryl/telemetry
-import beryl/wire/codec.{type Codec, type Inbound}
+import beryl/wire/codec
 import gleam/bool
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/result
+
+/// Channel-system handle accepted by transport implementations.
+pub type Channels =
+  beryl.Channels
+
+/// Connection slot permit held by a transport connection.
+pub type ConnectionPermit =
+  beryl.ConnectionPermit
+
+/// Connection metadata delivered to the app's `init`.
+pub type ConnectSeed =
+  event.ConnectSeed
+
+/// Wire codec used by a transport connection.
+pub type Codec =
+  codec.Codec
+
+/// Decoded inbound wire message.
+pub type Inbound =
+  codec.Inbound
+
+/// Wire decode failure.
+pub type DecodeError =
+  codec.DecodeError
+
+/// Build connection metadata for a WebSocket upgrade.
+pub fn connect_seed(
+  path path: String,
+  query query: List(#(String, String)),
+  headers headers: List(#(String, String)),
+  metadata metadata: List(#(String, String)),
+) -> ConnectSeed {
+  event.ConnectSeed(
+    path: path,
+    query: query,
+    headers: headers,
+    metadata: metadata,
+  )
+}
+
+/// Decode an inbound text frame with a codec.
+pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
+  codec.decode_text(codec)
+}
+
+/// Return the codec's optional binary decoder.
+pub fn decode_binary(
+  codec: Codec,
+) -> Option(fn(BitArray) -> Result(Inbound, DecodeError)) {
+  codec.decode_binary(codec)
+}
+
+/// Format a wire decode failure for transport logging.
+pub fn format_decode_error(error: DecodeError) -> String {
+  codec.format_decode_error(error)
+}
+
+/// Acquire a configured connection slot.
+pub fn acquire_connection_slot(
+  channels: Channels,
+  ip: String,
+) -> Result(ConnectionPermit, Nil) {
+  beryl.acquire_connection_slot(channels, ip)
+}
+
+/// Bind a connection slot to the current transport process.
+pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
+  beryl.bind_connection_slot(permit)
+}
+
+/// Release a held connection slot.
+pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
+  beryl.release_connection_slot(permit)
+}
+
+/// Return the configured maximum inbound frame size.
+pub fn max_inbound_frame_bytes(channels: Channels) -> Int {
+  beryl.max_inbound_frame_bytes(channels)
+}
 
 // --- Telemetry ---
 
@@ -145,18 +223,15 @@ pub fn telemetry_frame_stop(
 // --- Socket lifecycle ---
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Announce a newly connected socket. `send`/`send_binary` deliver outbound
-/// frames on this connection. `assigns` seeds connect-time socket assigns
-/// (type-erased internally) for channel-module systems; `seed` carries the
-/// upgrade request's connection data for app-dispatch systems (delivered to
-/// the app's `init` as `ConnectInfo.seed`). Call `register_closer`
-/// immediately after this.
+/// Compatibility registration for coordinator-backed `OwnerUnmonitored`
+/// systems. App-runtime transports must use `connection_owner` and
+/// `admit_socket` so registration and closer installation are tied to one
+/// exact runtime pid.
 pub fn socket_connected(
   channels channels: Channels,
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns assigns: assigns,
   seed seed: ConnectSeed,
 ) -> Nil {
   socket_connected_with_codec(
@@ -165,12 +240,15 @@ pub fn socket_connected(
     send: send,
     send_binary: send_binary,
     codec: None,
-    assigns: assigns,
     seed: seed,
   )
 }
 
-/// Announce a newly connected socket that negotiates its own wire format.
+/// Compatibility registration with a connection-specific wire format.
+///
+/// This is for coordinator-backed `OwnerUnmonitored` systems. App-runtime
+/// transports must pass the codec to `admit_socket`.
+///
 /// `Some(codec)` frames this connection's outbound messages with `codec`
 /// instead of the configured one, so a single coordinator — sharing channels,
 /// pubsub and presence — can serve transports speaking different framings.
@@ -181,7 +259,6 @@ pub fn socket_connected_with_codec(
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec codec: Option(Codec),
-  assigns assigns: assigns,
   seed seed: ConnectSeed,
 ) -> Nil {
   beryl.transport_socket_connected(
@@ -190,15 +267,15 @@ pub fn socket_connected_with_codec(
     send,
     send_binary,
     codec,
-    erase(assigns),
     seed,
   )
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Register a function that force-closes the socket's underlying connection
-/// so the coordinator can actively evict it (e.g. heartbeat timeout) instead
-/// of leaving a zombie socket whose frames are silently dropped.
+/// Install a closer for a coordinator-backed `OwnerUnmonitored` socket.
+///
+/// App-runtime transports install the closer atomically with `admit_socket`;
+/// this compatibility function intentionally does nothing for those systems.
 pub fn register_closer(
   channels channels: Channels,
   socket_id socket_id: String,
@@ -313,10 +390,6 @@ pub fn log_warning(
   log.warn(logger.inner, message, metadata)
 }
 
-/// Type-erase connect-time assigns before handing them to the coordinator.
-@external(erlang, "beryl_ffi", "identity")
-fn erase(value: anything) -> Dynamic
-
 // --- Connection ownership ---
 
 /// The lifecycle relationship between a transport connection and the runtime
@@ -356,7 +429,6 @@ pub fn admit_socket(
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec codec: Option(Codec),
-  assigns assigns: assigns,
   seed seed: ConnectSeed,
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
@@ -379,7 +451,6 @@ pub fn admit_socket(
           send,
           send_binary,
           codec,
-          erase(assigns),
           seed,
           close,
         )

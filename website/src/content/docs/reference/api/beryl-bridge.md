@@ -1,6 +1,6 @@
 ---
 title: beryl/bridge
-description: Bridge - Forward an external OTP actor's message stream to a socket channel.
+description: Bridge - Forward an external OTP actor's message stream to a socket via
 ---
 
 <!--
@@ -9,66 +9,56 @@ description: Bridge - Forward an external OTP actor's message stream to a socket
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-Bridge - Forward an external OTP actor's message stream to a socket channel.
+Bridge - Forward an external OTP actor's message stream to a socket via
+ its `Sender`.
 
- A common pattern is a long-lived domain actor (e.g. a per-document session)
- that emits updates which need to be pushed to each joined socket. Wiring
- this up by hand requires per-socket boilerplate: spawn a forwarder process
- holding a `Subject`, subscribe it to the domain actor, translate each
- message and call `beryl.send_info`, then tear the process down on
- `terminate`.
+ A common pattern is a long-lived domain actor (e.g. a per-document
+ session) that emits updates which need to be pushed to a connected
+ socket. Wiring this up by hand requires per-socket boilerplate: spawn a
+ forwarder process holding a `Subject`, subscribe it to the domain actor,
+ translate each message and call `event.notify`, then tear the process
+ down when the socket closes.
 
- `bridge` packages that plumbing into a single helper. Start a bridge inside
- a channel `join`, store the handle in the socket assigns, subscribe the
- returned `Subject` to your domain actor, and stop the bridge in `terminate`.
+ `bridge` packages that plumbing into a single helper. Start a bridge in
+ your app's `init` (or when a topic is joined), store the handle in the
+ socket model, subscribe the returned `Subject` to your domain actor, and
+ stop the bridge when the socket or topic closes.
 
- Calling `stop` from `terminate` is **required** for cleanup: channels are
- dispatched by a shared coordinator rather than one process per channel, so
- the process the forwarder monitors is the coordinator itself — the monitor
- is a backstop for coordinator death, not a per-channel lifecycle. A bridge
- whose `stop` is never called keeps running until the coordinator exits.
+ Calling `stop` when the socket/topic ends is **required** for cleanup:
+ the forwarder monitors the process that started it only as a backstop for
+ that owner's death, not as a per-topic lifecycle. A bridge whose `stop`
+ is never called keeps running until its owner exits.
 
  ## Example
 
  ```gleam
- import beryl.{type RegisteredChannel}
  import beryl/bridge.{type Bridge}
- import beryl/channel.{type Channel}
- import beryl/socket
- import gleam/option.{None}
- import my_app/doc
+ import beryl/event.{type ConnectInfo}
 
  // Messages emitted by your domain actor.
  pub type DocEvent {
    Updated(version: Int)
  }
 
- pub type Assigns {
-   Assigns(bridge: Bridge(DocEvent))
+ // Your app's server-side message type, delivered to `update` as `Info`.
+ pub type Msg {
+   DocUpdated(version: Int)
  }
 
- // `registered_channel` is the handle returned by `beryl.register`.
- fn new_channel(
-   registered_channel: RegisteredChannel(Assigns, DocEvent),
-   doc_actor,
- ) -> Channel(Assigns, DocEvent) {
-   channel.new(fn(topic, _payload, socket) {
-     // Forward each DocEvent to this socket's `handle_info` callback.
-     let b =
-       bridge.start(
-         channel: registered_channel,
-         socket_id: socket.id(socket),
-         topic: topic,
-         with: fn(event) { event },
-       )
-     // Subscribe the domain actor to the bridge's subject.
-     doc.subscribe(doc_actor, bridge.subject(b))
-     channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
-   })
-   |> channel.with_terminate(fn(_reason, socket) {
-     bridge.stop(socket.get_assigns(socket).bridge)
-   })
+ fn init(info: ConnectInfo(Msg)) {
+   // Forward each DocEvent to this socket as an `Info(Msg)` event.
+   let assert Ok(b) =
+     bridge.start(to: info.self, with: fn(e: DocEvent) {
+       let Updated(v) = e
+       DocUpdated(v)
+     })
+   // Subscribe the domain actor to the bridge's subject.
+   doc.subscribe(doc_actor, bridge.subject(b))
+   #(Model(bridge: b), [])
  }
+
+ // Stop the bridge when the socket closes (e.g. from a `Closed` event).
+ bridge.stop(model.bridge)
  ```
 
 ## Types
@@ -85,6 +75,23 @@ A handle to a running bridge forwarder process.
 pub type Bridge(a)
 ```
 
+### `StartError`
+
+Why a bridge failed to start.
+
+```gleam
+pub type StartError {
+  ForwarderUnavailable
+}
+```
+
+#### Constructors
+
+##### `ForwarderUnavailable`
+
+The forwarder process did not report its subjects within
+ `handshake_timeout_ms` — it failed to spawn or start.
+
 ## Functions
 
 ### `pid`
@@ -100,38 +107,35 @@ pub fn pid(Bridge(a)) -> process.Pid
 
 ### `start`
 
-Start a bridge that forwards values from an external `Subject` to a socket's
- channel as `handle_info` messages.
+Start a bridge that forwards values from an external `Subject` to a
+ socket's `update` function as `Info` events.
 
  The returned `Bridge` owns a freshly spawned forwarder process. Pass
- `subject(bridge)` to the external/domain actor so it delivers its stream to
- the forwarder; each received value is mapped with `transform` and delivered
- via `beryl.send_info(channel, socket_id, topic, transform(value))`.
+ `subject(bridge)` to the external/domain actor so it delivers its stream
+ to the forwarder; each received value is mapped with `transform` and
+ delivered via `event.notify(sender, transform(value))`.
 
- Use `transform` to translate the domain message into whatever your channel's
- `handle_info` expects. If no translation is needed, pass the identity
- function `fn(value) { value }`.
+ Use `transform` to translate the domain message into your app's
+ server-side `msg` type (the `Info` payload). If no translation is needed,
+ pass the identity function `fn(value) { value }`.
 
- Always call `stop` from your channel's `terminate` — that is the only
- per-channel cleanup. The forwarder also monitors the calling process, but
- because channel callbacks run inside the shared coordinator, that monitor
- fires only if the coordinator itself dies; it does not detect an
- individual channel ending.
+ Always call `stop` when the owning socket or topic ends — that is the
+ per-owner cleanup. The forwarder also monitors the calling process, but
+ that monitor is only a backstop: it fires if the owner dies without a
+ `stop`, not as a per-topic lifecycle.
 
 ```gleam
 pub fn start(
-  channel: beryl.RegisteredChannel(a, b),
-  socket_id: String,
-  topic: String,
-  with: fn(c) -> b
-) -> Bridge(c)
+  to: event.Sender(a),
+  with: fn(b) -> a
+) -> Result(Bridge(b), StartError)
 ```
 
 ### `stop`
 
 Stop the bridge's forwarder process.
 
- Call this from your channel's `terminate` callback. It is safe to call more
+ Call this when the owning socket or topic ends. It is safe to call more
  than once and after the forwarder has already exited.
 
 ```gleam
@@ -143,7 +147,7 @@ pub fn stop(Bridge(a)) -> Nil
 The `Subject` the external actor should send its stream to.
 
  Hand this to your domain actor (e.g. as its subscriber) so each emitted
- value is forwarded to the bridged socket/topic.
+ value is forwarded to the bridged socket.
 
 ```gleam
 pub fn subject(Bridge(a)) -> process.Subject(a)

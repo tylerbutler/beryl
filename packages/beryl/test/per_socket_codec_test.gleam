@@ -6,7 +6,6 @@ import beryl/internal/unsupervised
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
 import gleam/option
@@ -68,7 +67,6 @@ fn connect(
     },
     send_binary: fn(_data) { Ok(Nil) },
     codec: socket_codec,
-    assigns: dynamic.nil(),
     seed: event.empty_seed(),
   )
   sent

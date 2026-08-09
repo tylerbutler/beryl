@@ -1,13 +1,13 @@
 # Collaborative CRDT Docs
 
-This example shows a collaborative document editor built with beryl channels and
-client-side CRDT state.
+This example shows a collaborative document editor built with beryl app-side
+dispatch and client-side CRDT state.
 
 ## What it demonstrates
 
 | Feature | How it is used |
 |---|---|
-| Segment wildcard topics | The server registers `document:*:*` so each tenant/document pair gets an isolated topic. |
+| Segment wildcard topics | The server routes `document:*:*` topics so each tenant/document pair gets an isolated topic. |
 | Client-side CRDT merge | The browser keeps document blocks with the `lattice_core`, `lattice_maps`, and `lattice_registers` packages as an `ORMap(MVRegister(String))`. |
 | Unordered realtime transport | Beryl carries serialized document state updates between clients without requiring total message ordering. |
 | Late joiner cache | The server caches merged document state and returns it in the join reply for newly connected clients. |

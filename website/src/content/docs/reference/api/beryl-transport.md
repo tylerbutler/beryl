@@ -14,16 +14,16 @@ Transport SPI — the contract between beryl core and WebSocket transport
 
  A transport implementation:
  1. Admits a connection (origin/auth policy is the transport's concern),
-    acquiring a slot with `beryl.acquire_connection_slot` and binding it
-    with `beryl.bind_connection_slot`.
+    acquiring a slot with `acquire_connection_slot` and binding it with
+    `bind_connection_slot`.
  2. Captures `connection_owner`, installs its monitor, and atomically
     registers the socket and closer with `admit_socket`.
- 3. Decodes inbound frames with the codec from `active_codec` (see
-    `beryl/wire/codec`) and routes them with `route_decoded` /
+ 3. Decodes inbound frames with the codec from `active_codec` and routes
+    them with `route_decoded` /
     `route_binary`, shedding over-rate frames via `new_message_limiter` /
-    `take_token` and oversized frames via `beryl.max_inbound_frame_bytes`.
+    `take_token` and oversized frames via `max_inbound_frame_bytes`.
  4. Announces disconnects with `socket_disconnected` and releases the
-    slot with `beryl.release_connection_slot`.
+    slot with `release_connection_slot`.
 
 ## Types
 
@@ -143,7 +143,68 @@ pub type UpgradeOutcome {
 }
 ```
 
+## Type aliases
+
+### `Channels`
+
+Channel-system handle accepted by transport implementations.
+
+```gleam
+pub type Channels = beryl.Sockets
+```
+
+### `Codec`
+
+Wire codec used by a transport connection.
+
+```gleam
+pub type Codec = codec.Codec
+```
+
+### `ConnectionPermit`
+
+Connection slot permit held by a transport connection.
+
+```gleam
+pub type ConnectionPermit = beryl.ConnectionPermit
+```
+
+### `ConnectSeed`
+
+Connection metadata delivered to the app's `init`.
+
+```gleam
+pub type ConnectSeed = event.ConnectSeed
+```
+
+### `DecodeError`
+
+Wire decode failure.
+
+```gleam
+pub type DecodeError = codec.DecodeError
+```
+
+### `Inbound`
+
+Decoded inbound wire message.
+
+```gleam
+pub type Inbound = codec.Inbound
+```
+
 ## Functions
+
+### `acquire_connection_slot`
+
+Acquire a configured connection slot.
+
+```gleam
+pub fn acquire_connection_slot(
+  beryl.Sockets,
+  String
+) -> Result(beryl.ConnectionPermit, Nil)
+```
 
 ### `active_codec`
 
@@ -172,10 +233,30 @@ pub fn admit_socket(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec: option.Option(codec.Codec),
-  assigns: a,
   seed: event.ConnectSeed,
   close: fn() -> Nil
 ) -> Result(Nil, Nil)
+```
+
+### `bind_connection_slot`
+
+Bind a connection slot to the current transport process.
+
+```gleam
+pub fn bind_connection_slot(beryl.ConnectionPermit) -> Nil
+```
+
+### `connect_seed`
+
+Build connection metadata for a WebSocket upgrade.
+
+```gleam
+pub fn connect_seed(
+  path: String,
+  query: List(#(String, String)),
+  headers: List(#(String, String)),
+  metadata: List(#(String, String))
+) -> event.ConnectSeed
 ```
 
 ### `connection_owner`
@@ -187,6 +268,30 @@ Determine how a newly accepted connection is owned. Call this in the
 
 ```gleam
 pub fn connection_owner(beryl.Sockets) -> ConnectionOwner
+```
+
+### `decode_binary`
+
+Return the codec's optional binary decoder.
+
+```gleam
+pub fn decode_binary(codec.Codec) -> option.Option(fn(BitArray) -> Result(codec.Inbound, codec.DecodeError))
+```
+
+### `decode_text`
+
+Decode an inbound text frame with a codec.
+
+```gleam
+pub fn decode_text(codec.Codec) -> fn(String) -> Result(codec.Inbound, codec.DecodeError)
+```
+
+### `format_decode_error`
+
+Format a wire decode failure for transport logging.
+
+```gleam
+pub fn format_decode_error(codec.DecodeError) -> String
 ```
 
 ### `log_warning`
@@ -209,6 +314,14 @@ Create a named transport logger (e.g. `"beryl.transport.mist"`).
 pub fn logger(String) -> Logger
 ```
 
+### `max_inbound_frame_bytes`
+
+Return the configured maximum inbound frame size.
+
+```gleam
+pub fn max_inbound_frame_bytes(beryl.Sockets) -> Int
+```
+
 ### `new_message_limiter`
 
 Create a fresh per-connection message limiter, `None` when no message
@@ -220,9 +333,10 @@ pub fn new_message_limiter(beryl.Sockets) -> option.Option(RateLimiter)
 
 ### `register_closer`
 
-Register a function that force-closes the socket's underlying connection
- so the coordinator can actively evict it (e.g. heartbeat timeout) instead
- of leaving a zombie socket whose frames are silently dropped.
+Install a closer for a coordinator-backed `OwnerUnmonitored` socket.
+
+ App-runtime transports install the closer atomically with `admit_socket`;
+ this compatibility function intentionally does nothing for those systems.
 
 ```gleam
 pub fn register_closer(
@@ -230,6 +344,14 @@ pub fn register_closer(
   socket_id: String,
   close: fn() -> Nil
 ) -> Nil
+```
+
+### `release_connection_slot`
+
+Release a held connection slot.
+
+```gleam
+pub fn release_connection_slot(beryl.ConnectionPermit) -> Nil
 ```
 
 ### `route_binary`
@@ -277,12 +399,10 @@ pub fn route_decoded_binary(
 
 ### `socket_connected`
 
-Announce a newly connected socket. `send`/`send_binary` deliver outbound
- frames on this connection. `assigns` seeds connect-time socket assigns
- (type-erased internally) for channel-module systems; `seed` carries the
- upgrade request's connection data for app-dispatch systems (delivered to
- the app's `init` as `ConnectInfo.seed`). Call `register_closer`
- immediately after this.
+Compatibility registration for coordinator-backed `OwnerUnmonitored`
+ systems. App-runtime transports must use `connection_owner` and
+ `admit_socket` so registration and closer installation are tied to one
+ exact runtime pid.
 
 ```gleam
 pub fn socket_connected(
@@ -290,14 +410,17 @@ pub fn socket_connected(
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns: a,
   seed: event.ConnectSeed
 ) -> Nil
 ```
 
 ### `socket_connected_with_codec`
 
-Announce a newly connected socket that negotiates its own wire format.
+Compatibility registration with a connection-specific wire format.
+
+ This is for coordinator-backed `OwnerUnmonitored` systems. App-runtime
+ transports must pass the codec to `admit_socket`.
+
  `Some(codec)` frames this connection's outbound messages with `codec`
  instead of the configured one, so a single coordinator — sharing channels,
  pubsub and presence — can serve transports speaking different framings.
@@ -310,7 +433,6 @@ pub fn socket_connected_with_codec(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec: option.Option(codec.Codec),
-  assigns: a,
   seed: event.ConnectSeed
 ) -> Nil
 ```

@@ -1,6 +1,6 @@
 import beryl
 import beryl/group
-import beryl/presence
+import example_helpers/session_presence
 import example_helpers/static
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -13,7 +13,7 @@ import mist.{type Connection, type ResponseData}
 pub type Context {
   Context(
     channels: beryl.Channels,
-    presence: presence.Presence,
+    presence: session_presence.Tracker,
     groups: group.Groups,
     base_path: String,
   )
@@ -46,7 +46,7 @@ fn rooms_api(ctx: Context) -> Response(ResponseData) {
           [_, name] -> name
           _ -> topic
         }
-        let user_count = list.length(presence.list(ctx.presence, topic))
+        let user_count = session_presence.count(ctx.presence, topic)
         json.object([
           #("topic", json.string(topic)),
           #("name", json.string(room_name)),

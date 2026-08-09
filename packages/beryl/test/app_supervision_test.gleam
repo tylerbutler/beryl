@@ -83,7 +83,6 @@ fn admit(
     send: fn(_message) { Ok(Nil) },
     send_binary: fn(_data) { Ok(Nil) },
     codec: None,
-    assigns: Nil,
     seed: event.empty_seed(),
     close: close,
   )
@@ -557,7 +556,6 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
           },
           send_binary: fn(_data) { Ok(Nil) },
           codec: None,
-          assigns: Nil,
           seed: event.empty_seed(),
           close: fn() {
             beryl.release_connection_slot(permit)

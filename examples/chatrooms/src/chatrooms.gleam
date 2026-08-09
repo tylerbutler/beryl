@@ -1,64 +1,68 @@
 import beryl
 import beryl/group
-import beryl/presence
-import beryl/supervisor
 import beryl/wire
 import beryl_mist as mist_transport
-import chatrooms/chat_channel
+import chatrooms/app as chat_app
 import chatrooms/router
+import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/http/request
 import gleam/io
 import gleam/list
-import gleam/option.{Some}
 import gleam/otp/static_supervisor
 import gleam/result
 import mist
 
 pub fn main() {
-  // Configure beryl channels with rate limiting, presence, and groups, then
-  // add beryl's child specification to this application's own supervisor.
-  let beryl_config =
-    supervisor.config(
-      beryl.config(wire.phoenix_codec())
-      |> beryl.with_message_rate(per_second: 30, burst: 60)
-      |> beryl.with_join_rate(per_second: 5, burst: 10)
-      |> beryl.with_channel_rate(per_second: 10, burst: 20),
-    )
-    |> supervisor.with_presence(presence.default_config("node1"))
-    |> supervisor.with_groups()
+  let presence_tracker = session_presence.start()
 
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(beryl_config))
-    |> static_supervisor.start()
-
-  let channels = supervisor.channels(beryl_config)
-  let assert Some(presence_actor) = supervisor.presence(beryl_config)
-  let assert Some(groups) = supervisor.groups(beryl_config)
-
-  // Create default room group
+  // Start groups and create default room group.
+  let assert Ok(groups) = group.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
   let assert Ok(_) = group.add(groups, "public", "room:random")
   let assert Ok(_) = group.add(groups, "public", "room:help")
 
-  // Register the chat channel handler for room:* topics
-  let handler = chat_channel.new_handler(channels, presence_actor, groups)
-  let assert Ok(_) = beryl.register(channels, "room:*", handler)
+  let ctx = chat_app.Ctx(presence: presence_tracker, groups: groups)
+
+  // Rate limiting matches the previous channel-module deployment.
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
+    |> beryl.with_join_rate(per_second: 5, burst: 10)
+    |> beryl.with_channel_rate(per_second: 10, burst: 20)
+
+  let assert Ok(#(channels, beryl_spec)) =
+    beryl.child_spec(
+      config,
+      init: chat_app.standalone_init,
+      update: fn(model, ev) { chat_app.standalone_update(ctx, model, ev) },
+    )
+  session_presence.configure(presence_tracker, channels)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.start()
 
   io.println("💬 Chat Rooms Demo")
   io.println("   Open http://localhost:8001?token=beryl-demo")
   io.println("")
 
-  // Start the HTTP server
-  let ctx =
-    router.Context(channels:, presence: presence_actor, groups:, base_path: "")
+  // Start the HTTP server. A pre-upgrade token gate rejects connections
+  // without the demo token before the WebSocket handshake; accepted
+  // connections carry no extra metadata (`Ok([])`).
+  let ctx_router =
+    router.Context(
+      channels:,
+      presence: presence_tracker,
+      groups:,
+      base_path: "",
+    )
   let ws_config =
     mist_transport.default_config("/socket/websocket")
     |> mist_transport.with_on_connect(fn(req) {
       case get_query_param(req, "token") {
-        Ok("beryl-demo") -> Ok(Nil)
+        Ok("beryl-demo") -> Ok([])
         _ -> Error(mist_transport.ConnectRejected)
       }
     })
@@ -66,7 +70,7 @@ pub fn main() {
   let assert Ok(_) =
     fn(req) {
       mist_transport.upgrade(req, channels, ws_config, fn() {
-        router.handle_request(req, ctx)
+        router.handle_request(req, ctx_router)
       })
     }
     |> mist.new

@@ -15,12 +15,12 @@ This reference is generated from Gleam's docs metadata for `beryl`, `beryl_ewe`,
 Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no `hexdocs.pm` listing.
 :::
 
-## `beryl` `0.1.0`
+## `beryl` `0.2.0`
 
 | Module | Description |
 |---|---|
 | [`beryl`](/reference/api/beryl/) | beryl - Type-safe real-time communication |
-| [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket channel. |
+| [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket via |
 | [`beryl/channel`](/reference/api/beryl-channel/) | Channel - Topic-based message callbacks |
 | [`beryl/error`](/reference/api/beryl-error/) | Shared beryl-owned error helpers. |
 | [`beryl/event`](/reference/api/beryl-event/) | App-side dispatch types for the `beryl.start_app` socket API (ADR 0002). |
@@ -36,13 +36,13 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
 
-## `beryl_ewe` `0.1.0`
+## `beryl_ewe` `0.1.1`
 
 | Module | Description |
 |---|---|
 | [`beryl_ewe`](/reference/api/beryl_ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
 
-## `beryl_mist` `0.1.0`
+## `beryl_mist` `0.2.0`
 
 | Module | Description |
 |---|---|
