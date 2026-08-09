@@ -1,0 +1,3 @@
+project = "beryl_mist"
+kind = "Changed"
+body = "`TransportConfig` is no longer generic: `on_connect` is now a pure auth gate returning `Result(Nil, ConnectError)`. Connect-time request data reaches the app's `init` through the `ConnectSeed` (`ConnectInfo.seed`) instead of type-erased socket assigns."

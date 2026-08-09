@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Removed"
+body = "Removed the channel-module API entirely: beryl/channel, beryl/socket, beryl/coordinator, and beryl/supervisor, along with RegisteredChannel, beryl.register, beryl.send_info, and the unsupervised beryl.start path. The Sender-based beryl/bridge remains available for app-side dispatch. Use supervised app-side dispatch through beryl.child_spec with init and update; app-side dispatch types live in beryl/event."
