@@ -1,5 +1,5 @@
 [tools]
-"github:tylerbutler/trellis" = "0.10.3"
+"github:tylerbutler/trellis" = "0.11.0"
 
 [env]
 LC_ALL = "en_US.UTF-8"
