@@ -7,7 +7,7 @@
 ////   through, storing the returned model per topic.
 //// - A socket-wide `Standalone` model plus `standalone_init`/
 ////   `standalone_update` wrappers that drive the standalone cursors server
-////   through `beryl.child_spec`, reusing the same per-topic surface.
+////   through a `beryl.child_spec` runtime, reusing the same per-topic surface.
 
 import beryl/event.{type Effect, type Ref}
 import example_helpers/color
@@ -100,17 +100,17 @@ pub type Standalone {
   Standalone(socket_id: String, cursors: Dict(String, Model))
 }
 
-/// `init` for the standalone cursors `beryl.child_spec` runtime.
+/// `init` for the standalone cursors app-dispatch runtime.
 pub fn standalone_init(
   info: event.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
   #(Standalone(socket_id: info.socket_id, cursors: dict.new()), [])
 }
 
-/// `update` for the standalone cursors `beryl.child_spec` runtime: route
+/// `update` for the standalone cursors app-dispatch runtime: route
 /// each event to the embeddable `join`/`update`/`closed` surface, keyed by
-/// topic. Non-`cursor:*` joins are rejected (fail closed), mirroring the old
-/// `cursor:*` handler registration.
+/// topic. Non-`cursor:*` joins are rejected (fail closed), preserving the
+/// example's topic-namespace boundary.
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,

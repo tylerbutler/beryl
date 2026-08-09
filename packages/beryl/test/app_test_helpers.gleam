@@ -1,4 +1,4 @@
-//// Shared helpers for app-side dispatch (`beryl.child_spec`) tests.
+//// Shared helpers for supervised app-side dispatch (`beryl.child_spec`) tests.
 ////
 //// Sockets are driven through the public transport SPI so the tests
 //// exercise the same path a real transport uses. Outbound frames are

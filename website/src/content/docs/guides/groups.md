@@ -95,17 +95,10 @@ This is equivalent to calling `beryl.broadcast` on each topic in the group in se
 
 ## Error reference
 
-Group operations return `GroupError`:
-
-| `GroupError` | When |
+| Error | When |
 |-------|------|
 | `GroupAlreadyExists` | `create` called for a name already in use |
 | `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
-
-Startup has its own separate type, `GroupStartError`:
-
-| `GroupStartError` | When |
-|-------|------|
 | `GroupActorStartFailed` | `group.start()` — the internal group actor failed to initialize |
 
 ## Full example: team rooms
@@ -137,32 +130,8 @@ group.broadcast(
 let assert Ok(Nil) = group.delete(groups, "team:eng")
 ```
 
-## Using groups with the supervisor
+## Lifecycle
 
-When using `beryl/supervisor`, enable groups in the supervised configuration, add beryl to the application's supervision tree, then resolve the stable groups handle with `supervisor.groups`:
+The groups actor is a plain OTP actor linked to the process that calls `group.start()` — start it from your long-lived application process alongside `beryl.child_spec`. A `start_named` variant registers the actor under a `process.Name` for callers integrating it into their own supervision arrangements.
 
-```gleam
-import beryl
-import beryl/group
-import beryl/supervisor
-import beryl/wire
-import gleam/option.{None, Some}
-import gleam/otp/static_supervisor
-
-let beryl =
-  supervisor.config(beryl.config(wire.phoenix_codec()))
-  |> supervisor.with_groups()
-
-let assert Ok(_root) =
-  static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(supervisor.start(beryl))
-  |> static_supervisor.start()
-
-case supervisor.groups(beryl) {
-  Some(g) ->
-    group.broadcast(g, supervisor.channels(beryl), "team:eng", "alert", payload)
-  None -> Nil
-}
-```
-
-See the [Supervision guide](/guides/supervision/) for details on the supervised startup pattern.
+See the [Supervision guide](/guides/supervision) for the overall startup pattern.

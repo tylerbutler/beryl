@@ -4,18 +4,29 @@ title: Presence
 
 ## Model
 
-beryl presence is an OTP actor that wraps [`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence) — an **add-wins, observed-remove CRDT**. Each node in a cluster holds its own replica of the CRDT state. Because the data structure is conflict-free, replicas merge in any order without coordination: concurrent joins and leaves from different nodes always converge to the same result.
+Beryl presence is an OTP actor that wraps [`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence) — an **add-wins, observed-remove CRDT**. Each node in a cluster holds its own replica of the CRDT state. Because the data structure is conflict-free, replicas merge in any order without coordination: concurrent joins and leaves from different nodes always converge to the same result.
 
 Every tracked entry is stamped with a **replica name** (the `replica` argument to `default_config/1`). The replica name must be unique across the cluster; it is used as the CRDT replica identifier when merging remote state.
 
-## API Surface
+## How Beryl apps use it
+
+The presence actor is a standalone process that the application starts and
+supervises. It is not attached to the shared socket runtime in Lane B.
+
+Public presence reads and mutations are synchronous. Applications that
+combine presence with app-side dispatch should put those calls in a separate
+application actor, send it nonblocking commands from `update`, and broadcast
+diffs or snapshots after the presence operation completes. This keeps a slow
+presence callback or mailbox from stalling unrelated sockets and heartbeats.
+
+## API surface
 
 ### Starting presence
 
 | Function | Description |
 |---|---|
 | `start(config)` | Start an anonymous presence actor |
-| `start_named(config, name)` | Start a named presence actor (used by supervision helpers) |
+| `start_named(config, name)` | Start a named presence actor |
 
 ### Configuration builders
 
@@ -30,16 +41,16 @@ Every tracked entry is stamped with a **replica name** (the `replica` argument t
 
 | Function | Description |
 |---|---|
-| `track(presence, topic, key, pid, meta)` | Add a presence entry; returns the pid string for later untracking |
-| `untrack(presence, topic, key, pid)` | Remove a specific entry by topic, key, and pid |
-| `untrack_all(presence, pid)` | Remove all entries for a pid (call on socket disconnect) |
+| `track(presence, topic, key, session_id, meta)` | Add a presence entry; returns a server-generated tracking ref for later `untrack` |
+| `untrack(presence, ref)` | Remove one tracked entry by the ref returned from `track` |
+| `untrack_all(presence, session_id)` | Remove all entries for a session id |
 
 ### Querying
 
 | Function | Description |
 |---|---|
 | `list(presence, topic)` | Return all `PresenceEntry` values for a topic |
-| `get_by_key(presence, topic, key)` | Return `{pid, meta}` pairs for a specific key within a topic |
+| `get_by_key(presence, topic, key)` | Return `{session_id, meta}` pairs for a specific key within a topic |
 
 ### Diff helpers
 
@@ -56,8 +67,8 @@ Every tracked entry is stamped with a **replica name** (the `replica` argument t
 
 When `with_pubsub` and `with_broadcast_interval` are both configured, the presence actor runs a periodic broadcast loop:
 
-1. On each tick, if the local CRDT has changed since the last broadcast (`dirty = true`), the actor serialises its full state into a JSON envelope and publishes it to the well-known topic `"beryl:presence:sync"` using `broadcast_from` — which excludes self-delivery at the PubSub layer.
-2. Remote replicas on other nodes receive the message through PubSub. The actor deserialises the envelope, calls `state.merge_with_diff`, and updates its CRDT.
+1. On each tick, if the local CRDT has changed since the last broadcast (`dirty = true`), the actor publishes a typed `SyncPayload(v, sender, state)` term to the well-known topic `"beryl:presence:sync"` using `broadcast_from` — which excludes self-delivery at the PubSub layer.
+2. Remote replicas on other nodes receive that typed payload through PubSub, merge the incoming state with `state.merge_with_diff`, and update their CRDT replica.
 3. If the merge changes membership (new joins or leaves relative to local state), `on_diff` fires immediately with the resulting `Diff`. This ensures no diff is silently dropped when multiple merges arrive in rapid succession.
 
 Setting `broadcast_interval_ms` to `0` (the default in `default_config`) disables periodic broadcasts entirely, which is appropriate for single-node deployments.
@@ -66,11 +77,15 @@ Setting `broadcast_interval_ms` to `0` (the default in `default_config`) disable
 
 ```mermaid
 sequenceDiagram
-  participant App
+  participant App as app update
+  participant Worker as app presence worker
+  participant Runtime as runtime
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Pres: track(topic, key, pid, meta)
+  App->>Worker: nonblocking track/untrack command
+  Worker->>Pres: track / untrack / list
+  Worker->>Runtime: broadcast or typed Info after completion
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end

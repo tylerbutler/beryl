@@ -8,7 +8,7 @@ import palabres
 import palabres/level
 import palabres/options
 
-/// Logging verbosity for beryl's internal helpers.
+/// Logging verbosity for Beryl's internal helpers.
 pub type LogLevel {
   Debug
   Info
@@ -16,7 +16,7 @@ pub type LogLevel {
   Err
 }
 
-/// Logging configuration shared by internal beryl modules.
+/// Logging configuration shared by internal Beryl modules.
 pub type LoggingConfig {
   LoggingConfig(
     level: LogLevel,
@@ -25,10 +25,10 @@ pub type LoggingConfig {
   )
 }
 
-/// Configure the global palabres logger from a beryl logging configuration.
+/// Configure the global palabres logger from a Beryl logging configuration.
 ///
 /// Palabres is a singleton configured once at startup; the level set here is
-/// global across every beryl logger. Called when a coordinator starts.
+/// global across every Beryl logger. Called when a runtime starts.
 pub fn configure(config: LoggingConfig) -> Nil {
   options.defaults()
   |> options.level(to_palabres_level(config.level))
@@ -63,7 +63,7 @@ pub fn logger(name: String) -> Logger {
   log.new(name)
 }
 
-/// Build a named logger using the supplied beryl logging configuration.
+/// Build a named logger using the supplied Beryl logging configuration.
 ///
 /// The level is applied globally via `configure`; the returned logger only
 /// carries its name.

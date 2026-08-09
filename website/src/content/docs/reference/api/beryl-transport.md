@@ -334,7 +334,7 @@ pub fn release_connection_slot(beryl.ConnectionPermit) -> Nil
 ### `route_binary`
 
 Route a raw binary frame, for codecs without a binary decoder (fans out
- to the socket's joined topics' `handle_binary`).
+ to the socket's joined topics as `Binary` events delivered to `update`).
 
 ```gleam
 pub fn route_binary(

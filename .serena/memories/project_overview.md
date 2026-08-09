@@ -1,64 +1,72 @@
 # Beryl - Project Overview
 
 ## Purpose
-Type-safe real-time channels and presence for Gleam, targeting the Erlang (BEAM) runtime. Inspired by Phoenix Channels.
+
+Type-safe real-time sockets, channels, PubSub, and presence for Gleam on the
+Erlang/BEAM runtime, with Phoenix V2 wire compatibility.
 
 ## Tech Stack
-- **Language**: Gleam (targeting Erlang/BEAM)
-- **Runtime**: Erlang 27.2.1
-- **Gleam version**: 1.14.0
-- **Task runner**: just 1.38.0
-- **Test framework**: gleeunit
-- **Dependencies**: gleam_stdlib, gleam_erlang, gleam_otp, gleam_json, gleam_crypto, wisp (local path dep for WebSocket)
+
+- **Language/runtime**: Gleam on Erlang/OTP
+- **Tool versions**: `.tool-versions` (Erlang 27.2.1, Gleam 1.16.0, just 1.50.0)
+- **Workspace/release tooling**: trellis
+- **Tests**: gleeunit; Playwright for examples
+- **Transports**: Mist (`beryl_mist`) and Ewe (`beryl_ewe`)
 
 ## Architecture Layers
-1. **Channel System** (`beryl`, `beryl/channel`, `beryl/coordinator`) - Topic-based WebSocket messaging with pattern matching
-2. **PubSub** (`beryl/pubsub`) - Distributed publish/subscribe via Erlang `pg` process groups
-3. **Presence** (`beryl/presence`, `beryl/presence/state`) - Distributed presence tracking via CRDT (add-wins observed-remove set)
-4. **Groups** (`beryl/group`) - Named channel groups for multi-topic broadcast
-5. **Transport** (`beryl/transport/websocket`) - Wisp WebSocket transport integration
-6. **Wire Protocol** (`beryl/wire`) - JSON encode/decode for the wire format
-7. **Socket** (`beryl/socket`) - Socket abstraction with typed assigns
-8. **Topic** (`beryl/topic`) - Topic pattern matching (exact and wildcard)
+
+1. **App dispatch** (`beryl`, `beryl/event`, internal `beryl/runtime`) -
+   `beryl.child_spec` captures typed `init`/`update` callbacks; one supervised
+   runtime owns socket models, topic membership, heartbeat state, and ordered
+   effect interpretation.
+2. **Transport SPI** (`beryl/transport`) - connection ownership, atomic socket
+   admission, frame decoding/routing, edge rate limiting, and telemetry.
+3. **PubSub** (`beryl/pubsub`) - distributed broadcasts through Erlang `pg`.
+4. **Presence** (`beryl/presence`) - CRDT-backed distributed presence actor.
+5. **Groups** (`beryl/group`) - named collections of topics for broadcast.
+6. **Wire protocol** (`beryl/wire`, `beryl/wire/codec`) - Phoenix text and
+   binary framing.
+7. **Observability and controls** (`beryl/stats`, internal telemetry, connection
+   and rate limits).
 
 ## Key Design Patterns
-- Type erasure via Erlang FFI identity coercion for heterogeneous channel storage
-- OTP actors for coordinator and presence
-- Result types over exceptions
-- Builder pattern for channel construction (`new()` + `with_*()` functions)
-- Typed socket assigns (generic type parameter on Socket)
 
-## Levee Integration
-- `beryl/levee/document_channel` - Fluid Framework document channel
-- `beryl/levee/runtime` - Elixir runtime bridge
+- Opaque `Sockets` and configuration values with builder functions.
+- Typed per-socket `model` and `msg`; decoded payloads alone use `Dynamic`.
+- `Event`/`Next`/`Effect` app loop with strict effect-list wire ordering.
+- Join `Ref` values carry unique pending-join identity; stale completions cannot
+  answer a replacement join even when wire correlation fields are reused.
+- Transport admission binds to an exact runtime pid and uses a cancellation
+  token so timed-out admissions cannot later register or apply init effects.
+- PubSub validates its frozen raw record shape before the package-internal
+  identity coercion needed at the Erlang mailbox boundary.
+- Result types, exhaustive matching, and supervised OTP lifecycle.
 
 ## Source Structure
-```
-src/beryl.gleam                    # Main public API
-src/beryl_ffi.erl                  # Erlang FFI (identity coercion)
-src/beryl_pubsub_ffi.erl           # Erlang FFI for pg-based PubSub
-src/beryl/channel.gleam            # Channel behaviour/callbacks
-src/beryl/coordinator.gleam        # Channel lifecycle coordinator (OTP actor)
-src/beryl/group.gleam              # Named channel groups
-src/beryl/presence.gleam           # Presence tracking (OTP actor wrapping CRDT)
-src/beryl/presence/state.gleam     # Pure CRDT (add-wins observed-remove set)
-src/beryl/pubsub.gleam             # PubSub abstraction (pg-based)
-src/beryl/socket.gleam             # Socket abstraction
-src/beryl/topic.gleam              # Topic pattern matching
-src/beryl/transport/websocket.gleam # Wisp WebSocket transport
-src/beryl/wire.gleam               # Wire protocol (JSON encode/decode)
-src/beryl/levee/document_channel.gleam
-src/beryl/levee/runtime.gleam
+
+```text
+packages/beryl/src/beryl.gleam             # Config, child_spec, stop, broadcast
+packages/beryl/src/beryl/event.gleam       # Events, effects, refs, Sender
+packages/beryl/src/beryl/runtime.gleam     # Internal app-dispatch runtime
+packages/beryl/src/beryl/transport.gleam   # Public transport SPI
+packages/beryl/src/beryl/pubsub.gleam      # Typed pg-based PubSub
+packages/beryl/src/beryl/presence.gleam    # Presence actor
+packages/beryl/src/beryl/group.gleam       # Topic groups
+packages/beryl/src/beryl/stats.gleam       # Runtime stats
+packages/beryl/src/beryl/wire.gleam        # Built-in wire codecs
+packages/beryl_mist/src/beryl_mist.gleam   # Mist transport
+packages/beryl_ewe/src/beryl_ewe.gleam     # Ewe transport
 ```
 
-## Tests
-```
-test/beryl_test.gleam
-test/group_test.gleam
-test/presence_test.gleam
-test/presence_state_test.gleam
-test/pubsub_test.gleam
-```
+## Testing Notes
+
+- BEAM mailbox state matters: select exact message shapes and drain messages
+  created by tests.
+- Prefer polling helpers over sleeps for asynchronous state.
+- Public socket/event behavior needs runtime-level coverage; transport behavior
+  needs Mist and Ewe contract coverage.
 
 ## Note on Serena
-The Gleam language server is not supported by Serena, so symbolic tools (get_symbols_overview, find_symbol, etc.) will not work. Use file-based tools (read_file, search_for_pattern, list_dir) instead.
+
+The Gleam language server is not supported by Serena, so use file-based search
+and editing tools rather than symbolic tools.

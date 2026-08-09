@@ -42,18 +42,17 @@ import gleam/json
 let ref = presence.track(
   p,
   "room:lobby",   // topic
-  "user:alice",   // key (groups multiple connections)
-  socket_id,      // session id (unique per connection)
-  json.object([   // metadata
+  "user:alice",    // key (groups multiple connections)
+  socket_id,       // session ID (unique per connection)
+  json.object([    // metadata
     #("status", json.string("online")),
     #("joined_at", json.int(1234567890)),
   ]),
 )
 ```
 
-The **key** groups multiple connections from the same user — every browser tab
-signed in as `alice` shares one key. The **session id** identifies a single
-connection; pass the socket ID, which is what `untrack_all` expects later.
+The **key** groups multiple connections from the same user. The **session ID**
+uniquely identifies each connection (typically the socket ID).
 
 ## Untracking
 
@@ -61,14 +60,15 @@ connection; pass the socket ID, which is what `untrack_all` expects later.
 // Remove a specific presence, using the ref returned by `track`
 presence.untrack(p, ref)
 
-// Remove all presences for a session id / socket (e.g., on disconnect)
+// Remove all presences for a session ID / socket (e.g., on disconnect)
 presence.untrack_all(p, socket_id)
 ```
 
 `track` returns a server-generated ref that identifies exactly the presence it
 created. Hold onto that ref if you need to remove one specific presence later
 with `untrack`. To clear every presence for a disconnecting socket, use
-`untrack_all` with the session id instead.
+`untrack_all` with the session ID instead. The string `session_id` identifies
+the logical session; it is not a BEAM process identifier.
 
 ## Listing presences
 
@@ -158,21 +158,34 @@ Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process th
 
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
-## Integration with channels
+## Integration with app-side dispatch
 
-A common pattern is to track presence in your channel's join callback and untrack in terminate:
+Presence remains a standalone actor. Its public mutation and read calls are
+synchronous and can wait up to five seconds, so do **not** call them from the
+shared socket runtime's `init` or `update`.
+
+Instead, send a command to an application-owned worker/actor from `update`.
+That worker performs `presence.track` or `presence.untrack`, then publishes
+the resulting `presence_diff`/snapshot with `beryl.broadcast` (or sends a
+typed message back with `event.notify`):
 
 ```gleam
-fn join(topic, payload, socket) -> JoinResult(MyAssigns) {
-  let socket_id = socket.id(socket)
-  let _ref = presence.track(p, topic, "user:" <> user_id, socket_id, meta)
-  channel.JoinOk(reply: None, socket: socket)
-}
+event.Join(topic, _payload, ref) ->
+  {
+    process.send(presence_worker, Track(topic, model.user_id, meta))
+    event.Next(model, [event.AcceptJoin(ref, option.None)])
+  }
 
-fn terminate(reason, socket) -> Nil {
-  presence.untrack_all(p, socket.id(socket))
-}
+event.Closed(topic, _reason) ->
+  {
+    process.send(presence_worker, Untrack(topic, model.presence_ref))
+    event.Next(model, [])
+  }
 ```
+
+The application owns the tracking refs and cleanup. Lane B intentionally does
+not expose partial synchronous presence effects on the shared runtime; the
+indivisible async presence/read-model work is deferred.
 
 ## Next steps
 

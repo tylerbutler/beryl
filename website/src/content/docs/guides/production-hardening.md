@@ -2,10 +2,10 @@
 title: Production Hardening
 ---
 
-beryl ships with all rate and connection limits **disabled**, because no
+Beryl ships with all rate and connection limits **disabled**, because no
 default is right for every deployment. That is fine for development, but a
 production server with no abuse controls can be degraded by a single hostile
-(or buggy) client. beryl logs a warning at startup when every control is
+(or buggy) client. Beryl logs a warning at startup when every control is
 off; this guide explains what to turn on and why.
 
 ## What is always on
@@ -15,7 +15,7 @@ Even with no configuration, beryl enforces:
 - **Frame size**: inbound WebSocket frames over 1 MiB close the connection
   (`with_max_inbound_frame_bytes` to adjust).
 - **Topic and event lengths**: topics over 256 bytes and event names over 64
-  bytes are rejected before reaching a channel
+  bytes are rejected before reaching your app
   (`with_max_topic_length`, `with_max_event_length`).
 - **Joined-topic cap**: a socket may join at most 1000 topics
   (`with_max_joined_topics_per_socket`).
@@ -40,7 +40,7 @@ let config =
   // clients-behind-one-NAT worst case; see the caveat below.
   |> beryl.with_max_connections_per_ip(max_connections: 100)
   // Node-wide ceiling on concurrent connections across all IPs. Size to a
-  // single node's process/socket/coordinator budget; see below.
+  // single node's process/socket/runtime budget; see below.
   |> beryl.with_max_connections(max_connections: 10_000)
 ```
 
@@ -54,13 +54,13 @@ starve others.
 `with_max_connections` caps concurrent connections across the whole node. When
 both are set a connection must be under **both** ceilings to be admitted;
 otherwise the transport rejects it with `429` **before** allocating any
-long-lived channel or coordinator state. Freed capacity is reclaimed on normal
+long-lived socket or runtime state. Freed capacity is reclaimed on normal
 close, transport failure, heartbeat eviction, crash, and setup failure.
 
 The node-wide ceiling exists because a per-IP limit alone cannot stop many
 **distinct** source addresses — a botnet, or a single host rotating through an
 IPv6 range — from each opening a few connections and collectively exhausting
-the node's process, socket, and coordinator budget. The global ceiling bounds
+the node's process, socket, and runtime budget. The global ceiling bounds
 that total regardless of how the connections are spread across IPs.
 
 Because it is enforced per BEAM node, a load-balanced cluster of N nodes has an
@@ -95,15 +95,15 @@ attackers rotating connections.
   from unexpected origins before the WebSocket handshake.
 - `with_on_connect` authenticates the connection once, before upgrade —
   reject unauthenticated clients with a 403 rather than at join time.
-- Authorize each topic in your channel's `join` callback; clients cannot
+- Authorize each topic in your update's `Join` arm; clients cannot
   send events to topics they have not joined.
 
 ## Erlang cluster security boundary
 
-beryl's distributed PubSub and presence replication run over Erlang
+Beryl's distributed PubSub and presence replication run over Erlang
 distribution. Every node in your Erlang cluster is **fully trusted**: a
 process on any peer node can subscribe to any topic, receive all
-broadcasts, and deliver messages that beryl's coordinator will process as
+broadcasts, and deliver messages that beryl's runtime will process as
 legitimate internal traffic. Channel authorization callbacks and
 WebSocket-layer controls do **not** apply to messages delivered over
 distribution — they protect only inbound WebSocket clients.
@@ -112,11 +112,11 @@ distribution — they protect only inbound WebSocket clients.
 
 | Source | Trust level | Gated by |
 |---|---|---|
-| WebSocket clients | Untrusted | `with_on_connect` authentication, channel `join` authorization, and `handle_in` event handling |
+| WebSocket clients | Untrusted | `with_on_connect` authentication, `Join` authorization, and `Message` handling in `update` |
 | Erlang distribution peers | Fully trusted | Erlang cookie + network controls |
 
 A hostile distribution peer can broadcast arbitrary messages into any
-channel and read all presence state. Secure the cluster boundary **before**
+topic and read all presence state. Secure the cluster boundary **before**
 deploying multi-node beryl.
 
 ### Erlang cookie
@@ -169,26 +169,11 @@ for the full trust-boundary and distribution-hardening reference.
 
 ## Operational notes
 
-- The coordinator is a single actor per channels system. The transport
+- The runtime is a single actor per channels system. The transport
   sheds oversized frames and (when configured) rate-limited traffic before
   it, but extreme fan-out workloads may want multiple channels systems
   sharded by topic space.
-- Enable and export Beryl's bounded telemetry taxonomy, and poll local
-  coordinator snapshots, as described in the
-  [Observability guide](/guides/observability/). Monitor the coordinator
-  mailbox, connection count, BEAM ports/processes, and edge saturation
-  together. The benchmark server's
-  [`/stats` endpoint](https://github.com/tylerbutler/beryl/blob/main/examples/load_test/README.md#health-and-stats)
-  demonstrates the JSON shape; it is not a production exporter, and telemetry
-  handlers remain application-owned and synchronous.
-- beryl always runs inside your own supervision tree via `supervisor.start`.
-  The subtree has a one-for-one parent wrapping a rest-for-one channel
-  supervisor, and restarts are bounded at 3 per 5 seconds before the beryl
-  supervisor shuts down and defers to its parent. See the
-  [Supervision guide](/guides/supervision/) for the full tree.
-
-Before setting production limits, establish a controlled capacity baseline on
-representative topology. The repository's
-[load-testing guide](https://github.com/tylerbutler/beryl/blob/main/load/README.md)
-covers Mist/Ewe parity, multi-source execution, OS and BEAM limits, NAT/proxy
-constraints, repeatability, and promotion of measured baselines to thresholds.
+- The runtime always starts supervised (`child_spec` has no unsupervised
+  mode); restarts are bounded at 3 per 5 seconds, after which the crash
+  propagates to the process that called `child_spec`. See the
+  [Supervision guide](/guides/supervision/).

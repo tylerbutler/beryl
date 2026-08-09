@@ -28,7 +28,7 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/presence/wire`](/reference/api/beryl-presence-wire/) | Phoenix-compatible wire encoding for presence diffs. |
 | [`beryl/pubsub`](/reference/api/beryl-pubsub/) | PubSub - Distributed publish/subscribe using Erlang pg |
 | [`beryl/stats`](/reference/api/beryl-stats/) | Local runtime statistics. |
-| [`beryl/topic`](/reference/api/beryl-topic/) | Topic - Pattern matching for channel routing |
+| [`beryl/topic`](/reference/api/beryl-topic/) | Pattern matching for topic routing. |
 | [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |

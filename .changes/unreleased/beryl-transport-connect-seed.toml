@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Changed"
+body = "Transport SPI: transports capture connection_owner, monitor that exact runtime pid, and call admit_socket to atomically install the socket, closer, codec, and ConnectSeed. Unavailable, replaced, or failed runtimes reject admission and close the connection."

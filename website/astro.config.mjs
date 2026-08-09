@@ -118,10 +118,6 @@ export default defineConfig({
 							label: "Production Hardening",
 							slug: "guides/production-hardening",
 						},
-						{
-							label: "Observability",
-							slug: "guides/observability",
-						},
 					],
 				},
 				{
@@ -155,8 +151,8 @@ export default defineConfig({
 							slug: "architecture/message-lifecycle",
 						},
 						{
-							label: "Coordinator & Supervision",
-							slug: "architecture/coordinator",
+							label: "Runtime & Supervision",
+							slug: "architecture/runtime",
 						},
 						{
 							label: "PubSub & Distribution",

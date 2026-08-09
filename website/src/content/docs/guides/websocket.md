@@ -2,67 +2,24 @@
 title: WebSocket Transport
 ---
 
-beryl serves channels over WebSockets through a transport package. Two are
-available and expose the same API:
-
-| Package | Web server |
-|---|---|
-| `beryl_mist` | [Mist](https://hexdocs.pm/mist/) |
-| `beryl_ewe` | [Ewe](https://hexdocs.pm/ewe/) |
-
-This guide uses `beryl_mist`. Every example applies to `beryl_ewe` with
-`ewe_transport` substituted for `mist_transport` — the config builders,
-`on_connect` hook, origin validation, and handler functions are identical.
+beryl provides a WebSocket transport layer that integrates directly with [Mist](https://hexdocs.pm/mist/) for handling browser client connections.
 
 ## Basic setup
 
-`mist_transport.handler` composes the WebSocket upgrade and your regular HTTP
-handler into a single request handler, so it is the shortest path to a working
-server:
+The simplest way to add WebSocket support is with `mist_transport.upgrade`:
 
 ```gleam
 import beryl
 import beryl_mist as mist_transport
 import gleam/bytes_tree
+import gleam/http/request
 import gleam/http/request.{type Request}
 import gleam/http/response
 import mist
 
-pub fn start(channels: beryl.Channels) {
-  mist_transport.handler(
-    channels,
-    mist_transport.default_config("/socket/websocket"),
-    handle_http,
-  )
-  |> mist.new
-  |> mist.port(8000)
-  |> mist.start
-}
-
-fn handle_http(
-  req: Request(mist.Connection),
-) -> response.Response(mist.ResponseData) {
-  case request.path_segments(req) {
-    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
-    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
-  }
-}
-```
-
-WebSocket upgrades on the configured path go to beryl; everything else falls
-through to `handle_http`.
-
-### Driving the upgrade yourself
-
-When you need the upgrade decision inside your own routing — to run middleware
-first, or to mount the socket conditionally — use `mist_transport.upgrade`
-directly. It matches the request path, performs the upgrade, and calls the
-continuation when the path does not match:
-
-```gleam
 fn handle_request(
   req: Request(mist.Connection),
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
 ) -> response.Response(mist.ResponseData) {
   // Upgrade /socket/websocket requests to WebSocket
   use <- mist_transport.upgrade(
@@ -72,9 +29,14 @@ fn handle_request(
   )
 
   // Non-WebSocket requests fall through here
-  handle_http(req)
+  case request.path_segments(req) {
+    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
+    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
 }
 ```
+
+The `upgrade` function checks if the request path matches, performs the WebSocket upgrade, and wires the connection to the beryl runtime.
 
 :::tip[Phoenix JS clients]
 The Phoenix JS client (`new Socket("/socket", ...)`) connects to `/socket/websocket` by default — it appends `/websocket` to the path you pass. Configure the transport path to match:
@@ -107,7 +69,7 @@ let config =
 use <- mist_transport.upgrade(req, channels, config)
 ```
 
-Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling/#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting/#authentication-failures) for diagnosis steps.
+Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
 
 ### Origin validation and CSWSH
 
@@ -136,37 +98,41 @@ If you cannot use an origin allow-list, avoid cookie-based WebSocket
 authentication. Use a token passed explicitly to `on_connect` and reject invalid
 tokens before upgrading.
 
-### Seeding initial assigns
+### Connect-time data and the ConnectSeed
 
-`on_connect` can also return seeded socket-level **assigns** instead of `Nil`.
-Whatever value you return in `Ok(assigns)` becomes the socket's initial assigns
-and is visible to every channel at join time via `socket.get_assigns`. This lets
-you authenticate once at connect and avoid repeating per-socket auth in each
-channel's `join`:
+`on_connect` is a pure gate — it allows or rejects the upgrade. The request
+data itself (path, query parameters, headers) reaches your app separately:
+the transport assembles a `ConnectSeed` from the upgrade request and delivers
+it to your `init` as `ConnectInfo.seed`. Authenticate once in `on_connect`,
+then derive per-socket state from the seed in `init` — no re-auth in any
+join:
 
 ```gleam
 let config =
   mist_transport.default_config("/socket/websocket")
   |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
-    // Validate once, derive socket state, reject on failure.
+    // Validate once; reject the whole connection on failure.
     case validate_token(req) {
-      Ok(user_id) -> Ok(user_id)                       // Seed assigns
+      Ok(_) -> Ok(Nil)
       Error(_) -> Error(mist_transport.ConnectRejected) // Reject with 403
     }
   })
 ```
 
 ```gleam
-// The channel reads the connect-seeded assigns at join — no re-auth needed.
-fn join(_topic, _payload, socket) {
-  let user_id = socket.get_assigns(socket)
-  channel.JoinOk(reply: None, socket: socket)
-}
+// init derives the user from the same request data — no re-auth needed.
+beryl.child_spec(
+  config,
+  init: fn(info: event.ConnectInfo(Msg)) {
+    let user_id =
+      list.key_find(info.seed.query, "token")
+      |> result.map(decode_user_id)
+      |> result.unwrap("anonymous")
+    #(Model(user_id: user_id), [])
+  },
+  update: update,
+)
 ```
-
-The assigns type returned by `on_connect` should match the channel's `assigns`
-type (commonly a record shared across all topics that require the same auth).
-When no hook is configured, sockets start with `Nil` assigns.
 
 ## Direct upgrade
 
@@ -184,7 +150,7 @@ fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
 Note: `upgrade_connection` does not invoke the `on_connect` callback. Run your own auth check before calling it.
 
 :::tip[Troubleshooting connections]
-If clients cannot connect, see [Clients cannot connect at all](/troubleshooting/#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
+If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
 :::
 
 ## Wire protocol
@@ -197,7 +163,7 @@ Pass `wire.phoenix_codec()` to `beryl.config` to use the Phoenix JSON array form
 
 Applications can pass a custom codec to `beryl.config(codec)` to use another text framing or a binary framing. Codec-produced outbound frames are sent as text or binary WebSocket frames according to the codec result.
 
-`wire.phoenix_codec()` uses beryl's native Phoenix wire implementation, which has no extra dependencies. The public `beryl/wire/codec.Codec` API and wire format are stable, so applications can supply their own codec to `beryl.config` for alternative framings.
+`wire.phoenix_codec()` uses Beryl's native Phoenix wire implementation, which has no extra dependencies. The public `beryl/wire/codec.Codec` API and wire format are stable, so applications can supply their own codec to `beryl.config` for alternative framings.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -234,10 +200,10 @@ Server replies:
 
 1. Client connects via WebSocket to the configured path
 2. `on_connect` callback runs (if configured) — reject returns 403
-3. Transport generates a unique socket ID and registers with the coordinator
-4. Client sends `phx_join` messages to subscribe to topics
-5. Messages are routed through the coordinator to channel handlers
-6. On disconnect, the coordinator runs `terminate` on all joined channels
+3. Transport generates a unique socket ID, builds the `ConnectSeed`, and announces the socket to the runtime, which calls your `init`
+4. Client sends `phx_join` messages to subscribe to topics — each arrives at `update` as a `Join` event
+5. Messages are routed through the runtime to `update` as `Message` events
+6. On disconnect, `update` receives a `Closed` event for every joined topic
 
 ## Heartbeats
 
@@ -275,6 +241,7 @@ let config =
 | `message_rate` | Per socket | Total messages per second across all topics |
 | `join_rate` | Per socket | Join attempts per second |
 | `channel_rate` | Per socket+topic | Messages per second on a single topic |
+| `topic_rates` | Per socket+topic | Pattern-scoped override of `channel_rate` (`with_topic_rate`) |
 
 ## Per-IP connection limits
 
@@ -315,5 +282,5 @@ future release. Until then, treat `X-Forwarded-For` as untrusted input.
 ## Next steps
 
 - [Error Handling guide](/guides/error-handling/) — rejected joins, malformed frames, and client-visible error shapes
-- [Supervision guide](/guides/supervision/) — supervised startup for production so a coordinator crash doesn't take down the whole transport
+- [Supervision guide](/guides/supervision/) — the built-in runtime supervision and restart semantics
 - [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for connection, join, and message delivery failures

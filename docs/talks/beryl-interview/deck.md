@@ -129,15 +129,15 @@ perception, Gleam fixes the typing. That's where this talk is going.
 ## Processes: concurrency you don't ration
 
 - Millions of tiny, isolated, share-nothing processes per node
-- **One process per connection is the normal pattern**, not a hack
 - No shared memory, no locks — processes only send messages
-- A crash takes down one conversation, not the server
+- beryl uses connection processes at the transport edge and one shared app runtime
+- Per-socket models stay isolated by ID and callback failures are contained
 
 <!--
 Numbers make this real:
 - A BEAM process starts at a few KB (~2-3 KB including its heap). An OS
-  thread reserves megabytes of stack. That's three orders of magnitude —
-  it's why "a process per connection" is idiomatic here and absurd elsewhere.
+  thread reserves megabytes of stack. That's three orders of magnitude and
+  makes actor-oriented transport, runtime, presence, and worker designs cheap.
 - Each process has its OWN heap and its own garbage collector. No global
   GC pause: one process collecting never stalls the others. This is why
   BEAM latency stays flat under load.
@@ -148,8 +148,14 @@ Numbers make this real:
 
 Isolation is the philosophical point: share NOTHING. The only way two
 processes interact is by copying a message into the other's mailbox.
-No shared memory means no locks, no data races, and — crucially —
-no way for one connection's corrupted state to infect another's.
+No shared memory means no locks or data races.
+
+Be precise about beryl's topology: it does not spawn an application actor per
+socket. Mist/Ewe own their normal WebSocket connection processes, while one
+shared runtime actor stores every socket's typed model and topic membership.
+The runtime rescues app callback crashes and applies a scoped policy: reject a
+crashing join, close a topic for a crashing message, and tear down only that
+socket for a crashing `Info`. Other sockets and the runtime survive.
 
 TRANSITION: "Isolation also changes what a crash means — which brings us
 to the strangest and best idea in Erlang."
@@ -161,13 +167,16 @@ to the strangest and best idea in Erlang."
 
 - Supervisors watch processes and restart them in a known-good state
 - "Let it crash": no defensive try/catch webs — fail fast, restart clean
-- beryl ships a **rest-for-one** tree:
+- `beryl.child_spec` contributes a small **one-for-one** subtree:
 
 ```
-supervisor
- ├─ coordinator      ← crash here restarts everything below
- ├─ presence
- └─ groups
+application supervisor
+ └─ beryl subtree (Transient)
+     ├─ runtime (significant Transient)
+     └─ connection limiter (optional)
+
+presence · groups     application-owned sibling actors
+PubSub                Erlang pg lifecycle
 ```
 
 <!--
@@ -183,22 +192,23 @@ WILL push back:
   bad user input, rejected joins — are still handled as values.
   Let-it-crash is for the errors you didn't predict.
 
-The diagram — explain rest-for-one concretely, top to bottom:
-- Children start in order; each depends on the ones above it.
-- If GROUPS crashes: only groups restarts. Presence and coordinator
-  never notice.
-- If the COORDINATOR crashes: presence and groups restart too, because
-  their view of the world routed through it. Fresh, consistent state
-  for all three — no half-alive system.
-
-beryl embeds into YOUR app's supervision tree via `supervisor.start`, so
-channels recover alongside the rest of your application — same
-mechanism, one tree.
+Explain the actual tree:
+- `beryl.child_spec(config, init:, update:)` returns a stable `Sockets`
+  handle plus the Beryl subtree's child specification.
+- The runtime is the significant transient child. A genuine runtime crash is
+  restarted under the same registered name; the optional limiter is its
+  sibling.
+- Transports monitor the exact runtime pid. If it dies, existing WebSockets
+  close instead of becoming zombies attached to a successor.
+- `beryl.stop` drains only this subtree. Presence and groups are borrowed,
+  application-owned actors, and PubSub is backed by `pg`; Beryl does not stop
+  any of them.
 
 LIKELY QUESTION: "What about in-flight state when it restarts?" —
-honest answer: node-local ephemeral state is rebuilt (clients rejoin,
-presence re-tracks on reconnect); anything durable belongs in your
-database anyway. Real-time state is a cache of "now," not a ledger.
+honest answer: the runtime restarts with the app's `init`/`update` closures,
+but connected-socket models and topic membership are gone. Monitored
+transports close, clients reconnect and rejoin, and anything durable belongs
+in your database. Real-time state is a cache of "now," not a ledger.
 -->
 
 ---
@@ -224,9 +234,10 @@ mesh just by knowing each other's names and sharing a secret cookie.
 
 beryl's PubSub module is a thin, typed wrapper over pg — and here's the
 architectural sentence to say slowly: "PubSub is the ONLY cross-node
-primitive in beryl. Channels, presence actors, rate limiters — all
-node-local. Scaling out means starting more nodes and letting pg carry
-broadcasts between them." (This gets a diagram later.)
+primitive in beryl. The app runtime, presence actors, groups, and rate
+limiters are node-local. Scaling out means starting more nodes and letting
+pg carry broadcasts and presence sync between them." (This gets a diagram
+later.)
 
 FORESHADOW (pays off on the production slide): distribution assumes
 every node in the cluster is trusted — it's a clustering protocol, not
@@ -271,22 +282,22 @@ you take that seriously."
 
 ---
 
-## beryl ≈ Phoenix Channels, with a compiler
+## Phoenix Channels semantics, with a compiler
 
-- **Channels** — topic handlers with wildcards: `room:*`, `document:*:*`
+- **Sockets + topics** — one typed `init`/`update` pair routes every topic
 - **Presence** — who's online, CRDT-backed, works across nodes
 - **PubSub** — distributed broadcast over `pg`
 - **Groups** — named topic collections for multi-topic fan-out
-- **Transport** — Mist WebSockets, Phoenix-compatible wire format
+- **Transport** — Mist/Ewe WebSockets, explicit pluggable codec
 
 <!--
 First give the MENTAL MODEL (for those who don't know Phoenix):
 clients open ONE WebSocket, then join any number of TOPICS over it —
-"room:lobby", "room:42". The server registers handlers against topic
-PATTERNS: `room:*` matches any room; `document:*:*` matches segments,
-so one handler serves every document channel. Messages on a topic go
-to its handler; the handler can reply to the sender, push to that
-client, or broadcast to everyone on the topic.
+"room:lobby", "room:42". In beryl, the app's one `update` function receives
+`Join`, `Message`, `Closed`, raw `Binary`, and typed `Info` events and routes
+them by matching topic strings or `beryl/topic` patterns. It returns ordered
+effects to accept/reject, reply, push, broadcast, or kick a topic. There is no
+channel registry or per-topic callback module.
 
 For those who DO know Phoenix: same model, same wire format —
 literally the same JSON array framing, `[join_ref, ref, topic, event,
@@ -294,15 +305,16 @@ payload]`. The Phoenix JavaScript client connects to beryl UNCHANGED.
 That's deliberate: a decade of client libraries, reconnect logic, and
 docs come along for free.
 
-The differentiator is in the title: every callback is TYPED. Phoenix
-stores per-connection state in a dynamic map; beryl makes it a type
-parameter the compiler tracks (next two slides show it).
+The differentiator is in the title: each socket's app model and server-side
+message type are compiler-checked end to end. Phoenix stores connection state
+in a dynamic map; beryl threads the app's concrete `model` through `Next` and
+delivers typed server messages as `Info(msg)` (next two slides show it).
 
 INEVITABLE QUESTION — "Why not just use Phoenix?" Have this ready:
 1. If you're building in Gleam, staying in one typed language across
    the whole stack beats bridging into Elixir.
-2. Typed assigns and handler results catch at compile time what
-   Phoenix catches in production.
+2. Typed per-socket models, server messages, and effect results catch at
+   compile time what Phoenix often represents dynamically.
 3. beryl is smaller and unbundled: codec and transport are both
    swappable interfaces, not framework internals.
 Concede the flip side honestly: Phoenix is battle-tested and huge;
@@ -316,19 +328,21 @@ on Elixir, use Phoenix.
 
 ```gleam
 pub fn main() {
-  let beryl_config = supervisor.config(beryl.config(wire.phoenix_codec()))
+  let assert Ok(#(sockets, beryl_spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      init: init,
+      update: update,
+    )
 
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(beryl_config))
+    |> static_supervisor.add(beryl_spec)
     |> static_supervisor.start()
-
-  let channels = supervisor.channels(beryl_config)
-  let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
 
   let assert Ok(_) =
     mist_transport.handler(
-      channels,
+      sockets,
       mist_transport.default_config("/socket/websocket"),
       http_fallback,
     )
@@ -343,23 +357,21 @@ pub fn main() {
 <!--
 Walk it line by line — this is the whole server, not an excerpt:
 
-1. `supervisor.config(beryl.config(wire.phoenix_codec()))` — describes the
-   channel runtime as a child spec for YOUR supervision tree; there is no
-   unsupervised start. The config takes a CODEC: Phoenix JSON framing ships
-   in the box, but it's an interface — custom binary framing is a config
-   change, not a fork.
-2. `beryl.register(channels, "room:*", new_channel())` — binds a topic
-   pattern to a channel definition. Call it as many times as you have
-   channel types; patterns can be exact, prefix (`room:*`), or
-   segment wildcards (`document:*:ops`).
+1. `beryl.child_spec(config, init:, update:)` — validates config and returns
+   the stable `Sockets` handle plus a child spec for YOUR supervision tree.
+   The codec argument is required: `wire.phoenix_codec()` opts into Phoenix
+   JSON and V2 binary framing; a custom codec is a config change, not a fork.
+2. The app supplies one `init` and one `update`. `update` routes `room:*`,
+   `document:*:*`, or any other namespace itself by pattern matching; there
+   is no registration step to replay after a runtime restart.
 3. `mist_transport.handler(...)` — the nice composition trick: it wraps
    the WebSocket upgrade AND your regular HTTP handler into one Mist
    handler. Upgrades on `/socket/websocket` go to beryl; every other
    request falls through to `http_fallback`. One server, one port,
    both jobs.
-4. `process.sleep_forever()` — keeps main alive for a demo. In a real
-   app you'd skip this and put beryl under your OTP supervision tree
-   via `beryl/supervisor.start` — there's a supervision guide.
+4. `process.sleep_forever()` — keeps this standalone demo alive. In a larger
+   application, the root supervisor or host server already owns process
+   lifetime.
 
 Caveat to say out loud so nobody copies it blindly: `let assert Ok(..)`
 is demo-grade "crash if startup fails" — which, per the supervision
@@ -369,55 +381,57 @@ pattern-match the Result properly.
 
 ---
 
-## Typed assigns: the compiler checks your callbacks
+## Typed models: the compiler checks every update
 
 ```gleam
-pub type RoomAssigns {
-  RoomAssigns(username: String)
+pub type Model {
+  Model(username: Option(String))
 }
 
-channel.new(fn(_topic, payload, socket) {
-  let username = // ...decode from join payload
-  channel.JoinOk(
-    reply: None,
-    socket: socket.set_assigns(socket, RoomAssigns(username:)),
-  )
-})
-|> channel.with_handle_in(fn(event, payload, socket) {
-  // socket is Socket(RoomAssigns) — guaranteed at compile time
-  channel.NoReply(socket)
-})
+pub type Msg {
+  UserLoaded(String)
+}
+
+fn update(model: Model, ev: event.Event(Msg)) {
+  case ev {
+    event.Join("room:" <> _, payload, ref) -> {
+      let username = decode_username(payload)
+      event.Next(Model(username: Some(username)), [
+        event.AcceptJoin(ref, None),
+      ])
+    }
+    event.Message(topic, "typing", _payload, _ref) ->
+      event.Next(model, [event.BroadcastFrom(topic, "typing", json.null())])
+    event.Info(UserLoaded(username)) ->
+      event.Next(Model(..model, username: Some(username)), [])
+    _ -> event.Next(model, [])
+  }
+}
 ```
 
 <!--
 This is the core pitch in one snippet — spend time here.
 
-"Assigns" = per-connection, per-topic state. In Phoenix it's a dynamic
-map: `socket.assigns.username` might be a string, might be missing —
-you find out at runtime. In beryl YOU define the type, and `Socket` is
-parameterized by it: this channel's sockets are `Socket(RoomAssigns)`.
+Phoenix assigns are a dynamic map. In beryl, YOU define the per-socket
+`Model`, and the runtime threads exactly that type through every `update`.
+Rename `username` and every use fails to compile.
 
 Walk the flow:
-- `channel.new(join_fn)` — the join callback is the front door for a
-  topic. It decodes the join payload with a proper decoder (untrusted
-  input is `Dynamic` — the type system forces you to validate at the
-  boundary, no silent coercion). It can REJECT the join, or accept and
-  SEED the assigns. After this point, well-typed state is guaranteed.
-- `with_handle_in` — handles client events. The socket parameter is
-  `Socket(RoomAssigns)`; rename a field and every callback that touches
-  it fails to compile. That's the whole pitch in one sentence.
-- Return values are plain data, not macros: `NoReply(socket)`,
-  `Reply(payload, socket)` to answer the sender, `Push(event, payload,
-  socket)` to send something unrelated. The compiler makes you return
-  exactly one of them — no forgotten replies.
+- Wire payloads are still untrusted `Dynamic`, so the join branch must decode
+  them. That is the validation boundary.
+- Once decoded, app state is an ordinary typed model. Returning
+  `Next(new_model, effects)` determines exactly what the next event sees.
+- Effects are plain exhaustive data: accept/reject, reply, push, broadcast,
+  kick. Their list order is wire order.
+- `Msg` is also the app's type. Other actors send through the socket's
+  `Sender(Msg)` and `update` receives `Info(UserLoaded(...))` with no
+  callback-level erasure.
+- Cleanup is an `event.Closed(topic, reason)` branch. Returning
+  `event.Stop(reason)` tears down the whole socket.
 
-Mention what's NOT on the slide (breadth without detail):
-- `with_handle_info` — messages from the SERVER side (other processes,
-  timers, domain actors), typed via a second type parameter.
-- `with_terminate` — cleanup when the client leaves or vanishes.
-- Socket-level `on_connect` hook — authentication ONCE per socket
-  before any join; the Phoenix `UserSocket.connect` analogue. Reject
-  there and no channel ever sees the connection.
+Socket-level `on_connect` remains the Phoenix `UserSocket.connect` analogue:
+it can reject the upgrade and attach validated metadata to `ConnectSeed`
+before `init` runs.
 
 TRANSITION: "Enough slides — let me show you the thing running."
 -->
@@ -444,15 +458,15 @@ THE SCRIPT (~2 minutes):
 1. Open two browser windows side by side, join the same room. Move the
    mouse — cursor appears live in the other window. Let it be visceral
    for a beat before explaining.
-2. "Every one of these tabs is one BEAM process on the server — a few
-   KB each. This pattern is why one node handles tens of thousands of
-   these." (Callback to the processes slide.)
+2. "Each tab is one WebSocket whose connection process handles edge work,
+   while Beryl's shared runtime holds a separate typed model for each socket."
+   (Callback to the processes slide without claiming an app actor per socket.)
 3. Point at the code: `broadcast_from` = everyone EXCEPT the sender —
    you don't need your own cursor echoed back.
 4. Open a third tab → presence list grows. CLOSE it abruptly →
-   presence shrinks. "Nobody sent a leave message. The process died,
-   the runtime noticed, terminate ran, presence updated. That's
-   supervision and monitoring doing the cleanup slide 3 hand-rolled."
+   presence shrinks. "The transport reported the disconnect, the runtime
+   delivered `Closed`, and the app-owned presence worker untracked the
+   session. Cleanup follows the current app-dispatch lifecycle."
 5. Mention the rate limiter: mousemove fires hundreds of events/sec;
    a token-bucket limiter tames the firehose per socket.
 
@@ -516,7 +530,7 @@ case. STOP before scenario 3 — that's the payoff for the next slide.
 Define CRDT without the acronym soup: a data structure whose MERGE
 operation is commutative, associative, and idempotent. Consequence:
 replicas can apply updates in any order, duplicated, delayed — and
-they still converge to the same value. No coordinator, no locks, no
+they still converge to the same value. No central lock and no
 "who wins" tiebreak at runtime. The convergence is a property of the
 math, not of the network behaving.
 
@@ -545,10 +559,12 @@ Seeing the same messages arrive in the same broken order and NOT break
 is the whole argument, animated.
 
 Implementation notes (brief): the CRDT comes from the `lattice_presence`
-package — beryl wraps it in an OTP actor per node and replicates diffs
-over PubSub. On the wire it emits Phoenix-compatible `presence_state` /
-`presence_diff` (joins/leaves maps), so the Phoenix JS Presence class
-renders beryl presence without modification.
+package — beryl wraps it in an OTP actor per node. When local state is dirty,
+periodic ticks publish the versioned **full CRDT state** over PubSub; peers
+merge it and surface non-empty local/merge diffs through `with_on_diff`.
+Those replication payloads are not the client wire format. The app separately
+emits Phoenix-compatible `presence_state` / `presence_diff` joins/leaves maps,
+so the Phoenix JS Presence class renders beryl presence without modification.
 
 LIKELY QUESTION: "Why not just track it in Postgres/Redis?" — answer:
 presence is high-churn ephemeral state; a DB adds a round-trip and a
@@ -561,29 +577,32 @@ problem — you've just moved where the conflict happens.
 ## Architecture: one slide
 
 ```
-WebSocket transport     beryl_mist  (swappable — public transport SPI)
+WebSocket transport     beryl_mist / beryl_ewe  (public transport SPI)
         │
-Wire codec              beryl/wire  (pluggable; ships Phoenix framing)
+Configured codec        beryl/wire  (required; Phoenix is one option)
         │
-Channels · Presence · Groups
+Shared runtime          per-socket models · topics · heartbeat · effects
         │
-Coordinator             one OTP actor: routing, registry, heartbeats
+App update              Join · Message · Binary · Closed · typed Info
         │
 PubSub                  Erlang pg — the ONLY cross-node layer
+
+Presence · Groups       independent, application-owned actors
 ```
 
 <!--
 Narrate it as THE LIFE OF ONE MESSAGE, top to bottom:
 1. A WebSocket frame arrives at the TRANSPORT (beryl_mist). The
-   transport knows sockets and bytes — nothing about channels.
-2. The CODEC decodes the frame into a typed message: topic, event,
-   payload, refs. Phoenix JSON framing by default; the codec is an
-   interface, so custom framing is a swap, not a fork.
-3. The COORDINATOR — one OTP actor per beryl instance — looks up which
-   registered handler matches the topic pattern, tracks which sockets
-   have joined what, and enforces heartbeats (dead-connection sweep).
-4. Your CHANNEL handler runs: typed callbacks from the earlier slides.
-5. If the handler broadcasts, PUBSUB fans it out over pg — including
+   transport owns the connection, edge limiter, and raw bytes — nothing about
+   the app model.
+2. The explicitly configured CODEC decodes text and, when available, binary
+   frames into topic/event/payload/ref values. Decoded binary keeps binary
+   telemetry classification; without a binary decoder it becomes a raw
+   `Binary` event.
+3. The RUNTIME — one shared OTP actor per app — tracks socket models, joined
+   topics, heartbeat state, and outstanding refs. There is no registry.
+4. Your app's one `update` function runs and returns an ordered effect list.
+5. If an effect broadcasts, PUBSUB fans it out over pg — including
    to subscribers on OTHER nodes — and each node's transports push to
    their local sockets.
 
@@ -596,11 +615,11 @@ Two sentences to deliver slowly, because they're the design thesis:
   different HTTP server, or a non-WebSocket transport, implements the
   same contract." (This is why the repo split into two packages.)
 
-LIKELY QUESTION: "Is the single coordinator actor a bottleneck?" —
-fair question; answer honestly: it's a routing/registry actor, the
-heavy per-connection work lives in per-socket processes, and it's
-per-node (not per-cluster). Published benchmarks for exactly this
-kind of thing are near the top of the post-1.0 roadmap.
+LIKELY QUESTION: "Is the shared runtime actor a bottleneck?" — fair question;
+answer honestly: app dispatch and local fan-out are serialized there. Frame
+size checks, message-rate shedding, and decoding happen in transport
+connection processes before enqueueing. The actor is per app/node, not
+per cluster; published capacity benchmarks remain important post-1.0 work.
 -->
 
 ---
@@ -725,7 +744,7 @@ in the browser is a perfectly good day-one setup.
 CLOSE — three beats:
 1. Recap in one breath: "The BEAM already solved real-time's hard
    problems — cheap processes, supervision, clustering. Gleam adds the
-   type system. beryl is just those two things pointed at channels."
+   type system. beryl is just those two things pointed at real-time sockets."
 2. The honest ask: the API is stable and 1.0 is here (or days away) —
    what shapes the roadmap now is real-world reports. The most useful
    thing anyone here can do is build something small with it and tell

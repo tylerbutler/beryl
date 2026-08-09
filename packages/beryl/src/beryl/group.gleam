@@ -4,6 +4,10 @@
 //// Useful for scenarios like broadcasting to all channels in a "team" or
 //// sending a system-wide notification.
 ////
+//// Groups are independent of the Beryl runtime. Start the actor from a
+//// long-lived application process and include it in the application's
+//// supervision arrangement as appropriate.
+////
 //// ## Example
 ////
 //// ```gleam

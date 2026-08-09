@@ -1,12 +1,12 @@
 ---
 title: Observability
-description: Telemetry events, coordinator snapshots, and application-owned metrics export.
+description: Telemetry events, runtime snapshots, and application-owned metrics export.
 ---
 
 Beryl provides two complementary signals:
 
 - opt-in `:telemetry` events for rates, outcomes, and operation durations;
-- `beryl/stats.snapshot` for point-in-time local coordinator state.
+- `beryl/stats.snapshot` for point-in-time local runtime state.
 
 Beryl deliberately does not depend on a Prometheus or OpenTelemetry exporter.
 Your application owns aggregation, labels, and export.
@@ -23,7 +23,7 @@ let config =
 
 Attach handlers before traffic begins. Erlang `:telemetry` invokes handlers
 **synchronously in the process emitting the event**. A slow handler therefore
-adds latency to a WebSocket connection process or the shared coordinator.
+adds latency to a WebSocket connection process or the shared runtime.
 Perform bounded counter/histogram updates or enqueue a small message and
 return immediately; never make network calls, format logs, or run expensive
 label conversion in the handler.
@@ -40,6 +40,12 @@ low-cardinality telemetry taxonomy:
 | `[:beryl, :channel, :join, :stop]` | `count`, `duration` | `outcome` |
 | `[:beryl, :channel, :message, :stop]` | `count`, `duration` | `kind`, `outcome`, `callback_result` |
 | `[:beryl, :broadcast, :stop]` | `count`, `duration`, `recipients`, `send_failures` | `origin` |
+
+The `:channel` event-name segment is retained for telemetry compatibility
+even though app-side dispatch now owns routing. For an app `update`,
+`callback_result` describes the first response-like effect (`reply`,
+`reply_error`, or `push`), `no_reply` when none is returned, and `stop` for a
+socket stop.
 
 `duration` uses the BEAM's native monotonic time unit. Convert it with
 `erlang:convert_time_unit(Value, native, microsecond)` (or another desired
@@ -123,10 +129,10 @@ and rate-limit rates, join/message callback failures, connection lifetime,
 broadcast send-failure ratio, and latency histograms. Alert on sustained rates
 and tail latency rather than individual events.
 
-## Coordinator snapshots
+## Runtime snapshots
 
 `beryl/stats.snapshot(channels)` requests a point-in-time view from the
-coordinator represented by `channels`:
+socket runtime represented by `channels`:
 
 ```gleam
 import beryl/stats
@@ -136,11 +142,10 @@ case stats.snapshot(channels) {
     let sockets = stats.connected_sockets(snapshot)
     let joined_pairs = stats.joined_socket_topic_pairs(snapshot)
     let topics = stats.active_topics(snapshot)
-    let handlers = stats.registered_channel_handlers(snapshot)
-    let mailbox = stats.coordinator_mailbox_length(snapshot)
+    let mailbox = stats.runtime_mailbox_length(snapshot)
     // Publish these gauges through the application's metrics system.
   }
-  Error(stats.CoordinatorUnavailable) -> {
+  Error(stats.RuntimeUnavailable) -> {
     // Supervisor restart or shutdown: report the scrape/poll as unavailable.
   }
   Error(stats.RequestTimedOut) -> {
@@ -149,14 +154,14 @@ case stats.snapshot(channels) {
 }
 ```
 
-The snapshot is local to one coordinator on one BEAM node; it is not a
+The snapshot is local to one socket runtime on one BEAM node; it is not a
 transactional cluster view or an event stream. Aggregate gauges across nodes
 in the monitoring system. `joined_socket_topic_pairs` counts memberships, so
 one socket joined to two topics contributes two. The mailbox value is captured
-when the coordinator services the request.
+when the runtime services the request.
 
 Poll no more frequently than roughly once per second. Polling itself sends a
-request through the coordinator, and synchronized polling across many
+request through the runtime, and synchronized polling across many
 scrapers can add load. Prefer one application poller per node, cache the latest
 successful snapshot for the scrape endpoint, add jitter, and expose snapshot
 age. Do not turn a timeout into a zero-valued snapshot: it indicates restart

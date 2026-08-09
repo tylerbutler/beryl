@@ -2,22 +2,22 @@
 
 ## Status
 
-Accepted (2026-07-22). Supersedes
-[ADR 0001](0001-type-erased-channel-registry.md). Implemented in two
-phases: the dispatch core landed alongside the channel-module API
-(with the showcase example rewritten as the acceptance gate), then the
-channel-module API, registry, and identity-FFI erasure were removed.
+Accepted (2026-07-21). Supersedes [ADR 0001](0001-type-erased-channel-registry.md).
 
 ## Context
 
 ADR 0001 chose type erasure given library-side dispatch, and its analysis
 surfaced two facts that motivate revisiting that premise:
 
-- App-side dispatch (ADR 0001's design 2) is the only considered design
-  with no unchecked casts anywhere — including the two residual coercions
-  ADR 0001 documents, which close structurally: `send_info` becomes an
-  ordinary typed `Subject(msg)` send, and connect-time assigns disappear
-  because the app's `init` produces the model.
+- App-side dispatch (ADR 0001's design 2) removes unchecked casts from the
+  application dispatch path. The two residual coercions ADR 0001 documents
+  close structurally: `send_info` becomes an ordinary typed `Subject(msg)`
+  send, and connect-time assigns disappear because the app's `init` produces
+  the model. A separate package-internal boundary remains in PubSub:
+  `pg` delivers frozen raw `Message(payload)` records to a process mailbox,
+  so `pubsub.selecting` first validates the record tag and four-field arity,
+  then uses the retained identity FFI to recover the subscriber's
+  compile-time payload type.
 - Nearly all library infrastructure keys on topic strings and wire data,
   not app types: rate limiting, connection limits, presence, pubsub, and
   the wire codec stay library-side under either model. The transport SPI
@@ -31,34 +31,57 @@ ergonomics. This ADR proposes trading those ergonomics for soundness and a
 single API, rather than maintaining two APIs (the layered variant ADR 0001
 deferred).
 
-## Decision (proposed)
+## Decision
 
 Replace the channel-module API entirely with app-side dispatch:
 
-- One entry point, roughly `beryl.start(config, init, update)`: the app
-  supplies `init: fn(ConnectInfo) -> model` and
+- One supervised entry point, `beryl.child_spec(config, init, update)
+  -> Result(#(Sockets, ChildSpecification(_)), ConfigError)`: the app
+  supplies `init: fn(ConnectInfo(msg)) -> #(model, List(Effect))` and
   `update: fn(model, Event(msg)) -> Next(model, msg)` per socket, and
   routes topics itself.
-- Callback returns become an effects list (reply, push, broadcast,
-  presence ops, stop), replacing today's one-action `HandleResult`.
-- Channel modules, the registry, and all identity-FFI erasure are removed.
+- Callback returns are an effects list (join acceptance/rejection, reply,
+  push, broadcast, and topic kick), replacing the old channel API's
+  one-action `HandleResult`. Presence effects are deferred to the later
+  async presence slice; stopping a socket remains a `Next` result.
+- Channel modules and the registry are removed, along with identity-FFI
+  erasure from socket dispatch. The validated raw PubSub coercion boundary described
+  above remains because Erlang `pg` delivers untyped mailbox terms.
 - Third-party functionality ships as embeddable `model`/`msg`/`update`
   triples that apps wire in with a wrapper variant — the composition
   pattern established by the Elm/Lustre ecosystem.
-- Abuse controls become declarative per-topic-pattern config at `start`.
+- Abuse controls are declarative per-topic-pattern config on `Config`,
+  supplied to `child_spec`.
+- Server-side sends to a joined socket go through a typed `Sender(msg)`
+  (`beryl/event.notify`), obtained from `ConnectInfo.self` — an ordinary
+  typed send, no erasure.
 
-API strawman, current-to-new mapping, and open questions:
-[socket-api-strawman](../design/socket-api-strawman.md).
+Final API, current-to-new mapping, and the resolution of every open
+question below: [socket API reference](../design/app-side-dispatch-reference.md).
 
 ## Consequences
 
 - Full breaking rewrite of the `packages/beryl` public API, docs, and
-  examples. Hex publishing is currently disabled, so external migration
-  cost is low today and grows with every release under the old model.
-- Transports are unaffected; the typed core sits behind the existing
-  frame-level SPI via closures captured at `start`.
+  examples. Hex publishing was disabled during the cutover, so external
+  migration cost was low and the old channel API (`beryl/channel`,
+  `beryl/socket`, `beryl/coordinator`, `beryl/supervisor`) was deleted
+  rather than deprecated.
+- The typed core stays behind a monomorphic frame-level SPI. Transports
+  capture the exact runtime pid, monitor it, and atomically install the
+  socket, closer, codec, and `ConnectSeed` with `admit_socket`.
 - Union-and-router boilerplate scales with channel count: zero for
   single-channel apps (use your types directly), linear otherwise.
-- The effects type is the main design risk (join-ack ordering, presence
-  interplay). Acceptance gate: the strawman survives those cases and one
-  real example app is rewritten to gauge boilerplate at scale.
+- The effects type carried the main join-ack ordering risk. Effects apply
+  strictly in list order within one runtime actor turn, so list order is
+  wire order. Presence integration is deliberately separate in Lane B:
+  synchronous presence work stays outside the shared runtime, while the
+  indivisible async read-model/effect bundle is deferred to a later slice.
+- Supervision is explicit through the sole runtime entry point:
+  `child_spec` returns the Beryl subtree (runtime plus an optional
+  connection limiter) for the caller's own supervisor. Beryl owns only
+  that subtree — supplied
+  presence/PubSub handles and separately started groups are borrowed, and
+  `stop` drains and terminates only the Beryl subtree, never the
+  application's root or siblings. See
+  [Supervision](/guides/supervision/) for the full contract, including what
+  state is lost when the supervised runtime restarts.
