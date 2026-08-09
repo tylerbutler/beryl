@@ -7,6 +7,7 @@
   // --- Config ---
   const THROTTLE_MS = 50; // 20fps cursor updates
   const CURSOR_TIMEOUT_MS = 5000; // Remove stale cursors after 5s
+  const REACTION_DURATION_MS = 1200;
 
   // --- State ---
   let mySocketId = null;
@@ -60,8 +61,87 @@
     cursor.el.style.transform = `translate(${x}px, ${y}px)`;
   });
 
-  // --- Send own cursor position ---
+  // --- Handle remote reactions ---
+  channel.on("reaction", (payload) => {
+    const { reaction, x, y } = payload;
+    if (
+      !["👍", "❤️", "😂", "🎉", "🔥"].includes(reaction) ||
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      x < 0 ||
+      x > 1 ||
+      y < 0 ||
+      y > 1
+    ) {
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    spawnReaction(reaction, x * rect.width, y * rect.height);
+  });
+
+  // --- DOM references and reaction state ---
   const canvas = document.getElementById("canvas");
+  const reactionToolbar = document.getElementById("reaction-toolbar");
+  const reactionButtons = Array.from(
+    reactionToolbar.querySelectorAll(".reaction-option")
+  );
+  let selectedReaction = "👍";
+
+  // --- Reaction toolbar ---
+
+  function setSelectedReaction(reaction) {
+    selectedReaction = selectedReaction === reaction ? null : reaction;
+    for (const button of reactionButtons) {
+      const selected = button.dataset.reaction === selectedReaction;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    }
+  }
+
+  for (const button of reactionButtons) {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setSelectedReaction(button.dataset.reaction);
+    });
+  }
+
+  canvas.addEventListener("click", (event) => {
+    if (!selectedReaction || event.target.closest("#reaction-toolbar")) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    spawnReaction(selectedReaction, x, y);
+    channel.push("reaction", {
+      reaction: selectedReaction,
+      x: x / rect.width,
+      y: y / rect.height,
+    });
+  });
+
+  function spawnReaction(reaction, x, y) {
+    const el = document.createElement("span");
+    el.className = "reaction-burst";
+    el.textContent = reaction;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.style.setProperty(
+      "--reaction-drift",
+      `${(Math.random() * 32 - 16).toFixed(1)}px`
+    );
+    el.style.setProperty(
+      "--reaction-scale",
+      (0.9 + Math.random() * 0.25).toFixed(2)
+    );
+
+    const cleanup = () => el.remove();
+    el.addEventListener("animationend", cleanup, { once: true });
+    setTimeout(cleanup, REACTION_DURATION_MS + 200);
+    canvas.appendChild(el);
+  }
+
+  // --- Send own cursor position ---
   let localCursorEl = null;
 
   function ensureLocalCursor() {

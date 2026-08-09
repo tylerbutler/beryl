@@ -55,6 +55,13 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
         <p class=\"hint\">Open this page in multiple tabs to see it in action.</p>
         <p class=\"powered-by\">Powered by <a href=\"https://github.com/tylerbutler/beryl\">beryl</a></p>
       </div>
+      <div id=\"reaction-toolbar\" role=\"toolbar\" aria-label=\"Choose reaction\">
+        <button class=\"reaction-option is-selected\" type=\"button\" data-reaction=\"👍\" aria-label=\"Thumbs up\" aria-pressed=\"true\">👍</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"❤️\" aria-label=\"Heart\" aria-pressed=\"false\">❤️</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"😂\" aria-label=\"Face with tears of joy\" aria-pressed=\"false\">😂</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"🎉\" aria-label=\"Party popper\" aria-pressed=\"false\">🎉</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"🔥\" aria-label=\"Fire\" aria-pressed=\"false\">🔥</button>
+      </div>
     </div>
     <aside id=\"sidebar\">
       <h2>Online</h2>

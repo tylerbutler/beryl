@@ -95,6 +95,187 @@ test.describe("Collaborative Cursors Demo", () => {
     });
   });
 
+  test.describe("Reaction toolbar", () => {
+    test("renders five accessible reactions with thumbs up selected", async ({
+      page,
+    }) => {
+      await page.goto("/");
+
+      const toolbar = page.getByRole("toolbar", { name: "Choose reaction" });
+      await expect(toolbar).toBeVisible();
+      await expect(toolbar.getByRole("button")).toHaveCount(5);
+      await expect(
+        toolbar.getByRole("button", { name: "Thumbs up" })
+      ).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("switches and clears the selected reaction", async ({ page }) => {
+      await page.goto("/");
+
+      const heart = page.getByRole("button", { name: "Heart" });
+      const thumbsUp = page.getByRole("button", { name: "Thumbs up" });
+      await heart.click();
+      await expect(heart).toHaveAttribute("aria-pressed", "true");
+      await expect(thumbsUp).toHaveAttribute("aria-pressed", "false");
+
+      await heart.click();
+      await expect(heart).toHaveAttribute("aria-pressed", "false");
+    });
+
+    test("spawns and removes the selected local reaction", async ({ page }) => {
+      await page.goto("/");
+
+      await page.locator("#canvas").click({ position: { x: 120, y: 140 } });
+      const reaction = page.locator("#canvas .reaction-burst");
+      await expect(reaction).toHaveText("👍");
+      await expect(reaction).toHaveCount(0, { timeout: 3_000 });
+    });
+
+    test("toolbar clicks do not spawn reactions", async ({ page }) => {
+      await page.goto("/");
+
+      await page.getByRole("button", { name: "Party popper" }).click();
+      await expect(page.locator("#canvas .reaction-burst")).toHaveCount(0);
+    });
+
+    test("canvas clicks do nothing after clearing selection", async ({
+      page,
+    }) => {
+      await page.goto("/");
+
+      await page.getByRole("button", { name: "Thumbs up" }).click();
+      await page.locator("#canvas").click({ position: { x: 100, y: 100 } });
+      await expect(page.locator("#canvas .reaction-burst")).toHaveCount(0);
+    });
+
+    test("keeps the selection active across rapid clicks", async ({ page }) => {
+      await page.goto("/");
+
+      const canvas = page.locator("#canvas");
+      await canvas.click({ position: { x: 100, y: 100 } });
+      await canvas.click({ position: { x: 140, y: 140 } });
+      await expect(page.locator("#canvas .reaction-burst")).toHaveCount(2);
+      await expect(
+        page.getByRole("button", { name: "Thumbs up" })
+      ).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("keeps the toolbar inside the canvas on mobile", async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({
+        viewport: { width: 375, height: 667 },
+      });
+      const page = await context.newPage();
+
+      try {
+        await page.goto("/");
+        const canvasBox = await page.locator("#canvas").boundingBox();
+        const toolbarBox = await page.locator("#reaction-toolbar").boundingBox();
+        expect(toolbarBox.x).toBeGreaterThanOrEqual(canvasBox.x);
+        expect(toolbarBox.x + toolbarBox.width).toBeLessThanOrEqual(
+          canvasBox.x + canvasBox.width
+        );
+      } finally {
+        await context.close();
+      }
+    });
+
+    test("uses the reduced-motion fade", async ({ browser }) => {
+      const context = await browser.newContext({ reducedMotion: "reduce" });
+      const page = await context.newPage();
+
+      try {
+        await page.goto("/");
+        await page.locator("#canvas").click({ position: { x: 100, y: 100 } });
+        const animationName = await page
+          .locator("#canvas .reaction-burst")
+          .evaluate((el) => getComputedStyle(el).animationName);
+        expect(animationName).toBe("reaction-fade");
+      } finally {
+        await context.close();
+      }
+    });
+  });
+
+  test.describe("Collaborative reactions", () => {
+    test("sends the selected reaction with normalized coordinates", async ({
+      page,
+    }) => {
+      const sentFrames = [];
+      page.on("websocket", (ws) => {
+        ws.on("framesent", (frame) => {
+          try {
+            const data = JSON.parse(frame.payload);
+            if (Array.isArray(data) && data[3] === "reaction") {
+              sentFrames.push(data);
+            }
+          } catch {
+            // ignore non-JSON frames
+          }
+        });
+      });
+
+      await gotoWithUsername(page, "Reactor");
+      await expect(page.locator("#user-list li")).toHaveCount(1, {
+        timeout: 10_000,
+      });
+
+      const canvas = page.locator("#canvas");
+      const box = await canvas.boundingBox();
+      await canvas.click({
+        position: { x: box.width * 0.25, y: box.height * 0.75 },
+      });
+      await expect.poll(() => sentFrames.length).toBeGreaterThan(0);
+
+      const payload = sentFrames[0][4];
+      expect(payload.reaction).toBe("👍");
+      expect(payload.x).toBeCloseTo(0.25, 2);
+      expect(payload.y).toBeCloseTo(0.75, 2);
+    });
+
+    test("broadcasts a reaction to another user at the same relative point", async ({
+      browser,
+    }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+
+      try {
+        await gotoWithUsername(page1, "Sender");
+        await expect(page1.locator("#user-list li")).toHaveCount(1, {
+          timeout: 10_000,
+        });
+        await gotoWithUsername(page2, "Watcher");
+        await expect(page1.locator("#user-list li")).toHaveCount(2, {
+          timeout: 10_000,
+        });
+
+        await page1.getByRole("button", { name: "Party popper" }).click();
+        const senderCanvas = page1.locator("#canvas");
+        const senderBox = await senderCanvas.boundingBox();
+        await senderCanvas.click({
+          position: { x: senderBox.width * 0.4, y: senderBox.height * 0.6 },
+        });
+
+        const remote = page2.locator("#canvas .reaction-burst");
+        await expect(remote).toHaveText("🎉", { timeout: 5_000 });
+
+        const watcherBox = await page2.locator("#canvas").boundingBox();
+        const position = await remote.evaluate((el) => ({
+          left: Number.parseFloat(el.style.left),
+          top: Number.parseFloat(el.style.top),
+        }));
+        expect(position.left).toBeCloseTo(watcherBox.width * 0.4, 0);
+        expect(position.top).toBeCloseTo(watcherBox.height * 0.6, 0);
+      } finally {
+        await context1.close();
+        await context2.close();
+      }
+    });
+  });
+
   test.describe("Static assets", () => {
     test("loads the stylesheet", async ({ page }) => {
       const response = await page.goto("/static/style.css");

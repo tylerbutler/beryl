@@ -16,6 +16,9 @@
   let myColor = null;
   let typingTimer = null;
   let isTyping = false;
+  let lobbyChannel = null;
+  let lobbyJoined = false;
+  let roomRefreshSequence = 0;
 
   // --- Username prompt ---
   const username = prompt("Choose a display name:", "User" + Math.floor(Math.random() * 1000)) || "Anonymous";
@@ -37,6 +40,53 @@
   const msgInput = document.getElementById("msg-input");
   const sendBtn = document.getElementById("send-btn");
   const userList = document.getElementById("user-list");
+  const basePath = document.getElementById("app").dataset.basePath || "";
+  const roomsUrl = `${basePath}/api/rooms`;
+
+  async function refreshRoomCounts() {
+    const requestSequence = ++roomRefreshSequence;
+
+    try {
+      const response = await fetch(roomsUrl);
+      if (!response.ok) {
+        throw new Error(`Room refresh failed with ${response.status}`);
+      }
+      const rooms = await response.json();
+      if (requestSequence !== roomRefreshSequence) return;
+      updateRoomCounts(rooms);
+    } catch (error) {
+      if (requestSequence === roomRefreshSequence) {
+        console.warn("Could not refresh room counts", error);
+      }
+    }
+  }
+
+  function updateRoomCounts(rooms) {
+    if (!Array.isArray(rooms)) return;
+
+    const counts = new Map();
+    for (const room of rooms) {
+      if (
+        room &&
+        typeof room.name === "string" &&
+        Number.isInteger(room.users) &&
+        room.users >= 0
+      ) {
+        counts.set(room.name, room.users);
+      }
+    }
+
+    document.querySelectorAll(".room-count").forEach((badge) => {
+      const roomName = badge.dataset.roomCount;
+      if (!counts.has(roomName)) return;
+      const users = counts.get(roomName);
+      badge.textContent = String(users);
+      badge.setAttribute(
+        "aria-label",
+        `${users} ${users === 1 ? "user" : "users"} in ${roomName}`
+      );
+    });
+  }
 
   // --- Room switching ---
   roomList.addEventListener("click", (e) => {
@@ -79,6 +129,9 @@
         mySocketId = resp.socket_id;
         myUsername = resp.username;
         myColor = resp.color;
+        if (lobbyJoined) {
+          refreshRoomCounts();
+        }
       })
       .receive("error", (resp) => {
         const msg = resp.error || resp.message || "Failed to join room";
@@ -243,11 +296,27 @@
     renderTypingIndicator();
   }, 1000);
 
-  // --- Auto-join first room ---
-  const firstRoom = document.querySelector(".room-item");
-  if (firstRoom) {
-    joinRoom(firstRoom.dataset.room);
+  // --- Lobby-first startup ---
+  function joinFirstRoom() {
+    const firstRoom = document.querySelector(".room-item");
+    if (firstRoom) {
+      joinRoom(firstRoom.dataset.room);
+    }
   }
+
+  lobbyChannel = socket.channel("lobby", {});
+  lobbyChannel.on("rooms_changed", () => {
+    refreshRoomCounts();
+  });
+  lobbyChannel.join()
+    .receive("ok", () => {
+      lobbyJoined = true;
+      joinFirstRoom();
+    })
+    .receive("error", (response) => {
+      console.warn("Failed to join lobby", response);
+      joinFirstRoom();
+    });
 
   // --- Utilities ---
   function escapeHtml(str) {

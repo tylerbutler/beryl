@@ -45,6 +45,8 @@ body {
 }
 
 .room-item {
+  display: flex;
+  align-items: center;
   padding: 0.4rem 1rem;
   cursor: pointer;
   color: #96989d;
@@ -67,7 +69,32 @@ body {
 
 .room-hash {
   color: #96989d;
-  margin-right: 2px;
+  margin-right: 4px;
+}
+
+.room-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-count {
+  min-width: 1.5rem;
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #35373c;
+  color: #b5bac1;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.room-item.active .room-count {
+  background: #2b2d31;
+  color: #fff;
 }
 
 .sidebar-footer {
