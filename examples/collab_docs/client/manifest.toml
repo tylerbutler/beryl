@@ -13,8 +13,8 @@ packages = [
 ]
 
 [requirements]
-gleam_json = { version = ">= 3.0.0 and < 4.0.0" }
-gleam_stdlib = { version = ">= 0.44.0 and < 2.0.0" }
+gleam_json = { version = ">= 3.1.0 and < 4.0.0" }
+gleam_stdlib = { version = ">= 1.0.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 lattice_core = { version = ">= 1.0.0 and < 2.0.0" }
 lattice_maps = { version = ">= 1.0.0 and < 2.0.0" }
