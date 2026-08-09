@@ -313,6 +313,7 @@ The same rule matters for replies:
 
 ## Next steps
 
+- [Coming from Phoenix](/guides/coming-from-phoenix/) — map channel modules, callbacks, and assigns onto this model
 - [WebSocket Transport](/guides/websocket/) — connect browsers and seed `ConnectInfo.seed.metadata`
 - [Presence](/guides/presence/) — keep synchronous presence work outside the shared runtime
 - [Runtime & Effect Interpreter](/architecture/runtime/) — runtime behavior, effect ordering, and teardown details
