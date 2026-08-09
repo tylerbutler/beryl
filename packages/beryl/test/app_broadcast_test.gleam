@@ -19,7 +19,7 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_runtime(scope: String) -> beryl.Channels {
+fn start_runtime(scope: String) -> beryl.Sockets {
   let ps = pubsub.start(pubsub.config_with_scope(scope))
   let assert Ok(channels) =
     h.start_app(
@@ -40,7 +40,7 @@ fn start_runtime(scope: String) -> beryl.Channels {
 }
 
 fn join_lobby(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   join_ref: String,
 ) -> process.Subject(String) {

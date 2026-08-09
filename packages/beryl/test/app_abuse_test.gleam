@@ -6,10 +6,11 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Message, Next}
+import beryl/event.{Join, Message}
 import beryl/wire
 import gleam/erlang/process
-import gleam/option.{None}
+import gleam/int
+
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -18,23 +19,8 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_system(
-  config: beryl.Config,
-  events: process.Subject(event.Event(Nil)),
-) -> beryl.Channels {
-  let assert Ok(channels) =
-    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
-      process.send(events, ev)
-      case ev {
-        Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-        _ -> Next(model, [])
-      }
-    })
-  channels
-}
-
 fn join_ok(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   events: process.Subject(event.Event(Nil)),
   frames: process.Subject(String),
   socket_id: String,
@@ -54,7 +40,7 @@ pub fn join_rate_limit_rejects_excess_joins_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_join_rate(per_second: 1, burst: 1)
-  let channels = start_system(config, events)
+  let channels = h.start_observed(config, events)
   let frames = h.connect(channels, "s1")
 
   // Burst of 1: the first join is accepted, the second is rejected before
@@ -77,7 +63,7 @@ pub fn message_rate_limit_sheds_flood_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 1, burst: 1)
-  let channels = start_system(config, events)
+  let channels = h.start_observed(config, events)
   let frames = h.connect(channels, "s1")
   join_ok(channels, events, frames, "s1", "room:a", "jr-1")
 
@@ -94,7 +80,7 @@ pub fn heartbeat_flood_is_message_rate_limited_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_message_rate(per_second: 1, burst: 1)
-  let channels = start_system(config, events)
+  let channels = h.start_observed(config, events)
   let frames = h.connect(channels, "s1")
 
   // The message limiter also guards protocol frames: only one heartbeat in
@@ -113,7 +99,7 @@ pub fn topic_cap_rejects_excess_join_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_max_joined_topics_per_socket(1)
-  let channels = start_system(config, events)
+  let channels = h.start_observed(config, events)
   let frames = h.connect(channels, "s1")
   join_ok(channels, events, frames, "s1", "room:a", "jr-1")
 
@@ -135,7 +121,7 @@ fn capped_config() -> beryl.Config {
 
 pub fn channel_bucket_cap_bounds_distinct_topics_test() {
   let events = process.new_subject()
-  let channels = start_system(capped_config(), events)
+  let channels = h.start_observed(capped_config(), events)
   let frames = h.connect(channels, "s1")
   join_ok(channels, events, frames, "s1", "room:a", "jr-a")
   join_ok(channels, events, frames, "s1", "room:b", "jr-b")
@@ -153,7 +139,7 @@ pub fn channel_bucket_cap_bounds_distinct_topics_test() {
 
 pub fn channel_bucket_cap_recovers_after_leave_test() {
   let events = process.new_subject()
-  let channels = start_system(capped_config(), events)
+  let channels = h.start_observed(capped_config(), events)
   let frames = h.connect(channels, "s1")
   join_ok(channels, events, frames, "s1", "room:a", "jr-a")
   join_ok(channels, events, frames, "s1", "room:b", "jr-b")
@@ -175,7 +161,7 @@ pub fn channel_bucket_cap_recovers_after_leave_test() {
 
 pub fn channel_bucket_cap_is_isolated_per_socket_test() {
   let events = process.new_subject()
-  let channels = start_system(capped_config(), events)
+  let channels = h.start_observed(capped_config(), events)
   let frames1 = h.connect(channels, "s1")
   let frames2 = h.connect(channels, "s2")
   join_ok(channels, events, frames1, "s1", "room:a", "jr-a")
@@ -192,4 +178,46 @@ pub fn channel_bucket_cap_is_isolated_per_socket_test() {
   let assert Ok(Message("room:x", _, _, _)) = process.receive(events, 500)
   h.push(channels, "s2", "room:y", "m", "r-y")
   let assert Ok(Message("room:y", _, _, _)) = process.receive(events, 500)
+}
+
+pub fn unjoined_events_do_not_consume_channel_bucket_cap_test() {
+  // Regression: messages on never-joined topics must not allocate a rate-limit
+  // bucket slot, so a socket that is flooded before joining a legitimate topic
+  // still has its full cap available.
+  let events = process.new_subject()
+  let channels =
+    h.start_observed(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_channel_rate(per_second: 100, burst: 100)
+        |> beryl.with_channel_rate_max_keys_per_socket(1),
+      events,
+    )
+  let frames = h.connect(channels, "s-sec")
+
+  // Flood 50 messages on never-joined topics; none should create a bucket.
+  flood_unjoined(channels, "s-sec", 50)
+  process.sleep(50)
+
+  // The single cap slot is still available for a legitimately joined topic.
+  join_ok(channels, events, frames, "s-sec", "room:real", "jr-real")
+  h.push(channels, "s-sec", "room:real", "client_event", "r-real")
+  let assert Ok(Message("room:real", _, _, _)) = process.receive(events, 500)
+}
+
+fn flood_unjoined(channels: beryl.Sockets, socket_id: String, n: Int) -> Nil {
+  case n <= 0 {
+    True -> Nil
+    False -> {
+      // Use null ref so the runtime does not enqueue an error reply frame;
+      // the flood should only probe whether bucket slots are consumed.
+      h.route(
+        channels,
+        socket_id,
+        "[null,null,\"room:unjoined-"
+          <> int.to_string(n)
+          <> "\",\"client_event\",{}]",
+      )
+      flood_unjoined(channels, socket_id, n - 1)
+    }
+  }
 }

@@ -14,7 +14,7 @@ pub fn health() -> EndpointResult {
   )
 }
 
-pub fn stats(channels: beryl.Channels) -> EndpointResult {
+pub fn stats(channels: beryl.Sockets) -> EndpointResult {
   case stats.snapshot(channels) {
     Error(error) -> stats_error(error)
     Ok(beryl_snapshot) ->
@@ -40,12 +40,8 @@ pub fn stats(channels: beryl.Channels) -> EndpointResult {
                     json.int(stats.active_topics(beryl_snapshot)),
                   ),
                   #(
-                    "registered_channel_handlers",
-                    json.int(stats.registered_channel_handlers(beryl_snapshot)),
-                  ),
-                  #(
-                    "coordinator_mailbox_length",
-                    json.int(stats.coordinator_mailbox_length(beryl_snapshot)),
+                    "runtime_mailbox_length",
+                    json.int(stats.runtime_mailbox_length(beryl_snapshot)),
                   ),
                 ]),
               ),
@@ -75,9 +71,8 @@ pub fn stats(channels: beryl.Channels) -> EndpointResult {
 
 pub fn stats_error(error: stats.SnapshotError) -> EndpointResult {
   case error {
-    stats.CoordinatorUnavailable ->
-      error_response(503, "coordinator_unavailable")
-    stats.RequestTimedOut -> error_response(504, "coordinator_timeout")
+    stats.RuntimeUnavailable -> error_response(503, "runtime_unavailable")
+    stats.RequestTimedOut -> error_response(504, "runtime_timeout")
   }
 }
 

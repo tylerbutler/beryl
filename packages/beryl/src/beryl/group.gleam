@@ -4,10 +4,6 @@
 //// Useful for scenarios like broadcasting to all channels in a "team" or
 //// sending a system-wide notification.
 ////
-//// When running beryl under `beryl/supervisor`, enable groups with
-//// `supervisor.with_groups` and obtain the handle from `supervisor.groups`
-//// instead of calling `start` directly.
-////
 //// ## Example
 ////
 //// ```gleam
@@ -68,7 +64,7 @@ pub opaque type Message {
   ListGroups(reply: Subject(List(String)))
   BroadcastToGroup(
     group_name: String,
-    channels: beryl.Channels,
+    channels: beryl.Sockets,
     event: String,
     payload: json.Json,
   )
@@ -87,30 +83,6 @@ pub fn start() -> Result(Groups, GroupStartError) {
   |> result.map_error(fn(error) {
     GroupActorStartFailed(beryl_error.from_actor_start_error(error))
   })
-}
-
-// nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
-/// Start the groups actor with a registered name. Package-internal: used by
-/// `beryl/supervisor`; end users get supervision via `supervisor.start`.
-@internal
-pub fn start_named(
-  name: process.Name(Message),
-) -> Result(actor.Started(Subject(Message)), actor.StartError) {
-  build_groups()
-  |> actor.named(name)
-  |> actor.start
-}
-
-// nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
-@internal
-pub fn from_subject(subject: Subject(Message)) -> Groups {
-  Groups(subject: subject)
-}
-
-// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
-@internal
-pub fn subject(groups: Groups) -> Subject(Message) {
-  groups.subject
 }
 
 fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {
@@ -179,7 +151,7 @@ pub fn list_groups(groups: Groups) -> List(String) {
 /// If the group doesn't exist, this is a silent no-op (fire and forget).
 pub fn broadcast(
   groups: Groups,
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   group_name: String,
   event: String,
   payload: json.Json,
@@ -288,7 +260,7 @@ fn handle_message(
 
 fn broadcast_to_topics(
   topics: Set(String),
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   event: String,
   payload: json.Json,
 ) -> Nil {

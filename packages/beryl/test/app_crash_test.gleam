@@ -28,7 +28,7 @@ pub type Msg {
 fn start_system(
   events: process.Subject(event.Event(Msg)),
   senders: process.Subject(event.Sender(Msg)),
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -52,7 +52,7 @@ fn start_system(
 }
 
 fn start() -> #(
-  beryl.Channels,
+  beryl.Sockets,
   process.Subject(event.Event(Msg)),
   process.Subject(event.Sender(Msg)),
 ) {
@@ -157,7 +157,7 @@ pub fn init_crash_leaves_socket_unregistered_test() {
     )
   let frames = process.new_subject()
   transport.admit_socket(
-    channels: channels,
+    sockets: channels,
     owner: transport.connection_owner(channels),
     socket_id: "s1",
     send: fn(message) {

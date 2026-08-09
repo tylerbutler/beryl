@@ -1,4 +1,4 @@
-//// Shared helpers for app-side dispatch (`beryl.start_app`) tests.
+//// Shared helpers for app-side dispatch (`beryl.child_spec`) tests.
 ////
 //// Sockets are driven through the public transport SPI so the tests
 //// exercise the same path a real transport uses. Outbound frames are
@@ -10,7 +10,7 @@ import beryl/event
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
-import gleam/option.{None}
+import gleam/option.{type Option, None}
 import gleam/otp/static_supervisor
 import gleam/result
 import gleeunit/should
@@ -29,10 +29,28 @@ pub fn start_app(
   Ok(sockets)
 }
 
+/// Start an app that forwards every event to `events` and accepts all
+/// joins.
+pub fn start_observed(
+  config: beryl.Config,
+  events: process.Subject(event.Event(Nil)),
+) -> beryl.Sockets {
+  let assert Ok(channels) =
+    start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
+      process.send(events, ev)
+      case ev {
+        event.Join(_, _, ref) ->
+          event.Next(model, [event.AcceptJoin(ref, None)])
+        _ -> event.Next(model, [])
+      }
+    })
+  channels
+}
+
 /// Connect a socket, returning the subject that captures its outbound
 /// text frames.
 pub fn connect(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
 ) -> process.Subject(String) {
   connect_with_seed_and_close(channels, socket_id, event.empty_seed(), fn() {
@@ -41,7 +59,7 @@ pub fn connect(
 }
 
 pub fn connect_with_close(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
@@ -53,23 +71,43 @@ pub fn connect_with_close(
 /// `ConnectInfo.seed`), returning the subject that captures its outbound
 /// text frames.
 pub fn connect_with_seed(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   seed: event.ConnectSeed,
 ) -> process.Subject(String) {
   connect_with_seed_and_close(channels, socket_id, seed, fn() { Nil })
 }
 
-fn connect_with_seed_and_close(
-  channels: beryl.Channels,
+/// Connect a socket with an explicit per-socket codec, returning the
+/// subject that captures its outbound text frames.
+pub fn connect_with_codec(
+  channels: beryl.Sockets,
   socket_id: String,
+  socket_codec: Option(codec.Codec),
+) -> process.Subject(String) {
+  admit(channels, socket_id, socket_codec, event.empty_seed(), fn() { Nil })
+}
+
+fn connect_with_seed_and_close(
+  channels: beryl.Sockets,
+  socket_id: String,
+  seed: event.ConnectSeed,
+  close: fn() -> Nil,
+) -> process.Subject(String) {
+  admit(channels, socket_id, None, seed, close)
+}
+
+fn admit(
+  channels: beryl.Sockets,
+  socket_id: String,
+  socket_codec: Option(codec.Codec),
   seed: event.ConnectSeed,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
   let owner = transport.connection_owner(channels)
   transport.admit_socket(
-    channels: channels,
+    sockets: channels,
     owner: owner,
     socket_id: socket_id,
     send: fn(message) {
@@ -77,7 +115,7 @@ fn connect_with_seed_and_close(
       Ok(Nil)
     },
     send_binary: fn(_data) { Ok(Nil) },
-    codec: None,
+    codec: socket_codec,
     seed: seed,
     close: close,
   )
@@ -87,14 +125,14 @@ fn connect_with_seed_and_close(
 
 /// Route a raw text frame the way a transport does: decode in the caller,
 /// then hand the decoded message to the runtime.
-pub fn route(channels: beryl.Channels, socket_id: String, raw: String) -> Nil {
+pub fn route(channels: beryl.Sockets, socket_id: String, raw: String) -> Nil {
   let assert Ok(msg) = codec.decode_text(transport.active_codec(channels))(raw)
   transport.route_decoded(channels, socket_id, msg)
 }
 
 /// Send a `phx_join` for a topic with the given join_ref/ref.
 pub fn join(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   topic_name: String,
   join_ref: String,
@@ -115,7 +153,7 @@ pub fn join(
 
 /// Send a user event on a topic with a reply ref.
 pub fn push(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   topic_name: String,
   event_name: String,

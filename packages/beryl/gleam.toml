@@ -8,9 +8,7 @@ target = "erlang"
 internal_modules = [
   "beryl/app_supervisor",
   "beryl/connection_limit",
-  "beryl/coordinator",
   "beryl/internal",
-  "beryl/internal/unsupervised",
   "beryl/log",
   "beryl/rate_limit",
   "beryl/telemetry",

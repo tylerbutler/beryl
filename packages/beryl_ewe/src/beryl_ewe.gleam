@@ -1,6 +1,6 @@
 //// Ewe WebSocket Transport - Direct Ewe integration for beryl
 ////
-//// Bridges Ewe's native WebSocket handling to the beryl coordinator, using
+//// Bridges Ewe's native WebSocket handling to the beryl runtime, using
 //// Ewe request and response types directly.
 ////
 //// It mirrors the `beryl_mist` package: the two transports expose the same
@@ -8,7 +8,7 @@
 //// either web server by choosing the matching transport package. Both consume
 //// only beryl's public `beryl/transport` SPI.
 
-import beryl/transport.{type Channels}
+import beryl/transport.{type Sockets}
 import ewe.{type Connection, type ResponseBody, type WebsocketConnection}
 import gleam/bit_array
 import gleam/bool
@@ -33,10 +33,9 @@ pub opaque type TransportConfig {
     /// whole connection a single time and can reject it before any channel
     /// join. Return `Ok(metadata)` to allow the connection and seed
     /// `ConnectSeed.metadata` (an ordered list of string pairs, visible to
-    /// the app's `init` via `ConnectInfo.seed`; channel-module systems ignore
-    /// it), or `Error(ConnectRejected)` to reject with a 403 Forbidden
-    /// response. When `None`, all connections are allowed and metadata
-    /// starts empty (`[]`).
+    /// the app's `init` via `ConnectInfo.seed`), or `Error(ConnectRejected)`
+    /// to reject with a 403 Forbidden response. When `None`, all connections
+    /// are allowed and metadata starts empty (`[]`).
     on_connect: Option(
       fn(Request(Connection)) -> Result(List(#(String, String)), ConnectError),
     ),
@@ -113,10 +112,9 @@ pub fn default_config(path: String) -> TransportConfig {
 /// The callback receives the HTTP request before the WebSocket upgrade and
 /// runs once per socket. Return `Ok(metadata)` to allow the connection and
 /// seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
-/// an app-dispatch system's `init` via `ConnectInfo.seed` (see
-/// `ConnectInfo.init`); channel-module systems ignore it — or
-/// `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
-/// response before any channel join occurs.
+/// the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
+/// reject the connection with a 403 Forbidden response before any channel
+/// join occurs.
 ///
 /// Callback order and duplicate keys are preserved verbatim in
 /// `ConnectSeed.metadata`; this transport never logs metadata values.
@@ -175,17 +173,17 @@ pub fn with_allow_all_origins(config: TransportConfig) -> TransportConfig {
 type ConnectionState {
   ConnectionState(
     socket_id: String,
-    channels: Channels,
+    channels: Sockets,
     connection_permit: Option(transport.ConnectionPermit),
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
-    /// coordinator.
+    /// runtime.
     codec: transport.Codec,
     telemetry: transport.Telemetry,
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
-    /// so a flooding socket cannot fill the coordinator's mailbox.
+    /// so a flooding socket cannot fill the runtime's mailbox.
     message_limiter: Option(transport.RateLimiter),
   )
 }
@@ -203,7 +201,7 @@ type SendRequest {
 /// ```gleam
 /// import beryl_ewe as ewe_transport
 ///
-/// fn handle_request(req: Request(Connection), channels: Channels) -> Response(ResponseBody) {
+/// fn handle_request(req: Request(Connection), channels: Sockets) -> Response(ResponseBody) {
 ///   use <- ewe_transport.upgrade(req, channels, ewe_transport.default_config("/socket"))
 ///   // Fall through to regular HTTP routing
 ///   case request.path_segments(req) {
@@ -235,7 +233,7 @@ type SendRequest {
 /// When `beryl.with_max_connections` is configured, this transport also
 /// enforces a node-wide ceiling on concurrent connections across all IPs,
 /// likewise returning `429` and rejecting the upgrade before allocating any
-/// long-lived channel/coordinator state. The two limits compose: a connection
+/// long-lived channel/runtime state. The two limits compose: a connection
 /// must be under both to be admitted. The node-wide ceiling bounds total
 /// resource use when a per-IP limit alone cannot (many distributed source
 /// addresses / IPv6 rotation). It is enforced per BEAM node, so across a
@@ -243,7 +241,7 @@ type SendRequest {
 /// use the load balancer's own controls for a cluster-wide cap.
 pub fn upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
   next: fn() -> Response(ResponseBody),
 ) -> Response(ResponseBody) {
@@ -258,7 +256,7 @@ pub fn upgrade(
 
 fn handle_matched_upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
 ) -> Response(ResponseBody) {
   let telemetry = transport.telemetry(channels, transport.Ewe)
@@ -392,7 +390,7 @@ fn forbidden() -> Response(ResponseBody) {
 
 fn run_connect_and_upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
   connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
@@ -475,7 +473,7 @@ pub fn is_websocket_request(request: Request(Connection)) -> Bool {
 /// |> ewe.start
 /// ```
 pub fn handler(
-  channels: Channels,
+  channels: Sockets,
   config: TransportConfig,
   http_fallback: fn(Request(Connection)) -> Response(ResponseBody),
 ) -> fn(Request(Connection)) -> Response(ResponseBody) {
@@ -497,7 +495,7 @@ pub fn handler(
 /// this function.
 pub fn upgrade_connection(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
 ) -> Response(ResponseBody) {
   let telemetry = transport.telemetry(channels, transport.Ewe)
   do_upgrade(
@@ -531,7 +529,7 @@ fn connect_seed(
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
-  channels: Channels,
+  channels: Sockets,
   connect_metadata: List(#(String, String)),
   connection_permit: Option(transport.ConnectionPermit),
   telemetry: transport.Telemetry,
@@ -589,7 +587,7 @@ fn do_upgrade(
 fn on_init(
   _connection: WebsocketConnection,
   base_selector: Selector(SendRequest),
-  channels: Channels,
+  channels: Sockets,
   seed: transport.ConnectSeed,
   connection_permit: Option(transport.ConnectionPermit),
   max_inbound_frame_bytes: Int,
@@ -606,11 +604,11 @@ fn on_init(
   // Generate unique socket ID
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
-  // Extend the selector Ewe provides so the coordinator can push outbound
+  // Extend the selector Ewe provides so the runtime can push outbound
   // frames to this connection's process as `ewe.User(SendRequest)` messages.
   let selector = process.select(base_selector, send_subject)
 
-  // Create send function that the coordinator can use
+  // Create send function that the runtime can use
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
     process.send(send_subject, SendText(text))
     Ok(Nil)
@@ -629,7 +627,7 @@ fn on_init(
         process.select_specific_monitor(selector, monitor, fn(_down) { Close })
       case
         transport.admit_socket(
-          channels: channels,
+          sockets: channels,
           owner: owner,
           socket_id: socket_id,
           send: send_fn,
@@ -646,23 +644,6 @@ fn on_init(
     transport.OwnerUnavailable -> {
       process.send(send_subject, Close)
       selector
-    }
-    transport.OwnerUnmonitored -> {
-      case
-        transport.admit_socket(
-          channels: channels,
-          owner: owner,
-          socket_id: socket_id,
-          send: send_fn,
-          send_binary: send_binary_fn,
-          codec: None,
-          seed: seed,
-          close: fn() { process.send(send_subject, Close) },
-        )
-      {
-        Ok(Nil) -> selector
-        Error(Nil) -> selector
-      }
     }
   }
 
@@ -682,7 +663,7 @@ fn on_init(
 
 /// Handle incoming WebSocket messages.
 ///
-/// Frames are routed to the coordinator for dispatch. Ewe does not deliver a
+/// Frames are routed to the runtime for dispatch. Ewe does not deliver a
 /// close message to the handler; cleanup happens in `on_close`.
 fn on_message(
   connection: WebsocketConnection,
@@ -740,7 +721,7 @@ fn on_message(
 
 /// Rate-check and decode a text frame in the connection process, so parse
 /// cost stays here and only valid, rate-admitted messages reach the shared
-/// coordinator.
+/// runtime.
 fn handle_inbound_text(
   state: ConnectionState,
   text: String,
@@ -793,7 +774,7 @@ fn handle_inbound_text(
 
 /// Rate-check and decode a binary frame in the connection process. Codecs
 /// without a binary decoder keep the raw `handle_binary` fan-out, routed
-/// through the coordinator.
+/// through the runtime.
 fn handle_inbound_binary(
   state: ConnectionState,
   data: BitArray,

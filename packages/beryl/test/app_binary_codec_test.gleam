@@ -22,11 +22,11 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_system() -> beryl.Channels {
+fn start_system() -> beryl.Sockets {
   start_with(beryl.config(binary_test_codec()))
 }
 
-fn start_with(config: beryl.Config) -> beryl.Channels {
+fn start_with(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
       case ev {
@@ -51,13 +51,13 @@ fn start_with(config: beryl.Config) -> beryl.Channels {
 }
 
 fn connect_binary(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
 ) -> #(process.Subject(String), process.Subject(BitArray)) {
   let text = process.new_subject()
   let binary = process.new_subject()
   transport.admit_socket(
-    channels: channels,
+    sockets: channels,
     owner: transport.connection_owner(channels),
     socket_id: socket_id,
     send: fn(message) {
@@ -83,7 +83,7 @@ fn recv_binary(subject: process.Subject(BitArray)) -> String {
 }
 
 fn route_binary(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   socket_id: String,
   raw: String,
 ) -> Nil {
@@ -135,6 +135,24 @@ pub fn binary_broadcast_uses_binary_send_test() {
   route_binary(channels, "s1", "E|cast-1|room:lobby|cast|{}")
   recv_binary(binary)
   |> should.equal("P|room:lobby|announcement|{\"body\":\"hello\"}")
+  process.receive(text, 50) |> should.be_error
+}
+
+pub fn undecodable_binary_frame_is_dropped_test() {
+  let channels = start_system()
+  let #(text, binary) = connect_binary(channels, "s1")
+  route_binary(channels, "s1", "J|join-ref|join-1|room:lobby|{}")
+  let _join_reply = recv_binary(binary)
+
+  // An undecodable binary frame is dropped by the decoder codec before
+  // dispatch: no reply, and nothing is fanned out raw.
+  route_binary(channels, "s1", "not-a-valid-frame")
+  process.receive(binary, 100) |> should.be_error
+
+  // A following valid event still routes and replies (liveness + ordering).
+  route_binary(channels, "s1", "E|event-1|room:lobby|ping|{}")
+  recv_binary(binary)
+  |> should.equal("R|event-1|room:lobby|ok|{\"ok\":true}")
   process.receive(text, 50) |> should.be_error
 }
 

@@ -4,10 +4,10 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Message, Next}
+import beryl/event.{Join, Message}
 import beryl/wire
 import gleam/erlang/process
-import gleam/option.{None}
+
 import gleeunit
 import gleeunit/should
 
@@ -15,23 +15,8 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_system(
-  config: beryl.Config,
-  events: process.Subject(event.Event(Nil)),
-) -> beryl.Channels {
-  let assert Ok(channels) =
-    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
-      process.send(events, ev)
-      case ev {
-        Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-        _ -> Next(model, [])
-      }
-    })
-  channels
-}
-
 fn drain_join(
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   events: process.Subject(event.Event(Nil)),
   frames: process.Subject(String),
   socket_id: String,
@@ -48,7 +33,7 @@ pub fn topic_rate_limits_matching_pattern_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_topic_rate(pattern: "room:*", per_second: 1, burst: 1)
-  let channels = start_system(config, events)
+  let channels = h.start_observed(config, events)
   let frames = h.connect(channels, "s1")
   drain_join(channels, events, frames, "s1", "room:a")
 
@@ -66,7 +51,7 @@ pub fn unmatched_topic_falls_back_to_global_channel_rate_test() {
     beryl.config(wire.phoenix_codec())
     |> beryl.with_topic_rate(pattern: "room:*", per_second: 1, burst: 1)
     |> beryl.with_channel_rate(per_second: 2, burst: 2)
-  let channels = start_system(config, events)
+  let channels = h.start_observed(config, events)
   let frames = h.connect(channels, "s1")
   drain_join(channels, events, frames, "s1", "other:a")
 
@@ -86,7 +71,7 @@ pub fn no_matching_limits_means_unlimited_test() {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_topic_rate(pattern: "room:*", per_second: 1, burst: 1)
-  let channels = start_system(config, events)
+  let channels = h.start_observed(config, events)
   let frames = h.connect(channels, "s1")
   drain_join(channels, events, frames, "s1", "other:a")
 

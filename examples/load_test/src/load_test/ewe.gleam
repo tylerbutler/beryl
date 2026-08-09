@@ -6,7 +6,7 @@ import load_test/http
 
 pub fn handle(
   request: Request(Connection),
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
 ) -> Response(ResponseBody) {
   case request.path_segments(request) {
     ["health"] -> from_endpoint(http.health())

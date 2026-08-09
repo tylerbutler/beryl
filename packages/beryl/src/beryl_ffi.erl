@@ -4,13 +4,13 @@
          admission_token_new/0, admission_token_cancel/1,
          admission_token_pending/1, admission_token_claim/1]).
 
-%% Identity function for type erasure
+%% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
 
 %% Run a callback, converting any crash (error/exit/throw) into an
-%% {error, Description} result so a crashing channel callback cannot take
-%% down the shared coordinator actor. The description is depth-limited and
-%% truncated so client-triggered crashes cannot bloat log metadata.
+%% {error, Description} result so a crashing callback cannot take down the
+%% shared runtime actor. The description is depth-limited and truncated so
+%% client-triggered crashes cannot bloat log metadata.
 rescue(Fun) ->
     try
         {ok, Fun()}

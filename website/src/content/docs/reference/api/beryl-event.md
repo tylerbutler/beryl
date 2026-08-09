@@ -1,6 +1,6 @@
 ---
 title: beryl/event
-description: App-side dispatch types for the `beryl.start_app` socket API (ADR 0002).
+description: Types for building app-side dispatch systems with `beryl.child_spec`.
 ---
 
 <!--
@@ -9,7 +9,7 @@ description: App-side dispatch types for the `beryl.start_app` socket API (ADR 0
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-App-side dispatch types for the `beryl.start_app` socket API (ADR 0002).
+Types for building app-side dispatch systems with `beryl.child_spec`.
 
  With app-side dispatch the application owns routing: beryl delivers
  every wire event for a socket to one `update` function, and the

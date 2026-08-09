@@ -1,4 +1,4 @@
-//// Core app-side dispatch tests (`beryl.start_app`): join accept/reject,
+//// Core app-side dispatch tests (`beryl.child_spec`): join accept/reject,
 //// fail-closed unanswered joins, replies, typed `Info` via `Sender`,
 //// duplicate-join replacement, and `Closed` delivery on leave/disconnect.
 
@@ -35,7 +35,7 @@ type JoinRaceModel {
   JoinRaceModel(previous: Option(Ref), mode: JoinRaceMode)
 }
 
-fn start_join_race(mode: JoinRaceMode) -> beryl.Channels {
+fn start_join_race(mode: JoinRaceMode) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -106,13 +106,13 @@ fn start_join_race(mode: JoinRaceMode) -> beryl.Channels {
   channels
 }
 
-/// A start_app system that accepts `room:*`, rejects `secret:*`, ignores
+/// A start system that accepts `room:*`, rejects `secret:*`, ignores
 /// `limbo:*` (leaving the join unanswered), replies ok/error to "echo" and
 /// "fail", pushes on `Info`, and forwards every event to an observer.
 fn start_observed(
   events: process.Subject(event.Event(Msg)),
   senders: process.Subject(event.Sender(Msg)),
-) -> beryl.Channels {
+) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -161,7 +161,7 @@ fn start_observed(
 }
 
 fn start_system() -> #(
-  beryl.Channels,
+  beryl.Sockets,
   process.Subject(event.Event(Msg)),
   process.Subject(event.Sender(Msg)),
 ) {
@@ -347,8 +347,8 @@ pub fn runtime_is_supervised_and_restarts_with_dispatch_intact_test() {
   let _reply = h.recv(frames)
 
   // Kill the runtime process outright: the internal supervisor must
-  // restart it with the app's init/update intact (socket state is
-  // dropped, matching coordinator restart semantics).
+  // restart it with the app's init/update intact (per-socket state is
+  // dropped on restart).
   let assert Ok(old_pid) = beryl.app_runtime_pid(channels)
   process.kill(old_pid)
   test_helpers.wait_until(
@@ -380,6 +380,6 @@ pub fn heartbeat_gets_reply_test() {
   reply |> string.contains("hb-1") |> should.be_true
 }
 
-fn transport_disconnect(channels: beryl.Channels, socket_id: String) -> Nil {
+fn transport_disconnect(channels: beryl.Sockets, socket_id: String) -> Nil {
   transport.socket_disconnected(channels, socket_id)
 }
