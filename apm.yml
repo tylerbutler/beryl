@@ -17,5 +17,11 @@ dependencies:
     # - git: https://github.com/obra/superpowers
     - DietrichGebert/ponytail
   mcp: []
+  lsp:
+    - name: gleam
+      command: gleam
+      args: ["lsp"]
+      extensionToLanguage:
+        ".gleam": gleam
 includes: auto
 scripts: {}

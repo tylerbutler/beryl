@@ -1,0 +1,13 @@
+{
+  "lspServers": {
+    "gleam": {
+      "command": "gleam",
+      "args": [
+        "lsp"
+      ],
+      "fileExtensions": {
+        ".gleam": "gleam"
+      }
+    }
+  }
+}
