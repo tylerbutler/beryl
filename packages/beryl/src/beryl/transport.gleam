@@ -23,7 +23,7 @@ import beryl/telemetry
 import beryl/wire/codec
 import gleam/bool
 import gleam/erlang/process
-import gleam/option.{type Option, Some}
+import gleam/option.{type Option}
 import gleam/result
 
 /// Runtime handle accepted by transport implementations.
@@ -363,20 +363,16 @@ pub fn admit_socket(
   seed seed: ConnectSeed,
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
-  let expected_owner = case owner {
-    OwnerAlive(pid) -> Ok(Some(pid))
+  case owner {
     OwnerUnavailable -> {
       close()
       Error(Nil)
     }
-  }
-  case expected_owner {
-    Error(Nil) -> Error(Nil)
-    Ok(expected_owner) ->
+    OwnerAlive(pid) ->
       case
         beryl.transport_admit_socket(
           sockets,
-          expected_owner,
+          pid,
           socket_id,
           send,
           send_binary,

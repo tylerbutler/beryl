@@ -6,15 +6,11 @@
 //// observation does not add meaningful runtime load.
 
 import beryl
+import beryl/runtime
 
 /// A point-in-time snapshot of local runtime state.
 pub opaque type Snapshot {
-  Snapshot(
-    connected_sockets: Int,
-    joined_socket_topic_pairs: Int,
-    active_topics: Int,
-    runtime_mailbox_length: Int,
-  )
+  Snapshot(inner: runtime.StatsSnapshot)
 }
 
 /// Errors returned while requesting a runtime snapshot.
@@ -35,37 +31,31 @@ pub type SnapshotError {
 ///
 /// Poll no more frequently than roughly once per second.
 pub fn snapshot(sockets: beryl.Sockets) -> Result(Snapshot, SnapshotError) {
-  case beryl.app_dispatch(sockets).stats() {
-    Error(False) -> Error(RuntimeUnavailable)
-    Error(True) -> Error(RequestTimedOut)
-    Ok(#(connected, joined, topics, mailbox)) ->
-      Ok(Snapshot(
-        connected_sockets: connected,
-        joined_socket_topic_pairs: joined,
-        active_topics: topics,
-        runtime_mailbox_length: mailbox,
-      ))
+  case beryl.runtime_stats(sockets) {
+    Error(runtime.RuntimeDown) -> Error(RuntimeUnavailable)
+    Error(runtime.RequestTimeout) -> Error(RequestTimedOut)
+    Ok(inner) -> Ok(Snapshot(inner))
   }
 }
 
 /// Return the number of sockets connected to the local runtime.
 pub fn connected_sockets(snapshot: Snapshot) -> Int {
-  snapshot.connected_sockets
+  snapshot.inner.connected_sockets
 }
 
 /// Return the number of joined socket/topic pairs.
 ///
 /// One socket joined to two topics contributes two pairs.
 pub fn joined_socket_topic_pairs(snapshot: Snapshot) -> Int {
-  snapshot.joined_socket_topic_pairs
+  snapshot.inner.joined_socket_topic_pairs
 }
 
 /// Return the number of topics with at least one local joined socket.
 pub fn active_topics(snapshot: Snapshot) -> Int {
-  snapshot.active_topics
+  snapshot.inner.active_topics
 }
 
 /// Return the runtime mailbox length when it serviced the request.
 pub fn runtime_mailbox_length(snapshot: Snapshot) -> Int {
-  snapshot.runtime_mailbox_length
+  snapshot.inner.runtime_mailbox_length
 }

@@ -10,7 +10,7 @@ import beryl/event
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
-import gleam/option.{None}
+import gleam/option.{type Option, None}
 import gleam/otp/static_supervisor
 import gleam/result
 import gleeunit/should
@@ -27,6 +27,24 @@ pub fn start_app(
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
   Ok(sockets)
+}
+
+/// Start an app that forwards every event to `events` and accepts all
+/// joins.
+pub fn start_observed(
+  config: beryl.Config,
+  events: process.Subject(event.Event(Nil)),
+) -> beryl.Sockets {
+  let assert Ok(channels) =
+    start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
+      process.send(events, ev)
+      case ev {
+        event.Join(_, _, ref) ->
+          event.Next(model, [event.AcceptJoin(ref, None)])
+        _ -> event.Next(model, [])
+      }
+    })
+  channels
 }
 
 /// Connect a socket, returning the subject that captures its outbound
@@ -60,9 +78,29 @@ pub fn connect_with_seed(
   connect_with_seed_and_close(channels, socket_id, seed, fn() { Nil })
 }
 
+/// Connect a socket with an explicit per-socket codec, returning the
+/// subject that captures its outbound text frames.
+pub fn connect_with_codec(
+  channels: beryl.Sockets,
+  socket_id: String,
+  socket_codec: Option(codec.Codec),
+) -> process.Subject(String) {
+  admit(channels, socket_id, socket_codec, event.empty_seed(), fn() { Nil })
+}
+
 fn connect_with_seed_and_close(
   channels: beryl.Sockets,
   socket_id: String,
+  seed: event.ConnectSeed,
+  close: fn() -> Nil,
+) -> process.Subject(String) {
+  admit(channels, socket_id, None, seed, close)
+}
+
+fn admit(
+  channels: beryl.Sockets,
+  socket_id: String,
+  socket_codec: Option(codec.Codec),
   seed: event.ConnectSeed,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
@@ -77,7 +115,7 @@ fn connect_with_seed_and_close(
       Ok(Nil)
     },
     send_binary: fn(_data) { Ok(Nil) },
-    codec: None,
+    codec: socket_codec,
     seed: seed,
     close: close,
   )

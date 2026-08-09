@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "pg-based PubSub for multi-node broadcast fan-out and presence replication. `PubSub`/`Message` are generic over a `payload` type — broadcasts travel as native BEAM terms, with no forced JSON encoding — and `pubsub.selecting` lets any gleam_erlang/gleam_otp actor receive them through its own `Selector` without touching raw process messages. The wire shape is frozen per `payload` type across the trusted Erlang cluster boundary."

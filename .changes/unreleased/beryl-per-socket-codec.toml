@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "Added the `codec` argument to `transport.admit_socket`, letting one runtime serve connections with different wire formats while sharing topics and PubSub. Passing `None` uses the configured codec."

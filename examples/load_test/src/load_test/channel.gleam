@@ -38,7 +38,7 @@ pub fn update(
   }
 }
 
-pub fn message_effects(
+fn message_effects(
   presence: session_presence.Tracker,
   topic: String,
   event_name: String,

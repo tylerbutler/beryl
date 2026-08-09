@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "beryl",
+  "description": "Local plugins for the beryl workspace",
+  "owner": {
+    "name": "Tyler Butler",
+    "email": "tyler@tylerbutler.com"
+  },
+  "plugins": [
+    {
+      "name": "gleam-lsp",
+      "description": "Gleam language server for Claude Code",
+      "source": "./"
+    }
+  ]
+}

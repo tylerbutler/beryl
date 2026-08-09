@@ -267,12 +267,6 @@ pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
 
-// nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
-@internal
-pub fn from_subject(subject: Subject(Message)) -> Presence {
-  Presence(subject: subject)
-}
-
 // nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
 @internal
 pub fn subject(presence: Presence) -> Subject(Message) {
@@ -287,19 +281,6 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
   |> result.map_error(fn(error) {
     PresenceStartFailed(beryl_error.from_actor_start_error(error))
   })
-}
-
-// nolint: unused_exports -- package-internal constructor for supervised presence; hidden from public docs with @internal
-/// Start the presence actor with a registered name, for embedding the
-/// presence actor under an application's own supervision tree.
-@internal
-pub fn start_named(
-  config: Config,
-  name: process.Name(Message),
-) -> Result(actor.Started(Subject(Message)), actor.StartError) {
-  build_presence(config)
-  |> actor.named(name)
-  |> actor.start
 }
 
 fn build_presence(

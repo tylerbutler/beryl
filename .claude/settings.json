@@ -14,6 +14,81 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "commandWindows": "if (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\ponytail-activate.js\" }",
+            "statusMessage": "Loading ponytail mode...",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/ponytail/hooks/ponytail-activate.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Loading ponytail mode...",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/ponytail/hooks/ponytail-activate.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "commandWindows": "if (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\ponytail-subagent.js\" }",
+            "statusMessage": "Loading ponytail mode...",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/ponytail/hooks/ponytail-subagent.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Loading ponytail mode...",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/ponytail/hooks/ponytail-subagent.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "commandWindows": "if (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\ponytail-mode-tracker.js\" }",
+            "statusMessage": "Tracking ponytail mode...",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/ponytail/hooks/ponytail-mode-tracker.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Tracking ponytail mode...",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/ponytail/hooks/ponytail-mode-tracker.js\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

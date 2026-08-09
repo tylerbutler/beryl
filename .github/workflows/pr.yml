@@ -2,7 +2,7 @@ name: PR Validation
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:
   pull-requests: write
@@ -47,8 +47,27 @@ jobs:
       # The release PR (branch release/pending) consumes all unreleased
       # fragments into the CHANGELOGs, so it can never satisfy this check.
       - name: Check changelog fragments
+        id: changelog
         if: github.head_ref != 'release/pending'
+        # Keep going on a failed check so the comment below still reports why.
+        continue-on-error: true
         run: |
           trellis changelog check \
             --base ${{ github.event.pull_request.base.sha }} \
-            --head ${{ github.event.pull_request.head.sha }}
+            --head ${{ github.event.pull_request.head.sha }} \
+            --format github >> "$GITHUB_OUTPUT"
+
+      # `--edit-last --create-if-none` makes this a sticky comment: one
+      # comment per PR, rewritten on every push.
+      - name: Comment changelog preview
+        if: steps.changelog.outputs.preview != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW: ${{ steps.changelog.outputs.preview }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --edit-last --create-if-none --body "$PREVIEW"
+
+      - name: Fail on missing changelog fragments
+        if: steps.changelog.outcome == 'failure'
+        run: exit 1
