@@ -1,13 +1,13 @@
 lockfile_version: '1'
-generated_at: '2026-08-07T20:56:25.818499+00:00'
+generated_at: '2026-08-09T00:01:13.296768+00:00'
 apm_version: 0.28.0
 dependencies:
 - repo_url: dietrichgebert/ponytail
   materialization_repo_url: DietrichGebert/ponytail
   name: ponytail
   host: github.com
-  resolved_commit: 16f29800fd2681bdf24f3eb4ccffe38be3baec6b
-  version: 4.8.4
+  resolved_commit: 2ed6c52c9d7e5e56942508591085fd45dea277d3
+  version: 2ed6c52
   package_type: marketplace_plugin
   deployed_files:
   - .agents/skills/ponytail
@@ -64,7 +64,7 @@ dependencies:
     .claude/hooks/ponytail/hooks/ponytail-config.js: sha256:0a8daf96cf9ac703dc4cb7b5065253567e513c951d60b8eb94a0fe727514aeca
     .claude/hooks/ponytail/hooks/ponytail-instructions.js: sha256:23c050103f28dbe6bad953ae21d98cd06d720a20f33d4716e9de419f947d495e
     .claude/hooks/ponytail/hooks/ponytail-mode-tracker.js: sha256:5d1a960ff01b73f651ec0242052a8cf1e064cb88147806bf6e13f92798aca251
-    .claude/hooks/ponytail/hooks/ponytail-runtime.js: sha256:80e4a13db4eca13f8cfca5237a46c34220c7c1f9ec841297191c0a46e49ca33e
+    .claude/hooks/ponytail/hooks/ponytail-runtime.js: sha256:02fa6127cf6c4b65a7b07b66541677ea587a0691802b6d1d2be2419bccea9110
     .claude/hooks/ponytail/hooks/ponytail-statusline.ps1: sha256:6138f15bc7651ee7e5ced2a2a2280f5c810d58cad3e9f3252c628f4c923e48c9
     .claude/hooks/ponytail/hooks/ponytail-statusline.sh: sha256:f1dbfa5997a5d4b5339619709053eff557ab16d71af75eb3041c3d3e3dca42ec
     .claude/hooks/ponytail/hooks/ponytail-subagent.js: sha256:7f6bee86702a488d29ef0dcaabf424bbe2aca345a6a642319d43a1fe0276792e
@@ -79,17 +79,16 @@ dependencies:
     .github/hooks/scripts/ponytail/hooks/ponytail-config.js: sha256:0a8daf96cf9ac703dc4cb7b5065253567e513c951d60b8eb94a0fe727514aeca
     .github/hooks/scripts/ponytail/hooks/ponytail-instructions.js: sha256:23c050103f28dbe6bad953ae21d98cd06d720a20f33d4716e9de419f947d495e
     .github/hooks/scripts/ponytail/hooks/ponytail-mode-tracker.js: sha256:5d1a960ff01b73f651ec0242052a8cf1e064cb88147806bf6e13f92798aca251
-    .github/hooks/scripts/ponytail/hooks/ponytail-runtime.js: sha256:80e4a13db4eca13f8cfca5237a46c34220c7c1f9ec841297191c0a46e49ca33e
+    .github/hooks/scripts/ponytail/hooks/ponytail-runtime.js: sha256:02fa6127cf6c4b65a7b07b66541677ea587a0691802b6d1d2be2419bccea9110
     .github/hooks/scripts/ponytail/hooks/ponytail-statusline.ps1: sha256:6138f15bc7651ee7e5ced2a2a2280f5c810d58cad3e9f3252c628f4c923e48c9
     .github/hooks/scripts/ponytail/hooks/ponytail-statusline.sh: sha256:f1dbfa5997a5d4b5339619709053eff557ab16d71af75eb3041c3d3e3dca42ec
     .github/hooks/scripts/ponytail/hooks/ponytail-subagent.js: sha256:7f6bee86702a488d29ef0dcaabf424bbe2aca345a6a642319d43a1fe0276792e
-  content_hash: sha256:44264185d4a65991e96fe785ab209f9c447f5878f675d294fe2e85ca61e711c3
-  declared_license: MIT
+  content_hash: sha256:17a5d405c7a1b9ef17969bc14deacaa78ae420fb453c0f2b1f7170d530e55b26
 - repo_url: juliusbrussee/caveman
   materialization_repo_url: JuliusBrussee/caveman
   name: caveman-commit
   host: github.com
-  resolved_commit: ec83e5bace4c20484d704dea21e12fc4eb94e9aa
+  resolved_commit: 11ddc0c9813c8f75365cd5be2f753df08712f154
   version: unknown
   virtual_path: skills/caveman-commit
   is_virtual: true
@@ -161,7 +160,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:80e4a13db4eca13f8cfca5237a46c34220c7c1f9ec841297191c0a46e49ca33e
+  content_hash: sha256:02fa6127cf6c4b65a7b07b66541677ea587a0691802b6d1d2be2419bccea9110
 - kind: project-relative
   target: claude
   value: .claude/hooks/ponytail/hooks/ponytail-statusline.ps1
@@ -512,7 +511,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:80e4a13db4eca13f8cfca5237a46c34220c7c1f9ec841297191c0a46e49ca33e
+  content_hash: sha256:02fa6127cf6c4b65a7b07b66541677ea587a0691802b6d1d2be2419bccea9110
 - kind: project-relative
   target: copilot
   value: .github/hooks/scripts/ponytail/hooks/ponytail-statusline.ps1
@@ -540,3 +539,13 @@ deployments:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
   content_hash: sha256:7f6bee86702a488d29ef0dcaabf424bbe2aca345a6a642319d43a1fe0276792e
+lsp_servers:
+- gleam
+lsp_configs:
+  gleam:
+    name: gleam
+    command: gleam
+    args:
+    - lsp
+    extensionToLanguage:
+      .gleam: gleam

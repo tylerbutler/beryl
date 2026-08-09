@@ -198,6 +198,31 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`
 
 See `.commitlintrc.json` for configuration.
 
+## Editor / LSP Setup
+
+The Gleam language server is wired up two ways:
+
+- `.lsp.json` / `.github/lsp.json` — materialized by `apm` from the `lsp`
+  entry in `apm.yml`'s `dependencies` (`gleam lsp`, `.gleam` → `gleam`), for
+  targets that discover root-level LSP config (e.g. Copilot).
+- `.claude-plugin/marketplace.json` + `.claude-plugin/plugin.json` — a local
+  Claude Code plugin (`gleam-lsp@beryl`) with `lspServers` inlined. Claude
+  Code's `getAllLspServers()` only reads enabled plugins' manifests — there's
+  no project-root or user-settings discovery path — so this plugin is what
+  actually registers the LSP for Claude Code.
+
+Plugin marketplace registration and enablement state lives in the user's
+global `~/.claude/plugins/known_marketplaces.json` and
+`installed_plugins.json`, never in the repo, so it can't be checked in. Each
+clone needs a one-time:
+
+```bash
+claude plugin marketplace add ./
+claude plugin install gleam-lsp@beryl
+```
+
+LSP tools become available on the next session start.
+
 ## Additional Documentation
 
 - **DEV.md**: Detailed development workflows and guidelines

@@ -1,0 +1,14 @@
+{
+  "name": "gleam-lsp",
+  "description": "Gleam language server for Claude Code",
+  "version": "1.0.0",
+  "lspServers": {
+    "gleam": {
+      "command": "gleam",
+      "args": ["lsp"],
+      "extensionToLanguage": {
+        ".gleam": "gleam"
+      }
+    }
+  }
+}
