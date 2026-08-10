@@ -22,11 +22,11 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl`](/reference/api/beryl/) | Beryl - Type-safe real-time communication |
 | [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket via |
 | [`beryl/error`](/reference/api/beryl-error/) | Shared beryl-owned error helpers. |
-| [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.child_spec`. |
 | [`beryl/group`](/reference/api/beryl-group/) | Channel Groups - Named collections of topics for multi-topic broadcasting |
 | [`beryl/presence`](/reference/api/beryl-presence/) | Presence - Distributed presence tracking backed by a CRDT |
 | [`beryl/presence/wire`](/reference/api/beryl-presence-wire/) | Phoenix-compatible wire encoding for presence diffs. |
 | [`beryl/pubsub`](/reference/api/beryl-pubsub/) | PubSub - Distributed publish/subscribe using Erlang pg |
+| [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.child_spec`. |
 | [`beryl/stats`](/reference/api/beryl-stats/) | Local runtime statistics. |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Pattern matching for topic routing. |
 | [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |

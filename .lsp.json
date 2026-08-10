@@ -1,0 +1,11 @@
+{
+  "gleam": {
+    "command": "gleam",
+    "args": [
+      "lsp"
+    ],
+    "extensionToLanguage": {
+      ".gleam": "gleam"
+    }
+  }
+}

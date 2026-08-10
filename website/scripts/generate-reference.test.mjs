@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -245,4 +245,34 @@ test("reports a helpful error when the docs JSON is missing", async () => {
 			/gleam docs build/,
 		);
 	});
+});
+
+test("ignores build-only directories left by removed packages", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "beryl-ref-discovery-"));
+	try {
+		const packageDir = path.join(dir, "packages", "beryl");
+		const docsDir = path.join(packageDir, "build", "dev", "docs", "beryl");
+		const outputDir = path.join(dir, "out");
+		await mkdir(docsDir, { recursive: true });
+		await mkdir(path.join(dir, "packages", "removed_package", "build"), {
+			recursive: true,
+		});
+		await writeFile(
+			path.join(docsDir, "package-interface.json"),
+			JSON.stringify(fixture),
+		);
+
+		const result = await generateReference({
+			workspaceRoot: dir,
+			workspacePackages: [
+				{ name: "beryl", path: "packages/beryl" },
+				{ name: "example", path: "examples/example" },
+			],
+			outputDir,
+		});
+
+		assert.equal(result.moduleCount, 2);
+	} finally {
+		await rm(dir, { force: true, recursive: true });
+	}
 });
