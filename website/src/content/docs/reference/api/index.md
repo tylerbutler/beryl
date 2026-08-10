@@ -15,7 +15,7 @@ This reference is generated from Gleam's docs metadata for `beryl`, `beryl_ewe`,
 Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no `hexdocs.pm` listing.
 :::
 
-## `beryl` `0.0.1`
+## `beryl` `0.2.0`
 
 | Module | Description |
 |---|---|
@@ -33,13 +33,13 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
 
-## `beryl_ewe` `0.0.1`
+## `beryl_ewe` `0.1.1`
 
 | Module | Description |
 |---|---|
 | [`beryl_ewe`](/reference/api/beryl_ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
 
-## `beryl_mist` `0.0.1`
+## `beryl_mist` `0.2.0`
 
 | Module | Description |
 |---|---|
