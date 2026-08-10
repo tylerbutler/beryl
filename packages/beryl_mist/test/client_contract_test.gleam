@@ -337,8 +337,7 @@ fn receive_terminated(
   topic: String,
 ) -> Result(socket.StopReason, Nil) {
   case process.receive(events, 500) {
-    Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic ->
-      Ok(reason)
+    Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic -> Ok(reason)
     _ -> Error(Nil)
   }
 }
