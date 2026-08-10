@@ -7,8 +7,8 @@
 # You should check this file into your source control repository.
 
 packages = [
-  { name = "beryl", version = "0.0.1", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "telemetry"], source = "local", path = "../../packages/beryl" },
-  { name = "beryl_mist", version = "0.0.1", build_tools = ["gleam"], requirements = ["beryl", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "mist"], source = "local", path = "../../packages/beryl_mist" },
+  { name = "beryl", version = "0.2.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "telemetry"], source = "local", path = "../../packages/beryl" },
+  { name = "beryl_mist", version = "0.2.0", build_tools = ["gleam"], requirements = ["beryl", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "mist"], source = "local", path = "../../packages/beryl_mist" },
   { name = "chatrooms", version = "0.1.0", build_tools = ["gleam"], requirements = ["beryl", "beryl_mist", "example_helpers", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "mist"], source = "local", path = "../chatrooms" },
   { name = "collab_docs", version = "0.1.0", build_tools = ["gleam"], requirements = ["beryl", "beryl_mist", "example_helpers", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_core", "lattice_maps", "mist"], source = "local", path = "../collab_docs" },
   { name = "cursors", version = "0.1.0", build_tools = ["gleam"], requirements = ["beryl", "beryl_mist", "envoy", "example_helpers", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "mist"], source = "local", path = "../cursors" },
