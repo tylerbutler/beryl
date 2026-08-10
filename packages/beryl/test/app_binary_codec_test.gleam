@@ -5,7 +5,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next, ReplyOk}
+import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next, ReplyOk}
 import beryl/transport
 import beryl/wire/codec
 import gleam/bit_array
@@ -69,7 +69,7 @@ fn connect_binary(
       Ok(Nil)
     },
     codec: None,
-    seed: event.empty_seed(),
+    seed: socket.empty_seed(),
     close: fn() { Nil },
   )
   |> should.equal(Ok(Nil))

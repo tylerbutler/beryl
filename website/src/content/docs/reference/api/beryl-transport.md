@@ -159,7 +159,7 @@ pub type ConnectionPermit = beryl.ConnectionPermit
 Connection metadata delivered to the app's `init`.
 
 ```gleam
-pub type ConnectSeed = event.ConnectSeed
+pub type ConnectSeed = socket.ConnectSeed
 ```
 
 ### `DecodeError`
@@ -225,7 +225,7 @@ pub fn admit_socket(
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   codec: option.Option(codec.Codec),
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
   close: fn() -> Nil
 ) -> Result(Nil, Nil)
 ```
@@ -248,7 +248,7 @@ pub fn connect_seed(
   query: List(#(String, String)),
   headers: List(#(String, String)),
   metadata: List(#(String, String))
-) -> event.ConnectSeed
+) -> socket.ConnectSeed
 ```
 
 ### `connection_owner`

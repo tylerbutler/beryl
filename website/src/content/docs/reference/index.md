@@ -20,8 +20,8 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | Module | What it does | When to use it |
 |---|---|---|
 | `beryl` | Top-level app-side dispatch lifecycle, config builders, and broadcast helpers | Entry point for starting/stopping a Beryl socket system |
-| `beryl/event` | `Event`, `Next`, `Effect`, `ConnectInfo`, and `Sender` types | Writing your app's `init` and `update` functions |
-| `beryl/bridge` | Forward an external OTP actor's message stream into `event.Info(...)` | Bridging domain actors to one socket without hand-rolled forwarders |
+| `beryl/socket` | `Input`, `Next`, `Effect`, `ConnectInfo`, and `Sender` types | Writing your app's `init` and `update` functions |
+| `beryl/bridge` | Forward an external OTP actor's message stream into `socket.Info(...)` | Bridging domain actors to one socket without hand-rolled forwarders |
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
 | `beryl/pubsub` | Distributed PubSub backed by Erlang `pg`, with typed subscribers and topic joins/leaves | Multi-node fan-out, cluster broadcasts, custom background consumers |
 | `beryl/presence` | OTP actor wrapping the presence CRDT, plus opaque `Diff` accessors | Tracking who is online |
@@ -37,14 +37,14 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 
 | Goal | API | Notes |
 |---|---|---|
-| Accept a join | `event.AcceptJoin(ref, reply)` from `event.Join` | Sends the join `phx_reply` and subscribes the socket to the topic |
-| Reject a join | `event.RejectJoin(ref, reason)` from `event.Join` | Fails the join immediately; unanswered joins are rejected automatically too |
-| Reply to an incoming message | `event.ReplyOk(ref, payload)` or `event.ReplyError(ref, payload)` from `event.Message(..., Some(ref))` | Sends `phx_reply`; replies are keyed by ref, not by event name |
-| Push to the current socket only | `event.Push(topic, event, payload)` | Server-originated push on a topic this socket already joined |
-| No response | `event.Next(model, [])` | Continue without outgoing frames or side effects |
-| Broadcast to all sockets on a topic | `event.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
-| Broadcast, excluding sender | `event.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
-| Send a typed server-side message to one socket | `event.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `event.Info(message)` |
+| Accept a join | `socket.AcceptJoin(ref, reply)` from `socket.Join` | Sends the join `phx_reply` and subscribes the socket to the topic |
+| Reject a join | `socket.RejectJoin(ref, reason)` from `socket.Join` | Fails the join immediately; unanswered joins are rejected automatically too |
+| Reply to an incoming message | `socket.ReplyOk(ref, payload)` or `socket.ReplyError(ref, payload)` from `socket.Message(..., Some(ref))` | Sends `phx_reply`; replies are keyed by ref, not by event name |
+| Push to the current socket only | `socket.Push(topic, event, payload)` | Server-originated push on a topic this socket already joined |
+| No response | `socket.Next(model, [])` | Continue without outgoing frames or side effects |
+| Broadcast to all sockets on a topic | `socket.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
+| Broadcast, excluding sender | `socket.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
+| Send a typed server-side message to one socket | `socket.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `socket.Info(message)` |
 | Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; perform synchronous presence mutations in an application-owned worker |
 
 ---
@@ -78,7 +78,7 @@ beryl speaks the same JSON array wire format as Phoenix channels. All frames are
 
 ### Reply shape (`phx_reply`)
 
-Sent in response to any client message. `event.ReplyOk` and `event.ReplyError` always serialize as `phx_reply` keyed by the original ref.
+Sent in response to any client message. `socket.ReplyOk` and `socket.ReplyError` always serialize as `phx_reply` keyed by the original ref.
 
 ```json
 [join_ref, original_ref, "topic:name", "phx_reply", {"status": "ok", "response": <your_payload>}]

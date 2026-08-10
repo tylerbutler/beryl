@@ -37,8 +37,7 @@ existentials, no type classes) cannot express.
    one app-written update function that routes topics itself. Fully
    type-safe — even design 3's residual coercions (see Consequences)
    disappear, since each socket has one `msg` type and `send_info` becomes
-   an ordinary typed send. The application takes over routing, channel
-   lifecycle, and authorization, but most infrastructure stays library-side:
+   an ordinary typed send. Most infrastructure could stay library-side:
    rate limiting, presence, pubsub, and connection limits key on topic
    strings and wire data, not app types. The loss is the channel module as
    the unit of composition — colocated callbacks, no hand-written union or

@@ -21,14 +21,14 @@ The runtime maintains four categories of state:
 
 The runtime actor is generic over the app's `model` and `msg` types. `beryl.child_spec` captures those types in a record of monomorphic closures at construction time, so the public `Sockets` handle — and the frame-level transport SPI behind it — stays unparameterized while the runtime holds fully typed state. This is plain closure capture by a generic function: there are no unchecked casts, `Dynamic` round-trips, or identity FFI in the socket-dispatch path. PubSub separately validates the frozen raw mailbox record before its package-internal payload coercion.
 
-Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `event.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
+Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `socket.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
-## Event dispatch
+## Input dispatch
 
 Inbound WebSocket frames follow a two-step path:
 
 1. **Decode at the edge** — the transport decodes raw frames in the connection process using the configured codec (see [Wire & Transport](/architecture/wire-and-transport)), so parse cost and malformed input never reach the shared runtime actor.
-2. **Route to update** — the decoded message is sent to the runtime, which turns it into an `Event` for the socket's `update` function:
+2. **Route to update** — the decoded message is sent to the runtime, which turns it into an `Input` for the socket's `update` function:
    - `phx_join` → validates the topic (length, control characters, reserved `beryl:` prefix, join rate, topic cap), then delivers `Join(topic, payload, ref)`. The join is held pending until the update's effects answer it; an unanswered join is rejected (fail closed).
    - Any other event on a joined topic → `Message(topic, event, payload, ref)`.
    - `heartbeat` → answered directly by the runtime; the app never sees it.

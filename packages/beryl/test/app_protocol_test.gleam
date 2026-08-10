@@ -5,10 +5,10 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{Closed, Join, Message}
+import beryl/socket.{AcceptJoin, Closed, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
-
+import gleam/option.{None}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -17,8 +17,20 @@ pub fn main() {
   gleeunit.main()
 }
 
-fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
-  h.start_observed(beryl.config(wire.phoenix_codec()), events)
+fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
+  let assert Ok(channels) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        process.send(events, ev)
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          _ -> Next(model, [])
+        }
+      },
+    )
+  channels
 }
 
 fn event_frame(
@@ -81,7 +93,7 @@ pub fn stale_join_ref_message_is_dropped_after_rejoin_test() {
 
   // Rejoin under a new join_ref: the old instance closes, the new one is live.
   h.join(channels, "s1", "room:a", "jr-2", "r-2")
-  let assert Ok(Closed("room:a", event.Normal)) = process.receive(events, 500)
+  let assert Ok(Closed("room:a", socket.Normal)) = process.receive(events, 500)
   let _close = h.recv(frames)
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
   let _reply2 = h.recv(frames)
@@ -103,7 +115,7 @@ pub fn stale_join_ref_leave_is_ignored_test() {
   let _reply1 = h.recv(frames)
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
   h.join(channels, "s1", "room:a", "jr-2", "r-2")
-  let assert Ok(Closed("room:a", event.Normal)) = process.receive(events, 500)
+  let assert Ok(Closed("room:a", socket.Normal)) = process.receive(events, 500)
   let _close = h.recv(frames)
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
   let _reply2 = h.recv(frames)

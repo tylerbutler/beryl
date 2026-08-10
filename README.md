@@ -26,7 +26,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 
 ```gleam
 import beryl
-import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
@@ -38,11 +38,11 @@ import mist
 
 pub type Model { Model(username: String) }
 
-fn init(_info: event.ConnectInfo(Nil)) -> #(Model, List(event.Effect)) {
+fn init(_info: socket.ConnectInfo(Nil)) -> #(Model, List(socket.Effect)) {
   #(Model(username: "anonymous"), [])
 }
 
-fn update(model: Model, ev: event.Event(Nil)) -> event.Next(Model, Nil) {
+fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model, Nil) {
   case ev {
     Join("room:" <> _, payload, ref) -> {
       let username_decoder = {
@@ -57,7 +57,7 @@ fn update(model: Model, ev: event.Event(Nil)) -> event.Next(Model, Nil) {
     }
     Join(_, _, ref) ->
       Next(model, [
-        event.RejectJoin(ref, json.object([#("reason", json.string("unknown_topic"))])),
+        socket.RejectJoin(ref, json.object([#("reason", json.string("unknown_topic"))])),
       ])
     Message(topic, "new_msg", payload, _ref) ->
       Next(model, [Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))])
@@ -165,7 +165,7 @@ small forwarder process, translates the actor's messages, and delivers typed
 
 ```gleam
 import beryl/bridge.{type Bridge}
-import beryl/event.{Closed, Info, Next, Push}
+import beryl/socket.{Closed, Info, Next, Push}
 import gleam/json
 
 pub type DocEvent {
@@ -180,7 +180,7 @@ pub type Model {
   Model(bridge: Bridge(DocEvent))
 }
 
-fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
+fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   let assert Ok(forwarder) =
     bridge.start(to: info.self, with: fn(event: DocEvent) {
       let Updated(version) = event
@@ -190,7 +190,7 @@ fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
   #(Model(bridge: forwarder), [])
 }
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
     Info(DocUpdated(version)) ->
       Next(model, [

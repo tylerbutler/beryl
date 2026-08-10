@@ -38,7 +38,7 @@ Replace the channel-module API entirely with app-side dispatch:
 - One supervised entry point, `beryl.child_spec(config, init, update)
   -> Result(#(Sockets, ChildSpecification(_)), ConfigError)`: the app
   supplies `init: fn(ConnectInfo(msg)) -> #(model, List(Effect))` and
-  `update: fn(model, Event(msg)) -> Next(model, msg)` per socket, and
+  `update: fn(model, Input(msg)) -> Next(model, msg)` per socket, and
   routes topics itself.
 - Callback returns are an effects list (join acceptance/rejection, reply,
   push, broadcast, and topic kick), replacing the old channel API's
@@ -53,7 +53,7 @@ Replace the channel-module API entirely with app-side dispatch:
 - Abuse controls are declarative per-topic-pattern config on `Config`,
   supplied to `child_spec`.
 - Server-side sends to a joined socket go through a typed `Sender(msg)`
-  (`beryl/event.notify`), obtained from `ConnectInfo.self` — an ordinary
+  (`beryl/socket.notify`), obtained from `ConnectInfo.self` — an ordinary
   typed send, no erasure.
 
 Final API, current-to-new mapping, and the resolution of every open

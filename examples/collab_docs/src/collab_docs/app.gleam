@@ -13,7 +13,7 @@
 //// Join-level tenant-token auth is preserved: the join payload must carry a
 //// `token` HMAC-signed for the tenant whose document is being joined.
 
-import beryl/event.{type Effect, type Ref}
+import beryl/socket.{type Effect, type Ref}
 import beryl/topic as beryl_topic
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
@@ -65,12 +65,12 @@ pub fn join(
       // HMAC-signed for the tenant whose document is being joined.
       case extract_token(payload) {
         Error(_) -> #(None, [
-          event.RejectJoin(ref, error_payload("missing_token")),
+          socket.RejectJoin(ref, error_payload("missing_token")),
         ])
         Ok(token) ->
           case auth.verify_tenant(token, tenant, ctx.secret) {
             Error(_) -> #(None, [
-              event.RejectJoin(ref, error_payload("unauthorized")),
+              socket.RejectJoin(ref, error_payload("unauthorized")),
             ])
             Ok(Nil) -> {
               let document_key = build_document_key(tenant, document)
@@ -92,13 +92,13 @@ pub fn join(
                   #("state", state),
                 ])
               #(Some(Model(document_key: document_key)), [
-                event.AcceptJoin(ref, Some(reply)),
+                socket.AcceptJoin(ref, Some(reply)),
               ])
             }
           }
       }
 
-    _ -> #(None, [event.RejectJoin(ref, error_payload("invalid_topic"))])
+    _ -> #(None, [socket.RejectJoin(ref, error_payload("invalid_topic"))])
   }
 }
 
@@ -139,7 +139,7 @@ pub type Standalone {
 
 /// `init` for the standalone collab-docs app-dispatch runtime.
 pub fn standalone_init(
-  info: event.ConnectInfo(Nil),
+  info: socket.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
   #(Standalone(socket_id: info.socket_id, docs: dict.new()), [])
 }
@@ -151,53 +151,53 @@ pub fn standalone_init(
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,
-  ev: event.Event(Nil),
-) -> event.Next(Standalone, Nil) {
+  ev: socket.Input(Nil),
+) -> socket.Next(Standalone, Nil) {
   case ev {
-    event.Join(topic, payload, ref) ->
+    socket.Join(topic, payload, ref) ->
       case topic {
         "document:" <> _ -> {
           let #(joined, effects) =
             join(ctx, model.socket_id, topic, payload, ref)
           case joined {
             Some(sub) ->
-              event.Next(
+              socket.Next(
                 Standalone(..model, docs: dict.insert(model.docs, topic, sub)),
                 effects,
               )
-            None -> event.Next(model, effects)
+            None -> socket.Next(model, effects)
           }
         }
         _ ->
-          event.Next(model, [
-            event.RejectJoin(ref, error_payload("invalid_topic")),
+          socket.Next(model, [
+            socket.RejectJoin(ref, error_payload("invalid_topic")),
           ])
       }
 
-    event.Message(topic, event_name, payload, ref) ->
+    socket.Message(topic, event_name, payload, ref) ->
       case dict.get(model.docs, topic) {
         Ok(sub) -> {
           let #(sub, effects) =
             update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
-          event.Next(
+          socket.Next(
             Standalone(..model, docs: dict.insert(model.docs, topic, sub)),
             effects,
           )
         }
-        Error(Nil) -> event.Next(model, [])
+        Error(Nil) -> socket.Next(model, [])
       }
 
-    event.Closed(topic, _reason) ->
+    socket.Closed(topic, _reason) ->
       case dict.get(model.docs, topic) {
         Ok(sub) ->
-          event.Next(
+          socket.Next(
             Standalone(..model, docs: dict.delete(model.docs, topic)),
             closed(ctx, model.socket_id, topic, sub),
           )
-        Error(Nil) -> event.Next(model, [])
+        Error(Nil) -> socket.Next(model, [])
       }
 
-    event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
+    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
   }
 }
 
@@ -215,7 +215,7 @@ fn sync_state(
         False -> {
           doc_store.merge_state(ctx.store, model.document_key, state)
           #(model, [
-            event.BroadcastFrom(
+            socket.BroadcastFrom(
               topic_name,
               "doc_state",
               json.object([#("state", json.string(state))]),
@@ -232,7 +232,7 @@ fn sync_state(
 /// error payload (and dropped them without a ref); mirror that.
 fn reply_error(code: String, ref: Option(Ref)) -> List(Effect) {
   case ref {
-    Some(r) -> [event.ReplyOk(r, error_payload(code))]
+    Some(r) -> [socket.ReplyOk(r, error_payload(code))]
     None -> []
   }
 }

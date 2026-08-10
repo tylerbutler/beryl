@@ -1,6 +1,7 @@
 import app_test_helpers as h
 import beryl
-import beryl/event
+import beryl/socket
+import beryl/transport
 import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
@@ -40,29 +41,57 @@ fn start_sockets() -> beryl.Sockets {
       init: fn(_info) { #(Nil, []) },
       update: fn(model, input) {
         case input {
-          event.Join(_, _, ref) ->
-            event.Next(model, [event.AcceptJoin(ref, option.None)])
-          event.Message(topic, _, _, _) ->
-            event.Next(model, [event.Push(topic, "echoed", json.object([]))])
-          _ -> event.Next(model, [])
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+          socket.Message(topic, _, _, _) ->
+            socket.Next(model, [socket.Push(topic, "echoed", json.object([]))])
+          _ -> socket.Next(model, [])
         }
       },
     )
   sockets
 }
 
+fn connect(
+  channels: beryl.Sockets,
+  socket_id: String,
+  socket_codec: option.Option(codec.Codec),
+) -> process.Subject(String) {
+  let sent = process.new_subject()
+  transport.admit_socket(
+    sockets: channels,
+    owner: transport.connection_owner(channels),
+    socket_id: socket_id,
+    send: fn(text) {
+      process.send(sent, text)
+      Ok(Nil)
+    },
+    send_binary: fn(_data) { Ok(Nil) },
+    codec: socket_codec,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.equal(Ok(Nil))
+  sent
+}
+
+fn route(channels: beryl.Sockets, socket_id: String, frame: String) -> Nil {
+  let assert Ok(input) =
+    codec.decode_text(transport.active_codec(channels))(frame)
+  transport.route_decoded(channels, socket_id, input)
+}
+
 // A socket announced with an explicit codec is framed with that codec,
 // not the coordinator's configured one.
 pub fn socket_codec_overrides_configured_codec_test() {
   let channels = start_sockets()
-  let sent =
-    h.connect_with_codec(channels, "tagged", option.Some(tagged_codec()))
+  let sent = connect(channels, "tagged", option.Some(tagged_codec()))
 
-  h.route(channels, "tagged", "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]")
+  route(channels, "tagged", "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]")
   let assert Ok(join_reply) = process.receive(sent, 500)
   join_reply |> string.starts_with("TAGGED-REPLY|") |> should.be_true
 
-  h.route(channels, "tagged", "[null,null,\"room:lobby\",\"ping\",{}]")
+  route(channels, "tagged", "[null,null,\"room:lobby\",\"ping\",{}]")
   let assert Ok(push) = process.receive(sent, 500)
   push |> string.starts_with("TAGGED-PUSH|room:lobby|echoed") |> should.be_true
 }
@@ -70,13 +99,13 @@ pub fn socket_codec_overrides_configured_codec_test() {
 // A socket announced without a codec inherits the configured one.
 pub fn socket_without_codec_inherits_configured_codec_test() {
   let channels = start_sockets()
-  let sent = h.connect_with_codec(channels, "plain", option.None)
+  let sent = connect(channels, "plain", option.None)
 
-  h.route(channels, "plain", "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]")
+  route(channels, "plain", "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]")
   let assert Ok(join_reply) = process.receive(sent, 500)
   join_reply |> string.contains("phx_reply") |> should.be_true
 
-  h.route(channels, "plain", "[null,null,\"room:lobby\",\"ping\",{}]")
+  route(channels, "plain", "[null,null,\"room:lobby\",\"ping\",{}]")
   let assert Ok(push) = process.receive(sent, 500)
   push |> string.contains("\"echoed\"") |> should.be_true
   push |> string.starts_with("TAGGED-") |> should.be_false
@@ -87,18 +116,17 @@ pub fn socket_without_codec_inherits_configured_codec_test() {
 // broadcast in its own wire format.
 pub fn sockets_with_different_codecs_share_a_topic_test() {
   let channels = start_sockets()
-  let phoenix_sent =
-    h.connect_with_codec(channels, "phoenix-socket", option.None)
+  let phoenix_sent = connect(channels, "phoenix-socket", option.None)
   let tagged_sent =
-    h.connect_with_codec(channels, "tagged-socket", option.Some(tagged_codec()))
+    connect(channels, "tagged-socket", option.Some(tagged_codec()))
 
-  h.route(
+  route(
     channels,
     "phoenix-socket",
     "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]",
   )
   let assert Ok(_) = process.receive(phoenix_sent, 500)
-  h.route(
+  route(
     channels,
     "tagged-socket",
     "[null,\"jr\",\"room:lobby\",\"phx_join\",{}]",

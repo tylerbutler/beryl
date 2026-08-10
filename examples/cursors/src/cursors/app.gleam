@@ -9,7 +9,7 @@
 ////   `standalone_update` wrappers that drive the standalone cursors server
 ////   through a `beryl.child_spec` runtime, reusing the same per-topic surface.
 
-import beryl/event.{type Effect, type Ref}
+import beryl/socket.{type Effect, type Ref}
 import example_helpers/color
 import example_helpers/payload
 import example_helpers/session_presence
@@ -56,7 +56,7 @@ pub fn join(
     ])
   session_presence.track(ctx.presence, topic, socket_id, meta)
   #(Some(Model(username: username, color: color)), [
-    event.AcceptJoin(ref, Some(reply)),
+    socket.AcceptJoin(ref, Some(reply)),
   ])
 }
 
@@ -79,7 +79,7 @@ pub fn update(
           #("username", json.string(model.username)),
           #("color", json.string(model.color)),
         ])
-      #(model, [event.BroadcastFrom(topic, "cursor_move", move_payload)])
+      #(model, [socket.BroadcastFrom(topic, "cursor_move", move_payload)])
     }
     "reaction" ->
       case decode_reaction(payload) {
@@ -91,7 +91,7 @@ pub fn update(
               #("y", json.float(y)),
             ])
           #(model, [
-            event.BroadcastFrom(topic, "reaction", reaction_payload),
+            socket.BroadcastFrom(topic, "reaction", reaction_payload),
           ])
         }
         None -> #(model, [])
@@ -121,7 +121,7 @@ pub type Standalone {
 
 /// `init` for the standalone cursors app-dispatch runtime.
 pub fn standalone_init(
-  info: event.ConnectInfo(Nil),
+  info: socket.ConnectInfo(Nil),
 ) -> #(Standalone, List(Effect)) {
   #(Standalone(socket_id: info.socket_id, cursors: dict.new()), [])
 }
@@ -133,59 +133,59 @@ pub fn standalone_init(
 pub fn standalone_update(
   ctx: Ctx,
   model: Standalone,
-  ev: event.Event(Nil),
-) -> event.Next(Standalone, Nil) {
+  ev: socket.Input(Nil),
+) -> socket.Next(Standalone, Nil) {
   case ev {
-    event.Join(topic, payload, ref) ->
+    socket.Join(topic, payload, ref) ->
       case topic {
         "cursor:" <> _ -> {
           let #(joined, effects) =
             join(ctx, model.socket_id, topic, payload, ref)
           case joined {
             Some(sub) ->
-              event.Next(
+              socket.Next(
                 Standalone(
                   ..model,
                   cursors: dict.insert(model.cursors, topic, sub),
                 ),
                 effects,
               )
-            None -> event.Next(model, effects)
+            None -> socket.Next(model, effects)
           }
         }
         _ ->
-          event.Next(model, [
-            event.RejectJoin(
+          socket.Next(model, [
+            socket.RejectJoin(
               ref,
               json.object([#("reason", json.string("unknown_topic"))]),
             ),
           ])
       }
 
-    event.Message(topic, event_name, payload, _ref) ->
+    socket.Message(topic, event_name, payload, _ref) ->
       case dict.get(model.cursors, topic) {
         Ok(sub) -> {
           let #(sub, effects) =
             update(ctx, model.socket_id, topic, sub, event_name, payload)
-          event.Next(
+          socket.Next(
             Standalone(..model, cursors: dict.insert(model.cursors, topic, sub)),
             effects,
           )
         }
-        Error(Nil) -> event.Next(model, [])
+        Error(Nil) -> socket.Next(model, [])
       }
 
-    event.Closed(topic, _reason) ->
+    socket.Closed(topic, _reason) ->
       case dict.get(model.cursors, topic) {
         Ok(sub) ->
-          event.Next(
+          socket.Next(
             Standalone(..model, cursors: dict.delete(model.cursors, topic)),
             closed(ctx, model.socket_id, topic, sub),
           )
-        Error(Nil) -> event.Next(model, [])
+        Error(Nil) -> socket.Next(model, [])
       }
 
-    event.Binary(_, _) | event.Info(_) -> event.Next(model, [])
+    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
   }
 }
 

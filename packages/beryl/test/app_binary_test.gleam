@@ -5,12 +5,12 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{Binary, Join}
+import beryl/socket.{AcceptJoin, Binary, Join, Next}
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
-
+import gleam/option.{None}
 import gleeunit
 
 pub fn main() {
@@ -30,8 +30,20 @@ fn text_only_codec() -> codec.Codec {
   |> codec.with_error_encoder(wire.channel_error)
 }
 
-fn start_system(events: process.Subject(event.Event(Nil))) -> beryl.Sockets {
-  h.start_observed(beryl.config(text_only_codec()), events)
+fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
+  let assert Ok(channels) =
+    h.start_app(
+      beryl.config(text_only_codec()),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        process.send(events, ev)
+        case ev {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          _ -> Next(model, [])
+        }
+      },
+    )
+  channels
 }
 
 pub fn raw_binary_fans_out_to_joined_topics_in_sorted_order_test() {

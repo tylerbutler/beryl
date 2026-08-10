@@ -5,13 +5,13 @@ description: Route joins, messages, binary frames, close events, and typed serve
 
 Beryl's current programming model is **app-side dispatch**: build one supervised runtime with `beryl.child_spec`, build a per-socket model in `init`, and route every socket event in one `update` function.
 
-There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `event.Event` values and returning `event.Next(model, effects)`.
+There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `socket.Input` values and returning `socket.Next(model, effects)`.
 
 ## The two app entry points
 
 ```gleam
 import beryl
-import beryl/event as event
+import beryl/socket as socket
 import beryl/wire
 import gleam/otp/static_supervisor
 
@@ -27,18 +27,18 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-- `init` runs once per socket connection and returns `#(model, List(event.Effect))`.
-- `update` receives every `event.Event(msg)` for that socket and returns either:
-  - `event.Next(model, effects)` to continue, or
-  - `event.Stop(reason)` to close the whole socket.
+- `init` runs once per socket connection and returns `#(model, List(socket.Effect))`.
+- `update` receives every `socket.Input(msg)` for that socket and returns either:
+  - `socket.Next(model, effects)` to continue, or
+  - `socket.Stop(reason)` to close the whole socket.
 
-`event.Event(msg)` is the whole contract:
+`socket.Input(msg)` is the whole contract:
 
-- `event.Join(topic, payload, ref)`
-- `event.Message(topic, event, payload, ref)`
-- `event.Binary(topic, data)`
-- `event.Closed(topic, reason)`
-- `event.Info(msg)`
+- `socket.Join(topic, payload, ref)`
+- `socket.Message(topic, event, payload, ref)`
+- `socket.Binary(topic, data)`
+- `socket.Closed(topic, reason)`
+- `socket.Info(msg)`
 
 ## Topics and patterns
 
@@ -73,7 +73,7 @@ Keep the topic pattern in your own routing function, then decide which branch ow
 This example accepts `room:*` joins, replies to `ping`, broadcasts `typing` to everyone except the sender, tracks joined topics in the model, and reacts to typed server-side `Info` messages.
 
 ```gleam
-import beryl/event as event
+import beryl/socket as socket
 import beryl/topic
 import gleam/json
 import gleam/list
@@ -84,33 +84,33 @@ pub type Msg {
 }
 
 pub type Model {
-  Model(joined_topics: List(String), self: event.Sender(Msg))
+  Model(joined_topics: List(String), self: socket.Sender(Msg))
 }
 
-fn init(info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
+fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   #(Model(joined_topics: [], self: info.self), [])
 }
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   let room_pattern = topic.parse_pattern("room:*")
 
   case ev {
-    event.Join(topic_name, _payload, ref) ->
+    socket.Join(topic_name, _payload, ref) ->
       case topic.extract_id(room_pattern, topic_name) {
         Ok(room_id) ->
-          event.Next(
+          socket.Next(
             Model(
               joined_topics: [topic_name, ..model.joined_topics],
               self: model.self,
             ),
             [
-              event.AcceptJoin(
+              socket.AcceptJoin(
                 ref,
                 Some(json.object([
                   #("room_id", json.string(room_id)),
                 ])),
               ),
-              event.Push(
+              socket.Push(
                 topic_name,
                 "system:joined",
                 json.object([#("room_id", json.string(room_id))]),
@@ -119,10 +119,10 @@ fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
           )
 
         Error(_) ->
-          event.Next(
+          socket.Next(
             model,
             [
-              event.RejectJoin(
+              socket.RejectJoin(
                 ref,
                 json.object([
                   #("reason", json.string("unknown topic")),
@@ -132,25 +132,25 @@ fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
           )
       }
 
-    event.Message(_topic_name, "ping", _payload, Some(ref)) ->
-      event.Next(
+    socket.Message(_topic_name, "ping", _payload, Some(ref)) ->
+      socket.Next(
         model,
         [
-          event.ReplyOk(
+          socket.ReplyOk(
             ref,
             json.object([#("status", json.string("ok"))]),
           ),
         ],
       )
 
-    event.Message(topic_name, "typing", _payload, _ref) ->
-      event.Next(
+    socket.Message(topic_name, "typing", _payload, _ref) ->
+      socket.Next(
         model,
-        [event.BroadcastFrom(topic_name, "typing", json.object([]))],
+        [socket.BroadcastFrom(topic_name, "typing", json.object([]))],
       )
 
-    event.Closed(topic_name, _reason) ->
-      event.Next(
+    socket.Closed(topic_name, _reason) ->
+      socket.Next(
         Model(
           ..model,
           joined_topics: list.filter(model.joined_topics, fn(topic) {
@@ -160,40 +160,40 @@ fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
         [],
       )
 
-    event.Info(Tick(at)) -> {
+    socket.Info(Tick(at)) -> {
       let effects =
         list.map(model.joined_topics, fn(topic_name) {
-          event.Push(
+          socket.Push(
             topic_name,
             "tick",
             json.object([#("at", json.int(at))]),
           )
         })
-      event.Next(model, effects)
+      socket.Next(model, effects)
     }
 
-    event.Binary(_topic_name, _data) ->
-      event.Next(model, [])
+    socket.Binary(_topic_name, _data) ->
+      socket.Next(model, [])
 
-    event.Message(_, _, _, None) ->
-      event.Next(model, [])
+    socket.Message(_, _, _, None) ->
+      socket.Next(model, [])
   }
 }
 ```
 
 A few important details:
 
-- Joins are explicit: return `event.AcceptJoin(ref, reply)` or `event.RejectJoin(ref, reason)`.
-- Message replies are explicit too: use `event.ReplyOk` / `event.ReplyError` when a client ref is present.
-- `event.Closed(topic, reason)` replaces per-topic cleanup hooks. Prune topic-local state there.
-- `event.Info(msg)` is just a typed message from your own server code.
+- Joins are explicit: return `socket.AcceptJoin(ref, reply)` or `socket.RejectJoin(ref, reason)`.
+- Message replies are explicit too: use `socket.ReplyOk` / `socket.ReplyError` when a client ref is present.
+- `socket.Closed(topic, reason)` replaces per-topic cleanup hooks. Prune topic-local state there.
+- `socket.Info(msg)` is just a typed message from your own server code.
 
 ## Routing many topics from one app
 
 Multi-topic apps usually keep one top-level `Model` and delegate to smaller pure modules.
 
 ```gleam
-import beryl/event as event
+import beryl/socket as socket
 import beryl/topic
 import gleam/json
 
@@ -206,17 +206,17 @@ pub type Msg {
   AdminMsg(admin.Msg)
 }
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   let chat_pattern = topic.parse_pattern("chat:*")
   let admin_pattern = topic.parse_pattern("admin")
 
   case ev {
-    event.Join(topic_name, payload, ref) ->
+    socket.Join(topic_name, payload, ref) ->
       case topic.extract_id(chat_pattern, topic_name) {
         Ok(room_id) -> {
           let #(chat_model, effects) =
             chat.join(model.chat, room_id, payload, ref)
-          event.Next(Model(..model, chat: chat_model), effects)
+          socket.Next(Model(..model, chat: chat_model), effects)
         }
 
         Error(_) ->
@@ -224,13 +224,13 @@ fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
             True -> {
               let #(admin_model, effects) =
                 admin.join(model.admin, payload, ref)
-              event.Next(Model(..model, admin: admin_model), effects)
+              socket.Next(Model(..model, admin: admin_model), effects)
             }
             False ->
-              event.Next(
+              socket.Next(
                 model,
                 [
-                  event.RejectJoin(
+                  socket.RejectJoin(
                     ref,
                     json.object([
                       #("reason", json.string("unknown topic")),
@@ -241,55 +241,55 @@ fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
           }
       }
 
-    event.Message(topic_name, event_name, payload, ref) ->
+    socket.Message(topic_name, event_name, payload, ref) ->
       case topic.extract_id(chat_pattern, topic_name) {
         Ok(room_id) -> {
           let #(chat_model, effects) =
             chat.on_message(model.chat, room_id, event_name, payload, ref)
-          event.Next(Model(..model, chat: chat_model), effects)
+          socket.Next(Model(..model, chat: chat_model), effects)
         }
         Error(_) ->
           case topic.matches(admin_pattern, topic_name) {
             True -> {
               let #(admin_model, effects) =
                 admin.on_message(model.admin, event_name, payload, ref)
-              event.Next(Model(..model, admin: admin_model), effects)
+              socket.Next(Model(..model, admin: admin_model), effects)
             }
-            False -> event.Next(model, [])
+            False -> socket.Next(model, [])
           }
       }
 
-    event.Binary(topic_name, data) ->
+    socket.Binary(topic_name, data) ->
       chat.on_binary(model, topic_name, data)
 
-    event.Closed(topic_name, reason) ->
+    socket.Closed(topic_name, reason) ->
       chat.on_closed(model, topic_name, reason)
 
-    event.Info(msg) ->
+    socket.Info(msg) ->
       chat.on_info(model, msg)
   }
 }
 ```
 
-The top-level `update` is the router. Smaller modules own their own sub-models and return ordinary `List(event.Effect)` values back to the parent.
+The top-level `update` is the router. Smaller modules own their own sub-models and return ordinary `List(socket.Effect)` values back to the parent.
 
 ## Typed server-side messages
 
-`event.ConnectInfo.self` gives each socket a typed `event.Sender(msg)`. Any process can keep that sender and deliver `event.Info(msg)` later with `event.notify`.
+`socket.ConnectInfo.self` gives each socket a typed `socket.Sender(msg)`. Any process can keep that sender and deliver `socket.Info(msg)` later with `socket.notify`.
 
 ```gleam
-import beryl/event
+import beryl/socket
 
 pub type Msg {
   JobFinished(String)
 }
 
-fn notify_socket(sender: event.Sender(Msg), job_id: String) -> Nil {
-  event.notify(sender, JobFinished(job_id))
+fn notify_socket(sender: socket.Sender(Msg), job_id: String) -> Nil {
+  socket.notify(sender, JobFinished(job_id))
 }
 ```
 
-If the socket has already disconnected, `event.notify` is ignored.
+If the socket has already disconnected, `socket.notify` is ignored.
 
 For long-lived external actors that should stream updates into a socket, see `beryl/bridge`.
 
@@ -298,9 +298,9 @@ For long-lived external actors that should stream updates into a socket, see `be
 The runtime applies effects strictly in list order inside one actor turn. That means this is guaranteed:
 
 ```gleam
-event.Next(model, [
-  event.AcceptJoin(ref, None),
-  event.Push(topic_name, "ready", json.object([])),
+socket.Next(model, [
+  socket.AcceptJoin(ref, None),
+  socket.Push(topic_name, "ready", json.object([])),
 ])
 ```
 
@@ -308,12 +308,11 @@ The client sees the join acknowledgment first and the `ready` push second.
 
 The same rule matters for replies:
 
-- order `event.Push` after the `event.AcceptJoin` it depends on,
-- order `event.ReplyOk` / `event.ReplyError` where you want them emitted.
+- order `socket.Push` after the `socket.AcceptJoin` it depends on,
+- order `socket.ReplyOk` / `socket.ReplyError` where you want them emitted.
 
 ## Next steps
 
-- [Coming from Phoenix](/guides/coming-from-phoenix/) — map channel modules, callbacks, and assigns onto this model
 - [WebSocket Transport](/guides/websocket/) — connect browsers and seed `ConnectInfo.seed.metadata`
 - [Presence](/guides/presence/) — keep synchronous presence work outside the shared runtime
 - [Runtime & Effect Interpreter](/architecture/runtime/) — runtime behavior, effect ordering, and teardown details
