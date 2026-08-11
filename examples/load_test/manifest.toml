@@ -7,7 +7,7 @@
 # You should check this file into your source control repository.
 
 packages = [
-  { name = "beryl", version = "0.2.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "telemetry"], source = "local", path = "../../packages/beryl" },
+  { name = "beryl", version = "0.2.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "telemetry"], source = "local", path = "../../packages/beryl" },
   { name = "beryl_ewe", version = "0.1.1", build_tools = ["gleam"], requirements = ["beryl", "ewe", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib"], source = "local", path = "../../packages/beryl_ewe" },
   { name = "beryl_mist", version = "0.2.0", build_tools = ["gleam"], requirements = ["beryl", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "mist"], source = "local", path = "../../packages/beryl_mist" },
   { name = "compresso", version = "0.1.0", build_tools = ["gleam"], requirements = ["exception", "gleam_erlang", "gleam_stdlib", "gleam_yielder", "logging"], otp_app = "compresso", source = "hex", outer_checksum = "8BE29A1EDA42F70826ED148EAE40C46BB3FC18E78FE472663DB01DD4A38172D4" },
