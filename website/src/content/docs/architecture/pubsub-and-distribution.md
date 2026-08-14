@@ -6,19 +6,19 @@ title: PubSub & Distribution
 
 Beryl's PubSub layer is built on Erlang's built-in [`pg`](https://www.erlang.org/doc/man/pg.html) module (process groups). When a process subscribes to a topic, it joins a named `pg` group scoped to the PubSub instance. When a broadcast is sent, beryl looks up all members of that group and delivers the message to each one.
 
-Because `pg` is cluster-aware, this works transparently across nodes in an Erlang cluster — a process on Node A subscribing to `"room:lobby"` will receive broadcasts from Node B without any additional configuration.
+Because `pg` is cluster-aware, this works transparently across nodes in an Erlang cluster: a process on Node A subscribing to `"room:lobby"` will receive broadcasts from Node B without any additional configuration.
 
 Each PubSub instance is isolated by a **scope** (an Erlang atom). The default scope is `beryl_pubsub`; use `config_with_scope/1` to create isolated namespaces.
 
 ## The FFI Boundary
 
-The Gleam module `beryl/pubsub` delegates all low-level pg operations to `src/beryl_pubsub_ffi.erl` via `@external` declarations. The FFI file is intentionally minimal — it is a thin wrapper that maps Gleam calls directly to `pg` BIFs.
+The Gleam module `beryl/pubsub` delegates all low-level pg operations to `src/beryl_pubsub_ffi.erl` via `@external` declarations. The FFI file is intentionally minimal: a thin wrapper that maps Gleam calls directly to `pg` BIFs.
 
 **Public surface of `beryl/pubsub`:**
 
 | Function | Description |
 |---|---|
-| `start(config)` | Start a pg scope (idempotent — safe to call multiple times) |
+| `start(config)` | Start a pg scope (idempotent, safe to call multiple times) |
 | `subscriber(ps)` | Create a typed subscriber owned by the calling process |
 | `join(subscriber, topic)` | Join the subscriber to a topic |
 | `leave(subscriber, topic)` | Leave a previously joined topic |
@@ -48,8 +48,8 @@ pub type PubSubFrom {
 
 `broadcast_from` and `broadcast_from_socket` implement **sender exclusion**: the originating process does not receive its own broadcast. This prevents a runtime from echoing a message back to the socket that sent it.
 
-- `broadcast_from(ps, from, ...)` — skips delivery to the process whose `Pid` matches `from`.
-- `broadcast_from_socket(ps, from, except_socket_id, ...)` — also skips delivery to `from`, and carries `FromSocket(from, except_socket_id)` in the message so that any remote runtime receiving it can optionally suppress re-delivery to a matching socket ID on their node.
+- `broadcast_from(ps, from, ...)` skips delivery to the process whose `Pid` matches `from`.
+- `broadcast_from_socket(ps, from, except_socket_id, ...)` also skips delivery to `from`, and carries `FromSocket(from, except_socket_id)` in the message so that any remote runtime receiving it can optionally suppress re-delivery to a matching socket ID on their node.
 
 :::caution[Regression-prone contract]
 The exclusion behaviour is load-bearing for channel correctness. If the comparison `pid == from` is ever changed or skipped, senders will receive their own messages. Tests that cover `broadcast_from` exclusion must be preserved when refactoring the PubSub layer.
@@ -70,7 +70,7 @@ flowchart LR
   PG -- deliver --> C2
 ```
 
-When socket A sends a message on Node 1, its runtime calls `broadcast_from`, which iterates the `pg` group members. Members on Node 2 receive the message via Erlang distribution — no extra message-bus infrastructure is required.
+When socket A sends a message on Node 1, its runtime calls `broadcast_from`, which iterates the `pg` group members. Members on Node 2 receive the message via Erlang distribution; no extra message-bus infrastructure is required.
 
 ## Trust Model
 
@@ -85,9 +85,9 @@ A process on any peer node can:
   internal traffic.
 - Inject reserved presence sync traffic, delivering false presence state to
   subscribers on all nodes. Ordinary WebSocket clients cannot reach these
-  reserved internal topics — this vector is exclusive to trusted cluster peers.
+  reserved internal topics; this vector is exclusive to trusted cluster peers.
 
-**App-level authorization** — the `Join` and `Message` arms of `update` —
+**App-level authorization** (the `Join` and `Message` arms of `update`)
 applies only to inbound WebSocket frames. It does not screen messages that
 arrive via distribution.
 
@@ -99,5 +99,5 @@ distribution, EPMD port restrictions, and cluster isolation).
 
 | File | Role |
 |---|---|
-| `src/beryl/pubsub.gleam` | Public Gleam API — types, config, and all broadcast functions |
-| `src/beryl_pubsub_ffi.erl` | Erlang FFI — thin `pg` wrappers called via `@external` |
+| `src/beryl/pubsub.gleam` | Public Gleam API: types, config, and all broadcast functions |
+| `src/beryl_pubsub_ffi.erl` | Erlang FFI: thin `pg` wrappers called via `@external` |

@@ -5,8 +5,8 @@ description: Build your first beryl app end-to-end — init/update on the server
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-<Aside type="caution" title="Pre-1.0 Software">
-beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
+<Aside type="note" title="Pre-1.0">
+beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
 </Aside>
 
 This guide walks you through building a working real-time channel from scratch:
@@ -19,8 +19,17 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 
 ## Prerequisites
 
-- Gleam project targeting **Erlang** (`gleam new my_app`)
-- `gleam add beryl beryl_mist` adds beryl, the Mist WebSocket transport, and all their dependencies
+- Gleam >= 1.18 project targeting **Erlang** (`gleam new my_app`)
+- beryl and the Mist WebSocket transport as git dependencies in `gleam.toml` (beryl isn't on Hex yet):
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
+```
+
+Run `gleam deps download` afterwards. The [Installation guide](/installation/)
+covers version pinning and the Ewe transport alternative.
 
 ## 1. Define your app
 
@@ -294,3 +303,6 @@ leave unanswered is rejected automatically — beryl fails closed.
 - Add [Presence tracking](/guides/presence/) to see who's online
 - Set up [PubSub](/guides/pubsub/) for distributed messaging
 - Configure [WebSocket transport](/guides/websocket/) options including `on_connect` auth
+
+Channel not connecting? The [Troubleshooting guide](/troubleshooting/) is
+organized by symptom — start there.

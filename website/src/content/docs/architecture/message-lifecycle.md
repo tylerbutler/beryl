@@ -6,7 +6,7 @@ This page traces every significant step a message takes from the moment a WebSoc
 
 ## Connect and init
 
-When a client initiates a WebSocket upgrade, the Mist transport layer generates a unique socket id, assembles a `ConnectSeed` from the upgrade request (path, query, headers), and hands the socket — along with its send functions — to the runtime. The runtime calls your app's `init` with a `ConnectInfo` carrying the socket id, the seed, and a typed `Sender` for server-side messages, and stores the returned model.
+When a client initiates a WebSocket upgrade, the Mist transport layer generates a unique socket id, assembles a `ConnectSeed` from the upgrade request (path, query, headers), and hands the socket, along with its send functions, to the runtime. The runtime calls your app's `init` with a `ConnectInfo` carrying the socket id, the seed, and a typed `Sender` for server-side messages, and stores the returned model.
 
 ```mermaid
 sequenceDiagram
@@ -42,7 +42,7 @@ sequenceDiagram
   RT-->>Client: phx_reply (ok/error)
 ```
 
-A `Join` left unanswered by the update's effects is rejected automatically — beryl fails closed.
+A `Join` left unanswered by the update's effects is rejected automatically; beryl fails closed.
 
 ## Handle an inbound event
 
@@ -111,7 +111,7 @@ The runtime is a single OTP actor processing its mailbox sequentially; broadcast
 
 ## Where this lives
 
-- `packages/beryl_mist/src/beryl_mist.gleam` — connect/close, edge decoding, frame routing
-- `src/beryl/runtime.gleam` — event dispatch, effect application, heartbeat timer
-- `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam` — decode/encode frames
-- `src/beryl/pubsub.gleam` — fan-out
+- `packages/beryl_mist/src/beryl_mist.gleam`: connect/close, edge decoding, frame routing
+- `src/beryl/runtime.gleam`: event dispatch, effect application, heartbeat timer
+- `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam`: decode/encode frames
+- `src/beryl/pubsub.gleam`: fan-out
