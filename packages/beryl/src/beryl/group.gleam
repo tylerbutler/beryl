@@ -89,6 +89,30 @@ pub fn start() -> Result(Groups, GroupStartError) {
   })
 }
 
+// nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
+/// Start the groups actor with a registered name, for embedding the groups
+/// actor under an application's own supervision tree.
+@internal
+pub fn start_named(
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_groups()
+  |> actor.named(name)
+  |> actor.start
+}
+
+// nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
+@internal
+pub fn from_subject(subject: Subject(Message)) -> Groups {
+  Groups(subject: subject)
+}
+
+// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
+@internal
+pub fn subject(groups: Groups) -> Subject(Message) {
+  groups.subject
+}
+
 fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {
   actor.new(State(groups: dict.new()))
   |> actor.on_message(handle_message)

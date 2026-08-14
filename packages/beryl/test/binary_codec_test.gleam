@@ -5,7 +5,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Binary, Join, Message, Next, ReplyOk}
+import beryl/socket.{AcceptJoin, Binary, Join, Message, Next, ReplyOk}
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
@@ -177,7 +177,7 @@ fn connect_binary(
       Ok(Nil)
     },
     codec: None,
-    seed: event.empty_seed(),
+    seed: socket.empty_seed(),
     close: fn() { Nil },
   )
   |> should.equal(Ok(Nil))
@@ -298,7 +298,7 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(binary_test_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, ev) {
         case ev {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])

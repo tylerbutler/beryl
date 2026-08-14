@@ -19,7 +19,7 @@ channel process per joined topic, and it calls your callbacks
 In beryl, **your app owns the router**. There is no registry and no channel
 module: you pass one `init` and one `update` function to `beryl.child_spec`, and
 every event for a socket — joins, messages, closes, server-side messages,
-across all of its topics — arrives at that `update` as an `event.Event(msg)`
+across all of its topics — arrives at that `update` as a `socket.Input(msg)`
 value. You route topics yourself with pattern matching, and per-socket state
 lives in one `model` you return from each `update`.
 
@@ -36,19 +36,19 @@ PubSub, heartbeats, and the JSON array wire format.
 | `channel "room:*", RoomChannel` routing table | topic pattern match in `update`, with `beryl/topic` helpers |
 | One channel process per joined topic | One `model` + `update` per socket, covering all its joined topics |
 | `socket.assigns` + `assign/3` | your `model`, returned from each `update` |
-| `join/3` callback | `event.Join(topic, payload, ref)` |
-| `{:ok, socket}` / `{:ok, reply, socket}` | `event.AcceptJoin(ref, None)` / `event.AcceptJoin(ref, Some(reply))` |
-| `{:error, %{reason: ...}}` | `event.RejectJoin(ref, reason)` |
-| `handle_in/3` | `event.Message(topic, event, payload, ref)` |
-| `{:reply, {:ok, payload}, socket}` | `event.ReplyOk(ref, payload)` / `event.ReplyError(ref, payload)` |
-| `{:noreply, socket}` | `event.Next(model, [])` |
-| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | store the `Ref` in your model, `event.ReplyOk` from a later `update` turn |
-| `push(socket, event, payload)` | `event.Push(topic, event, payload)` effect |
-| `broadcast!/3` | `event.Broadcast(topic, event, payload)` effect |
-| `broadcast_from!/3` | `event.BroadcastFrom(topic, event, payload)` effect |
-| `handle_info(msg, socket)` + `send(pid, msg)` | `event.Info(msg)` + `event.notify(sender, msg)` — typed end to end |
-| `terminate/2` | `event.Closed(topic, reason)` event, delivered on every exit path |
-| `{:stop, reason, socket}` (ends one channel) | `event.KickTopic(topic)` for one topic, `event.Stop(reason)` for the whole socket |
+| `join/3` callback | `socket.Join(topic, payload, ref)` |
+| `{:ok, socket}` / `{:ok, reply, socket}` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |
+| `{:error, %{reason: ...}}` | `socket.RejectJoin(ref, reason)` |
+| `handle_in/3` | `socket.Message(topic, event, payload, ref)` |
+| `{:reply, {:ok, payload}, socket}` | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
+| `{:noreply, socket}` | `socket.Next(model, [])` |
+| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | store the `Ref` in your model, `socket.ReplyOk` from a later `update` turn |
+| `push(socket, event, payload)` | `socket.Push(topic, event, payload)` effect |
+| `broadcast!/3` | `socket.Broadcast(topic, event, payload)` effect |
+| `broadcast_from!/3` | `socket.BroadcastFrom(topic, event, payload)` effect |
+| `handle_info(msg, socket)` + `send(pid, msg)` | `socket.Info(msg)` + `socket.notify(sender, msg)` — typed end to end |
+| `terminate/2` | `socket.Closed(topic, reason)` input, delivered on every exit path |
+| `{:stop, reason, socket}` (ends one channel) | `socket.KickTopic(topic)` for one topic, `socket.Stop(reason)` for the whole socket |
 | `MyAppWeb.Endpoint.broadcast/3` from anywhere | `beryl.broadcast(sockets, topic, event, payload)` |
 | `Phoenix.PubSub` | `beryl/pubsub`, also built on `pg` |
 | `Phoenix.Presence.track/3` / `untrack/3` | send a nonblocking command to an application-owned presence worker |
@@ -88,7 +88,7 @@ the imperative `push`/`broadcast_from!` calls become effect values returned to
 the runtime:
 
 ```gleam
-import beryl/event
+import beryl/socket
 import gleam/json
 import gleam/option.{Some}
 
@@ -100,40 +100,40 @@ pub type Model {
   Model(room_id: String)
 }
 
-fn init(_info: event.ConnectInfo(Msg)) -> #(Model, List(event.Effect)) {
+fn init(_info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   #(Model(room_id: ""), [])
 }
 
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
-  case ev {
-    event.Join("room:" <> room_id, _payload, ref) ->
-      event.Next(Model(room_id: room_id), [
-        event.AcceptJoin(
+fn update(model: Model, input: socket.Input(Msg)) -> socket.Next(Model, Msg) {
+  case input {
+    socket.Join("room:" <> room_id, _payload, ref) ->
+      socket.Next(Model(room_id: room_id), [
+        socket.AcceptJoin(
           ref,
           Some(json.object([#("room_id", json.string(room_id))])),
         ),
       ])
 
-    event.Message(_topic, "ping", _payload, Some(ref)) ->
-      event.Next(model, [
-        event.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
+    socket.Message(_topic, "ping", _payload, Some(ref)) ->
+      socket.Next(model, [
+        socket.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
       ])
 
-    event.Message(topic, "typing", _payload, _ref) ->
-      event.Next(model, [
-        event.BroadcastFrom(topic, "typing", json.object([])),
+    socket.Message(topic, "typing", _payload, _ref) ->
+      socket.Next(model, [
+        socket.BroadcastFrom(topic, "typing", json.object([])),
       ])
 
-    event.Info(Tick(at)) ->
-      event.Next(model, [
-        event.Push(
+    socket.Info(Tick(at)) ->
+      socket.Next(model, [
+        socket.Push(
           "room:" <> model.room_id,
           "tick",
           json.object([#("at", json.int(at))]),
         ),
       ])
 
-    _ -> event.Next(model, [])
+    _ -> socket.Next(model, [])
   }
 }
 ```
@@ -151,7 +151,7 @@ Three shifts to notice:
   `update` turn is rejected automatically.
 - **Server-side messages are typed.** Phoenix's `handle_info` receives any
   term; beryl's `Info(msg)` carries your own `msg` type, delivered through the
-  typed `event.Sender(msg)` from `ConnectInfo.self` — the compiler checks
+  typed `socket.Sender(msg)` from `ConnectInfo.self` — the compiler checks
   every variant.
 
 ## One process per topic vs. one model per socket
@@ -203,7 +203,7 @@ end
 worker. Presence calls can block, so they do not run in Beryl's shared runtime:
 
 ```gleam
-event.Join(topic_name, _payload, ref) ->
+socket.Join(topic_name, _payload, ref) ->
   {
     process.send(
       presence_worker,
@@ -213,7 +213,7 @@ event.Join(topic_name, _payload, ref) ->
         json.object([#("status", json.string("online"))]),
       ),
     )
-    event.Next(model, [event.AcceptJoin(ref, None)])
+    socket.Next(model, [socket.AcceptJoin(ref, None)])
   }
 ```
 
@@ -234,8 +234,8 @@ beryl.broadcast(sockets, "room:lobby", "notice", json.object([]))
 
 With PubSub configured, `beryl.broadcast` distributes across the cluster, the
 same way `Endpoint.broadcast` rides `Phoenix.PubSub`. To message one specific
-socket (Phoenix: `send(channel_pid, msg)`), keep its `event.Sender(msg)` from
-`ConnectInfo.self` and call `event.notify` — the message arrives as a typed
+socket (Phoenix: `send(channel_pid, msg)`), keep its `socket.Sender(msg)` from
+`ConnectInfo.self` and call `socket.notify` — the message arrives as a typed
 `Info` event.
 
 ## Next steps

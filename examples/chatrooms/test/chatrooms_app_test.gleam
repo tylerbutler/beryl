@@ -1,5 +1,5 @@
-import beryl/event
 import beryl/group
+import beryl/socket
 import chatrooms/app
 import example_helpers/session_presence
 import gleam/dict
@@ -16,16 +16,16 @@ fn context() -> app.Ctx {
   app.Ctx(presence: presence_tracker, groups: groups)
 }
 
-fn lobby_ref() -> event.Ref {
-  event.make_join_ref(
+fn lobby_ref() -> socket.Ref {
+  socket.make_join_ref(
     topic: "lobby",
     join_ref: Some("lobby-join"),
     msg_ref: Some("lobby-ref"),
   )
 }
 
-fn room_ref(topic: String) -> event.Ref {
-  event.make_join_ref(
+fn room_ref(topic: String) -> socket.Ref {
+  socket.make_join_ref(
     topic: topic,
     join_ref: Some("room-join"),
     msg_ref: Some("room-ref"),
@@ -36,11 +36,11 @@ fn empty_payload() -> dynamic.Dynamic {
   dynamic.properties([])
 }
 
-fn connect_info() -> event.ConnectInfo(Nil) {
-  event.ConnectInfo(
+fn connect_info() -> socket.ConnectInfo(Nil) {
+  socket.ConnectInfo(
     socket_id: "socket-1",
-    seed: event.empty_seed(),
-    self: event.make_sender(fn(_message) { Nil }),
+    seed: socket.empty_seed(),
+    self: socket.make_sender(fn(_message) { Nil }),
   )
 }
 
@@ -48,7 +48,7 @@ pub fn lobby_join_is_accepted_test() {
   let #(model, effects) = app.lobby_join(lobby_ref())
 
   model |> should.equal(app.Lobby)
-  let assert [event.AcceptJoin(_, None)] = effects
+  let assert [socket.AcceptJoin(_, None)] = effects
 }
 
 pub fn lobby_messages_are_ignored_test() {
@@ -63,11 +63,11 @@ pub fn lobby_message_with_no_lobby_is_a_noop_test() {
   let model =
     app.Standalone(socket_id: "socket-1", rooms: dict.new(), lobby: None)
 
-  let assert event.Next(next_model, effects) =
+  let assert socket.Next(next_model, effects) =
     app.standalone_update(
       context(),
       model,
-      event.Message("lobby", "refresh", empty_payload(), None),
+      socket.Message("lobby", "refresh", empty_payload(), None),
     )
 
   next_model |> should.equal(model)
@@ -80,12 +80,12 @@ pub fn standalone_routes_lobby_join_test() {
     app.standalone_update(
       context(),
       model,
-      event.Join("lobby", empty_payload(), lobby_ref()),
+      socket.Join("lobby", empty_payload(), lobby_ref()),
     )
 
-  let assert event.Next(
+  let assert socket.Next(
     app.Standalone(socket_id: _, rooms: _, lobby: Some(app.Lobby)),
-    [event.AcceptJoin(_, None)],
+    [socket.AcceptJoin(_, None)],
   ) = next
 }
 
@@ -100,9 +100,13 @@ pub fn closing_lobby_preserves_room_models_test() {
     )
 
   let next =
-    app.standalone_update(context(), model, event.Closed("lobby", event.Normal))
+    app.standalone_update(
+      context(),
+      model,
+      socket.Closed("lobby", socket.Normal),
+    )
 
-  let assert event.Next(
+  let assert socket.Next(
     app.Standalone(socket_id: _, rooms: rooms, lobby: None),
     [],
   ) = next
@@ -115,14 +119,14 @@ pub fn unrelated_topic_is_rejected_test() {
     app.standalone_update(
       context(),
       model,
-      event.Join(
+      socket.Join(
         "notifications:alice",
         empty_payload(),
         room_ref("notifications:alice"),
       ),
     )
 
-  let assert event.Next(_, [event.RejectJoin(_, reason)]) = next
+  let assert socket.Next(_, [socket.RejectJoin(_, reason)]) = next
   json.to_string(reason)
   |> should.equal("{\"reason\":\"unknown_topic\"}")
 }
@@ -143,9 +147,9 @@ pub fn accepted_room_join_tracks_session_and_invalidates_lobby_test() {
 
   joined |> should.be_some
   let assert [
-    event.AcceptJoin(_, _),
-    event.Broadcast("lobby", "rooms_changed", changed),
-    event.Broadcast("room:general", "new_msg", _),
+    socket.AcceptJoin(_, _),
+    socket.Broadcast("lobby", "rooms_changed", changed),
+    socket.Broadcast("room:general", "new_msg", _),
   ] = effects
   session_presence.count(tracker, "room:general") |> should.equal(1)
   json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
@@ -162,7 +166,7 @@ pub fn rejected_room_join_does_not_invalidate_lobby_test() {
     )
 
   joined |> should.be_none
-  let assert [event.RejectJoin(_, _)] = effects
+  let assert [socket.RejectJoin(_, _)] = effects
 }
 
 pub fn room_close_untracks_session_and_invalidates_lobby_test() {
@@ -174,8 +178,8 @@ pub fn room_close_untracks_session_and_invalidates_lobby_test() {
   let effects = app.closed(ctx, "socket-1", "room:general", model)
 
   let assert [
-    event.Broadcast("lobby", "rooms_changed", changed),
-    event.Broadcast("room:general", "new_msg", _),
+    socket.Broadcast("lobby", "rooms_changed", changed),
+    socket.Broadcast("room:general", "new_msg", _),
   ] = effects
   session_presence.count(tracker, "room:general") |> should.equal(0)
   json.to_string(changed) |> should.equal("{\"room\":\"general\"}")

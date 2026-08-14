@@ -1,5 +1,5 @@
 ---
-title: beryl/event
+title: beryl/socket
 description: Types for building app-side dispatch systems with `beryl.child_spec`.
 ---
 
@@ -108,7 +108,7 @@ pub type Effect {
 
 Accept a pending join. Subscribes the socket to the topic and sends
  the join acknowledgment (with an optional reply payload). Only valid
- while the `Join` event's ref is pending.
+ while the `Join` input's ref is pending.
 
 ##### `RejectJoin(
   ref: Ref,
@@ -161,14 +161,14 @@ Broadcast to every subscriber of a topic except this socket.
 ##### `KickTopic(topic: String)`
 
 Close this socket's subscription to a topic. The topic receives a
- `Closed(topic, Shutdown)` event and the client a terminal frame.
+ `Closed(topic, Shutdown)` input and the client a terminal frame.
 
-### `Event`
+### `Input`
 
 Everything the runtime delivers to the app's `update` function.
 
 ```gleam
-pub type Event(a) {
+pub type Input(a) {
   Join(
     topic: String,
     payload: dynamic.Dynamic,
@@ -229,7 +229,7 @@ A binary frame on a joined topic (codecs without a binary decoder
 
 A joined topic ended (client leave, kick, crash, or socket close).
  Delivered on every exit path — use it to prune per-topic state from
- the model. Frames pushed to the closing topic from this event are
+ the model. Frames pushed to the closing topic from this input are
  dropped; broadcasts still reach the topic's remaining subscribers.
 
 ##### `Info(a)`
@@ -263,7 +263,7 @@ Continue with the given model, applying the effects in order.
 
 ##### `Stop(reason: StopReason)`
 
-Tear down the socket: every joined topic receives a `Closed` event,
+Tear down the socket: every joined topic receives a `Closed` input,
  terminal frames are sent, and the transport connection is closed.
 
 ### `Ref`
@@ -271,7 +271,7 @@ Tear down the socket: every joined topic receives a `Closed` event,
 A reply correlation handle.
 
  Carried by `Join` and (when the client requested a reply) `Message`
- events. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
+ inputs. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
  effects. Message refs may be stored in the model and answered from a later
  `update` turn (for example, after an async lookup completes). Join refs are
  valid only for their pending join and carry a unique runtime token, so a
@@ -298,7 +298,7 @@ pub type Sender(a)
 
 Why a socket or topic is stopping.
 
- Delivered in `Closed` events and accepted by `Stop`. Match with a
+ Delivered in `Closed` inputs and accepted by `Stop`. Match with a
  catch-all (`_`) arm: new stop reasons may be added in minor releases.
 
 ```gleam

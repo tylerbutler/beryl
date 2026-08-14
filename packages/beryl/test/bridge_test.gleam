@@ -1,5 +1,5 @@
 import beryl/bridge
-import beryl/event
+import beryl/socket
 import gleam/erlang/process
 import gleam/string
 import gleeunit/should
@@ -7,8 +7,8 @@ import test_helpers.{wait_until}
 
 /// Build a test `Sender` that forwards every notified value to a subject the
 /// test can receive on, standing in for a socket's real `update` delivery.
-fn capturing_sender(into received: process.Subject(msg)) -> event.Sender(msg) {
-  event.make_sender(fn(msg) { process.send(received, msg) })
+fn capturing_sender(into received: process.Subject(msg)) -> socket.Sender(msg) {
+  socket.make_sender(fn(msg) { process.send(received, msg) })
 }
 
 pub fn bridge_forwards_subject_values_to_sender_test() {

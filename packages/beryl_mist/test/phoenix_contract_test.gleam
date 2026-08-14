@@ -1,6 +1,6 @@
 import app_test_helpers as h
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
@@ -207,42 +207,42 @@ fn assert_no_text_message(client: WebsocketClient) {
 /// server message, `broadcast_from_me` broadcasts to everyone but the
 /// sender, and topic close reports its reason to `terminated`.
 fn contract_update(
-  terminated: process.Subject(event.StopReason),
-) -> fn(Nil, event.Event(Nil)) -> event.Next(Nil, Nil) {
+  terminated: process.Subject(socket.StopReason),
+) -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
   fn(model, ev) {
     case ev {
-      event.Join(_topic, _payload, ref) ->
-        event.Next(model, [
-          event.AcceptJoin(
+      socket.Join(_topic, _payload, ref) ->
+        socket.Next(model, [
+          socket.AcceptJoin(
             ref,
             Some(json.object([#("joined", json.bool(True))])),
           ),
         ])
-      event.Message(_topic, "ping", _payload, Some(ref)) ->
-        event.Next(model, [
-          event.ReplyOk(ref, json.object([#("pong", json.bool(True))])),
+      socket.Message(_topic, "ping", _payload, Some(ref)) ->
+        socket.Next(model, [
+          socket.ReplyOk(ref, json.object([#("pong", json.bool(True))])),
         ])
-      event.Message(topic, "push_me", _payload, _ref) ->
-        event.Next(model, [
-          event.Push(
+      socket.Message(topic, "push_me", _payload, _ref) ->
+        socket.Next(model, [
+          socket.Push(
             topic,
             "pushed",
             json.object([#("from", json.string("server"))]),
           ),
         ])
-      event.Message(topic, "broadcast_from_me", payload, _ref) ->
-        event.Next(model, [
-          event.BroadcastFrom(
+      socket.Message(topic, "broadcast_from_me", payload, _ref) ->
+        socket.Next(model, [
+          socket.BroadcastFrom(
             topic,
             "broadcasted",
             wire.dynamic_to_json(payload),
           ),
         ])
-      event.Closed(_topic, reason) -> {
+      socket.Closed(_topic, reason) -> {
         process.send(terminated, reason)
-        event.Next(model, [])
+        socket.Next(model, [])
       }
-      _ -> event.Next(model, [])
+      _ -> socket.Next(model, [])
     }
   }
 }
@@ -304,7 +304,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let assert Ok(channels) =
     h.start(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: contract_update(terminated),
     )
   let #(port, server_pid) = start_mist_server(channels)
@@ -404,7 +404,7 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
   let _ =
     assert_reply(serializer, leave, Some("join-ref"), "leave-1", "room:lobby")
   let assert Ok(reason) = process.receive(terminated, 200)
-  reason |> should.equal(event.Normal)
+  reason |> should.equal(socket.Normal)
 
   drain_text_messages(client)
   beryl.broadcast(
@@ -459,8 +459,8 @@ pub fn on_connect_rejects_connection_without_token_test() {
   let assert Ok(channels) =
     h.start(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, _ev) { event.Next(model, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, _ev) { socket.Next(model, []) },
     )
   let config =
     mist_transport.default_config("/socket/websocket")
@@ -491,11 +491,11 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
   let assert Ok(channels) =
     h.start(
       beryl.config(wire.phoenix_codec()),
-      init: fn(info: event.ConnectInfo(Nil)) {
+      init: fn(info: socket.ConnectInfo(Nil)) {
         process.send(seeds, info.seed)
         #(Nil, [])
       },
-      update: fn(model, _ev) { event.Next(model, []) },
+      update: fn(model, _ev) { socket.Next(model, []) },
     )
 
   let config =
@@ -524,17 +524,17 @@ pub fn runtime_death_closes_the_connection_test() {
   let assert Ok(channels) =
     h.start(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, ev) {
         case ev {
-          event.Join(_, _, ref) ->
-            event.Next(model, [
-              event.AcceptJoin(
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [
+              socket.AcceptJoin(
                 ref,
                 Some(json.object([#("joined", json.bool(True))])),
               ),
             ])
-          _ -> event.Next(model, [])
+          _ -> socket.Next(model, [])
         }
       },
     )

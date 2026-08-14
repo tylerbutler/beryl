@@ -6,11 +6,11 @@
 //// forward every event to an observer subject to make delivery visible.
 
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/transport
 import beryl/wire/codec
 import gleam/erlang/process
-import gleam/option.{type Option, None}
+import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/result
 import gleeunit/should
@@ -18,8 +18,8 @@ import gleeunit/should
 /// Build and start an app-side dispatch subtree for tests.
 pub fn start_app(
   config: beryl.Config,
-  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(beryl.Sockets, beryl.ConfigError) {
   use #(sockets, spec) <- result.try(beryl.child_spec(config, init:, update:))
   let assert Ok(_) =
@@ -29,31 +29,13 @@ pub fn start_app(
   Ok(sockets)
 }
 
-/// Start an app that forwards every event to `events` and accepts all
-/// joins.
-pub fn start_observed(
-  config: beryl.Config,
-  events: process.Subject(event.Event(Nil)),
-) -> beryl.Sockets {
-  let assert Ok(channels) =
-    start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
-      process.send(events, ev)
-      case ev {
-        event.Join(_, _, ref) ->
-          event.Next(model, [event.AcceptJoin(ref, None)])
-        _ -> event.Next(model, [])
-      }
-    })
-  channels
-}
-
 /// Connect a socket, returning the subject that captures its outbound
 /// text frames.
 pub fn connect(
   channels: beryl.Sockets,
   socket_id: String,
 ) -> process.Subject(String) {
-  connect_with_seed_and_close(channels, socket_id, event.empty_seed(), fn() {
+  connect_with_seed_and_close(channels, socket_id, socket.empty_seed(), fn() {
     Nil
   })
 }
@@ -63,7 +45,7 @@ pub fn connect_with_close(
   socket_id: String,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
-  connect_with_seed_and_close(channels, socket_id, event.empty_seed(), close)
+  connect_with_seed_and_close(channels, socket_id, socket.empty_seed(), close)
 }
 
 /// Connect a socket with an explicit `ConnectSeed` (e.g. to assert that
@@ -73,35 +55,15 @@ pub fn connect_with_close(
 pub fn connect_with_seed(
   channels: beryl.Sockets,
   socket_id: String,
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
 ) -> process.Subject(String) {
   connect_with_seed_and_close(channels, socket_id, seed, fn() { Nil })
-}
-
-/// Connect a socket with an explicit per-socket codec, returning the
-/// subject that captures its outbound text frames.
-pub fn connect_with_codec(
-  channels: beryl.Sockets,
-  socket_id: String,
-  socket_codec: Option(codec.Codec),
-) -> process.Subject(String) {
-  admit(channels, socket_id, socket_codec, event.empty_seed(), fn() { Nil })
 }
 
 fn connect_with_seed_and_close(
   channels: beryl.Sockets,
   socket_id: String,
-  seed: event.ConnectSeed,
-  close: fn() -> Nil,
-) -> process.Subject(String) {
-  admit(channels, socket_id, None, seed, close)
-}
-
-fn admit(
-  channels: beryl.Sockets,
-  socket_id: String,
-  socket_codec: Option(codec.Codec),
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
   close: fn() -> Nil,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
@@ -115,7 +77,7 @@ fn admit(
       Ok(Nil)
     },
     send_binary: fn(_data) { Ok(Nil) },
-    codec: socket_codec,
+    codec: None,
     seed: seed,
     close: close,
   )
@@ -187,8 +149,8 @@ pub fn recv_none(frames: process.Subject(String)) -> Nil {
 
 /// Receive the next observed event, failing after 500ms.
 pub fn next_event(
-  events: process.Subject(event.Event(msg)),
-) -> event.Event(msg) {
+  events: process.Subject(socket.Input(msg)),
+) -> socket.Input(msg) {
   let assert Ok(ev) = process.receive(events, 500)
   ev
 }

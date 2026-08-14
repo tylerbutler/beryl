@@ -35,7 +35,7 @@ need. The same helpers work on the transport request in `on_connect` and on
 the `ConnectSeed` in `init`:
 
 ```gleam
-import beryl/event
+import beryl/socket
 import gleam/http/request.{type Request}
 import gleam/list
 import gleam/result
@@ -65,7 +65,7 @@ fn query_param(req: Request(mist.Connection), name: String) -> Result(String, Ni
 }
 
 /// The same extraction against the ConnectSeed delivered to `init`.
-fn seed_token(seed: event.ConnectSeed) -> Result(String, Nil) {
+fn seed_token(seed: socket.ConnectSeed) -> Result(String, Nil) {
   case seed_bearer(seed) {
     Ok(token) -> Ok(token)
     Error(_) ->
@@ -74,7 +74,7 @@ fn seed_token(seed: event.ConnectSeed) -> Result(String, Nil) {
   }
 }
 
-fn seed_bearer(seed: event.ConnectSeed) -> Result(String, Nil) {
+fn seed_bearer(seed: socket.ConnectSeed) -> Result(String, Nil) {
   use header <- result.try(list.key_find(seed.headers, "authorization"))
   case string.split(header, " ") {
     ["Bearer", token] -> Ok(token)
@@ -131,7 +131,7 @@ pub type Model {
 
 beryl.child_spec(
   config,
-  init: fn(info: event.ConnectInfo(Msg)) {
+  init: fn(info: socket.ConnectInfo(Msg)) {
     let model = case seed_token(info.seed) {
       Ok(token) ->
         case verify_token(token) {
@@ -157,16 +157,16 @@ and only needs to decide **authorization** — is this user allowed on *this*
 topic?
 
 ```gleam
-fn update(model: Model, ev: event.Event(Msg)) -> event.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
   case ev {
-    event.Join(topic, _payload, ref) ->
+    socket.Join(topic, _payload, ref) ->
       case model {
         Authenticated(claims) ->
           case authorized_for_topic(claims, topic) {
-            True -> event.Next(model, [event.AcceptJoin(ref, option.None)])
-            False -> event.Next(model, [event.RejectJoin(ref, forbidden())])
+            True -> socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+            False -> socket.Next(model, [socket.RejectJoin(ref, forbidden())])
           }
-        Anonymous -> event.Next(model, [event.RejectJoin(ref, forbidden())])
+        Anonymous -> socket.Next(model, [socket.RejectJoin(ref, forbidden())])
       }
     // ...
   }

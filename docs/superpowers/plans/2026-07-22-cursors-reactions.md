@@ -43,14 +43,14 @@
 
 **Interfaces:**
 - Consumes: Existing `app.update(Ctx, String, String, Model, String, Dynamic) -> #(Model, List(Effect))`
-- Produces: `reaction` handling that emits `event.BroadcastFrom(topic, "reaction", payload)` only for supported emoji and normalized coordinates
+- Produces: `reaction` handling that emits `socket.BroadcastFrom(topic, "reaction", payload)` only for supported emoji and normalized coordinates
 
 - [ ] **Step 1: Write failing Gleam tests**
 
 Create `examples/cursors/test/cursors_app_test.gleam`:
 
 ```gleam
-import beryl/event
+import beryl/socket
 import cursors/app
 import example_helpers/session_presence
 import gleam/dynamic
@@ -97,7 +97,7 @@ pub fn supported_reactions_broadcast_test() {
       )
 
     let assert [
-      event.BroadcastFrom("cursor:lobby", "reaction", payload),
+      socket.BroadcastFrom("cursor:lobby", "reaction", payload),
     ] = effects
     json.to_string(payload)
     |> should.equal(
@@ -118,7 +118,7 @@ pub fn integer_boundary_coordinates_broadcast_test() {
     )
 
   let assert [
-    event.BroadcastFrom("cursor:lobby", "reaction", payload),
+    socket.BroadcastFrom("cursor:lobby", "reaction", payload),
   ] = effects
   json.to_string(payload)
   |> should.equal("{\"reaction\":\"👍\",\"x\":0.0,\"y\":1.0}")
@@ -170,7 +170,7 @@ pub fn cursor_move_behavior_is_unchanged_test() {
     )
 
   let assert [
-    event.BroadcastFrom("cursor:lobby", "cursor_move", broadcast),
+    socket.BroadcastFrom("cursor:lobby", "cursor_move", broadcast),
   ] = effects
   json.to_string(broadcast)
   |> should.equal(
@@ -213,7 +213,7 @@ Add the `reaction` branch immediately after `cursor_move`:
               #("y", json.float(y)),
             ])
           #(model, [
-            event.BroadcastFrom(topic, "reaction", reaction_payload),
+            socket.BroadcastFrom(topic, "reaction", reaction_payload),
           ])
         }
         None -> #(model, [])

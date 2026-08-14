@@ -4,7 +4,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Message, Next}
+import beryl/socket.{AcceptJoin, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/int
@@ -20,14 +20,14 @@ pub fn main() {
 /// observer, with a generous channel rate but a small bucket cap.
 fn start_capped_app(
   max_keys: Int,
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(socket.Input(Nil)),
 ) -> beryl.Sockets {
   start_capped_app_with(max_keys, events, beryl.config(wire.phoenix_codec()))
 }
 
 fn start_capped_app_with(
   max_keys: Int,
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(socket.Input(Nil)),
   base: beryl.Config,
 ) -> beryl.Sockets {
   let assert Ok(channels) =
@@ -49,7 +49,7 @@ fn start_capped_app_with(
 
 /// Wait for a `Message` event on the given topic, skipping other events.
 fn expect_handled(
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(socket.Input(Nil)),
   topic: String,
 ) -> Nil {
   case process.receive(events, 500) {
@@ -61,7 +61,7 @@ fn expect_handled(
 
 /// Assert that no `Message` event for the topic arrives.
 fn expect_dropped(
-  events: process.Subject(event.Event(Nil)),
+  events: process.Subject(socket.Input(Nil)),
   topic: String,
 ) -> Nil {
   case process.receive(events, 100) {
@@ -72,7 +72,7 @@ fn expect_dropped(
 }
 
 /// Discard everything currently queued on the observer.
-fn drain_events(events: process.Subject(event.Event(Nil))) -> Nil {
+fn drain_events(events: process.Subject(socket.Input(Nil))) -> Nil {
   case process.receive(events, 0) {
     Ok(_) -> drain_events(events)
     Error(Nil) -> Nil

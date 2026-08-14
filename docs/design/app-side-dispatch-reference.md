@@ -2,7 +2,7 @@
 
 Final API and design record for the app-side dispatch model accepted in
 [ADR 0002](../adr/0002-app-side-dispatch.md). This document reflects the
-shipped `beryl`/`beryl/event` API — see `beryl.gleam` and `beryl/event.gleam`
+shipped `beryl`/`beryl/socket` API — see `beryl.gleam` and `beryl/socket.gleam`
 for the authoritative signatures and doc comments, and the
 [generated API reference](/reference/api/) for the full public surface.
 
@@ -10,7 +10,7 @@ for the authoritative signatures and doc comments, and the
 
 ```gleam
 /// Everything the runtime delivers to the app's `update` function.
-pub type Event(msg) {
+pub type Input(msg) {
   /// A client asked to join a topic. Answer with `AcceptJoin` or
   /// `RejectJoin`; a `Join` left unanswered by the end of the update turn
   /// is rejected automatically (fail closed).
@@ -25,7 +25,7 @@ pub type Event(msg) {
   /// Delivered on every exit path.
   Closed(topic: String, reason: StopReason)
   /// A typed server-side message, sent via the socket's `Sender(msg)`
-  /// (see `ConnectInfo.self` and `event.notify`). An ordinary typed send —
+  /// (see `ConnectInfo.self` and `socket.notify`). An ordinary typed send —
   /// no erasure involved.
   Info(msg)
 }
@@ -65,7 +65,7 @@ accept or reject a later join, even when the later join uses the same topic.
 pub fn child_spec(
   config: Config,
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Event(msg)) -> Next(model, msg),
+  update update: fn(model, Input(msg)) -> Next(model, msg),
 ) -> Result(
   #(Sockets, ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -89,11 +89,6 @@ what `stop` does and does not tear down.
 
 ## Mapping from the deleted channel-module API
 
-The old API mirrored Phoenix Channels, so the website's
-[Coming from Phoenix](/guides/coming-from-phoenix/) guide gives the same
-mapping in user-facing form, with side-by-side code and the Phoenix-specific
-concepts (assigns, `socket_ref`, Presence, `Endpoint.broadcast`).
-
 | Old (`beryl/channel`, deleted)   | App-side dispatch                        |
 | --------------------------------- | ----------------------------------------- |
 | `join` callback                  | `Join` event + `AcceptJoin`/`RejectJoin`  |
@@ -106,7 +101,7 @@ concepts (assigns, `socket_ref`, Presence, `Endpoint.broadcast`).
 | assigns threading via `Socket`   | `model` threading via `Next`              |
 | `beryl.register(handler)`        | routing inside the app's `update`         |
 | `beryl.child_spec(config)` + registry | `beryl.child_spec(config, init:, update:)`     |
-| `send_info(socket, msg)`         | `event.notify(sender, msg)`               |
+| `send_info(socket, msg)`         | `socket.notify(sender, msg)`               |
 
 ## Single-channel app — no union, no router
 
@@ -114,7 +109,7 @@ concepts (assigns, `socket_ref`, Presence, `Endpoint.broadcast`).
 type Model { Model(user: String, joined: Bool) }
 // msg = whatever the app sends itself; no wrapper needed.
 
-fn update(model: Model, event: beryl.Event(Msg)) -> beryl.Next(Model, Msg) {
+fn update(model: Model, event: beryl.Input(Msg)) -> beryl.Next(Model, Msg) {
   case event {
     beryl.Join("room:" <> _, _payload, ref) ->
       beryl.Next(Model(..model, joined: True), [beryl.AcceptJoin(ref, None)])
@@ -131,7 +126,7 @@ fn update(model: Model, event: beryl.Event(Msg)) -> beryl.Next(Model, Msg) {
 type Model { Model(chats: Dict(String, chat.Model), admin: admin.Model) }
 type Msg  { ChatMsg(topic: String, msg: chat.Msg)  AdminMsg(admin.Msg) }
 
-fn update(model: Model, event: beryl.Event(Msg)) -> beryl.Next(Model, Msg) {
+fn update(model: Model, event: beryl.Input(Msg)) -> beryl.Next(Model, Msg) {
   case event {
     beryl.Join("chat:" <> id, payload, ref) ->
       // delegate to chat.join, store its model in the dict

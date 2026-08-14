@@ -123,7 +123,7 @@ let config =
 // init derives the user from the same request data — no re-auth needed.
 beryl.child_spec(
   config,
-  init: fn(info: event.ConnectInfo(Msg)) {
+  init: fn(info: socket.ConnectInfo(Msg)) {
     let user_id =
       list.key_find(info.seed.query, "token")
       |> result.map(decode_user_id)

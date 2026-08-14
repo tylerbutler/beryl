@@ -1,7 +1,7 @@
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Join, Next}
 import beryl/internal
+import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/dict
 import gleam/dynamic
@@ -71,7 +71,7 @@ fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
     h.start_app(
       config,
-      init: fn(_info: event.ConnectInfo(Nil)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, ev) {
         case ev {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])

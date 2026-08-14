@@ -15,15 +15,15 @@
 ////    slot with `release_connection_slot`.
 
 import beryl
-import beryl/event
 import beryl/internal
 import beryl/log
 import beryl/rate_limit
+import beryl/socket
 import beryl/telemetry
 import beryl/wire/codec
 import gleam/bool
 import gleam/erlang/process
-import gleam/option.{type Option}
+import gleam/option.{type Option, Some}
 import gleam/result
 
 /// Runtime handle accepted by transport implementations.
@@ -36,7 +36,7 @@ pub type ConnectionPermit =
 
 /// Connection metadata delivered to the app's `init`.
 pub type ConnectSeed =
-  event.ConnectSeed
+  socket.ConnectSeed
 
 /// Wire codec used by a transport connection.
 pub type Codec =
@@ -57,7 +57,7 @@ pub fn connect_seed(
   headers headers: List(#(String, String)),
   metadata metadata: List(#(String, String)),
 ) -> ConnectSeed {
-  event.ConnectSeed(
+  socket.ConnectSeed(
     path: path,
     query: query,
     headers: headers,
@@ -363,16 +363,20 @@ pub fn admit_socket(
   seed seed: ConnectSeed,
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
-  case owner {
+  let expected_owner = case owner {
+    OwnerAlive(pid) -> Ok(Some(pid))
     OwnerUnavailable -> {
       close()
       Error(Nil)
     }
-    OwnerAlive(pid) ->
+  }
+  case expected_owner {
+    Error(Nil) -> Error(Nil)
+    Ok(expected_owner) ->
       case
         beryl.transport_admit_socket(
           sockets,
-          pid,
+          expected_owner,
           socket_id,
           send,
           send_binary,

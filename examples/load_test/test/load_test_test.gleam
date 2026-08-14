@@ -1,5 +1,5 @@
 import beryl
-import beryl/event
+import beryl/socket
 import beryl/stats
 import beryl/transport
 import beryl/wire
@@ -53,7 +53,7 @@ fn connect(
     },
     send_binary: fn(_) { Ok(Nil) },
     codec: option.None,
-    seed: event.empty_seed(),
+    seed: socket.empty_seed(),
     close: fn() { Nil },
   )
   |> should.equal(Ok(Nil))

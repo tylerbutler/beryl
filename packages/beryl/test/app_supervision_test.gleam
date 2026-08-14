@@ -9,7 +9,7 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/event.{AcceptJoin, Broadcast, Join, Next}
+import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
@@ -38,11 +38,16 @@ fn wait_for_gate(gate: Gate) -> Nil
 fn release_gate(gate: Gate) -> Nil
 
 // A minimal app system that accepts every join.
-fn accepting_init(_info: event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
+fn accepting_init(
+  _info: socket.ConnectInfo(Nil),
+) -> #(Nil, List(socket.Effect)) {
   #(Nil, [])
 }
 
-fn accepting_update(model: Nil, ev: event.Event(Nil)) -> event.Next(Nil, Nil) {
+fn accepting_update(
+  model: Nil,
+  ev: socket.Input(Nil),
+) -> socket.Next(Nil, Nil) {
   case ev {
     Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
     _ -> Next(model, [])
@@ -83,7 +88,7 @@ fn admit(
     send: fn(_message) { Ok(Nil) },
     send_binary: fn(_data) { Ok(Nil) },
     codec: None,
-    seed: event.empty_seed(),
+    seed: socket.empty_seed(),
     close: close,
   )
 }
@@ -404,18 +409,18 @@ pub fn runtime_crash_closes_owned_connection_test() {
 // ── an update crash closes the affected socket through its close callback ───
 
 fn capturing_init(
-  senders: process.Subject(event.Sender(Nil)),
-) -> fn(event.ConnectInfo(Nil)) -> #(Nil, List(event.Effect)) {
-  fn(info: event.ConnectInfo(Nil)) {
+  senders: process.Subject(socket.Sender(Nil)),
+) -> fn(socket.ConnectInfo(Nil)) -> #(Nil, List(socket.Effect)) {
+  fn(info: socket.ConnectInfo(Nil)) {
     process.send(senders, info.self)
     #(Nil, [])
   }
 }
 
-fn crashing_update(model: Nil, ev: event.Event(Nil)) -> event.Next(Nil, Nil) {
+fn crashing_update(model: Nil, ev: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
   case ev {
     Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-    event.Info(_) -> panic as "boom"
+    socket.Info(_) -> panic as "boom"
     _ -> Next(model, [])
   }
 }
@@ -437,7 +442,7 @@ pub fn update_crash_runs_socket_close_callback_test() {
 
   // Drive an app-info event into the crashing update; the runtime rescues the
   // crash, tears the socket down, and runs its registered close callback.
-  event.notify(sender, Nil)
+  socket.notify(sender, Nil)
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   // The runtime itself survives the rescued crash and keeps serving.
@@ -448,7 +453,7 @@ pub fn failed_registration_closes_connection_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info: event.ConnectInfo(Nil)) { panic as "init failed" },
+      init: fn(_info: socket.ConnectInfo(Nil)) { panic as "init failed" },
       update: accepting_update,
     )
   let closed = process.new_subject()
@@ -467,7 +472,7 @@ pub fn stale_runtime_owner_cannot_register_with_successor_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: fn(info: event.ConnectInfo(Nil)) {
+      init: fn(info: socket.ConnectInfo(Nil)) {
         process.send(initialized, info.socket_id)
         #(Nil, [])
       },
@@ -509,7 +514,7 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(1),
-      init: fn(info: event.ConnectInfo(Nil)) {
+      init: fn(info: socket.ConnectInfo(Nil)) {
         case info.socket_id {
           "late" -> {
             process.send(init_entered, Nil)
@@ -556,7 +561,7 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
           },
           send_binary: fn(_data) { Ok(Nil) },
           codec: None,
-          seed: event.empty_seed(),
+          seed: socket.empty_seed(),
           close: fn() {
             beryl.release_connection_slot(permit)
             process.send(connection_closed, Nil)

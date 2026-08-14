@@ -1,10 +1,10 @@
 import app_test_helpers as h
 import beryl
-import beryl/event.{
+import beryl/pubsub
+import beryl/socket.{
   AcceptJoin, Binary, Info, Join, Message, Next, Push, RejectJoin, ReplyError,
   ReplyOk,
 }
-import beryl/pubsub
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
@@ -66,7 +66,7 @@ fn telemetry_config() -> beryl.Config {
   |> beryl.with_telemetry
 }
 
-fn update(model: Nil, input: event.Event(AppMessage)) {
+fn update(model: Nil, input: socket.Input(AppMessage)) {
   case input {
     Join("room:reject", _, ref) ->
       Next(model, [RejectJoin(ref, json.object([]))])
@@ -88,7 +88,7 @@ fn start(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(sockets) =
     h.start_app(
       config,
-      init: fn(_info: event.ConnectInfo(AppMessage)) { #(Nil, []) },
+      init: fn(_info: socket.ConnectInfo(AppMessage)) { #(Nil, []) },
       update: update,
     )
   sockets
@@ -266,7 +266,7 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() {
       beryl.config(raw_binary_codec())
         |> beryl.with_pubsub(ps)
         |> beryl.with_telemetry,
-      init: fn(info: event.ConnectInfo(AppMessage)) {
+      init: fn(info: socket.ConnectInfo(AppMessage)) {
         process.send(senders, info.self)
         #(Nil, [])
       },
@@ -281,7 +281,7 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() {
 
   transport.route_binary(sockets, "ok", <<1, 2, 3>>)
   expect_message(handler, "binary", "handled", "no_reply") |> should.be_true
-  event.notify(sender, Tick)
+  socket.notify(sender, Tick)
   expect_message(handler, "info", "handled", "no_reply") |> should.be_true
 
   beryl.broadcast(sockets, "room:lobby", "event", json.object([]))

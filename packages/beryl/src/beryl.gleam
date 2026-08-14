@@ -7,7 +7,7 @@
 //// ## Features
 ////
 //// - **Sockets** — App-side dispatch: topic-based WebSocket messaging
-////   routed by your `update` function (`beryl`, `beryl/event`)
+////   routed by your `update` function (`beryl`, `beryl/socket`)
 //// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
 //// - **Presence** — Distributed presence tracking backed by a causal-context
@@ -19,7 +19,7 @@
 ////
 //// ```gleam
 //// import beryl
-//// import beryl/event.{AcceptJoin, Broadcast, Join, Message, Next}
+//// import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
 //// import beryl/pubsub
 //// import beryl/wire
 //// import gleam/option
@@ -58,7 +58,6 @@
 
 import beryl/app_supervisor
 import beryl/connection_limit
-import beryl/event
 import beryl/internal
 import beryl/log
 import beryl/presence.{type Diff}
@@ -66,6 +65,7 @@ import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit
 import beryl/runtime
+import beryl/socket
 import beryl/topic
 import beryl/wire/codec
 import gleam/bool
@@ -549,8 +549,9 @@ pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
 /// Beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
-/// should be a visible one. Called by `child_spec`.
-fn warn_if_unprotected(config: Config) -> Nil {
+/// should be a visible one. Called while building the `child_spec` subtree.
+@internal
+pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
     config.max_connections_per_ip <= 0
     && config.max_connections <= 0
@@ -612,7 +613,8 @@ pub opaque type Sockets {
 /// Monomorphic closures over a generic runtime actor, captured by
 /// `child_spec`. This is what lets the frame-level transport SPI stay
 /// unparameterized while the runtime holds typed per-socket models.
-type AppHandle {
+@internal
+pub type AppHandle {
   AppHandle(
     admit_socket: fn(
       process.Pid,
@@ -620,7 +622,7 @@ type AppHandle {
       fn(String) -> Result(Nil, Nil),
       fn(BitArray) -> Result(Nil, Nil),
       Option(codec.Codec),
-      event.ConnectSeed,
+      socket.ConnectSeed,
       fn() -> Nil,
     ) -> Bool,
     socket_disconnected: fn(String) -> Nil,
@@ -632,7 +634,7 @@ type AppHandle {
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
-    stats: fn() -> Result(runtime.StatsSnapshot, runtime.StatsError),
+    stats: fn() -> Result(#(Int, Int, Int, Int), Bool),
   )
 }
 
@@ -807,7 +809,7 @@ fn stop_app_subtree(
     Ok(runtime_pid) -> {
       let runtime_monitor = process.monitor(runtime_pid)
       let limiter_monitor =
-        option.map(
+        option_map(
           option.from_result(app_limiter_owner(connection_limiter)),
           process.monitor,
         )
@@ -891,8 +893,8 @@ fn drop_monitor(monitor: process.Monitor) -> Nil {
 /// ```
 pub fn child_spec(
   config: Config,
-  init init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -939,8 +941,8 @@ type AppSubtree {
 /// resurrected.
 fn build_app_subtree(
   config: Config,
-  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -960,7 +962,7 @@ fn build_app_subtree(
   let handle =
     Sockets(
       config: config,
-      connection_limiter: option.map(limiter_name, connection_limit.from_name),
+      connection_limiter: option_map(limiter_name, connection_limit.from_name),
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
@@ -985,8 +987,8 @@ fn child_spec_supervisor(
   config: Config,
   runtime_name: process.Name(runtime.Msg(msg)),
   limiter_name: Option(process.Name(connection_limit.Message)),
-  init: fn(event.ConnectInfo(msg)) -> #(model, List(event.Effect)),
-  update: fn(model, event.Event(msg)) -> event.Next(model, msg),
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
   let runtime_child =
     supervision.worker(fn() {
@@ -1035,6 +1037,13 @@ fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
     runtime.ActorStartFailed(error) -> error
     runtime.InvalidHeartbeatTimeout ->
       actor.InitFailed("invalid heartbeat timeout")
+  }
+}
+
+fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
+  case option {
+    Some(value) -> Some(transform(value))
+    None -> None
   }
 }
 
@@ -1139,12 +1148,20 @@ fn app_handle(
     runtime_owner: fn() { process.subject_owner(subject) },
     stats: fn() {
       case process.subject_owner(subject) {
-        Error(Nil) -> Error(runtime.RuntimeDown)
+        Error(Nil) -> Error(False)
         Ok(_) -> {
           let reply = process.new_subject()
-          process.send(subject, runtime.GetStats(reply))
-          process.receive(reply, 1000)
-          |> result.replace_error(runtime.RequestTimeout)
+          send_runtime(subject, runtime.GetStats(reply))
+          case process.receive(reply, 1000) {
+            Error(Nil) -> Error(True)
+            Ok(snapshot) ->
+              Ok(#(
+                snapshot.connected_sockets,
+                snapshot.joined_socket_topic_pairs,
+                snapshot.active_topics,
+                snapshot.runtime_mailbox_length,
+              ))
+          }
         }
       }
     },
@@ -1255,34 +1272,35 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
 // app runtime closures captured by `child_spec`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Request a stats snapshot from the runtime, waiting at most one second.
 @internal
-pub fn runtime_stats(
-  channels: Sockets,
-) -> Result(runtime.StatsSnapshot, runtime.StatsError) {
-  channels.app.stats()
+pub fn app_dispatch(sockets: Sockets) -> AppHandle {
+  sockets.app
 }
 
 @internal
 pub fn transport_admit_socket(
   channels: Sockets,
-  owner: process.Pid,
+  owner: Option(process.Pid),
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
   socket_codec: Option(codec.Codec),
-  seed: event.ConnectSeed,
+  seed: socket.ConnectSeed,
   close: fn() -> Nil,
 ) -> Bool {
-  channels.app.admit_socket(
-    owner,
-    socket_id,
-    send,
-    send_binary,
-    socket_codec,
-    seed,
-    close,
-  )
+  case owner {
+    Some(runtime_owner) ->
+      channels.app.admit_socket(
+        runtime_owner,
+        socket_id,
+        send,
+        send_binary,
+        socket_codec,
+        seed,
+        close,
+      )
+    None -> False
+  }
 }
 
 @internal

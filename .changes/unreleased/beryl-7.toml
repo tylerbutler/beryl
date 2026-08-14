@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Fixed"
+body = "Recover the app supervisor when the runtime crashes during beryl.stop so later stops and restart exhaustion remain correct."

@@ -145,7 +145,7 @@ fn not_found() -> Response(mist.ResponseData) {
 
 `beryl.broadcast` is the right tool when the backend wants to fan out JSON payloads by topic.
 
-If you instead need a long-lived domain actor to stream typed updates into one socket, pair the socket's `event.Sender(msg)` with `beryl/bridge` and forward that actor's subject into `event.Info(msg)`.
+If you instead need a long-lived domain actor to stream typed updates into one socket, pair the socket's `socket.Sender(msg)` with `beryl/bridge` and forward that actor's subject into `socket.Info(msg)`.
 
 ## Why this split works
 
