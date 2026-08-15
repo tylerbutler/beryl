@@ -91,7 +91,7 @@ pub fn main() {
 into a single Mist request handler: WebSocket upgrades on the configured path go
 to beryl, everything else falls through to the HTTP fallback. If you need to drive
 the upgrade decision yourself, `mist_transport.upgrade` (and the
-`mist_transport.is_websocket_request` guard) remain available.
+`beryl/transport/server.is_websocket_request` guard) remain available.
 
 For a complete end-to-end walkthrough including Phoenix JS client code, see the
 **[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)** on the docs website.
