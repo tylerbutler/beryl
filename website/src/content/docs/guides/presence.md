@@ -80,11 +80,27 @@ let entries = presence.list(p, "room:lobby")
 // Get presences for a specific key
 let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
 // Returns: [#("socket_1", meta), #("socket_2", meta)]
+
+// Count without materializing the entry list
+let online_count = presence.count(p, "room:lobby")
 ```
+
+`list`, `get_by_key`, and `count` read an actor-owned ETS snapshot rather than
+calling through the actor mailbox, so reads remain nonblocking while the actor
+is busy. Synchronous mutations publish before replying, giving immediate
+read-after-write consistency. `count` reads a materialized count in O(1).
+
+The table lifetime follows the actor: reads panic after that actor stops rather
+than returning a misleading empty result. Other presence actors own independent
+tables and remain unaffected.
+
+The read model's ETS table is node-local: a `Presence` handle must stay on the node where `presence.start` created it. Sending the handle to (or otherwise calling `list`/`get_by_key`/`count` from) a process on a different BEAM node looks up a table reference that names nothing on that node, so those calls panic there too (`track`/`untrack`/`untrack_all` still work remotely, since they only need to reach the owning actor's process). Use PubSub replication (`with_pubsub`) to share presence state across nodes instead of moving the handle itself.
 
 ## Diff callbacks
 
 Get notified immediately when presence state changes:
+
+The callback runs synchronously on the presence actor — for both local mutations and remote merges, identically — before the affected topics' read-model snapshots are (re)published and before the triggering call replies. So if the callback reads presence state through the same handle (`list`, `get_by_key`, `count`) for a topic the diff touches, it sees the *previous* snapshot, not the one this diff is about to produce; read what you need from the `Diff` argument itself (`diff_joins`/`diff_leaves`) rather than re-reading through the handle inside the callback. Keep the callback fast: it runs on the actor process, so a slow callback delays that topic's publish, the reply to the mutating call, and anything else queued behind it in the actor's mailbox.
 
 ```gleam
 let config =
@@ -160,32 +176,35 @@ The underlying CRDT state is intentionally internal. Applications should use Pub
 
 ## Integration with app-side dispatch
 
-Presence remains a standalone actor. Its public mutation and read calls are
-synchronous and can wait up to five seconds, so do **not** call them from the
-shared socket runtime's `init` or `update`.
-
-Instead, send a command to an application-owned worker/actor from `update`.
-That worker performs `presence.track` or `presence.untrack`, then publishes
-the resulting `presence_diff`/snapshot with `beryl.broadcast` (or sends a
-typed message back with `socket.notify`):
+Start and supervise the standalone presence actor, then attach its handle with
+`beryl.with_presence_handle`. In `update`, use presence effects rather than
+calling the synchronous public mutation functions:
 
 ```gleam
 socket.Join(topic, _payload, ref) ->
-  {
-    process.send(presence_worker, Track(topic, model.user_id, meta))
-    socket.Next(model, [socket.AcceptJoin(ref, option.None)])
-  }
+  socket.Next(model, [
+    socket.AcceptJoin(ref, option.None),
+    socket.PresenceTrack(topic, model.user_id, meta),
+    socket.BroadcastPresence(topic, "presence_list", encode_presence),
+  ])
 
-socket.Closed(topic, _reason) ->
-  {
-    process.send(presence_worker, Untrack(topic, model.presence_ref))
-    socket.Next(model, [])
-  }
+socket.Message(topic, "offline", _payload, _ref) ->
+  socket.Next(model, [
+    socket.PresenceUntrack(topic, model.user_id),
+    socket.BroadcastPresence(topic, "presence_list", encode_presence),
+  ])
 ```
 
-The application owns the tracking refs and cleanup. Lane B intentionally does
-not expose partial synchronous presence effects on the shared runtime; the
-indivisible async presence/read-model work is deferred.
+The runtime sends each mutation asynchronously and suspends only that socket
+until presence acknowledges that the CRDT and ETS read model are current. The
+rest of the effect list then resumes in order, so the snapshot above sees the
+track or untrack it follows. Other sockets, broadcasts, heartbeats, and
+shutdown handling continue while one socket waits.
+
+The runtime owns refs created by `PresenceTrack` and automatically removes any
+remaining refs when the topic closes. Public synchronous `presence.track`
+calls remain available to application actors and other out-of-band workflows;
+their refs are independently addressable and are not part of runtime cleanup.
 
 ## Next steps
 

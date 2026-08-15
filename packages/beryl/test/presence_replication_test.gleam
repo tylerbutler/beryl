@@ -157,6 +157,32 @@ pub fn remote_state_triggers_merge_via_pubsub_test() {
   entry.key |> should.equal("user:2")
 }
 
+pub fn remote_merge_updates_read_model_count_test() {
+  let ps = test_pubsub("remote_merge_count")
+
+  let config1 =
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
+    |> presence.with_broadcast_interval(0)
+  let assert Ok(p1) = presence.start(config1)
+
+  let config2 = test_config(ps, "node2", 50)
+  let assert Ok(p2) = presence.start(config2)
+
+  presence.count(p1, "room:lobby") |> should.equal(0)
+
+  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
+
+  // `count` is served from the read model too -- confirm the merge
+  // republishes it, not just `list`.
+  test_helpers.wait_until(
+    fn() { presence.count(p1, "room:lobby") == 1 },
+    2000,
+    20,
+  )
+  presence.count(p1, "room:lobby") |> should.equal(1)
+}
+
 // ── Multi-replica convergence ───────────────────────────────────────
 
 pub fn three_replicas_converge_test() {
@@ -337,6 +363,44 @@ pub fn survives_exception_in_processing_path_test() {
   presence.list(p1, "room:poison") |> should.equal([])
 }
 
+pub fn merge_failure_leaves_read_model_unchanged_test() {
+  let ps = test_pubsub("merge_failure_read_model")
+
+  let config1 =
+    presence.default_config("node1")
+    |> presence.with_pubsub(ps)
+    |> presence.with_on_diff(fn(diff) {
+      case presence.diff_joins(diff, "room:poison") {
+        [] -> Nil
+        _ -> panic as "poisoned diff"
+      }
+    })
+  let assert Ok(p1) = presence.start(config1)
+
+  // Snapshot the read model for an unrelated topic before the poisoned sync.
+  let _ =
+    presence.track(p1, "room:lobby", "user:safe", "socket-safe", json.null())
+  let before_entries = presence.list(p1, "room:lobby")
+  let before_count = presence.count(p1, "room:lobby")
+
+  let config2 = test_config(ps, "node2", 50)
+  let assert Ok(p2) = presence.start(config2)
+  let _ =
+    presence.track(p2, "room:poison", "user:boom", "socket-boom", json.null())
+
+  // Give node1 time to receive and reject the poisoned broadcast.
+  process.sleep(200)
+
+  // The read model for the untouched topic is byte-for-byte unchanged.
+  presence.list(p1, "room:lobby") |> should.equal(before_entries)
+  presence.count(p1, "room:lobby") |> should.equal(before_count)
+  // The poisoned topic's read model was never published in the first
+  // place -- it reads empty because the merge was rejected before any
+  // ETS write happened, not because of a later prune or partial write.
+  presence.list(p1, "room:poison") |> should.equal([])
+  presence.count(p1, "room:poison") |> should.equal(0)
+}
+
 // ── Helper to drain stray messages ──────────────────────────────────
 
 fn drain_mailbox() -> Nil {
@@ -351,18 +415,6 @@ fn drain_mailbox() -> Nil {
 }
 
 // ── Restart safety: incarnation-unique replicas ───────────────────────
-
-/// Kill a presence actor's process, simulating a crash without cleanup.
-fn kill_presence(p: presence.Presence) -> Nil {
-  let assert Ok(pid) = process.subject_owner(presence.subject(p))
-  // The actor is linked to this (test) process; unlink before killing so
-  // the exit signal does not take the test runner down with it.
-  process.unlink(pid)
-  process.kill(pid)
-  // Wait for the process to actually be gone.
-  test_helpers.wait_until(fn() { !process.is_alive(pid) }, 1000, 5)
-  Nil
-}
 
 pub fn restarted_node_presences_replicate_to_peers_test() {
   let ps = test_pubsub("restart_join")
@@ -379,7 +431,7 @@ pub fn restarted_node_presences_replicate_to_peers_test() {
   )
 
   // Crash node1 and restart it under the same configured base name.
-  kill_presence(p1)
+  test_helpers.kill_presence(p1)
   let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
 
   // A presence tracked by the restarted incarnation must become visible on
@@ -414,7 +466,7 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() {
     10,
   )
 
-  kill_presence(p1)
+  test_helpers.kill_presence(p1)
   let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
   // Give the new incarnation something to gossip so peers observe it.
   let _ =
@@ -440,4 +492,143 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() {
   presence.list(p1b, "room:lobby")
   |> list.map(fn(entry) { entry.key })
   |> should.equal(["user:live"])
+}
+
+pub fn restart_prune_updates_read_model_count_test() {
+  let ps = test_pubsub("restart_prune_count")
+  let assert Ok(p1) = presence.start(test_config(ps, "node1", 30))
+  let assert Ok(p2) = presence.start(test_config(ps, "node2", 30))
+
+  let _ =
+    presence.track(p1, "room:lobby", "user:ghost", "socket-dead", json.null())
+  test_helpers.wait_until(
+    fn() { presence.count(p2, "room:lobby") == 1 },
+    2000,
+    10,
+  )
+
+  test_helpers.kill_presence(p1)
+  let assert Ok(p1b) = presence.start(test_config(ps, "node1", 30))
+  let _ =
+    presence.track(p1b, "room:lobby", "user:live", "socket-live", json.null())
+
+  // The pruned ghost must not inflate the peer's count once it converges
+  // on the restarted incarnation.
+  test_helpers.wait_until(
+    fn() { presence.count(p2, "room:lobby") == 1 },
+    3000,
+    10,
+  )
+  presence.count(p2, "room:lobby") |> should.equal(1)
+}
+
+// ── Reads stay responsive while the actor mailbox is busy ────────────
+//
+// Both tests below hold the actor busy from *inside* a test-supplied
+// `with_on_diff` callback rather than any production-only message or API:
+// `on_diff` already runs synchronously, on the actor process, before the
+// read model is published and before the triggering call replies, so a
+// callback that blocks is a legitimate (if deliberately slow) user of the
+// existing public API. Synchronization uses subjects exclusively -- the
+// test always waits on an `entered` signal sent from inside the callback
+// before it reads or asserts anything, so there is no sleep-and-hope: the
+// assertions run only once the actor is deterministically known to be
+// parked inside the callback.
+
+pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() {
+  // Fires only for user:2's join, so tracking user:1 below completes and
+  // publishes normally; only the second track call blocks the actor.
+  let entered = process.new_subject()
+  let config =
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) {
+      let joined_user2 =
+        presence.diff_joins(diff, "room:lobby")
+        |> list.any(fn(entry) { entry.key == "user:2" })
+      case joined_user2 {
+        False -> Nil
+        True -> {
+          let release = process.new_subject()
+          process.send(entered, release)
+          let assert Ok(_) = process.receive(release, 5000)
+          Nil
+        }
+      }
+    })
+  let assert Ok(p) = presence.start(config)
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+
+  // Track user:2 from another process: this call blocks (behind on_diff)
+  // until we release it below, so it must not run on the test process.
+  let track_done = process.new_subject()
+  process.spawn_unlinked(fn() {
+    let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+    process.send(track_done, Nil)
+  })
+
+  // Deterministically wait until the actor is parked inside the blocked
+  // callback for user:2's diff -- it is now busy in its message handler,
+  // ahead of both that diff's read-model publish and its own reply.
+  let assert Ok(release) = process.receive(entered, 1000)
+
+  // Reads must stay responsive, and still see the already-published
+  // user:1 state, even though the actor's mailbox is busy handling the
+  // still-blocked second track call.
+  presence.count(p, "room:lobby") |> should.equal(1)
+  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  list.length(presence.get_by_key(p, "room:lobby", "user:1"))
+  |> should.equal(1)
+
+  // The second track call genuinely has not returned yet: this is a
+  // present-tense check on a fixed synchronization point, not a timing
+  // race, since the actor cannot have replied while parked above.
+  process.receive(track_done, 0) |> should.equal(Error(Nil))
+
+  // Release the callback and drain completion so it can't bleed into a
+  // later test.
+  process.send(release, Nil)
+  let assert Ok(_) = process.receive(track_done, 1000)
+}
+
+// ── track/untrack reply only after the read model is published ───────
+
+pub fn actor_reply_is_ordered_after_read_model_publication_test() {
+  let entered = process.new_subject()
+  let config =
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(_diff) {
+      let release = process.new_subject()
+      process.send(entered, release)
+      let assert Ok(_) = process.receive(release, 5000)
+      Nil
+    })
+  let assert Ok(p) = presence.start(config)
+
+  // `track` blocks (behind on_diff) until released below, so it must run
+  // on another process while the test drives the synchronization.
+  let track_done = process.new_subject()
+  process.spawn_unlinked(fn() {
+    let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+    process.send(track_done, ref)
+  })
+
+  // Deterministically wait until the actor is parked inside the blocked
+  // callback -- it has not yet published the read model or replied.
+  let assert Ok(release) = process.receive(entered, 1000)
+
+  // While the callback is blocked, neither the publish nor the reply has
+  // happened yet: the tracking call has not returned, and the read model
+  // still reports the pre-track state.
+  process.receive(track_done, 0) |> should.equal(Error(Nil))
+  presence.count(p, "room:lobby") |> should.equal(0)
+
+  // Release the callback so the actor finishes handling `Track`: publish
+  // the read model, then reply.
+  process.send(release, Nil)
+  let assert Ok(_ref) = process.receive(track_done, 1000)
+
+  // The moment `track` returns, its read-model snapshot is already
+  // published -- this is a reply-ordering guarantee, not eventual
+  // consistency, so no polling is needed here.
+  presence.count(p, "room:lobby") |> should.equal(1)
 }

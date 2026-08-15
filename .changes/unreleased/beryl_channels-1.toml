@@ -1,0 +1,3 @@
+project = "beryl_channels"
+kind = "Added"
+body = "Initial release scaffold: publishable beryl_channels package with path dependency on beryl, package metadata, manifest, licence-audit configuration, and glinter policy, ready for the ADR 0003 channel-composition API to land in follow-up work."

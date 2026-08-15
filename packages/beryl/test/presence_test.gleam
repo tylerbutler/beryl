@@ -5,6 +5,7 @@ import gleam/list
 import gleam/string
 import gleeunit
 import gleeunit/should
+import test_helpers
 
 pub fn main() {
   gleeunit.main()
@@ -88,6 +89,40 @@ pub fn presence_untrack_removes_only_that_ref_test() {
   entry.session_id |> should.equal("socket-2")
 }
 
+pub fn presence_untrack_same_tuple_ref_preserves_other_ref_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref1 =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("device", json.string("desktop"))]),
+    )
+  let ref2 =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("device", json.string("mobile"))]),
+    )
+
+  presence.count(p, "room:lobby") |> should.equal(2)
+  presence.untrack(p, ref1)
+
+  let assert [remaining] = presence.list(p, "room:lobby")
+  let remaining_meta = json.to_string(remaining.meta)
+  remaining_meta |> string.contains(ref2) |> should.be_true
+  remaining_meta |> string.contains(ref1) |> should.be_false
+
+  presence.untrack(p, ref1)
+  presence.count(p, "room:lobby") |> should.equal(1)
+  presence.untrack(p, ref2)
+  presence.count(p, "room:lobby") |> should.equal(0)
+}
+
 pub fn presence_untrack_unknown_ref_is_noop_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
@@ -163,6 +198,93 @@ pub fn presence_empty_list_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
   let entries = presence.list(p, "room:empty")
   list.length(entries) |> should.equal(0)
+}
+
+// ── count ────────────────────────────────────────────────────────────────
+
+pub fn presence_count_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+
+  presence.count(p, "room:lobby") |> should.equal(2)
+}
+
+pub fn presence_count_matches_list_length_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
+  let _ = presence.track(p, "room:lobby", "user:3", "socket-3", json.null())
+
+  presence.count(p, "room:lobby")
+  |> should.equal(list.length(presence.list(p, "room:lobby")))
+}
+
+pub fn presence_count_missing_topic_is_zero_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  presence.count(p, "room:never-touched") |> should.equal(0)
+}
+
+pub fn presence_count_empty_after_untrack_all_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  presence.untrack_all(p, "socket-1")
+
+  presence.count(p, "room:lobby") |> should.equal(0)
+}
+
+// ── get_by_key on a missing topic ───────────────────────────────────────────
+
+pub fn presence_get_by_key_missing_topic_returns_empty_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  presence.get_by_key(p, "room:never-touched", "user:1")
+  |> should.equal([])
+}
+
+// ── track/untrack/untrack_all read-after-write consistency ─────────────────
+//
+// `list`, `get_by_key`, and `count` read a materialized snapshot from an
+// ETS table, not the actor's CRDT directly. These calls check for immediate
+// (not eventual) consistency: no `wait_until` polling, proving `track` only
+// replies after its read-model snapshot has already been published.
+
+pub fn track_is_immediately_visible_to_all_readers_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let meta = json.object([#("status", json.string("online"))])
+  let _ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
+
+  presence.count(p, "room:lobby") |> should.equal(1)
+  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  list.length(presence.get_by_key(p, "room:lobby", "user:1")) |> should.equal(1)
+}
+
+pub fn untrack_is_immediately_visible_to_all_readers_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  presence.untrack(p, ref)
+
+  presence.count(p, "room:lobby") |> should.equal(0)
+  presence.list(p, "room:lobby") |> should.equal([])
+  presence.get_by_key(p, "room:lobby", "user:1") |> should.equal([])
+}
+
+pub fn untrack_all_is_immediately_visible_across_topics_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p, "room:general", "user:1", "socket-1", json.null())
+
+  presence.untrack_all(p, "socket-1")
+
+  presence.count(p, "room:lobby") |> should.equal(0)
+  presence.count(p, "room:general") |> should.equal(0)
 }
 
 pub fn presence_default_config_test() {
@@ -298,4 +420,121 @@ pub fn diff_accessors_return_empty_lists_for_unmentioned_topics_test() {
 
   presence.diff_joins(diff, "room:missing") |> should.equal([])
   presence.diff_leaves(diff, "room:missing") |> should.equal([])
+}
+
+// ── read model lifetime: reads fail explicitly after the actor dies ────────
+//
+// `list`, `get_by_key`, and `count` read an ETS table owned by the presence
+// actor process; the table is destroyed automatically when that process
+// stops. These checks prove a dead actor's reads panic loudly instead of
+// silently falling back to an empty/default result, which would be
+// indistinguishable from a topic that simply has no presences.
+
+/// Run `op` in an unlinked process and confirm it crashes (any reason other
+/// than a normal exit) rather than returning normally. Unlinked + monitored
+/// so the panic inside `op` cannot bring down the test process itself.
+fn assert_crashes(op: fn() -> Nil) -> Nil {
+  let pid = process.spawn_unlinked(op)
+  let mon = process.monitor(pid)
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(mon, fn(down) { down })
+
+  case process.selector_receive(selector, 1000) {
+    Ok(process.ProcessDown(reason: process.Normal, ..)) -> should.fail()
+    Ok(process.ProcessDown(..)) -> Nil
+    Ok(process.PortDown(..)) -> should.fail()
+    Error(Nil) -> should.fail()
+  }
+}
+
+pub fn list_fails_after_presence_terminated_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+
+  test_helpers.kill_presence(p)
+
+  assert_crashes(fn() {
+    let _ = presence.list(p, "room:lobby")
+    Nil
+  })
+}
+
+pub fn get_by_key_fails_after_presence_terminated_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+
+  test_helpers.kill_presence(p)
+
+  assert_crashes(fn() {
+    let _ = presence.get_by_key(p, "room:lobby", "user:1")
+    Nil
+  })
+}
+
+pub fn count_fails_after_presence_terminated_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+  let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+
+  test_helpers.kill_presence(p)
+
+  assert_crashes(fn() { presence.count(p, "room:lobby") |> should.equal(0) })
+}
+
+pub fn count_fails_after_presence_terminated_even_for_untouched_topic_test() {
+  // A topic that was never tracked reads as count 0 while the actor is
+  // alive (see `presence_count_missing_topic_is_zero_test`); once the
+  // actor is gone, `count` must still fail explicitly rather than reusing
+  // that same "0" default, since the two situations are not the same.
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  test_helpers.kill_presence(p)
+
+  assert_crashes(fn() {
+    presence.count(p, "room:never-touched") |> should.equal(0)
+  })
+}
+
+// ── multiple presence actors: independent, unnamed read tables ─────────────
+//
+// The read-model ETS table is created unnamed (no `named_table`) so
+// concurrent actor starts never collide on a shared table name. These
+// checks prove that in practice: several presence actors' reads stay fully
+// isolated from one another, and terminating one actor's table has no
+// effect on the others.
+
+pub fn multiple_presence_actors_have_independent_read_tables_test() {
+  let assert Ok(p1) = presence.start(test_config("node1"))
+  let assert Ok(p2) = presence.start(test_config("node2"))
+  let assert Ok(p3) = presence.start(test_config("node3"))
+
+  let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
+  let _ = presence.track(p2, "room:lobby", "user:3", "socket-3", json.null())
+
+  // p3 never tracked anything in "room:lobby"; each actor's read model
+  // reflects only what was tracked on it, never a peer's entries.
+  presence.count(p1, "room:lobby") |> should.equal(1)
+  presence.count(p2, "room:lobby") |> should.equal(2)
+  presence.count(p3, "room:lobby") |> should.equal(0)
+}
+
+pub fn killing_one_presence_actor_does_not_affect_others_test() {
+  let assert Ok(p1) = presence.start(test_config("node1"))
+  let assert Ok(p2) = presence.start(test_config("node2"))
+
+  let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
+  let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
+
+  test_helpers.kill_presence(p1)
+
+  // p1's table is gone, but p2's is a separate (unnamed) table: its reads
+  // keep working exactly as before, untouched by p1's death.
+  presence.count(p2, "room:lobby") |> should.equal(1)
+  list.length(presence.list(p2, "room:lobby")) |> should.equal(1)
+
+  assert_crashes(fn() {
+    let _ = presence.list(p1, "room:lobby")
+    Nil
+  })
 }

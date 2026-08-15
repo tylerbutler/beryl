@@ -7,12 +7,16 @@
 //// reach the runtime", where reply presence/absence alone cannot
 //// distinguish edge-level shedding from runtime-level shedding.
 
+import beryl/presence
 import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/atom
 import gleam/erlang/process
 import gleeunit/should
+
+@external(erlang, "beryl_test_process_ffi", "mailbox_length")
+pub fn mailbox_length(pid: process.Pid) -> Int
 
 /// Poll a condition function until it returns True, or fail after timeout.
 ///
@@ -96,6 +100,19 @@ pub fn begin_capture() -> process.Selector(CapturedLog) {
 /// Remove the capture handler installed by `begin_capture`.
 pub fn stop_capture() -> Nil {
   stop_capture_ffi()
+}
+
+// ── Presence actor lifetime ──────────────────────────────────────────────────
+
+/// Kill a presence actor's process, simulating a crash without cleanup.
+pub fn kill_presence(p: presence.Presence) -> Nil {
+  let assert Ok(pid) = process.subject_owner(presence.subject(p))
+  // The actor is linked to this (test) process; unlink before killing so
+  // the exit signal does not take the test runner down with it.
+  process.unlink(pid)
+  process.kill(pid)
+  // Wait for the process to actually be gone.
+  wait_until(fn() { !process.is_alive(pid) }, 1000, 5)
 }
 
 /// Receive captured logs from `selector` until one matching `message`
