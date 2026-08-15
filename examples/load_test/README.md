@@ -56,6 +56,12 @@ server from starting. Rate and connection values at or below zero disable
 their limit. All heartbeat durations are milliseconds, all rates are events
 per second, and string limits are bytes.
 
+For each enabled rate limit, a burst of `0` defaults to the corresponding
+per-second rate. A positive burst sets an explicit bucket capacity. A negative
+burst is accepted as configured but provides no usable capacity, so every
+event is rate-limited; use `0` for the default instead. If the corresponding
+rate is non-positive, the limit is disabled regardless of its burst value.
+
 | Variable | Default | Meaning |
 |---|---:|---|
 | `BIND_ADDRESS` | `127.0.0.1` | Listener interface |
@@ -64,12 +70,14 @@ per second, and string limits are bytes.
 | `BERYL_HEARTBEAT_TIMEOUT_MS` | `60000` | Server staleness/eviction window, in ms |
 | `BERYL_MAX_CONNECTIONS_PER_IP` | `0` | Concurrent connections per real peer IP; `<= 0` is unlimited |
 | `BERYL_MAX_CONNECTIONS` | `0` | Concurrent connections on this BEAM node; `<= 0` is unlimited |
+| `BERYL_FRAME_RATE` | `0` | Per-connection inbound frame rate before decoding; `<= 0` disables it |
+| `BERYL_FRAME_BURST` | `0` | Frame bucket capacity; `0` defaults to `BERYL_FRAME_RATE` |
 | `BERYL_MESSAGE_RATE` | `0` | Per-socket message rate; `<= 0` disables it |
-| `BERYL_MESSAGE_BURST` | `0` | Burst capacity used when the message rate is enabled |
+| `BERYL_MESSAGE_BURST` | `0` | Message bucket capacity; `0` defaults to `BERYL_MESSAGE_RATE` |
 | `BERYL_JOIN_RATE` | `0` | Per-socket join rate; `<= 0` disables it |
-| `BERYL_JOIN_BURST` | `0` | Burst capacity used when the join rate is enabled |
+| `BERYL_JOIN_BURST` | `0` | Join bucket capacity; `0` defaults to `BERYL_JOIN_RATE` |
 | `BERYL_CHANNEL_RATE` | `0` | Per-socket, per-topic message rate; `<= 0` disables it |
-| `BERYL_CHANNEL_BURST` | `0` | Burst capacity used when the channel rate is enabled |
+| `BERYL_CHANNEL_BURST` | `0` | Channel bucket capacity; `0` defaults to `BERYL_CHANNEL_RATE` |
 | `BERYL_CHANNEL_RATE_MAX_KEYS_PER_SOCKET` | `1000` | Active per-channel rate buckets per socket; `<= 0` removes this cap |
 | `BERYL_MAX_TOPIC_LENGTH` | `256` | Maximum client topic length in bytes |
 | `BERYL_MAX_EVENT_LENGTH` | `64` | Maximum client event-name length in bytes |

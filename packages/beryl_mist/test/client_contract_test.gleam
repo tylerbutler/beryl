@@ -24,6 +24,8 @@ import mist
 
 const socket_path = "/socket/websocket"
 
+const receive_timeout_ms = 1000
+
 type TestServer {
   TestServer(
     channels: beryl.Sockets,
@@ -181,7 +183,7 @@ pub fn aquamarine_push_gets_server_reply_test() {
     json.object([#("body", json.string("hello"))]),
   )
 
-  let assert Ok(incoming) = aquamarine.receive(channel, 1000)
+  let assert Ok(incoming) = aquamarine.receive(channel, receive_timeout_ms)
   incoming.event |> should.equal(phoenix.codec().reply_event)
   incoming.topic |> should.equal("test:echo")
   decode_body(incoming.payload) |> should.equal(Ok("hello"))
@@ -215,7 +217,7 @@ pub fn aquamarine_client_receives_server_broadcast_test() {
     json.object([#("n", json.int(42))]),
   )
 
-  let assert Ok(incoming) = aquamarine.receive(channel, 1000)
+  let assert Ok(incoming) = aquamarine.receive(channel, receive_timeout_ms)
   incoming.event |> should.equal("tick")
   incoming.topic |> should.equal("test:lobby")
   decode_n(incoming.payload) |> should.equal(Ok(42))

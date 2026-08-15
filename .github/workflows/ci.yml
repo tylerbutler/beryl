@@ -21,10 +21,12 @@ jobs:
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
-          # Providing erlang-version makes the action ignore version-file, so
-          # gleam-version must be set explicitly or Gleam won't be installed.
+          # Providing erlang-version makes the action ignore version-file and
+          # skip installing Gleam (gleam-version is left unset). Setup mise
+          # tools (below) installs the Gleam pinned in .tool-versions, which
+          # is what actually ends up on PATH and is what we want: one Gleam
+          # version, matching local dev, regardless of the Erlang matrix leg.
           erlang-version: ${{ matrix.erlang }}
-          gleam-version: "1.16.0"
           run-deps: false
 
       - name: Install rebar3
@@ -188,8 +190,10 @@ jobs:
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          # gleam-version intentionally omitted: Setup mise tools (below)
+          # installs the Gleam pinned in .tool-versions, which is what
+          # ends up on PATH. See the Test job for the full rationale.
           erlang-version: ${{ matrix.erlang }}
-          gleam-version: "1.16.0"
           run-deps: false
 
       - name: Setup Node.js
@@ -222,7 +226,7 @@ jobs:
         run: just load-check protocol-smoke
 
       - name: Build load-test server
-        run: trellis run build load_test
+        run: ./scripts/gleam-each.sh build load_test
 
       # protocol-smoke contains protocol/error thresholds only: this job does
       # not enforce latency, throughput, or other hardware-dependent gates.
