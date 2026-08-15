@@ -9,7 +9,7 @@ description: Generated API reference from Gleam docs metadata.
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-This reference is generated from Gleam's docs metadata for `beryl`, `beryl_ewe`, and `beryl_mist`.
+This reference is generated from Gleam's docs metadata for `beryl`, `beryl_channels`, `beryl_ewe`, and `beryl_mist`.
 
 :::note[Generated content]
 Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no `hexdocs.pm` listing.
@@ -35,6 +35,13 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/transport/server`](/reference/api/beryl-transport-server/) | Server-agnostic WebSocket transport infrastructure. |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
+
+## `beryl_channels` `0.0.1`
+
+| Module | Description |
+|---|---|
+| [`beryl_channels`](/reference/api/beryl_channels/) | Composable channels for beryl real-time sockets. |
+| [`beryl_channels/channel`](/reference/api/beryl_channels-channel/) | The channel composition surface: a channel is a topic pattern paired |
 
 ## `beryl_ewe` `0.1.1`
 
