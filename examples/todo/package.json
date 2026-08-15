@@ -1,0 +1,14 @@
+{
+  "name": "todo",
+  "private": true,
+  "description": "Standalone browser Todo app built with Lustre.",
+  "type": "module",
+  "scripts": {
+    "build": "cd client && gleam run -m lustre/dev build",
+    "dev": "cd client && gleam run -m lustre/dev start",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

@@ -3,6 +3,7 @@ packages:
   - chatrooms
   - collab_docs
   - showcase
+  - todo
 onlyBuiltDependencies:
   - esbuild
   - esbuild@0.27.7
