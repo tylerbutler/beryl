@@ -219,7 +219,6 @@ fn build(
   |> actor.on_message(handle_message)
 }
 
-// nolint: unused_exports -- package-internal supervised actor constructor
 @internal
 pub fn start_named(
   max_per_ip: Int,
@@ -231,7 +230,6 @@ pub fn start_named(
   |> actor.start
 }
 
-// nolint: unused_exports -- package-internal named actor accessor
 @internal
 pub fn from_name(name: process.Name(Message)) -> ConnectionLimiter {
   ConnectionLimiter(subject: process.named_subject(name))
@@ -244,7 +242,6 @@ pub fn pid(limiter: ConnectionLimiter) -> Result(Pid, Nil) {
   process.subject_owner(limiter.subject)
 }
 
-// nolint: unused_exports -- package-internal optional limiter constructor
 /// Start a limiter only when at least one ceiling is positive.
 ///
 /// `max_per_ip` caps concurrent connections from a single peer; `max_total`
@@ -261,7 +258,6 @@ pub fn start_optional(
   Some(limiter)
 }
 
-// nolint: unused_exports -- package-internal limiter predicate
 @internal
 pub fn enabled(max_per_ip: Int, max_total: Int) -> Bool {
   max_per_ip > 0 || max_total > 0
@@ -311,27 +307,6 @@ fn release(permit: Permit) -> Nil {
 pub fn release_optional(permit: Option(Permit)) -> Nil {
   case permit {
     Some(permit) -> release(permit)
-    None -> Nil
-  }
-}
-
-fn stop(limiter: ConnectionLimiter) -> Nil {
-  let should_send = case process.subject_owner(limiter.subject) {
-    Error(Nil) -> False
-    Ok(pid) -> process.is_alive(pid)
-  }
-
-  use <- bool.guard(when: !should_send, return: Nil)
-  let reply = process.new_subject()
-  process.send(limiter.subject, Stop(reply))
-  let _stop_result = process.receive(reply, registry_call_timeout_ms)
-  Nil
-}
-
-/// Stop the connection limiter if one is present; a no-op when `None`.
-pub fn stop_optional(limiter: Option(ConnectionLimiter)) -> Nil {
-  case limiter {
-    Some(limiter) -> stop(limiter)
     None -> Nil
   }
 }

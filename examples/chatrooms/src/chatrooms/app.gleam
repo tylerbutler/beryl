@@ -17,12 +17,13 @@ import beryl/group.{type Groups}
 import beryl/socket.{type Effect, type Ref}
 import example_helpers/color
 import example_helpers/payload
+import example_helpers/reply
+import example_helpers/router
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/int
 import gleam/json
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/set
 import gleam/string
@@ -32,11 +33,6 @@ const max_room_users = 20
 /// Per-topic state for one socket in a chat room.
 pub type Model {
   Model(username: String, color: String, room_name: String)
-}
-
-/// Per-socket state for the application-wide lobby topic.
-pub type Lobby {
-  Lobby
 }
 
 /// Dependencies shared by chat sockets.
@@ -125,7 +121,7 @@ pub fn update(
       case string.trim(text) {
         "" -> #(
           model,
-          reply_ok(ref, error_with_code(422, "Message cannot be empty")),
+          reply.ok(ref, error_with_code(422, "Message cannot be empty")),
         )
         trimmed -> {
           let msg_payload =
@@ -137,19 +133,16 @@ pub fn update(
               #("type", json.string("user")),
               #("timestamp", json.int(timestamp_ms())),
             ])
-          #(
-            model,
-            list.append(
-              [socket.Broadcast(topic, "new_msg", msg_payload)],
-              reply_ok(
-                ref,
-                json.object([
-                  #("status", json.string("ok")),
-                  #("timestamp", json.int(timestamp_ms())),
-                ]),
-              ),
-            ),
-          )
+          #(model, [
+            socket.Broadcast(topic, "new_msg", msg_payload),
+            ..reply.ok(
+              ref,
+              json.object([
+                #("status", json.string("ok")),
+                #("timestamp", json.int(timestamp_ms())),
+              ]),
+            )
+          ])
         }
       }
     }
@@ -184,132 +177,41 @@ pub fn closed(
 
 // --- Standalone app-side dispatch wrapper ---
 
-/// Accept the application-wide `lobby` topic.
-pub fn lobby_join(ref: Ref) -> #(Lobby, List(Effect)) {
-  #(Lobby, [socket.AcceptJoin(ref, None)])
-}
-
-/// The lobby is read-only; client events produce no effects.
-pub fn lobby_update(
-  model: Lobby,
-  _event_name: String,
-  _payload: Dynamic,
-  _ref: Option(Ref),
-) -> #(Lobby, List(Effect)) {
-  #(model, [])
-}
-
-/// Closing the lobby requires no external cleanup.
-pub fn lobby_closed(_model: Lobby) -> List(Effect) {
-  []
-}
-
-/// Socket-wide state for the standalone chatrooms server: the optional
-/// application lobby plus one `Model` per joined `room:*` topic.
-pub type Standalone {
-  Standalone(
-    socket_id: String,
-    rooms: Dict(String, Model),
-    lobby: Option(Lobby),
+/// Adapt the `room:*` handlers to a containing socket-wide model.
+pub fn namespace(
+  ctx: Ctx,
+  socket_id socket_id: fn(model) -> String,
+  get get: fn(model) -> Dict(String, Model),
+  put put: fn(model, Dict(String, Model)) -> model,
+) -> router.Namespace(model) {
+  router.stateful(
+    matches: string.starts_with(_, "room:"),
+    socket_id:,
+    get:,
+    put:,
+    join: fn(socket_id, topic, payload, ref) {
+      join(ctx, socket_id, topic, payload, ref)
+    },
+    message: fn(socket_id, topic, model, event_name, payload, ref) {
+      update(ctx, socket_id, topic, model, event_name, payload, ref)
+    },
+    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
   )
 }
 
-/// `init` for the standalone chatrooms app-dispatch runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, rooms: dict.new(), lobby: None), [])
-}
-
-/// `update` for the standalone chatrooms app-dispatch runtime: route
-/// lobby events through the lobby callbacks and `room:*` events through the
-/// embeddable `join`/`update`/`closed` surface. Other joins are rejected.
+/// Build the standalone update once, sharing the canonical router model.
 pub fn standalone_update(
   ctx: Ctx,
-  model: Standalone,
-  ev: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  case ev {
-    socket.Join(topic, payload, ref) ->
-      case topic {
-        "lobby" -> {
-          let #(lobby, effects) = lobby_join(ref)
-          socket.Next(Standalone(..model, lobby: Some(lobby)), effects)
-        }
-        "room:" <> _ -> {
-          let #(joined, effects) =
-            join(ctx, model.socket_id, topic, payload, ref)
-          case joined {
-            Some(sub) ->
-              socket.Next(
-                Standalone(..model, rooms: dict.insert(model.rooms, topic, sub)),
-                effects,
-              )
-            None -> socket.Next(model, effects)
-          }
-        }
-        _ ->
-          socket.Next(model, [
-            socket.RejectJoin(
-              ref,
-              json.object([#("reason", json.string("unknown_topic"))]),
-            ),
-          ])
-      }
-
-    socket.Message(topic, event_name, payload, ref) ->
-      case topic {
-        "lobby" ->
-          case model.lobby {
-            Some(lobby) -> {
-              let #(lobby, effects) =
-                lobby_update(lobby, event_name, payload, ref)
-              socket.Next(Standalone(..model, lobby: Some(lobby)), effects)
-            }
-            None -> socket.Next(model, [])
-          }
-        _ ->
-          case dict.get(model.rooms, topic) {
-            Ok(sub) -> {
-              let #(sub, effects) =
-                update(
-                  ctx,
-                  model.socket_id,
-                  topic,
-                  sub,
-                  event_name,
-                  payload,
-                  ref,
-                )
-              socket.Next(
-                Standalone(..model, rooms: dict.insert(model.rooms, topic, sub)),
-                effects,
-              )
-            }
-            Error(Nil) -> socket.Next(model, [])
-          }
-      }
-
-    socket.Closed(topic, _reason) ->
-      case topic {
-        "lobby" ->
-          case model.lobby {
-            Some(lobby) ->
-              socket.Next(Standalone(..model, lobby: None), lobby_closed(lobby))
-            None -> socket.Next(model, [])
-          }
-        _ ->
-          case dict.get(model.rooms, topic) {
-            Ok(sub) ->
-              socket.Next(
-                Standalone(..model, rooms: dict.delete(model.rooms, topic)),
-                closed(ctx, model.socket_id, topic, sub),
-              )
-            Error(Nil) -> socket.Next(model, [])
-          }
-      }
-
-    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
+) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [
+    router.accept_only("lobby"),
+    router.standalone_namespace(fn(socket_id, get, put) {
+      namespace(ctx, socket_id, get, put)
+    }),
+  ]
+  fn(model, input) {
+    router.route(namespaces, router.unknown_topic(), model, input)
   }
 }
 
@@ -359,16 +261,6 @@ fn system_message(text: String) -> json.Json {
 
 fn room_changed(room_name: String) -> json.Json {
   json.object([#("room", json.string(room_name))])
-}
-
-/// Reply only when the client sent a ref (matching the channel-module
-/// behavior of dropping refless replies). The ok status with an error
-/// payload mirrors the previous wire behavior exactly.
-fn reply_ok(ref: Option(Ref), reply_payload: json.Json) -> List(Effect) {
-  case ref {
-    Some(r) -> [socket.ReplyOk(r, reply_payload)]
-    None -> []
-  }
 }
 
 fn error(message: String) -> json.Json {

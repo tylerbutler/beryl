@@ -10,6 +10,7 @@ The simplest way to add WebSocket support is with `mist_transport.upgrade`:
 
 ```gleam
 import beryl
+import beryl/transport/server
 import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/http/request
@@ -25,7 +26,7 @@ fn handle_request(
   use <- mist_transport.upgrade(
     req,
     channels,
-    mist_transport.default_config("/socket/websocket"),
+    server.default_config("/socket/websocket"),
   )
 
   // Non-WebSocket requests fall through here
@@ -43,7 +44,7 @@ The Phoenix JS client (`new Socket("/socket", ...)`) connects to `/socket/websoc
 
 ```gleam
 // Matches Phoenix JS: new Socket("/socket", ...)
-mist_transport.default_config("/socket/websocket")
+server.default_config("/socket/websocket")
 ```
 
 Raw WebSocket clients connect directly to the configured path with no suffix appended.
@@ -57,19 +58,19 @@ before any channel join, and can reject the whole connection.
 
 ```gleam
 let config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+  server.default_config("/socket/websocket")
+  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
     // Check auth token, session, etc.
     case validate_token(req) {
       Ok(_user) -> Ok(Nil)                              // Allow connection
-      Error(_) -> Error(mist_transport.ConnectRejected)  // Reject with 403
+      Error(_) -> Error(server.ConnectRejected)  // Reject with 403
     }
   })
 
 use <- mist_transport.upgrade(req, channels, config)
 ```
 
-Returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
+Returning `Error(server.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
 
 ### Origin validation and CSWSH
 
@@ -83,16 +84,17 @@ the full `Origin` header exactly: scheme, host, and port when present.
 
 ```gleam
 let config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_allowed_origins(["https://app.example.com"])
-  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+  server.default_config("/socket/websocket")
+  |> server.with_allowed_origins(["https://app.example.com"])
+  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
     validate_cookie_session(req)
   })
 ```
 
 Requests with missing or non-matching origins are rejected with HTTP 403 before
-the WebSocket handshake. If you do not configure an allow-list, existing behavior
-is unchanged and all origins are accepted.
+the WebSocket handshake. Without an explicit allow-list, the default
+`SameOrigin` policy rejects cross-site browser handshakes while allowing
+non-browser clients that omit `Origin`.
 
 If you cannot use an origin allow-list, avoid cookie-based WebSocket
 authentication. Use a token passed explicitly to `on_connect` and reject invalid
@@ -109,12 +111,12 @@ join:
 
 ```gleam
 let config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_on_connect(fn(req: Request(mist.Connection)) {
+  server.default_config("/socket/websocket")
+  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
     // Validate once; reject the whole connection on failure.
     case validate_token(req) {
       Ok(_) -> Ok(Nil)
-      Error(_) -> Error(mist_transport.ConnectRejected) // Reject with 403
+      Error(_) -> Error(server.ConnectRejected) // Reject with 403
     }
   })
 ```
@@ -133,21 +135,6 @@ beryl.child_spec(
   update: update,
 )
 ```
-
-## Direct upgrade
-
-If you handle path matching yourself, use `upgrade_connection` directly:
-
-```gleam
-fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
-  case request.path_segments(req) {
-    ["ws"] -> mist_transport.upgrade_connection(req, channels)
-    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
-  }
-}
-```
-
-Note: `upgrade_connection` does not invoke the `on_connect` callback. Run your own auth check before calling it.
 
 :::tip[Troubleshooting connections]
 If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
@@ -219,8 +206,7 @@ Configure heartbeat timing in the beryl config:
 let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_heartbeat(
-    interval_ms: 30_000,  // Client-advisory ping cadence (server does not read it)
-    timeout_ms: 60_000,   // Server evicts after 60s silence (must be >= 2)
+    timeout_ms: 60_000,  // Server evicts after 60s silence (must be >= 2)
   )
 ```
 

@@ -43,7 +43,6 @@ import gleam/string
 pub type Config {
   Config(
     codec: Codec,
-    heartbeat_check_interval_ms: Int,
     heartbeat_timeout_ms: Int,
     message_limits: Option(RateLimitConfig),
     join_limits: Option(RateLimitConfig),
@@ -58,12 +57,6 @@ pub type Config {
     telemetry: Bool,
     logging: internal.LoggingConfig,
   )
-}
-
-/// Errors when starting the runtime.
-pub type StartError {
-  InvalidHeartbeatTimeout
-  ActorStartFailed(actor.StartError)
 }
 
 pub type AdmissionToken
@@ -115,9 +108,8 @@ pub type Msg(msg) {
   /// A typed server-side message for one socket, sent through its
   /// `Sender`. Delivered to `update` as `Info(message)`.
   AppInfo(socket_id: String, message: msg)
-  /// Local broadcast fan-out. PubSub forwarding is the sender's concern
-  /// (the `beryl` broadcast helpers and the effect interpreter forward
-  /// before/while sending this).
+  /// Broadcast fan-out: local subscribers plus PubSub forwarding to other
+  /// runtimes when PubSub is configured.
   Broadcast(topic: String, event: String, payload: Json, except: Option(String))
   RemoteBroadcast(pubsub.Message(Json))
   CheckHeartbeats
@@ -281,12 +273,7 @@ pub fn start_named(
   pubsub ps: Option(PubSub(Json)),
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Input(msg)) -> Next(model, msg),
-) -> Result(actor.Started(Subject(Msg(msg))), StartError) {
-  use <- bool.guard(
-    when: config.heartbeat_check_interval_ms > 0
-      && config.heartbeat_timeout_ms <= 0,
-    return: Error(InvalidHeartbeatTimeout),
-  )
+) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
   internal.configure(config.logging)
   let initial_state =
     State(
@@ -329,15 +316,15 @@ pub fn start_named(
   |> actor.on_message(handle_message)
   |> actor.named(name)
   |> actor.start
-  |> result.map_error(ActorStartFailed)
 }
 
+/// Check at half the staleness window; `beryl.validate_config` guarantees the
+/// timeout is at least 2, so the interval is always positive.
 fn schedule_heartbeat_check(subject: Subject(Msg(msg)), config: Config) -> Nil {
-  use <- bool.guard(when: config.heartbeat_check_interval_ms <= 0, return: Nil)
   let _timer =
     process.send_after(
       subject,
-      config.heartbeat_check_interval_ms,
+      config.heartbeat_timeout_ms / 2,
       CheckHeartbeats,
     )
   Nil
@@ -383,14 +370,7 @@ fn handle_message(
     AppInfo(socket_id, app_message) ->
       handle_app_info(state, socket_id, app_message)
     Broadcast(topic_name, event_name, payload, except) -> {
-      emit_broadcast(
-        state,
-        topic_name,
-        event_name,
-        payload,
-        except,
-        telemetry.Local,
-      )
+      broadcast_with_pubsub(state, topic_name, event_name, payload, except)
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
@@ -620,12 +600,9 @@ fn handle_check_heartbeats(
   let now = monotonic_time_ms()
   let timeout_ms = state.config.heartbeat_timeout_ms
   let stale_socket_ids =
-    dict.fold(state.sockets, [], fn(acc, socket_id, socket) {
-      case now - socket.last_heartbeat > timeout_ms {
-        True -> [socket_id, ..acc]
-        False -> acc
-      }
-    })
+    state.sockets
+    |> dict.filter(fn(_, socket) { now - socket.last_heartbeat > timeout_ms })
+    |> dict.keys
   list.each(stale_socket_ids, fn(socket_id) {
     state.logger
     |> log.warn("Evicting socket due to heartbeat timeout", [
@@ -888,7 +865,7 @@ fn reject_invalid_join(
           codec.inbound_ref(msg),
           codec.inbound_topic(msg),
           codec.StatusError,
-          json.object([#("reason", json.string("invalid_topic"))]),
+          error_reason("invalid_topic"),
         )
       let _send_result = send_frame_logged(state, socket, safe_topic, reply)
       emit_join_stop(state, started_at, telemetry.JoinInvalidTopic)
@@ -922,7 +899,7 @@ fn handle_join(
         topic_name,
         join_ref,
         ref,
-        json.object([#("reason", json.string("rate_limited"))]),
+        error_reason("rate_limited"),
       )
       emit_join_stop(state, started_at, telemetry.JoinRateLimited)
       actor.continue(state)
@@ -974,7 +951,7 @@ fn handle_join_inner(
             topic_name,
             join_ref,
             ref,
-            json.object([#("reason", json.string("too_many_topics"))]),
+            error_reason("too_many_topics"),
           )
           emit_join_stop(state, started_at, telemetry.JoinTopicLimit)
           actor.continue(state)
@@ -1270,7 +1247,7 @@ fn reject_unjoined_event(
           Some(r),
           topic_name,
           codec.StatusError,
-          json.object([#("reason", json.string("unmatched topic"))]),
+          error_reason("unmatched topic"),
         )
       let _send_result = send_frame_logged(state, socket, topic_name, reply)
       Nil
@@ -1315,77 +1292,121 @@ fn handle_in_rate_limited(
       )
       actor.continue(state)
     }
+    True ->
+      route_inbound_message(
+        state,
+        socket,
+        socket_id,
+        topic_name,
+        event_name,
+        payload,
+        ref,
+        started_at,
+        kind,
+      )
+  }
+}
+
+fn route_inbound_message(
+  state: State(model, msg),
+  socket: SocketState(model, msg),
+  socket_id: String,
+  topic_name: String,
+  event_name: String,
+  payload: Dynamic,
+  ref: Option(String),
+  started_at: Int,
+  kind: telemetry.MessageKind,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  state.logger
+  |> log.debug("Inbound message routed", [
+    #("socket_id", socket_id),
+    #("topic", topic_name),
+    #("event", event_name),
+    #("ref", optional_string(ref)),
+  ])
+  let message_ref =
+    option.map(ref, fn(ref) {
+      sock.make_message_ref(
+        topic: topic_name,
+        join_ref: joined_ref(socket, topic_name),
+        msg_ref: Some(ref),
+      )
+    })
+  case message_ref {
+    Some(message_ref) ->
+      route_message_with_ref(
+        state,
+        socket,
+        socket_id,
+        topic_name,
+        event_name,
+        payload,
+        message_ref,
+        started_at,
+        kind,
+      )
+    None ->
+      deliver_client_message(
+        state,
+        socket_id,
+        topic_name,
+        event_name,
+        payload,
+        None,
+        started_at,
+        kind,
+      )
+  }
+}
+
+fn route_message_with_ref(
+  state: State(model, msg),
+  socket: SocketState(model, msg),
+  socket_id: String,
+  topic_name: String,
+  event_name: String,
+  payload: Dynamic,
+  message_ref: Ref,
+  started_at: Int,
+  kind: telemetry.MessageKind,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case set.contains(socket.pending_reply_refs, message_ref) {
     True -> {
       state.logger
-      |> log.debug("Inbound message routed", [
+      |> log.warn("Inbound message rejected: reply ref already outstanding", [
         #("socket_id", socket_id),
         #("topic", topic_name),
         #("event", event_name),
-        #("ref", optional_string(ref)),
       ])
-      let message_ref =
-        option.map(ref, fn(r) {
-          sock.make_message_ref(
-            topic: topic_name,
-            join_ref: joined_ref(socket, topic_name),
-            msg_ref: Some(r),
-          )
-        })
-      case message_ref {
-        Some(message_ref) ->
-          case set.contains(socket.pending_reply_refs, message_ref) {
-            True -> {
-              state.logger
-              |> log.warn(
-                "Inbound message rejected: reply ref already outstanding",
-                [
-                  #("socket_id", socket_id),
-                  #("topic", topic_name),
-                  #("event", event_name),
-                ],
-              )
-              send_error_reply(
-                state,
-                socket_id,
-                topic_name,
-                sock.ref_join_ref(message_ref),
-                sock.ref_msg_ref(message_ref),
-                json.object([#("reason", json.string("duplicate_ref"))]),
-              )
-              emit_message_stop(
-                state,
-                started_at,
-                kind,
-                telemetry.MessageInvalid,
-                telemetry.NotApplicable,
-              )
-              actor.continue(state)
-            }
-            False ->
-              deliver_client_message(
-                state,
-                socket_id,
-                topic_name,
-                event_name,
-                payload,
-                Some(message_ref),
-                started_at,
-                kind,
-              )
-          }
-        None ->
-          deliver_client_message(
-            state,
-            socket_id,
-            topic_name,
-            event_name,
-            payload,
-            None,
-            started_at,
-            kind,
-          )
-      }
+      send_error_reply(
+        state,
+        socket_id,
+        topic_name,
+        sock.ref_join_ref(message_ref),
+        sock.ref_msg_ref(message_ref),
+        error_reason("duplicate_ref"),
+      )
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageInvalid,
+        telemetry.NotApplicable,
+      )
+      actor.continue(state)
     }
+    False ->
+      deliver_client_message(
+        state,
+        socket_id,
+        topic_name,
+        event_name,
+        payload,
+        Some(message_ref),
+        started_at,
+        kind,
+      )
   }
 }
 
@@ -1446,69 +1467,70 @@ fn handle_binary_in(
         Ok(msg) ->
           dispatch_inbound(state, socket_id, msg, telemetry.BinaryMessage)
       }
-    None -> {
-      let started_at = telemetry_start(state)
-      let #(state, allowed) = check_message_rate(state, socket_id)
-      case allowed {
-        False -> {
-          state.logger
-          |> log.warn("Binary message rate limited", [
-            #("socket_id", socket_id),
-          ])
+    None -> handle_undecoded_binary_in(state, socket_id, data)
+  }
+}
+
+/// Rate-limit and fan an undecoded binary frame out to each joined topic.
+/// The frame keeps binary telemetry classification throughout the fan-out.
+fn handle_undecoded_binary_in(
+  state: State(model, msg),
+  socket_id: String,
+  data: BitArray,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  let started_at = telemetry_start(state)
+  let #(state, allowed) = check_message_rate(state, socket_id)
+  case allowed, dict.get(state.sockets, socket_id) {
+    False, _ -> {
+      state.logger
+      |> log.warn("Binary message rate limited", [#("socket_id", socket_id)])
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.BinaryMessage,
+        telemetry.MessageRateLimited,
+        telemetry.NotApplicable,
+      )
+      actor.continue(state)
+    }
+    True, Error(Nil) -> {
+      state.logger
+      |> log.debug("Binary message ignored", [
+        #("socket_id", socket_id),
+        #("reason", "socket_not_found"),
+      ])
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.BinaryMessage,
+        telemetry.MessageSocketMissing,
+        telemetry.NotApplicable,
+      )
+      actor.continue(state)
+    }
+    True, Ok(socket) -> {
+      let topics =
+        set.to_list(socket.subscribed_topics)
+        |> list.sort(string.compare)
+      case topics {
+        [] -> {
           emit_message_stop(
             state,
             started_at,
             telemetry.BinaryMessage,
-            telemetry.MessageRateLimited,
+            telemetry.MessageUnjoined,
             telemetry.NotApplicable,
           )
           actor.continue(state)
         }
-        True ->
-          case dict.get(state.sockets, socket_id) {
-            Error(Nil) -> {
-              state.logger
-              |> log.debug("Binary message ignored", [
-                #("socket_id", socket_id),
-                #("reason", "socket_not_found"),
-              ])
-              emit_message_stop(
-                state,
-                started_at,
-                telemetry.BinaryMessage,
-                telemetry.MessageSocketMissing,
-                telemetry.NotApplicable,
-              )
-              actor.continue(state)
-            }
-            Ok(socket) -> {
-              // Fan the raw frame out to every joined topic, in sorted
-              // order for determinism.
-              let topics =
-                set.to_list(socket.subscribed_topics)
-                |> list.sort(string.compare)
-              case topics {
-                [] -> {
-                  emit_message_stop(
-                    state,
-                    started_at,
-                    telemetry.BinaryMessage,
-                    telemetry.MessageUnjoined,
-                    telemetry.NotApplicable,
-                  )
-                  actor.continue(state)
-                }
-                _ ->
-                  actor.continue(fan_out_binary(
-                    state,
-                    socket_id,
-                    topics,
-                    data,
-                    started_at,
-                  ))
-              }
-            }
-          }
+        _ ->
+          actor.continue(fan_out_binary(
+            state,
+            socket_id,
+            topics,
+            data,
+            started_at,
+          ))
       }
     }
   }
@@ -1524,8 +1546,6 @@ fn fan_out_binary(
   case topics {
     [] -> state
     [topic_name, ..rest] -> {
-      // Re-check per topic: an earlier delivery may have closed it or
-      // stopped the socket.
       let state = case socket_subscribed(state, socket_id, topic_name) {
         False -> state
         True ->
@@ -1637,102 +1657,111 @@ fn update_once(
       let model = socket.model
       case internal.rescue(fn() { update(model, ev) }) {
         Error(crash) -> handle_update_crash(state, socket_id, source, crash)
-        Ok(sock.Stop(reason)) -> {
-          state.logger
-          |> log.debug("Update stopped socket", [
-            #("socket_id", socket_id),
-            #("reason", stop_reason_string(reason)),
-          ])
-          // A join answered with Stop is still unanswered on the wire:
-          // fail it closed before the teardown frames.
-          reject_unanswered_join(state, socket_id, source)
-          case source {
-            JoinSource(_, _, _, _, started_at) ->
-              emit_join_stop(state, started_at, telemetry.JoinHandlerRejected)
-            MessageSource(_, kind, started_at) ->
-              emit_message_stop(
-                state,
-                started_at,
-                kind,
-                telemetry.MessageHandled,
-                telemetry.Stop,
-              )
-            InfoSource(started_at) ->
-              emit_message_stop(
-                state,
-                started_at,
-                telemetry.InfoMessage,
-                telemetry.MessageHandled,
-                telemetry.Stop,
-              )
-            ClosedSource -> Nil
-          }
-          Outcome(state, [], Some(reason))
-        }
-        Ok(sock.Next(new_model, effects)) -> {
-          let state = store_model(state, socket_id, new_model)
-          let pending = case source {
-            JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
-              Some(Pending(topic_name, join_ref, msg_ref, ref))
-            _ -> None
-          }
-          let #(state, pending, kicks) =
-            apply_effects(state, socket_id, effects, pending)
-          case pending {
-            Some(p) -> {
-              state.logger
-              |> log.warn("Join not acknowledged by update; rejecting", [
-                #("socket_id", socket_id),
-                #("topic", p.topic),
-              ])
-              send_error_reply(
-                state,
-                socket_id,
-                p.topic,
-                p.join_ref,
-                p.msg_ref,
-                json.object([
-                  #("reason", json.string("join not acknowledged")),
-                ]),
-              )
-              Nil
-            }
-            None -> Nil
-          }
-          case source {
-            JoinSource(topic_name, _, _, _, started_at) -> {
-              let join_outcome = case
-                pending,
-                socket_subscribed(state, socket_id, topic_name)
-              {
-                None, True -> telemetry.JoinAccepted
-                _, _ -> telemetry.JoinHandlerRejected
-              }
-              emit_join_stop(state, started_at, join_outcome)
-            }
-            MessageSource(_, kind, started_at) ->
-              emit_message_stop(
-                state,
-                started_at,
-                kind,
-                telemetry.MessageHandled,
-                effects_callback_result(effects),
-              )
-            InfoSource(started_at) ->
-              emit_message_stop(
-                state,
-                started_at,
-                telemetry.InfoMessage,
-                telemetry.MessageHandled,
-                effects_callback_result(effects),
-              )
-            ClosedSource -> Nil
-          }
-          Outcome(state, kicks, None)
-        }
+        Ok(sock.Stop(reason)) ->
+          apply_update_stop(state, socket_id, source, reason)
+        Ok(sock.Next(new_model, effects)) ->
+          apply_update_next(state, socket_id, source, new_model, effects)
       }
     }
   }
+}
+
+fn apply_update_stop(
+  state: State(model, msg),
+  socket_id: String,
+  source: Source,
+  reason: StopReason,
+) -> Outcome(model, msg) {
+  state.logger
+  |> log.debug("Update stopped socket", [
+    #("socket_id", socket_id),
+    #("reason", stop_reason_string(reason)),
+  ])
+  // A join answered with Stop is still unanswered on the wire:
+  // fail it closed before the teardown frames.
+  reject_stopped_join(state, socket_id, source)
+  case source {
+    JoinSource(_, _, _, _, started_at) ->
+      emit_join_stop(state, started_at, telemetry.JoinHandlerRejected)
+    MessageSource(_, kind, started_at) ->
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageHandled,
+        telemetry.Stop,
+      )
+    InfoSource(started_at) ->
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.InfoMessage,
+        telemetry.MessageHandled,
+        telemetry.Stop,
+      )
+    ClosedSource -> Nil
+  }
+  Outcome(state, [], Some(reason))
+}
+
+/// Store a returned model, apply effects, fail an unanswered join closed, and
+/// emit the callback's terminal telemetry without weakening join-ref identity.
+fn apply_update_next(
+  state: State(model, msg),
+  socket_id: String,
+  source: Source,
+  new_model: model,
+  effects: List(Effect),
+) -> Outcome(model, msg) {
+  let state = store_model(state, socket_id, new_model)
+  let pending = case source {
+    JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
+      Some(Pending(topic_name, join_ref, msg_ref, ref))
+    _ -> None
+  }
+  let #(state, pending, kicks) =
+    apply_effects(state, socket_id, effects, pending)
+  case pending {
+    Some(p) -> {
+      state.logger
+      |> log.warn("Join not acknowledged by update; rejecting", [
+        #("socket_id", socket_id),
+        #("topic", p.topic),
+      ])
+      reject_unanswered_join(state, socket_id, p)
+    }
+    None -> Nil
+  }
+  case source {
+    JoinSource(topic_name, _, _, _, started_at) -> {
+      let join_outcome = case
+        pending,
+        socket_subscribed(state, socket_id, topic_name)
+      {
+        None, True -> telemetry.JoinAccepted
+        _, _ -> telemetry.JoinHandlerRejected
+      }
+      emit_join_stop(state, started_at, join_outcome)
+    }
+    MessageSource(_, kind, started_at) ->
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageHandled,
+        effects_callback_result(effects),
+      )
+    InfoSource(started_at) ->
+      emit_message_stop(
+        state,
+        started_at,
+        telemetry.InfoMessage,
+        telemetry.MessageHandled,
+        effects_callback_result(effects),
+      )
+    ClosedSource -> Nil
+  }
+  Outcome(state, kicks, None)
 }
 
 /// Crash policy: joins are rejected and the socket survives; topic-scoped
@@ -1759,7 +1788,7 @@ fn handle_update_crash(
         topic_name,
         join_ref,
         msg_ref,
-        json.object([#("reason", json.string("join crashed"))]),
+        error_reason("join crashed"),
       )
       emit_join_stop(state, started_at, telemetry.JoinCallbackFailed)
       Outcome(state, [], None)
@@ -1806,25 +1835,37 @@ fn handle_update_crash(
   }
 }
 
-/// Fail-closed reply for a join the update never answered (used for both
-/// the missing-`AcceptJoin` case and `Stop` returned from a join).
-fn reject_unanswered_join(
+/// Fail closed when an update returns `Stop` while handling a join.
+fn reject_stopped_join(
   state: State(model, msg),
   socket_id: String,
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref, _, _) ->
-      send_error_reply(
+    JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
+      reject_unanswered_join(
         state,
         socket_id,
-        topic_name,
-        join_ref,
-        msg_ref,
-        json.object([#("reason", json.string("join not acknowledged"))]),
+        Pending(topic_name, join_ref, msg_ref, ref),
       )
     _ -> Nil
   }
+}
+
+/// Fail-closed reply for a join the update never answered.
+fn reject_unanswered_join(
+  state: State(model, msg),
+  socket_id: String,
+  pending: Pending,
+) -> Nil {
+  send_error_reply(
+    state,
+    socket_id,
+    pending.topic,
+    pending.join_ref,
+    pending.msg_ref,
+    error_reason("join not acknowledged"),
+  )
 }
 
 /// Process an outcome's follow-ups: tear the socket down if an update
@@ -1837,25 +1878,28 @@ fn drive(outcome: Outcome(model, msg), socket_id: String) -> State(model, msg) {
     None ->
       case outcome.kicks {
         [] -> outcome.state
-        [topic_name, ..rest] -> {
-          let next = case
-            socket_subscribed(outcome.state, socket_id, topic_name)
-          {
-            False -> Outcome(outcome.state, rest, None)
-            True -> {
-              let closed =
-                close_topic(outcome.state, socket_id, topic_name, sock.Shutdown)
-              Outcome(
-                closed.state,
-                list.append(rest, closed.kicks),
-                closed.stop,
-              )
-            }
-          }
-          drive(next, socket_id)
-        }
+        [topic_name, ..rest] ->
+          drive(
+            close_kicked_topic(outcome.state, socket_id, topic_name, rest),
+            socket_id,
+          )
       }
   }
+}
+
+/// Close one queued kick, preserving any nested kicks and socket stop.
+fn close_kicked_topic(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  rest: List(String),
+) -> Outcome(model, msg) {
+  use <- bool.guard(
+    when: !socket_subscribed(state, socket_id, topic_name),
+    return: Outcome(state, rest, None),
+  )
+  let closed = close_topic(state, socket_id, topic_name, sock.Shutdown)
+  Outcome(closed.state, list.append(rest, closed.kicks), closed.stop)
 }
 
 /// Close one topic subscription: remove the subscription state, deliver
@@ -2131,40 +2175,32 @@ fn apply_accept_join(
   pending: Option(Pending),
   kicks: List(String),
 ) -> #(State(model, msg), Option(Pending), List(String)) {
-  case pending {
-    Some(p) ->
-      case sock.ref_is_join(ref) && sock.refs_match(ref, p.ref) {
-        True -> {
-          let state = subscribe_socket(state, socket_id, p)
-          case dict.get(state.sockets, socket_id) {
-            Ok(socket) -> {
-              let response = option.unwrap(reply, json.object([]))
-              let frame =
-                codec.encode_reply(socket.codec)(
-                  p.join_ref,
-                  p.msg_ref,
-                  p.topic,
-                  codec.StatusOk,
-                  response,
-                )
-              let _send_result =
-                send_frame_logged(state, socket, p.topic, frame)
-              Nil
-            }
-            Error(Nil) -> Nil
-          }
-          state.logger
-          |> log.debug("Join accepted", [
-            #("socket_id", socket_id),
-            #("topic", p.topic),
-          ])
-          #(state, None, kicks)
+  case matching_pending_join(ref, pending) {
+    Some(p) -> {
+      let state = subscribe_socket(state, socket_id, p)
+      case dict.get(state.sockets, socket_id) {
+        Ok(socket) -> {
+          let response = option.unwrap(reply, json.object([]))
+          let frame =
+            codec.encode_reply(socket.codec)(
+              p.join_ref,
+              p.msg_ref,
+              p.topic,
+              codec.StatusOk,
+              response,
+            )
+          let _send_result = send_frame_logged(state, socket, p.topic, frame)
+          Nil
         }
-        False -> {
-          warn_unmatched_join_answer(state, socket_id, ref, "AcceptJoin")
-          #(state, pending, kicks)
-        }
+        Error(Nil) -> Nil
       }
+      state.logger
+      |> log.debug("Join accepted", [
+        #("socket_id", socket_id),
+        #("topic", p.topic),
+      ])
+      #(state, None, kicks)
+    }
     None -> {
       warn_unmatched_join_answer(state, socket_id, ref, "AcceptJoin")
       #(state, pending, kicks)
@@ -2180,34 +2216,34 @@ fn apply_reject_join(
   pending: Option(Pending),
   kicks: List(String),
 ) -> #(State(model, msg), Option(Pending), List(String)) {
-  case pending {
-    Some(p) ->
-      case sock.ref_is_join(ref) && sock.refs_match(ref, p.ref) {
-        True -> {
-          state.logger
-          |> log.debug("Join rejected", [
-            #("socket_id", socket_id),
-            #("topic", p.topic),
-          ])
-          send_error_reply(
-            state,
-            socket_id,
-            p.topic,
-            p.join_ref,
-            p.msg_ref,
-            reason,
-          )
-          #(state, None, kicks)
-        }
-        False -> {
-          warn_unmatched_join_answer(state, socket_id, ref, "RejectJoin")
-          #(state, pending, kicks)
-        }
-      }
+  case matching_pending_join(ref, pending) {
+    Some(p) -> {
+      state.logger
+      |> log.debug("Join rejected", [
+        #("socket_id", socket_id),
+        #("topic", p.topic),
+      ])
+      send_error_reply(state, socket_id, p.topic, p.join_ref, p.msg_ref, reason)
+      #(state, None, kicks)
+    }
     None -> {
       warn_unmatched_join_answer(state, socket_id, ref, "RejectJoin")
       #(state, pending, kicks)
     }
+  }
+}
+
+fn matching_pending_join(
+  ref: Ref,
+  pending: Option(Pending),
+) -> Option(Pending) {
+  case pending {
+    Some(p) ->
+      case sock.ref_is_join(ref) && sock.refs_match(ref, p.ref) {
+        True -> Some(p)
+        False -> None
+      }
+    None -> None
   }
 }
 
@@ -2553,12 +2589,11 @@ fn resolve_channel_limits(
   config: Config,
   topic_name: String,
 ) -> Option(RateLimitConfig) {
-  let matched =
+  case
     list.find(config.topic_rates, fn(entry) {
-      let #(pattern, _limits) = entry
-      topic.matches(pattern, topic_name)
+      topic.matches(entry.0, topic_name)
     })
-  case matched {
+  {
     Ok(#(_pattern, limits)) -> Some(limits)
     Error(Nil) -> config.channel_limits
   }
@@ -2640,6 +2675,10 @@ fn remove_socket_rate_limits(
 }
 
 // ── Small helpers ───────────────────────────────────────────────────────────
+
+fn error_reason(text: String) -> Json {
+  json.object([#("reason", json.string(text))])
+}
 
 fn store_socket(
   state: State(model, msg),

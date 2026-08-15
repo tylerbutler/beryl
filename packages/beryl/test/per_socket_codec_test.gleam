@@ -58,9 +58,10 @@ fn connect(
   socket_codec: option.Option(codec.Codec),
 ) -> process.Subject(String) {
   let sent = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(channels)
   transport.admit_socket(
     sockets: channels,
-    owner: transport.connection_owner(channels),
+    owner: owner,
     socket_id: socket_id,
     send: fn(text) {
       process.send(sent, text)
@@ -94,6 +95,22 @@ pub fn socket_codec_overrides_configured_codec_test() {
   route(channels, "tagged", "[null,null,\"room:lobby\",\"ping\",{}]")
   let assert Ok(push) = process.receive(sent, 500)
   push |> string.starts_with("TAGGED-PUSH|room:lobby|echoed") |> should.be_true
+}
+
+// Runtime-cleanup replays must keep protocol replies on the socket's
+// negotiated codec rather than falling back to the app-wide codec.
+pub fn socket_codec_encodes_heartbeat_reply_test() {
+  let channels = start_sockets()
+  let sent = connect(channels, "tagged-heartbeat", option.Some(tagged_codec()))
+
+  route(
+    channels,
+    "tagged-heartbeat",
+    "[null,\"heartbeat-ref\",\"phoenix\",\"heartbeat\",{}]",
+  )
+
+  let assert Ok(reply) = process.receive(sent, 500)
+  reply |> should.equal("TAGGED-HB")
 }
 
 // A socket announced without a codec inherits the configured one.

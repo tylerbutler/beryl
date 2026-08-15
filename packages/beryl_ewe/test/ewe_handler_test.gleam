@@ -7,6 +7,7 @@
 import app_test_helpers as h
 import beryl
 import beryl/socket
+import beryl/transport/server
 import beryl/wire
 import beryl_ewe as ewe_transport
 import ewe
@@ -89,12 +90,12 @@ fn stop_supervisor(pid: process.Pid) -> Nil
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
 fn start_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
-  start_server_with_config(channels, ewe_transport.default_config("/socket"))
+  start_server_with_config(channels, server.default_config("/socket"))
 }
 
 fn start_server_with_config(
   channels: beryl.Sockets,
-  config: ewe_transport.TransportConfig,
+  config: server.TransportConfig(ewe.Connection),
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let http_fallback = fn(_request) {
@@ -259,8 +260,8 @@ pub fn handler_routes_websocket_on_other_path_to_fallback_test() {
 pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
   let channels = start_channels()
   let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_allowed_origins(["https://app.example.com"])
+    server.default_config("/socket")
+    |> server.with_allowed_origins(["https://app.example.com"])
   let #(port, server_pid) = start_server_with_config(channels, config)
 
   websocket_upgrade_status_with_origin(
@@ -322,8 +323,8 @@ pub fn handler_allow_all_origins_admits_cross_origin_test() {
   // behaviour for apps that intentionally accept cross-origin sockets.
   let channels = start_channels()
   let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_allow_all_origins()
+    server.default_config("/socket")
+    |> server.with_allow_all_origins()
   let #(port, server_pid) = start_server_with_config(channels, config)
 
   let assert Ok(client) =
@@ -496,11 +497,11 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
     )
 
   let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_on_connect(fn(req) {
+    server.default_config("/socket")
+    |> server.with_on_connect(fn(req) {
       auth_query(req, "token")
       |> result.map(fn(token) { [#("user", token), #("user", token)] })
-      |> result.map_error(fn(_) { ewe_transport.ConnectRejected })
+      |> result.map_error(fn(_) { server.ConnectRejected })
     })
   let #(port, server_pid) = start_server_with_config(channels, config)
 

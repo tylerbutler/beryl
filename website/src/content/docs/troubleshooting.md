@@ -18,11 +18,11 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    ```
    Your transport config must match:
    ```gleam
-   mist_transport.default_config("/socket/websocket")
+   server.default_config("/socket/websocket")
    ```
    Raw WebSocket clients (non-Phoenix) connect directly to the path with no suffix.
 
-3. **on_connect rejection.** If you configured `with_on_connect`, returning `Error(mist_transport.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
+3. **on_connect rejection.** If you configured `with_on_connect`, returning `Error(server.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
 
 4. **Reverse proxy not forwarding upgrade headers.** See [Reverse proxy / nginx](#reverse-proxy--nginx) below.
 

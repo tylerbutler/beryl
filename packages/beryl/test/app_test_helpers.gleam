@@ -13,7 +13,26 @@ import gleam/erlang/process
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/result
+import gleam/string
 import gleeunit/should
+
+/// A minimal app `init` that carries no model and produces no effects.
+pub fn accepting_init(
+  _info: socket.ConnectInfo(Nil),
+) -> #(Nil, List(socket.Effect)) {
+  #(Nil, [])
+}
+
+/// A minimal app `update` that accepts every join and ignores other inputs.
+pub fn accepting_update(
+  model: Nil,
+  input: socket.Input(Nil),
+) -> socket.Next(Nil, Nil) {
+  case input {
+    socket.Join(_, _, ref) -> socket.Next(model, [socket.AcceptJoin(ref, None)])
+    _ -> socket.Next(model, [])
+  }
+}
 
 /// Build and start an app-side dispatch subtree for tests.
 pub fn start_app(
@@ -27,6 +46,26 @@ pub fn start_app(
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
   Ok(sockets)
+}
+
+/// Start a supervised app that accepts joins and forwards every input to
+/// the observer subject.
+pub fn start_observed(
+  config: beryl.Config,
+  inputs: process.Subject(socket.Input(Nil)),
+) -> beryl.Sockets {
+  let assert Ok(sockets) =
+    start_app(config, init: accepting_init, update: fn(model, input) {
+      process.send(inputs, input)
+      accepting_update(model, input)
+    })
+  sockets
+}
+
+/// Return the live runtime pid backing a supervised sockets handle.
+pub fn runtime_pid(sockets: beryl.Sockets) -> process.Pid {
+  let assert Ok(pid) = beryl.app_runtime_pid(sockets)
+  pid
 }
 
 /// Connect a socket, returning the subject that captures its outbound
@@ -48,18 +87,6 @@ pub fn connect_with_close(
   connect_with_seed_and_close(channels, socket_id, socket.empty_seed(), close)
 }
 
-/// Connect a socket with an explicit `ConnectSeed` (e.g. to assert that
-/// transport-provided metadata reaches the app's `init` via
-/// `ConnectInfo.seed`), returning the subject that captures its outbound
-/// text frames.
-pub fn connect_with_seed(
-  channels: beryl.Sockets,
-  socket_id: String,
-  seed: socket.ConnectSeed,
-) -> process.Subject(String) {
-  connect_with_seed_and_close(channels, socket_id, seed, fn() { Nil })
-}
-
 fn connect_with_seed_and_close(
   channels: beryl.Sockets,
   socket_id: String,
@@ -67,7 +94,7 @@ fn connect_with_seed_and_close(
   close: fn() -> Nil,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
-  let owner = transport.connection_owner(channels)
+  let assert Ok(owner) = transport.runtime_pid(channels)
   transport.admit_socket(
     sockets: channels,
     owner: owner,
@@ -132,6 +159,19 @@ pub fn push(
       <> event_name
       <> "\",{}]",
   )
+}
+
+/// Send a join and assert its reply has status `"ok"`.
+pub fn join_ok(
+  channels: beryl.Sockets,
+  frames: process.Subject(String),
+  socket_id: String,
+  topic_name: String,
+  join_ref: String,
+  ref: String,
+) -> Nil {
+  join(channels, socket_id, topic_name, join_ref, ref)
+  recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
 /// Receive the next captured frame, failing after 500ms.

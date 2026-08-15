@@ -18,6 +18,7 @@ import gleam/option.{None}
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
+import gleam/result
 import gleeunit
 import gleeunit/should
 import test_helpers
@@ -37,23 +38,6 @@ fn wait_for_gate(gate: Gate) -> Nil
 @external(erlang, "beryl_supervisor_test_ffi", "gate_release")
 fn release_gate(gate: Gate) -> Nil
 
-// A minimal app system that accepts every join.
-fn accepting_init(
-  _info: socket.ConnectInfo(Nil),
-) -> #(Nil, List(socket.Effect)) {
-  #(Nil, [])
-}
-
-fn accepting_update(
-  model: Nil,
-  ev: socket.Input(Nil),
-) -> socket.Next(Nil, Nil) {
-  case ev {
-    Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-    _ -> Next(model, [])
-  }
-}
-
 // ── A trivial named sibling worker used to prove parent/sibling survival ────
 
 fn start_sibling(
@@ -65,11 +49,6 @@ fn start_sibling(
   |> actor.start
 }
 
-fn runtime_pid(sockets: beryl.Sockets) -> process.Pid {
-  let assert Ok(pid) = beryl.app_runtime_pid(sockets)
-  pid
-}
-
 fn limiter_pid(sockets: beryl.Sockets) -> process.Pid {
   let assert Ok(pid) = beryl.app_limiter_pid(sockets)
   pid
@@ -77,7 +56,7 @@ fn limiter_pid(sockets: beryl.Sockets) -> process.Pid {
 
 fn admit(
   sockets: beryl.Sockets,
-  owner: transport.ConnectionOwner,
+  owner: process.Pid,
   socket_id: String,
   close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
@@ -101,8 +80,8 @@ pub fn stop_shuts_down_only_beryl_subtree_test() {
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   let sibling_spec = supervision.worker(fn() { start_sibling(sibling_name) })
@@ -115,14 +94,14 @@ pub fn stop_shuts_down_only_beryl_subtree_test() {
 
   // Everything is up.
   test_helpers.wait_until(
-    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_ok },
     2000,
     10,
   )
   let sibling_subject = process.named_subject(sibling_name)
   let assert Ok(sibling) = process.subject_owner(sibling_subject)
   let assert Ok(_) = beryl.app_limiter_pid(sockets)
-  process.is_alive(runtime_pid(sockets)) |> should.be_true
+  process.is_alive(h.runtime_pid(sockets)) |> should.be_true
 
   // Stop only the Beryl subtree.
   beryl.stop(sockets) |> should.equal(Ok(Nil))
@@ -146,12 +125,12 @@ pub fn stop_waits_for_subtree_teardown_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   let limiter = limiter_pid(sockets)
-  let runtime = runtime_pid(sockets)
+  let runtime = h.runtime_pid(sockets)
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 
@@ -167,12 +146,12 @@ pub fn limiter_survives_runtime_restart_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   let limiter = limiter_pid(sockets)
-  let old_runtime = runtime_pid(sockets)
+  let old_runtime = h.runtime_pid(sockets)
 
   // Crash the runtime abnormally; the transient significant child restarts.
   process.kill(old_runtime)
@@ -203,8 +182,8 @@ pub fn runtime_crash_during_stop_recovers_and_second_stop_succeeds_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   let recovered_runtime = crash_runtime_during_stop(sockets)
@@ -220,8 +199,8 @@ pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() {
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
   let assert Ok(root) =
     static_supervisor.new(static_supervisor.OneForOne)
@@ -229,7 +208,7 @@ pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() {
     |> static_supervisor.start()
 
   test_helpers.wait_until(
-    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_ok },
     2000,
     10,
   )
@@ -265,9 +244,9 @@ fn crash_runtime_during_stop(sockets: beryl.Sockets) -> process.Pid {
   let gate = new_gate()
   let stop_entered = process.new_subject()
   let stop_result = process.new_subject()
-  let old_runtime = runtime_pid(sockets)
+  let old_runtime = h.runtime_pid(sockets)
 
-  admit(sockets, transport.connection_owner(sockets), "crash-during-stop", fn() {
+  admit(sockets, h.runtime_pid(sockets), "crash-during-stop", fn() {
     process.send(stop_entered, Nil)
     wait_for_gate(gate)
   })
@@ -291,8 +270,8 @@ pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() {
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   let assert Ok(root) =
@@ -301,13 +280,13 @@ pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() {
     |> static_supervisor.start()
 
   test_helpers.wait_until(
-    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_ok },
     2000,
     10,
   )
 
   let original_limiter = limiter_pid(sockets)
-  let runtime1 = runtime_pid(sockets)
+  let runtime1 = h.runtime_pid(sockets)
   process.kill(runtime1)
   let runtime2 = wait_for_new_runtime(sockets, runtime1)
   process.kill(runtime2)
@@ -331,13 +310,11 @@ pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() {
     10,
   )
 
-  let recovered_runtime = runtime_pid(sockets)
+  let recovered_runtime = h.runtime_pid(sockets)
   limiter_pid(sockets) |> should.not_equal(original_limiter)
 
   // The original name-backed Sockets handle is re-registered and usable.
-  admit(sockets, transport.connection_owner(sockets), "after-exhaustion", fn() {
-    Nil
-  })
+  admit(sockets, h.runtime_pid(sockets), "after-exhaustion", fn() { Nil })
   |> should.equal(Ok(Nil))
   process.is_alive(recovered_runtime) |> should.be_true
 
@@ -364,7 +341,7 @@ fn wait_for_new_runtime(
     2000,
     10,
   )
-  runtime_pid(sockets)
+  h.runtime_pid(sockets)
 }
 
 // ── a runtime crash closes connections that monitor the accepting runtime ──
@@ -373,8 +350,8 @@ pub fn runtime_crash_closes_owned_connection_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   let closed = process.new_subject()
@@ -384,8 +361,8 @@ pub fn runtime_crash_closes_owned_connection_test() {
   // accepted it before registration and closes when that exact runtime dies.
   let _conn =
     process.spawn(fn() {
-      case transport.connection_owner(sockets) {
-        transport.OwnerAlive(pid) -> {
+      case transport.runtime_pid(sockets) {
+        Ok(pid) -> {
           let mon = process.monitor(pid)
           let selector =
             process.new_selector()
@@ -400,7 +377,7 @@ pub fn runtime_crash_closes_owned_connection_test() {
 
   // Wait for the monitor-installation handshake rather than sleeping.
   process.receive(ready, 1000) |> should.equal(Ok(Nil))
-  process.kill(runtime_pid(sockets))
+  process.kill(h.runtime_pid(sockets))
 
   // The owned connection observed the runtime's death and closed itself.
   process.receive(closed, 2000) |> should.equal(Ok(Nil))
@@ -435,7 +412,7 @@ pub fn update_crash_runs_socket_close_callback_test() {
     )
 
   let closed = process.new_subject()
-  let owner = transport.connection_owner(sockets)
+  let owner = h.runtime_pid(sockets)
   admit(sockets, owner, "s1", fn() { process.send(closed, Nil) })
   |> should.equal(Ok(Nil))
   let assert Ok(sender) = process.receive(senders, 1000)
@@ -446,7 +423,7 @@ pub fn update_crash_runs_socket_close_callback_test() {
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   // The runtime itself survives the rescued crash and keeps serving.
-  process.is_alive(runtime_pid(sockets)) |> should.be_true
+  process.is_alive(h.runtime_pid(sockets)) |> should.be_true
 }
 
 pub fn failed_registration_closes_connection_test() {
@@ -454,17 +431,17 @@ pub fn failed_registration_closes_connection_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: socket.ConnectInfo(Nil)) { panic as "init failed" },
-      update: accepting_update,
+      update: h.accepting_update,
     )
   let closed = process.new_subject()
 
-  admit(sockets, transport.connection_owner(sockets), "failed-init", fn() {
+  admit(sockets, h.runtime_pid(sockets), "failed-init", fn() {
     process.send(closed, Nil)
   })
   |> should.be_error
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
-  process.is_alive(runtime_pid(sockets)) |> should.be_true
+  process.is_alive(h.runtime_pid(sockets)) |> should.be_true
 }
 
 pub fn stale_runtime_owner_cannot_register_with_successor_test() {
@@ -476,10 +453,9 @@ pub fn stale_runtime_owner_cannot_register_with_successor_test() {
         process.send(initialized, info.socket_id)
         #(Nil, [])
       },
-      update: accepting_update,
+      update: h.accepting_update,
     )
-  let owner = transport.connection_owner(sockets)
-  let assert transport.OwnerAlive(old_runtime) = owner
+  let assert Ok(old_runtime) = transport.runtime_pid(sockets)
   let monitor = process.monitor(old_runtime)
   let selector =
     process.new_selector()
@@ -499,11 +475,11 @@ pub fn stale_runtime_owner_cannot_register_with_successor_test() {
   )
 
   let closed = process.new_subject()
-  admit(sockets, owner, "stale-owner", fn() { process.send(closed, Nil) })
+  admit(sockets, old_runtime, "stale-owner", fn() { process.send(closed, Nil) })
   |> should.be_error
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   process.receive(initialized, 100) |> should.be_error
-  process.is_alive(runtime_pid(sockets)) |> should.be_true
+  process.is_alive(h.runtime_pid(sockets)) |> should.be_true
 }
 
 pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
@@ -550,10 +526,11 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
       let assert Ok(permit) =
         beryl.acquire_connection_slot(sockets, "203.0.113.10")
       beryl.bind_connection_slot(permit)
+      let assert Ok(owner) = transport.runtime_pid(sockets)
       let result =
         transport.admit_socket(
           sockets: sockets,
-          owner: transport.connection_owner(sockets),
+          owner: owner,
           socket_id: "late",
           send: fn(frame) {
             process.send(late_frames, frame)
@@ -594,48 +571,30 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
 
 // ── transport connection ownership status ───────────────────────────────────
 
-pub fn connection_owner_reports_alive_when_running_test() {
+pub fn runtime_pid_reports_alive_when_running_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
-  case transport.connection_owner(sockets) {
-    transport.OwnerAlive(pid) -> pid |> should.equal(runtime_pid(sockets))
-    _ -> should.fail()
-  }
+  transport.runtime_pid(sockets) |> should.equal(Ok(h.runtime_pid(sockets)))
 
   let assert Ok(_) = beryl.stop(sockets)
 }
 
-pub fn connection_owner_unavailable_before_start_test() {
+pub fn runtime_pid_unavailable_before_start_test() {
   let assert Ok(#(sockets, _spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   // The runtime is not running yet: a new connection cannot be owned, so the
   // transport must refuse it rather than admit a dead socket.
-  transport.connection_owner(sockets)
-  |> should.equal(transport.OwnerUnavailable)
-}
-
-fn to_bool(result: Result(a, b)) -> Bool {
-  case result {
-    Ok(_) -> True
-    Error(_) -> False
-  }
-}
-
-fn not_running(sockets: beryl.Sockets) -> Bool {
-  case beryl.app_runtime_pid(sockets) {
-    Ok(_) -> False
-    Error(Nil) -> True
-  }
+  transport.runtime_pid(sockets) |> should.be_error
 }
 
 // ── the embedded subtree dies with the application root ─────────────────────
@@ -645,19 +604,19 @@ pub fn application_root_shutdown_tears_down_beryl_subtree_test() {
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
   let assert Ok(root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(beryl_spec)
     |> static_supervisor.start()
   test_helpers.wait_until(
-    fn() { beryl.app_runtime_pid(sockets) |> to_bool },
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_ok },
     2000,
     10,
   )
-  let runtime = runtime_pid(sockets)
+  let runtime = h.runtime_pid(sockets)
   let limiter = limiter_pid(sockets)
 
   // The application root goes down; the embedded Beryl subtree, linked under
@@ -678,8 +637,8 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(5),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   // A sibling that always fails to start. The supervisor tears down the
@@ -704,7 +663,11 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
 
   // Whether or not the doomed supervisor reported an error, no Beryl runtime
   // or limiter is left running.
-  test_helpers.wait_until(fn() { not_running(sockets) }, 3000, 20)
+  test_helpers.wait_until(
+    fn() { beryl.app_runtime_pid(sockets) |> result.is_error },
+    3000,
+    20,
+  )
   beryl.app_runtime_pid(sockets) |> should.be_error
   beryl.app_limiter_pid(sockets) |> should.be_error
 }
@@ -715,13 +678,13 @@ pub fn stop_without_limiter_waits_for_runtime_teardown_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
 
   // No connection limit is configured, so there is no limiter in the subtree.
   beryl.app_limiter_pid(sockets) |> should.be_error
-  let runtime = runtime_pid(sockets)
+  let runtime = h.runtime_pid(sockets)
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 
@@ -736,10 +699,10 @@ pub fn stop_leaves_no_registered_name_or_process_test() {
     h.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(3),
-      init: accepting_init,
-      update: accepting_update,
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
-  let runtime = runtime_pid(sockets)
+  let runtime = h.runtime_pid(sockets)
   let limiter = limiter_pid(sockets)
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))

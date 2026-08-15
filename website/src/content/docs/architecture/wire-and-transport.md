@@ -56,24 +56,26 @@ The `join_ref` and `ref` fields are nullable strings used for reply correlation.
 
 **`heartbeat_reply(ref)`**: produces the heartbeat acknowledgement. The topic is always `"phoenix"`, the event is `"phx_reply"`, and the status is `"ok"` with an empty response object. The client sends heartbeats with topic `"phoenix"` / event `"heartbeat"`.
 
-## Mist transport
+## Shared transport core
 
-The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's native WebSocket handling to the beryl runtime through the frame-level SPI in `beryl/transport`. It is responsible for:
+`beryl/transport/server` owns the server-agnostic admission, connection, and
+frame pipeline. `beryl_mist` and `beryl_ewe` provide only their server-specific
+upgrade, frame-send, and peer-IP glue:
 
-1. **Generating a unique socket id**: `crypto.strong_random_bytes` produces a 16-byte random id encoded as base16.
-2. **Admitting the socket atomically**: the transport captures `transport.connection_owner`, installs a monitor for that exact pid, then calls `transport.admit_socket` with the send functions, closer, codec, and `ConnectSeed`. A restart or registration failure closes the connection instead of registering it with a successor runtime.
+1. **Generating a unique socket id**: the shared server uses `crypto.strong_random_bytes` to produce a 16-byte random id encoded as base16.
+2. **Admitting the socket atomically**: the shared server captures `transport.runtime_pid`, installs a monitor for that exact pid, then calls `transport.admit_socket` with the send functions, closer, codec, and `ConnectSeed`. A restart or registration failure closes the connection instead of registering it with a successor runtime.
 3. **Routing text frames**: `mist.Text` frames are decoded in the connection process with the codec from `transport.active_codec` and routed with `transport.route_decoded`.
 4. **Routing binary frames**: when the active codec supplies `decode_binary`, `mist.Binary` frames are decoded in the connection process and routed with `transport.route_decoded_binary`, producing normal `Join`/`Message` semantics while preserving binary telemetry classification; without a binary decoder, the transport uses `transport.route_binary` to deliver the raw `BitArray` to the app as a `Binary` event. Ewe follows the same routing contract.
-5. **Notifying on close**: `mist.Closed` and `mist.Shutdown` call `transport.socket_disconnected` so the runtime can clean up subscriptions.
+5. **Notifying on close**: each server adapter calls the shared close path, which releases the connection permit and invokes `transport.socket_disconnected`.
 6. **Rejecting disallowed origins**: when configured, `with_allowed_origins` checks the full `Origin` header before the WebSocket handshake and returns HTTP 403 for missing or non-matching origins.
 
 ### Key functions
 
-**`default_config(path)`**: creates a `TransportConfig` with no connect hook. Accepts all (same-origin) connections.
+**`server.default_config(path)`**: creates a `TransportConfig` with no connect hook and the default same-origin policy.
 
-**`with_on_connect(config, callback)`**: attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(metadata)` to allow the connection and append ordered string pairs to `ConnectSeed.metadata`, or `Error(ConnectRejected)` to reject with 403.
+**`server.with_on_connect(config, callback)`**: attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(metadata)` to allow the connection and append ordered string pairs to `ConnectSeed.metadata`, or `Error(ConnectRejected)` to reject with 403.
 
-**`with_allowed_origins(config, origins)`**: attaches an exact-match allow-list for browser `Origin` headers, such as `["https://app.example.com"]`. Use this when cookie-authenticated WebSockets need CSWSH protection.
+**`server.with_allowed_origins(config, origins)`**: attaches an exact-match allow-list for browser `Origin` headers, such as `["https://app.example.com"]`. Use this when cookie-authenticated WebSockets need CSWSH protection.
 
 **`upgrade(request, channels, config, next)`**: checks whether the request path matches the configured socket path, runs the `on_connect` hook, and performs the WebSocket upgrade. Calls `next()` when the path does not match, enabling use as middleware.
 
@@ -85,12 +87,13 @@ The Mist transport (`packages/beryl_mist/src/beryl_mist.gleam`) bridges Mist's n
 
 ```mermaid
 flowchart LR
-  FR["raw WS frame"] --> MI["beryl_mist"]
-  MI -->|text| CD["wire/codec"]
-  MI -->|binary, no decoder| RB["Binary event"]
+  FR["raw WS frame"] --> ADAPTER["beryl_mist / beryl_ewe"]
+  ADAPTER --> CORE["transport/server"]
+  CORE -->|text| CD["wire/codec"]
+  CORE -->|binary, no decoder| RB["Binary input"]
   CD -->|decoded Join / Message| RT["runtime"]
   RB --> RT
-  RT --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
+  RT --> EN["encode reply/push"] --> CORE --> ADAPTER --> CL["client"]
 ```
 
 ## Where this lives
@@ -99,4 +102,7 @@ flowchart LR
 |---|---|
 | Codec abstraction | `src/beryl/wire/codec.gleam` |
 | Phoenix wire helpers | `src/beryl/wire.gleam` |
+| Shared server pipeline | `src/beryl/transport/server.gleam` |
+| Origin policy | `src/beryl/transport/origin.gleam` |
 | Mist transport | `packages/beryl_mist/src/beryl_mist.gleam` |
+| Ewe transport | `packages/beryl_ewe/src/beryl_ewe.gleam` |

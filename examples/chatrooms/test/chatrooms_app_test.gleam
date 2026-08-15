@@ -1,6 +1,7 @@
 import beryl/group
 import beryl/socket
 import chatrooms/app
+import example_helpers/router as topic_router
 import example_helpers/session_presence
 import gleam/dict
 import gleam/dynamic
@@ -44,28 +45,22 @@ fn connect_info() -> socket.ConnectInfo(Nil) {
   )
 }
 
-pub fn lobby_join_is_accepted_test() {
-  let #(model, effects) = app.lobby_join(lobby_ref())
+pub fn standalone_routes_lobby_join_test() {
+  let #(model, _) = topic_router.standalone_init(connect_info())
+  let next =
+    app.standalone_update(context())(
+      model,
+      socket.Join("lobby", empty_payload(), lobby_ref()),
+    )
 
-  model |> should.equal(app.Lobby)
-  let assert [socket.AcceptJoin(_, None)] = effects
+  let assert socket.Next(_, [socket.AcceptJoin(_, None)]) = next
 }
 
 pub fn lobby_messages_are_ignored_test() {
-  let #(model, effects) =
-    app.lobby_update(app.Lobby, "refresh", empty_payload(), None)
-
-  model |> should.equal(app.Lobby)
-  effects |> should.equal([])
-}
-
-pub fn lobby_message_with_no_lobby_is_a_noop_test() {
-  let model =
-    app.Standalone(socket_id: "socket-1", rooms: dict.new(), lobby: None)
+  let #(model, _) = topic_router.standalone_init(connect_info())
 
   let assert socket.Next(next_model, effects) =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Message("lobby", "refresh", empty_payload(), None),
     )
@@ -74,50 +69,32 @@ pub fn lobby_message_with_no_lobby_is_a_noop_test() {
   effects |> should.equal([])
 }
 
-pub fn standalone_routes_lobby_join_test() {
-  let #(model, _) = app.standalone_init(connect_info())
-  let next =
-    app.standalone_update(
-      context(),
-      model,
-      socket.Join("lobby", empty_payload(), lobby_ref()),
-    )
-
-  let assert socket.Next(
-    app.Standalone(socket_id: _, rooms: _, lobby: Some(app.Lobby)),
-    [socket.AcceptJoin(_, None)],
-  ) = next
-}
-
 pub fn closing_lobby_preserves_room_models_test() {
   let room =
     app.Model(username: "Alice", color: "#abcdef", room_name: "general")
   let model =
-    app.Standalone(
+    topic_router.Standalone(
       socket_id: "socket-1",
-      rooms: dict.from_list([#("room:general", room)]),
-      lobby: Some(app.Lobby),
+      topics: dict.from_list([#("room:general", room)]),
     )
 
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Closed("lobby", socket.Normal),
     )
 
   let assert socket.Next(
-    app.Standalone(socket_id: _, rooms: rooms, lobby: None),
+    topic_router.Standalone(socket_id: _, topics: rooms),
     [],
   ) = next
   dict.has_key(rooms, "room:general") |> should.be_true
 }
 
 pub fn unrelated_topic_is_rejected_test() {
-  let #(model, _) = app.standalone_init(connect_info())
+  let #(model, _) = topic_router.standalone_init(connect_info())
   let next =
-    app.standalone_update(
-      context(),
+    app.standalone_update(context())(
       model,
       socket.Join(
         "notifications:alice",

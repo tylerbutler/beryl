@@ -14,6 +14,7 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -56,9 +57,10 @@ fn connect_binary(
 ) -> #(process.Subject(String), process.Subject(BitArray)) {
   let text = process.new_subject()
   let binary = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(channels)
   transport.admit_socket(
     sockets: channels,
-    owner: transport.connection_owner(channels),
+    owner: owner,
     socket_id: socket_id,
     send: fn(message) {
       process.send(text, message)
@@ -180,7 +182,7 @@ fn decode_binary_frame(
 fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
   case string.split(raw, "|") {
     ["J", join_ref, ref, topic, payload_json] -> {
-      use payload <- result_try(decode_payload(payload_json))
+      use payload <- result.try(decode_payload(payload_json))
       Ok(codec.inbound(
         join_ref: Some(join_ref),
         ref: Some(ref),
@@ -190,7 +192,7 @@ fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
       ))
     }
     ["E", ref, topic, event, payload_json] -> {
-      use payload <- result_try(decode_payload(payload_json))
+      use payload <- result.try(decode_payload(payload_json))
       Ok(codec.inbound(
         join_ref: None,
         ref: Some(ref),
@@ -210,16 +212,6 @@ fn decode_payload(payload_json: String) -> Result(Dynamic, codec.DecodeError) {
   }
 }
 
-fn result_try(
-  result: Result(a, codec.DecodeError),
-  next: fn(a) -> Result(b, codec.DecodeError),
-) -> Result(b, codec.DecodeError) {
-  case result {
-    Ok(value) -> next(value)
-    Error(error) -> Error(error)
-  }
-}
-
 fn encode_reply(
   _join_ref: Option(String),
   ref: Option(String),
@@ -233,7 +225,7 @@ fn encode_reply(
   }
   {
     "R|"
-    <> ref_to_string(ref)
+    <> option.unwrap(ref, "null")
     <> "|"
     <> topic
     <> "|"
@@ -257,11 +249,4 @@ fn encode_push(
 
 fn encode_heartbeat_reply(ref: Option(String)) -> codec.Frame {
   encode_reply(None, ref, "phoenix", codec.StatusOk, json.object([]))
-}
-
-fn ref_to_string(ref: Option(String)) -> String {
-  case ref {
-    Some(value) -> value
-    None -> "null"
-  }
 }

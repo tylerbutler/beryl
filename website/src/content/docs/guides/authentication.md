@@ -95,26 +95,27 @@ and hands you an authenticated identity to build the token from.)
 
 ```gleam
 import beryl_mist as mist_transport
+import beryl/transport/server
 
 // let verify_token: fn(String) -> Result(Claims, Nil)
 
 let ws_config =
-  mist_transport.default_config("/socket/websocket")
+  server.default_config("/socket/websocket")
   // Reject cross-site handshakes when auth relies on ambient credentials.
-  |> mist_transport.with_allowed_origins(["https://app.example.com"])
-  |> mist_transport.with_on_connect(fn(req) {
+  |> server.with_allowed_origins(["https://app.example.com"])
+  |> server.with_on_connect(fn(req) {
     case extract_token(req) {
       Ok(token) ->
         case verify_token(token) {
           Ok(_claims) -> Ok(Nil)
-          Error(_) -> Error(mist_transport.ConnectRejected)
+          Error(_) -> Error(server.ConnectRejected)
         }
-      Error(_) -> Error(mist_transport.ConnectRejected)
+      Error(_) -> Error(server.ConnectRejected)
     }
   })
 ```
 
-Returning `Error(mist_transport.ConnectRejected)` sends HTTP 403 before the
+Returning `Error(server.ConnectRejected)` sends HTTP 403 before the
 upgrade, so an unauthenticated client never reaches your app.
 
 ## 4. Decode claims into the model in `init`

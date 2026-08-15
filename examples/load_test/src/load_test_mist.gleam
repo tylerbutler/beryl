@@ -1,3 +1,4 @@
+import beryl/transport/server
 import beryl_mist
 import gleam/erlang/process
 import gleam/io
@@ -14,7 +15,7 @@ pub fn main() {
       beryl_mist.upgrade(
         request,
         channels,
-        beryl_mist.default_config("/socket"),
+        server.default_config("/socket"),
         fn() { http.handle(request, channels) },
       )
     }

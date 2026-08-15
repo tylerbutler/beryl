@@ -41,10 +41,10 @@ pub fn bind_address() -> String {
 fn environment_config() -> beryl.Config {
   let configured =
     beryl.config(wire.phoenix_codec())
-    |> beryl.with_heartbeat(
-      interval_ms: env_int("BERYL_HEARTBEAT_INTERVAL_MS", 30_000),
-      timeout_ms: env_int("BERYL_HEARTBEAT_TIMEOUT_MS", 60_000),
-    )
+    |> beryl.with_heartbeat(timeout_ms: env_int(
+      "BERYL_HEARTBEAT_TIMEOUT_MS",
+      60_000,
+    ))
     |> beryl.with_max_connections_per_ip(max_connections: env_int(
       "BERYL_MAX_CONNECTIONS_PER_IP",
       0,

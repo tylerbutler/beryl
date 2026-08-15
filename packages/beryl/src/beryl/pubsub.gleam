@@ -112,9 +112,6 @@ fn ffi_get_local_members(scope: Dynamic, group: String) -> List(Pid)
 @external(erlang, "beryl_pubsub_ffi", "send_to_pid")
 fn ffi_send_to_pid(pid: Pid, msg: Message(payload)) -> Nil
 
-@external(erlang, "erlang", "binary_to_atom")
-fn binary_to_atom(name: String) -> Dynamic
-
 /// Recover a `Message(payload)` from the raw process message `selecting`
 /// matched on. Safe only because `selecting` first confirms the message has
 /// the `message` tag and exactly four fields, matching the frozen shape all
@@ -131,7 +128,7 @@ fn message_tag() -> atom.Atom {
 
 /// Create a default PubSub configuration with scope `beryl_pubsub`
 pub fn default_config() -> PubSubConfig {
-  PubSubConfig(scope: binary_to_atom("beryl_pubsub"))
+  PubSubConfig(scope: atom.create("beryl_pubsub") |> atom.to_dynamic)
 }
 
 /// Create a PubSub configuration with a custom scope name
@@ -157,7 +154,7 @@ pub fn default_config() -> PubSubConfig {
 /// // pubsub.config_with_scope(database_row.name)
 /// ```
 pub fn config_with_scope(name: String) -> PubSubConfig {
-  PubSubConfig(scope: binary_to_atom(name))
+  PubSubConfig(scope: atom.create(name) |> atom.to_dynamic)
 }
 
 /// Start a PubSub instance
@@ -269,13 +266,9 @@ pub fn broadcast_from(
 ) -> Nil {
   let msg =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
-  let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) {
-    case pid == from {
-      True -> Nil
-      False -> ffi_send_to_pid(pid, msg)
-    }
-  })
+  ffi_get_members(ps.scope, topic)
+  |> list.filter(fn(pid) { pid != from })
+  |> list.each(ffi_send_to_pid(_, msg))
 }
 
 /// Broadcast a message to all subscribers except a process, preserving a socket
@@ -295,16 +288,12 @@ pub fn broadcast_from_socket(
       payload: payload,
       from: FromSocket(from, except_socket_id),
     )
-  let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) {
-    case pid == from {
-      True -> Nil
-      False -> ffi_send_to_pid(pid, msg)
-    }
-  })
+  ffi_get_members(ps.scope, topic)
+  |> list.filter(fn(pid) { pid != from })
+  |> list.each(ffi_send_to_pid(_, msg))
 }
 
-// nolint: unused_exports -- public PubSub API surface alongside broadcast/broadcast_from; intended for downstream consumers
+// nolint: unused_exports -- public PubSub API intended for downstream consumers
 /// Broadcast a message to local subscribers only (current node)
 pub fn local_broadcast(
   ps: PubSub(payload),

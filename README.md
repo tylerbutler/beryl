@@ -27,6 +27,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 ```gleam
 import beryl
 import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
+import beryl/transport/server
 import beryl_mist as mist_transport
 import beryl/wire
 import gleam/dynamic/decode
@@ -74,7 +75,7 @@ pub fn main() {
     |> static_supervisor.start()
 
   let assert Ok(_) =
-    mist_transport.handler(channels, mist_transport.default_config("/socket/websocket"), fn(_req) {
+    mist_transport.handler(channels, server.default_config("/socket/websocket"), fn(_req) {
       // your regular HTTP handler here
       panic as "not implemented"
     })
@@ -90,7 +91,7 @@ pub fn main() {
 into a single Mist request handler: WebSocket upgrades on the configured path go
 to beryl, everything else falls through to the HTTP fallback. If you need to drive
 the upgrade decision yourself, `mist_transport.upgrade` (and the
-`mist_transport.is_websocket_request` guard) remain available.
+`beryl/transport/server.is_websocket_request` guard) remain available.
 
 For a complete end-to-end walkthrough including Phoenix JS client code, see the
 **[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)** on the docs website.

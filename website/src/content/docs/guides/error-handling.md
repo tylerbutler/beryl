@@ -43,15 +43,17 @@ Every `Join` must be answered with `AcceptJoin` or `RejectJoin` in the same upda
 
 ## Connection-level authentication rejection
 
-`on_connect` in the transport config rejects the WebSocket upgrade before any topic join occurs. Return `Error(mist_transport.ConnectRejected)` to send an HTTP 403 response:
+`on_connect` in the transport config rejects the WebSocket upgrade before any topic join occurs. Return `Error(server.ConnectRejected)` to send an HTTP 403 response:
 
 ```gleam
+import beryl/transport/server
+
 let config =
-  mist_transport.default_config("/socket/websocket")
-  |> mist_transport.with_on_connect(fn(req) {
+  server.default_config("/socket/websocket")
+  |> server.with_on_connect(fn(req) {
     case extract_token(req) {
       Ok(_) -> Ok(Nil)
-      Error(_) -> Error(mist_transport.ConnectRejected)  // → HTTP 403, connection refused
+      Error(_) -> Error(server.ConnectRejected)  // → HTTP 403, connection refused
     }
   })
 ```

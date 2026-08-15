@@ -6,35 +6,15 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/socket.{AcceptJoin, Join, Message, Next}
+import beryl/socket.{Join, Message}
 import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
-import gleam/option.{None}
 import gleeunit
 import gleeunit/should
 
 pub fn main() {
   gleeunit.main()
-}
-
-fn start_system(
-  the_codec: codec.Codec,
-  events: process.Subject(socket.Input(Nil)),
-) -> beryl.Sockets {
-  let assert Ok(channels) =
-    h.start_app(
-      beryl.config(the_codec),
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
-          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
-        }
-      },
-    )
-  channels
 }
 
 fn join_room(
@@ -43,8 +23,7 @@ fn join_room(
   frames: process.Subject(String),
   topic_name: String,
 ) -> Nil {
-  h.join(channels, "s1", topic_name, "jr-1", "r-1")
-  let _reply = h.recv(frames)
+  h.join_ok(channels, frames, "s1", topic_name, "jr-1", "r-1")
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
   Nil
 }
@@ -52,7 +31,10 @@ fn join_room(
 pub fn topicless_event_routes_to_single_join_test() {
   let events = process.new_subject()
   let channels =
-    start_system(wire.phoenix_codec() |> codec.with_topicless_events(), events)
+    h.start_observed(
+      beryl.config(wire.phoenix_codec() |> codec.with_topicless_events()),
+      events,
+    )
   let frames = h.connect(channels, "s1")
   join_room(channels, events, frames, "room:lobby")
 
@@ -64,7 +46,7 @@ pub fn topicless_event_routes_to_single_join_test() {
 
 pub fn phoenix_codec_drops_topicless_events_test() {
   let events = process.new_subject()
-  let channels = start_system(wire.phoenix_codec(), events)
+  let channels = h.start_observed(beryl.config(wire.phoenix_codec()), events)
   let frames = h.connect(channels, "s1")
   join_room(channels, events, frames, "room:lobby")
 
@@ -76,7 +58,10 @@ pub fn phoenix_codec_drops_topicless_events_test() {
 pub fn topicless_event_without_join_is_dropped_test() {
   let events = process.new_subject()
   let channels =
-    start_system(wire.phoenix_codec() |> codec.with_topicless_events(), events)
+    h.start_observed(
+      beryl.config(wire.phoenix_codec() |> codec.with_topicless_events()),
+      events,
+    )
   let _frames = h.connect(channels, "s1")
 
   // No join to fall back to: the event is dropped.

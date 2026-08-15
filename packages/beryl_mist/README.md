@@ -17,6 +17,7 @@ gleam add beryl beryl_mist
 import beryl
 import beryl/socket.{type ConnectInfo, AcceptJoin, Join, Next}
 import beryl/wire
+import beryl/transport/server
 import beryl_mist as mist_transport
 import gleam/erlang/process
 import gleam/option.{None}
@@ -49,7 +50,7 @@ pub fn main() {
   let assert Ok(_) =
     mist_transport.handler(
       sockets,
-      mist_transport.default_config("/socket"),
+      server.default_config("/socket"),
       fn(_req) { panic as "not implemented" },
     )
     |> mist.new

@@ -1,0 +1,3 @@
+project = "beryl_ewe"
+kind = "Dependencies"
+body = "Update locked Gleam dependencies."

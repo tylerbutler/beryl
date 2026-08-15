@@ -106,22 +106,6 @@ pub opaque type LoggingConfig {
   )
 }
 
-// nolint: unused_exports -- package-internal accessors for tests; hidden from public docs with @internal
-@internal
-pub fn logging_level(logging: LoggingConfig) -> LogLevel {
-  logging.level
-}
-
-@internal
-pub fn logging_include_payloads(logging: LoggingConfig) -> Bool {
-  logging.include_payloads
-}
-
-@internal
-pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
-  logging.payload_preview_bytes
-}
-
 /// Configuration for an app-side socket runtime.
 ///
 /// This type is opaque: construct it with `config` and adjust it with the
@@ -132,10 +116,6 @@ pub opaque type Config {
     /// Wire codec used to decode inbound text and encode replies/pushes.
     /// Use `wire.phoenix_codec()` for the historical Phoenix array format.
     codec: codec.Codec,
-    /// Client-advisory heartbeat interval in milliseconds (default: 30000).
-    /// The server does not read this value; it is the interval clients should
-    /// use for their own pings. See `with_heartbeat`.
-    heartbeat_interval_ms: Int,
     /// Server-side heartbeat staleness window in milliseconds (default: 60000).
     /// Sockets that send no heartbeat within this window are evicted. Must be
     /// at least 2 (see `with_heartbeat`).
@@ -209,7 +189,6 @@ pub fn logging_config(
 pub fn config(codec: codec.Codec) -> Config {
   Config(
     codec: codec,
-    heartbeat_interval_ms: 30_000,
     heartbeat_timeout_ms: 60_000,
     max_connections_per_ip: 0,
     max_connections: 0,
@@ -263,30 +242,13 @@ pub fn with_telemetry(config: Config) -> Config {
   Config(..config, telemetry: True)
 }
 
-/// Configure heartbeat timing.
+/// Configure the server-side heartbeat staleness window.
 ///
-/// `interval_ms` is **client-advisory only**: it is the interval clients should
-/// use for their own outbound pings. The server never reads it and does not use
-/// it to schedule anything — it exists purely to communicate a suggested ping
-/// cadence to clients.
-///
-/// `timeout_ms` is the server-side staleness window — a socket that sends no
-/// heartbeat within this window is evicted. The server derives its internal
-/// check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
-/// be at least 2; smaller values are rejected by `child_spec` and
-/// `validate_config` with `HeartbeatTimeoutTooLow` because a check interval
-/// of 0 would disable eviction. The defaults are 30000 ms and 60000 ms
-/// respectively.
-pub fn with_heartbeat(
-  config: Config,
-  interval_ms interval_ms: Int,
-  timeout_ms timeout_ms: Int,
-) -> Config {
-  Config(
-    ..config,
-    heartbeat_interval_ms: interval_ms,
-    heartbeat_timeout_ms: timeout_ms,
-  )
+/// A socket that sends no heartbeat within `timeout_ms` is evicted. The
+/// runtime checks at half this window, so values below 2 are rejected by
+/// `validate_config` with `HeartbeatTimeoutTooLow`. The default is 60000 ms.
+pub fn with_heartbeat(config: Config, timeout_ms timeout_ms: Int) -> Config {
+  Config(..config, heartbeat_timeout_ms: timeout_ms)
 }
 
 /// Configure the maximum number of concurrent connections allowed per client
@@ -357,6 +319,7 @@ pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
   Config(..config, logging: logging)
 }
 
+// nolint: unused_exports -- public logging builder intended for downstream users
 /// Configure the maximum payload/frame preview length for logs.
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
@@ -431,6 +394,7 @@ pub fn with_max_event_length(
   Config(..config, max_event_length: max_length)
 }
 
+// nolint: unused_exports -- enforced in sibling transport handler tests
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
 /// The limit is enforced **post-assembly**: the transport (Mist/gramps)
@@ -465,82 +429,6 @@ pub fn with_max_joined_topics_per_socket(
   max_topics max_topics: Int,
 ) -> Config {
   Config(..config, max_joined_topics_per_socket: max_topics)
-}
-
-// nolint: unused_exports -- package-internal accessors for supervisor/tests; hidden from public docs with @internal
-@internal
-pub fn config_heartbeat_interval_ms(config: Config) -> Int {
-  config.heartbeat_interval_ms
-}
-
-@internal
-pub fn config_heartbeat_timeout_ms(config: Config) -> Int {
-  config.heartbeat_timeout_ms
-}
-
-@internal
-pub fn config_max_connections_per_ip(config: Config) -> Int {
-  config.max_connections_per_ip
-}
-
-@internal
-pub fn config_max_connections(config: Config) -> Int {
-  config.max_connections
-}
-
-@internal
-pub fn config_pubsub(config: Config) -> Option(PubSub(json.Json)) {
-  config.pubsub
-}
-
-@internal
-pub fn config_logging(config: Config) -> LoggingConfig {
-  config.logging
-}
-
-@internal
-pub fn config_join_rate(config: Config) -> Int {
-  config.join_rate
-}
-
-@internal
-pub fn config_join_burst(config: Config) -> Int {
-  config.join_burst
-}
-
-@internal
-pub fn config_channel_rate(config: Config) -> Int {
-  config.channel_rate
-}
-
-@internal
-pub fn config_channel_burst(config: Config) -> Int {
-  config.channel_burst
-}
-
-@internal
-pub fn config_channel_rate_max_keys_per_socket(config: Config) -> Int {
-  config.channel_rate_max_keys_per_socket
-}
-
-@internal
-pub fn config_max_topic_length(config: Config) -> Int {
-  config.max_topic_length
-}
-
-@internal
-pub fn config_max_event_length(config: Config) -> Int {
-  config.max_event_length
-}
-
-@internal
-pub fn config_max_inbound_frame_bytes(config: Config) -> Int {
-  config.max_inbound_frame_bytes
-}
-
-@internal
-pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
-  config.max_joined_topics_per_socket
 }
 
 /// Warn when an app-side socket runtime starts with every abuse control
@@ -580,7 +468,6 @@ fn optional_limits(
   Some(rate_limit.config(per_second: rate, burst: burst))
 }
 
-// nolint: unused_exports -- package-internal accessor for transports; hidden from public docs with @internal
 /// Per-socket message rate limits for transports, `None` when unlimited.
 ///
 /// Transports enforce this with a local token bucket per connection so
@@ -638,7 +525,6 @@ pub type AppHandle {
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// The wire codec configured for this system.
 @internal
 pub fn configured_codec(channels: Sockets) -> codec.Codec {
@@ -697,7 +583,6 @@ pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
   connection_limit.release_optional(permit.inner)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Return the configured inbound frame size cap for transports.
 pub fn max_inbound_frame_bytes(channels: Sockets) -> Int {
   channels.config.max_inbound_frame_bytes
@@ -742,24 +627,13 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(HeartbeatTimeoutTooLow(2)),
   )
-  validate_topic_patterns(config.topic_rates)
-}
-
-fn validate_topic_patterns(
-  rates: List(#(String, rate_limit.RateLimitConfig)),
-) -> Result(Nil, ConfigError) {
-  case rates {
-    [] -> Ok(Nil)
-    [#(pattern, _limits), ..rest] ->
-      case topic.validate_pattern(pattern) {
-        Ok(_) -> validate_topic_patterns(rest)
-        Error(error) ->
-          internal.result_error(InvalidTopicPattern(
-            pattern,
-            topic_error_reason(error),
-          ))
-      }
-  }
+  list.try_each(config.topic_rates, fn(entry) {
+    let #(pattern, _limits) = entry
+    topic.validate_pattern(pattern)
+    |> result.map_error(fn(error) {
+      InvalidTopicPattern(pattern, topic_error_reason(error))
+    })
+  })
 }
 
 fn topic_error_reason(error: topic.TopicError) -> String {
@@ -809,37 +683,51 @@ fn stop_app_subtree(
     Ok(runtime_pid) -> {
       let runtime_monitor = process.monitor(runtime_pid)
       let limiter_monitor =
-        option_map(
-          option.from_result(app_limiter_owner(connection_limiter)),
-          process.monitor,
-        )
+        option.from_result(app_limiter_owner(connection_limiter))
+        |> option.map(process.monitor)
       // Drain sockets (deliver `Closed` and close transports) and stop the
       // runtime; this triggers the subtree auto-shutdown.
       case app.stop() {
         Error(error) -> {
-          drop_monitor(runtime_monitor)
-          case limiter_monitor {
-            Some(monitor) -> drop_monitor(monitor)
-            None -> Nil
-          }
+          drop_subtree_monitors(runtime_monitor, limiter_monitor)
           Error(error)
         }
-        Ok(Nil) -> {
-          let awaited =
-            await_down(runtime_monitor)
-            |> result.try(fn(_) {
-              case limiter_monitor {
-                Some(monitor) -> await_down(monitor)
-                None -> Ok(Nil)
-              }
-            })
-          case awaited {
-            Ok(Nil) -> Ok(Nil)
-            Error(Nil) -> internal.result_error(StopTimeout)
-          }
-        }
+        Ok(Nil) -> await_subtree_down(runtime_monitor, limiter_monitor)
       }
     }
+  }
+}
+
+/// Release the subtree monitors taken before a drain that failed, so the
+/// caller's mailbox does not collect their later `Down` messages.
+fn drop_subtree_monitors(
+  runtime_monitor: process.Monitor,
+  limiter_monitor: Option(process.Monitor),
+) -> Nil {
+  process.demonitor_process(runtime_monitor)
+  case limiter_monitor {
+    Some(monitor) -> process.demonitor_process(monitor)
+    None -> Nil
+  }
+}
+
+/// Wait for the runtime and, when one is supervised, the sibling limiter to
+/// terminate. `Error(StopTimeout)` when either is still alive at the deadline.
+fn await_subtree_down(
+  runtime_monitor: process.Monitor,
+  limiter_monitor: Option(process.Monitor),
+) -> Result(Nil, StopError) {
+  let awaited =
+    await_down(runtime_monitor)
+    |> result.try(fn(_) {
+      case limiter_monitor {
+        Some(monitor) -> await_down(monitor)
+        None -> Ok(Nil)
+      }
+    })
+  case awaited {
+    Ok(Nil) -> Ok(Nil)
+    Error(Nil) -> internal.result_error(StopTimeout)
   }
 }
 
@@ -860,10 +748,6 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
     process.new_selector()
     |> process.select_specific_monitor(monitor, fn(_down) { Nil })
   process.selector_receive(selector, 5000)
-}
-
-fn drop_monitor(monitor: process.Monitor) -> Nil {
-  process.demonitor_process(monitor)
 }
 
 /// Build the app-side dispatch supervision child specification.
@@ -962,11 +846,10 @@ fn build_app_subtree(
   let handle =
     Sockets(
       config: config,
-      connection_limiter: option_map(limiter_name, connection_limit.from_name),
+      connection_limiter: option.map(limiter_name, connection_limit.from_name),
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
-        config.pubsub,
       ),
     )
 
@@ -999,7 +882,6 @@ fn child_spec_supervisor(
         init: init,
         update: update,
       )
-      |> result.map_error(runtime_start_error)
     })
     |> supervision.restart(supervision.Transient)
     // The runtime is the subtree's significant child: a graceful stop (normal
@@ -1032,21 +914,6 @@ fn child_spec_supervisor(
   static_supervisor.start(builder)
 }
 
-fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
-  case error {
-    runtime.ActorStartFailed(error) -> error
-    runtime.InvalidHeartbeatTimeout ->
-      actor.InitFailed("invalid heartbeat timeout")
-  }
-}
-
-fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
-  case option {
-    Some(value) -> Some(transform(value))
-    None -> None
-  }
-}
-
 fn await_admission(
   reply: Subject(Bool),
   admission: runtime.AdmissionToken,
@@ -1066,7 +933,6 @@ fn await_admission(
 fn app_handle(
   subject: Subject(runtime.Msg(msg)),
   supervisor: Subject(app_supervisor.Message),
-  ps: Option(PubSub(json.Json)),
 ) -> AppHandle {
   AppHandle(
     admit_socket: fn(
@@ -1114,35 +980,12 @@ fn app_handle(
       send_runtime(subject, runtime.HandleBinary(socket_id, data))
     },
     broadcast: fn(topic_name, event_name, payload, except) {
-      // Local fan-out via the runtime; distributed fan-out via PubSub with
-      // the runtime's pid as sender so it does not echo back to itself.
+      // The runtime owns local and distributed fan-out so every sender uses
+      // one ordered path and PubSub attribution always uses the runtime pid.
       send_runtime(
         subject,
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
-      case ps, process.subject_owner(subject) {
-        Some(ps), Ok(runtime_pid) ->
-          case except {
-            None ->
-              pubsub.broadcast_from(
-                ps,
-                runtime_pid,
-                topic_name,
-                event_name,
-                payload,
-              )
-            Some(socket_id) ->
-              pubsub.broadcast_from_socket(
-                ps,
-                runtime_pid,
-                socket_id,
-                topic_name,
-                event_name,
-                payload,
-              )
-          }
-        _, _ -> Nil
-      }
     },
     stop: fn() { request_runtime_stop(supervisor) },
     runtime_owner: fn() { process.subject_owner(subject) },
@@ -1173,10 +1016,7 @@ fn app_handle(
 fn request_runtime_stop(
   supervisor: Subject(app_supervisor.Message),
 ) -> Result(Nil, StopError) {
-  use _ <- result.try(
-    process.subject_owner(supervisor)
-    |> result.map_error(fn(_) { NotRunning }),
-  )
+  use _ <- result.try(ensure_supervisor_running(supervisor))
   let started = process.new_subject()
   let finished = process.new_subject()
   process.send(supervisor, app_supervisor.StopRuntime(started, finished))
@@ -1190,6 +1030,15 @@ fn request_runtime_stop(
         Ok(False) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
+  }
+}
+
+fn ensure_supervisor_running(
+  supervisor: Subject(app_supervisor.Message),
+) -> Result(Nil, StopError) {
+  case process.subject_owner(supervisor) {
+    Ok(_) -> Ok(Nil)
+    Error(Nil) -> internal.result_error(NotRunning)
   }
 }
 
@@ -1219,13 +1068,11 @@ fn send_runtime(
   }
 }
 
-// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
 @internal
 pub fn app_runtime_pid(channels: Sockets) -> Result(process.Pid, Nil) {
   channels.app.runtime_owner()
 }
 
-// nolint: unused_exports -- package-internal accessor for supervision tests and the transport SPI; hidden from public docs with @internal
 /// The pid of the app subtree's optional connection limiter, if running.
 @internal
 pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
@@ -1235,8 +1082,6 @@ pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
 fn to_runtime_config(config: Config) -> runtime.Config {
   runtime.Config(
     codec: config.codec,
-    // Server checks at half the timeout interval validated by `child_spec`.
-    heartbeat_check_interval_ms: config.heartbeat_timeout_ms / 2,
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
     message_limits: optional_limits(config.message_rate, config.message_burst),
     join_limits: optional_limits(config.join_rate, config.join_burst),
