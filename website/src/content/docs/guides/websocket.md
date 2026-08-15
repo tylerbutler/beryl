@@ -136,21 +136,6 @@ beryl.child_spec(
 )
 ```
 
-## Direct upgrade
-
-If you handle path matching yourself, use `upgrade_connection` directly:
-
-```gleam
-fn handle_request(req, channels) -> response.Response(mist.ResponseData) {
-  case request.path_segments(req) {
-    ["ws"] -> mist_transport.upgrade_connection(req, channels)
-    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
-  }
-}
-```
-
-Note: `upgrade_connection` does not invoke the `on_connect` callback. Run your own auth check before calling it.
-
 :::tip[Troubleshooting connections]
 If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
 :::
@@ -221,8 +206,7 @@ Configure heartbeat timing in the beryl config:
 let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_heartbeat(
-    interval_ms: 30_000,  // Client-advisory ping cadence (server does not read it)
-    timeout_ms: 60_000,   // Server evicts after 60s silence (must be >= 2)
+    timeout_ms: 60_000,  // Server evicts after 60s silence (must be >= 2)
   )
 ```
 

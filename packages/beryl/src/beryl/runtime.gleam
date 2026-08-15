@@ -43,7 +43,6 @@ import gleam/string
 pub type Config {
   Config(
     codec: Codec,
-    heartbeat_check_interval_ms: Int,
     heartbeat_timeout_ms: Int,
     message_limits: Option(RateLimitConfig),
     join_limits: Option(RateLimitConfig),
@@ -58,12 +57,6 @@ pub type Config {
     telemetry: Bool,
     logging: internal.LoggingConfig,
   )
-}
-
-/// Errors when starting the runtime.
-pub type StartError {
-  InvalidHeartbeatTimeout
-  ActorStartFailed(actor.StartError)
 }
 
 pub type AdmissionToken
@@ -115,9 +108,8 @@ pub type Msg(msg) {
   /// A typed server-side message for one socket, sent through its
   /// `Sender`. Delivered to `update` as `Info(message)`.
   AppInfo(socket_id: String, message: msg)
-  /// Local broadcast fan-out. PubSub forwarding is the sender's concern
-  /// (the `beryl` broadcast helpers and the effect interpreter forward
-  /// before/while sending this).
+  /// Broadcast fan-out: local subscribers plus PubSub forwarding to other
+  /// runtimes when PubSub is configured.
   Broadcast(topic: String, event: String, payload: Json, except: Option(String))
   RemoteBroadcast(pubsub.Message(Json))
   CheckHeartbeats
@@ -281,12 +273,7 @@ pub fn start_named(
   pubsub ps: Option(PubSub(Json)),
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Input(msg)) -> Next(model, msg),
-) -> Result(actor.Started(Subject(Msg(msg))), StartError) {
-  use <- bool.guard(
-    when: config.heartbeat_check_interval_ms > 0
-      && config.heartbeat_timeout_ms <= 0,
-    return: Error(InvalidHeartbeatTimeout),
-  )
+) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
   internal.configure(config.logging)
   let initial_state =
     State(
@@ -329,15 +316,15 @@ pub fn start_named(
   |> actor.on_message(handle_message)
   |> actor.named(name)
   |> actor.start
-  |> result.map_error(ActorStartFailed)
 }
 
+/// Check at half the staleness window; `beryl.validate_config` guarantees the
+/// timeout is at least 2, so the interval is always positive.
 fn schedule_heartbeat_check(subject: Subject(Msg(msg)), config: Config) -> Nil {
-  use <- bool.guard(when: config.heartbeat_check_interval_ms <= 0, return: Nil)
   let _timer =
     process.send_after(
       subject,
-      config.heartbeat_check_interval_ms,
+      config.heartbeat_timeout_ms / 2,
       CheckHeartbeats,
     )
   Nil
@@ -383,14 +370,7 @@ fn handle_message(
     AppInfo(socket_id, app_message) ->
       handle_app_info(state, socket_id, app_message)
     Broadcast(topic_name, event_name, payload, except) -> {
-      emit_broadcast(
-        state,
-        topic_name,
-        event_name,
-        payload,
-        except,
-        telemetry.Local,
-      )
+      broadcast_with_pubsub(state, topic_name, event_name, payload, except)
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
@@ -620,12 +600,9 @@ fn handle_check_heartbeats(
   let now = monotonic_time_ms()
   let timeout_ms = state.config.heartbeat_timeout_ms
   let stale_socket_ids =
-    dict.fold(state.sockets, [], fn(acc, socket_id, socket) {
-      case now - socket.last_heartbeat > timeout_ms {
-        True -> [socket_id, ..acc]
-        False -> acc
-      }
-    })
+    state.sockets
+    |> dict.filter(fn(_, socket) { now - socket.last_heartbeat > timeout_ms })
+    |> dict.keys
   list.each(stale_socket_ids, fn(socket_id) {
     state.logger
     |> log.warn("Evicting socket due to heartbeat timeout", [
@@ -888,7 +865,7 @@ fn reject_invalid_join(
           codec.inbound_ref(msg),
           codec.inbound_topic(msg),
           codec.StatusError,
-          json.object([#("reason", json.string("invalid_topic"))]),
+          error_reason("invalid_topic"),
         )
       let _send_result = send_frame_logged(state, socket, safe_topic, reply)
       emit_join_stop(state, started_at, telemetry.JoinInvalidTopic)
@@ -922,7 +899,7 @@ fn handle_join(
         topic_name,
         join_ref,
         ref,
-        json.object([#("reason", json.string("rate_limited"))]),
+        error_reason("rate_limited"),
       )
       emit_join_stop(state, started_at, telemetry.JoinRateLimited)
       actor.continue(state)
@@ -974,7 +951,7 @@ fn handle_join_inner(
             topic_name,
             join_ref,
             ref,
-            json.object([#("reason", json.string("too_many_topics"))]),
+            error_reason("too_many_topics"),
           )
           emit_join_stop(state, started_at, telemetry.JoinTopicLimit)
           actor.continue(state)
@@ -1270,7 +1247,7 @@ fn reject_unjoined_event(
           Some(r),
           topic_name,
           codec.StatusError,
-          json.object([#("reason", json.string("unmatched topic"))]),
+          error_reason("unmatched topic"),
         )
       let _send_result = send_frame_logged(state, socket, topic_name, reply)
       Nil
@@ -1408,7 +1385,7 @@ fn route_message_with_ref(
         topic_name,
         sock.ref_join_ref(message_ref),
         sock.ref_msg_ref(message_ref),
-        json.object([#("reason", json.string("duplicate_ref"))]),
+        error_reason("duplicate_ref"),
       )
       emit_message_stop(
         state,
@@ -1569,8 +1546,6 @@ fn fan_out_binary(
   case topics {
     [] -> state
     [topic_name, ..rest] -> {
-      // Re-check per topic: an earlier delivery may have closed it or
-      // stopped the socket.
       let state = case socket_subscribed(state, socket_id, topic_name) {
         False -> state
         True ->
@@ -1704,7 +1679,7 @@ fn apply_update_stop(
   ])
   // A join answered with Stop is still unanswered on the wire:
   // fail it closed before the teardown frames.
-  reject_unanswered_join(state, socket_id, source)
+  reject_stopped_join(state, socket_id, source)
   case source {
     JoinSource(_, _, _, _, started_at) ->
       emit_join_stop(state, started_at, telemetry.JoinHandlerRejected)
@@ -1753,14 +1728,7 @@ fn apply_update_next(
         #("socket_id", socket_id),
         #("topic", p.topic),
       ])
-      send_error_reply(
-        state,
-        socket_id,
-        p.topic,
-        p.join_ref,
-        p.msg_ref,
-        json.object([#("reason", json.string("join not acknowledged"))]),
-      )
+      reject_unanswered_join(state, socket_id, p)
     }
     None -> Nil
   }
@@ -1820,7 +1788,7 @@ fn handle_update_crash(
         topic_name,
         join_ref,
         msg_ref,
-        json.object([#("reason", json.string("join crashed"))]),
+        error_reason("join crashed"),
       )
       emit_join_stop(state, started_at, telemetry.JoinCallbackFailed)
       Outcome(state, [], None)
@@ -1867,25 +1835,37 @@ fn handle_update_crash(
   }
 }
 
-/// Fail-closed reply for a join the update never answered (used for both
-/// the missing-`AcceptJoin` case and `Stop` returned from a join).
-fn reject_unanswered_join(
+/// Fail closed when an update returns `Stop` while handling a join.
+fn reject_stopped_join(
   state: State(model, msg),
   socket_id: String,
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(topic_name, join_ref, msg_ref, _, _) ->
-      send_error_reply(
+    JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
+      reject_unanswered_join(
         state,
         socket_id,
-        topic_name,
-        join_ref,
-        msg_ref,
-        json.object([#("reason", json.string("join not acknowledged"))]),
+        Pending(topic_name, join_ref, msg_ref, ref),
       )
     _ -> Nil
   }
+}
+
+/// Fail-closed reply for a join the update never answered.
+fn reject_unanswered_join(
+  state: State(model, msg),
+  socket_id: String,
+  pending: Pending,
+) -> Nil {
+  send_error_reply(
+    state,
+    socket_id,
+    pending.topic,
+    pending.join_ref,
+    pending.msg_ref,
+    error_reason("join not acknowledged"),
+  )
 }
 
 /// Process an outcome's follow-ups: tear the socket down if an update
@@ -2609,12 +2589,11 @@ fn resolve_channel_limits(
   config: Config,
   topic_name: String,
 ) -> Option(RateLimitConfig) {
-  let matched =
+  case
     list.find(config.topic_rates, fn(entry) {
-      let #(pattern, _limits) = entry
-      topic.matches(pattern, topic_name)
+      topic.matches(entry.0, topic_name)
     })
-  case matched {
+  {
     Ok(#(_pattern, limits)) -> Some(limits)
     Error(Nil) -> config.channel_limits
   }
@@ -2696,6 +2675,10 @@ fn remove_socket_rate_limits(
 }
 
 // ── Small helpers ───────────────────────────────────────────────────────────
+
+fn error_reason(text: String) -> Json {
+  json.object([#("reason", json.string(text))])
+}
 
 fn store_socket(
   state: State(model, msg),

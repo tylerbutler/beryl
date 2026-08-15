@@ -5,6 +5,7 @@ import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
 import chatrooms/router
+import example_helpers/router as topic_router
 import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/http/request
@@ -36,8 +37,8 @@ pub fn main() {
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
       config,
-      init: chat_app.standalone_init,
-      update: fn(model, ev) { chat_app.standalone_update(ctx, model, ev) },
+      init: topic_router.standalone_init,
+      update: chat_app.standalone_update(ctx),
     )
   session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
@@ -82,10 +83,6 @@ pub fn main() {
 }
 
 fn get_query_param(req, name: String) -> Result(String, Nil) {
-  case request.get_query(req) {
-    Ok(params) ->
-      list.find(params, fn(pair) { pair.0 == name })
-      |> result.map(fn(pair) { pair.1 })
-    Error(_) -> Error(Nil)
-  }
+  request.get_query(req)
+  |> result.try(list.key_find(_, name))
 }

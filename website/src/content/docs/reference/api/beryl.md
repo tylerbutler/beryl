@@ -464,25 +464,15 @@ pub fn with_channel_rate_max_keys_per_socket(
 
 ### `with_heartbeat`
 
-Configure heartbeat timing.
+Configure the server-side heartbeat staleness window.
 
- `interval_ms` is **client-advisory only**: it is the interval clients should
- use for their own outbound pings. The server never reads it and does not use
- it to schedule anything — it exists purely to communicate a suggested ping
- cadence to clients.
-
- `timeout_ms` is the server-side staleness window — a socket that sends no
- heartbeat within this window is evicted. The server derives its internal
- check interval as `timeout_ms / 2` (integer division), so `timeout_ms` must
- be at least 2; smaller values are rejected by `child_spec` and
- `validate_config` with `HeartbeatTimeoutTooLow` because a check interval
- of 0 would disable eviction. The defaults are 30000 ms and 60000 ms
- respectively.
+ A socket that sends no heartbeat within `timeout_ms` is evicted. The
+ runtime checks at half this window, so values below 2 are rejected by
+ `validate_config` with `HeartbeatTimeoutTooLow`. The default is 60000 ms.
 
 ```gleam
 pub fn with_heartbeat(
   Config,
-  interval_ms: Int,
   timeout_ms: Int
 ) -> Config
 ```

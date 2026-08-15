@@ -20,7 +20,7 @@ pub fn main() {
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   h.start_observed(
     beryl.config(wire.phoenix_codec())
-      |> beryl.with_heartbeat(interval_ms: 20, timeout_ms: 40),
+      |> beryl.with_heartbeat(timeout_ms: 40),
     events,
   )
 }

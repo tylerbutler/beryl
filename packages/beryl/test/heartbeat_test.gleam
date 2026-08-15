@@ -23,7 +23,7 @@ fn start_hb_app(
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec())
-        |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: timeout_ms),
+        |> beryl.with_heartbeat(timeout_ms: timeout_ms),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {
         process.send(events, ev)
@@ -273,7 +273,7 @@ pub fn start_app_accepts_default_timeout_test() {
 fn start_trivial(timeout_ms: Int) -> Result(beryl.Sockets, beryl.ConfigError) {
   h.start_app(
     beryl.config(wire.phoenix_codec())
-      |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: timeout_ms),
+      |> beryl.with_heartbeat(timeout_ms: timeout_ms),
     init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
     update: fn(model, _ev) { Next(model, []) },
   )

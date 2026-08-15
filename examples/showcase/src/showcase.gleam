@@ -22,13 +22,12 @@ import collab_docs/router as collab_docs_router
 import cursors/app as cursors_app
 import cursors/router as cursors_router
 import envoy
+import example_helpers/router as topic_router
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
 import gleam/io
-import gleam/json
-import gleam/option.{type Option, None, Some}
 import gleam/otp/static_supervisor
 import gleam/result
 import mist
@@ -41,7 +40,6 @@ type Model {
     socket_id: String,
     cursors: Dict(String, cursors_app.Model),
     rooms: Dict(String, chat_app.Model),
-    lobby: Option(chat_app.Lobby),
     docs: Dict(String, docs_app.Model),
   )
 }
@@ -91,13 +89,12 @@ pub fn main() {
             socket_id: info.socket_id,
             cursors: dict.new(),
             rooms: dict.new(),
-            lobby: None,
             docs: dict.new(),
           ),
           [],
         )
       },
-      update: fn(model, ev) { update(ctx, model, ev) },
+      update: update(ctx),
     )
   session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
@@ -160,179 +157,31 @@ pub fn main() {
   process.sleep_forever()
 }
 
-/// The socket-wide router: dispatch every event to the embedded app that
-/// owns its topic namespace, threading that app's sub-model through the
-/// per-namespace `Dict`.
-fn update(ctx: Ctx, model: Model, ev: Input(Nil)) -> Next(Model, Nil) {
-  case ev {
-    socket.Join(topic, payload, ref) ->
-      case topic {
-        "lobby" -> {
-          let #(lobby, effects) = chat_app.lobby_join(ref)
-          socket.Next(Model(..model, lobby: Some(lobby)), effects)
-        }
-        "cursor:" <> _ -> {
-          let #(joined, effects) =
-            cursors_app.join(ctx.cursors, model.socket_id, topic, payload, ref)
-          socket.Next(store_cursor(model, topic, joined), effects)
-        }
-        "room:" <> _ -> {
-          let #(joined, effects) =
-            chat_app.join(ctx.rooms, model.socket_id, topic, payload, ref)
-          socket.Next(store_room(model, topic, joined), effects)
-        }
-        "document:" <> _ -> {
-          let #(joined, effects) =
-            docs_app.join(ctx.docs, model.socket_id, topic, payload, ref)
-          socket.Next(store_doc(model, topic, joined), effects)
-        }
-        _ ->
-          socket.Next(model, [
-            socket.RejectJoin(
-              ref,
-              json.object([#("reason", json.string("unknown_topic"))]),
-            ),
-          ])
-      }
-
-    socket.Message(topic, event_name, payload, ref) ->
-      case topic {
-        "lobby" ->
-          case model.lobby {
-            Some(lobby) -> {
-              let #(lobby, effects) =
-                chat_app.lobby_update(lobby, event_name, payload, ref)
-              socket.Next(Model(..model, lobby: Some(lobby)), effects)
-            }
-            None -> socket.Next(model, [])
-          }
-        "cursor:" <> _ ->
-          case dict.get(model.cursors, topic) {
-            Ok(sub) -> {
-              let #(sub, effects) =
-                cursors_app.update(
-                  ctx.cursors,
-                  model.socket_id,
-                  topic,
-                  sub,
-                  event_name,
-                  payload,
-                )
-              socket.Next(store_cursor(model, topic, Some(sub)), effects)
-            }
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "room:" <> _ ->
-          case dict.get(model.rooms, topic) {
-            Ok(sub) -> {
-              let #(sub, effects) =
-                chat_app.update(
-                  ctx.rooms,
-                  model.socket_id,
-                  topic,
-                  sub,
-                  event_name,
-                  payload,
-                  ref,
-                )
-              socket.Next(store_room(model, topic, Some(sub)), effects)
-            }
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "document:" <> _ ->
-          case dict.get(model.docs, topic) {
-            Ok(sub) -> {
-              let #(sub, effects) =
-                docs_app.update(
-                  ctx.docs,
-                  model.socket_id,
-                  topic,
-                  sub,
-                  event_name,
-                  payload,
-                  ref,
-                )
-              socket.Next(store_doc(model, topic, Some(sub)), effects)
-            }
-            Error(Nil) -> socket.Next(model, [])
-          }
-        _ -> socket.Next(model, [])
-      }
-
-    socket.Closed(topic, _reason) ->
-      case topic {
-        "lobby" ->
-          case model.lobby {
-            Some(lobby) ->
-              socket.Next(
-                Model(..model, lobby: None),
-                chat_app.lobby_closed(lobby),
-              )
-            None -> socket.Next(model, [])
-          }
-        "cursor:" <> _ ->
-          case dict.get(model.cursors, topic) {
-            Ok(sub) ->
-              socket.Next(
-                Model(..model, cursors: dict.delete(model.cursors, topic)),
-                cursors_app.closed(ctx.cursors, model.socket_id, topic, sub),
-              )
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "room:" <> _ ->
-          case dict.get(model.rooms, topic) {
-            Ok(sub) ->
-              socket.Next(
-                Model(..model, rooms: dict.delete(model.rooms, topic)),
-                chat_app.closed(ctx.rooms, model.socket_id, topic, sub),
-              )
-            Error(Nil) -> socket.Next(model, [])
-          }
-        "document:" <> _ ->
-          case dict.get(model.docs, topic) {
-            Ok(sub) ->
-              socket.Next(
-                Model(..model, docs: dict.delete(model.docs, topic)),
-                docs_app.closed(ctx.docs, model.socket_id, topic, sub),
-              )
-            Error(Nil) -> socket.Next(model, [])
-          }
-        _ -> socket.Next(model, [])
-      }
-
-    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
-  }
-}
-
-fn store_cursor(
-  model: Model,
-  topic: String,
-  sub: option.Option(cursors_app.Model),
-) -> Model {
-  case sub {
-    Some(sub) -> Model(..model, cursors: dict.insert(model.cursors, topic, sub))
-    None -> model
-  }
-}
-
-fn store_room(
-  model: Model,
-  topic: String,
-  sub: option.Option(chat_app.Model),
-) -> Model {
-  case sub {
-    Some(sub) -> Model(..model, rooms: dict.insert(model.rooms, topic, sub))
-    None -> model
-  }
-}
-
-fn store_doc(
-  model: Model,
-  topic: String,
-  sub: option.Option(docs_app.Model),
-) -> Model {
-  case sub {
-    Some(sub) -> Model(..model, docs: dict.insert(model.docs, topic, sub))
-    None -> model
+/// Build the composed router once. The read-only lobby remains mounted so the
+/// chatrooms UI keeps live room-count invalidations in the showcase.
+fn update(ctx: Ctx) -> fn(Model, Input(Nil)) -> Next(Model, Nil) {
+  let namespaces = [
+    topic_router.accept_only("lobby"),
+    cursors_app.namespace(
+      ctx.cursors,
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.cursors },
+      put: fn(model: Model, cursors) { Model(..model, cursors: cursors) },
+    ),
+    chat_app.namespace(
+      ctx.rooms,
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.rooms },
+      put: fn(model: Model, rooms) { Model(..model, rooms: rooms) },
+    ),
+    docs_app.namespace(
+      ctx.docs,
+      socket_id: fn(model: Model) { model.socket_id },
+      get: fn(model: Model) { model.docs },
+      put: fn(model: Model, docs) { Model(..model, docs: docs) },
+    ),
+  ]
+  fn(model, input) {
+    topic_router.route(namespaces, topic_router.unknown_topic(), model, input)
   }
 }

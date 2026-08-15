@@ -1,3 +1,3 @@
 project = "beryl_mist"
 kind = "Changed"
-body = "Transport configuration and shared infrastructure moved to beryl/transport/server and beryl/transport/origin. beryl_mist now keeps only Mist-specific upgrade, frame-send, and peer-IP glue while the core preserves atomic admission, negotiated codecs, rate controls, and text/binary telemetry."
+body = "Transport configuration and shared infrastructure moved to beryl/transport/server and beryl/transport/origin. beryl_mist now keeps only Mist-specific upgrade, frame-send, and peer-IP glue while the core preserves atomic admission, negotiated codecs, rate controls, and text/binary telemetry. The upgrade_connection bypass is removed; use upgrade or handler so origin, capacity, and on_connect checks always run."

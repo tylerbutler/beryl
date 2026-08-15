@@ -13,11 +13,14 @@
 //// request body type, so one config value works with any transport whose
 //// server exposes `gleam/http` requests.
 
-import beryl/transport.{
-  type Codec, type ConnectSeed, type ConnectionPermit, type RateLimiter,
-  type Sockets,
-}
+import beryl.{type Sockets}
+import beryl/internal
+import beryl/log
+import beryl/rate_limit
+import beryl/socket.{type ConnectSeed}
+import beryl/transport.{type ConnectionPermit}
 import beryl/transport/origin.{type OriginPolicy}
+import beryl/wire/codec.{type Codec}
 import gleam/bit_array
 import gleam/bool
 import gleam/crypto
@@ -78,10 +81,19 @@ pub type ConnectError {
 /// `with_allow_all_origins` to opt out of origin checking entirely.
 pub fn default_config(path: String) -> TransportConfig(body) {
   TransportConfig(
-    path: path,
+    path: normalize_path(path),
     on_connect: None,
     origin_policy: origin.SameOrigin,
   )
+}
+
+fn normalize_path(path: String) -> String {
+  "/"
+  <> {
+    string.split(path, "/")
+    |> list.filter(fn(segment) { segment != "" })
+    |> string.join("/")
+  }
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -100,11 +112,7 @@ pub fn with_on_connect(
   config: TransportConfig(body),
   callback: fn(Request(body)) -> Result(List(#(String, String)), ConnectError),
 ) -> TransportConfig(body) {
-  TransportConfig(
-    path: config.path,
-    on_connect: Some(callback),
-    origin_policy: config.origin_policy,
-  )
+  TransportConfig(..config, on_connect: Some(callback))
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -124,11 +132,7 @@ pub fn with_allowed_origins(
   config: TransportConfig(body),
   origins: List(String),
 ) -> TransportConfig(body) {
-  TransportConfig(
-    path: config.path,
-    on_connect: config.on_connect,
-    origin_policy: origin.AllowList(origins),
-  )
+  TransportConfig(..config, origin_policy: origin.AllowList(origins))
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -142,11 +146,7 @@ pub fn with_allowed_origins(
 pub fn with_allow_all_origins(
   config: TransportConfig(body),
 ) -> TransportConfig(body) {
-  TransportConfig(
-    path: config.path,
-    on_connect: config.on_connect,
-    origin_policy: origin.AllowAll,
-  )
+  TransportConfig(..config, origin_policy: origin.AllowAll)
 }
 
 // --- Upgrade admission pipeline ---
@@ -181,18 +181,17 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 ///
 /// ## Path matching
 ///
-/// The request path is normalised by re-joining its segments as
-/// `"/" <> string.join(segments, "/")` and compared for exact equality with
-/// `config.path`. Because the normalised path never has a trailing slash, a
-/// config path written with a trailing slash (e.g. `"/socket/"`) will never
-/// match. Configure the path without a trailing slash (e.g. `"/socket"`).
+/// Request and configured paths are normalized without trailing or doubled
+/// slashes before an exact comparison.
 ///
 /// ## Connection limits
 ///
 /// When `beryl.with_max_connections_per_ip` is configured, the limit is
 /// enforced before completing the handshake, returning `reject(429)` once the
 /// peer is at its limit. `request_ip` must return the **real socket peer IP**
-/// from the TCP connection; forwarded headers such as `X-Forwarded-For` must
+/// from the TCP connection, or `Error(Nil)` when unavailable. Unknown peers
+/// share one limiter bucket rather than bypassing the limit. Forwarded
+/// headers such as `X-Forwarded-For` must
 /// **not** be trusted or parsed, because clients can set them and would
 /// otherwise spoof their address to bypass the limit. Behind a trusted
 /// reverse proxy, all connections share the proxy's IP — resolve the real
@@ -212,7 +211,7 @@ pub fn upgrade(
   sockets sockets: Sockets,
   config config: TransportConfig(body),
   telemetry telemetry: transport.Telemetry,
-  request_ip request_ip: fn(Request(body)) -> String,
+  request_ip request_ip: fn(Request(body)) -> Result(String, Nil),
   reject reject: fn(Int) -> Response(resp),
   accept accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
   next next: fn() -> Response(resp),
@@ -234,12 +233,27 @@ pub fn upgrade(
   }
 }
 
+// nolint: unused_exports -- transport SPI, consumed by sibling transports
+/// Build a combined request handler that sends upgrade requests through a
+/// transport-specific `upgrade` function and everything else to HTTP.
+pub fn handler(
+  upgrade upgrade: fn(Request(body), fn() -> Response(resp)) -> Response(resp),
+  http_fallback http_fallback: fn(Request(body)) -> Response(resp),
+) -> fn(Request(body)) -> Response(resp) {
+  fn(request) {
+    case is_websocket_request(request) {
+      True -> upgrade(request, fn() { http_fallback(request) })
+      False -> http_fallback(request)
+    }
+  }
+}
+
 fn handle_matched_upgrade(
   request: Request(body),
   sockets: Sockets,
   config: TransportConfig(body),
   telemetry: transport.Telemetry,
-  request_ip: fn(Request(body)) -> String,
+  request_ip: fn(Request(body)) -> Result(String, Nil),
   reject: fn(Int) -> Response(resp),
   accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
 ) -> Response(resp) {
@@ -265,7 +279,8 @@ fn handle_matched_upgrade(
       403,
     )
   })
-  case transport.acquire_connection_slot(sockets, request_ip(request)) {
+  let peer_ip = request_ip(request) |> result.unwrap("unknown")
+  case beryl.acquire_connection_slot(sockets, peer_ip) {
     Error(Nil) ->
       reject_upgrade(
         reject,
@@ -312,9 +327,9 @@ fn run_on_connect(
       case callback(request) {
         Ok(metadata) ->
           accept(metadata, connection_permit)
-          |> finish_upgrade(Some(connection_permit), telemetry, started_at)
+          |> finish_upgrade(connection_permit, telemetry, started_at)
         Error(ConnectRejected) -> {
-          transport.release_connection_slot(connection_permit)
+          beryl.release_connection_slot(connection_permit)
           reject_upgrade(
             reject,
             telemetry,
@@ -326,7 +341,7 @@ fn run_on_connect(
       }
     None ->
       accept([], connection_permit)
-      |> finish_upgrade(Some(connection_permit), telemetry, started_at)
+      |> finish_upgrade(connection_permit, telemetry, started_at)
   }
 }
 
@@ -353,41 +368,17 @@ fn request_vsn_supported(request: Request(body)) -> Bool {
   }
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Release a held connection slot when a WebSocket handshake fails.
-///
-/// A failed handshake (e.g. missing `Sec-WebSocket-Key`, reported as a
-/// status of 400 or above) never runs the connection's init/close callbacks,
-/// so the acquired slot must be released here or repeated bad handshakes
-/// would permanently exhaust the IP's slots. Pipe the server's upgrade
-/// response through this before returning it.
-pub fn release_slot_on_failed_handshake(
-  response: Response(resp),
-  connection_permit: Option(ConnectionPermit),
-) -> Response(resp) {
-  use <- bool.guard(when: response.status < 400, return: response)
-  case connection_permit {
-    Some(permit) -> transport.release_connection_slot(permit)
-    None -> Nil
-  }
-  response
-}
-
-// nolint: unused_exports -- transport SPI, consumed by transport packages
 /// Complete an upgrade telemetry span and release its slot if the server
 /// rejected the WebSocket handshake before connection callbacks could run.
-pub fn finish_upgrade(
+fn finish_upgrade(
   response: Response(resp),
-  connection_permit: Option(ConnectionPermit),
+  connection_permit: ConnectionPermit,
   telemetry: transport.Telemetry,
   started_at: Int,
 ) -> Response(resp) {
   case response.status >= 400 {
     True -> {
-      case connection_permit {
-        Some(permit) -> transport.release_connection_slot(permit)
-        None -> Nil
-      }
+      beryl.release_connection_slot(connection_permit)
       transport.telemetry_upgrade_stop(
         telemetry,
         started_at,
@@ -421,7 +412,7 @@ pub opaque type ConnectionState {
   ConnectionState(
     socket_id: String,
     sockets: Sockets,
-    connection_permit: Option(ConnectionPermit),
+    connection_permit: ConnectionPermit,
     max_inbound_frame_bytes: Int,
     /// Wire codec for decoding inbound frames here in the connection
     /// process, so parse cost and malformed input never reach the shared
@@ -431,8 +422,8 @@ pub opaque type ConnectionState {
     /// Per-connection message-rate limiter (`None` = unlimited).
     /// Enforced at the edge: frames over the rate are shed before decode,
     /// so a flooding socket cannot fill the runtime's mailbox.
-    message_limiter: Option(RateLimiter),
-    logger: transport.Logger,
+    message_limiter: Option(rate_limit.Bucket),
+    logger: log.Logger,
   )
 }
 
@@ -448,7 +439,7 @@ pub fn connect_seed(
   request: Request(body),
   metadata: List(#(String, String)),
 ) -> ConnectSeed {
-  transport.connect_seed(
+  socket.ConnectSeed(
     path: request.path,
     query: request.get_query(request) |> result.unwrap([]),
     headers: request.headers,
@@ -459,7 +450,7 @@ pub fn connect_seed(
 /// Initialize a newly upgraded WebSocket connection in its connection
 /// process.
 ///
-/// Binds any held connection slot to the calling process (so the slot is
+/// Binds the held connection slot to the calling process (so the slot is
 /// reclaimed even if the process dies without a clean close), monitors the
 /// exact owning runtime, then atomically registers the socket and its
 /// runtime-triggered closer against that owner. A concurrent restart cannot
@@ -475,7 +466,7 @@ pub fn connect_seed(
 pub fn init_connection(
   sockets sockets: Sockets,
   seed seed: ConnectSeed,
-  connection_permit connection_permit: Option(ConnectionPermit),
+  connection_permit connection_permit: ConnectionPermit,
   base_selector base_selector: Selector(SendRequest),
   logger_name logger_name: String,
   telemetry telemetry: transport.Telemetry,
@@ -483,10 +474,7 @@ pub fn init_connection(
 ) -> #(ConnectionState, Selector(SendRequest)) {
   // Bind the per-IP slot to this WebSocket process so it is reclaimed even
   // if the process dies without running the transport's close callback.
-  case connection_permit {
-    Some(permit) -> transport.bind_connection_slot(permit)
-    None -> Nil
-  }
+  beryl.bind_connection_slot(connection_permit)
 
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
@@ -535,23 +523,21 @@ pub fn init_connection(
       socket_id: socket_id,
       sockets: sockets,
       connection_permit: connection_permit,
-      max_inbound_frame_bytes: transport.max_inbound_frame_bytes(sockets),
-      codec: option.unwrap(socket_codec, transport.active_codec(sockets)),
+      max_inbound_frame_bytes: beryl.max_inbound_frame_bytes(sockets),
+      codec: option.unwrap(socket_codec, beryl.configured_codec(sockets)),
       telemetry: telemetry,
-      message_limiter: transport.new_message_limiter(sockets),
-      logger: transport.logger(logger_name),
+      message_limiter: beryl.message_limits(sockets)
+        |> option.map(rate_limit.new_bucket),
+      logger: internal.logger(logger_name),
     )
 
   #(state, selector)
 }
 
-/// Clean up when a connection closes: release any held connection slot and
+/// Clean up when a connection closes: release the held connection slot and
 /// announce the disconnect to the runtime.
 pub fn close_connection(state: ConnectionState) -> Nil {
-  case state.connection_permit {
-    Some(permit) -> transport.release_connection_slot(permit)
-    None -> Nil
-  }
+  beryl.release_connection_slot(state.connection_permit)
   transport.socket_disconnected(state.sockets, state.socket_id)
 }
 
@@ -573,147 +559,124 @@ pub type FrameOutcome {
 /// Oversized frames return `Stop` (close the connection); over-rate frames
 /// are shed silently; undecodable frames are logged and dropped.
 pub fn handle_text_frame(state: ConnectionState, text: String) -> FrameOutcome {
-  let bytes = string.byte_size(text)
-  let started_at = transport.telemetry_start(state.telemetry)
-  use <- bool.lazy_guard(
-    when: frame_too_large(state.max_inbound_frame_bytes, bytes),
-    return: fn() {
-      emit_frame_stop(
-        state,
-        started_at,
-        bytes,
-        transport.TextFrame,
-        transport.FrameOversized,
-      )
-      Stop
-    },
-  )
-  let #(state, allowed) = take_message_token(state)
-  use <- bool.lazy_guard(when: !allowed, return: fn() {
-    emit_frame_stop(
-      state,
-      started_at,
-      bytes,
-      transport.TextFrame,
-      transport.FrameRateLimited,
-    )
-    Continue(state)
-  })
-  case transport.decode_text(state.codec)(text) {
-    Ok(msg) -> {
-      transport.route_decoded(state.sockets, state.socket_id, msg)
-      emit_frame_stop(
-        state,
-        started_at,
-        bytes,
-        transport.TextFrame,
-        transport.FrameRouted,
-      )
-      Continue(state)
-    }
-    Error(err) -> {
-      transport.log_warning(
-        state.logger,
-        "Failed to decode wire protocol message",
-        [
-          #("socket_id", state.socket_id),
-          #("error", transport.format_decode_error(err)),
-        ],
-      )
-      emit_frame_stop(
-        state,
-        started_at,
-        bytes,
-        transport.TextFrame,
-        transport.FrameDecodeFailed,
-      )
-      Continue(state)
-    }
-  }
-}
-
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Size-check, rate-check, and decode an inbound binary frame in the
-/// connection process. Codecs without a binary decoder keep the raw
-/// `transport.route_binary` fan-out, routed through the runtime.
-///
-/// Oversized frames return `Stop` (close the connection); over-rate frames
-/// are shed silently; undecodable frames are logged and dropped.
-pub fn handle_binary_frame(
-  state: ConnectionState,
-  data: BitArray,
-) -> FrameOutcome {
-  let bytes = bit_array.byte_size(data)
-  let started_at = transport.telemetry_start(state.telemetry)
-  use <- bool.lazy_guard(
-    when: frame_too_large(state.max_inbound_frame_bytes, bytes),
-    return: fn() {
-      emit_frame_stop(
-        state,
-        started_at,
-        bytes,
-        transport.BinaryFrame,
-        transport.FrameOversized,
-      )
-      Stop
-    },
-  )
-  let #(state, allowed) = take_message_token(state)
-  use <- bool.lazy_guard(when: !allowed, return: fn() {
-    emit_frame_stop(
-      state,
-      started_at,
-      bytes,
-      transport.BinaryFrame,
-      transport.FrameRateLimited,
-    )
-    Continue(state)
-  })
-  case transport.decode_binary(state.codec) {
-    None -> {
-      transport.route_binary(state.sockets, state.socket_id, data)
-      emit_frame_stop(
-        state,
-        started_at,
-        bytes,
-        transport.BinaryFrame,
-        transport.FrameRouted,
-      )
-      Continue(state)
-    }
-    Some(decode_binary) ->
-      case decode_binary(data) {
-        Ok(msg) -> {
-          transport.route_decoded_binary(state.sockets, state.socket_id, msg)
+  admit_frame(
+    state,
+    string.byte_size(text),
+    transport.TextFrame,
+    fn(state, started_at) {
+      case codec.decode_text(state.codec)(text) {
+        Ok(message) -> {
+          transport.route_decoded(state.sockets, state.socket_id, message)
           emit_frame_stop(
             state,
             started_at,
-            bytes,
-            transport.BinaryFrame,
+            string.byte_size(text),
+            transport.TextFrame,
             transport.FrameRouted,
           )
           Continue(state)
         }
-        Error(err) -> {
-          transport.log_warning(
-            state.logger,
-            "Failed to decode binary wire protocol message",
-            [
-              #("socket_id", state.socket_id),
-              #("error", transport.format_decode_error(err)),
-            ],
-          )
+        Error(error) -> {
+          log.warn(state.logger, "Failed to decode wire protocol message", [
+            #("socket_id", state.socket_id),
+            #("error", codec.format_decode_error(error)),
+          ])
           emit_frame_stop(
             state,
             started_at,
-            bytes,
-            transport.BinaryFrame,
+            string.byte_size(text),
+            transport.TextFrame,
             transport.FrameDecodeFailed,
           )
           Continue(state)
         }
       }
-  }
+    },
+  )
+}
+
+// nolint: unused_exports -- transport SPI, consumed by sibling transports
+/// Size-check, rate-check, and decode an inbound binary frame in the
+/// connection process. Codecs without a binary decoder keep the raw
+/// `transport.route_binary` fan-out, routed through the runtime.
+pub fn handle_binary_frame(
+  state: ConnectionState,
+  data: BitArray,
+) -> FrameOutcome {
+  let bytes = bit_array.byte_size(data)
+  admit_frame(state, bytes, transport.BinaryFrame, fn(state, started_at) {
+    case codec.decode_binary(state.codec) {
+      None -> {
+        transport.route_binary(state.sockets, state.socket_id, data)
+        emit_frame_stop(
+          state,
+          started_at,
+          bytes,
+          transport.BinaryFrame,
+          transport.FrameRouted,
+        )
+        Continue(state)
+      }
+      Some(decode_binary) ->
+        case decode_binary(data) {
+          Ok(message) -> {
+            transport.route_decoded_binary(
+              state.sockets,
+              state.socket_id,
+              message,
+            )
+            emit_frame_stop(
+              state,
+              started_at,
+              bytes,
+              transport.BinaryFrame,
+              transport.FrameRouted,
+            )
+            Continue(state)
+          }
+          Error(error) -> {
+            log.warn(
+              state.logger,
+              "Failed to decode binary wire protocol message",
+              [
+                #("socket_id", state.socket_id),
+                #("error", codec.format_decode_error(error)),
+              ],
+            )
+            emit_frame_stop(
+              state,
+              started_at,
+              bytes,
+              transport.BinaryFrame,
+              transport.FrameDecodeFailed,
+            )
+            Continue(state)
+          }
+        }
+    }
+  })
+}
+
+fn admit_frame(
+  state: ConnectionState,
+  bytes: Int,
+  kind: transport.FrameKind,
+  handle: fn(ConnectionState, Int) -> FrameOutcome,
+) -> FrameOutcome {
+  let started_at = transport.telemetry_start(state.telemetry)
+  use <- bool.lazy_guard(
+    when: frame_too_large(state.max_inbound_frame_bytes, bytes),
+    return: fn() {
+      emit_frame_stop(state, started_at, bytes, kind, transport.FrameOversized)
+      Stop
+    },
+  )
+  let #(state, allowed) = take_message_token(state)
+  use <- bool.lazy_guard(when: !allowed, return: fn() {
+    emit_frame_stop(state, started_at, bytes, kind, transport.FrameRateLimited)
+    Continue(state)
+  })
+  handle(state, started_at)
 }
 
 fn emit_frame_stop(
@@ -737,9 +700,12 @@ fn emit_frame_stop(
 fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
   case state.message_limiter {
     None -> #(state, True)
-    Some(limiter) -> {
-      let #(limiter, allowed) = transport.take_token(limiter)
-      #(ConnectionState(..state, message_limiter: Some(limiter)), allowed)
+    Some(bucket) -> {
+      let #(bucket, taken) = rate_limit.take(bucket)
+      #(
+        ConnectionState(..state, message_limiter: Some(bucket)),
+        result.is_ok(taken),
+      )
     }
   }
 }

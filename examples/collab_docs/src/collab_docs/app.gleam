@@ -14,11 +14,11 @@
 //// `token` HMAC-signed for the tenant whose document is being joined.
 
 import beryl/socket.{type Effect, type Ref}
-import beryl/topic as beryl_topic
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
 import example_helpers/payload
 import example_helpers/reply
+import example_helpers/router
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/io
@@ -29,9 +29,6 @@ import gleam/string
 /// Maximum byte size of a `sync_state` payload's `state` field. Protects
 /// the doc_store actor from unbounded merges.
 const max_state_bytes = 65_536
-
-/// Topic pattern for document channels: `document:<tenant>:<document>`.
-const document_topic_pattern_string = "document:*:*"
 
 /// Per-topic state for one socket on a document.
 pub type Model {
@@ -58,9 +55,8 @@ pub fn join(
   payload: Dynamic,
   ref: Ref,
 ) -> #(Option(Model), List(Effect)) {
-  let pattern = beryl_topic.parse_pattern(document_topic_pattern_string)
-  case beryl_topic.extract_wildcards(pattern, topic_name) {
-    Ok([tenant, document]) ->
+  case string.split(topic_name, ":") {
+    ["document", tenant, document] ->
       // Topic-level auth: the join payload must carry a `token`
       // HMAC-signed for the tenant whose document is being joined.
       case payload.string_field(payload, "token") {
@@ -131,73 +127,40 @@ pub fn closed(
 
 // --- Standalone app-side dispatch wrapper ---
 
-/// Socket-wide state for the standalone collab-docs server: one per-topic
-/// `Model` per joined `document:*:*` topic, keyed by topic.
-pub type Standalone {
-  Standalone(socket_id: String, docs: Dict(String, Model))
+/// Adapt the `document:*` handlers to a containing socket-wide model.
+pub fn namespace(
+  ctx: Ctx,
+  socket_id socket_id: fn(model) -> String,
+  get get: fn(model) -> Dict(String, Model),
+  put put: fn(model, Dict(String, Model)) -> model,
+) -> router.Namespace(model) {
+  router.stateful(
+    matches: string.starts_with(_, "document:"),
+    socket_id:,
+    get:,
+    put:,
+    join: fn(socket_id, topic, payload, ref) {
+      join(ctx, socket_id, topic, payload, ref)
+    },
+    message: fn(socket_id, topic, model, event_name, payload, ref) {
+      update(ctx, socket_id, topic, model, event_name, payload, ref)
+    },
+    closed: fn(_socket_id, _topic, _model) { [] },
+  )
 }
 
-/// `init` for the standalone collab-docs app-dispatch runtime.
-pub fn standalone_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(Standalone, List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, docs: dict.new()), [])
-}
-
-/// `update` for the standalone collab-docs app-dispatch runtime: route
-/// each event to the embeddable `join`/`update`/`closed` surface, keyed by
-/// topic. Non-`document:*` joins are rejected (fail closed), preserving the
-/// example's topic-namespace boundary.
+/// Build the standalone update once, sharing the canonical router model.
 pub fn standalone_update(
   ctx: Ctx,
-  model: Standalone,
-  ev: socket.Input(Nil),
-) -> socket.Next(Standalone, Nil) {
-  case ev {
-    socket.Join(topic, payload, ref) ->
-      case topic {
-        "document:" <> _ -> {
-          let #(joined, effects) =
-            join(ctx, model.socket_id, topic, payload, ref)
-          case joined {
-            Some(sub) ->
-              socket.Next(
-                Standalone(..model, docs: dict.insert(model.docs, topic, sub)),
-                effects,
-              )
-            None -> socket.Next(model, effects)
-          }
-        }
-        _ ->
-          socket.Next(model, [
-            socket.RejectJoin(ref, error_payload("invalid_topic")),
-          ])
-      }
-
-    socket.Message(topic, event_name, payload, ref) ->
-      case dict.get(model.docs, topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            update(ctx, model.socket_id, topic, sub, event_name, payload, ref)
-          socket.Next(
-            Standalone(..model, docs: dict.insert(model.docs, topic, sub)),
-            effects,
-          )
-        }
-        Error(Nil) -> socket.Next(model, [])
-      }
-
-    socket.Closed(topic, _reason) ->
-      case dict.get(model.docs, topic) {
-        Ok(sub) ->
-          socket.Next(
-            Standalone(..model, docs: dict.delete(model.docs, topic)),
-            closed(ctx, model.socket_id, topic, sub),
-          )
-        Error(Nil) -> socket.Next(model, [])
-      }
-
-    socket.Binary(_, _) | socket.Info(_) -> socket.Next(model, [])
+) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
+  socket.Next(router.Standalone(Model), Nil) {
+  let namespaces = [
+    router.standalone_namespace(fn(socket_id, get, put) {
+      namespace(ctx, socket_id, get, put)
+    }),
+  ]
+  fn(model, input) {
+    router.route(namespaces, error_payload("invalid_topic"), model, input)
   }
 }
 

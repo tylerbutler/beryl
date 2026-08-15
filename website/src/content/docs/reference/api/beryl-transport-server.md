@@ -107,7 +107,7 @@ pub type TransportConfig(a)
 
 ### `close_connection`
 
-Clean up when a connection closes: release any held connection slot and
+Clean up when a connection closes: release the held connection slot and
  announce the disconnect to the runtime.
 
 ```gleam
@@ -149,28 +149,11 @@ Create a default transport config with no connect hook.
 pub fn default_config(String) -> TransportConfig(a)
 ```
 
-### `finish_upgrade`
-
-Complete an upgrade telemetry span and release its slot if the server
- rejected the WebSocket handshake before connection callbacks could run.
-
-```gleam
-pub fn finish_upgrade(
-  response.Response(a),
-  option.Option(beryl.ConnectionPermit),
-  transport.Telemetry,
-  Int
-) -> response.Response(a)
-```
-
 ### `handle_binary_frame`
 
 Size-check, rate-check, and decode an inbound binary frame in the
  connection process. Codecs without a binary decoder keep the raw
  `transport.route_binary` fan-out, routed through the runtime.
-
- Oversized frames return `Stop` (close the connection); over-rate frames
- are shed silently; undecodable frames are logged and dropped.
 
 ```gleam
 pub fn handle_binary_frame(
@@ -195,12 +178,24 @@ pub fn handle_text_frame(
 ) -> FrameOutcome
 ```
 
+### `handler`
+
+Build a combined request handler that sends upgrade requests through a
+ transport-specific `upgrade` function and everything else to HTTP.
+
+```gleam
+pub fn handler(
+  upgrade: fn(request.Request(a), fn() -> response.Response(b)) -> response.Response(b),
+  http_fallback: fn(request.Request(a)) -> response.Response(b)
+) -> fn(request.Request(a)) -> response.Response(b)
+```
+
 ### `init_connection`
 
 Initialize a newly upgraded WebSocket connection in its connection
  process.
 
- Binds any held connection slot to the calling process (so the slot is
+ Binds the held connection slot to the calling process (so the slot is
  reclaimed even if the process dies without a clean close), monitors the
  exact owning runtime, then atomically registers the socket and its
  runtime-triggered closer against that owner. A concurrent restart cannot
@@ -218,7 +213,7 @@ Initialize a newly upgraded WebSocket connection in its connection
 pub fn init_connection(
   sockets: beryl.Sockets,
   seed: socket.ConnectSeed,
-  connection_permit: option.Option(beryl.ConnectionPermit),
+  connection_permit: beryl.ConnectionPermit,
   base_selector: process.Selector(SendRequest),
   logger_name: String,
   telemetry: transport.Telemetry,
@@ -236,23 +231,6 @@ Determine whether a request is a WebSocket upgrade request.
 
 ```gleam
 pub fn is_websocket_request(request.Request(a)) -> Bool
-```
-
-### `release_slot_on_failed_handshake`
-
-Release a held connection slot when a WebSocket handshake fails.
-
- A failed handshake (e.g. missing `Sec-WebSocket-Key`, reported as a
- status of 400 or above) never runs the connection's init/close callbacks,
- so the acquired slot must be released here or repeated bad handshakes
- would permanently exhaust the IP's slots. Pipe the server's upgrade
- response through this before returning it.
-
-```gleam
-pub fn release_slot_on_failed_handshake(
-  response.Response(a),
-  option.Option(beryl.ConnectionPermit)
-) -> response.Response(a)
 ```
 
 ### `upgrade`
@@ -273,18 +251,17 @@ Run the shared upgrade admission pipeline for a request.
 
  ## Path matching
 
- The request path is normalised by re-joining its segments as
- `"/" <> string.join(segments, "/")` and compared for exact equality with
- `config.path`. Because the normalised path never has a trailing slash, a
- config path written with a trailing slash (e.g. `"/socket/"`) will never
- match. Configure the path without a trailing slash (e.g. `"/socket"`).
+ Request and configured paths are normalized without trailing or doubled
+ slashes before an exact comparison.
 
  ## Connection limits
 
  When `beryl.with_max_connections_per_ip` is configured, the limit is
  enforced before completing the handshake, returning `reject(429)` once the
  peer is at its limit. `request_ip` must return the **real socket peer IP**
- from the TCP connection; forwarded headers such as `X-Forwarded-For` must
+ from the TCP connection, or `Error(Nil)` when unavailable. Unknown peers
+ share one limiter bucket rather than bypassing the limit. Forwarded
+ headers such as `X-Forwarded-For` must
  **not** be trusted or parsed, because clients can set them and would
  otherwise spoof their address to bypass the limit. Behind a trusted
  reverse proxy, all connections share the proxy's IP — resolve the real
@@ -306,7 +283,7 @@ pub fn upgrade(
   sockets: beryl.Sockets,
   config: TransportConfig(a),
   telemetry: transport.Telemetry,
-  request_ip: fn(request.Request(a)) -> String,
+  request_ip: fn(request.Request(a)) -> Result(String, Nil),
   reject: fn(Int) -> response.Response(b),
   accept: fn(List(#(String, String)), beryl.ConnectionPermit) -> response.Response(b),
   next: fn() -> response.Response(b)
