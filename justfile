@@ -26,17 +26,17 @@ deps-gleam:
 
 # Build all packages (Erlang target)
 build *ARGS:
-    trellis run build --serial {{ ARGS }}
+    trellis run build {{ ARGS }}
 
 # Build with warnings as errors
 build-strict:
-    trellis run build --strict --serial
+    trellis run build --strict
 
 # === TESTING ===
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
 test *ARGS:
-    trellis run test --serial {{ ARGS }}
+    trellis run test {{ ARGS }}
 
 # === CODE QUALITY ===
 
@@ -50,7 +50,7 @@ format-check:
 
 # Type check without building
 check:
-    trellis run check --serial
+    trellis run check
 
 # Run the glinter linter (packages only; examples are excluded)
 lint:
@@ -125,7 +125,7 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build --serial chatrooms collab_docs cursors example_helpers showcase load_test collab_docs_client
+    trellis run build chatrooms collab_docs cursors example_helpers showcase load_test collab_docs_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
