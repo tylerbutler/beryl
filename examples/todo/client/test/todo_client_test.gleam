@@ -1,65 +1,138 @@
+import gleam/dynamic/decode
+import gleam/json
+import gleam/option.{None, Some}
 import gleeunit
+import gleeunit/should
 import todo_app/domain
-import todo_app/storage
+import todo_channel
+import todo_client
 
 pub fn main() -> Nil {
   gleeunit.main()
 }
 
-pub fn add_rejects_whitespace_and_trims_text_test() {
-  assert domain.add(domain.new(), " \n\t ") == Error(Nil)
-
-  let assert Ok(state) = domain.add(domain.new(), "  Write the tests  ")
-  assert domain.todos(state)
-    == [
-      domain.Todo(id: 0, text: "Write the tests", completed: False),
-    ]
-  assert domain.next_id(state) == 1
+fn dynamic_json(raw: String) {
+  let assert Ok(value) = json.parse(from: raw, using: decode.dynamic)
+  value
 }
 
-pub fn toggle_and_items_left_test() {
-  let assert Ok(state) = domain.add(domain.new(), "One")
-  let assert Ok(state) = domain.add(state, "Two")
+pub fn domain_put_is_idempotent_by_server_id_test() {
+  let first = domain.Todo(id: 7, text: "Write", completed: False)
+  let updated = domain.Todo(..first, completed: True)
+  let state =
+    domain.new()
+    |> domain.put(first)
+    |> domain.put(first)
+    |> domain.put(updated)
 
-  assert domain.items_left(state) == 2
-  let state = domain.toggle(state, 0)
-  assert domain.items_left(state) == 1
-  assert domain.todos(state)
-    == [
-      domain.Todo(id: 0, text: "One", completed: True),
-      domain.Todo(id: 1, text: "Two", completed: False),
-    ]
+  domain.todos(state)
+  |> should.equal([updated])
+  domain.items_left(state)
+  |> should.equal(0)
 }
 
-pub fn delete_preserves_monotonic_ids_test() {
-  let assert Ok(state) = domain.add(domain.new(), "One")
-  let assert Ok(state) = domain.add(state, "Two")
-  let state = domain.delete(state, 0)
-  let assert Ok(state) = domain.add(state, "Three")
+pub fn domain_delete_preserves_other_server_ids_test() {
+  let first = domain.Todo(id: 4, text: "One", completed: False)
+  let second = domain.Todo(id: 9, text: "Two", completed: False)
+  let state =
+    domain.new()
+    |> domain.put(first)
+    |> domain.put(second)
+    |> domain.delete(4)
 
-  assert domain.todos(state)
-    == [
-      domain.Todo(id: 1, text: "Two", completed: False),
-      domain.Todo(id: 2, text: "Three", completed: False),
-    ]
-  assert domain.next_id(state) == 3
+  domain.todos(state)
+  |> should.equal([second])
+  domain.items_left(state)
+  |> should.equal(1)
 }
 
-pub fn storage_round_trip_test() {
-  let assert Ok(state) = domain.add(domain.new(), "Persist me")
-  let state = domain.toggle(state, 0)
-  let assert Ok(decoded) = state |> storage.encode |> storage.decode
+pub fn channel_decodes_snapshot_and_canonical_mutations_test() {
+  todo_channel.decode_snapshot(dynamic_json(
+    "{\"todos\":[{\"id\":3,\"text\":\"Ship\",\"completed\":false}]}",
+  ))
+  |> should.equal(
+    Ok([
+      domain.Todo(id: 3, text: "Ship", completed: False),
+    ]),
+  )
 
-  assert domain.next_id(decoded) == domain.next_id(state)
-  assert domain.todos(decoded) == domain.todos(state)
+  todo_channel.decode_todo(dynamic_json(
+    "{\"id\":3,\"text\":\"Ship\",\"completed\":true}",
+  ))
+  |> should.equal(Ok(domain.Todo(id: 3, text: "Ship", completed: True)))
+
+  todo_channel.decode_deleted(dynamic_json("{\"id\":3}"))
+  |> should.equal(Ok(3))
 }
 
-pub fn storage_rejects_invalid_data_test() {
-  assert storage.decode("{not json") == Error(Nil)
-  assert storage.decode("{\"version\":2,\"next_id\":0,\"todos\":[]}")
-    == Error(Nil)
-  assert storage.decode(
-      "{\"version\":1,\"next_id\":1,\"todos\":[{\"id\":1,\"text\":\"bad id\",\"completed\":false}]}",
+pub fn channel_rejects_malformed_or_duplicate_snapshot_data_test() {
+  todo_channel.decode_snapshot(dynamic_json("{\"todos\":\"bad\"}"))
+  |> should.equal(Error(Nil))
+  todo_channel.decode_snapshot(dynamic_json(
+    "{\"todos\":[{\"id\":1,\"text\":\"One\",\"completed\":false},{\"id\":1,\"text\":\"Two\",\"completed\":false}]}",
+  ))
+  |> should.equal(Error(Nil))
+  todo_channel.decode_todo(dynamic_json(
+    "{\"id\":-1,\"text\":\"Bad\",\"completed\":false}",
+  ))
+  |> should.equal(Error(Nil))
+}
+
+pub fn joined_snapshot_replaces_client_state_test() {
+  let stale = domain.Todo(id: 1, text: "Stale", completed: False)
+  let fresh = domain.Todo(id: 2, text: "Fresh", completed: True)
+  let model =
+    todo_client.Model(
+      ..todo_client.initial_model(),
+      state: domain.put(domain.new(), stale),
     )
-    == Error(Nil)
+
+  let #(model, _) =
+    todo_client.update(
+      model,
+      todo_client.ChannelEvent(
+        todo_channel.Joined([
+          fresh,
+        ]),
+      ),
+    )
+
+  domain.todos(model.state)
+  |> should.equal([fresh])
+  model.connection
+  |> should.equal(todo_client.Connected)
+}
+
+pub fn duplicate_reply_and_broadcast_are_idempotent_test() {
+  let item = domain.Todo(id: 5, text: "One row", completed: False)
+  let #(model, _) =
+    todo_client.update(
+      todo_client.initial_model(),
+      todo_client.ChannelEvent(todo_channel.Added(item)),
+    )
+  let #(model, _) =
+    todo_client.update(model, todo_client.AddFinished("One row", Ok(item)))
+
+  domain.todos(model.state)
+  |> should.equal([item])
+}
+
+pub fn add_input_clears_only_after_matching_acknowledgement_test() {
+  let item = domain.Todo(id: 5, text: "First", completed: False)
+  let model =
+    todo_client.Model(
+      ..todo_client.initial_model(),
+      input: "Second",
+      pending_add: Some("First"),
+    )
+
+  let #(model, _) =
+    todo_client.update(model, todo_client.AddFinished("First", Ok(item)))
+
+  model.input
+  |> should.equal("Second")
+  model.pending_add
+  |> should.equal(None)
+  domain.todos(model.state)
+  |> should.equal([item])
 }

@@ -1,6 +1,6 @@
 name = "todo_client"
 version = "1.0.0"
-description = "A standalone browser Todo app built with Lustre"
+description = "Lustre client for the beryl realtime Todo example"
 gleam = ">= 1.13.0"
 target = "javascript"
 
@@ -15,12 +15,5 @@ lustre_dev_tools = ">= 2.3.6 and < 3.0.0"
 
 [tools.lustre.build]
 minify = true
-outdir = "./priv/static"
-
-[tools.lustre.dev]
-port = 8011
-
-[tools.lustre.html]
-title = "Lustre Todo"
-body = "<main id=\"app\"></main>"
-stylesheets = [{ href = "/style.css" }]
+no_html = true
+outdir = "../priv/static"

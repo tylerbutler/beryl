@@ -36,6 +36,10 @@ importers:
         version: 1.58.2
 
   todo:
+    dependencies:
+      phoenix:
+        specifier: ^1.8.11
+        version: 1.8.11
     devDependencies:
       '@playwright/test':
         specifier: ^1.58.2
@@ -214,6 +218,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  phoenix@1.8.11:
+    resolution: {integrity: sha512-MbS8y0+8lYNjOYRIorek1GzMFS3nKvycetLlLxB/DZOFRu0yLI0PCvvm8wg+7aEORbmWuioe95+7uoyNKlErZg==}
+
   playwright-core@1.58.2:
     resolution: {integrity: sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==}
     engines: {node: '>=18'}
@@ -339,6 +346,8 @@ snapshots:
 
   fsevents@2.3.2:
     optional: true
+
+  phoenix@1.8.11: {}
 
   playwright-core@1.58.2: {}
 

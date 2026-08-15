@@ -44,6 +44,12 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+button:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 button:focus-visible,
 input:focus-visible {
   outline: 3px solid #f0a83b;
@@ -262,6 +268,11 @@ input:focus-visible {
 
 .app-footer p {
   margin: 0;
+}
+
+.connection-status {
+  color: var(--accent-dark);
+  font-weight: 750;
 }
 
 @keyframes settle-in {

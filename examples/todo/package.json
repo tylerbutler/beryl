@@ -1,14 +1,18 @@
 {
   "name": "todo",
   "private": true,
-  "description": "Standalone browser Todo app built with Lustre.",
+  "description": "Server-authoritative realtime Todo app built with Beryl and Lustre.",
   "type": "module",
   "scripts": {
     "build": "cd client && gleam run -m lustre/dev build",
-    "dev": "cd client && gleam run -m lustre/dev start",
+    "dev": "pnpm build && gleam run",
+    "start": "gleam run",
     "test": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2"
+  },
+  "dependencies": {
+    "phoenix": "^1.8.11"
   }
 }

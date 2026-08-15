@@ -1,6 +1,7 @@
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/string
 import lustre
 import lustre/attribute
 import lustre/effect.{type Effect}
@@ -9,29 +10,37 @@ import lustre/element/html
 import lustre/element/keyed
 import lustre/event
 import todo_app/domain
-import todo_app/local_storage
-import todo_app/storage
+import todo_channel
 
-const storage_key = "lustre.todo.v1"
+pub type Connection {
+  Connecting
+  Connected
+  Disconnected
+}
 
-type Model {
+pub type Model {
   Model(
     state: domain.State,
     input: String,
-    load_error: Option(String),
+    client: Option(todo_channel.Client),
+    connection: Connection,
+    pending_add: Option(String),
     form_error: Option(String),
-    storage_error: Option(String),
+    channel_error: Option(String),
     status: String,
   )
 }
 
-type Message {
+pub type Message {
   InputChanged(String)
   TodoSubmitted
   TodoToggled(Int)
   TodoDeleted(Int)
-  StorageSaved
-  StorageFailed
+  ChannelReady(todo_channel.Client)
+  ChannelEvent(todo_channel.Event)
+  AddFinished(String, Result(domain.Todo, todo_channel.MutationError))
+  ToggleFinished(Result(domain.Todo, todo_channel.MutationError))
+  DeleteFinished(Result(Int, todo_channel.MutationError))
 }
 
 pub fn main() {
@@ -41,68 +50,131 @@ pub fn main() {
   Nil
 }
 
-fn initial_model() -> Model {
-  case local_storage.get_item(storage_key) {
-    Error(_) ->
-      Model(
-        state: domain.new(),
-        input: "",
-        load_error: Some(
-          "Browser storage is unavailable. You can use the list, but changes may not survive a reload.",
-        ),
-        form_error: None,
-        storage_error: None,
-        status: "Started with an empty list.",
-      )
-    Ok(None) ->
-      Model(
-        state: domain.new(),
-        input: "",
-        load_error: None,
-        form_error: None,
-        storage_error: None,
-        status: "Ready. Changes stay in this browser.",
-      )
-    Ok(Some(encoded)) ->
-      case storage.decode(encoded) {
-        Ok(state) ->
-          Model(
-            state: state,
-            input: "",
-            load_error: None,
-            form_error: None,
-            storage_error: None,
-            status: "Saved todos restored.",
-          )
-        Error(_) ->
-          Model(
-            state: domain.new(),
-            input: "",
-            load_error: Some(
-              "Saved todos could not be read, so this list started empty. Add a todo to replace the damaged data.",
-            ),
-            form_error: None,
-            storage_error: None,
-            status: "Started with an empty list.",
-          )
-      }
-  }
+pub fn initial_model() -> Model {
+  Model(
+    state: domain.new(),
+    input: "",
+    client: None,
+    connection: Connecting,
+    pending_add: None,
+    form_error: None,
+    channel_error: None,
+    status: "Connecting to the Todo server…",
+  )
 }
 
 fn init(model: Model) -> #(Model, Effect(Message)) {
-  #(model, effect.none())
+  #(model, connect())
 }
 
-fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
+fn connect() -> Effect(Message) {
+  effect.from(fn(dispatch) {
+    let client =
+      todo_channel.connect(fn(event) { dispatch(ChannelEvent(event)) })
+    dispatch(ChannelReady(client))
+  })
+}
+
+pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
   case message {
     InputChanged(input) -> #(
       Model(..model, input: input, form_error: None),
       effect.none(),
     )
 
-    TodoSubmitted ->
-      case domain.add(model.state, model.input) {
-        Error(_) -> #(
+    ChannelReady(client) -> #(
+      Model(..model, client: Some(client)),
+      effect.none(),
+    )
+
+    ChannelEvent(event) -> handle_channel_event(model, event)
+
+    TodoSubmitted -> submit_todo(model)
+
+    TodoToggled(id) ->
+      case ready_client(model) {
+        Error(Nil) -> not_connected(model)
+        Ok(client) -> #(
+          Model(..model, channel_error: None, status: "Updating todo…"),
+          effect.from(fn(dispatch) {
+            todo_channel.toggle(client, id, fn(result) {
+              dispatch(ToggleFinished(result))
+            })
+          }),
+        )
+      }
+
+    TodoDeleted(id) ->
+      case ready_client(model) {
+        Error(Nil) -> not_connected(model)
+        Ok(client) -> #(
+          Model(..model, channel_error: None, status: "Deleting todo…"),
+          effect.from(fn(dispatch) {
+            todo_channel.delete(client, id, fn(result) {
+              dispatch(DeleteFinished(result))
+            })
+          }),
+        )
+      }
+
+    AddFinished(submitted, result) ->
+      case result {
+        Ok(item) -> #(
+          Model(
+            ..model,
+            state: domain.put(model.state, item),
+            input: case model.input == submitted {
+              True -> ""
+              False -> model.input
+            },
+            pending_add: None,
+            form_error: None,
+            channel_error: None,
+            status: "Todo added.",
+          ),
+          effect.none(),
+        )
+        Error(error) -> mutation_failed(model, error)
+      }
+
+    ToggleFinished(result) ->
+      case result {
+        Ok(item) -> #(
+          Model(
+            ..model,
+            state: domain.put(model.state, item),
+            channel_error: None,
+            status: "Todo updated.",
+          ),
+          effect.none(),
+        )
+        Error(error) -> mutation_failed(model, error)
+      }
+
+    DeleteFinished(result) ->
+      case result {
+        Ok(id) -> #(
+          Model(
+            ..model,
+            state: domain.delete(model.state, id),
+            channel_error: None,
+            status: "Todo deleted.",
+          ),
+          effect.none(),
+        )
+        Error(error) -> mutation_failed(model, error)
+      }
+  }
+}
+
+fn submit_todo(model: Model) -> #(Model, Effect(Message)) {
+  case ready_client(model), model.pending_add {
+    Error(Nil), _ -> not_connected(model)
+    _, Some(_) -> #(model, effect.none())
+    Ok(client), None -> {
+      let text = string.trim(model.input)
+      case text {
+        "" -> #(
           Model(
             ..model,
             form_error: Some("Enter a todo before adding it."),
@@ -110,58 +182,144 @@ fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
           ),
           effect.none(),
         )
+        _ -> #(
+          Model(
+            ..model,
+            pending_add: Some(model.input),
+            form_error: None,
+            channel_error: None,
+            status: "Adding todo…",
+          ),
+          effect.from(fn(dispatch) {
+            todo_channel.add(client, model.input, fn(result) {
+              dispatch(AddFinished(model.input, result))
+            })
+          }),
+        )
+      }
+    }
+  }
+}
+
+fn handle_channel_event(
+  model: Model,
+  channel_event: todo_channel.Event,
+) -> #(Model, Effect(Message)) {
+  case channel_event {
+    todo_channel.Connecting -> #(
+      Model(
+        ..model,
+        connection: Connecting,
+        channel_error: None,
+        status: "Connecting to the Todo server…",
+      ),
+      effect.none(),
+    )
+
+    todo_channel.Joined(todos) ->
+      case domain.from_todos(todos) {
         Ok(state) -> #(
           Model(
             ..model,
             state: state,
-            input: "",
-            form_error: None,
-            status: "Todo added.",
+            connection: Connected,
+            pending_add: None,
+            channel_error: None,
+            status: "Connected to the Todo server.",
           ),
-          persist(state),
+          effect.none(),
         )
+        Error(Nil) -> decode_failed(model, "The Todo snapshot was invalid.")
       }
 
-    TodoToggled(id) -> {
-      let state = domain.toggle(model.state, id)
-      #(Model(..model, state: state, status: "Todo updated."), persist(state))
-    }
-
-    TodoDeleted(id) -> {
-      let state = domain.delete(model.state, id)
-      #(Model(..model, state: state, status: "Todo deleted."), persist(state))
-    }
-
-    StorageSaved -> #(
+    todo_channel.Disconnected(reason) -> #(
       Model(
         ..model,
-        load_error: None,
-        storage_error: None,
-        status: "Saved locally.",
+        connection: Disconnected,
+        pending_add: None,
+        channel_error: Some(reason),
+        status: "Disconnected. Waiting to reconnect…",
       ),
       effect.none(),
     )
 
-    StorageFailed -> #(
+    todo_channel.Added(item) -> #(
       Model(
         ..model,
-        storage_error: Some(
-          "This change is visible now, but it could not be saved. Check your browser storage settings.",
-        ),
-        status: "Could not save this change.",
+        state: domain.put(model.state, item),
+        status: "Todo added.",
       ),
       effect.none(),
     )
+
+    todo_channel.Updated(item) -> #(
+      Model(
+        ..model,
+        state: domain.put(model.state, item),
+        status: "Todo updated.",
+      ),
+      effect.none(),
+    )
+
+    todo_channel.Deleted(id) -> #(
+      Model(
+        ..model,
+        state: domain.delete(model.state, id),
+        status: "Todo deleted.",
+      ),
+      effect.none(),
+    )
+
+    todo_channel.DecodeFailed(message) -> decode_failed(model, message)
   }
 }
 
-fn persist(state: domain.State) -> Effect(Message) {
-  effect.from(fn(dispatch) {
-    case local_storage.set_item(storage_key, storage.encode(state)) {
-      True -> dispatch(StorageSaved)
-      False -> dispatch(StorageFailed)
-    }
-  })
+fn decode_failed(model: Model, message: String) -> #(Model, Effect(Message)) {
+  #(
+    Model(
+      ..model,
+      channel_error: Some(message),
+      status: "Received unreadable server data.",
+    ),
+    effect.none(),
+  )
+}
+
+fn mutation_failed(
+  model: Model,
+  error: todo_channel.MutationError,
+) -> #(Model, Effect(Message)) {
+  let message = case error {
+    todo_channel.Rejected(_, message) -> message
+    todo_channel.InvalidResponse(message) -> message
+  }
+  #(
+    Model(
+      ..model,
+      pending_add: None,
+      channel_error: Some(message),
+      status: "The Todo server rejected the change.",
+    ),
+    effect.none(),
+  )
+}
+
+fn ready_client(model: Model) -> Result(todo_channel.Client, Nil) {
+  case model.connection, model.client {
+    Connected, Some(client) -> Ok(client)
+    _, _ -> Error(Nil)
+  }
+}
+
+fn not_connected(model: Model) -> #(Model, Effect(Message)) {
+  #(
+    Model(
+      ..model,
+      channel_error: Some("Wait for the Todo channel to connect."),
+      status: "Not connected.",
+    ),
+    effect.none(),
+  )
 }
 
 fn view(model: Model) -> Element(Message) {
@@ -172,7 +330,7 @@ fn view(model: Model) -> Element(Message) {
       html.h1([], [html.text("Things worth doing")]),
       html.p([], [
         html.text(
-          "A quiet list for this browser. No account, server, or connection required.",
+          "A shared list kept authoritative by a Gleam server and synchronized through Beryl.",
         ),
       ]),
     ]),
@@ -195,10 +353,17 @@ fn view(model: Model) -> Element(Message) {
             attribute.class("todo-list"),
             attribute.aria_label("Todo list"),
           ],
-          list.map(todos, view_todo),
+          list.map(todos, fn(item) { view_todo(item, model.connection) }),
         )
     },
     html.footer([attribute.class("app-footer")], [
+      html.p(
+        [
+          attribute.id("connection-status"),
+          attribute.class("connection-status"),
+        ],
+        [html.text(connection_label(model.connection))],
+      ),
       html.p(
         [
           attribute.id("app-status"),
@@ -207,7 +372,7 @@ fn view(model: Model) -> Element(Message) {
         ],
         [html.text(model.status)],
       ),
-      html.p([], [html.text("Stored only in localStorage on this device.")]),
+      html.p([], [html.text("Server-authoritative through Beryl.")]),
     ]),
   ])
 }
@@ -215,11 +380,7 @@ fn view(model: Model) -> Element(Message) {
 fn view_error(model: Model) -> Element(Message) {
   let error = case model.form_error {
     Some(error) -> Some(error)
-    None ->
-      case model.storage_error {
-        Some(error) -> Some(error)
-        None -> model.load_error
-      }
+    None -> model.channel_error
   }
 
   case error {
@@ -241,6 +402,8 @@ fn view_form(model: Model) -> Element(Message) {
     Some(_) -> "true"
     None -> "false"
   }
+  let enabled = model.connection == Connected
+  let submitting = model.pending_add != None
 
   html.form(
     [attribute.class("todo-form"), event.on_submit(fn(_) { TodoSubmitted })],
@@ -256,22 +419,33 @@ fn view_form(model: Model) -> Element(Message) {
           attribute.autocomplete("off"),
           attribute.autofocus(True),
           attribute.maxlength(160),
+          attribute.disabled(!enabled),
           attribute.aria_invalid(invalid),
           attribute.aria_describedby("todo-hint todo-error"),
           event.on_input(InputChanged),
         ]),
-        html.button([attribute.type_("submit")], [html.text("Add todo")]),
+        html.button(
+          [
+            attribute.type_("submit"),
+            attribute.disabled(!enabled || submitting),
+          ],
+          [html.text("Add todo")],
+        ),
       ]),
       html.p([attribute.id("todo-hint"), attribute.class("form-hint")], [
-        html.text("Press Enter to add. Blank todos are ignored."),
+        html.text("Press Enter to add. Blank todos are rejected."),
       ]),
     ],
   )
 }
 
-fn view_todo(item: domain.Todo) -> #(String, Element(Message)) {
+fn view_todo(
+  item: domain.Todo,
+  connection: Connection,
+) -> #(String, Element(Message)) {
   let domain.Todo(id:, text:, completed:) = item
   let input_id = "todo-" <> int.to_string(id)
+  let disabled = connection != Connected
 
   #(
     int.to_string(id),
@@ -285,6 +459,7 @@ fn view_todo(item: domain.Todo) -> #(String, Element(Message)) {
           attribute.id(input_id),
           attribute.type_("checkbox"),
           attribute.checked(completed),
+          attribute.disabled(disabled),
           event.on_check(fn(_) { TodoToggled(id) }),
         ]),
         html.label([attribute.for(input_id)], [html.text(text)]),
@@ -293,6 +468,7 @@ fn view_todo(item: domain.Todo) -> #(String, Element(Message)) {
             attribute.type_("button"),
             attribute.class("delete-button"),
             attribute.aria_label("Delete " <> text),
+            attribute.disabled(disabled),
             event.on_click(TodoDeleted(id)),
           ],
           [html.text("Delete")],
@@ -300,6 +476,14 @@ fn view_todo(item: domain.Todo) -> #(String, Element(Message)) {
       ],
     ),
   )
+}
+
+fn connection_label(connection: Connection) -> String {
+  case connection {
+    Connecting -> "Connecting"
+    Connected -> "Connected"
+    Disconnected -> "Disconnected"
+  }
 }
 
 fn items_left_label(count: Int) -> String {

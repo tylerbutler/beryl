@@ -12,10 +12,10 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "pnpm dev",
+    command: "pnpm build && gleam run",
     url: `http://localhost:${PORT}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    reuseExistingServer: false,
+    timeout: 90_000,
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });

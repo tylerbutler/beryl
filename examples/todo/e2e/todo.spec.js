@@ -1,13 +1,64 @@
 // @ts-check
 import { expect, test } from "@playwright/test";
 
+const PHOENIX_FRAME = {
+  topic: 2,
+  event: 3,
+  payload: 4,
+  length: 5,
+};
+
+function parsePhoenixFrame(payload) {
+  if (typeof payload !== "string") return undefined;
+
+  try {
+    const frame = JSON.parse(payload);
+    if (!Array.isArray(frame) || frame.length !== PHOENIX_FRAME.length) {
+      return undefined;
+    }
+    return {
+      topic: frame[PHOENIX_FRAME.topic],
+      event: frame[PHOENIX_FRAME.event],
+      payload: frame[PHOENIX_FRAME.payload],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function waitForJoin(page) {
+  await expect(page.locator("#connection-status")).toHaveText("Connected", {
+    timeout: 10_000,
+  });
+  await expect(page.getByRole("textbox", { name: "New todo" })).toBeEnabled();
+}
+
+async function cleanTodos(page) {
+  let count = await page.getByRole("listitem").count();
+  while (count > 0) {
+    await page.getByRole("listitem").first().getByRole("button").click();
+    count -= 1;
+    await expect(page.getByRole("listitem")).toHaveCount(count);
+  }
+}
+
+async function openClient(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto("/");
+  await waitForJoin(page);
+  return { context, page };
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
-  await page.evaluate(() => window.localStorage.clear());
-  await page.reload();
+  await waitForJoin(page);
+  await cleanTodos(page);
 });
 
-test("adds, toggles, and deletes todos", async ({ page }) => {
+test("rejects blank input and performs add, toggle, and delete", async ({
+  page,
+}) => {
   const input = page.getByRole("textbox", { name: "New todo" });
 
   await input.fill("   ");
@@ -19,6 +70,7 @@ test("adds, toggles, and deletes todos", async ({ page }) => {
 
   await input.fill("Write the guide");
   await input.press("Enter");
+  await expect(input).toHaveValue("");
   await input.fill("Ship the example");
   await input.press("Enter");
 
@@ -33,44 +85,122 @@ test("adds, toggles, and deletes todos", async ({ page }) => {
   await expect(page.locator("#items-left")).toHaveText("0 items left");
 });
 
-test("restores the saved list after reload", async ({ page }) => {
-  const input = page.getByRole("textbox", { name: "New todo" });
+test("synchronizes canonical mutations between two browsers", async ({
+  browser,
+  page: alice,
+}) => {
+  const bob = await openClient(browser);
 
-  await input.fill("Survive a reload");
-  await input.press("Enter");
-  await page.getByRole("checkbox", { name: "Survive a reload" }).check();
-  await expect(page.locator("#app-status")).toHaveText("Saved locally.");
+  try {
+    const input = alice.getByRole("textbox", { name: "New todo" });
+    await input.fill("Shared task");
+    await input.press("Enter");
 
-  await page.reload();
+    await expect(
+      bob.page.getByRole("checkbox", { name: "Shared task" }),
+    ).toBeVisible();
 
-  await expect(
-    page.getByRole("checkbox", { name: "Survive a reload" }),
-  ).toBeChecked();
-  await expect(page.locator("#items-left")).toHaveText("0 items left");
-  await expect(page.locator("#app-status")).toHaveText(
-    "Saved todos restored.",
-  );
+    await bob.page.getByRole("checkbox", { name: "Shared task" }).check();
+    await expect(
+      alice.getByRole("checkbox", { name: "Shared task" }),
+    ).toBeChecked();
+
+    await alice.getByRole("button", { name: "Delete Shared task" }).click();
+    await expect(bob.page.getByRole("listitem")).toHaveCount(0);
+  } finally {
+    await bob.context.close();
+  }
 });
 
-test("recovers from malformed saved data", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => {
-    window.localStorage.setItem("lustre.todo.v1", "{not json");
-  });
-  await page.reload();
-
-  await expect(page.getByRole("alert")).toContainText(
-    "Saved todos could not be read",
-  );
-  await expect(page.getByRole("listitem")).toHaveCount(0);
-
+test("late join receives the complete server snapshot", async ({
+  browser,
+  page,
+}) => {
   const input = page.getByRole("textbox", { name: "New todo" });
-  await input.fill("Replace damaged data");
+  await input.fill("Already on the server");
   await input.press("Enter");
+  await page
+    .getByRole("checkbox", { name: "Already on the server" })
+    .check();
 
-  await expect(page.getByRole("alert")).toHaveCount(0);
-  await page.reload();
-  await expect(
-    page.getByRole("checkbox", { name: "Replace damaged data" }),
-  ).toBeVisible();
+  const late = await openClient(browser);
+  try {
+    await expect(
+      late.page.getByRole("checkbox", { name: "Already on the server" }),
+    ).toBeChecked();
+    await expect(late.page.locator("#items-left")).toHaveText("0 items left");
+  } finally {
+    await late.context.close();
+  }
+});
+
+test("uses Phoenix join, push, reply, and broadcast frames", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const sent = [];
+  const received = [];
+
+  page.on("websocket", (socket) => {
+    socket.on("framesent", (frame) => {
+      const parsed = parsePhoenixFrame(frame.payload);
+      if (parsed) sent.push(parsed);
+    });
+    socket.on("framereceived", (frame) => {
+      const parsed = parsePhoenixFrame(frame.payload);
+      if (parsed) received.push(parsed);
+    });
+  });
+
+  try {
+    await page.goto("/");
+    await waitForJoin(page);
+
+    await expect
+      .poll(() =>
+        sent.some(
+          (frame) => frame.topic === "todos" && frame.event === "phx_join",
+        ),
+      )
+      .toBe(true);
+
+    const input = page.getByRole("textbox", { name: "New todo" });
+    await input.fill("Inspect the wire");
+    await input.press("Enter");
+
+    await expect
+      .poll(() =>
+        sent.some(
+          (frame) =>
+            frame.topic === "todos" &&
+            frame.event === "add_todo" &&
+            frame.payload?.text === "Inspect the wire",
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        received.some(
+          (frame) =>
+            frame.topic === "todos" &&
+            frame.event === "phx_reply" &&
+            frame.payload?.status === "ok" &&
+            frame.payload?.response?.text === "Inspect the wire",
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        received.some(
+          (frame) =>
+            frame.topic === "todos" &&
+            frame.event === "todo_added" &&
+            frame.payload?.text === "Inspect the wire",
+        ),
+      )
+      .toBe(true);
+  } finally {
+    await context.close();
+  }
 });
