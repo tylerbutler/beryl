@@ -176,32 +176,35 @@ The underlying CRDT state is intentionally internal. Applications should use Pub
 
 ## Integration with app-side dispatch
 
-Presence remains a standalone actor. Its public mutation and read calls are
-synchronous and can wait up to five seconds, so do **not** call them from the
-shared socket runtime's `init` or `update`.
-
-Instead, send a command to an application-owned worker/actor from `update`.
-That worker performs `presence.track` or `presence.untrack`, then publishes
-the resulting `presence_diff`/snapshot with `beryl.broadcast` (or sends a
-typed message back with `socket.notify`):
+Start and supervise the standalone presence actor, then attach its handle with
+`beryl.with_presence_handle`. In `update`, use presence effects rather than
+calling the synchronous public mutation functions:
 
 ```gleam
 socket.Join(topic, _payload, ref) ->
-  {
-    process.send(presence_worker, Track(topic, model.user_id, meta))
-    socket.Next(model, [socket.AcceptJoin(ref, option.None)])
-  }
+  socket.Next(model, [
+    socket.AcceptJoin(ref, option.None),
+    socket.PresenceTrack(topic, model.user_id, meta),
+    socket.BroadcastPresence(topic, "presence_list", encode_presence),
+  ])
 
-socket.Closed(topic, _reason) ->
-  {
-    process.send(presence_worker, Untrack(topic, model.presence_ref))
-    socket.Next(model, [])
-  }
+socket.Message(topic, "offline", _payload, _ref) ->
+  socket.Next(model, [
+    socket.PresenceUntrack(topic, model.user_id),
+    socket.BroadcastPresence(topic, "presence_list", encode_presence),
+  ])
 ```
 
-The application owns the tracking refs and cleanup. Lane B intentionally does
-not expose partial synchronous presence effects on the shared runtime; the
-indivisible async presence/read-model work is deferred.
+The runtime sends each mutation asynchronously and suspends only that socket
+until presence acknowledges that the CRDT and ETS read model are current. The
+rest of the effect list then resumes in order, so the snapshot above sees the
+track or untrack it follows. Other sockets, broadcasts, heartbeats, and
+shutdown handling continue while one socket waits.
+
+The runtime owns refs created by `PresenceTrack` and automatically removes any
+remaining refs when the topic closes. Public synchronous `presence.track`
+calls remain available to application actors and other out-of-band workflows;
+their refs are independently addressable and are not part of runtime cleanup.
 
 ## Next steps
 

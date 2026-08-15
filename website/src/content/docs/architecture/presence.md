@@ -11,13 +11,26 @@ Every tracked entry is stamped with a **replica name** (the `replica` argument t
 ## How Beryl apps use it
 
 The presence actor is a standalone process that the application starts and
-supervises. It is not attached to the shared socket runtime in Lane B.
+supervises, then supplies to `beryl.Config` with `with_presence_handle`.
 
-Public presence reads and mutations are synchronous. Applications that
-combine presence with app-side dispatch should put those calls in a separate
-application actor, send it nonblocking commands from `update`, and broadcast
-diffs or snapshots after the presence operation completes. This keeps a slow
-presence callback or mailbox from stalling unrelated sockets and heartbeats.
+App-side dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
+`BroadcastPresence` effects. Mutations are sent asynchronously to the presence
+actor and acknowledged only after both the CRDT and its ETS read model are
+updated. The runtime suspends the issuing socket's remaining effects and later
+inputs until that acknowledgement arrives; other sockets, broadcasts,
+heartbeats, and shutdown handling continue normally.
+
+Snapshot effects read the actor-owned ETS model directly, so they do not wait
+on the actor mailbox. Re-tracking a runtime-owned key is one atomic
+leave-plus-join transition, and topic close cleans up that socket's remaining
+runtime refs in one batch. Tracking refs resolve to exact local CRDT tags, so a
+late runtime acknowledgement cannot remove an independently owned public
+`presence.track` entry with the same session, topic, and key.
+
+The public `track`, `untrack`, and `untrack_all` APIs remain synchronous for
+application actors and other out-of-band workflows. Public `list`,
+`get_by_key`, and `count` calls read ETS directly and retain immediate
+read-after-write behavior.
 
 ## API surface
 
@@ -78,14 +91,16 @@ Setting `broadcast_interval_ms` to `0` (the default in `default_config`) disable
 ```mermaid
 sequenceDiagram
   participant App as app update
-  participant Worker as app presence worker
   participant Runtime as runtime
   participant Pres as presence actor
+  participant Read as ETS read model
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Worker: nonblocking track/untrack command
-  Worker->>Pres: track / untrack / list
-  Worker->>Runtime: broadcast or typed Info after completion
+  App->>Runtime: PresenceTrack / PresenceUntrack / PushPresence / BroadcastPresence
+  Runtime->>Pres: track / untrack (async, acknowledged)
+  Pres->>Read: publish touched topics
+  Pres-->>Runtime: mutation ack
+  Runtime->>Read: list / count (direct read)
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end

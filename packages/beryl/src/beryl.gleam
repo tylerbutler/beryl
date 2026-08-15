@@ -170,6 +170,11 @@ pub opaque type Config {
     /// Ordered; the first matching pattern wins. `None` is an explicit
     /// unlimited override for that pattern.
     topic_rates: List(#(String, Option(rate_limit.RateLimitConfig))),
+    /// Presence handle used by presence effects.
+    presence: Option(presence.Presence),
+    /// How long a socket waits for a presence mutation to be applied
+    /// before the runtime gives up on it (app-dispatch systems only).
+    presence_op_timeout_ms: Int,
   )
 }
 
@@ -217,6 +222,8 @@ pub fn config(codec: codec.Codec) -> Config {
     telemetry: False,
     logging: logging_config(level: InfoLevel, include_payloads: False),
     topic_rates: [],
+    presence: None,
+    presence_op_timeout_ms: 5000,
   )
 }
 
@@ -247,6 +254,26 @@ pub fn with_topic_rate(
 /// Add PubSub to a configuration for distributed broadcasts
 pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(ps))
+}
+
+/// Attach the presence actor used by socket presence effects.
+pub fn with_presence_handle(
+  config: Config,
+  presence presence: presence.Presence,
+) -> Config {
+  Config(..config, presence: Some(presence))
+}
+
+/// Bound how long a socket waits for a presence mutation to be applied.
+///
+/// Presence effects are asynchronous: the socket that issued one has its
+/// remaining effects held until the presence actor confirms the mutation.
+/// This bounds that wait — after it the runtime logs and resumes without
+/// claiming the mutation succeeded. The default (5 s) matches the timeout
+/// the previous blocking implementation used.
+@internal
+pub fn with_presence_op_timeout(config: Config, timeout_ms: Int) -> Config {
+  Config(..config, presence_op_timeout_ms: timeout_ms)
 }
 
 /// Enable beryl's `:telemetry` events.
@@ -1124,6 +1151,8 @@ fn to_runtime_config(config: Config) -> runtime.Config {
     max_joined_topics_per_socket: config.max_joined_topics_per_socket,
     telemetry: config.telemetry,
     logging: internal_logging_config(config.logging),
+    presence: config.presence,
+    presence_op_timeout_ms: config.presence_op_timeout_ms,
   )
 }
 

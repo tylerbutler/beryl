@@ -89,6 +89,40 @@ pub fn presence_untrack_removes_only_that_ref_test() {
   entry.session_id |> should.equal("socket-2")
 }
 
+pub fn presence_untrack_same_tuple_ref_preserves_other_ref_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+
+  let ref1 =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("device", json.string("desktop"))]),
+    )
+  let ref2 =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("device", json.string("mobile"))]),
+    )
+
+  presence.count(p, "room:lobby") |> should.equal(2)
+  presence.untrack(p, ref1)
+
+  let assert [remaining] = presence.list(p, "room:lobby")
+  let remaining_meta = json.to_string(remaining.meta)
+  remaining_meta |> string.contains(ref2) |> should.be_true
+  remaining_meta |> string.contains(ref1) |> should.be_false
+
+  presence.untrack(p, ref1)
+  presence.count(p, "room:lobby") |> should.equal(1)
+  presence.untrack(p, ref2)
+  presence.count(p, "room:lobby") |> should.equal(0)
+}
+
 pub fn presence_untrack_unknown_ref_is_noop_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 

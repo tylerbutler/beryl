@@ -221,9 +221,62 @@ pub opaque type Message {
   )
   Untrack(ref: String, reply: Subject(Nil))
   UntrackAll(pid: String, reply: Subject(Nil))
+  /// Asynchronous track used by the runtime's effect interpreter. The new
+  /// entry supersedes every runtime-owned ref this actor still holds for the
+  /// same logical `(pid, topic, key)` — `replace`, when the caller knows the
+  /// previous ref, plus any runtime ref the caller has lost track of (an
+  /// earlier operation it timed out on, say). Public synchronous refs remain
+  /// independently owned. All of that happens in this one actor turn, so the
+  /// topic never materializes an intermediate snapshot without the runtime
+  /// entry.
+  TrackAsync(
+    topic: String,
+    key: String,
+    pid: String,
+    meta: json.Json,
+    replace: Option(String),
+    tag: String,
+    op_id: Int,
+    reply: Subject(MutationAck),
+  )
+  /// Asynchronous batch untrack by ref, used by the runtime for both the
+  /// `PresenceUntrack` effect and topic-close cleanup. Every ref is removed
+  /// in one turn, producing one `on_diff` and one read-model publication
+  /// per touched topic.
+  UntrackAsync(
+    refs: List(String),
+    tag: String,
+    op_id: Int,
+    reply: Subject(MutationAck),
+  )
+  /// Fire-and-forget runtime-owned session sweep, used while the runtime is
+  /// shutting down and unable to wait for an acknowledgement. Public refs
+  /// for the same session remain independently owned.
+  UntrackRuntimeAllAsync(pid: String)
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
   RemoteSync(pubsub_msg: pubsub.Message(SyncPayload))
+}
+
+/// Acknowledgement of an asynchronous presence mutation.
+///
+/// `tag` and `op_id` are echoed back verbatim from the request so the
+/// caller can route the acknowledgement to the right waiter and discard
+/// acknowledgements for operations it has already given up on.
+@internal
+pub type MutationAck {
+  MutationAck(tag: String, op_id: Int, outcome: MutationOutcome)
+}
+
+/// What an acknowledged mutation produced.
+@internal
+pub type MutationOutcome {
+  /// A track completed: the generated ref and the meta as actually stored
+  /// (the caller's meta with `phx_ref` merged in), so the caller's own
+  /// bookkeeping, diffs, and later leaves all use identical metadata.
+  Tracked(ref: String, meta: json.Json)
+  /// An untrack batch completed.
+  Untracked
 }
 
 // ── Read model (ETS) ─────────────────────────────────────────────────────────
@@ -329,8 +382,20 @@ fn read_entries(presence: Presence, topic: String) -> List(PresenceEntry) {
 }
 
 /// A tracked presence's location within the CRDT, keyed by tracking ref.
+type RefOwner {
+  PublicOwner
+  RuntimeOwner
+}
+
 type TrackedPresence {
-  TrackedPresence(topic: String, key: String, session_id: String)
+  TrackedPresence(
+    topic: String,
+    key: String,
+    session_id: String,
+    meta: json.Json,
+    tag: state.Tag,
+    owner: RefOwner,
+  )
 }
 
 /// Internal actor state
@@ -383,10 +448,12 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 /// Set the callback invoked when local changes or remote merges produce a diff.
 ///
 /// The callback runs synchronously on the presence actor, for both local
-/// mutations (`track`/`untrack`/`untrack_all`) and remote merges, before the
-/// affected topics' read-model snapshots are (re)published and before the
-/// triggering call replies. This ordering is identical for local and remote
-/// diffs -- there is no divergent local-vs-remote behavior.
+/// mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
+/// mutations the runtime issues for presence effects) and remote merges,
+/// before the affected topics' read-model snapshots are (re)published and
+/// before the triggering call replies or the mutation is acknowledged.
+/// This ordering is identical for local and remote diffs -- there is no
+/// divergent local-vs-remote behavior.
 ///
 /// One consequence: if the callback reads presence state through the same
 /// `Presence` handle (`list`, `get_by_key`, `count`) for a topic this diff
@@ -398,10 +465,12 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 ///
 /// Keep the callback fast and non-blocking: it runs on the actor process,
 /// so a slow or blocking callback delays that topic's read-model publish,
-/// the reply to the mutating call, and every other message queued behind it
-/// in the actor's mailbox (though concurrent `list`/`get_by_key`/`count`
-/// reads from other processes are unaffected, since those bypass the
-/// mailbox entirely).
+/// the reply to (or acknowledgement of) the mutating operation, and every
+/// other message queued behind it in the actor's mailbox (though concurrent
+/// `list`/`get_by_key`/`count` reads from other processes are unaffected,
+/// since those bypass the mailbox entirely). It no longer stalls a Beryl
+/// runtime wholesale: only the socket whose presence effect is in flight
+/// waits on it.
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
@@ -660,6 +729,90 @@ pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
   })
 }
 
+// ── Asynchronous mutation protocol (package-internal) ───────────────────────
+//
+// The runtime interprets presence effects from its single actor turn and
+// must never block that actor on a `process.call`. These functions send the
+// mutation and return immediately; the presence actor replies with a
+// `MutationAck` to `reply` once the CRDT *and* the ETS read-model snapshot
+// for every touched topic have been updated. They share the exact mutation
+// logic used by the synchronous `track`/`untrack` above, so both entry
+// points produce identical CRDT state, diffs, and read-model publications.
+
+/// Track a presence asynchronously. The new entry supersedes, atomically in
+/// the same actor turn, both `replace` (a runtime ref from a previous track
+/// of this key, when the caller still knows it) and any other runtime-owned
+/// ref for the same `(session_id, topic, key)`. Public synchronous refs for
+/// that tuple remain independent. The acknowledgement carries the generated
+/// ref and the stored meta.
+@internal
+pub fn track_async(
+  presence presence: Presence,
+  topic topic: String,
+  key key: String,
+  session_id session_id: String,
+  meta meta: json.Json,
+  replace replace: Option(String),
+  tag tag: String,
+  op_id op_id: Int,
+  reply reply: Subject(MutationAck),
+) -> Nil {
+  process.send(
+    presence.subject,
+    TrackAsync(
+      topic: topic,
+      key: key,
+      pid: session_id,
+      meta: meta,
+      replace: replace,
+      tag: tag,
+      op_id: op_id,
+      reply: reply,
+    ),
+  )
+}
+
+/// Untrack a batch of refs asynchronously. Unknown or already-removed refs
+/// are skipped; the whole batch is one actor turn, one `on_diff`, and one
+/// read-model publication per touched topic.
+@internal
+pub fn untrack_async(
+  presence presence: Presence,
+  refs refs: List(String),
+  tag tag: String,
+  op_id op_id: Int,
+  reply reply: Subject(MutationAck),
+) -> Nil {
+  process.send(
+    presence.subject,
+    UntrackAsync(refs: refs, tag: tag, op_id: op_id, reply: reply),
+  )
+}
+
+/// Sweep every runtime-owned presence a session still holds, without
+/// acknowledgement. Used while the runtime is shutting down, when it can no
+/// longer wait. Public synchronous refs for the same session are untouched.
+@internal
+pub fn untrack_runtime_all_async(
+  presence: Presence,
+  session_id: String,
+) -> Nil {
+  process.send(presence.subject, UntrackRuntimeAllAsync(session_id))
+}
+
+/// Whether the presence actor is still running.
+///
+/// The asynchronous protocol above cannot detect a dead actor (a send to a
+/// dead process is silently dropped), so callers probe first rather than
+/// waiting out an acknowledgement that can never arrive.
+@internal
+pub fn is_running(presence: Presence) -> Bool {
+  case process.subject_owner(presence.subject) {
+    Ok(pid) -> process.is_alive(pid)
+    Error(Nil) -> False
+  }
+}
+
 /// List all presences for a topic.
 ///
 /// Reads the actor-owned read model directly (an ETS snapshot materialized
@@ -728,88 +881,51 @@ fn handle_message(
   let logger = internal.logger("beryl.presence")
   case message {
     Track(topic, key, pid, meta, reply) -> {
-      let ref = generate_ref()
-      let meta = meta_with_phx_ref(meta, ref)
-      let new_crdt = state.join(actor_state.crdt, pid, topic, key, meta)
-      maybe_invoke_on_diff(
-        actor_state.config,
-        single_join_diff(topic, key, pid, meta),
-      )
-      logger
-      |> log.debug("Presence tracked", [
-        #("topic", topic),
-        #("key", key),
-        #("session_id", pid),
-        #("ref", ref),
-      ])
-      let new_refs =
-        dict.insert(
-          actor_state.refs,
-          ref,
-          TrackedPresence(topic: topic, key: key, session_id: pid),
-        )
-      // Publish the read model before replying, so a `track(); list()`
-      // caller always observes the entry it just tracked.
-      publish_topic(actor_state.read_table, new_crdt, topic)
+      let #(new_state, ref, _meta) =
+        do_track(actor_state, topic, key, pid, meta, SupersedeNothing)
+      log_tracked(logger, topic, key, pid, ref)
+      // The read model was published inside `do_track`, before this reply,
+      // so a `track(); list()` caller always observes the entry it just
+      // tracked.
       process.send(reply, ref)
-      actor.continue(
-        ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs),
-      )
+      actor.continue(new_state)
+    }
+
+    TrackAsync(topic, key, pid, meta, replace, tag, op_id, reply) -> {
+      let #(new_state, ref, stored_meta) =
+        do_track(
+          actor_state,
+          topic,
+          key,
+          pid,
+          meta,
+          SupersedeSameKey(explicit: replace),
+        )
+      log_tracked(logger, topic, key, pid, ref)
+      process.send(reply, MutationAck(tag, op_id, Tracked(ref, stored_meta)))
+      actor.continue(new_state)
     }
 
     Untrack(ref, reply) -> {
-      case dict.get(actor_state.refs, ref) {
-        Error(Nil) -> {
-          // Unknown or already-removed ref: nothing to do.
-          process.send(reply, Nil)
-          actor.continue(actor_state)
-        }
-        Ok(TrackedPresence(topic, key, session_id)) -> {
-          let diff = leave_diff(actor_state.crdt, topic, key, session_id)
-          let new_crdt = state.leave(actor_state.crdt, session_id, topic, key)
-          maybe_invoke_on_diff(actor_state.config, diff)
-          logger
-          |> log.debug("Presence untracked", [
-            #("topic", topic),
-            #("key", key),
-            #("session_id", session_id),
-            #("ref", ref),
-          ])
-          // Publish before replying, so a `untrack(); list()` caller always
-          // observes the removal.
-          publish_topic(actor_state.read_table, new_crdt, topic)
-          process.send(reply, Nil)
-          actor.continue(
-            ActorState(
-              ..actor_state,
-              crdt: new_crdt,
-              dirty: True,
-              refs: dict.delete(actor_state.refs, ref),
-            ),
-          )
-        }
-      }
+      let new_state = do_untrack_refs(actor_state, [ref])
+      process.send(reply, Nil)
+      actor.continue(new_state)
+    }
+
+    UntrackAsync(refs, tag, op_id, reply) -> {
+      let new_state = do_untrack_refs(actor_state, refs)
+      process.send(reply, MutationAck(tag, op_id, Untracked))
+      actor.continue(new_state)
     }
 
     UntrackAll(pid, reply) -> {
-      let diff = leave_all_diff(actor_state.crdt, pid)
-      let new_crdt = state.leave_by_pid(actor_state.crdt, pid)
-      maybe_invoke_on_diff(actor_state.config, diff)
-      // Drop any refs that pointed at the removed session so they cannot leak
-      // or later leave presences they no longer own.
-      let new_refs =
-        dict.filter(actor_state.refs, fn(_ref, tracked) {
-          tracked.session_id != pid
-        })
-      // A single session can hold presences in several topics; republish
-      // every topic the leave touched (from the pre-mutation diff) before
-      // replying.
-      publish_topics(actor_state.read_table, new_crdt, dict.keys(diff.leaves))
+      let new_state = do_untrack_all(actor_state, pid)
       process.send(reply, Nil)
-      actor.continue(
-        ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs),
-      )
+      actor.continue(new_state)
     }
+
+    UntrackRuntimeAllAsync(pid) ->
+      actor.continue(do_untrack_runtime_all(actor_state, pid))
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
@@ -835,36 +951,257 @@ fn handle_message(
   }
 }
 
-fn single_join_diff(
+fn log_tracked(
+  logger: log.Logger,
+  topic: String,
+  key: String,
+  pid: String,
+  ref: String,
+) -> Nil {
+  logger
+  |> log.debug("Presence tracked", [
+    #("topic", topic),
+    #("key", key),
+    #("pid", pid),
+    #("ref", ref),
+  ])
+}
+
+// ── Shared mutation core ────────────────────────────────────────────────────
+//
+// Every mutation entry point (synchronous call or asynchronous message)
+// funnels through these functions, so the CRDT update, the `on_diff`
+// invocation, and the read-model publication happen in exactly one order:
+// mutate, invoke `on_diff`, publish every touched topic, and only then
+// reply/acknowledge.
+
+/// The result of removing a batch of refs from the CRDT.
+type RemovedRefs {
+  RemovedRefs(
+    crdt: State,
+    /// Entries actually removed, grouped by topic — the leave side of the
+    /// diff, captured before each removal so metas are the stored ones.
+    leaves: Dict(String, List(PresenceEntry)),
+    /// The ref map with every removed ref dropped.
+    refs: Dict(String, TrackedPresence),
+    /// Topics touched by the removals (with duplicates).
+    topics: List(String),
+  )
+}
+
+@external(erlang, "beryl_presence_state_ffi", "remove_tag")
+fn remove_tag(crdt: State, tag: state.Tag) -> #(State, Bool)
+
+fn remove_refs(
+  crdt: State,
+  refs: Dict(String, TrackedPresence),
+  removing: List(String),
+) -> RemovedRefs {
+  list.fold(
+    removing,
+    RemovedRefs(crdt: crdt, leaves: dict.new(), refs: refs, topics: []),
+    fn(acc, ref) {
+      case dict.get(acc.refs, ref) {
+        Error(Nil) -> acc
+        Ok(TrackedPresence(topic, key, session_id, meta, tag, _owner)) -> {
+          let #(crdt, removed) = remove_tag(acc.crdt, tag)
+          let existing =
+            dict.get(acc.leaves, topic)
+            |> result.unwrap([])
+          RemovedRefs(
+            crdt: crdt,
+            leaves: case removed {
+              False -> acc.leaves
+              True ->
+                dict.insert(
+                  acc.leaves,
+                  topic,
+                  list.append(existing, [
+                    PresenceEntry(session_id: session_id, key: key, meta: meta),
+                  ]),
+                )
+            },
+            refs: dict.delete(acc.refs, ref),
+            topics: case removed {
+              True -> [topic, ..acc.topics]
+              False -> acc.topics
+            },
+          )
+        }
+      }
+    },
+  )
+}
+
+/// Which refs a track supersedes in its own turn.
+type Supersede {
+  /// The public synchronous `track`: supersede nothing. Callers of the
+  /// public API own their refs and remove them explicitly with `untrack`,
+  /// and several refs for one key (each with its own `phx_ref` meta) is a
+  /// meaningful, supported shape there.
+  SupersedeNothing
+  /// The runtime's asynchronous track: supersede `explicit` (the previous
+  /// runtime ref, when the caller still knows it) and every other
+  /// runtime-owned ref this actor holds for the same `(pid, topic, key)`.
+  ///
+  /// The sweep is what keeps runtime-owned presence single-valued when the
+  /// caller has lost a ref — an operation it timed out on and gave up,
+  /// whose acknowledgement is still in flight. Public refs are deliberately
+  /// excluded: exact tag removal keeps their independently owned entries
+  /// safe from runtime replacement and compensation.
+  SupersedeSameKey(explicit: Option(String))
+}
+
+/// The refs a track must remove before joining: none for the public API,
+/// and for the runtime the explicit replacement plus every runtime-owned ref
+/// still held for the same logical `(pid, topic, key)`, deduplicated.
+fn superseded_refs(
+  refs: Dict(String, TrackedPresence),
+  topic: String,
+  key: String,
+  pid: String,
+  supersede: Supersede,
+) -> List(String) {
+  case supersede {
+    SupersedeNothing -> []
+    SupersedeSameKey(explicit) -> {
+      let same_key =
+        refs
+        |> dict.filter(fn(_ref, tracked) {
+          tracked.topic == topic
+          && tracked.key == key
+          && tracked.session_id == pid
+          && tracked.owner == RuntimeOwner
+        })
+        |> dict.keys
+      case explicit {
+        // An explicit ref the map no longer holds is kept in the list and
+        // skipped by `remove_refs`; dropping it here would be equivalent.
+        Some(old_ref) ->
+          case list.contains(same_key, old_ref) {
+            True -> same_key
+            False -> [old_ref, ..same_key]
+          }
+        None -> same_key
+      }
+    }
+  }
+}
+
+/// Track one key, superseding previous refs for it (see `Supersede`) in the
+/// same turn. Returns the new actor state, the generated ref, and the meta
+/// as stored (the caller's meta with `phx_ref` merged in).
+fn do_track(
+  actor_state: ActorState,
   topic: String,
   key: String,
   pid: String,
   meta: json.Json,
-) -> Diff {
-  Diff(
-    joins: dict.from_list([
-      #(topic, [
-        PresenceEntry(session_id: pid, key: key, meta: meta),
+  supersede: Supersede,
+) -> #(ActorState, String, json.Json) {
+  let ref = generate_ref()
+  let stored_meta = meta_with_phx_ref(meta, ref)
+  // Superseding removes the old entries and adds the new one before
+  // anything is published, so the topic's snapshot moves straight from the
+  // old meta to the new one — never through an intermediate state without
+  // the key — and one `on_diff` carries the whole leave-plus-join
+  // transition.
+  let removed =
+    remove_refs(
+      actor_state.crdt,
+      actor_state.refs,
+      superseded_refs(actor_state.refs, topic, key, pid, supersede),
+    )
+  let new_crdt = state.join(removed.crdt, pid, topic, key, stored_meta)
+  let owner = case supersede {
+    SupersedeNothing -> PublicOwner
+    SupersedeSameKey(_) -> RuntimeOwner
+  }
+  let replica = state.replica(new_crdt)
+  let assert Ok(clock) = dict.get(state.compacted_clocks(new_crdt), replica)
+  maybe_invoke_on_diff(
+    actor_state.config,
+    Diff(
+      joins: dict.from_list([
+        #(topic, [PresenceEntry(session_id: pid, key: key, meta: stored_meta)]),
       ]),
-    ]),
-    leaves: dict.new(),
+      leaves: removed.leaves,
+    ),
+  )
+  let new_refs =
+    dict.insert(
+      removed.refs,
+      ref,
+      TrackedPresence(
+        topic: topic,
+        key: key,
+        session_id: pid,
+        meta: stored_meta,
+        tag: state.Tag(replica: replica, clock: clock),
+        owner: owner,
+      ),
+    )
+  publish_topics(
+    actor_state.read_table,
+    new_crdt,
+    unique_strings([topic, ..removed.topics], set.new(), []),
+  )
+  #(
+    ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs),
+    ref,
+    stored_meta,
   )
 }
 
-fn leave_diff(
-  crdt: state.State,
-  topic: String,
-  key: String,
-  pid: String,
-) -> Diff {
-  let leaves =
-    state.get_by_key(crdt, topic, key)
-    |> list.filter(fn(entry) { entry.0 == pid })
-    |> list.map(fn(entry) {
-      PresenceEntry(session_id: entry.0, key: key, meta: entry.1)
-    })
+/// Remove every named ref in one turn. Unknown or already-removed refs are
+/// skipped; a batch that removes no live CRDT entry invokes no callback, but
+/// still prunes any dangling refs it named.
+fn do_untrack_refs(actor_state: ActorState, refs: List(String)) -> ActorState {
+  let removed = remove_refs(actor_state.crdt, actor_state.refs, refs)
+  use <- bool.guard(
+    when: removed.topics == [],
+    return: ActorState(..actor_state, refs: removed.refs),
+  )
+  maybe_invoke_on_diff(
+    actor_state.config,
+    Diff(joins: dict.new(), leaves: removed.leaves),
+  )
+  internal.logger("beryl.presence")
+  |> log.debug("Presence untracked", [
+    #("ref_count", int.to_string(list.length(refs))),
+    #("topics", string.join(dict.keys(removed.leaves), ",")),
+  ])
+  publish_topics(
+    actor_state.read_table,
+    removed.crdt,
+    unique_strings(removed.topics, set.new(), []),
+  )
+  ActorState(..actor_state, crdt: removed.crdt, dirty: True, refs: removed.refs)
+}
 
-  Diff(joins: dict.new(), leaves: topic_entries(topic, leaves))
+fn do_untrack_all(actor_state: ActorState, pid: String) -> ActorState {
+  let diff = leave_all_diff(actor_state.crdt, pid)
+  let new_crdt = state.leave_by_pid(actor_state.crdt, pid)
+  maybe_invoke_on_diff(actor_state.config, diff)
+  // Drop any refs that pointed at the removed session so they cannot leak
+  // or later leave presences they no longer own.
+  let new_refs =
+    dict.filter(actor_state.refs, fn(_ref, tracked) {
+      tracked.session_id != pid
+    })
+  // A single session can hold presences in several topics; republish
+  // every topic the leave touched (from the pre-mutation diff).
+  publish_topics(actor_state.read_table, new_crdt, dict.keys(diff.leaves))
+  ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs)
+}
+
+fn do_untrack_runtime_all(actor_state: ActorState, pid: String) -> ActorState {
+  actor_state.refs
+  |> dict.filter(fn(_ref, tracked) {
+    tracked.session_id == pid && tracked.owner == RuntimeOwner
+  })
+  |> dict.keys
+  |> do_untrack_refs(actor_state, _)
 }
 
 fn leave_all_diff(crdt: State, pid: String) -> Diff {
@@ -883,16 +1220,6 @@ fn leave_all_diff(crdt: State, pid: String) -> Diff {
     })
 
   Diff(joins: dict.new(), leaves: leaves)
-}
-
-fn topic_entries(
-  topic: String,
-  entries: List(PresenceEntry),
-) -> Dict(String, List(PresenceEntry)) {
-  case entries {
-    [] -> dict.new()
-    _ -> dict.from_list([#(topic, entries)])
-  }
 }
 
 /// Invoke the on_diff callback if configured and the diff is non-empty
