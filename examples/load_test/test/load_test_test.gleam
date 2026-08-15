@@ -43,9 +43,10 @@ fn connect(
   socket_id: String,
 ) -> process.Subject(String) {
   let sent = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(sockets)
   transport.admit_socket(
     sockets: sockets,
-    owner: transport.connection_owner(sockets),
+    owner: owner,
     socket_id: socket_id,
     send: fn(message) {
       process.send(sent, message)

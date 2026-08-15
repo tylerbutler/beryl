@@ -106,21 +106,6 @@ pub opaque type LoggingConfig {
   )
 }
 
-@internal
-pub fn logging_level(logging: LoggingConfig) -> LogLevel {
-  logging.level
-}
-
-@internal
-pub fn logging_include_payloads(logging: LoggingConfig) -> Bool {
-  logging.include_payloads
-}
-
-@internal
-pub fn logging_payload_preview_bytes(logging: LoggingConfig) -> Int {
-  logging.payload_preview_bytes
-}
-
 /// Configuration for an app-side socket runtime.
 ///
 /// This type is opaque: construct it with `config` and adjust it with the
@@ -356,6 +341,7 @@ pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
   Config(..config, logging: logging)
 }
 
+// nolint: unused_exports -- public logging builder intended for downstream users
 /// Configure the maximum payload/frame preview length for logs.
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
@@ -430,6 +416,7 @@ pub fn with_max_event_length(
   Config(..config, max_event_length: max_length)
 }
 
+// nolint: unused_exports -- enforced in sibling transport handler tests
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
 /// The limit is enforced **post-assembly**: the transport (Mist/gramps)
@@ -464,81 +451,6 @@ pub fn with_max_joined_topics_per_socket(
   max_topics max_topics: Int,
 ) -> Config {
   Config(..config, max_joined_topics_per_socket: max_topics)
-}
-
-@internal
-pub fn config_heartbeat_interval_ms(config: Config) -> Int {
-  config.heartbeat_interval_ms
-}
-
-@internal
-pub fn config_heartbeat_timeout_ms(config: Config) -> Int {
-  config.heartbeat_timeout_ms
-}
-
-@internal
-pub fn config_max_connections_per_ip(config: Config) -> Int {
-  config.max_connections_per_ip
-}
-
-@internal
-pub fn config_max_connections(config: Config) -> Int {
-  config.max_connections
-}
-
-@internal
-pub fn config_pubsub(config: Config) -> Option(PubSub(json.Json)) {
-  config.pubsub
-}
-
-@internal
-pub fn config_logging(config: Config) -> LoggingConfig {
-  config.logging
-}
-
-@internal
-pub fn config_join_rate(config: Config) -> Int {
-  config.join_rate
-}
-
-@internal
-pub fn config_join_burst(config: Config) -> Int {
-  config.join_burst
-}
-
-@internal
-pub fn config_channel_rate(config: Config) -> Int {
-  config.channel_rate
-}
-
-@internal
-pub fn config_channel_burst(config: Config) -> Int {
-  config.channel_burst
-}
-
-@internal
-pub fn config_channel_rate_max_keys_per_socket(config: Config) -> Int {
-  config.channel_rate_max_keys_per_socket
-}
-
-@internal
-pub fn config_max_topic_length(config: Config) -> Int {
-  config.max_topic_length
-}
-
-@internal
-pub fn config_max_event_length(config: Config) -> Int {
-  config.max_event_length
-}
-
-@internal
-pub fn config_max_inbound_frame_bytes(config: Config) -> Int {
-  config.max_inbound_frame_bytes
-}
-
-@internal
-pub fn config_max_joined_topics_per_socket(config: Config) -> Int {
-  config.max_joined_topics_per_socket
 }
 
 /// Warn when an app-side socket runtime starts with every abuse control
@@ -737,24 +649,13 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(HeartbeatTimeoutTooLow(2)),
   )
-  validate_topic_patterns(config.topic_rates)
-}
-
-fn validate_topic_patterns(
-  rates: List(#(String, rate_limit.RateLimitConfig)),
-) -> Result(Nil, ConfigError) {
-  case rates {
-    [] -> Ok(Nil)
-    [#(pattern, _limits), ..rest] ->
-      case topic.validate_pattern(pattern) {
-        Ok(_) -> validate_topic_patterns(rest)
-        Error(error) ->
-          internal.result_error(InvalidTopicPattern(
-            pattern,
-            topic_error_reason(error),
-          ))
-      }
-  }
+  list.try_each(config.topic_rates, fn(entry) {
+    let #(pattern, _limits) = entry
+    topic.validate_pattern(pattern)
+    |> result.map_error(fn(error) {
+      InvalidTopicPattern(pattern, topic_error_reason(error))
+    })
+  })
 }
 
 fn topic_error_reason(error: topic.TopicError) -> String {
@@ -825,9 +726,9 @@ fn drop_subtree_monitors(
   runtime_monitor: process.Monitor,
   limiter_monitor: Option(process.Monitor),
 ) -> Nil {
-  drop_monitor(runtime_monitor)
+  process.demonitor_process(runtime_monitor)
   case limiter_monitor {
-    Some(monitor) -> drop_monitor(monitor)
+    Some(monitor) -> process.demonitor_process(monitor)
     None -> Nil
   }
 }
@@ -869,10 +770,6 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
     process.new_selector()
     |> process.select_specific_monitor(monitor, fn(_down) { Nil })
   process.selector_receive(selector, 5000)
-}
-
-fn drop_monitor(monitor: process.Monitor) -> Nil {
-  process.demonitor_process(monitor)
 }
 
 /// Build the app-side dispatch supervision child specification.

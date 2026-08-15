@@ -16,7 +16,7 @@ Transport SPI — the contract between beryl core and WebSocket transport
  1. Admits a connection (origin/auth policy is the transport's concern),
     acquiring a slot with `acquire_connection_slot` and binding it with
     `bind_connection_slot`.
- 2. Captures `connection_owner`, installs its monitor, and atomically
+ 2. Captures `runtime_pid`, installs its monitor, and atomically
     registers the socket and closer with `admit_socket`.
  3. Decodes inbound frames with the codec from `active_codec` and routes
     them with `route_decoded`, `route_decoded_binary`, or `route_binary`,
@@ -26,37 +26,6 @@ Transport SPI — the contract between beryl core and WebSocket transport
     slot with `release_connection_slot`.
 
 ## Types
-
-### `ConnectionOwner`
-
-The lifecycle relationship between a transport connection and the runtime
- that owns it.
-
- App-side dispatch systems own their connections through a supervised
- runtime. A transport should monitor the owning runtime and close the
- connection when it dies, so a runtime crash or restart never leaves a
- zombie connection whose frames are silently dropped by a runtime that no
- longer knows the socket.
-
-```gleam
-pub type ConnectionOwner {
-  OwnerAlive(pid: process.Pid)
-  OwnerUnavailable
-}
-```
-
-#### Constructors
-
-##### `OwnerAlive(pid: process.Pid)`
-
-The owning runtime is alive at this pid. Monitor it and close the
- connection when it goes down.
-
-##### `OwnerUnavailable`
-
-This is an app-side dispatch system but its runtime is not currently
- running (pre-start or a restart window). A new connection cannot be
- owned, so the transport must refuse it rather than admit a dead socket.
 
 ### `FrameKind`
 
@@ -212,15 +181,15 @@ pub fn active_codec(beryl.Sockets) -> codec.Codec
 
 Register a socket and its closer against the captured connection owner.
 
- For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
- function. Admission succeeds only if that exact runtime instance processes
- the registration; a restart cannot redirect it to the successor runtime.
- On `Error`, close the connection so its bound connection permit is released.
+ Install a monitor for `owner` before calling this function. Admission
+ succeeds only if that exact runtime instance processes the registration; a
+ restart cannot redirect it to the successor runtime. On `Error`, the
+ connection is closed so its bound permit can be released.
 
 ```gleam
 pub fn admit_socket(
   sockets: beryl.Sockets,
-  owner: ConnectionOwner,
+  owner: process.Pid,
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
@@ -249,17 +218,6 @@ pub fn connect_seed(
   headers: List(#(String, String)),
   metadata: List(#(String, String))
 ) -> socket.ConnectSeed
-```
-
-### `connection_owner`
-
-Determine how a newly accepted connection is owned. Call this in the
- connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
- exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the
- connection immediately.
-
-```gleam
-pub fn connection_owner(beryl.Sockets) -> ConnectionOwner
 ```
 
 ### `decode_binary`
@@ -372,6 +330,18 @@ pub fn route_decoded_binary(
   socket_id: String,
   message: codec.Inbound
 ) -> Nil
+```
+
+### `runtime_pid`
+
+Return the pid of the runtime that owns transport connections.
+
+ On `Ok(pid)`, monitor that exact pid before admission and close the
+ connection on its `Down`. `Error(Nil)` means the runtime is unavailable
+ (pre-start or a restart window), so the connection must be refused.
+
+```gleam
+pub fn runtime_pid(beryl.Sockets) -> Result(process.Pid, Nil)
 ```
 
 ### `socket_disconnected`

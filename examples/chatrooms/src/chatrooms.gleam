@@ -1,5 +1,6 @@
 import beryl
 import beryl/group
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
@@ -59,11 +60,11 @@ pub fn main() {
       base_path: "",
     )
   let ws_config =
-    mist_transport.default_config("/socket/websocket")
-    |> mist_transport.with_on_connect(fn(req) {
+    server.default_config("/socket/websocket")
+    |> server.with_on_connect(fn(req) {
       case get_query_param(req, "token") {
         Ok("beryl-demo") -> Ok([])
-        _ -> Error(mist_transport.ConnectRejected)
+        _ -> Error(server.ConnectRejected)
       }
     })
 

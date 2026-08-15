@@ -82,36 +82,6 @@ fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
   channels
 }
 
-pub fn default_logging_preserves_info_without_payloads_test() {
-  let config = beryl.config(wire.phoenix_codec())
-
-  let logging = beryl.config_logging(config)
-  beryl.logging_level(logging)
-  |> should.equal(beryl.InfoLevel)
-  beryl.logging_include_payloads(logging)
-  |> should.be_false
-  beryl.logging_payload_preview_bytes(logging)
-  |> should.equal(200)
-}
-
-pub fn with_logging_replaces_logging_config_test() {
-  let logging =
-    beryl.logging_config(level: beryl.ErrorLevel, include_payloads: True)
-    |> beryl.with_payload_preview_bytes(bytes: 64)
-
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_logging(logging)
-
-  let logging = beryl.config_logging(config)
-  beryl.logging_level(logging)
-  |> should.equal(beryl.ErrorLevel)
-  beryl.logging_include_payloads(logging)
-  |> should.be_true
-  beryl.logging_payload_preview_bytes(logging)
-  |> should.equal(64)
-}
-
 pub fn start_app_accepts_debug_logging_config_test() {
   let config =
     beryl.config(wire.phoenix_codec())
@@ -122,15 +92,6 @@ pub fn start_app_accepts_debug_logging_config_test() {
 
   let channels = start_accepting_app(config)
   let _ = beryl.stop(channels)
-}
-
-pub fn payload_preview_bytes_never_negative_test() {
-  let logging =
-    beryl.logging_config(level: beryl.DebugLevel, include_payloads: True)
-    |> beryl.with_payload_preview_bytes(bytes: -1)
-
-  beryl.logging_payload_preview_bytes(logging)
-  |> should.equal(0)
 }
 
 pub fn preview_metadata_omits_payloads_by_default_test() {

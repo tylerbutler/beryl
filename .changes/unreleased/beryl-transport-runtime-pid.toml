@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Changed"
+body = "beryl/transport.connection_owner is now runtime_pid and returns Result(Pid, Nil) directly; ConnectionOwner is removed, and admit_socket takes the captured runtime Pid. Transports now match Ok(pid)/Error(Nil), install the monitor, and pass that exact pid for atomic admission."

@@ -1,75 +1,31 @@
+//// Compile-level checks that `beryl/transport/server`'s config builders
+//// instantiate against Ewe's connection body type, and that this package's
+//// documented entry points stay exported.
+////
+//// The builders' behavior and the origin policy are covered once in
+//// `packages/beryl`; only the Ewe-specific instantiation belongs here.
+
+import beryl/transport/server
 import beryl_ewe as ewe_transport
 import ewe.{type Connection}
 import gleam/http/request.{type Request}
 import gleeunit/should
 
-pub fn default_config_creates_with_path_test() {
-  let _config: ewe_transport.TransportConfig =
-    ewe_transport.default_config("/socket")
-
-  should.be_true(True)
-}
-
-pub fn default_config_slash_ws_test() {
-  let _config: ewe_transport.TransportConfig =
-    ewe_transport.default_config("/ws")
-
-  should.be_true(True)
-}
-
-pub fn with_on_connect_sets_callback_test() {
-  let callback = fn(_req: Request(Connection)) -> Result(
+pub fn config_builders_instantiate_for_ewe_test() {
+  let on_connect = fn(_req: Request(Connection)) -> Result(
     List(#(String, String)),
-    ewe_transport.ConnectError,
-  ) {
-    Ok([])
-  }
-
-  let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_on_connect(callback)
-
-  let _typed_config: ewe_transport.TransportConfig = config
-  should.be_true(True)
-}
-
-pub fn with_on_connect_replaces_callback_test() {
-  let callback1 = fn(_req: Request(Connection)) -> Result(
-    List(#(String, String)),
-    ewe_transport.ConnectError,
-  ) {
-    Ok([])
-  }
-  let callback2 = fn(_req: Request(Connection)) -> Result(
-    List(#(String, String)),
-    ewe_transport.ConnectError,
-  ) {
-    Error(ewe_transport.ConnectRejected)
-  }
-
-  let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_on_connect(callback1)
-    |> ewe_transport.with_on_connect(callback2)
-
-  let _typed_config: ewe_transport.TransportConfig = config
-  should.be_true(True)
-}
-
-pub fn with_on_connect_seeding_metadata_sets_callback_test() {
-  // on_connect may return ordered string metadata, not just an empty list.
-  let callback = fn(_req: Request(Connection)) -> Result(
-    List(#(String, String)),
-    ewe_transport.ConnectError,
+    server.ConnectError,
   ) {
     Ok([#("user", "user-123")])
   }
 
-  let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_on_connect(callback)
+  let _typed_config: server.TransportConfig(Connection) =
+    server.default_config("/socket")
+    |> server.with_on_connect(fn(_req) { Error(server.ConnectRejected) })
+    |> server.with_on_connect(on_connect)
+    |> server.with_allowed_origins(["https://app.example.com"])
+    |> server.with_allow_all_origins()
 
-  let _typed_config: ewe_transport.TransportConfig = config
   should.be_true(True)
 }
 
@@ -86,81 +42,4 @@ pub fn upgrade_connection_is_exported_test() {
 pub fn upgrade_is_exported_test() {
   let _upgrade = ewe_transport.upgrade
   should.be_true(True)
-}
-
-pub fn with_allowed_origins_sets_list_test() {
-  let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_allowed_origins(["https://app.example.com"])
-
-  let _typed_config: ewe_transport.TransportConfig = config
-  should.be_true(True)
-}
-
-pub fn with_allow_all_origins_is_exported_test() {
-  let config =
-    ewe_transport.default_config("/socket")
-    |> ewe_transport.with_allow_all_origins()
-
-  let _typed_config: ewe_transport.TransportConfig = config
-  should.be_true(True)
-}
-
-// --- same_origin authority comparison ---------------------------------------
-//
-// `same_origin` implements the SameOrigin policy at the string level: it
-// strips the scheme from the `Origin` header value and compares the resulting
-// authority (host + optional port) against the request `Host` authority.
-
-pub fn same_origin_matches_host_ignoring_scheme_test() {
-  ewe_transport.same_origin("http://app.example.com", "app.example.com")
-  |> should.be_true
-
-  ewe_transport.same_origin("https://app.example.com", "app.example.com")
-  |> should.be_true
-}
-
-pub fn same_origin_rejects_cross_origin_test() {
-  ewe_transport.same_origin("https://evil.example.com", "app.example.com")
-  |> should.be_false
-}
-
-pub fn same_origin_matches_non_default_port_test() {
-  ewe_transport.same_origin("http://127.0.0.1:8080", "127.0.0.1:8080")
-  |> should.be_true
-}
-
-pub fn same_origin_rejects_port_mismatch_test() {
-  ewe_transport.same_origin("http://127.0.0.1:8080", "127.0.0.1:9090")
-  |> should.be_false
-}
-
-pub fn same_origin_is_case_insensitive_on_host_test() {
-  ewe_transport.same_origin("https://APP.Example.COM", "app.example.com")
-  |> should.be_true
-}
-
-pub fn same_origin_rejects_opaque_origin_test() {
-  // Sandboxed iframes / file:// documents send `Origin: null`.
-  ewe_transport.same_origin("null", "app.example.com")
-  |> should.be_false
-}
-
-pub fn same_origin_rejects_malformed_origin_test() {
-  ewe_transport.same_origin("garbage", "app.example.com")
-  |> should.be_false
-
-  // Scheme present but no host authority.
-  ewe_transport.same_origin("https://", "app.example.com")
-  |> should.be_false
-}
-
-pub fn same_origin_matches_forwarded_host_authority_test() {
-  // Behind a reverse proxy that preserves the public Host header, the browser
-  // Origin authority (host:port) must match the forwarded Host authority.
-  ewe_transport.same_origin(
-    "https://public.example.com:8443",
-    "public.example.com:8443",
-  )
-  |> should.be_true
 }

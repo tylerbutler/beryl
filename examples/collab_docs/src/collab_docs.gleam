@@ -1,4 +1,5 @@
 import beryl
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import collab_docs/app as docs_app
@@ -40,7 +41,7 @@ pub fn main() {
       mist_transport.upgrade(
         req,
         channels,
-        mist_transport.default_config("/socket/websocket"),
+        server.default_config("/socket/websocket"),
         fn() { router.handle_request(req, ctx_router) },
       )
     }

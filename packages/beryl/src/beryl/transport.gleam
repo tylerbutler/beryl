@@ -5,7 +5,7 @@
 //// 1. Admits a connection (origin/auth policy is the transport's concern),
 ////    acquiring a slot with `acquire_connection_slot` and binding it with
 ////    `bind_connection_slot`.
-//// 2. Captures `connection_owner`, installs its monitor, and atomically
+//// 2. Captures `runtime_pid`, installs its monitor, and atomically
 ////    registers the socket and closer with `admit_socket`.
 //// 3. Decodes inbound frames with the codec from `active_codec` and routes
 ////    them with `route_decoded`, `route_decoded_binary`, or `route_binary`,
@@ -50,7 +50,6 @@ pub type Inbound =
 pub type DecodeError =
   codec.DecodeError
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Build connection metadata for a WebSocket upgrade.
 pub fn connect_seed(
   path path: String,
@@ -66,13 +65,11 @@ pub fn connect_seed(
   )
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Decode an inbound text frame with a codec.
 pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
   codec.decode_text(codec)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Return the codec's optional binary decoder.
 pub fn decode_binary(
   codec: Codec,
@@ -80,13 +77,11 @@ pub fn decode_binary(
   codec.decode_binary(codec)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Format a wire decode failure for transport logging.
 pub fn format_decode_error(error: DecodeError) -> String {
   codec.format_decode_error(error)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Acquire a configured connection slot.
 pub fn acquire_connection_slot(
   sockets: Sockets,
@@ -95,19 +90,16 @@ pub fn acquire_connection_slot(
   beryl.acquire_connection_slot(sockets, ip)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Bind a connection slot to the current transport process.
 pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
   beryl.bind_connection_slot(permit)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Release a held connection slot.
 pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
   beryl.release_connection_slot(permit)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Return the configured maximum inbound frame size.
 pub fn max_inbound_frame_bytes(sockets: Sockets) -> Int {
   beryl.max_inbound_frame_bytes(sockets)
@@ -151,7 +143,6 @@ pub opaque type Telemetry {
   Telemetry(enabled: Bool, transport: telemetry.Transport)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Create a telemetry context from the channels configuration.
 pub fn telemetry(
   channels: Sockets,
@@ -166,14 +157,12 @@ pub fn telemetry(
   )
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Start a timed transport operation. Returns a zero sentinel when disabled.
 pub fn telemetry_start(context: Telemetry) -> Int {
   use <- bool.guard(when: !context.enabled, return: 0)
   telemetry.start_time()
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Emit exactly one terminal matched-upgrade event.
 pub fn telemetry_upgrade_stop(
   context: Telemetry,
@@ -198,7 +187,6 @@ pub fn telemetry_upgrade_stop(
   )
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Emit exactly one terminal inbound-frame event.
 pub fn telemetry_frame_stop(
   context: Telemetry,
@@ -289,7 +277,6 @@ pub opaque type RateLimiter {
   RateLimiter(bucket: rate_limit.Bucket)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Create a fresh per-connection message limiter, `None` when no message
 /// rate is configured.
 pub fn new_message_limiter(sockets: Sockets) -> Option(RateLimiter) {
@@ -297,7 +284,6 @@ pub fn new_message_limiter(sockets: Sockets) -> Option(RateLimiter) {
   |> option.map(fn(config) { RateLimiter(rate_limit.new_bucket(config)) })
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Take one token; returns the updated limiter and whether the frame is
 /// admitted. Transports drop the frame when `False`.
 pub fn take_token(limiter: RateLimiter) -> #(RateLimiter, Bool) {
@@ -313,13 +299,11 @@ pub opaque type Logger {
   Logger(inner: log.Logger)
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Create a named transport logger (e.g. `"beryl.transport.mist"`).
 pub fn logger(name: String) -> Logger {
   Logger(internal.logger(name))
 }
 
-// nolint: unused_exports -- public transport SPI consumed by sibling transport packages
 /// Log a warning with structured metadata.
 pub fn log_warning(
   logger logger: Logger,
@@ -331,33 +315,24 @@ pub fn log_warning(
 
 // --- Connection ownership ---
 
-/// The lifecycle relationship between a transport connection and the runtime
-/// that owns it.
+/// Return the pid of the runtime that owns transport connections.
 ///
-/// App-side dispatch systems own their connections through a supervised
-/// runtime. A transport should monitor the owning runtime and close the
-/// connection when it dies, so a runtime crash or restart never leaves a
-/// zombie connection whose frames are silently dropped by a runtime that no
-/// longer knows the socket.
-pub type ConnectionOwner {
-  /// The owning runtime is alive at this pid. Monitor it and close the
-  /// connection when it goes down.
-  OwnerAlive(pid: process.Pid)
-  /// This is an app-side dispatch system but its runtime is not currently
-  /// running (pre-start or a restart window). A new connection cannot be
-  /// owned, so the transport must refuse it rather than admit a dead socket.
-  OwnerUnavailable
+/// On `Ok(pid)`, monitor that exact pid before admission and close the
+/// connection on its `Down`. `Error(Nil)` means the runtime is unavailable
+/// (pre-start or a restart window), so the connection must be refused.
+pub fn runtime_pid(sockets: Sockets) -> Result(process.Pid, Nil) {
+  beryl.app_runtime_pid(sockets)
 }
 
 /// Register a socket and its closer against the captured connection owner.
 ///
-/// For `OwnerAlive(pid)`, install a monitor for `pid` before calling this
-/// function. Admission succeeds only if that exact runtime instance processes
-/// the registration; a restart cannot redirect it to the successor runtime.
-/// On `Error`, close the connection so its bound connection permit is released.
+/// Install a monitor for `owner` before calling this function. Admission
+/// succeeds only if that exact runtime instance processes the registration; a
+/// restart cannot redirect it to the successor runtime. On `Error`, the
+/// connection is closed so its bound permit can be released.
 pub fn admit_socket(
   sockets sockets: Sockets,
-  owner owner: ConnectionOwner,
+  owner owner: process.Pid,
   socket_id socket_id: String,
   send send: fn(String) -> Result(Nil, Nil),
   send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
@@ -365,44 +340,21 @@ pub fn admit_socket(
   seed seed: ConnectSeed,
   close close: fn() -> Nil,
 ) -> Result(Nil, Nil) {
-  let expected_owner = case owner {
-    OwnerAlive(pid) -> Ok(Some(pid))
-    OwnerUnavailable -> {
+  use <- bool.lazy_guard(
+    when: !beryl.transport_admit_socket(
+      sockets,
+      Some(owner),
+      socket_id,
+      send,
+      send_binary,
+      codec,
+      seed,
+      close,
+    ),
+    return: fn() {
       close()
       Error(Nil)
-    }
-  }
-  case expected_owner {
-    Error(Nil) -> Error(Nil)
-    Ok(expected_owner) ->
-      case
-        beryl.transport_admit_socket(
-          sockets,
-          expected_owner,
-          socket_id,
-          send,
-          send_binary,
-          codec,
-          seed,
-          close,
-        )
-      {
-        True -> Ok(Nil)
-        False -> {
-          close()
-          Error(Nil)
-        }
-      }
-  }
-}
-
-/// Determine how a newly accepted connection is owned. Call this in the
-/// connection process right after upgrade. On `OwnerAlive(pid)`, monitor that
-/// exact pid before calling `admit_socket`; on `OwnerUnavailable`, close the
-/// connection immediately.
-pub fn connection_owner(sockets: Sockets) -> ConnectionOwner {
-  case beryl.app_runtime_pid(sockets) {
-    Ok(pid) -> OwnerAlive(pid)
-    Error(Nil) -> OwnerUnavailable
-  }
+    },
+  )
+  Ok(Nil)
 }
