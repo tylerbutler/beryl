@@ -288,7 +288,7 @@ A typed handle for sending server-side messages to one socket.
 
  Obtained from `ConnectInfo.self` in `init`. Any process may call
  `notify` with it; the message is delivered to the socket's `update` as
- an `Info` input. This is an ordinary typed send — no erasure involved.
+ an `Info` event. This is an ordinary typed send — no erasure involved.
 
 ```gleam
 pub type Sender(a)

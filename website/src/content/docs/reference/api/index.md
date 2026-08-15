@@ -15,31 +15,31 @@ This reference is generated from Gleam's docs metadata for `beryl`, `beryl_ewe`,
 Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no `hexdocs.pm` listing.
 :::
 
-## `beryl` `0.0.1`
+## `beryl` `0.2.0`
 
 | Module | Description |
 |---|---|
 | [`beryl`](/reference/api/beryl/) | Beryl - Type-safe real-time communication |
 | [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket via |
 | [`beryl/error`](/reference/api/beryl-error/) | Shared beryl-owned error helpers. |
-| [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.child_spec`. |
 | [`beryl/group`](/reference/api/beryl-group/) | Channel Groups - Named collections of topics for multi-topic broadcasting |
 | [`beryl/presence`](/reference/api/beryl-presence/) | Presence - Distributed presence tracking backed by a CRDT |
 | [`beryl/presence/wire`](/reference/api/beryl-presence-wire/) | Phoenix-compatible wire encoding for presence diffs. |
 | [`beryl/pubsub`](/reference/api/beryl-pubsub/) | PubSub - Distributed publish/subscribe using Erlang pg |
+| [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.child_spec`. |
 | [`beryl/stats`](/reference/api/beryl-stats/) | Local runtime statistics. |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Pattern matching for topic routing. |
 | [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
 
-## `beryl_ewe` `0.0.1`
+## `beryl_ewe` `0.1.1`
 
 | Module | Description |
 |---|---|
 | [`beryl_ewe`](/reference/api/beryl_ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
 
-## `beryl_mist` `0.0.1`
+## `beryl_mist` `0.2.0`
 
 | Module | Description |
 |---|---|
