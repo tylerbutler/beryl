@@ -26,17 +26,17 @@ deps-gleam:
 
 # Build all packages (Erlang target)
 build *ARGS:
-    trellis run build --serial {{ ARGS }}
+    ./scripts/gleam-each.sh build {{ ARGS }}
 
 # Build with warnings as errors
 build-strict:
-    trellis run build --strict --serial
+    ./scripts/gleam-each.sh build-strict
 
 # === TESTING ===
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
 test *ARGS:
-    trellis run test --serial {{ ARGS }}
+    ./scripts/gleam-each.sh test {{ ARGS }}
 
 # === CODE QUALITY ===
 
@@ -50,7 +50,7 @@ format-check:
 
 # Type check without building
 check:
-    trellis run check --serial
+    ./scripts/gleam-each.sh check
 
 # Run the glinter linter (packages only; examples are excluded)
 lint:
@@ -64,7 +64,7 @@ doctor:
 
 # Build Gleam API documentation (HTML + docs metadata) for both packages
 gleam-docs:
-    trellis run docs
+    ./scripts/gleam-each.sh docs
 
 # Build documentation: Gleam docs + regenerated website reference pages
 docs: gleam-docs
@@ -125,7 +125,7 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build --serial chatrooms collab_docs cursors example_helpers showcase load_test collab_docs_client
+    ./scripts/gleam-each.sh build chatrooms collab_docs cursors example_helpers showcase load_test collab_docs_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
