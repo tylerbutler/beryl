@@ -71,7 +71,24 @@ pub type Message
 A running Presence instance.
 
  This handle is intentionally opaque so callers cannot forge actor subjects
- or depend on the runtime representation.
+ or depend on the runtime representation. It carries both the actor's
+ subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
+ reference to the actor-owned ETS read model that `list`, `get_by_key`,
+ and `count` read directly, without going through the actor mailbox.
+
+ ## Node affinity
+
+ `list`, `get_by_key`, and `count` read the ETS read model directly
+ in-process, which only works for ETS tables local to the calling node.
+ Do not send this handle to, or otherwise use it from, a process on a
+ different BEAM node: `track`/`untrack`/`untrack_all` would still reach
+ the owning actor over distribution (they go through its `Subject`), but
+ the read functions would be looking up a table reference that names
+ nothing on that node (or, if the identifier happens to collide with an
+ unrelated local table, something else entirely), so they would panic or
+ read the wrong data. Keep a Presence handle on the node where `start`
+ created it, and use PubSub replication (`with_pubsub`) to share presence
+ state across nodes instead.
 
 ```gleam
 pub type Presence
@@ -111,6 +128,31 @@ pub type PresenceError {
 The presence actor failed to start.
 
 ## Functions
+
+### `count`
+
+Count presences in a topic.
+
+ Equivalent to `list(presence, topic) |> list.length`, but O(1): it reads
+ the materialized count directly from the read model via
+ `ets:lookup_element/4` instead of building (and copying) the entry list
+ just to measure it.
+
+ Reads the actor-owned read model directly (an ETS snapshot materialized
+ after each mutation, merge, or prune) rather than calling the actor, so
+ this never waits on the actor mailbox.
+
+ Panics if the presence read model is unavailable -- either the presence
+ actor is not running, or this handle is being used from a process on
+ another BEAM node than the one it was started on (see the node affinity
+ note on `Presence`).
+
+```gleam
+pub fn count(
+  Presence,
+  String
+) -> Int
+```
 
 ### `default_config`
 
@@ -171,9 +213,16 @@ pub fn diff_topics(Diff) -> List(String)
 
 ### `get_by_key`
 
-Get presences for a specific key within a topic
+Get presences for a specific key within a topic.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Reads the actor-owned read model directly (an ETS snapshot materialized
+ after each mutation, merge, or prune) rather than calling the actor, so
+ this never waits on the actor mailbox.
+
+ Panics if the presence read model is unavailable -- either the presence
+ actor is not running, or this handle is being used from a process on
+ another BEAM node than the one it was started on (see the node affinity
+ note on `Presence`).
 
 ```gleam
 pub fn get_by_key(
@@ -185,9 +234,16 @@ pub fn get_by_key(
 
 ### `list`
 
-List all presences for a topic
+List all presences for a topic.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Reads the actor-owned read model directly (an ETS snapshot materialized
+ after each mutation, merge, or prune) rather than calling the actor, so
+ this never waits on the actor mailbox.
+
+ Panics if the presence read model is unavailable -- either the presence
+ actor is not running, or this handle is being used from a process on
+ another BEAM node than the one it was started on (see the node affinity
+ note on `Presence`).
 
 ```gleam
 pub fn list(
@@ -273,6 +329,27 @@ pub fn with_broadcast_interval(
 ### `with_on_diff`
 
 Set the callback invoked when local changes or remote merges produce a diff.
+
+ The callback runs synchronously on the presence actor, for both local
+ mutations (`track`/`untrack`/`untrack_all`) and remote merges, before the
+ affected topics' read-model snapshots are (re)published and before the
+ triggering call replies. This ordering is identical for local and remote
+ diffs -- there is no divergent local-vs-remote behavior.
+
+ One consequence: if the callback reads presence state through the same
+ `Presence` handle (`list`, `get_by_key`, `count`) for a topic this diff
+ touches, it observes the *previous* snapshot -- the one from before this
+ diff -- not the one the diff itself is about to produce. Read the
+ entries and counts you need directly from the `Diff` argument (via
+ `diff_joins`/`diff_leaves`) instead of re-reading through `presence`
+ inside the callback.
+
+ Keep the callback fast and non-blocking: it runs on the actor process,
+ so a slow or blocking callback delays that topic's read-model publish,
+ the reply to the mutating call, and every other message queued behind it
+ in the actor's mailbox (though concurrent `list`/`get_by_key`/`count`
+ reads from other processes are unaffected, since those bypass the
+ mailbox entirely).
 
 ```gleam
 pub fn with_on_diff(

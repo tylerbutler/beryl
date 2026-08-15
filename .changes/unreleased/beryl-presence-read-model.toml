@@ -1,0 +1,3 @@
+project = "beryl"
+kind = "Added"
+body = "presence.list, get_by_key, and the new presence.count now read a materialized per-topic ETS snapshot directly instead of calling the presence actor, so reads never block on the actor mailbox; the actor remains the sole writer and republishes each topic's snapshot atomically after every track/untrack/untrack_all, remote merge, and replica-pruning operation. Each topic's snapshot stores its entry count alongside its entries, so presence.count is genuinely O(1) -- it fetches only the count field via ets:lookup_element/4 instead of materializing and measuring the entry list."
