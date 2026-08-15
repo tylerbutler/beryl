@@ -106,7 +106,6 @@ pub opaque type LoggingConfig {
   )
 }
 
-// nolint: unused_exports -- package-internal accessors for tests; hidden from public docs with @internal
 @internal
 pub fn logging_level(logging: LoggingConfig) -> LogLevel {
   logging.level
@@ -467,7 +466,6 @@ pub fn with_max_joined_topics_per_socket(
   Config(..config, max_joined_topics_per_socket: max_topics)
 }
 
-// nolint: unused_exports -- package-internal accessors for supervisor/tests; hidden from public docs with @internal
 @internal
 pub fn config_heartbeat_interval_ms(config: Config) -> Int {
   config.heartbeat_interval_ms
@@ -580,7 +578,6 @@ fn optional_limits(
   Some(rate_limit.config(per_second: rate, burst: burst))
 }
 
-// nolint: unused_exports -- package-internal accessor for transports; hidden from public docs with @internal
 /// Per-socket message rate limits for transports, `None` when unlimited.
 ///
 /// Transports enforce this with a local token bucket per connection so
@@ -638,7 +635,6 @@ pub type AppHandle {
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// The wire codec configured for this system.
 @internal
 pub fn configured_codec(channels: Sockets) -> codec.Codec {
@@ -697,7 +693,6 @@ pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
   connection_limit.release_optional(permit.inner)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Return the configured inbound frame size cap for transports.
 pub fn max_inbound_frame_bytes(channels: Sockets) -> Int {
   channels.config.max_inbound_frame_bytes
@@ -809,37 +804,51 @@ fn stop_app_subtree(
     Ok(runtime_pid) -> {
       let runtime_monitor = process.monitor(runtime_pid)
       let limiter_monitor =
-        option_map(
-          option.from_result(app_limiter_owner(connection_limiter)),
-          process.monitor,
-        )
+        option.from_result(app_limiter_owner(connection_limiter))
+        |> option.map(process.monitor)
       // Drain sockets (deliver `Closed` and close transports) and stop the
       // runtime; this triggers the subtree auto-shutdown.
       case app.stop() {
         Error(error) -> {
-          drop_monitor(runtime_monitor)
-          case limiter_monitor {
-            Some(monitor) -> drop_monitor(monitor)
-            None -> Nil
-          }
+          drop_subtree_monitors(runtime_monitor, limiter_monitor)
           Error(error)
         }
-        Ok(Nil) -> {
-          let awaited =
-            await_down(runtime_monitor)
-            |> result.try(fn(_) {
-              case limiter_monitor {
-                Some(monitor) -> await_down(monitor)
-                None -> Ok(Nil)
-              }
-            })
-          case awaited {
-            Ok(Nil) -> Ok(Nil)
-            Error(Nil) -> internal.result_error(StopTimeout)
-          }
-        }
+        Ok(Nil) -> await_subtree_down(runtime_monitor, limiter_monitor)
       }
     }
+  }
+}
+
+/// Release the subtree monitors taken before a drain that failed, so the
+/// caller's mailbox does not collect their later `Down` messages.
+fn drop_subtree_monitors(
+  runtime_monitor: process.Monitor,
+  limiter_monitor: Option(process.Monitor),
+) -> Nil {
+  drop_monitor(runtime_monitor)
+  case limiter_monitor {
+    Some(monitor) -> drop_monitor(monitor)
+    None -> Nil
+  }
+}
+
+/// Wait for the runtime and, when one is supervised, the sibling limiter to
+/// terminate. `Error(StopTimeout)` when either is still alive at the deadline.
+fn await_subtree_down(
+  runtime_monitor: process.Monitor,
+  limiter_monitor: Option(process.Monitor),
+) -> Result(Nil, StopError) {
+  let awaited =
+    await_down(runtime_monitor)
+    |> result.try(fn(_) {
+      case limiter_monitor {
+        Some(monitor) -> await_down(monitor)
+        None -> Ok(Nil)
+      }
+    })
+  case awaited {
+    Ok(Nil) -> Ok(Nil)
+    Error(Nil) -> internal.result_error(StopTimeout)
   }
 }
 
@@ -962,7 +971,7 @@ fn build_app_subtree(
   let handle =
     Sockets(
       config: config,
-      connection_limiter: option_map(limiter_name, connection_limit.from_name),
+      connection_limiter: option.map(limiter_name, connection_limit.from_name),
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
@@ -1037,13 +1046,6 @@ fn runtime_start_error(error: runtime.StartError) -> actor.StartError {
     runtime.ActorStartFailed(error) -> error
     runtime.InvalidHeartbeatTimeout ->
       actor.InitFailed("invalid heartbeat timeout")
-  }
-}
-
-fn option_map(option: Option(a), transform: fn(a) -> b) -> Option(b) {
-  case option {
-    Some(value) -> Some(transform(value))
-    None -> None
   }
 }
 
@@ -1173,10 +1175,7 @@ fn app_handle(
 fn request_runtime_stop(
   supervisor: Subject(app_supervisor.Message),
 ) -> Result(Nil, StopError) {
-  use _ <- result.try(
-    process.subject_owner(supervisor)
-    |> result.map_error(fn(_) { NotRunning }),
-  )
+  use _ <- result.try(ensure_supervisor_running(supervisor))
   let started = process.new_subject()
   let finished = process.new_subject()
   process.send(supervisor, app_supervisor.StopRuntime(started, finished))
@@ -1190,6 +1189,15 @@ fn request_runtime_stop(
         Ok(False) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
+  }
+}
+
+fn ensure_supervisor_running(
+  supervisor: Subject(app_supervisor.Message),
+) -> Result(Nil, StopError) {
+  case process.subject_owner(supervisor) {
+    Ok(_) -> Ok(Nil)
+    Error(Nil) -> internal.result_error(NotRunning)
   }
 }
 
@@ -1219,13 +1227,11 @@ fn send_runtime(
   }
 }
 
-// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
 @internal
 pub fn app_runtime_pid(channels: Sockets) -> Result(process.Pid, Nil) {
   channels.app.runtime_owner()
 }
 
-// nolint: unused_exports -- package-internal accessor for supervision tests and the transport SPI; hidden from public docs with @internal
 /// The pid of the app subtree's optional connection limiter, if running.
 @internal
 pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {

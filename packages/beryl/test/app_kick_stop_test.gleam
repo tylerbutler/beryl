@@ -50,8 +50,14 @@ fn join_rooms(
   case topics {
     [] -> Nil
     [topic_name, ..rest] -> {
-      h.join(channels, socket_id, topic_name, "jr-" <> topic_name, "r-1")
-      let _reply = h.recv(frames)
+      h.join_ok(
+        channels,
+        frames,
+        socket_id,
+        topic_name,
+        "jr-" <> topic_name,
+        "r-1",
+      )
       let assert Ok(Join(_, _, _)) = process.receive(events, 500)
       join_rooms(channels, events, frames, socket_id, rest)
     }

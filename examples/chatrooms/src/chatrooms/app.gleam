@@ -17,6 +17,7 @@ import beryl/group.{type Groups}
 import beryl/socket.{type Effect, type Ref}
 import example_helpers/color
 import example_helpers/payload
+import example_helpers/reply
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
@@ -125,7 +126,7 @@ pub fn update(
       case string.trim(text) {
         "" -> #(
           model,
-          reply_ok(ref, error_with_code(422, "Message cannot be empty")),
+          reply.ok(ref, error_with_code(422, "Message cannot be empty")),
         )
         trimmed -> {
           let msg_payload =
@@ -141,7 +142,7 @@ pub fn update(
             model,
             list.append(
               [socket.Broadcast(topic, "new_msg", msg_payload)],
-              reply_ok(
+              reply.ok(
                 ref,
                 json.object([
                   #("status", json.string("ok")),
@@ -359,16 +360,6 @@ fn system_message(text: String) -> json.Json {
 
 fn room_changed(room_name: String) -> json.Json {
   json.object([#("room", json.string(room_name))])
-}
-
-/// Reply only when the client sent a ref (matching the channel-module
-/// behavior of dropping refless replies). The ok status with an error
-/// payload mirrors the previous wire behavior exactly.
-fn reply_ok(ref: Option(Ref), reply_payload: json.Json) -> List(Effect) {
-  case ref {
-    Some(r) -> [socket.ReplyOk(r, reply_payload)]
-    None -> []
-  }
 }
 
 fn error(message: String) -> json.Json {

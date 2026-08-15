@@ -287,7 +287,6 @@ pub fn validate_event(event: String) -> Result(String, TopicError) {
   Ok(event)
 }
 
-// nolint: unused_exports -- package-internal logging helper; hidden from public docs with @internal
 /// Escape control characters in a string for safe use in log metadata.
 ///
 /// Replaces codepoints in the range 0–31 and 127 with `?` so that
