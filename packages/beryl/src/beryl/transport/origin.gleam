@@ -23,7 +23,7 @@ import gleam/string
 /// always send `Origin` on WebSocket handshakes, so an absent header signals a
 /// non-browser client (native app, server-to-server, CLI) that is not subject
 /// to the browser same-origin model and cannot be tricked into a cross-site
-/// upgrade. The one exception is [`AllowList`](#OriginPolicy), which requires a
+/// upgrade. The one exception is [`AllowList`](#originpolicy), which requires a
 /// matching `Origin` and therefore rejects absent ones.
 pub type OriginPolicy {
   /// Allow an upgrade only when the request `Origin` authority (host plus any
@@ -36,7 +36,7 @@ pub type OriginPolicy {
   ///
   /// Behind a reverse proxy this compares against the `Host` header as the app
   /// sees it: ensure the proxy forwards the public `Host` unchanged, or use
-  /// [`AllowList`](#OriginPolicy) with the public origins instead. Forwarded
+  /// [`AllowList`](#originpolicy) with the public origins instead. Forwarded
   /// headers such as `X-Forwarded-Host` are not trusted, because clients can
   /// spoof them.
   SameOrigin

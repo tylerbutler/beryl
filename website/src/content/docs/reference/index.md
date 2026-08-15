@@ -3,13 +3,14 @@ title: Reference
 description: Module map, wire protocol, broadcast cheatsheet, and client compatibility for beryl.
 ---
 
-:::caution[Pre-1.0 Software]
-beryl is not yet 1.0. The API is unstable and may change in minor releases. See the [Stability policy](#pre-10-stability-policy) section below.
+:::note[Pre-1.0]
+beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. See the [stability policy](#pre-10-stability-policy) below.
 :::
 
-The canonical function-level API reference is the generated Gleam documentation hosted on HexDocs:
-
-**[https://hexdocs.pm/beryl/](https://hexdocs.pm/beryl/)**
+The function-level API reference lives in the [Generated API](/reference/api/)
+section of this site, built from the source on `main`. (beryl isn't published
+to Hex yet, so there is no HexDocs page — the generated docs here are the
+reference until then.)
 
 This page provides a module map, broadcast cheatsheet, Phoenix wire protocol reference, and client compatibility notes.
 

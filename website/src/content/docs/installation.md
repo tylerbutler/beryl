@@ -2,8 +2,8 @@
 title: Installation
 ---
 
-:::caution[Pre-1.0 Software]
-beryl is not yet 1.0. The API is unstable, features may be removed in minor releases, and quality should not be considered production-ready. We welcome usage and feedback in the meantime!
+:::note[Pre-1.0]
+beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
 :::
 
 beryl is not yet published to Hex. Add it to your Gleam project as a git
@@ -11,8 +11,8 @@ dependency by editing `gleam.toml`:
 
 ```toml
 [dependencies]
-beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "v0.0", path = "packages/beryl_mist" }
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
 Then download the dependencies:
@@ -62,7 +62,7 @@ An error occurred while trying to parse this file:
     gleam.toml
 
   |
-7 | beryl = { git = "...", ref = "v0.0", path = "packages/beryl" }
+7 | beryl = { git = "...", ref = "main", path = "packages/beryl" }
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 data did not match any variant of untagged enum Requirement
 ```
@@ -72,21 +72,24 @@ upgrade Gleam.
 
 ## Choosing a ref
 
-The `ref` above pins the [`v0.0`](https://github.com/tylerbutler/beryl/releases)
-tag. Pin a tag rather than a branch: git dependencies are resolved at the exact
-ref you name, and beryl is pre-1.0, so tracking `main` can pull in breaking
-changes without warning. Use the same `ref` for `beryl` and its transport
-package — mixing versions across the two is unsupported.
+`ref = "main"` gives you the code this site documents. Everything here — the
+Quick Start, the guides, the generated API reference — describes `main`, so
+that is the recommended ref until the next tag lands. Git dependencies resolve
+at the exact ref you name, and `main` moves, so rerun `gleam deps download`
+deliberately when you want to pick up changes. Use the same `ref` for `beryl`
+and its transport package — mixing versions across the two is unsupported.
 
-:::caution[`v0.0` is behind these docs]
-`v0.0` is a preview tag, and the rest of this site documents `main`, which has
-moved on. The difference you are most likely to hit: `main` removed the
-unsupervised `beryl.start` path. Build Beryl with `beryl.child_spec` and add
-the returned specification to your application's OTP supervisor, as the
-[Supervision guide](/guides/supervision/) describes.
+If you'd rather pin an immutable ref, use a commit SHA from
+[`main`'s history](https://github.com/tylerbutler/beryl/commits/main) — you
+keep the documented API and control exactly when you move.
 
-Pin `ref = "main"` if you want the code these docs describe, accepting that it
-can break without warning.
+:::note[About the `v0.0` tag]
+The only released tag, [`v0.0`](https://github.com/tylerbutler/beryl/releases),
+is a preview from before these docs. Its API differs from what this site
+describes — most visibly, it still has the unsupervised `beryl.start` path
+that `main` replaced with `beryl.child_spec` and OTP supervision (see the
+[Supervision guide](/guides/supervision/)). Don't pin it unless you're
+deliberately using that older API.
 :::
 
 ## Dependencies

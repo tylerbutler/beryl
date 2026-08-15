@@ -22,6 +22,24 @@ export default defineConfig({
 			},
 			description:
 				"Type-safe real-time channels and presence for Gleam.",
+			// Green-based syntax themes so code tokens stay in the beryl
+			// palette instead of the default themes' neon purples.
+			expressiveCode: {
+				themes: ["everforest-dark", "everforest-light"],
+				// Token colors come from Everforest; frame chrome and
+				// backgrounds stay on the site palette.
+				useStarlightUiThemeColors: true,
+				// Wrap rather than clip. The gleam.toml git-dependency lines
+				// are the most important snippet on the site and were being
+				// cut mid-string (718px visible of 947px) at desktop widths,
+				// with no fade, scrollbar or wrap to signal it. Since beryl
+				// isn't on Hex, those lines have to be read and adapted, not
+				// blind-copied. preserveIndent keeps continuations aligned.
+				defaultProps: {
+					wrap: true,
+					preserveIndent: true,
+				},
+			},
 			lastUpdated: true,
 			logo: {
 				src: "./src/assets/beryl.webp",
@@ -42,8 +60,10 @@ export default defineConfig({
 			plugins: [
 				starlightLlmsTxt(),
 				starlightLinksValidator({
-					// Report broken links but don't fail the build on them.
-					failOnError: false,
+					// Fail the build in CI so broken links can't ship; stay
+					// permissive locally so a work-in-progress page doesn't
+					// block `astro dev`.
+					failOnError: Boolean(process.env.CI),
 				}),
 			],
 			social: [
@@ -79,44 +99,73 @@ export default defineConfig({
 					label: "Guides",
 					items: [
 						{
-							label: "Channels",
-							slug: "guides/channels",
+							label: "Core Concepts",
+							items: [
+								{
+									label: "App-Side Dispatch",
+									slug: "guides/dispatch",
+								},
+								{
+									label: "Sockets and Topics",
+									slug: "guides/channels",
+								},
+								{
+									label: "Presence",
+									slug: "guides/presence",
+								},
+								{
+									label: "PubSub",
+									slug: "guides/pubsub",
+								},
+								{
+									label: "Groups",
+									slug: "guides/groups",
+								},
+							],
 						},
 						{
-							label: "Presence",
-							slug: "guides/presence",
+							label: "Integration",
+							collapsed: true,
+							items: [
+								{
+									label: "WebSocket Transport",
+									slug: "guides/websocket",
+								},
+								{
+									label: "Authentication",
+									slug: "guides/authentication",
+								},
+								{
+									label: "Backend Integration",
+									slug: "guides/backend-integration",
+								},
+								{
+									label: "Coming from Phoenix",
+									slug: "guides/coming-from-phoenix",
+								},
+							],
 						},
 						{
-							label: "PubSub",
-							slug: "guides/pubsub",
-						},
-						{
-							label: "Groups",
-							slug: "guides/groups",
-						},
-						{
-							label: "Supervision",
-							slug: "guides/supervision",
-						},
-						{
-							label: "Error Handling",
-							slug: "guides/error-handling",
-						},
-						{
-							label: "WebSocket Transport",
-							slug: "guides/websocket",
-						},
-						{
-							label: "Authentication",
-							slug: "guides/authentication",
-						},
-						{
-							label: "Backend Integration",
-							slug: "guides/backend-integration",
-						},
-						{
-							label: "Production Hardening",
-							slug: "guides/production-hardening",
+							label: "Running in Production",
+							collapsed: true,
+							items: [
+								{
+									label: "Supervision",
+									slug: "guides/supervision",
+								},
+								{
+									label: "Error Handling",
+									slug: "guides/error-handling",
+								},
+								{
+									label: "Observability",
+									slug: "guides/observability",
+								},
+								{
+									label: "Production Hardening",
+									slug: "guides/production-hardening",
+								},
+							],
 						},
 					],
 				},
@@ -129,6 +178,7 @@ export default defineConfig({
 						},
 						{
 							label: "Generated API",
+							collapsed: true,
 							items: [
 								{
 									autogenerate: {
@@ -141,6 +191,13 @@ export default defineConfig({
 				},
 				{
 					label: "Architecture",
+					// Collapsed by default like Integration and Running in
+					// Production. Expanded it put 6 links on every page —
+					// the group least relevant to someone on Quick Start took
+					// the most open real estate, and the open/closed policy
+					// tracked nothing a reader could predict. Starlight still
+					// auto-expands whichever group holds the current page.
+					collapsed: true,
 					items: [
 						{
 							label: "Overview",

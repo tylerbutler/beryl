@@ -23,10 +23,27 @@
 	/* brand extras */
 	--beryl-magenta: oklch(0.72 0.2 350); /* morganite pop */
 	--beryl-magenta-soft: oklch(0.72 0.2 350 / 0.16);
+	--beryl-magenta-bright: oklch(0.82 0.16 350); /* magenta on dark ground */
 	--beryl-glow: oklch(0.85 0.19 150 / 0.5); /* lime glow */
 	--beryl-ring: var(--sl-color-accent);
 	--beryl-surface: oklch(0.215 0.028 163 / 0.7);
 	--beryl-hairline: oklch(0.42 0.04 161 / 0.5);
+
+	/* Faceted hero shards. Dark leans on luminous accents over a near-black
+	   ground; light needs its own set (see the light block) because the same
+	   colors simply disappear on off-white. */
+	--beryl-shard-1: var(--sl-color-accent);
+	--beryl-shard-2: var(--beryl-magenta);
+	--beryl-shard-3: var(--beryl-glow);
+	--beryl-shard-4: var(--sl-color-accent-high);
+	--beryl-shard-opacity: 0.5;
+	--beryl-shard-opacity-2: 0.34;
+	--beryl-shard-opacity-4: 0.28;
+
+	/* Elevation for the hero code card: a green glow reads on near-black. */
+	--beryl-elevation:
+		0 1px 0 0 var(--beryl-hairline) inset,
+		0 30px 70px -32px var(--beryl-glow);
 }
 
 /* ---------- Light theme ---------- */
@@ -47,10 +64,32 @@
 
 	--beryl-magenta: oklch(0.52 0.23 352);
 	--beryl-magenta-soft: oklch(0.52 0.23 352 / 0.12);
-	--beryl-glow: oklch(0.72 0.16 150 / 0.35);
+	--beryl-magenta-bright: oklch(0.45 0.2 350); /* magenta on light ground */
+	/* Darkened deliberately: a *bright* green "glow" is invisible against an
+	   off-white page, so in light mode this token has to behave as a shadow.
+	   Card hovers, pagination lift and the gem all read again as a result. */
+	--beryl-glow: oklch(0.55 0.14 150 / 0.35);
 	--beryl-ring: var(--sl-color-accent);
 	--beryl-surface: oklch(1 0 0 / 0.6);
 	--beryl-hairline: oklch(0.55 0.04 158 / 0.35);
+
+	/* Light shards are their own device, not the dark ones faded out: higher
+	   chroma and lower lightness so they read as saturated mineral tint on
+	   white, where the dark palette's luminous accents wash away entirely. */
+	--beryl-shard-1: oklch(0.72 0.17 158);
+	--beryl-shard-2: oklch(0.62 0.22 350);
+	--beryl-shard-3: oklch(0.78 0.16 150);
+	--beryl-shard-4: oklch(0.66 0.15 162);
+	--beryl-shard-opacity: 0.42;
+	--beryl-shard-opacity-2: 0.3;
+	--beryl-shard-opacity-4: 0.26;
+
+	/* Light elevation is a real ring + neutral drop shadow. The ring follows
+	   the border-radius exactly, so it can't double up on the frame's own
+	   rounded edge the way an extra border would. */
+	--beryl-elevation:
+		0 0 0 1px var(--beryl-hairline),
+		0 24px 50px -28px oklch(0.4 0.05 160 / 0.3);
 }
 
 /* ==========================================================================
@@ -92,20 +131,60 @@ body {
 	font-size: var(--sl-text-h4);
 	letter-spacing: -0.02em;
 }
+/* Persistent stability status in the chrome: every page says pre-1.0 once,
+   here, so the docs pages don't have to keep apologizing. */
+.site-title::after {
+	content: "pre-1.0";
+	font-family: var(--sl-font);
+	font-size: 0.62rem;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	line-height: 1;
+	/* Must NOT be color-mix(in oklch, …, var(--sl-color-white)): OKLCH takes the
+	   short hue arc, and magenta (350) → the green-tinted white (152) runs *up*
+	   through 360, landing on hue 22 — coral in dark, blood red in light. The
+	   badge then reads as an error next to a wordmark whose period is pink.
+	   A per-theme magenta keeps the hue fixed and stays on palette. */
+	color: var(--beryl-magenta-bright);
+	border: 1px solid
+		color-mix(in oklch, var(--beryl-magenta) 45%, transparent);
+	border-radius: 999px;
+	padding: 0.3em 0.6em 0.25em;
+	margin-inline-start: 0.15rem;
+	align-self: center;
+	translate: 0 0.05rem;
+}
 
 /* ==========================================================================
    Selection, focus, scrollbar — small on-brand details
    ========================================================================== */
 
+/* Magenta-tinted selection that keeps each theme's own text color, so
+   selected text stays readable (solid magenta + white was ~2.5:1). */
 ::selection {
-	background: var(--beryl-magenta);
-	color: oklch(0.99 0.01 150);
+	background: color-mix(in oklch, var(--beryl-magenta) 35%, var(--sl-color-black));
 }
 
 :focus-visible {
 	outline: 2px solid var(--beryl-ring);
 	outline-offset: 2px;
-	border-radius: 4px;
+}
+
+/* Heading anchor links render 24x35 — under the 44px touch minimum. Expand the
+   hit area with an overlay rather than min-width/height: Starlight makes the
+   heading `display: inline` so the anchor tucks onto the same line, and sizing
+   the anchor itself would shift the heading's baseline. */
+.sl-markdown-content .sl-anchor-link {
+	position: relative;
+}
+.sl-markdown-content .sl-anchor-link::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 44px;
+	height: 44px;
+	translate: -50% -50%;
 }
 
 /* ==========================================================================
@@ -217,6 +296,16 @@ body {
 }
 .starlight-aside__title {
 	color: var(--sl-color-asides-text-accent);
+}
+/* Note asides take the brand's emerald instead of Starlight's blue — blue is
+   the one hue the palette doesn't own, and notes carry the pre-1.0 message. */
+.starlight-aside--note {
+	--sl-color-asides-text-accent: var(--sl-color-accent-high);
+	--sl-color-asides-border: var(--sl-color-accent);
+}
+/* Asides on full-width splash pages otherwise run to ~130ch lines */
+.starlight-aside__content {
+	max-width: 75ch;
 }
 
 /* ==========================================================================

@@ -2,8 +2,8 @@
 title: What is beryl?
 ---
 
-:::caution[Pre-1.0 Software]
-beryl is not yet 1.0. The API is unstable, features may be removed in minor releases, and quality should not be considered production-ready. We welcome usage and feedback in the meantime!
+:::note[Pre-1.0]
+beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
 :::
 
 beryl is a **type-safe real-time channels and presence library** for Gleam, targeting the Erlang (BEAM) runtime. It provides the building blocks for adding real-time features to your Gleam web applications.
