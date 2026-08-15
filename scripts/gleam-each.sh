@@ -117,13 +117,19 @@ for name in "${packages[@]}"; do
         # dependency's own build/ dir (e.g. beryl's, when beryl_ewe or
         # beryl_mist depends on it), not necessarily $name's — cleaning
         # only $name's build/ was confirmed insufficient. Clean every
-        # package processed so far this run and retry.
-        echo "=== $name: cleaning build/ for all packages run so far and retrying ==="
-        for cleaned in "${packages[@]}"; do
-          cleaned_path=$(echo "$all_packages_json" | jq -r --arg name "$cleaned" '.packages[] | select(.name == $name) | .path')
-          [[ -n "$cleaned_path" ]] && rm -rf "$cleaned_path/build"
-          [[ "$cleaned" == "$name" ]] && break
-        done
+        # package processed so far this run and retry. Docs are the exception:
+        # deleting earlier builds also deletes metadata needed by the website.
+        if [[ "$verb" == "docs" ]]; then
+          echo "=== $name: cleaning its build/ and retrying ==="
+          rm -rf "$path/build"
+        else
+          echo "=== $name: cleaning build/ for all packages run so far and retrying ==="
+          for cleaned in "${packages[@]}"; do
+            cleaned_path=$(echo "$all_packages_json" | jq -r --arg name "$cleaned" '.packages[] | select(.name == $name) | .path')
+            [[ -n "$cleaned_path" ]] && rm -rf "$cleaned_path/build"
+            [[ "$cleaned" == "$name" ]] && break
+          done
+        fi
       fi
     fi
     rm -f "$log"
