@@ -3,6 +3,7 @@
 //// tenant-token authorization.
 
 import beryl/socket
+import beryl/socket/router
 import collab_docs/app
 import collab_docs/auth
 import collab_docs/doc_store
@@ -18,6 +19,10 @@ fn document_ref() -> socket.Ref {
     join_ref: Some("jr"),
     msg_ref: Some("r"),
   )
+}
+
+fn document_match() -> router.Match {
+  router.Match(topic: "document:demo:readme", params: ["demo", "readme"])
 }
 
 fn payload_from_json(raw: String) -> dynamic.Dynamic {
@@ -43,7 +48,7 @@ pub fn join_with_valid_tenant_token_is_accepted_test() {
 
   let payload = payload_from_json("{\"token\":\"" <> token <> "\"}")
   let #(model, effects) =
-    app.join(ctx, "s1", "document:demo:readme", payload, document_ref())
+    app.join(ctx, "s1", document_match(), payload, document_ref())
 
   model |> should.be_some
   case effects {
@@ -61,7 +66,7 @@ pub fn join_without_token_is_rejected_test() {
     app.join(
       ctx,
       "s1",
-      "document:demo:readme",
+      document_match(),
       payload_from_json("{}"),
       document_ref(),
     )
@@ -82,7 +87,7 @@ pub fn join_with_token_for_other_tenant_is_rejected_test() {
 
   let payload = payload_from_json("{\"token\":\"" <> token <> "\"}")
   let #(model, effects) =
-    app.join(ctx, "s1", "document:demo:readme", payload, document_ref())
+    app.join(ctx, "s1", document_match(), payload, document_ref())
 
   model |> should.be_none
   case effects {

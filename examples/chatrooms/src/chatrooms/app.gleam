@@ -15,10 +15,9 @@
 
 import beryl/group.{type Groups}
 import beryl/socket.{type Effect, type Ref}
+import beryl/socket/router
 import example_helpers/color
 import example_helpers/payload
-import example_helpers/reply
-import example_helpers/router
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
@@ -44,12 +43,13 @@ pub type Ctx {
 pub fn join(
   ctx: Ctx,
   socket_id: String,
-  topic: String,
+  match: router.Match,
   payload: Dynamic,
   ref: Ref,
 ) -> #(Option(Model), List(Effect)) {
-  let room_name = case string.split(topic, ":") {
-    [_, name] -> name
+  let router.Match(topic:, params:) = match
+  let room_name = case params {
+    [name] -> name
     _ -> "unknown"
   }
 
@@ -121,7 +121,7 @@ pub fn update(
       case string.trim(text) {
         "" -> #(
           model,
-          reply.ok(ref, error_with_code(422, "Message cannot be empty")),
+          socket.reply_ok(ref, error_with_code(422, "Message cannot be empty")),
         )
         trimmed -> {
           let msg_payload =
@@ -135,7 +135,7 @@ pub fn update(
             ])
           #(model, [
             socket.Broadcast(topic, "new_msg", msg_payload),
-            ..reply.ok(
+            ..socket.reply_ok(
               ref,
               json.object([
                 #("status", json.string("ok")),
@@ -185,17 +185,19 @@ pub fn namespace(
   put put: fn(model, Dict(String, Model)) -> model,
 ) -> router.Namespace(model) {
   router.stateful(
-    matches: string.starts_with(_, "room:"),
+    pattern: "room:*",
     socket_id:,
     get:,
     put:,
-    join: fn(socket_id, topic, payload, ref) {
-      join(ctx, socket_id, topic, payload, ref)
+    join: fn(socket_id, match, payload, ref) {
+      join(ctx, socket_id, match, payload, ref)
     },
-    message: fn(socket_id, topic, model, event_name, payload, ref) {
-      update(ctx, socket_id, topic, model, event_name, payload, ref)
+    message: fn(socket_id, match, model, event_name, payload, ref) {
+      update(ctx, socket_id, match.topic, model, event_name, payload, ref)
     },
-    closed: fn(socket_id, topic, model) { closed(ctx, socket_id, topic, model) },
+    closed: fn(socket_id, match, model, _reason) {
+      closed(ctx, socket_id, match.topic, model)
+    },
   )
 }
 

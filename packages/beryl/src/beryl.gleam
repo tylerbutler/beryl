@@ -498,8 +498,8 @@ pub opaque type Sockets {
 }
 
 /// Monomorphic closures over a generic runtime actor, captured by
-/// `child_spec`. This is what lets the frame-level transport SPI stay
-/// unparameterized while the runtime holds typed per-socket models.
+/// `child_spec`. `beryl/transport` reads these fields through `app_dispatch`
+/// while the application-facing `Sockets` handle remains opaque.
 @internal
 pub type AppHandle {
   AppHandle(
@@ -1120,67 +1120,6 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
 @internal
 pub fn app_dispatch(sockets: Sockets) -> AppHandle {
   sockets.app
-}
-
-@internal
-pub fn transport_admit_socket(
-  channels: Sockets,
-  owner: Option(process.Pid),
-  socket_id: String,
-  send: fn(String) -> Result(Nil, Nil),
-  send_binary: fn(BitArray) -> Result(Nil, Nil),
-  socket_codec: Option(codec.Codec),
-  seed: socket.ConnectSeed,
-  close: fn() -> Nil,
-) -> Bool {
-  case owner {
-    Some(runtime_owner) ->
-      channels.app.admit_socket(
-        runtime_owner,
-        socket_id,
-        send,
-        send_binary,
-        socket_codec,
-        seed,
-        close,
-      )
-    None -> False
-  }
-}
-
-@internal
-pub fn transport_socket_disconnected(
-  channels: Sockets,
-  socket_id: String,
-) -> Nil {
-  channels.app.socket_disconnected(socket_id)
-}
-
-@internal
-pub fn transport_route_decoded(
-  channels: Sockets,
-  socket_id: String,
-  message: codec.Inbound,
-) -> Nil {
-  channels.app.route_decoded(socket_id, message)
-}
-
-@internal
-pub fn transport_route_decoded_binary(
-  channels: Sockets,
-  socket_id: String,
-  message: codec.Inbound,
-) -> Nil {
-  channels.app.route_decoded_binary(socket_id, message)
-}
-
-@internal
-pub fn transport_route_binary(
-  channels: Sockets,
-  socket_id: String,
-  data: BitArray,
-) -> Nil {
-  channels.app.route_binary(socket_id, data)
 }
 
 /// Broadcast a message to all subscribers of a topic

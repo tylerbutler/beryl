@@ -73,6 +73,9 @@ the generated [API reference](https://beryl.tylerbutler.com/reference/api/);
   socket, closer, codec, and `ConnectSeed` with `admit_socket`.
 - Union-and-router boilerplate scales with channel count: zero for
   single-channel apps (use your types directly), linear otherwise.
+  That cost was later absorbed by `beryl/socket/router`: multi-topic apps
+  register pattern-keyed namespaces, receive wildcard captures in `Match`,
+  and use fail-closed dispatch instead of hand-writing the router.
 - The effects type carried the main join-ack ordering risk. Effects apply
   strictly in list order within one runtime actor turn, so list order is
   wire order. Presence integration is deliberately separate in Lane B:

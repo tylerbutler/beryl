@@ -10,6 +10,7 @@
 import beryl
 import beryl/group
 import beryl/socket.{type Input, type Next}
+import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
@@ -22,7 +23,6 @@ import collab_docs/router as collab_docs_router
 import cursors/app as cursors_app
 import cursors/router as cursors_router
 import envoy
-import example_helpers/router as topic_router
 import example_helpers/session_presence
 import gleam/dict.{type Dict}
 import gleam/erlang/process
