@@ -68,6 +68,20 @@ pub fn start_rejects_invalid_config_test() {
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
 
+pub fn validate_config_rejects_invalid_disabled_topic_pattern_test() {
+  let bad = "room:" <> control_char
+  let result =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_topic_rate(pattern: bad, per_second: 0, burst: 0)
+    |> beryl.validate_config
+
+  case result {
+    Error(beryl.InvalidTopicPattern(pattern, _reason)) ->
+      pattern |> should.equal(bad)
+    _ -> should.fail()
+  }
+}
+
 pub fn child_spec_rejects_invalid_config_test() {
   let result =
     beryl.child_spec(

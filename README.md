@@ -254,9 +254,10 @@ either:
 
 In both cases the transport's receive buffer grows unbounded *before* Beryl's
 frame-size check ever runs. **Beryl's per-IP connection limit
-(`with_max_connections_per_ip`) and per-socket message-rate limit
-(`with_message_rate`) do not mitigate this vector** — the buffer grows within a
-single admitted connection and before any message is emitted to a channel.
+(`with_max_connections_per_ip`), per-connection frame-rate limit
+(`with_frame_rate`), and per-socket message-rate limit (`with_message_rate`)
+do not mitigate this vector** — all run post-assembly, so the buffer grows
+within one admitted connection before dispatch.
 
 To bound transport memory in production you **must** place an edge proxy or
 load balancer (e.g. nginx, HAProxy, Envoy, or your cloud LB) in front of Beryl

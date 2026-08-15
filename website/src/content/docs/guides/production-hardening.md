@@ -20,8 +20,7 @@ Even with no configuration, beryl enforces:
 - **Joined-topic cap**: a socket may join at most 1000 topics
   (`with_max_joined_topics_per_socket`).
 - **Protocol hygiene**: reserved `phx_*` events, reserved `beryl:*` topics,
-  and messages carrying a stale `join_ref` are dropped; heartbeat and leave
-  frames count against the message rate limit when one is configured.
+  and messages carrying a stale `join_ref` are dropped.
 - **Heartbeat eviction**: sockets that stop sending heartbeats are evicted
   and their connections closed (60 s window by default, `with_heartbeat`).
 
@@ -30,6 +29,8 @@ Even with no configuration, beryl enforces:
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  // Shed all complete frames at the transport edge before decode.
+  |> beryl.with_frame_rate(per_second: 150, burst: 300)
   // Cap messages per socket. Size to your chattiest legitimate client:
   // for most interactive apps 50-100 msg/s with 2x burst is generous.
   |> beryl.with_message_rate(per_second: 100, burst: 200)
@@ -43,6 +44,11 @@ let config =
   // single node's process/socket/runtime budget; see below.
   |> beryl.with_max_connections(max_connections: 10_000)
 ```
+
+`with_frame_rate` and `with_message_rate` are independent. Joins consume frame
+and join quota, but not message quota; leaves and heartbeats consume both frame
+and message quota. Configure both, with frame capacity slightly higher for
+protocol traffic and malformed frames that never reach the runtime.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not

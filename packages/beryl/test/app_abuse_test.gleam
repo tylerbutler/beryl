@@ -1,13 +1,20 @@
 //// Abuse controls for app-side dispatch: the join-rate limiter rejects
-//// excess joins, the message-rate limiter sheds flooded messages and
-//// protocol frames, the per-socket topic cap rejects extra joins, and the
+//// excess joins, the message-rate limiter (runtime, post-decode) sheds
+//// flooded messages and protocol frames without ever consuming a token for
+//// joins, the per-socket topic cap rejects extra joins, and the
 //// channel-rate bucket cap bounds the number of distinct topic buckets a
 //// socket may allocate (recovering when a topic closes, isolated per socket).
+//// These tests drive the runtime directly through `transport.route_decoded`
+//// (via the `app_test_helpers` wrappers), the same path any transport uses
+//// after decoding a frame; frame-rate edge admission is covered separately
+//// in `transport_server_rate_test.gleam`.
 
 import app_test_helpers as h
 import beryl
 import beryl/socket.{Join, Message}
+import beryl/transport
 import beryl/wire
+import beryl/wire/codec
 import gleam/erlang/process
 import gleam/int
 import gleam/string
@@ -65,8 +72,8 @@ pub fn message_rate_limit_sheds_flood_test() {
   let frames = h.connect(channels, "s1")
   join_ok(channels, events, frames, "s1", "room:a", "jr-1")
 
-  // Burst of 1: the first message is delivered, the second is shed at the
-  // transport edge.
+  // Burst of 1: the first message is delivered, the second is shed by the
+  // runtime's message-rate limiter (post-decode).
   h.push(channels, "s1", "room:a", "msg", "r-2")
   h.push(channels, "s1", "room:a", "msg", "r-3")
   let assert Ok(Message("room:a", "msg", _, _)) = process.receive(events, 500)
@@ -88,6 +95,81 @@ pub fn heartbeat_flood_is_message_rate_limited_test() {
   let reply = h.recv(frames)
   reply |> string.contains("hb-1") |> should.be_true
   h.recv_none(frames)
+}
+
+pub fn joins_do_not_consume_message_rate_token_test() {
+  // Regression: joins never touch the message-rate bucket. A message-rate
+  // burst of exactly 1 stays fully available after two joins, so it still
+  // gates on the first post-join message rather than being pre-spent.
+  let events = process.new_subject()
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_message_rate(per_second: 1, burst: 1)
+  let channels = h.start_observed(config, events)
+  let frames = h.connect(channels, "s1")
+  join_ok(channels, events, frames, "s1", "room:a", "jr-1")
+  join_ok(channels, events, frames, "s1", "room:b", "jr-2")
+
+  // The single message token is still available: the first message lands.
+  h.push(channels, "s1", "room:a", "msg", "r-1")
+  let assert Ok(Message("room:a", "msg", _, _)) = process.receive(events, 500)
+
+  // The second message spends the token the joins never touched.
+  h.push(channels, "s1", "room:b", "msg", "r-2")
+  process.receive(events, 100) |> should.be_error
+}
+
+pub fn invalid_decoded_event_consumes_message_rate_token_test() {
+  // Regression: a decoded event with a semantically invalid topic/event
+  // still consumes a message-rate token, even though it never reaches the
+  // app. With a burst of 1, the invalid envelope spends the only token, so
+  // a following valid message is shed too.
+  let events = process.new_subject()
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_message_rate(per_second: 1, burst: 1)
+  let channels = h.start_observed(config, events)
+  let frames = h.connect(channels, "s1")
+  join_ok(channels, events, frames, "s1", "room:a", "jr-1")
+
+  // A control-character topic on a Message frame is decoded successfully
+  // but rejected as an invalid topic before dispatch.
+  h.route(
+    channels,
+    "s1",
+    "[null,\"r-bad\",\"room:\\nbad\",\"client_event\",{}]",
+  )
+  // The valid follow-up message finds the bucket already spent.
+  h.push(channels, "s1", "room:a", "msg", "r-good")
+  process.receive(events, 200) |> should.be_error
+}
+
+pub fn direct_route_decoded_enforces_message_rate_test() {
+  // `beryl/transport.route_decoded` is the direct SPI entry a custom
+  // transport calls after decoding a frame itself; it goes through the
+  // same runtime message-rate enforcement as the `app_test_helpers.route`
+  // wrapper used elsewhere in this file (which forwards to it).
+  let events = process.new_subject()
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_message_rate(per_second: 1, burst: 1)
+  let channels = h.start_observed(config, events)
+  let frames = h.connect(channels, "s1")
+  join_ok(channels, events, frames, "s1", "room:a", "jr-1")
+
+  let assert Ok(first) =
+    codec.decode_text(transport.active_codec(channels))(
+      "[null,\"r-1\",\"room:a\",\"msg\",{}]",
+    )
+  transport.route_decoded(channels, "s1", first)
+  let assert Ok(Message("room:a", "msg", _, _)) = process.receive(events, 500)
+
+  let assert Ok(second) =
+    codec.decode_text(transport.active_codec(channels))(
+      "[null,\"r-2\",\"room:a\",\"msg\",{}]",
+    )
+  transport.route_decoded(channels, "s1", second)
+  process.receive(events, 100) |> should.be_error
 }
 
 // ── Per-socket topic cap ─────────────────────────────────────────────────────

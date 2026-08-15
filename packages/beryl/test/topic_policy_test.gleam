@@ -81,3 +81,31 @@ pub fn no_matching_limits_means_unlimited_test() {
   let assert Ok(Message(_, _, _, _)) = process.receive(events, 500)
   let assert Ok(Message(_, _, _, _)) = process.receive(events, 500)
 }
+
+fn non_positive_topic_rate_disables_global_limit(rate: Int) -> Nil {
+  let events = process.new_subject()
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_channel_rate(per_second: 1, burst: 1)
+    |> beryl.with_topic_rate(pattern: "room:*", per_second: rate, burst: 1)
+  let channels = h.start_observed(config, events)
+  let frames = h.connect(channels, "s1")
+  drain_join(channels, events, frames, "s1", "room:a")
+
+  h.push(channels, "s1", "room:a", "msg", "r-2")
+  h.push(channels, "s1", "room:a", "msg", "r-3")
+  h.push(channels, "s1", "room:a", "msg", "r-4")
+
+  let assert Ok(Message("room:a", _, _, _)) = process.receive(events, 500)
+  let assert Ok(Message("room:a", _, _, _)) = process.receive(events, 500)
+  let assert Ok(Message("room:a", _, _, _)) = process.receive(events, 500)
+  Nil
+}
+
+pub fn zero_topic_rate_disables_override_without_allocating_bucket_test() {
+  non_positive_topic_rate_disables_global_limit(0)
+}
+
+pub fn negative_topic_rate_disables_override_without_allocating_bucket_test() {
+  non_positive_topic_rate_disables_global_limit(-1)
+}

@@ -60,7 +60,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 1. **Did the client successfully join?** `Message` events are only delivered after a successful `phx_join`. If join was rejected, messages to the topic get an `unmatched topic` error reply (when they carry a ref) or are dropped.
 
-2. **Rate limits dropping messages.** If `with_message_rate`, `with_channel_rate`, or `with_topic_rate` is configured and the client is sending faster than the limit, excess messages are silently dropped. Check your rate limit values or the `Message rate limited` / `Channel rate limited` warnings in the logs.
+2. **Rate limits dropping traffic.** `with_frame_rate` sheds complete frames at the transport edge before decode. `with_message_rate`, `with_channel_rate`, and `with_topic_rate` apply after decode in the runtime.
 
 3. **Event name mismatch.** The `Message` event carries the raw event string. Verify the client sends the exact event name your `update` matches on.
 
@@ -185,9 +185,11 @@ let logging =
 
 1. **Check burst values.** The `burst` parameter sets the token bucket capacity. If burst is too small, a legitimate burst of messages (e.g., on reconnect) exceeds the limit.
 
-2. **message_rate vs. channel_rate.** `message_rate` is per-socket total; `channel_rate` is per-socket-per-topic. If a client joins many topics, `message_rate` limits across all of them while `channel_rate` limits each topic independently.
+2. **frame_rate vs. message_rate.** These are independent. `frame_rate` counts malformed frames, joins, leaves, heartbeats, and messages before decode; `message_rate` counts decoded non-join envelopes.
 
-3. **No error is sent to the client.** Rate-limited messages are dropped silently (over-rate joins get an error reply). If you need clients to know they were limited, implement application-level feedback in `update`.
+3. **message_rate vs. channel_rate.** `message_rate` is per-socket total; `channel_rate` is per-socket-per-topic.
+
+4. **No error is sent to the client.** Rate-limited traffic is dropped silently (over-rate joins get an error reply). Add application-level feedback if needed.
 
 ---
 

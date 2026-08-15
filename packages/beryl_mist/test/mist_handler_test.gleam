@@ -11,7 +11,10 @@ import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bit_array
 import gleam/bytes_tree
+import gleam/dict
 import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/http/response
 import gleam/int
@@ -82,6 +85,68 @@ fn http_get(port: Int, path: String) -> Result(Int, Nil)
 
 @external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
+
+// Runtime log capture distinguishes edge shedding from runtime shedding.
+type CapturedLog {
+  CapturedLog(message: String, metadata: dict.Dict(String, String))
+}
+
+@external(erlang, "beryl_log_capture", "start")
+fn start_capture(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_log_capture", "stop")
+fn stop_capture() -> Nil
+
+fn captured_decoder() -> decode.Decoder(CapturedLog) {
+  use message <- decode.field(1, decode.string)
+  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
+  decode.success(CapturedLog(message:, metadata:))
+}
+
+fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
+  case decode.run(value, captured_decoder()) {
+    Ok(captured) -> captured
+    Error(_) -> CapturedLog(message: "", metadata: dict.new())
+  }
+}
+
+fn captured_selector() -> process.Selector(CapturedLog) {
+  process.new_selector()
+  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
+}
+
+fn drain_captured(selector: process.Selector(CapturedLog)) -> Nil {
+  case process.selector_receive(selector, 0) {
+    Ok(_) -> drain_captured(selector)
+    Error(Nil) -> Nil
+  }
+}
+
+fn begin_capture() -> process.Selector(CapturedLog) {
+  start_capture(process.self())
+  let selector = captured_selector()
+  drain_captured(selector)
+  selector
+}
+
+fn receive_log(
+  selector: process.Selector(CapturedLog),
+  message: String,
+  attempts: Int,
+) -> Result(CapturedLog, Nil) {
+  case attempts <= 0 {
+    True -> Error(Nil)
+    False ->
+      case process.selector_receive(selector, 500) {
+        Ok(captured) ->
+          case captured.message == message {
+            True -> Ok(captured)
+            False -> receive_log(selector, message, attempts - 1)
+          }
+        Error(Nil) -> Error(Nil)
+      }
+  }
+}
 
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
@@ -380,22 +445,75 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_sheds_message_flood_at_the_edge_test() {
+pub fn handler_sheds_frame_flood_at_the_edge_test() {
   let channels =
     start_app_system(
       beryl.config(wire.phoenix_codec())
-      |> beryl.with_message_rate(per_second: 1, burst: 2),
+      |> beryl.with_frame_rate(per_second: 1, burst: 2),
     )
   let #(port, server_pid) = start_server(channels)
   let assert Ok(client) = connect_websocket(port, "/socket")
 
   // Flood heartbeats: only the burst allowance may produce replies. The
-  // rest are shed by the connection process before reaching the
-  // runtime.
+  // rest are shed by the connection process, pre-decode, before reaching
+  // the runtime — `with_frame_rate` alone accomplishes this with no
+  // `with_message_rate` configured.
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)
   { replies <= 2 } |> should.be_true
   { replies >= 1 } |> should.be_true
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() {
+  // Regression: `with_message_rate` governs the runtime bucket only. A
+  // heartbeat flood still gets shed (the runtime's message limiter catches
+  // it after decode), but the two settings are independent — this proves
+  // `with_message_rate` is not silently doing edge-level frame shedding.
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 1, burst: 2)
+      |> beryl.with_logging(beryl.logging_config(
+        level: beryl.DebugLevel,
+        include_payloads: False,
+      )),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  let selector = begin_capture()
+
+  send_heartbeats(client, 10)
+  let replies = count_replies(client, 0)
+  { replies <= 2 } |> should.be_true
+  { replies >= 1 } |> should.be_true
+  receive_log(selector, "Message rate limited", 20) |> should.be_ok
+  stop_capture()
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_frame_rate_counts_malformed_frames_test() {
+  // Regression: the frame-rate bucket counts every complete inbound frame
+  // before decoding, so a malformed frame consumes a token the same as a
+  // well-formed one — a single-token burst spent on garbage leaves no
+  // token for a following valid heartbeat.
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_frame_rate(per_second: 1, burst: 1),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  let assert Ok(_) = send_text(client, "not-valid-json")
+  let assert Ok(_) =
+    send_text(client, "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]")
+
+  receive_text(client, 200) |> should.equal(Error(Nil))
 
   close(client)
   stop_supervisor(server_pid)

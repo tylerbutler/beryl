@@ -5,7 +5,7 @@
 //// its builders, the upgrade admission pipeline (path matching, origin
 //// policy, `?vsn` negotiation, connection limits, `on_connect`
 //// authentication), per-connection lifecycle choreography, and the inbound
-//// frame pipeline (size caps, rate limiting, decoding, routing).
+//// frame pipeline (size caps, frame-rate limiting, decoding, routing).
 ////
 //// Transport packages such as `beryl_mist` and `beryl_ewe` supply only the
 //// server-specific glue: the WebSocket upgrade call, frame sending, and peer
@@ -419,10 +419,10 @@ pub opaque type ConnectionState {
     /// runtime.
     codec: Codec,
     telemetry: transport.Telemetry,
-    /// Per-connection message-rate limiter (`None` = unlimited).
-    /// Enforced at the edge: frames over the rate are shed before decode,
-    /// so a flooding socket cannot fill the runtime's mailbox.
-    message_limiter: Option(rate_limit.Bucket),
+    /// Per-connection frame-rate limiter (`None` = unlimited).
+    /// Every complete text or binary frame consumes this bucket before decode.
+    /// It is independent of the runtime's decoded-message limiter.
+    frame_limiter: Option(rate_limit.Bucket),
     logger: log.Logger,
   )
 }
@@ -526,7 +526,7 @@ pub fn init_connection(
       max_inbound_frame_bytes: beryl.max_inbound_frame_bytes(sockets),
       codec: option.unwrap(socket_codec, beryl.configured_codec(sockets)),
       telemetry: telemetry,
-      message_limiter: beryl.message_limits(sockets)
+      frame_limiter: beryl.frame_limits(sockets)
         |> option.map(rate_limit.new_bucket),
       logger: internal.logger(logger_name),
     )
@@ -671,7 +671,7 @@ fn admit_frame(
       Stop
     },
   )
-  let #(state, allowed) = take_message_token(state)
+  let #(state, allowed) = take_frame_token(state)
   use <- bool.lazy_guard(when: !allowed, return: fn() {
     emit_frame_stop(state, started_at, bytes, kind, transport.FrameRateLimited)
     Continue(state)
@@ -695,15 +695,15 @@ fn emit_frame_stop(
   )
 }
 
-/// Take a token from the connection's message limiter; always allowed when
-/// no message rate is configured.
-fn take_message_token(state: ConnectionState) -> #(ConnectionState, Bool) {
-  case state.message_limiter {
+/// Take a token from the connection's frame limiter; always allowed when
+/// no frame rate is configured.
+fn take_frame_token(state: ConnectionState) -> #(ConnectionState, Bool) {
+  case state.frame_limiter {
     None -> #(state, True)
     Some(bucket) -> {
       let #(bucket, taken) = rate_limit.take(bucket)
       #(
-        ConnectionState(..state, message_limiter: Some(bucket)),
+        ConnectionState(..state, frame_limiter: Some(bucket)),
         result.is_ok(taken),
       )
     }

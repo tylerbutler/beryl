@@ -11,6 +11,7 @@ import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
 import gleeunit
+import gleeunit/should
 
 pub fn main() {
   gleeunit.main()
@@ -30,7 +31,14 @@ fn text_only_codec() -> codec.Codec {
 }
 
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
-  h.start_observed(beryl.config(text_only_codec()), events)
+  start_with(beryl.config(text_only_codec()), events)
+}
+
+fn start_with(
+  config: beryl.Config,
+  events: process.Subject(socket.Input(Nil)),
+) -> beryl.Sockets {
+  h.start_observed(config, events)
 }
 
 pub fn raw_binary_fans_out_to_joined_topics_in_sorted_order_test() {
@@ -59,4 +67,29 @@ pub fn binary_to_unjoined_socket_is_dropped_test() {
   transport.route_binary(channels, "s1", <<1, 2, 3>>)
 
   let assert Error(Nil) = process.receive(events, 100)
+}
+
+pub fn raw_binary_consumes_one_message_rate_token_test() {
+  // Regression: raw binary delivered as an application `Binary` input
+  // (codec has no binary decoder) consumes the runtime's message-rate
+  // bucket exactly like a decoded text event does.
+  let events = process.new_subject()
+  let channels =
+    start_with(
+      beryl.config(text_only_codec())
+        |> beryl.with_message_rate(per_second: 1, burst: 1),
+      events,
+    )
+  let frames = h.connect(channels, "s1")
+  h.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _join_reply = h.recv(frames)
+  let assert Ok(Join(_, _, _)) = process.receive(events, 500)
+
+  // The first raw binary frame spends the single token and fans out.
+  transport.route_binary(channels, "s1", <<1, 2, 3>>)
+  let assert Ok(Binary("room:a", <<1, 2, 3>>)) = process.receive(events, 500)
+
+  // The second is shed by the runtime's message limiter.
+  transport.route_binary(channels, "s1", <<4, 5, 6>>)
+  process.receive(events, 100) |> should.be_error
 }

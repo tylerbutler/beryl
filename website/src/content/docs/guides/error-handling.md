@@ -129,25 +129,37 @@ Crash descriptions are depth-limited and truncated before logging so client-trig
 
 ## Rate limiting
 
-When a client exceeds a configured rate limit, the offending message is **dropped**. No error is sent to the client (joins are the exception: an over-rate join gets an error reply with `reason: "rate_limited"`). Rate limits are applied at these levels:
+When a client exceeds a configured rate limit, the offending frame or message is **dropped**. No error is sent to the client (joins are the exception: an over-rate join gets an error reply with `reason: "rate_limited"`).
 
-| Limit | Scope | Config function |
-|-------|-------|-----------------|
-| `message_rate` | Per socket, all topics | `beryl.with_message_rate` |
-| `join_rate` | Per socket, join attempts | `beryl.with_join_rate` |
-| `channel_rate` | Per socket+topic | `beryl.with_channel_rate` |
-| `topic_rates` | Per socket+topic for matching patterns | `beryl.with_topic_rate` |
+| Limit | Scope | Enforced | Config function |
+|-------|-------|----------|-----------------|
+| `frame_rate` | Per connection, every complete frame | Transport edge | `beryl.with_frame_rate` |
+| `message_rate` | Per socket, decoded non-join traffic | Runtime | `beryl.with_message_rate` |
+| `join_rate` | Per socket, joins | Runtime | `beryl.with_join_rate` |
+| `channel_rate` | Per socket+topic | Runtime | `beryl.with_channel_rate` |
+| `topic_rates` | First matching pattern | Runtime | `beryl.with_topic_rate` |
+
+The frame and message buckets are independent. Joins consume frame tokens like
+every inbound frame, never message tokens, and use `join_rate` for runtime
+accounting.
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  |> beryl.with_frame_rate(per_second: 150, burst: 300)
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   |> beryl.with_join_rate(per_second: 5, burst: 10)
   |> beryl.with_channel_rate(per_second: 50, burst: 100)
   |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
 ```
 
-`with_topic_rate` overrides the global `channel_rate` for topics matching its pattern — use it to give a fast-streaming namespace (like live cursors) more headroom than chat. If you need to inform the client that it has been rate-limited, implement application-level tracking in `update` and return an explicit `ReplyError`.
+`with_topic_rate` overrides the global `channel_rate` for topics matching its
+pattern — use it to give a fast-streaming namespace (like live cursors) more
+headroom than chat. A non-positive `per_second` makes matching topics unlimited,
+even when a global channel limit is configured, and allocates no per-topic
+bucket. If you need to inform the client that it has been rate-limited,
+implement application-level tracking in `update` and return an explicit
+`ReplyError`.
 
 ## Group errors
 

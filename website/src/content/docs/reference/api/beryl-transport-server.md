@@ -16,7 +16,7 @@ Server-agnostic WebSocket transport infrastructure.
  its builders, the upgrade admission pipeline (path matching, origin
  policy, `?vsn` negotiation, connection limits, `on_connect`
  authentication), per-connection lifecycle choreography, and the inbound
- frame pipeline (size caps, rate limiting, decoding, routing).
+ frame pipeline (size caps, frame-rate limiting, decoding, routing).
 
  Transport packages such as `beryl_mist` and `beryl_ewe` supply only the
  server-specific glue: the WebSocket upgrade call, frame sending, and peer
