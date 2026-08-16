@@ -1,5 +1,5 @@
 //// Showcase: all three example channels on one socket, composed with
-//// `beryl_channels`.
+//// `beryl/channel`.
 ////
 //// Each example's topic namespace is a channel handler here — `cursor:*`,
 //// `room:*`, and `document:` — and the layer routes every socket event
@@ -14,11 +14,10 @@
 //// This app is the multi-topic case the channel layer exists for.
 
 import beryl
+import beryl/channel
 import beryl/group
 import beryl/transport/server
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
 import beryl_mist as mist_transport
 import chatrooms/router as chatrooms_router
 import collab_docs/auth as docs_auth
@@ -26,6 +25,7 @@ import collab_docs/doc_store
 import collab_docs/router as collab_docs_router
 import cursors/router as cursors_router
 import envoy
+import example_helpers/broadcast_hub as hub
 import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/int
@@ -36,7 +36,6 @@ import mist
 import showcase/channels/cursors as cursors_channel
 import showcase/channels/documents as documents_channel
 import showcase/channels/rooms as rooms_channel
-import showcase/hub
 import showcase/router
 
 /// Everything the showcase channels read. Assembled in `main` and passed
@@ -124,7 +123,7 @@ pub fn main() {
     )
 
   let assert Ok(#(channels, beryl_spec)) =
-    beryl_channels.child_spec(config, handlers: handlers(deps))
+    channel.child_spec(config, handlers: handlers(deps))
 
   session_presence.configure(presence_tracker, channels)
   hub.bind(hub, channels)
@@ -164,7 +163,7 @@ pub fn main() {
     envoy.get("BIND_ADDRESS")
     |> result.unwrap("localhost")
 
-  io.println("✨ beryl examples showcase (beryl_channels)")
+  io.println("✨ beryl examples showcase (beryl/channel)")
   io.println("   Listening on " <> interface <> ":" <> int.to_string(port))
   io.println("")
 

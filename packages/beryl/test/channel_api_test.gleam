@@ -2,9 +2,9 @@
 //// typed callback dispatch, ordered actions, close/socket-stop results,
 //// and typed server-side sends through the layer-owned `Sender`.
 
+import beryl/channel
 import beryl/presence
 import beryl/socket
-import beryl_channels/channel
 import gleam/bit_array
 import gleam/dynamic
 import gleam/dynamic/decode

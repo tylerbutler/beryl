@@ -1,10 +1,12 @@
 import beryl
+import beryl/channel
 import beryl/group
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import chatrooms/app as chat_app
 import chatrooms/router
+import example_helpers/broadcast_hub
 import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/http/request
@@ -23,8 +25,9 @@ pub fn main() {
   let assert Ok(_) = group.add(groups, "public", "room:general")
   let assert Ok(_) = group.add(groups, "public", "room:random")
   let assert Ok(_) = group.add(groups, "public", "room:help")
+  let assert Ok(hub) = broadcast_hub.start()
 
-  let ctx = chat_app.Ctx(presence: presence_tracker, groups: groups)
+  let ctx = chat_app.Ctx(presence: presence_tracker, groups: groups, hub: hub)
 
   // Rate limiting matches the previous channel-module deployment. The frame
   // limit covers every pre-decode frame and sits modestly above the decoded
@@ -37,12 +40,9 @@ pub fn main() {
     |> beryl.with_channel_rate(per_second: 10, burst: 20)
 
   let assert Ok(#(channels, beryl_spec)) =
-    beryl.child_spec(
-      config,
-      init: chat_app.chat_rooms_init,
-      update: chat_app.chat_rooms_update(ctx),
-    )
+    channel.child_spec(config, handlers: chat_app.handlers(ctx))
   session_presence.configure(presence_tracker, channels)
+  broadcast_hub.bind(hub, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(beryl_spec)

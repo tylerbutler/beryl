@@ -1,54 +1,43 @@
-//// One Phoenix wire-contract harness, run against two systems.
+//// One Phoenix wire-contract harness, run against two dispatch systems.
 ////
 //// The point of this module is that there is exactly **one** copy of every
-//// moving part a contract scenario needs — the transport server, the wire
-//// codec, the WebSocket client, the frame builders, the frame decoder —
-//// and exactly **two** ways to build the system under test:
+//// moving part a contract scenario needs — the public transport SPI, the
+//// wire codec, the frame builders, the frame decoder — and exactly **two**
+//// ways to build the system under test:
 ////
 ////   * `beryl.child_spec` with a hand-written `update`, and
-////   * `beryl_channels.child_spec` with a handler table.
+////   * `channel.child_spec` with a handler table.
 ////
 //// Both implement the same application contract (see "The contract app"
-//// below), both are served by the same `beryl_mist` transport over a real
-//// WebSocket, and both are configured with the same `beryl.Config`.
+//// below), both are driven through `beryl/transport`, and both are
+//// configured with the same `beryl.Config`.
 //// [`compare`](#compare) runs one scenario body against both and fails if
 //// the two systems are observably different, so no scenario has to be
 //// written twice.
 ////
-//// Nothing here imports a beryl internal module or re-implements any part
-//// of the transport or the codec: the frames on the wire are produced and
-//// consumed by `beryl`, `beryl_mist` and `gluegun`.
+//// Nothing here imports a beryl internal module or re-implements the
+//// runtime or codec. The same public SPI used by transport packages admits
+//// sockets, routes decoded frames, and captures encoded outbound frames.
 
 import beryl
+import beryl/channel
 import beryl/presence
 import beryl/socket
 import beryl/topic
-import beryl/transport/server
+import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import beryl_channels
-import beryl_channels/channel
-import beryl_mist
 import gleam/bit_array
-import gleam/bytes_tree
 import gleam/dynamic
 import gleam/dynamic/decode
-import gleam/erlang/atom
 import gleam/erlang/process
-import gleam/http/response
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/static_supervisor
 import gleeunit/should
-import gluegun/connection
-import gluegun/message
-import gluegun/websocket
-import mist
 import phoenix_channel_fixtures/frame as fixtures
-
-/// The path both systems are served on.
-pub const socket_path = "/socket/websocket"
 
 /// The only topic pattern the contract app answers to.
 pub const room_pattern = "room:*"
@@ -279,9 +268,13 @@ pub type Variant {
   Variant(name: String, start: fn(beryl.Config) -> beryl.Sockets)
 }
 
-/// A started system, served over a real WebSocket on `port`.
+/// A started system driven through the public transport SPI.
 pub type System {
-  System(variant: String, sockets: beryl.Sockets, port: Int)
+  System(
+    variant: String,
+    sockets: beryl.Sockets,
+    next_client_id: process.Subject(Int),
+  )
 }
 
 /// The two systems every scenario is run against.
@@ -302,9 +295,9 @@ pub fn variants() -> List(Variant) {
         as "the raw contract supervision tree starts"
       sockets
     }),
-    Variant(name: "beryl_channels.child_spec", start: fn(config) {
+    Variant(name: "channel.child_spec", start: fn(config) {
       let assert Ok(#(sockets, spec)) =
-        beryl_channels.child_spec(config, handlers: handlers())
+        channel.child_spec(config, handlers: handlers())
         as "the channel contract system builds"
       let assert Ok(_) =
         static_supervisor.new(static_supervisor.OneForOne)
@@ -354,9 +347,10 @@ pub fn compare(
     list.map(variants(), fn(variant) {
       let #(config, context) = setup()
       let sockets = variant.start(config)
-      let #(port, supervisor) = start_transport(sockets)
-      let observed = scenario(System(variant.name, sockets, port), context)
-      stop_transport(supervisor)
+      let next_client_id = process.new_subject()
+      process.send(next_client_id, 0)
+      let observed =
+        scenario(System(variant.name, sockets, next_client_id), context)
       let assert Ok(Nil) = beryl.stop(sockets) as "the system stops cleanly"
       observed
     })
@@ -377,88 +371,60 @@ pub fn compare_with(
   })
 }
 
-fn start_transport(sockets: beryl.Sockets) -> #(Int, process.Pid) {
-  let ports = process.new_subject()
-  let handler = fn(request) {
-    beryl_mist.upgrade(
-      request,
-      sockets,
-      server.default_config(socket_path),
-      fn() {
-        response.new(404)
-        |> response.set_body(mist.Bytes(bytes_tree.new()))
-      },
-    )
-  }
-
-  let assert Ok(started) =
-    handler
-    |> mist.new
-    |> mist.port(0)
-    |> mist.bind("127.0.0.1")
-    |> mist.after_start(fn(port, _scheme, _ip) { process.send(ports, port) })
-    |> mist.start
-    as "the mist server starts on a free port"
-  let assert Ok(port) = process.receive(ports, 1000)
-    as "the mist server reports its port"
-  #(port, started.pid)
-}
-
-fn stop_transport(supervisor: process.Pid) -> Nil {
-  // Unlink first: the test process started this supervisor, so an exit
-  // signal to a linked process would take the test down with it. `shutdown`
-  // (not `kill`) lets the supervisor terminate its acceptors gracefully
-  // instead of dumping a crash report for every one of them.
-  process.unlink(supervisor)
-  let watch = process.monitor(supervisor)
-  process.send_abnormal_exit(supervisor, atom.create("shutdown"))
-  let selector =
-    process.new_selector()
-    |> process.select_specific_monitor(watch, fn(_down) { Nil })
-  let assert Ok(Nil) = process.selector_receive(selector, 5000)
-    as "the transport server terminates"
-  Nil
-}
-
 // ---------------------------------------------------------------------------
-// WebSocket client
+// In-memory transport client
 // ---------------------------------------------------------------------------
 
-/// A connected WebSocket client.
-pub type Client =
-  websocket.Socket
+/// A socket admitted through the public transport SPI.
+pub opaque type Client {
+  Client(
+    sockets: beryl.Sockets,
+    socket_id: String,
+    frames: process.Subject(String),
+  )
+}
 
 /// Connect a client to a running system.
 pub fn connect(system: System) -> Client {
-  let assert Ok(client) =
-    websocket.connect(
-      host: "127.0.0.1",
-      port: system.port,
-      path: socket_path,
-      options: websocket.options()
-        |> websocket.with_timeout(connection.Milliseconds(500)),
-    )
-    as "the websocket client connects"
-  client
+  let assert Ok(client_id) = process.receive(system.next_client_id, 0)
+    as "the client id counter is available"
+  process.send(system.next_client_id, client_id + 1)
+  let socket_id = system.variant <> "-" <> int.to_string(client_id)
+  let frames = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(system.sockets)
+  transport.admit_socket(
+    sockets: system.sockets,
+    owner: owner,
+    socket_id: socket_id,
+    send: fn(frame) {
+      process.send(frames, frame)
+      Ok(Nil)
+    },
+    send_binary: fn(_frame) { Ok(Nil) },
+    codec: None,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.equal(Ok(Nil))
+  Client(sockets: system.sockets, socket_id: socket_id, frames: frames)
 }
 
 /// Send a raw text frame.
 pub fn send(client: Client, raw: String) -> Nil {
-  let assert Ok(Nil) = websocket.send_text(client, raw)
-    as "the text frame is sent"
-  Nil
+  let assert Ok(decoded) =
+    codec.decode_text(transport.active_codec(client.sockets))(raw)
+    as "the text frame is valid"
+  transport.route_decoded(client.sockets, client.socket_id, decoded)
 }
 
 /// Send a raw binary frame.
 pub fn send_binary(client: Client, data: BitArray) -> Nil {
-  let assert Ok(Nil) = websocket.send_binary(client, data)
-    as "the binary frame is sent"
-  Nil
+  transport.route_binary(client.sockets, client.socket_id, data)
 }
 
 /// Receive and decode the next server frame, failing if none arrives.
 pub fn next(client: Client) -> Frame {
-  let assert Ok(message.Text(raw)) = websocket.receive_app_frame(client)
+  let assert Ok(raw) = process.receive(client.frames, 500)
     as "a server text frame arrives"
   decode_frame(raw)
 }
@@ -507,14 +473,13 @@ const fence_ref = "fence"
 
 /// Assert the server sends nothing more.
 pub fn expect_silence(client: Client) -> Nil {
-  websocket.receive_app_frame(client) |> should.be_error
+  process.receive(client.frames, 100) |> should.be_error
   Nil
 }
 
 /// Close a client connection.
 pub fn close(client: Client) -> Nil {
-  let assert Ok(Nil) = websocket.close(client) as "the client closes"
-  Nil
+  transport.socket_disconnected(client.sockets, client.socket_id)
 }
 
 // ---------------------------------------------------------------------------

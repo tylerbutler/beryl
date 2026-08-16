@@ -1,13 +1,13 @@
 //// The `cursor:*` channel: one live cursor room per joined topic.
 ////
 //// The same behavior the standalone cursors server implements with raw
-//// app-side dispatch (`cursors/app`), written as a `beryl_channels`
+//// app-side dispatch (`cursors/app`), written as a `beryl/channel`
 //// channel: the per-topic state is this channel's own private state
 //// instead of an entry in a socket-wide `Dict`, and every effect is an
 //// action on this channel's topic. Session presence remains the
 //// example-local ETS tracker used by the standalone app.
 
-import beryl_channels/channel
+import beryl/channel
 import example_helpers/color
 import example_helpers/payload
 import example_helpers/session_presence

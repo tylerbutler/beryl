@@ -23,7 +23,7 @@ The runtime actor is generic over the app's `model` and `msg` types. `beryl.chil
 
 Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `socket.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
-`beryl_channels.child_spec` uses this same mechanism. Its generic router
+`channel.child_spec` uses this same mechanism. Its generic router
 captures each handler's private state and server-message type in closures,
 while the socket-level message is a sealed, generation-stamped envelope.
 The envelope's topic and generation are checked before the typed value is

@@ -16,7 +16,6 @@ Beryl packages are currently distributed from GitHub, not Hex. Add them to
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
-beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
@@ -24,8 +23,8 @@ beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", p
 gleam deps download
 ```
 
-`beryl` is the core runtime, `beryl_channels` is the recommended channel
-composition layer, and `beryl_mist` is the
+`beryl` includes both raw dispatch and the recommended `beryl/channel`
+composition layer. `beryl_mist` is the
 [Mist](https://hex.pm/packages/mist) WebSocket transport. An
 [Ewe](https://hex.pm/packages/ewe) transport is also available as
 `beryl_ewe` and mirrors the `beryl_mist` API.
@@ -38,8 +37,7 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 import beryl
 import beryl/transport/server
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
+import beryl/channel
 import beryl_mist as mist_transport
 import gleam/erlang/process
 import gleam/otp/static_supervisor
@@ -73,7 +71,7 @@ pub fn main() {
     |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
   let assert Ok(#(channels, spec)) =
-    beryl_channels.child_spec(config, handlers: [room_channel()])
+    channel.child_spec(config, handlers: [room_channel()])
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
@@ -139,7 +137,7 @@ flowchart TD
 | `phoenix_channel_fixtures` | Shared test fixtures for Phoenix channel wire compatibility. |
 | `roost` | Pure Phoenix channel frame constants, encode/decode helpers, and reply helpers. |
 | `beryl` | Server-side runtime with its own pluggable codec; its Phoenix codec is fixture-tested. |
-| `beryl_channels` | Typed channel composition layer built on beryl's public API. |
+| `beryl/channel` | Typed channel composition module in the `beryl` package. |
 | `aquamarine` | Client-side channel runtime that uses Roost for Phoenix compatibility. |
 
 ## Features
@@ -160,9 +158,9 @@ Four runnable demos are included in the `examples/` directory:
 | Example | What it demonstrates |
 |---------|----------------------|
 | [`examples/cursors`](examples/cursors/) | App-side dispatch, topic wildcards, session presence, `BroadcastFrom`, rate limiting |
-| [`examples/chatrooms`](examples/chatrooms/) | App-side dispatch, auth, join rejection, replies, pushes, groups, validation, typing indicators |
-| [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
-| [`examples/showcase`](examples/showcase/) | End-to-end `beryl_channels` composition across every subsystem |
+| [`examples/chatrooms`](examples/chatrooms/) | Channel handlers, auth, join rejection, replies, pushes, groups, validation, typing indicators |
+| [`examples/collab_docs`](examples/collab_docs/) | Channel handlers, client-side CRDT document blocks, segment wildcards, conflict resolution |
+| [`examples/showcase`](examples/showcase/) | End-to-end `beryl/channel` composition across every subsystem |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 

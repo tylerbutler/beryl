@@ -5,7 +5,7 @@ description: Channel layer or raw app-side dispatch — a short decision guide f
 
 beryl has one runtime and two ways to program it.
 
-- **The channel layer** (`beryl_channels`) — register a list of channel
+- **The channel layer** (`beryl/channel`) — register a list of channel
   handlers, one per topic pattern. Each channel keeps private state and a
   private server-side message type, and the layer routes every event to
   the channel that owns the topic. **This is the recommended default.**
@@ -29,14 +29,13 @@ difference is who writes the router.
 | serves exactly one topic family | [Raw dispatch](/guides/dispatch/) |
 | needs total control over routing and effect order | [Raw dispatch](/guides/dispatch/) |
 | wants one model that spans every topic on a socket | [Raw dispatch](/guides/dispatch/) |
-| wants the smallest possible dependency set | [Raw dispatch](/guides/dispatch/) |
 
 ## Side by side
 
 |  | Channel layer | Raw dispatch |
 |---|---|---|
-| Package | `beryl_channels` (adds `beryl`) | `beryl` |
-| Entry point | `beryl_channels.child_spec(config, handlers:)` | `beryl.child_spec(config, init:, update:)` |
+| Package | `beryl` | `beryl` |
+| Entry point | `channel.child_spec(config, handlers:)` | `beryl.child_spec(config, init:, update:)` |
 | Routing | Handler table, first matching pattern wins | Your `update`, pattern matching on topics |
 | Per-topic state | One private value per joined topic, pruned on close | Your own model; you prune it in the `Closed` branch |
 | Server-side messages | One typed `info` type per channel | One typed `msg` type per socket |
@@ -65,8 +64,8 @@ effect list, in a guaranteed order. The channel layer gives that up on
 purpose — its actions are always scoped to the channel's own topic, and
 cross-topic publishing has to go through the `Sockets` handle.
 
-Raw dispatch is also the smaller surface: no extra package, no handler
-table, and no routing rules other than the ones you write.
+Raw dispatch is the smaller API surface: no handler table and no routing
+rules other than the ones you write.
 
 ## Mixing them
 

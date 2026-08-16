@@ -1,41 +1,27 @@
-//// Collaborative-document logic for app-side dispatch.
+//// Collaborative-document channel logic.
 ////
-//// Two layers share one source of truth:
-////
-//// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
-////   composing app (see the showcase example) routes `document:*:*` events
-////   through, storing the returned model per topic.
-//// - A socket-wide `OpenDocuments` model plus `open_documents_init`/
-////   `open_documents_update` wrappers that drive the standalone collab-docs
-////   server through a `beryl.child_spec` runtime, reusing the same per-topic
-////   surface.
-////
-//// Join-level tenant-token auth is preserved: the join payload must carry a
-//// `token` HMAC-signed for the tenant whose document is being joined.
+//// Each `document:<tenant>:<document>` join gets private state. Join-level
+//// tenant-token auth requires a `token` HMAC-signed for the topic's tenant.
 
-import beryl/socket.{type Effect, type JoinRef, type ReplyRef}
-import beryl/socket/router
+import beryl/channel
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
 import example_helpers/payload
-import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/io
 import gleam/json
-import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 
-/// Maximum byte size of a `sync_state` payload's `state` field. Protects
-/// the doc_store actor from unbounded merges.
+/// Maximum byte size of a `sync_state` payload's `state` field.
 const max_state_bytes = 65_536
 
-/// Per-topic state for one socket on a document.
+/// Private state for one joined document.
 pub type Model {
   Model(document_key: String)
 }
 
-/// Dependencies the document logic needs: the doc store and the shared
-/// HMAC secret for tenant token verification.
+/// Dependencies the document channel needs.
 pub type Ctx {
   Ctx(store: Store, secret: BitArray)
 }
@@ -46,200 +32,117 @@ pub fn build_document_key(tenant: String, document: String) -> String {
   |> json.to_string
 }
 
-/// Handle a join for a `document:*:*` topic. Returns `None` when rejected.
-/// `match.params` carries the tenant and document captured by the
-/// pattern's wildcards.
-pub fn join(
-  ctx: Ctx,
-  _socket_id: String,
-  match: router.Match,
-  payload: Dynamic,
-  ref: JoinRef,
-) -> #(Option(Model), List(Effect)) {
-  case match.params {
-    [tenant, document] ->
-      // Topic-level auth: the join payload must carry a `token`
-      // HMAC-signed for the tenant whose document is being joined.
-      case payload.string_field(payload, "token") {
-        Error(_) -> #(None, [
-          socket.RejectJoin(ref, error_payload("missing_token")),
-        ])
-        Ok(token) ->
-          case auth.verify_tenant(token, tenant, ctx.secret) {
-            Error(_) -> #(None, [
-              socket.RejectJoin(ref, error_payload("unauthorized")),
-            ])
-            Ok(Nil) -> {
-              let document_key = build_document_key(tenant, document)
-              let state = case doc_store.get_state(ctx.store, document_key) {
-                Ok(encoded) -> json.string(encoded)
-                Error(doc_store.NotFound) -> json.null()
-                Error(doc_store.Timeout) -> {
-                  io.println_error(
-                    "[collab_docs.app] doc_store.get_state timed out for key="
-                    <> document_key,
-                  )
-                  json.null()
-                }
-              }
-              let reply =
-                json.object([
-                  #("tenant", json.string(tenant)),
-                  #("document", json.string(document)),
-                  #("state", state),
-                ])
-              #(Some(Model(document_key: document_key)), [
-                socket.AcceptJoin(ref, Some(reply)),
-              ])
-            }
-          }
-      }
+/// Build the collaborative-document channel.
+pub fn handler(ctx: Ctx) -> channel.Handler {
+  channel.handler("document:*", fn(context) {
+    case authorize_join(ctx, context.params, context.payload) {
+      Error(reason) -> channel.reject(reason)
+      Ok(#(model, reply)) ->
+        channel.accept(model, callbacks(ctx))
+        |> channel.with_reply(reply)
+    }
+  })
+}
 
-    _ -> #(None, [socket.RejectJoin(ref, error_payload("invalid_topic"))])
+/// Validate one document join and return its initial state and reply.
+///
+/// The handler claims the whole `document:` prefix so malformed document
+/// topics receive the same `invalid_topic` reason as any other unowned topic.
+pub fn authorize_join(
+  ctx: Ctx,
+  params: List(String),
+  raw: Dynamic,
+) -> Result(#(Model, json.Json), json.Json) {
+  case params {
+    [suffix] ->
+      case string.split(suffix, ":") {
+        [tenant, document] -> authorize_tenant(ctx, tenant, document, raw)
+        _ -> Error(error_payload("invalid_topic"))
+      }
+    _ -> Error(error_payload("invalid_topic"))
   }
 }
 
-/// Handle a client message on a joined document topic.
-pub fn update(
+fn authorize_tenant(
   ctx: Ctx,
-  _socket_id: String,
-  topic_name: String,
-  model: Model,
-  event_name: String,
-  payload: Dynamic,
-  ref: Option(ReplyRef),
-) -> #(Model, List(Effect)) {
-  case event_name {
-    "sync_state" -> sync_state(ctx, topic_name, model, payload, ref)
-    _ -> #(model, reply_error("unknown_event", ref))
-  }
-}
-
-/// Handle the topic closing. Documents keep no per-socket server state
-/// beyond the model itself, so there is nothing to clean up.
-pub fn closed(
-  _ctx: Ctx,
-  _socket_id: String,
-  _topic_name: String,
-  _model: Model,
-) -> List(Effect) {
-  []
-}
-
-// --- Socket-wide model and dispatch ---
-
-/// Socket-wide model for the standalone collab_docs server: the socket id
-/// plus one per-topic `Model` per joined `document:*:*` topic. The app owns
-/// this type; `beryl/socket/router` only decides which namespace an input
-/// belongs to.
-pub type OpenDocuments {
-  OpenDocuments(socket_id: String, topics: Dict(String, Model))
-}
-
-/// `init` for the `beryl.child_spec` runtime.
-pub fn open_documents_init(
-  info: socket.ConnectInfo(Nil),
-) -> #(OpenDocuments, List(Effect)) {
-  #(OpenDocuments(socket_id: info.socket_id, topics: dict.new()), [])
-}
-
-/// Adapt the `document:*:*` handlers to the socket-wide model. A
-/// join's model is committed only when the join is accepted.
-fn namespace(ctx: Ctx) -> router.Namespace(OpenDocuments) {
-  router.namespace(
-    pattern: "document:*:*",
-    join: fn(state: OpenDocuments, match: router.Match, payload, ref) {
-      case join(ctx, state.socket_id, match, payload, ref) {
-        #(Some(model), effects) -> #(
-          OpenDocuments(
-            ..state,
-            topics: dict.insert(state.topics, match.topic, model),
-          ),
-          effects,
-        )
-        #(None, effects) -> #(state, effects)
-      }
-    },
-    message: fn(
-      state: OpenDocuments,
-      match: router.Match,
-      event_name,
-      payload,
-      ref,
-    ) {
-      case dict.get(state.topics, match.topic) {
-        Ok(model) -> {
-          let #(model, effects) =
-            update(
-              ctx,
-              state.socket_id,
-              match.topic,
-              model,
-              event_name,
-              payload,
-              ref,
-            )
-          #(
-            OpenDocuments(
-              ..state,
-              topics: dict.insert(state.topics, match.topic, model),
-            ),
-            effects,
-          )
-        }
-        Error(Nil) -> #(state, [])
-      }
-    },
-    closed: fn(state: OpenDocuments, match: router.Match, _reason) {
-      #(
-        OpenDocuments(..state, topics: dict.delete(state.topics, match.topic)),
-        [],
-      )
-    },
+  tenant: String,
+  document: String,
+  raw: Dynamic,
+) -> Result(#(Model, json.Json), json.Json) {
+  use token <- result.try(
+    payload.string_field(raw, "token")
+    |> result.map_error(fn(_) { error_payload("missing_token") }),
   )
+  use _ <- result.try(
+    auth.verify_tenant(token, tenant, ctx.secret)
+    |> result.map_error(fn(_) { error_payload("unauthorized") }),
+  )
+
+  let document_key = build_document_key(tenant, document)
+  Ok(#(
+    Model(document_key: document_key),
+    json.object([
+      #("tenant", json.string(tenant)),
+      #("document", json.string(document)),
+      #("state", stored_state(ctx, document_key)),
+    ]),
+  ))
 }
 
-/// Build the socket-wide update once, sharing the app-owned model.
-pub fn open_documents_update(
-  ctx: Ctx,
-) -> fn(OpenDocuments, socket.Input(Nil)) -> socket.Next(OpenDocuments) {
-  let namespaces = [namespace(ctx)]
-  fn(model, input) {
-    router.route(namespaces, error_payload("invalid_topic"), model, input)
-  }
+fn callbacks(ctx: Ctx) -> channel.Callbacks(Model, Nil) {
+  channel.callbacks()
+  |> channel.on_message(fn(model, message) {
+    case message.event {
+      "sync_state" -> sync_state(ctx, model, message)
+      _ ->
+        channel.next(model, [
+          channel.reply_ok(message.reply, error_payload("unknown_event")),
+        ])
+    }
+  })
 }
 
 fn sync_state(
   ctx: Ctx,
-  topic_name: String,
   model: Model,
-  payload: Dynamic,
-  ref: Option(ReplyRef),
-) -> #(Model, List(Effect)) {
-  case payload.string_field(payload, "state") {
+  message: channel.Message,
+) -> channel.Next(Model) {
+  case payload.string_field(message.payload, "state") {
+    Error(_) ->
+      channel.next(model, [
+        channel.reply_ok(message.reply, error_payload("invalid_state")),
+      ])
     Ok(state) ->
       case string.byte_size(state) > max_state_bytes {
-        True -> #(model, reply_error("state_too_large", ref))
+        True ->
+          channel.next(model, [
+            channel.reply_ok(message.reply, error_payload("state_too_large")),
+          ])
         False -> {
           doc_store.merge_state(ctx.store, model.document_key, state)
-          #(model, [
-            socket.BroadcastFrom(
-              topic_name,
+          channel.next(model, [
+            channel.broadcast_from(
               "doc_state",
               json.object([#("state", json.string(state))]),
             ),
           ])
         }
       }
-
-    Error(_) -> #(model, reply_error("invalid_state", ref))
   }
 }
 
-/// The channel-module API sent state errors as an ok-status reply with an
-/// error payload (and dropped them without a ref); mirror that.
-fn reply_error(code: String, ref: Option(ReplyRef)) -> List(Effect) {
-  socket.reply_ok(ref, error_payload(code))
+fn stored_state(ctx: Ctx, document_key: String) -> json.Json {
+  case doc_store.get_state(ctx.store, document_key) {
+    Ok(encoded) -> json.string(encoded)
+    Error(doc_store.NotFound) -> json.null()
+    Error(doc_store.Timeout) -> {
+      io.println_error(
+        "[collab_docs.app] doc_store.get_state timed out for key="
+        <> document_key,
+      )
+      json.null()
+    }
+  }
 }
 
 fn error_payload(code: String) -> json.Json {

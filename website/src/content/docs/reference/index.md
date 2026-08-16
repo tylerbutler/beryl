@@ -12,7 +12,7 @@ metadata and hosted on this site. Beryl packages are currently distributed
 from GitHub, not Hex:
 
 **[beryl](/reference/api/beryl/)** ·
-**[beryl_channels](/reference/api/beryl_channels/)**
+**[beryl/channel](/reference/api/beryl-channel/)**
 
 This page provides a module map, broadcast cheatsheet, Phoenix wire protocol reference, and client compatibility notes.
 
@@ -23,8 +23,7 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | Module | What it does | When to use it |
 |---|---|---|
 | `beryl` | Top-level app-side dispatch lifecycle, config builders, and broadcast helpers | Building/stopping a Beryl socket system |
-| `beryl_channels` | Handler-table validation and supervised channel-system entry point | Recommended programming layer for multi-channel apps |
-| `beryl_channels/channel` | Typed handlers, callbacks, senders, actions, and lifecycle results | Defining one topic-pattern channel |
+| `beryl/channel` | Handler validation, supervised startup, typed handlers, callbacks, senders, actions, and lifecycle results | Recommended programming layer for multi-channel apps |
 | `beryl/socket` | `Input`, `Next`, `Effect`, `ConnectInfo`, and `Sender` types | Writing your app's `init` and `update` functions |
 | `beryl/bridge` | Forward an external OTP actor's message stream into `socket.Info(...)` | Bridging domain actors to one socket without hand-rolled forwarders |
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
@@ -154,7 +153,7 @@ beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**.
 - **Minor version bumps** (`0.x → 0.x+1`) may include breaking changes to the public API.
 - **Patch version bumps** (`0.x.y → 0.x.y+1`) fix bugs without intentional breakage.
 - Public API is defined as the exports of the modules listed in the module map
-  above, including the two public `beryl_channels` modules.
+  above, including `beryl/channel`.
 - The internal modules `beryl/connection_limit`, `beryl/internal`, `beryl/log`, `beryl/rate_limit`, and `beryl/runtime` are intentionally hidden from downstream packages. Transports integrate through the public `beryl/transport` SPI; `beryl_mist` is the supported Mist WebSocket transport.
 
 Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) before upgrading to a new minor version.

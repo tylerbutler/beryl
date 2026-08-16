@@ -221,6 +221,7 @@ pub type Effect {
   KickTopic(topic: String)
 }
 
+// nolint: unused_exports -- public socket helper used by downstream applications
 /// A `ReplyOk` when the client supplied a ref; no effects otherwise.
 ///
 /// `Message` inputs carry `Option(ReplyRef)` (refless messages expect no

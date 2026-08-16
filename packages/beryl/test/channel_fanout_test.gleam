@@ -8,9 +8,9 @@
 //// what the other socket actually receives.
 
 import beryl
+import beryl/channel
 import beryl/wire
-import beryl_channels/channel
-import dispatch_helper as helper
+import channel_dispatch_helper as helper
 import gleam/json
 import gleam/string
 import gleeunit/should

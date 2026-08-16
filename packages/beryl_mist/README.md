@@ -18,7 +18,7 @@ beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path =
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
-Use the same git ref for beryl, beryl_mist, and any channel-layer package.
+Use the same git ref for beryl and beryl_mist.
 See the [installation guide](https://beryl.tylerbutler.com/installation/) for
 release-tag guidance.
 

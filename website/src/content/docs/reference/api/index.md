@@ -9,7 +9,7 @@ description: Generated API reference from Gleam docs metadata.
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-This reference is generated from Gleam's docs metadata for `beryl`, `beryl_channels`, `beryl_ewe`, and `beryl_mist`.
+This reference is generated from Gleam's docs metadata for `beryl`, `beryl_ewe`, and `beryl_mist`.
 
 :::note[Generated content]
 Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference. Beryl packages are currently distributed from GitHub, not Hex.
@@ -21,13 +21,13 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 |---|---|
 | [`beryl`](/reference/api/beryl/) | Beryl - Type-safe real-time communication |
 | [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket via |
+| [`beryl/channel`](/reference/api/beryl-channel/) | The channel composition surface: a channel is a topic pattern paired |
 | [`beryl/error`](/reference/api/beryl-error/) | Shared beryl-owned error helpers. |
 | [`beryl/group`](/reference/api/beryl-group/) | Channel Groups - Named collections of topics for multi-topic broadcasting |
 | [`beryl/presence`](/reference/api/beryl-presence/) | Presence - Distributed presence tracking backed by a CRDT |
 | [`beryl/presence/wire`](/reference/api/beryl-presence-wire/) | Phoenix-compatible wire encoding for presence diffs. |
 | [`beryl/pubsub`](/reference/api/beryl-pubsub/) | PubSub - Distributed publish/subscribe using Erlang pg |
 | [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.child_spec`. |
-| [`beryl/socket/router`](/reference/api/beryl-socket-router/) | Topic-namespace routing for a hand-written `update` function. |
 | [`beryl/stats`](/reference/api/beryl-stats/) | Local runtime statistics. |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Pattern matching for topic routing. |
 | [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
@@ -35,13 +35,6 @@ Pages under `/reference/api/` are generated from Gleam's docs metadata and refle
 | [`beryl/transport/server`](/reference/api/beryl-transport-server/) | Server-agnostic WebSocket transport infrastructure. |
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
-
-## `beryl_channels` `0.0.1`
-
-| Module | Description |
-|---|---|
-| [`beryl_channels`](/reference/api/beryl_channels/) | Composable channels for beryl real-time sockets. |
-| [`beryl_channels/channel`](/reference/api/beryl_channels-channel/) | The channel composition surface: a channel is a topic pattern paired |
 
 ## `beryl_ewe` `0.1.1`
 

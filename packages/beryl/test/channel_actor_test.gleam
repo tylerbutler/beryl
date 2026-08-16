@@ -5,15 +5,15 @@
 //// the process mailbox that its own selector does not match.
 ////
 //// The router below is a faithful miniature of the real adapter in
-//// `beryl_channels/internal/router`: its actor message type is the
+//// `beryl/channel/internal/router`: its actor message type is the
 //// socket-level envelope, it owns the live channel and its generation,
 //// and every server-side send has to make the round trip out through
 //// `channel.notify` and back in as an envelope before `on_info` can run.
 //// It pins the seam in isolation; `dispatch_test` pins the same
 //// behaviour through a real running system.
 
+import beryl/channel
 import beryl/socket
-import beryl_channels/channel
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/int

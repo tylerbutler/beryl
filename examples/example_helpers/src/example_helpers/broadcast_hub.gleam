@@ -1,6 +1,6 @@
 //// A late-bound handle to the running socket system.
 ////
-//// A `beryl_channels` channel acts on its **own** topic: its actions are
+//// A `beryl/channel` handler acts on its **own** topic: its actions are
 //// scoped to the topic it is joined to, at join time, on every message,
 //// and again as it terminates. One showcase announcement falls outside
 //// that scope — the chat channel publishes room membership changes on the
@@ -22,7 +22,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 
-/// A handle to the showcase's broadcast hub.
+/// A handle to the application's broadcast hub.
 pub opaque type Hub {
   Hub(subject: Subject(Message))
 }
@@ -76,7 +76,7 @@ fn handle_message(
       // Only reachable if a channel ran before `bind`, which startup order
       // rules out — surface it rather than dropping it silently.
       io.println_error(
-        "[showcase.hub] dropped "
+        "[broadcast_hub] dropped "
         <> event
         <> " for "
         <> topic

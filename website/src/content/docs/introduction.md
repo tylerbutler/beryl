@@ -16,7 +16,7 @@ Building real-time features — like chat rooms, live cursors, collaborative
 editing, or presence indicators — requires coordinating state across many
 connected clients. beryl gives you:
 
-- **Channels** — Register one handler per topic pattern; each channel keeps private, typed state and its own server-side message type (`beryl_channels`)
+- **Channels** — Register one handler per topic pattern; each channel keeps private, typed state and its own server-side message type (`beryl/channel`)
 - **App-side dispatch** — Or route every socket event yourself in one typed `update` function, with pattern matching such as `"room:*"`
 - **Presence** — Distributed tracking of connected users backed by a conflict-free CRDT
 - **PubSub** — Distributed publish/subscribe built on Erlang's `pg` process groups
@@ -27,14 +27,14 @@ connected clients. beryl gives you:
 
 beryl ships one runtime and two ways to program it.
 
-The **channel layer** (`beryl_channels`) is the recommended default. You
+The **channel layer** (`beryl/channel`) is the recommended default. You
 register a list of channel handlers — a topic pattern plus a typed `join`
 callback — and the layer routes every join, message, binary frame, typed
 server-side message, and close to the channel that owns the topic:
 
 ```gleam
 let assert Ok(#(sockets, spec)) =
-  beryl_channels.child_spec(
+  channel.child_spec(
     beryl.config(wire.phoenix_codec()),
     handlers: [lobby.channel(), rooms.channel(), documents.channel()],
   )
@@ -115,10 +115,9 @@ and leaves automatically, even across distributed Erlang nodes.
 The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`,
 `gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres` — all standard
 BEAM ecosystem packages. A WebSocket transport such as `beryl_mist` adds `mist`
-and `gleam_http`, but the core library pulls in neither. `beryl_channels`
-depends on `beryl` and the same shared Gleam libraries beryl already uses, so
-it adds no new transitive dependencies of its own. No external message brokers
-or databases required.
+and `gleam_http`. `beryl/channel` is part of the core package, so choosing the
+channel model adds no dependency. No external message broker or database is
+required.
 
 ### Phoenix wire protocol compatibility
 

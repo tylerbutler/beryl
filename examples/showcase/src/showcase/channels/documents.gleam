@@ -2,7 +2,7 @@
 ////
 //// The same behavior the standalone collab_docs server implements with
 //// raw app-side dispatch (`collab_docs/app`), written as a
-//// `beryl_channels` channel. Join-level tenant-token auth is preserved:
+//// `beryl/channel` handler. Join-level tenant-token auth is preserved:
 //// the join payload must carry a `token` HMAC-signed for the tenant whose
 //// document is being joined.
 ////
@@ -10,7 +10,7 @@
 //// and answers a topic that is not `document:<tenant>:<document>` itself
 //// with `invalid_topic`.
 
-import beryl_channels/channel
+import beryl/channel
 import collab_docs/app as docs_app
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}

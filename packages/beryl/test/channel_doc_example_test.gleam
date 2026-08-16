@@ -1,11 +1,10 @@
-//// Compiles the module-doc examples from `beryl_channels` and
-//// `beryl_channels/channel` so the documented shapes cannot drift from
+//// Compiles the module-doc examples from `beryl/channel` and
+//// `beryl/channel` so the documented shapes cannot drift from
 //// the real API.
 
 import beryl
+import beryl/channel
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
 import gleam/json
 import gleam/otp/static_supervisor
 import gleeunit
@@ -50,16 +49,13 @@ pub fn documented_example_compiles_and_joins_test() {
   room() |> channel.pattern |> should.equal("room:*")
 }
 
-/// The `beryl_channels` module-doc entry-point example, compiled and run
+/// The `beryl/channel` module-doc entry-point example, compiled and run
 /// so the documented shape cannot drift from the real API either.
 pub fn documented_child_spec_example_compiles_and_starts_test() {
   let handlers = [room()]
 
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(
-      beryl.config(wire.phoenix_codec()),
-      handlers: handlers,
-    )
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: handlers)
     as "the documented handler table builds"
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)

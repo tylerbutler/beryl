@@ -19,7 +19,7 @@ Browser ──WebSocket──► beryl ◄──HTTP POST /internal/publish─�
 ```
 
 The `beryl.Sockets` handle in this guide can come from either layer —
-`beryl.child_spec` and `beryl_channels.child_spec` return the same handle
+`beryl.child_spec` and `channel.child_spec` return the same handle
 type, and `beryl.broadcast` behaves identically for both.
 
 ## The internal publish endpoint

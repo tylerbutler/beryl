@@ -27,7 +27,7 @@ runnable application with HTML, static assets, and end-to-end tests, see the
 
 - Gleam >= 1.18 project targeting **Erlang** (`gleam new my_app`)
 - The Git dependencies from the [Installation guide](/installation/) added to
-  `gleam.toml` (`beryl`, `beryl_channels`, and `beryl_mist`)
+  `gleam.toml` (`beryl` and `beryl_mist`)
 
 ## 1. Write a channel
 
@@ -38,7 +38,7 @@ own private state.
 ```gleam
 // src/my_app/room_channel.gleam
 import beryl/wire
-import beryl_channels/channel
+import beryl/channel
 import gleam/json
 
 /// This channel's private state — one value per joined topic.
@@ -127,8 +127,7 @@ Mist transport. That handle is an ordinary core handle — the same one
 import beryl
 import beryl/transport/server
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
+import beryl/channel
 import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/erlang/process
@@ -149,7 +148,7 @@ pub fn main() {
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(config, handlers: handlers())
+    channel.child_spec(config, handlers: handlers())
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
@@ -337,7 +336,7 @@ pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
 
 Build it with
 `beryl.child_spec(config, init: room_app.init, update: room_app.update)`
-instead of `beryl_channels.child_spec`; add the returned child specification
+instead of `channel.child_spec`; add the returned child specification
 to the same supervisor. Everything else — transport wiring, client code, and
 wire format — is identical. A `Join` that reaches the end of the `update` turn
 unanswered is rejected automatically, so joins fail closed here too.

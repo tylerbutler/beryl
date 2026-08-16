@@ -4,7 +4,7 @@
 //// ## Shape
 ////
 //// ```gleam
-//// import beryl_channels/channel
+//// import beryl/channel
 //// import gleam/json
 ////
 //// pub type Note {
@@ -72,14 +72,111 @@
 //// closes the topic, after the channel instance is gone. Its closing-phase
 //// action type permits only operations that remain meaningful then.
 
+import beryl
 import beryl/presence
 import beryl/socket
+import beryl/topic
+import gleam/dict
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/erlang/reference
 import gleam/json
 import gleam/list
 import gleam/option
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
+import gleam/result
+import gleam/set
+
+// ---------------------------------------------------------------------------
+// Supervised channel system
+// ---------------------------------------------------------------------------
+
+/// Why building a channel-system child specification failed.
+///
+/// Handler patterns are validated before the core configuration. Validation
+/// checks every pattern's syntax in registration order, then checks exact
+/// duplicates in registration order. Overlapping non-identical patterns are
+/// allowed because routing takes the first match.
+pub type ChildSpecError {
+  /// A handler used an invalid topic pattern.
+  InvalidPattern(pattern: String, reason: topic.TopicError)
+  /// Two handlers registered the same pattern string.
+  DuplicatePattern(pattern: String)
+  /// The core `beryl.Config` failed eager validation.
+  InvalidConfig(reason: beryl.ConfigError)
+}
+
+/// Build a channel system's supervision child specification for embedding
+/// in an application's supervision tree.
+///
+/// Like `beryl.child_spec`, this reports only what can be detected before
+/// the tree is started: the handler table is validated first, then the
+/// `beryl.Config`. The returned `beryl.Sockets` is usable as soon as the
+/// owning tree is running.
+///
+/// ## Example
+///
+/// ```gleam
+/// let assert Ok(#(sockets, spec)) =
+///   channel.child_spec(
+///     beryl.config(wire.phoenix_codec()),
+///     handlers: [rooms.channel()],
+///   )
+///
+/// let assert Ok(_root) =
+///   static_supervisor.new(static_supervisor.OneForOne)
+///   |> static_supervisor.add(spec)
+///   |> static_supervisor.start()
+/// ```
+pub fn child_spec(
+  config: beryl.Config,
+  handlers handlers: List(Handler),
+) -> Result(
+  #(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ChildSpecError,
+) {
+  use table <- result.try(compile(handlers))
+
+  beryl.child_spec(config, init: initialise(table), update: update)
+  |> result.map_error(InvalidConfig)
+}
+
+fn compile(
+  handlers: List(Handler),
+) -> Result(List(Registered), ChildSpecError) {
+  let patterns = list.map(handlers, pattern)
+  use _ <- result.try(list.try_each(patterns, validate_pattern))
+  use _ <- result.try(check_duplicates(patterns, set.new()))
+  Ok(table(handlers))
+}
+
+fn initialise(
+  table: List(Registered),
+) -> fn(socket.ConnectInfo(Envelope)) -> #(Router, List(socket.Effect)) {
+  fn(info) { init(table, info) }
+}
+
+fn validate_pattern(pattern: String) -> Result(String, ChildSpecError) {
+  topic.validate_pattern(pattern)
+  |> result.map_error(fn(error) {
+    InvalidPattern(pattern: pattern, reason: error)
+  })
+}
+
+fn check_duplicates(
+  patterns: List(String),
+  seen: set.Set(String),
+) -> Result(Nil, ChildSpecError) {
+  case patterns {
+    [] -> Ok(Nil)
+    [pattern, ..rest] ->
+      case set.contains(seen, pattern) {
+        True -> Error(DuplicatePattern(pattern))
+        False -> check_duplicates(rest, set.insert(seen, pattern))
+      }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Server-side sends
@@ -178,7 +275,7 @@ pub type Message {
 }
 
 // ---------------------------------------------------------------------------
-// Actions
+// Action builders
 // ---------------------------------------------------------------------------
 
 /// Marker for actions valid while a channel is active.
@@ -513,7 +610,7 @@ pub fn with_reply(
 /// [`notify`](#notify) schedules a *later* input, while actions preserve
 /// their declared position immediately after the join acknowledgment.
 ///
-/// Actions already attached stay ahead of the ones added here. A refused
+/// Existing actions stay ahead of the ones added here. A refused
 /// join has no topic to act on, so this returns [`reject`](#reject)
 /// results unchanged.
 pub fn with_actions(
@@ -553,7 +650,7 @@ pub opaque type Handler {
 ///
 /// `pattern` uses beryl's topic pattern syntax (`"room:lobby"`,
 /// `"room:*"`, `"document:*:ops"`, `"*"`) and is validated when the
-/// handler table is used by `beryl_channels.child_spec`.
+/// handler table is used by `channel.child_spec`.
 ///
 /// `join` receives one [`JoinContext`](#joincontext) containing connection
 /// data, the concrete topic, wildcard captures, and the payload.
@@ -802,5 +899,310 @@ fn effect(topic: String, action: Action(phase)) -> List(socket.Effect) {
     BroadcastPresenceAction(event: event, encode: encode) -> [
       socket.BroadcastPresence(topic: topic, event: event, encode: encode),
     ]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Private socket router
+// ---------------------------------------------------------------------------
+
+/// The socket-level message type of a channel system.
+///
+/// It carries no channel state and no typed `info` value: a `Mail` is a
+/// sealed thunk that only the join which created it can open, and the
+/// topic/generation pair says which join that is.
+type Envelope {
+  ChannelMail(topic: String, generation: Int, mail: Mail)
+}
+
+/// A handler with its topic pattern parsed once, at table build time.
+type Registered {
+  Registered(pattern: topic.TopicPattern, handler: Handler)
+}
+
+/// One live channel instance and the generation it was opened at.
+type Instance {
+  Instance(generation: Int, channel: LiveChannel)
+}
+
+/// The per-socket model.
+type Router {
+  Router(
+    handlers: List(Registered),
+    socket_id: String,
+    seed: socket.ConnectSeed,
+    self: socket.Sender(Envelope),
+    /// The last generation handed out; strictly increasing, never reused.
+    generation: Int,
+    /// The topics this socket currently has an accepted instance on.
+    live: dict.Dict(String, Instance),
+  )
+}
+
+/// Parse every handler's pattern once, preserving registration order —
+/// routing takes the first match, so order is the routing rule.
+fn table(handlers: List(Handler)) -> List(Registered) {
+  list.map(handlers, fn(handler) {
+    Registered(pattern: topic.parse_pattern(pattern(handler)), handler: handler)
+  })
+}
+
+/// The `init` half of the pair: a socket starts with no joined channels.
+fn init(
+  handlers: List(Registered),
+  info: socket.ConnectInfo(Envelope),
+) -> #(Router, List(socket.Effect)) {
+  let router =
+    Router(
+      handlers: handlers,
+      socket_id: info.socket_id,
+      seed: info.seed,
+      self: info.self,
+      generation: 0,
+      live: dict.new(),
+    )
+  #(router, [])
+}
+
+/// The `update` half of the pair.
+fn update(
+  router: Router,
+  input: socket.Input(Envelope),
+) -> socket.Next(Router) {
+  case input {
+    socket.Join(topic: name, payload: payload, ref: ref) ->
+      join(router, name, payload, ref)
+
+    socket.Message(topic: name, event: event, payload: payload, ref: ref) ->
+      on_live(router, name, fn(instance) {
+        instance.channel.on_message(Message(
+          topic: name,
+          event: event,
+          payload: payload,
+          reply: ref,
+        ))
+      })
+
+    socket.Binary(topic: name, data: data) ->
+      on_live(router, name, fn(instance) { instance.channel.on_binary(data) })
+
+    socket.Closed(topic: name, reason: reason) -> closed(router, name, reason)
+
+    socket.Info(ChannelMail(topic: name, generation: generation, mail: mail)) ->
+      deliver(router, name, generation, mail)
+  }
+}
+
+// --- joining ---------------------------------------------------------------
+
+/// First match wins. An unmatched topic is refused explicitly rather than
+/// left unanswered, so the client always learns why.
+fn join(
+  router: Router,
+  name: String,
+  payload: dynamic.Dynamic,
+  ref: socket.JoinRef,
+) -> socket.Next(Router) {
+  case select(router.handlers, name) {
+    Error(Nil) ->
+      socket.Next(router, [socket.RejectJoin(ref, unmatched_topic())])
+    Ok(#(handler, params)) ->
+      open_join(router, handler, name, params, payload, ref)
+  }
+}
+
+fn select(
+  handlers: List(Registered),
+  name: String,
+) -> Result(#(Handler, List(String)), Nil) {
+  case handlers {
+    [] -> Error(Nil)
+    [registered, ..rest] ->
+      case topic.matches(registered.pattern, name) {
+        False -> select(rest, name)
+        True -> {
+          let params =
+            topic.extract_wildcards(registered.pattern, name)
+            |> result.unwrap([])
+          Ok(#(registered.handler, params))
+        }
+      }
+  }
+}
+
+fn unmatched_topic() -> json.Json {
+  json.object([#("reason", json.string("unmatched topic"))])
+}
+
+/// Allocate this join's generation, bind the channel's sends to it, and
+/// run the handler.
+///
+/// The generation is bound into `deliver` *before* `open` runs,
+/// because a `join` callback may notify itself; its mail has to be
+/// addressed to the join being opened. The counter advances even when the
+/// handler rejects, so a rejected join's sender can never collide with a
+/// later accepted one.
+fn open_join(
+  router: Router,
+  handler: Handler,
+  name: String,
+  params: List(String),
+  payload: dynamic.Dynamic,
+  ref: socket.JoinRef,
+) -> socket.Next(Router) {
+  let generation = router.generation + 1
+  let router = Router(..router, generation: generation)
+  let context =
+    RoutedJoinContext(
+      socket_id: router.socket_id,
+      seed: router.seed,
+      topic: name,
+      params: params,
+      payload: payload,
+      deliver: mailbox(router.self, name, generation),
+    )
+
+  case open(handler, context) {
+    // Only accepted joins become instances; a rejection leaves the socket
+    // with no channel on this topic.
+    Rejected(reason) -> socket.Next(router, [socket.RejectJoin(ref, reason)])
+    Accepted(reply: reply, actions: actions, channel: live) -> {
+      let instance = Instance(generation: generation, channel: live)
+      socket.Next(
+        Router(..router, live: dict.insert(router.live, name, instance)),
+        // The acknowledgment is ordered ahead of the join's own actions,
+        // so a push can never precede its own join reply and the
+        // subscription the accept creates is already in place when they
+        // run. Same turn, so nothing can interleave between them.
+        [socket.AcceptJoin(ref, reply), ..effects(name, actions)],
+      )
+    }
+  }
+}
+
+/// Bind one join's sends to its topic and generation. Every `notify`
+/// produces exactly one envelope; nothing is coalesced.
+fn mailbox(
+  self: socket.Sender(Envelope),
+  name: String,
+  generation: Int,
+) -> fn(Mail) -> Nil {
+  fn(mail) {
+    socket.notify(
+      self,
+      ChannelMail(topic: name, generation: generation, mail: mail),
+    )
+  }
+}
+
+// --- routing to a live instance --------------------------------------------
+
+/// Run `callback` against the live instance for `name`, if there is one.
+///
+/// Inputs for a topic this socket has no accepted instance on are ignored:
+/// a rejected join starts nothing, and a closed channel is gone.
+fn on_live(
+  router: Router,
+  name: String,
+  callback: fn(Instance) -> Step,
+) -> socket.Next(Router) {
+  case dict.get(router.live, name) {
+    Error(Nil) -> socket.Next(router, [])
+    Ok(instance) -> advance(router, name, instance, callback(instance))
+  }
+}
+
+/// Deliver one sealed server-side message.
+///
+/// The envelope is checked against the live instance **before** the mail
+/// is handed over, so a stale envelope — one from a closed channel or a
+/// superseded generation — is dropped with its thunk still sealed and its
+/// payload reaches nothing.
+fn deliver(
+  router: Router,
+  name: String,
+  generation: Int,
+  mail: Mail,
+) -> socket.Next(Router) {
+  case dict.get(router.live, name) {
+    Error(Nil) -> socket.Next(router, [])
+    Ok(instance) ->
+      case instance.generation == generation {
+        False -> socket.Next(router, [])
+        True -> advance(router, name, instance, instance.channel.on_mail(mail))
+      }
+  }
+}
+
+/// Lower one callback result onto the core.
+fn advance(
+  router: Router,
+  name: String,
+  instance: Instance,
+  step: Step,
+) -> socket.Next(Router) {
+  case step {
+    // The next instance keeps this join's generation: it is the same join.
+    StepContinue(next: next, actions: actions) -> {
+      let live =
+        dict.insert(router.live, name, Instance(..instance, channel: next))
+      socket.Next(Router(..router, live: live), effects(name, actions))
+    }
+
+    // Apply actions first, then kick. The instance stays live until the
+    // `Closed` the kick produces arrives, so termination runs there — on
+    // the one path every ending channel takes.
+    StepClose(actions: actions) ->
+      socket.Next(
+        router,
+        list.append(effects(name, actions), [socket.KickTopic(name)]),
+      )
+
+    // Stopping the socket carries no actions: every channel on it is
+    // going away, and each still receives `Closed`.
+    StepStop(reason: reason) -> socket.Stop(reason)
+  }
+}
+
+// --- termination -----------------------------------------------------------
+
+/// A joined topic ended, for any reason.
+///
+/// The instance is removed *before* its termination callback runs, so the
+/// callback can neither be re-entered for this instance nor observe it as
+/// live, and `Closed` is the only place termination happens — exactly
+/// once per accepted join.
+///
+/// Termination actions are lowered inside this same `Closed` turn. Core
+/// has already dropped the subscription and purged the topic's
+/// outstanding reply refs by then, so it drops pushes to the closing
+/// topic (including presence snapshots pushed to this socket) and drops
+/// replies outright, while broadcasts still take effect. Core's automatic
+/// topic untrack runs immediately *after* this turn, so a
+/// `presence_track` here is undone as soon as it is applied — see
+/// `on_terminate`.
+///
+/// The removal only sticks if this turn returns. When `on_terminate`
+/// panics, core logs the crash and keeps the model from before this turn,
+/// which is the one that still holds this instance at this generation. It
+/// is not reachable from core's side — the topic is closed, so no client
+/// message, binary frame, or `Closed` can name it again — but `Info` is
+/// socket-scoped rather than topic-scoped, so a `Sender` created by this
+/// join still finds it in `live` and still delivers `on_info` to it. The
+/// entry goes away when the topic is joined again (`open` overwrites it)
+/// or when the socket ends. This layer cannot narrow that window: undoing
+/// it is exactly the model update the panic discarded, and rescuing the
+/// callback here would hide a crash core is responsible for reporting.
+fn closed(
+  router: Router,
+  name: String,
+  reason: socket.StopReason,
+) -> socket.Next(Router) {
+  case dict.get(router.live, name) {
+    Error(Nil) -> socket.Next(router, [])
+    Ok(instance) -> {
+      let router = Router(..router, live: dict.delete(router.live, name))
+      socket.Next(router, effects(name, instance.channel.on_terminate(reason)))
+    }
   }
 }

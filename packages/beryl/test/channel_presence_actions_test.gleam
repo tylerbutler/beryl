@@ -3,10 +3,10 @@
 //// semantics.
 
 import beryl
+import beryl/channel
 import beryl/presence
 import beryl/wire
-import beryl_channels/channel
-import dispatch_helper as helper
+import channel_dispatch_helper as helper
 import gleam/json
 import gleam/list
 import gleam/string

@@ -4,15 +4,17 @@
 
 Accepted (2026-08-02). Amends [ADR 0002](0002-app-side-dispatch.md): the
 dispatch core and its soundness guarantees stand unchanged; this ADR
-restores the channel-module ergonomics ADR 0002 traded away, as a separate
-package layered on the public API. ADR 0001 anticipated this outcome — "a
+restores the channel-module ergonomics ADR 0002 traded away as a layer on
+the public API. ADR 0001 anticipated this outcome — "a
 layered variant (typed core with channels as sugar on top) may merit a
 future ADR."
 
-Shipped as `packages/beryl_channels`; its initial release is recorded in
-that package's changelog. Two Decision bullets were rewritten on acceptance
-to describe what shipped rather than what was proposed; see [Revisions on
-acceptance](#revisions-on-acceptance).
+Amended (2026-08-16): the layer was first implemented as the unreleased
+`beryl_channels` package, but no tag or GitHub release ever contained it.
+Before release, its public API moved to `beryl/channel` in the core `beryl`
+package and the separate package was deleted. The package-boundary change
+does not alter the closure-sealing, generation-scoping, or zero-coercion
+guarantees below.
 
 ## Context
 
@@ -37,11 +39,11 @@ surface.)
 
 ## Decision
 
-Ship a new package, `beryl_channels`, built strictly on beryl's public
-API, with no access to internal modules:
+Ship `beryl/channel` in the `beryl` package. Its implementation is built
+strictly on beryl's public core API, with its routing machinery kept private:
 
 - The entry point mirrors the supervised core:
-  `beryl_channels.child_spec(config, handlers)`. It composes the handler
+  `channel.child_spec(config, handlers)`. It composes the handler
   list into an `#(init, update)` pair and delegates to
   `beryl.child_spec`. `Config` — including declarative per-topic abuse
   controls — is the core's, untouched. The layer does not restore an
@@ -84,9 +86,9 @@ API, with no access to internal modules:
 
 ## Consequences
 
-- `packages/beryl` is untouched. ADR 0002's single core API and its
-  channel/socket dispatch soundness guarantees remain unchanged; restoration
-  happens at a new layer, not by reverting the removal. The separate,
+- ADR 0002's core API and its channel/socket dispatch soundness guarantees
+  remain unchanged; restoration happens in a public module layered on that
+  API, not by reverting the runtime design. The separate,
   validated PubSub boundary also remains: `pubsub.selecting` checks the raw
   `pg` message's record tag and arity before using the retained identity FFI
   to recover `Message(payload)`.
@@ -103,7 +105,7 @@ API, with no access to internal modules:
   mailbox boundary described above and in ADR 0002.
 - Parity between the two APIs is enforced mechanically, not editorially:
   the `phoenix_channel_fixtures` contract suite runs as a matrix over
-  `beryl.child_spec` and `beryl_channels.child_spec`, since both lower to
+  `beryl.child_spec` and `channel.child_spec`, since both lower to
   the same runtime, wire codec, presence, and abuse-control
   implementations — which continue to exist exactly once.
 - The union-and-router boilerplate ADR 0002 accepted (linear in channel
@@ -114,20 +116,20 @@ API, with no access to internal modules:
   page (the channel layer for multi-channel, Phoenix-shaped apps; raw
   dispatch for single-topic apps and full control), rather than two
   co-equal tracks.
-- One more releasable workspace package: trellis fan-out, its own
-  changelog fragments and `beryl_channels-vX.Y.Z` tags, and a path
-  dependency on `beryl` rewritten to a Hex requirement at publish, exactly
-  as the transports do.
+- No additional releasable package. Applications depend on `beryl` plus a
+  transport and choose a programming model by importing `beryl/channel` or
+  the raw `beryl/socket` types.
 - ADR 0002's Status carries an "amended by ADR 0003" note; its Decision
   and Consequences are unchanged, because nothing this ADR ships alters
   the core.
 
-## Revisions on acceptance
+## Revisions
 
 The Decision above was proposed on 2026-08-02 and accepted the same day,
-after the package shipped. Two of its bullets described intentions that the
-implementation improved on, and both were rewritten in place so the record
-does not contradict `packages/beryl_channels`. What changed, and why:
+after the first implementation landed on an unreleased branch. Two bullets
+described intentions that the implementation improved on, and both were
+rewritten in place. The 2026-08-16 package-boundary amendment above then moved
+the unchanged public surface into `beryl/channel`. What changed, and why:
 
 - **`join` receives `JoinContext`, not the core `ConnectInfo`.** The layer
   owns the socket-level model and message type, so handing a channel the

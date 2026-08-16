@@ -6,12 +6,11 @@
 //// it, disconnect. Outbound frames are captured per socket.
 
 import beryl
+import beryl/channel
 import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import beryl_channels
-import beryl_channels/channel
 import gleam/erlang/process
 import gleam/option.{None}
 import gleam/otp/static_supervisor
@@ -27,7 +26,7 @@ pub fn start(
   handlers handlers: List(channel.Handler),
 ) -> beryl.Sockets {
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(config, handlers: handlers)
+    channel.child_spec(config, handlers: handlers)
     as "the handler table and config are valid"
   let assert Ok(_) =
     static_supervisor.new(static_supervisor.OneForOne)

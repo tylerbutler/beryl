@@ -1,3 +1,3 @@
 package = "beryl"
-kind = "Added"
-body = "New beryl/socket/router module: topic-namespace routing for a hand-written update function, for apps that want beryl.child_spec and their own dispatch with no additional dependency. Namespaces are keyed on beryl/topic patterns (the same syntax as with_topic_rate) and handlers receive a Match carrying the values captured by the pattern's wildcards. Includes namespace and accept_only constructors, fail-closed route dispatch, and close handlers that receive socket.StopReason; the app stores whatever per-topic state it needs in its own model. beryl/socket gains reply_ok, the ref-gated ok-reply helper. Applications composing several topic namespaces should use the beryl_channels package instead."
+kind = "Removed"
+body = "Remove the unreleased beryl/socket/router experiment before release. Raw single-topic apps match socket.Input directly with beryl/topic; multi-topic apps use beryl/channel."

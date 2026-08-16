@@ -1,9 +1,9 @@
 ---
 title: Channels
-description: The beryl_channels layer — handler tables, per-channel private state, typed senders, ordered actions, and lifecycle from join to termination.
+description: The beryl/channel layer — handler tables, per-channel private state, typed senders, ordered actions, and lifecycle from join to termination.
 ---
 
-`beryl_channels` is the **recommended default** for applications that serve
+`beryl/channel` is the **recommended default** for applications that serve
 more than one topic namespace on a socket, and for anyone porting a
 Phoenix-shaped design. You register a list of channel handlers, and the
 layer routes every join, message, binary frame, typed server-side message,
@@ -14,19 +14,10 @@ If you are not sure which layer you want, read
 complete control over routing, use [App-Side Dispatch](/guides/dispatch/)
 instead — it is the core the channel layer is built on.
 
-:::note[Separate package]
-The channel layer ships as its own package. Beryl packages are currently
-distributed from GitHub, not Hex, so add it alongside beryl and a transport
-in `gleam.toml`:
-
-```toml
-[dependencies]
-beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
-beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
-```
-
-See [Installation](/installation/) for version and transport choices.
+:::note[One package]
+The channel layer is the `beryl/channel` module in the `beryl` package.
+Applications add only `beryl` plus a transport. See
+[Installation](/installation/) for the dependency block.
 :::
 
 ## The shape
@@ -37,7 +28,7 @@ accepted private state and callback set.
 
 ```gleam
 // src/my_app/room_channel.gleam
-import beryl_channels/channel
+import beryl/channel
 import gleam/json
 
 /// This channel's private state — one value per joined topic.
@@ -95,7 +86,7 @@ nothing compose in a single list.
 
 ## Starting a channel system
 
-`beryl_channels.child_spec` takes the same `beryl.Config` as
+`channel.child_spec` takes the same `beryl.Config` as
 `beryl.child_spec` — codec, rate limits, presence handle, PubSub, logging —
 plus the handler table. It returns the ordinary `beryl.Sockets` handle and a
 child specification for your application's supervision tree.
@@ -105,8 +96,7 @@ child specification for your application's supervision tree.
 import beryl
 import beryl/transport/server
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
+import beryl/channel
 import beryl_mist as mist_transport
 import gleam/bytes_tree
 import gleam/erlang/process
@@ -127,7 +117,7 @@ pub fn main() {
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(config, handlers: handlers())
+    channel.child_spec(config, handlers: handlers())
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
@@ -166,7 +156,7 @@ runtime, the same wire codec, the same presence and abuse controls, the
 same transports. The layer only supplies the `init`/`update` pair.
 
 `child_spec` reports eager validation failures as
-`beryl_channels.ChildSpecError`:
+`channel.ChildSpecError`:
 
 | Variant | Meaning |
 |---|---|
@@ -209,7 +199,7 @@ in a minor release, so use a catch-all when the exact reason does not
 change your handling:
 
 ```gleam
-Error(beryl_channels.InvalidPattern(pattern, _reason)) ->
+Error(channel.InvalidPattern(pattern, _reason)) ->
   panic as { "invalid channel pattern " <> pattern }
 ```
 
@@ -329,7 +319,7 @@ Use `notify` to schedule a **later** turn — including from another
 process. Work that has to be part of the join itself belongs in
 [join actions](#join-actions).
 
-## Actions
+## Action builders
 
 An action is one thing to do **on this channel's own topic**. Constructors
 return one opaque action; put them in a list in wire order:
@@ -355,7 +345,7 @@ warning, exactly as the equivalent core effects are.
 
 ### Order is wire order
 
-Actions are applied strictly in the order they were added. They lower
+Channel actions are applied strictly in the order they were added. They lower
 one-to-one onto core `socket.Effect` values, which the runtime applies in
 list order. An asynchronous presence effect can park this socket while other
 sockets continue; the remaining actions resume only after it completes.
@@ -489,7 +479,7 @@ automatic untrack runs after `Closed`, not before your actions.
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Router as beryl_channels router
+  participant Router as beryl/channel router
   participant Ch as your channel
   Client->>Router: phx_join "room:lobby"
   Router->>Router: first matching pattern wins
@@ -544,20 +534,20 @@ handle. See [Runtime & Effect Interpreter](/architecture/runtime/).
 
 ## Supervision
 
-`beryl_channels.child_spec` mirrors `beryl.child_spec` for applications
+`channel.child_spec` mirrors `beryl.child_spec` for applications
 that own their supervision tree:
 
 ```gleam
 // src/my_app/supervised.gleam
 import beryl
 import beryl/wire
-import beryl_channels
+import beryl/channel
 import gleam/otp/static_supervisor
 import my_app
 
 pub fn start_supervised() -> beryl.Sockets {
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(
+    channel.child_spec(
       beryl.config(wire.phoenix_codec()),
       handlers: my_app.handlers(),
     )
@@ -572,7 +562,7 @@ pub fn start_supervised() -> beryl.Sockets {
 ```
 
 It reports only what can be detected before the tree starts, as
-`beryl_channels.ChildSpecError`:
+`channel.ChildSpecError`:
 
 | Variant | Meaning |
 |---|---|
@@ -589,15 +579,30 @@ After a runtime crash the handle keeps working for new connections, but
 every live channel instance is gone: clients reconnect and rejoin, and
 each join runs afresh.
 
+## Migrating from `beryl_channels`
+
+The compiler guides the package-boundary migration:
+
+1. Remove the `beryl_channels` dependency from `gleam.toml`.
+2. Replace imports of `beryl_channels/channel` with `beryl/channel`.
+3. Remove the root `beryl_channels` import and call
+   `channel.child_spec(config, handlers:)`.
+4. Match startup errors as `channel.InvalidPattern`,
+   `channel.DuplicatePattern`, and `channel.InvalidConfig`.
+
+Handler construction, closure-sealed state and server messages, action
+ordering, and callback behavior are unchanged. Run `gleam check` to find every
+remaining old import or qualified error name.
+
 ## Limitations
 
 The layer is deliberately scoped to *one topic at a time*. These are the
 edges to know before you design around it:
 
-- **Actions are topic-scoped.** A `room:general` channel cannot broadcast
+- **Each action is topic-scoped.** A `room:general` channel cannot broadcast
   on `lobby`. Cross-topic publishing goes through the external `Sockets`
   APIs — `beryl.broadcast`, `beryl.broadcast_from`, or a `beryl/group`
-  actor — with the handle `beryl_channels.child_spec` returned.
+  actor — with the handle `channel.child_spec` returned.
 - **Handlers are built before the handle is returned.** A channel cannot
   capture the `Sockets` handle directly while constructing its handler.
   The usual pattern is a small actor that holds the handle and exposes a
@@ -638,4 +643,4 @@ edges to know before you design around it:
 - [App-Side Dispatch](/guides/dispatch/) — the core this layer is built on
 - [Presence](/guides/presence/) — the presence actor the presence actions need
 - [Supervision](/guides/supervision/) — subtree shape, crash, and shutdown semantics
-- [`beryl_channels`](/reference/api/beryl_channels/) and [`beryl_channels/channel`](/reference/api/beryl_channels-channel/) — generated API reference
+- [`beryl/channel`](/reference/api/beryl-channel/) — generated API reference

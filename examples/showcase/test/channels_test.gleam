@@ -1,4 +1,4 @@
-//// Behavioral coverage for the showcase's `beryl_channels` handler table.
+//// Behavioral coverage for the showcase's `beryl/channel` handler table.
 ////
 //// These pin the wire shapes the bundled browser clients depend on —
 //// the join acknowledgments, the `presence_list` rosters, the chat

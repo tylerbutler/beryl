@@ -7,11 +7,10 @@ Type-safe app-side real-time sockets and presence for Gleam on the BEAM.
 > releases, and quality should not be considered production-ready. We welcome
 > usage and feedback in the meantime!
 
-beryl is the core real-time library: app-side dispatch (one `init`/`update`
-pair per app, Phoenix-compatible wire protocol), topic pattern matching,
-broadcasts, CRDT-backed presence tracking, pg-based PubSub for multi-node
-fan-out, and built-in abuse controls (rate limits, connection ceilings,
-heartbeat eviction).
+beryl is the core real-time library. Applications can use raw app-side
+dispatch with one `init`/`update` pair, or the `beryl/channel` handler layer.
+Both share the Phoenix-compatible wire protocol, topic matching, broadcasts,
+CRDT-backed presence, pg-based PubSub, and built-in abuse controls.
 
 To serve sockets over WebSockets, pair it with a transport package such as
 [`beryl_mist`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_mist).
@@ -25,7 +24,7 @@ beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", p
 
 Use the same git ref for beryl and your transport package. See the
 [installation guide](https://beryl.tylerbutler.com/installation/) for Ewe,
-channel-layer, and release-tag guidance.
+API-choice, and release-tag guidance.
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the
 JavaScript target.
