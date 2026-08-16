@@ -43,7 +43,7 @@
 //// `info`, the type of server-side messages it accepts. Neither escapes:
 //// [`joined`](#joined) seals `state` inside the callback closures, and
 //// [`handler`](#handler) seals `info` inside the registration closure, so
-//// the resulting [`Handler`](#Handler) is not generic and handlers with
+//// the resulting [`Handler`](#handler) is not generic and handlers with
 //// unrelated `state` and `info` types compose in one list. No value is
 //// ever erased to `Dynamic` and no unchecked coercion is involved:
 //// typed `info` values travel inside a closure that only the join which
@@ -52,7 +52,7 @@
 ////
 //// ## Ordering
 ////
-//// [`Actions`](#Actions) are applied strictly in the order they were
+//// [`Actions`](#actions) are applied strictly in the order they were
 //// added, and they always target the channel's own topic. They lower onto
 //// beryl's core `Effect` values, which the runtime applies in list order
 //// inside a single actor turn — so action order is wire order.
@@ -72,7 +72,7 @@ import gleam/option
 
 /// A typed handle for sending server-side messages to one joined channel.
 ///
-/// Obtained from [`JoinInfo`](#JoinInfo) in the `join` callback and safe to
+/// Obtained from [`JoinInfo`](#joininfo) in the `join` callback and safe to
 /// share with any process. Messages sent through it are delivered to the
 /// channel's `on_info` callback with their type intact.
 ///
@@ -94,7 +94,7 @@ pub opaque type Sender(info) {
 /// This is a fire-and-forget send: it returns as soon as the message is
 /// enqueued, whether or not the channel is still joined. A message
 /// enqueued for a channel that has already ended is discarded on arrival
-/// (see [`Sender`](#Sender)).
+/// (see [`Sender`](#sender)).
 pub fn notify(sender: Sender(info), message: info) -> Nil {
   sender.send(message)
 }
@@ -103,7 +103,7 @@ pub fn notify(sender: Sender(info), message: info) -> Nil {
 ///
 /// `socket_id` and `seed` come straight from the transport's connect
 /// information; `self` is this channel's own generation-scoped
-/// [`Sender`](#Sender), which is the supported way to schedule work for
+/// [`Sender`](#sender), which is the supported way to schedule work for
 /// just after the join acknowledgment.
 pub type JoinInfo(info) {
   JoinInfo(
@@ -181,7 +181,7 @@ pub fn broadcast_from(
 }
 
 /// Reply successfully to a client message, using the `reply` handle from
-/// the [`Message`](#Message) that asked for it.
+/// the [`Message`](#message) that asked for it.
 pub fn reply_ok(
   actions: Actions,
   reply: socket.Ref,
@@ -191,7 +191,7 @@ pub fn reply_ok(
 }
 
 /// Reply with an error to a client message, using the `reply` handle from
-/// the [`Message`](#Message) that asked for it.
+/// the [`Message`](#message) that asked for it.
 pub fn reply_error(
   actions: Actions,
   reply: socket.Ref,
@@ -337,7 +337,7 @@ pub fn on_binary(
 }
 
 /// Handle typed server-side messages sent through this channel's
-/// [`Sender`](#Sender).
+/// [`Sender`](#sender).
 pub fn on_info(
   callbacks: Callbacks(state, info),
   handle: fn(state, info) -> Next(state),
@@ -460,7 +460,7 @@ pub opaque type Handler {
 /// `"room:*"`, `"document:*:ops"`, `"*"`) and is validated when the
 /// handler table is used; see `beryl_channels.validate_handlers`.
 ///
-/// `join` receives the connection's [`JoinInfo`](#JoinInfo), the concrete
+/// `join` receives the connection's [`JoinInfo`](#joininfo), the concrete
 /// topic that matched, and the client's join payload, and answers with
 /// [`accept`](#accept), [`accept_with`](#accept_with), or
 /// [`reject`](#reject).

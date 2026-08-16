@@ -13,7 +13,7 @@ Composable channels for beryl real-time sockets.
 
  This package layers Phoenix-shaped channel modules on top of beryl's
  public app-side dispatch API. An application registers a list of
- [`channel.Handler`](./beryl_channels/channel.html#Handler) values —
+ [`channel.Handler`](/reference/api/beryl_channels-channel/#handler) values —
  each a topic pattern plus a typed `join` callback — and the layer
  routes every socket event to the channel that owns its topic. No
  hand-written message union and no hand-written router are required,
@@ -136,7 +136,7 @@ Build a channel system's supervision child specification for embedding
  Like `beryl.child_spec`, this reports only what can be detected before
  the tree is started: the handler table is validated first, then the
  `beryl.Config`, whose error is returned nested in
- [`ChildSpecInvalidConfig`](#ChildSpecError). The returned
+ [`ChildSpecInvalidConfig`](#childspecerror). The returned
  `beryl.Sockets` is usable as soon as the owning tree is running.
 
  ## Example
