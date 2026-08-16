@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Removed"
-body = "beryl/transport no longer exports connection-limit, decode, rate-limiter, or logging facade helpers; beryl/transport/server owns those concerns internally. The remaining SPI preserves atomic admit_socket/runtime_pid, text/binary routing, codecs, and telemetry. with_heartbeat is now timeout-only."

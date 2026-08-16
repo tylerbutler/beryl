@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Changed"
-body = "beryl/transport/origin.same_origin is now private; use origin.allowed with the SameOrigin policy, which applies the same authority comparison."
