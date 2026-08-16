@@ -425,7 +425,7 @@ pub fn on_message(
 Run cleanup when the channel ends, for any reason: client leave, a
  [`close`](#close) result, a socket teardown, or a disconnect.
 
- The returned [`Actions`](#Actions) are applied in the turn that closes
+ The returned [`Actions`](#actions) are applied in the turn that closes
  this topic, right after the channel instance is gone — which is why a
  leave announcement or a post-leave presence roster belongs here rather
  than in an out-of-band broadcast.
