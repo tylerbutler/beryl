@@ -70,7 +70,7 @@ topic.extract_wildcards(
 // -> Ok(["tenant-a", "doc-42"])
 ```
 
-For one namespace, matching inside `update` is fine. When several namespaces share a socket, use `beryl/socket/router` so pattern ownership and fail-closed dispatch stay declarative.
+For one namespace, matching inside `update` is fine, and `beryl/socket/router` keeps pattern ownership and fail-closed dispatch declarative. When several namespaces share a socket, use [`beryl_channels`](/guides/channels/) instead — see [Routing many topics from one app](#routing-many-topics-from-one-app).
 
 ## Single-topic example
 
@@ -194,48 +194,67 @@ A few important details:
 
 ## Routing many topics from one app
 
-Multi-topic apps keep one top-level model and register one `router.Namespace`
-per topic pattern. The router sends each input to the first matching namespace.
+Use [`beryl_channels`](/guides/channels/). Register a list of channel handlers
+and the layer routes every socket event to the channel that owns its topic.
+Each channel keeps its own private state and server-side message type, so
+channels that share no types compose in one list, and there is no socket-wide
+model, message union, or `update` function to write.
+
+`beryl/socket/router` is the alternative when you want `beryl.child_spec` and
+your own `update` with no additional dependency — typically a server around a
+single topic namespace. Every namespace on a socket shares one model type, and
+the app owns how per-topic state is stored in it:
 
 ```gleam
 import beryl/socket as socket
 import beryl/socket/router
 import gleam/dict.{type Dict}
+import gleam/option.{None, Some}
 
 pub type Model {
-  Model(
-    socket_id: String,
-    rooms: Dict(String, chat.Model),
-    docs: Dict(String, docs.Model),
+  Model(socket_id: String, rooms: Dict(String, chat.Model))
+}
+
+fn rooms(ctx: Ctx) -> router.Namespace(Model) {
+  router.namespace(
+    pattern: "room:*",
+    join: fn(model: Model, match: router.Match, payload, ref) {
+      // Commit the room's state only when the join is accepted.
+      case chat.join(ctx, model.socket_id, match, payload, ref) {
+        #(Some(room), effects) -> #(
+          Model(..model, rooms: dict.insert(model.rooms, match.topic, room)),
+          effects,
+        )
+        #(None, effects) -> #(model, effects)
+      }
+    },
+    message: fn(model: Model, match: router.Match, event, payload, ref) {
+      case dict.get(model.rooms, match.topic) {
+        Ok(room) -> {
+          let #(room, effects) =
+            chat.on_message(ctx, match.topic, room, event, payload, ref)
+          #(
+            Model(..model, rooms: dict.insert(model.rooms, match.topic, room)),
+            effects,
+          )
+        }
+        Error(Nil) -> #(model, [])
+      }
+    },
+    closed: fn(model: Model, match: router.Match, reason) {
+      case dict.get(model.rooms, match.topic) {
+        Ok(room) -> #(
+          Model(..model, rooms: dict.delete(model.rooms, match.topic)),
+          chat.on_closed(ctx, match.topic, room, reason),
+        )
+        Error(Nil) -> #(model, [])
+      }
+    },
   )
 }
 
 fn update(ctx: Ctx) -> fn(Model, socket.Input(Msg)) -> socket.Next(Model, Msg) {
-  let namespaces = [
-    router.accept_only("lobby"),
-    router.stateful(
-      pattern: "room:*",
-      socket_id: fn(model: Model) { model.socket_id },
-      get: fn(model: Model) { model.rooms },
-      put: fn(model: Model, rooms) { Model(..model, rooms: rooms) },
-      join: chat.join,
-      message: chat.on_message,
-      closed: chat.on_closed,
-    ),
-    router.stateful(
-      pattern: "document:*:*",
-      socket_id: fn(model: Model) { model.socket_id },
-      get: fn(model: Model) { model.docs },
-      put: fn(model: Model, docs) { Model(..model, docs: docs) },
-      join: fn(socket_id, match, payload, ref) {
-        docs.join(ctx, socket_id, match, payload, ref)
-      },
-      message: fn(socket_id, match, doc, event, payload, ref) {
-        docs.on_message(ctx, socket_id, match, doc, event, payload, ref)
-      },
-      closed: fn(_socket_id, _match, _doc, _reason) { [] },
-    ),
-  ]
+  let namespaces = [router.accept_only("lobby"), rooms(ctx)]
   fn(model, input) {
     router.route(namespaces, router.unknown_topic(), model, input)
   }
@@ -248,14 +267,13 @@ handlers receive `router.Match(topic:, params:)` with wildcard captures.
 
 Routing fails closed: unclaimed joins are rejected with the supplied payload,
 other unclaimed inputs are ignored, and `Binary`/`Info` pass through unchanged.
-Use `router.stateful` for per-topic `Dict` state, `router.accept_only` for
-read-only topics, or `router.namespace` for full model control. Close handlers
-receive `socket.StopReason`, so normal closes, shutdown, heartbeat timeouts, and
-crashes can be handled differently.
+Use `router.accept_only` for read-only topics and `router.namespace` for topics
+that carry state. Close handlers receive `socket.StopReason`, so normal closes,
+shutdown, heartbeat timeouts, and crashes can be handled differently.
 
-For a standalone server around one stateful namespace, pair
-`router.standalone_init` with `beryl.child_spec` and adapt the namespace with
-`router.standalone_namespace`.
+The `cursors` example is the smallest complete server written this way; the
+`showcase` example is the same three topic namespaces composed with
+`beryl_channels`.
 
 ## Typed server-side messages
 

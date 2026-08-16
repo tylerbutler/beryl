@@ -1,13 +1,19 @@
 //// Cursor-channel logic for app-side dispatch.
 ////
+//// This example is deliberately the one built without `beryl_channels`: it
+//// shows `beryl.child_spec` driven by a hand-written `update`, with
+//// `beryl/socket/router` matching topics and the app owning its own model.
+//// Applications composing several channels should prefer `beryl_channels`
+//// (see the showcase example), which keeps each channel's state and
+//// server-side message type private and needs no hand-written dispatch.
+////
 //// Two layers share one source of truth:
 ////
-//// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
-////   composing app (see the showcase example) routes `cursor:*` events
-////   through, storing the returned model per topic.
-//// - A socket-wide `Standalone` model plus `standalone_init`/
-////   `standalone_update` wrappers that drive the standalone cursors server
-////   through a `beryl.child_spec` runtime, reusing the same per-topic surface.
+//// - A topic-scoped `Model`/`join`/`update`/`closed` surface holding the
+////   actual cursor logic.
+//// - A socket-wide `CursorRooms` model plus `cursor_rooms_init`/
+////   `cursor_rooms_update` wrappers that drive the standalone cursors server
+////   through a `beryl.child_spec` runtime, reusing that per-topic surface.
 
 import beryl/socket.{type Effect, type Ref}
 import beryl/socket/router
@@ -110,42 +116,88 @@ pub fn closed(
   []
 }
 
-// --- Standalone app-side dispatch wrapper ---
+// --- Socket-wide model and dispatch ---
 
-/// Adapt the `cursor:*` handlers to a containing socket-wide model.
-pub fn namespace(
-  ctx: Ctx,
-  socket_id socket_id: fn(model) -> String,
-  get get: fn(model) -> Dict(String, Model),
-  put put: fn(model, Dict(String, Model)) -> model,
-) -> router.Namespace(model) {
-  router.stateful(
+/// Socket-wide model for the standalone cursors server: the socket id plus
+/// one per-topic `Model` per joined `cursor:*` topic.
+///
+/// The app owns this type. `beryl/socket/router` only decides which
+/// namespace an input belongs to; storing per-topic state is the app's job,
+/// which is what keeps the router itself free of any state-shape opinion.
+pub type CursorRooms {
+  CursorRooms(socket_id: String, topics: Dict(String, Model))
+}
+
+/// `init` for the `beryl.child_spec` runtime.
+pub fn cursor_rooms_init(
+  info: socket.ConnectInfo(Nil),
+) -> #(CursorRooms, List(Effect)) {
+  #(CursorRooms(socket_id: info.socket_id, topics: dict.new()), [])
+}
+
+/// Adapt the `cursor:*` handlers to the socket-wide model. A
+/// join's model is committed only when the join is accepted.
+fn namespace(ctx: Ctx) -> router.Namespace(CursorRooms) {
+  router.namespace(
     pattern: "cursor:*",
-    socket_id:,
-    get:,
-    put:,
-    join: fn(socket_id, match, payload, ref) {
-      join(ctx, socket_id, match.topic, payload, ref)
+    join: fn(state: CursorRooms, match: router.Match, payload, ref) {
+      case join(ctx, state.socket_id, match.topic, payload, ref) {
+        #(Some(model), effects) -> #(
+          CursorRooms(
+            ..state,
+            topics: dict.insert(state.topics, match.topic, model),
+          ),
+          effects,
+        )
+        #(None, effects) -> #(state, effects)
+      }
     },
-    message: fn(socket_id, match, model, event_name, payload, _ref) {
-      update(ctx, socket_id, match.topic, model, event_name, payload)
+    message: fn(
+      state: CursorRooms,
+      match: router.Match,
+      event_name,
+      payload,
+      _ref,
+    ) {
+      case dict.get(state.topics, match.topic) {
+        Ok(model) -> {
+          let #(model, effects) =
+            update(
+              ctx,
+              state.socket_id,
+              match.topic,
+              model,
+              event_name,
+              payload,
+            )
+          #(
+            CursorRooms(
+              ..state,
+              topics: dict.insert(state.topics, match.topic, model),
+            ),
+            effects,
+          )
+        }
+        Error(Nil) -> #(state, [])
+      }
     },
-    closed: fn(socket_id, match, model, _reason) {
-      closed(ctx, socket_id, match.topic, model)
+    closed: fn(state: CursorRooms, match: router.Match, _reason) {
+      case dict.get(state.topics, match.topic) {
+        Ok(model) -> #(
+          CursorRooms(..state, topics: dict.delete(state.topics, match.topic)),
+          closed(ctx, state.socket_id, match.topic, model),
+        )
+        Error(Nil) -> #(state, [])
+      }
     },
   )
 }
 
-/// Build the standalone update once, sharing the canonical router model.
-pub fn standalone_update(
+/// Build the socket-wide update once, sharing the app-owned model.
+pub fn cursor_rooms_update(
   ctx: Ctx,
-) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
-  socket.Next(router.Standalone(Model), Nil) {
-  let namespaces = [
-    router.standalone_namespace(fn(socket_id, get, put) {
-      namespace(ctx, socket_id, get, put)
-    }),
-  ]
+) -> fn(CursorRooms, socket.Input(Nil)) -> socket.Next(CursorRooms, Nil) {
+  let namespaces = [namespace(ctx)]
   fn(model, input) {
     router.route(namespaces, router.unknown_topic(), model, input)
   }

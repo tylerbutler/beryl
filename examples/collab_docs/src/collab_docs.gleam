@@ -1,5 +1,4 @@
 import beryl
-import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
@@ -23,8 +22,8 @@ pub fn main() {
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
-      init: topic_router.standalone_init,
-      update: docs_app.standalone_update(ctx),
+      init: docs_app.open_documents_init,
+      update: docs_app.open_documents_update(ctx),
     )
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)

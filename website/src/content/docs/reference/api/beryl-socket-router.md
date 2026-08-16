@@ -1,6 +1,6 @@
 ---
 title: "beryl/socket/router"
-description: "Topic-namespace routing for app-side dispatch."
+description: "Topic-namespace routing for a hand-written `update` function."
 ---
 
 <!--
@@ -9,13 +9,18 @@ description: "Topic-namespace routing for app-side dispatch."
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-Topic-namespace routing for app-side dispatch.
+Topic-namespace routing for a hand-written `update` function.
 
- An app built with `beryl.child_spec` receives every wire input for a socket in
- one `update` function. This module supplies the conventional shape of
- that function: decide which topic namespace owns an input, hand it to
- that namespace's `join`/`message`/`closed` handlers, and store the
- returned state back into the socket-wide model.
+ Most applications should use the `beryl_channels` package instead, which
+ owns the entry point, keeps each channel's state and server-side message
+ type private, and needs no hand-written dispatch. This module is the
+ escape hatch for apps that want `beryl.child_spec` and their own `update`
+ with no additional dependency.
+
+ An app built with `beryl.child_spec` receives every wire input for a
+ socket in one `update` function. This module decides which topic
+ namespace owns an input and hands it to that namespace's
+ `join`/`message`/`closed` handlers.
 
  Namespaces are keyed on `beryl/topic` patterns — the same pattern
  language used by `beryl.with_topic_rate` — and the values captured by a
@@ -23,10 +28,8 @@ Topic-namespace routing for app-side dispatch.
  re-split topic strings by hand.
 
  Each `Namespace` callback takes and returns the whole socket-wide model,
- which is what lets namespaces with different per-topic state types share
- one list. `stateful` builds that adaptation from three projections for
- the common Dict-per-topic shape, and `Standalone` is the canonical
- socket-wide model for a server built around a single namespace.
+ so every namespace on a socket shares one model type and the app owns
+ how per-topic state is stored in it.
 
  Routing fails closed: a `Join` for a topic no namespace claims is
  rejected, while other inputs for unclaimed topics are ignored.
@@ -54,26 +57,12 @@ pub type Match {
 
 One topic namespace's handlers, adapted to the app's socket-wide model.
 
- Build with `namespace` (full control over the model), `stateful` (state
- in a Dict keyed by topic), or `accept_only` (no state at all). Opaque so
- namespaces can grow new capabilities without breaking existing code.
+ Build with `namespace` (the app stores whatever per-topic state it needs
+ in its own model) or `accept_only` (no state at all). Opaque so
+ namespaces can gain new capabilities without breaking existing code.
 
 ```gleam
 pub type Namespace(a)
-```
-
-### `Standalone`
-
-Socket-wide model for a standalone server built around one stateful
- namespace: the socket id plus one per-topic sub-model per joined topic.
-
-```gleam
-pub type Standalone(a) {
-  Standalone(
-    socket_id: String,
-    topics: dict.Dict(String, a)
-  )
-}
 ```
 
 ## Functions
@@ -117,46 +106,6 @@ pub fn route(
   a,
   socket.Input(b)
 ) -> socket.Next(a, b)
-```
-
-### `standalone_init`
-
-`init` for a standalone `beryl.child_spec` runtime whose model is
- `Standalone`.
-
-```gleam
-pub fn standalone_init(socket.ConnectInfo(a)) -> #(Standalone(b), List(socket.Effect))
-```
-
-### `standalone_namespace`
-
-Adapt a projection-taking namespace factory to the canonical
- `Standalone` model: the factory receives the `socket_id`/`get`/`put`
- projections `stateful` expects.
-
-```gleam
-pub fn standalone_namespace(fn(fn(Standalone(a)) -> String, fn(Standalone(a)) -> dict.Dict(String, a), fn(Standalone(a), dict.Dict(String, a)) -> Standalone(a)) -> Namespace(Standalone(a))) -> Namespace(Standalone(a))
-```
-
-### `stateful`
-
-A namespace whose per-topic state lives in a `Dict` keyed by topic
- inside the socket-wide model. `socket_id`, `get`, and `put` project the
- model onto the pieces the namespace owns; `join`/`message`/`closed` are
- the per-topic handlers. A join's `Some(sub)` is committed only when the
- first matching join answer in its effects is `AcceptJoin`; rejected or
- unanswered joins leave no state behind.
-
-```gleam
-pub fn stateful(
-  pattern: String,
-  socket_id: fn(a) -> String,
-  get: fn(a) -> dict.Dict(String, b),
-  put: fn(a, dict.Dict(String, b)) -> a,
-  join: fn(String, Match, dynamic.Dynamic, socket.Ref) -> #(option.Option(b), List(socket.Effect)),
-  message: fn(String, Match, b, String, dynamic.Dynamic, option.Option(socket.Ref)) -> #(b, List(socket.Effect)),
-  closed: fn(String, Match, b, socket.StopReason) -> List(socket.Effect)
-) -> Namespace(a)
 ```
 
 ### `unknown_topic`

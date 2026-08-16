@@ -1,5 +1,4 @@
 import beryl
-import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
@@ -28,8 +27,8 @@ pub fn main() {
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
       config,
-      init: topic_router.standalone_init,
-      update: cursors_app.standalone_update(ctx),
+      init: cursors_app.cursor_rooms_init,
+      update: cursors_app.cursor_rooms_update(ctx),
     )
   session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =

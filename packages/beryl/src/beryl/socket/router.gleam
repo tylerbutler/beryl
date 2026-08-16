@@ -1,10 +1,15 @@
-//// Topic-namespace routing for app-side dispatch.
+//// Topic-namespace routing for a hand-written `update` function.
 ////
-//// An app built with `beryl.child_spec` receives every wire input for a socket in
-//// one `update` function. This module supplies the conventional shape of
-//// that function: decide which topic namespace owns an input, hand it to
-//// that namespace's `join`/`message`/`closed` handlers, and store the
-//// returned state back into the socket-wide model.
+//// Most applications should use the `beryl_channels` package instead, which
+//// owns the entry point, keeps each channel's state and server-side message
+//// type private, and needs no hand-written dispatch. This module is the
+//// escape hatch for apps that want `beryl.child_spec` and their own `update`
+//// with no additional dependency.
+////
+//// An app built with `beryl.child_spec` receives every wire input for a
+//// socket in one `update` function. This module decides which topic
+//// namespace owns an input and hands it to that namespace's
+//// `join`/`message`/`closed` handlers.
 ////
 //// Namespaces are keyed on `beryl/topic` patterns — the same pattern
 //// language used by `beryl.with_topic_rate` — and the values captured by a
@@ -12,24 +17,20 @@
 //// re-split topic strings by hand.
 ////
 //// Each `Namespace` callback takes and returns the whole socket-wide model,
-//// which is what lets namespaces with different per-topic state types share
-//// one list. `stateful` builds that adaptation from three projections for
-//// the common Dict-per-topic shape, and `Standalone` is the canonical
-//// socket-wide model for a server built around a single namespace.
+//// so every namespace on a socket shares one model type and the app owns
+//// how per-topic state is stored in it.
 ////
 //// Routing fails closed: a `Join` for a topic no namespace claims is
 //// rejected, while other inputs for unclaimed topics are ignored.
 
 import beryl/socket.{
-  type ConnectInfo, type Effect, type Input, type Next, type Ref,
-  type StopReason,
+  type Effect, type Input, type Next, type Ref, type StopReason,
 }
 import beryl/topic.{type TopicPattern}
-import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option, None}
 import gleam/result
 
 /// A topic claimed by a namespace: the concrete topic plus the values
@@ -43,9 +44,9 @@ pub type Match {
 
 /// One topic namespace's handlers, adapted to the app's socket-wide model.
 ///
-/// Build with `namespace` (full control over the model), `stateful` (state
-/// in a Dict keyed by topic), or `accept_only` (no state at all). Opaque so
-/// namespaces can grow new capabilities without breaking existing code.
+/// Build with `namespace` (the app stores whatever per-topic state it needs
+/// in its own model) or `accept_only` (no state at all). Opaque so
+/// namespaces can gain new capabilities without breaking existing code.
 pub opaque type Namespace(model) {
   Namespace(
     pattern: TopicPattern,
@@ -82,104 +83,9 @@ pub fn accept_only(pattern: String) -> Namespace(model) {
   )
 }
 
-/// A namespace whose per-topic state lives in a `Dict` keyed by topic
-/// inside the socket-wide model. `socket_id`, `get`, and `put` project the
-/// model onto the pieces the namespace owns; `join`/`message`/`closed` are
-/// the per-topic handlers. A join's `Some(sub)` is committed only when the
-/// first matching join answer in its effects is `AcceptJoin`; rejected or
-/// unanswered joins leave no state behind.
-pub fn stateful(
-  pattern pattern: String,
-  socket_id socket_id: fn(model) -> String,
-  get get: fn(model) -> Dict(String, sub),
-  put put: fn(model, Dict(String, sub)) -> model,
-  join join: fn(String, Match, Dynamic, Ref) -> #(Option(sub), List(Effect)),
-  message message: fn(String, Match, sub, String, Dynamic, Option(Ref)) ->
-    #(sub, List(Effect)),
-  closed closed: fn(String, Match, sub, StopReason) -> List(Effect),
-) -> Namespace(model) {
-  namespace(
-    pattern:,
-    join: fn(model, match, payload, ref) {
-      let #(sub, effects) = join(socket_id(model), match, payload, ref)
-      let next_model = case sub, join_answer(effects, ref) {
-        Some(sub), Accepted ->
-          put(model, dict.insert(get(model), match.topic, sub))
-        _, _ -> model
-      }
-      #(next_model, effects)
-    },
-    message: fn(model, match, event, payload, ref) {
-      case dict.get(get(model), match.topic) {
-        Ok(sub) -> {
-          let #(sub, effects) =
-            message(socket_id(model), match, sub, event, payload, ref)
-          #(put(model, dict.insert(get(model), match.topic, sub)), effects)
-        }
-        Error(Nil) -> #(model, [])
-      }
-    },
-    closed: fn(model, match, reason) {
-      case dict.get(get(model), match.topic) {
-        Ok(sub) -> #(
-          put(model, dict.delete(get(model), match.topic)),
-          closed(socket_id(model), match, sub, reason),
-        )
-        Error(Nil) -> #(model, [])
-      }
-    },
-  )
-}
-
-type JoinAnswer {
-  Accepted
-  Rejected
-  Unanswered
-}
-
-fn join_answer(effects: List(Effect), ref: Ref) -> JoinAnswer {
-  case effects {
-    [] -> Unanswered
-    [socket.AcceptJoin(answered_ref, _), ..] if answered_ref == ref -> Accepted
-    [socket.RejectJoin(answered_ref, _), ..] if answered_ref == ref -> Rejected
-    [_, ..rest] -> join_answer(rest, ref)
-  }
-}
-
 /// The conventional rejection payload for a topic no namespace claims.
 pub fn unknown_topic() -> Json {
   json.object([#("reason", json.string("unknown_topic"))])
-}
-
-/// Socket-wide model for a standalone server built around one stateful
-/// namespace: the socket id plus one per-topic sub-model per joined topic.
-pub type Standalone(sub) {
-  Standalone(socket_id: String, topics: Dict(String, sub))
-}
-
-/// `init` for a standalone `beryl.child_spec` runtime whose model is
-/// `Standalone`.
-pub fn standalone_init(
-  info: ConnectInfo(msg),
-) -> #(Standalone(sub), List(Effect)) {
-  #(Standalone(socket_id: info.socket_id, topics: dict.new()), [])
-}
-
-/// Adapt a projection-taking namespace factory to the canonical
-/// `Standalone` model: the factory receives the `socket_id`/`get`/`put`
-/// projections `stateful` expects.
-pub fn standalone_namespace(
-  factory: fn(
-    fn(Standalone(sub)) -> String,
-    fn(Standalone(sub)) -> Dict(String, sub),
-    fn(Standalone(sub), Dict(String, sub)) -> Standalone(sub),
-  ) -> Namespace(Standalone(sub)),
-) -> Namespace(Standalone(sub)) {
-  factory(
-    fn(model) { model.socket_id },
-    fn(model) { model.topics },
-    fn(model, topics) { Standalone(..model, topics:) },
-  )
 }
 
 /// Route one input to the first namespace whose pattern matches its topic.

@@ -1,8 +1,7 @@
 import beryl/socket
 import beryl/socket/router
-import gleam/dict
+import gleam/dict.{type Dict}
 import gleam/dynamic
-import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -11,10 +10,19 @@ import gleeunit/should
 
 // --- Fixtures ---
 //
-// A standalone-shaped app with three namespaces: a read-only "lobby", a
-// stateful "room:*" namespace whose sub-model records the captured room
-// name, and an exact "room:vip" namespace registered first to pin
+// The app owns its socket-wide model; the router only decides which
+// namespace an input belongs to. Three namespaces: a read-only "lobby", a
+// "room:*" namespace that keeps the captured room name in a Dict it manages
+// itself, and an exact "room:vip" namespace registered first to pin
 // first-match ordering.
+
+type Model {
+  Model(socket_id: String, topics: Dict(String, String))
+}
+
+fn init() -> Model {
+  Model(socket_id: "socket-1", topics: dict.new())
+}
 
 fn join_ref(topic: String) -> socket.Ref {
   socket.make_join_ref(topic:, join_ref: Some("j1"), msg_ref: Some("m1"))
@@ -28,45 +36,47 @@ fn empty_payload() -> dynamic.Dynamic {
   dynamic.properties([])
 }
 
-fn connect_info() -> socket.ConnectInfo(Nil) {
-  socket.ConnectInfo(
-    socket_id: "socket-1",
-    seed: socket.empty_seed(),
-    self: socket.make_sender(fn(_message) { Nil }),
+fn room_namespace() -> router.Namespace(Model) {
+  router.namespace(
+    pattern: "room:*",
+    join: fn(model: Model, match: router.Match, _payload, ref) {
+      case match.params {
+        [room] ->
+          case string.starts_with(room, "forbidden") {
+            True -> #(model, [socket.RejectJoin(ref, json.object([]))])
+            False -> #(
+              Model(
+                ..model,
+                topics: dict.insert(model.topics, match.topic, room),
+              ),
+              [socket.AcceptJoin(ref, None)],
+            )
+          }
+        _ -> #(model, [socket.RejectJoin(ref, json.object([]))])
+      }
+    },
+    message: fn(model: Model, match: router.Match, event, _payload, ref) {
+      case dict.get(model.topics, match.topic) {
+        Ok(room) -> #(
+          Model(
+            ..model,
+            topics: dict.insert(model.topics, match.topic, room <> ":" <> event),
+          ),
+          socket.reply_ok(ref, json.object([])),
+        )
+        Error(Nil) -> #(model, [])
+      }
+    },
+    closed: fn(model: Model, match: router.Match, reason) {
+      case dict.get(model.topics, match.topic) {
+        Ok(_) -> #(
+          Model(..model, topics: dict.delete(model.topics, match.topic)),
+          [socket.Broadcast(match.topic, reason_event(reason), json.object([]))],
+        )
+        Error(Nil) -> #(model, [])
+      }
+    },
   )
-}
-
-fn room_namespace() -> router.Namespace(router.Standalone(String)) {
-  router.standalone_namespace(fn(socket_id, get, put) {
-    router.stateful(
-      pattern: "room:*",
-      socket_id:,
-      get:,
-      put:,
-      join: fn(_socket_id, match: router.Match, _payload, ref) {
-        case match.params {
-          [room] ->
-            case
-              string.starts_with(room, "forbidden"),
-              string.starts_with(room, "silent")
-            {
-              True, _ -> #(Some(room), [
-                socket.RejectJoin(ref, json.object([])),
-              ])
-              _, True -> #(Some(room), [])
-              False, False -> #(Some(room), [socket.AcceptJoin(ref, None)])
-            }
-          _ -> #(None, [socket.RejectJoin(ref, json.object([]))])
-        }
-      },
-      message: fn(_socket_id, _match, room, event, _payload, ref) {
-        #(room <> ":" <> event, socket.reply_ok(ref, json.object([])))
-      },
-      closed: fn(_socket_id, match, _room, reason) {
-        [socket.Broadcast(match.topic, reason_event(reason), json.object([]))]
-      },
-    )
-  })
 }
 
 fn reason_event(reason: socket.StopReason) -> String {
@@ -78,7 +88,7 @@ fn reason_event(reason: socket.StopReason) -> String {
   }
 }
 
-fn vip_namespace() -> router.Namespace(router.Standalone(String)) {
+fn vip_namespace() -> router.Namespace(Model) {
   router.namespace(
     pattern: "room:vip",
     join: fn(model, _match, _payload, ref) {
@@ -89,23 +99,13 @@ fn vip_namespace() -> router.Namespace(router.Standalone(String)) {
   )
 }
 
-fn update(
-  model: router.Standalone(String),
-  ev: socket.Input(Nil),
-) -> socket.Next(router.Standalone(String), Nil) {
+fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model, Nil) {
   router.route(
     [vip_namespace(), router.accept_only("lobby"), room_namespace()],
     router.unknown_topic(),
     model,
     ev,
   )
-}
-
-fn init() -> router.Standalone(String) {
-  let #(model, effects) = router.standalone_init(connect_info())
-  effects |> should.equal([])
-  model.socket_id |> should.equal("socket-1")
-  model
 }
 
 // --- Fail-closed routing ---
@@ -164,9 +164,9 @@ pub fn accept_only_ignores_messages_test() {
   next |> should.equal(model)
 }
 
-// --- Stateful dict projection ---
+// --- Join / message / closed dispatch ---
 
-pub fn stateful_join_message_closed_round_trip_test() {
+pub fn join_message_closed_round_trip_test() {
   let assert socket.Next(joined, [socket.AcceptJoin(_, None)]) =
     update(
       init(),
@@ -194,63 +194,6 @@ pub fn stateful_join_message_closed_round_trip_test() {
   dict.has_key(closed.topics, "room:general") |> should.be_false
 }
 
-pub fn rejected_join_leaves_no_state_test() {
-  let assert socket.Next(next, [socket.RejectJoin(_, _)]) =
-    update(
-      init(),
-      socket.Join("room:forbidden", empty_payload(), join_ref("room:forbidden")),
-    )
-
-  dict.has_key(next.topics, "room:forbidden") |> should.be_false
-}
-
-pub fn unanswered_join_leaves_no_state_test() {
-  let assert socket.Next(next, []) =
-    update(
-      init(),
-      socket.Join("room:silent", empty_payload(), join_ref("room:silent")),
-    )
-
-  dict.has_key(next.topics, "room:silent") |> should.be_false
-}
-
-pub fn rejected_and_unanswered_joins_have_bounded_state_test() {
-  let rejected = route_rejected_joins(init(), 100)
-  let unanswered = route_unanswered_joins(rejected, 100)
-
-  dict.size(unanswered.topics) |> should.equal(0)
-}
-
-fn route_rejected_joins(
-  model: router.Standalone(String),
-  remaining: Int,
-) -> router.Standalone(String) {
-  case remaining <= 0 {
-    True -> model
-    False -> {
-      let topic = "room:forbidden-" <> int.to_string(remaining)
-      let assert socket.Next(next, [socket.RejectJoin(_, _)]) =
-        update(model, socket.Join(topic, empty_payload(), join_ref(topic)))
-      route_rejected_joins(next, remaining - 1)
-    }
-  }
-}
-
-fn route_unanswered_joins(
-  model: router.Standalone(String),
-  remaining: Int,
-) -> router.Standalone(String) {
-  case remaining <= 0 {
-    True -> model
-    False -> {
-      let topic = "room:silent-" <> int.to_string(remaining)
-      let assert socket.Next(next, []) =
-        update(model, socket.Join(topic, empty_payload(), join_ref(topic)))
-      route_unanswered_joins(next, remaining - 1)
-    }
-  }
-}
-
 pub fn message_for_unjoined_claimed_topic_is_ignored_test() {
   let model = init()
   let assert socket.Next(next, []) =
@@ -270,7 +213,7 @@ pub fn closed_for_unjoined_claimed_topic_is_ignored_test() {
   next |> should.equal(model)
 }
 
-pub fn stateful_close_receives_each_stop_reason_test() {
+pub fn close_receives_each_stop_reason_test() {
   [
     #(socket.Normal, "normal"),
     #(socket.Shutdown, "shutdown"),
@@ -300,7 +243,7 @@ pub fn first_matching_namespace_wins_test() {
     )
 
   json.to_string(reply) |> should.equal("\"vip\"")
-  // The stateful "room:*" namespace never saw the join.
+  // The "room:*" namespace never saw the join.
   dict.has_key(next.topics, "room:vip") |> should.be_false
 }
 
@@ -313,7 +256,7 @@ pub fn prefix_wildcard_captures_suffix_test() {
       socket.Join("room:general", empty_payload(), join_ref("room:general")),
     )
 
-  // The sub-model stores the captured param, not a re-split topic.
+  // The model stores the captured param, not a re-split topic.
   dict.get(next.topics, "room:general") |> should.equal(Ok("general"))
 }
 
