@@ -1,6 +1,5 @@
 import beryl
 import beryl/group
-import beryl/socket/router as topic_router
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
@@ -40,8 +39,8 @@ pub fn main() {
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
       config,
-      init: topic_router.standalone_init,
-      update: chat_app.standalone_update(ctx),
+      init: chat_app.chat_rooms_init,
+      update: chat_app.chat_rooms_update(ctx),
     )
   session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =

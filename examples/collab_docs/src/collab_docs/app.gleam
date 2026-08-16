@@ -5,8 +5,8 @@
 //// - A topic-scoped `Model`/`join`/`update`/`closed` surface that a
 ////   composing app (see the showcase example) routes `document:*:*` events
 ////   through, storing the returned model per topic.
-//// - A socket-wide `Standalone` model plus `standalone_init`/
-////   `standalone_update` wrappers that drive the standalone collab-docs
+//// - A socket-wide `OpenDocuments` model plus `open_documents_init`/
+////   `open_documents_update` wrappers that drive the standalone collab-docs
 ////   server through a `beryl.child_spec` runtime, reusing the same per-topic
 ////   surface.
 ////
@@ -126,40 +126,84 @@ pub fn closed(
   []
 }
 
-// --- Standalone app-side dispatch wrapper ---
+// --- Socket-wide model and dispatch ---
 
-/// Adapt the `document:*` handlers to a containing socket-wide model.
-pub fn namespace(
-  ctx: Ctx,
-  socket_id socket_id: fn(model) -> String,
-  get get: fn(model) -> Dict(String, Model),
-  put put: fn(model, Dict(String, Model)) -> model,
-) -> router.Namespace(model) {
-  router.stateful(
+/// Socket-wide model for the standalone collab_docs server: the socket id
+/// plus one per-topic `Model` per joined `document:*:*` topic. The app owns
+/// this type; `beryl/socket/router` only decides which namespace an input
+/// belongs to.
+pub type OpenDocuments {
+  OpenDocuments(socket_id: String, topics: Dict(String, Model))
+}
+
+/// `init` for the `beryl.child_spec` runtime.
+pub fn open_documents_init(
+  info: socket.ConnectInfo(Nil),
+) -> #(OpenDocuments, List(Effect)) {
+  #(OpenDocuments(socket_id: info.socket_id, topics: dict.new()), [])
+}
+
+/// Adapt the `document:*:*` handlers to the socket-wide model. A
+/// join's model is committed only when the join is accepted.
+fn namespace(ctx: Ctx) -> router.Namespace(OpenDocuments) {
+  router.namespace(
     pattern: "document:*:*",
-    socket_id:,
-    get:,
-    put:,
-    join: fn(socket_id, match, payload, ref) {
-      join(ctx, socket_id, match, payload, ref)
+    join: fn(state: OpenDocuments, match: router.Match, payload, ref) {
+      case join(ctx, state.socket_id, match, payload, ref) {
+        #(Some(model), effects) -> #(
+          OpenDocuments(
+            ..state,
+            topics: dict.insert(state.topics, match.topic, model),
+          ),
+          effects,
+        )
+        #(None, effects) -> #(state, effects)
+      }
     },
-    message: fn(socket_id, match: router.Match, model, event_name, payload, ref) {
-      update(ctx, socket_id, match.topic, model, event_name, payload, ref)
+    message: fn(
+      state: OpenDocuments,
+      match: router.Match,
+      event_name,
+      payload,
+      ref,
+    ) {
+      case dict.get(state.topics, match.topic) {
+        Ok(model) -> {
+          let #(model, effects) =
+            update(
+              ctx,
+              state.socket_id,
+              match.topic,
+              model,
+              event_name,
+              payload,
+              ref,
+            )
+          #(
+            OpenDocuments(
+              ..state,
+              topics: dict.insert(state.topics, match.topic, model),
+            ),
+            effects,
+          )
+        }
+        Error(Nil) -> #(state, [])
+      }
     },
-    closed: fn(_socket_id, _match, _model, _reason) { [] },
+    closed: fn(state: OpenDocuments, match: router.Match, _reason) {
+      #(
+        OpenDocuments(..state, topics: dict.delete(state.topics, match.topic)),
+        [],
+      )
+    },
   )
 }
 
-/// Build the standalone update once, sharing the canonical router model.
-pub fn standalone_update(
+/// Build the socket-wide update once, sharing the app-owned model.
+pub fn open_documents_update(
   ctx: Ctx,
-) -> fn(router.Standalone(Model), socket.Input(Nil)) ->
-  socket.Next(router.Standalone(Model), Nil) {
-  let namespaces = [
-    router.standalone_namespace(fn(socket_id, get, put) {
-      namespace(ctx, socket_id, get, put)
-    }),
-  ]
+) -> fn(OpenDocuments, socket.Input(Nil)) -> socket.Next(OpenDocuments, Nil) {
+  let namespaces = [namespace(ctx)]
   fn(model, input) {
     router.route(namespaces, error_payload("invalid_topic"), model, input)
   }
