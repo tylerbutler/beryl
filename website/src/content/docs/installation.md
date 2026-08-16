@@ -6,12 +6,14 @@ title: Installation
 beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
 :::
 
-beryl is not yet published to Hex. Add it to your Gleam project as a git
-dependency by editing `gleam.toml`:
+Beryl packages are currently distributed from
+[GitHub](https://github.com/tylerbutler/beryl), not Hex. Add them to your
+Gleam project as git dependencies by editing `gleam.toml`:
 
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
@@ -21,16 +23,36 @@ Then download the dependencies:
 gleam deps download
 ```
 
-`gleam add` only works with Hex packages, so the dependency has to be written by
-hand.
+`gleam add` only installs Hex packages, so these dependency entries must be
+written by hand.
 
-`beryl` is the core channels library. `beryl_mist` is the
-[Mist](https://hex.pm/packages/mist) WebSocket transport; if you prefer
+`beryl` is the core runtime, `beryl_channels` is the recommended programming
+layer for multi-channel apps, and `beryl_mist` is the
+[Mist](https://hex.pm/packages/mist) WebSocket transport. If you prefer
 [Ewe](https://hex.pm/packages/ewe), use `path = "packages/beryl_ewe"` instead.
-Both transports live in the same repository, so they share the `git` and `ref`
-values.
+All packages share the same `git` and `ref` values.
 
 beryl targets the **Erlang (BEAM)** runtime — it does not support the JavaScript target.
+
+## Packages
+
+A typical application adds three packages: the core, a programming layer, and a WebSocket transport.
+
+| Package | Add it when |
+|---------|-------------|
+| `beryl` | Always — the runtime, wire codec, presence, PubSub, groups, and the app-side dispatch API |
+| `beryl_channels` | You want the [channel layer](/guides/channels/), the recommended default for multi-channel and Phoenix-shaped apps |
+| `beryl_mist` | You serve HTTP with [Mist](https://hex.pm/packages/mist) |
+| `beryl_ewe` | You serve HTTP with [Ewe](https://hex.pm/packages/ewe) |
+
+For raw app-side dispatch on Mist, use the same dependency block without the
+`beryl_channels` line.
+
+`beryl_channels` depends on `beryl` plus the shared Gleam libraries beryl
+already pulls in (`gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`),
+so adding it introduces no new transitive runtime dependencies beyond beryl's
+existing graph. See [Choose an API](/choosing-an-api/) if you are deciding
+between the two layers.
 
 ## Requirements
 
@@ -41,7 +63,8 @@ beryl targets the **Erlang (BEAM)** runtime — it does not support the JavaScri
 ### Why Gleam 1.18?
 
 beryl is a monorepo: the packages live in subdirectories (`packages/beryl`,
-`packages/beryl_mist`, `packages/beryl_ewe`) rather than at the repository root.
+`packages/beryl_channels`, `packages/beryl_mist`, `packages/beryl_ewe`) rather
+than at the repository root.
 Pointing a git dependency at a subdirectory needs the `path` field, which Gleam
 added in 1.18. Gleam 1.17 and earlier have no way to point a git dependency at
 anything but the repository root, so beryl cannot be used as a dependency from
@@ -72,25 +95,14 @@ upgrade Gleam.
 
 ## Choosing a ref
 
-`ref = "main"` gives you the code this site documents. Everything here — the
-Quick Start, the guides, the generated API reference — describes `main`, so
-that is the recommended ref until the next tag lands. Git dependencies resolve
-at the exact ref you name, and `main` moves, so rerun `gleam deps download`
-deliberately when you want to pick up changes. Use the same `ref` for `beryl`
-and its transport package — mixing versions across the two is unsupported.
+The channel layer has not appeared in a GitHub release tag yet, so the example
+uses `main`, which matches these docs but can change without warning. Check
+[GitHub Releases](https://github.com/tylerbutler/beryl/releases); once a tag
+contains every package you use, replace `main` with that tag.
 
-If you'd rather pin an immutable ref, use a commit SHA from
-[`main`'s history](https://github.com/tylerbutler/beryl/commits/main) — you
-keep the documented API and control exactly when you move.
-
-:::note[About the `v0.0` tag]
-The only released tag, [`v0.0`](https://github.com/tylerbutler/beryl/releases),
-is a preview from before these docs. Its API differs from what this site
-describes — most visibly, it still has the unsupervised `beryl.start` path
-that `main` replaced with `beryl.child_spec` and OTP supervision (see the
-[Supervision guide](/guides/supervision/)). Don't pin it unless you're
-deliberately using that older API.
-:::
+Git dependencies are resolved at the exact ref you name. Always use the same
+ref for `beryl`, `beryl_channels`, and the transport package; mixing versions
+across them is unsupported.
 
 ## Dependencies
 

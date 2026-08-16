@@ -62,7 +62,7 @@ doctor:
 
 # === DOCUMENTATION ===
 
-# Build Gleam API documentation (HTML + docs metadata) for both packages
+# Build Gleam API documentation for publishable workspace packages
 gleam-docs:
     ./scripts/gleam-each.sh docs
 

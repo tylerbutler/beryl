@@ -3,11 +3,15 @@ title: App-Side Dispatch
 description: Route joins, messages, binary frames, close events, and typed server messages in one update function.
 ---
 
-Beryl's current programming model is **app-side dispatch**: build one supervised runtime with `beryl.child_spec`, build a per-socket model in `init`, and route every socket event in one `update` function.
+Raw **app-side dispatch** is beryl's core programming model: build one
+supervised runtime with `beryl.child_spec`, build a per-socket model in
+`init`, and route every socket event in one `update` function. For
+multi-channel or Phoenix-shaped apps, the recommended
+[`beryl_channels` layer](/guides/channels/) supplies this router for you.
 
 There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `socket.Input` values and returning `socket.Next(model, effects)`.
 
-## The two app entry points
+## The app entry point
 
 ```gleam
 import beryl

@@ -19,6 +19,15 @@
 //// longer live, so their envelopes are dropped instead of being handed to
 //// the new instance.
 ////
+//// The map is the *only* record of which instances are live, and it is
+//// only as durable as the model core keeps. A normal close removes the
+//// entry, so the closed join's senders find nothing; an `on_terminate`
+//// panic discards that removal, because core's `Closed` crash policy is
+//// to log and keep the pre-`Closed` model. The entry then survives at its
+//// original generation and its own senders still resolve to it until the
+//// topic is joined again or the socket ends. See
+//// [`closed`](#closed) and `crash_test`.
+////
 //// ## Process affinity (load-bearing)
 ////
 //// `channel.open` and `LiveChannel.on_mail` **must run in the same
@@ -308,10 +317,25 @@ fn advance(
 /// once per accepted join.
 ///
 /// Termination actions are lowered inside this same `Closed` turn. Core
-/// has already dropped the subscription by then, so it drops pushes to
-/// the closing topic (and the presence snapshots pushed to this socket)
-/// while broadcasts and presence track/untrack still take effect — see
+/// has already dropped the subscription and purged the topic's
+/// outstanding reply refs by then, so it drops pushes to the closing
+/// topic (including presence snapshots pushed to this socket) and drops
+/// replies outright, while broadcasts still take effect. Core's automatic
+/// topic untrack runs immediately *after* this turn, so a
+/// `presence_track` here is undone as soon as it is applied — see
 /// `channel.on_terminate`.
+///
+/// The removal only sticks if this turn returns. When `on_terminate`
+/// panics, core logs the crash and keeps the model from before this turn,
+/// which is the one that still holds this instance at this generation. It
+/// is not reachable from core's side — the topic is closed, so no client
+/// message, binary frame, or `Closed` can name it again — but `Info` is
+/// socket-scoped rather than topic-scoped, so a `Sender` created by this
+/// join still finds it in `live` and still delivers `on_info` to it. The
+/// entry goes away when the topic is joined again (`open` overwrites it)
+/// or when the socket ends. This layer cannot narrow that window: undoing
+/// it is exactly the model update the panic discarded, and rescuing the
+/// callback here would hide a crash core is responsible for reporting.
 fn closed(
   router: Router,
   name: String,

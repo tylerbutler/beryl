@@ -1,5 +1,5 @@
 ---
-title: beryl/transport/server
+title: "beryl/transport/server"
 description: "Server-agnostic WebSocket transport infrastructure."
 ---
 

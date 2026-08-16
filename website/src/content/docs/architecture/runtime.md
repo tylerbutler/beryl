@@ -23,6 +23,12 @@ The runtime actor is generic over the app's `model` and `msg` types. `beryl.chil
 
 Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `socket.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
+`beryl_channels.child_spec` uses this same mechanism. Its generic router
+captures each handler's private state and server-message type in closures,
+while the socket-level message is a sealed, generation-stamped envelope.
+The envelope's topic and generation are checked before the typed value is
+opened, so stale mail cannot reach a later join.
+
 ## Input dispatch
 
 Inbound WebSocket frames follow a two-step path:
@@ -44,6 +50,12 @@ Most lists are applied in a single actor turn. `PresenceTrack` and `PresenceUntr
 ## Crash containment
 
 Crashes in app callbacks are rescued rather than allowed to take down the shared runtime. The blast radius is scoped to what crashed: a crashing `Join` is rejected; a crashing topic-scoped `Message` or `Binary` closes only that topic; a crashing `Info` tears down the whole socket because it has no topic to attribute; a crashing `Closed` is logged while teardown continues; and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging. Other sockets remain isolated.
+
+For the channel layer, those scopes map to `join`, `on_message` /
+`on_binary`, `on_info`, and `on_terminate`. A terminate panic discards that
+router update, so its actions are lost and the old instance remains reachable
+only through its own typed sender until rejoin or socket teardown. Core still
+finishes closing the topic and continues closing sibling channels.
 
 ## Heartbeat enforcement
 

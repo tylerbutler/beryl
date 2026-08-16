@@ -1,5 +1,5 @@
 ---
-title: beryl/bridge
+title: "beryl/bridge"
 description: "Bridge - Forward an external OTP actor's message stream to a socket via"
 ---
 

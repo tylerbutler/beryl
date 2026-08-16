@@ -1,15 +1,26 @@
 # beryl_ewe
 
 [Ewe](https://hex.pm/packages/ewe) WebSocket transport for
-[beryl](https://hex.pm/packages/beryl) real-time sockets.
+[beryl](https://github.com/tylerbutler/beryl/tree/main/packages/beryl)
+real-time sockets.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
 > releases, and quality should not be considered production-ready.
 
-```sh
-gleam add beryl beryl_ewe
+## Installation
+
+Beryl packages are currently distributed from GitHub, not Hex:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_ewe = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_ewe" }
 ```
+
+Use the same git ref for beryl, beryl_ewe, and any channel-layer package.
+See the [installation guide](https://beryl.tylerbutler.com/installation/) for
+release-tag guidance.
 
 ## Usage
 
@@ -67,14 +78,16 @@ upgrade, validates the `Origin` header (same-origin by default, allow-list,
 or allow-all), and enforces beryl's frame-size, frame-rate, and connection
 limits at the edge.
 
-It mirrors the [`beryl_mist`](https://hex.pm/packages/beryl_mist) package: both
-transports expose the same config-builder and handler API, so you can run beryl
-sockets on either web server by choosing the matching transport package.
+It mirrors the
+[`beryl_mist`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_mist)
+package: both transports expose the same config-builder and handler API, so you
+can run beryl sockets on either web server by choosing the matching transport
+package.
 
 ## Documentation
 
 - Guides and API reference: <https://beryl.tylerbutler.com>
-- Package docs: <https://hexdocs.pm/beryl_ewe>
+- Package API: <https://beryl.tylerbutler.com/reference/api/beryl_ewe/>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl_ewe`)
 

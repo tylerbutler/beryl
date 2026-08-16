@@ -3,6 +3,7 @@
 //// `child_spec` system really dispatches once its supervisor is running.
 
 import beryl
+import beryl/topic
 import beryl/wire
 import beryl_channels
 import beryl_channels/channel
@@ -33,7 +34,7 @@ pub fn child_spec_rejects_an_invalid_pattern_before_building_test() {
     Error(
       beryl_channels.ChildSpecInvalidHandlers(beryl_channels.InvalidPattern(
         "",
-        "pattern cannot be empty",
+        topic.EmptyTopic,
       )),
     ),
   )

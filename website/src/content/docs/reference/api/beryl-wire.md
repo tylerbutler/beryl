@@ -1,5 +1,5 @@
 ---
-title: beryl/wire
+title: "beryl/wire"
 description: "Phoenix Wire Protocol — encoding/decoding helpers and the canonical"
 ---
 

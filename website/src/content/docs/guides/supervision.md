@@ -5,6 +5,8 @@ title: Supervision
 Beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
 handle and a child specification that you add to your application's OTP
 supervisor. Your `init`/`update` functions are captured in that specification.
+`beryl_channels.child_spec` returns the same handle/spec shape after compiling
+its handler table into the core `init`/`update` pair.
 
 ## What child_spec supervises
 
@@ -47,6 +49,11 @@ triggered them:
 
 See the [Error Handling guide](/guides/error-handling/) for details.
 
+For channel callbacks, those rows map to `join`, `on_message`/`on_binary`,
+`on_info`, and `on_terminate`. A terminate panic loses that callback's actions
+but does not stop sibling-channel teardown; see
+[Crash behavior](/guides/channels/#crash-behavior).
+
 ## Presence and groups
 
 `presence.start` and `group.start` return plain OTP actors linked to the
@@ -80,9 +87,11 @@ pub fn main() {
 }
 ```
 
-Presence is a separate application-owned actor. If socket updates drive it,
-send nonblocking commands to another application worker rather than calling
-the synchronous presence API inside Beryl's shared runtime.
+Presence is a separate application-owned actor. Drive it from socket code with
+`socket.PresenceTrack` / `PresenceUntrack` effects or the equivalent channel
+actions. The runtime applies those mutations asynchronously and parks only the
+affected socket until completion. Do not call the synchronous public presence
+API directly from `init`, `update`, or a channel callback.
 
 Both also offer `start_named` variants that register the actor under a
 `process.Name` for callers integrating them into their own supervision

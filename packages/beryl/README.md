@@ -14,11 +14,18 @@ fan-out, and built-in abuse controls (rate limits, connection ceilings,
 heartbeat eviction).
 
 To serve sockets over WebSockets, pair it with a transport package such as
-[`beryl_mist`](https://hex.pm/packages/beryl_mist):
+[`beryl_mist`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_mist).
+Beryl packages are currently distributed from GitHub, not Hex:
 
-```sh
-gleam add beryl beryl_mist
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
+
+Use the same git ref for beryl and your transport package. See the
+[installation guide](https://beryl.tylerbutler.com/installation/) for Ewe,
+channel-layer, and release-tag guidance.
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the
 JavaScript target.
@@ -26,7 +33,7 @@ JavaScript target.
 ## Documentation
 
 - Guides and API reference: <https://beryl.tylerbutler.com>
-- Package docs: <https://hexdocs.pm/beryl>
+- Package API: <https://beryl.tylerbutler.com/reference/api/beryl/>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl`)
 

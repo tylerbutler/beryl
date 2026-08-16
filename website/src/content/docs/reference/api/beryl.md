@@ -1,5 +1,5 @@
 ---
-title: beryl
+title: "beryl"
 description: "Beryl - Type-safe real-time communication"
 ---
 

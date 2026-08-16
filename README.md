@@ -10,15 +10,25 @@
 
 ## Install
 
-```sh
-gleam add beryl beryl_mist
+Beryl packages are currently distributed from GitHub, not Hex. Add them to
+`gleam.toml`:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
-`beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
-WebSocket transport. An [Ewe](https://hex.pm/packages/ewe) transport is also
-available as `beryl_ewe` (`gleam add beryl beryl_ewe`) and mirrors the
-`beryl_mist` API. All live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
-workspace under `packages/`).
+```sh
+gleam deps download
+```
+
+`beryl` is the core runtime, `beryl_channels` is the recommended channel
+composition layer, and `beryl_mist` is the
+[Mist](https://hex.pm/packages/mist) WebSocket transport. An
+[Ewe](https://hex.pm/packages/ewe) transport is also available as
+`beryl_ewe` and mirrors the `beryl_mist` API.
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
 
@@ -26,49 +36,43 @@ beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScri
 
 ```gleam
 import beryl
-import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
 import beryl/transport/server
-import beryl_mist as mist_transport
 import beryl/wire
-import gleam/dynamic/decode
+import beryl_channels
+import beryl_channels/channel
+import beryl_mist as mist_transport
 import gleam/erlang/process
-import gleam/json
-import gleam/option.{None}
 import gleam/otp/static_supervisor
 import mist
 
-pub type Model { Model(username: String) }
-
-fn init(_info: socket.ConnectInfo(Nil)) -> #(Model, List(socket.Effect)) {
-  #(Model(username: "anonymous"), [])
+type State {
+  State(room: String)
 }
 
-fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model, Nil) {
-  case ev {
-    Join("room:" <> _, payload, ref) -> {
-      let username_decoder = {
-        use username <- decode.field("username", decode.string)
-        decode.success(username)
-      }
-      let username = case decode.run(payload, username_decoder) {
-        Ok(username) -> username
-        Error(_) -> "anonymous"
-      }
-      Next(Model(username:), [AcceptJoin(ref, None)])
-    }
-    Join(_, _, ref) ->
-      Next(model, [
-        socket.RejectJoin(ref, json.object([#("reason", json.string("unknown_topic"))])),
-      ])
-    Message(topic, "new_msg", payload, _ref) ->
-      Next(model, [Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))])
-    _ -> Next(model, [])
-  }
+fn room_channel() -> channel.Handler {
+  channel.handler("room:*", fn(_info, topic, _payload) {
+    channel.accept(channel.joined(State(room: topic), callbacks()))
+  })
+}
+
+fn callbacks() -> channel.Callbacks(State, Nil) {
+  channel.callbacks()
+  |> channel.on_message(fn(state, message) {
+    channel.continue_with(
+      state,
+      channel.actions()
+      |> channel.broadcast(message.event, wire.dynamic_to_json(message.payload)),
+    )
+  })
 }
 
 pub fn main() {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
   let assert Ok(#(channels, spec)) =
-    beryl.child_spec(beryl.config(wire.phoenix_codec()), init: init, update: update)
+    beryl_channels.child_spec(config, handlers: [room_channel()])
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
@@ -99,12 +103,13 @@ For a complete end-to-end walkthrough including Phoenix JS client code, see the
 ## Documentation
 
 - **Website & guides**: <https://beryl.tylerbutler.com>
-- **Generated API docs**: <https://hexdocs.pm/beryl/>
+- **Generated API reference**: <https://beryl.tylerbutler.com/reference/api/>
+- **Repository and git releases**: <https://github.com/tylerbutler/beryl>
 
 ## Ecosystem
 
-Beryl is the server-side channel runtime. It owns socket registration, channel
-handlers, broadcasts, presence, groups, pubsub, and transport integration.
+Beryl is the server-side real-time runtime. It owns socket registration,
+broadcasts, presence, groups, PubSub, and transport integration.
 Beryl has its own pluggable wire codec, and its Phoenix codec is kept compatible
 with Roost and Aquamarine by shared conformance fixtures.
 
@@ -133,11 +138,13 @@ flowchart TD
 | `phoenix_channel_fixtures` | Shared test fixtures for Phoenix channel wire compatibility. |
 | `roost` | Pure Phoenix channel frame constants, encode/decode helpers, and reply helpers. |
 | `beryl` | Server-side runtime with its own pluggable codec; its Phoenix codec is fixture-tested. |
+| `beryl_channels` | Typed channel composition layer built on beryl's public API. |
 | `aquamarine` | Client-side channel runtime that uses Roost for Phoenix compatibility. |
 
 ## Features
 
-- **App-side dispatch** — one typed `init`/`update` pair per socket handles every topic; effects express replies, pushes, broadcasts, and kicks
+- **Channels** — register typed handlers by topic pattern; each joined topic keeps private state and a typed server-message API
+- **App-side dispatch** — use the core `init`/`update` API directly when you want to own the router
 - **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
 - **Groups** — Named channel groups for multi-topic broadcasting
 - **PubSub** — pg-based distributed publish/subscribe
@@ -147,7 +154,7 @@ flowchart TD
 
 ## Examples
 
-Three runnable demos are included in the `examples/` directory:
+Four runnable demos are included in the `examples/` directory:
 
 | Example | What it demonstrates |
 |---------|----------------------|

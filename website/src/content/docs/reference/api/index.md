@@ -12,7 +12,7 @@ description: Generated API reference from Gleam docs metadata.
 This reference is generated from Gleam's docs metadata for `beryl`, `beryl_channels`, `beryl_ewe`, and `beryl_mist`.
 
 :::note[Generated content]
-Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no `hexdocs.pm` listing.
+Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference. Beryl packages are currently distributed from GitHub, not Hex.
 :::
 
 ## `beryl` `0.2.0`

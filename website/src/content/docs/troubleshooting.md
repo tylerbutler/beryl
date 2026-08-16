@@ -40,8 +40,10 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    socket.Join("room:" <> _, payload, ref) ->
      socket.Next(model, [socket.AcceptJoin(ref, option.None)])
    ```
+   With `beryl_channels`, confirm a handler pattern matches the topic. The
+   layer rejects an unclaimed topic with `{"reason": "unmatched topic"}`.
 
-2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` after its child spec is started:
+2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` or `beryl_channels.child_spec` after its child spec is started:
    ```gleam
    use <- mist_transport.upgrade(req, channels, config)
    ```
@@ -63,6 +65,40 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 2. **Rate limits dropping traffic.** `with_frame_rate` sheds complete frames at the transport edge before decode. `with_message_rate`, `with_channel_rate`, and `with_topic_rate` apply after decode in the runtime.
 
 3. **Event name mismatch.** The `Message` event carries the raw event string. Verify the client sends the exact event name your `update` matches on.
+
+---
+
+## Channel-layer symptoms
+
+### `child_spec` returns `ChildSpecInvalidHandlers`
+
+- `InvalidPattern(pattern, reason)` means the pattern is not valid
+  `beryl/topic` syntax. `reason` is the nested `TopicError`; keep a catch-all
+  arm for future variants.
+- `DuplicatePattern(pattern)` means the same pattern string appears twice.
+  Overlapping but different patterns are valid; first match wins.
+
+### `channel.notify` never reaches `on_info`
+
+The sender is generation-scoped. Mail for a closed or rejoined channel is
+dropped still sealed, and `notify` never reports liveness. Capture
+`info.self` from each new join and install `channel.on_info`.
+
+### Termination actions do not arrive
+
+- `push`, `push_presence`, `reply_ok`, and `reply_error` are dropped because
+  the topic is already unsubscribed and its reply refs are already purged.
+- `presence_track` is immediately reversed by core's automatic close cleanup;
+  use `presence_untrack`.
+- If `on_terminate` panics, its actions are lost. Core still closes sibling
+  channels, but the old instance remains reachable through its own typed
+  sender until rejoin or socket teardown.
+
+### One channel crash closes more than expected
+
+Crash scope follows the callback: `join` rejects one join,
+`on_message`/`on_binary` closes one topic, and `on_info` tears down the whole
+socket. See [Crash behavior](/guides/channels/#crash-behavior).
 
 ---
 
@@ -115,17 +151,16 @@ let logging =
 
 **Checks:**
 
-1. **Untrack on `Closed`.** Send a nonblocking cleanup command to an
-   application-owned presence worker from the `Closed` arm:
+1. **Untrack on `Closed`.** Return a presence effect from the `Closed` arm
+   (or `channel.presence_untrack` from `on_terminate`):
    ```gleam
    socket.Closed(topic, _reason) ->
-     {
-       process.send(presence_worker, Untrack(topic, model.presence_ref))
-       socket.Next(model, [])
-     }
+     socket.Next(model, [
+       socket.PresenceUntrack(topic, model.presence_key),
+     ])
    ```
-   The application owns every ref returned by `presence.track` and must
-   untrack it. Do not run synchronous presence calls inside the shared runtime.
+   The runtime applies presence effects asynchronously. Do not call the
+   synchronous public presence API inside the shared runtime.
 
 2. **Cross-node sync.** If running multiple nodes, each node must be configured with the same PubSub instance and each presence actor needs a unique replica ID. The CRDT merges state over PubSub; without PubSub, nodes have independent state.
 

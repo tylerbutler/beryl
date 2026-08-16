@@ -37,9 +37,16 @@ pub fn room() -> channel.Handler {
           channel.actions() |> channel.push("announce", json.string(text)),
         )
       })
+      |> channel.on_terminate(fn(_count, _reason) {
+        channel.actions()
+        |> channel.broadcast("left", json.string(topic))
+      })
 
-    channel.notify(info.self, Announce("welcome to " <> topic))
+    channel.notify(info.self, Announce("later, on this topic"))
     channel.accept(channel.joined(0, callbacks))
+    |> channel.with_actions(
+      channel.actions() |> channel.push("welcome", json.string(topic)),
+    )
   })
 }
 
@@ -63,6 +70,8 @@ pub fn documented_child_spec_example_compiles_and_starts_test() {
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
     as "the documented supervision tree starts"
+
+  beryl.broadcast(sockets, "room:lobby", "announce", json.string("hi"))
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }

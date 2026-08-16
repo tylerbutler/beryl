@@ -92,17 +92,18 @@ import { Aside } from '@astrojs/starlight/components';
 	<ol>
 		<li>
 			<h3>Install beryl</h3>
-			<p>beryl isn't on Hex yet — it ships straight from <code>main</code>. Add <code>beryl</code> and <code>beryl_mist</code> to your <code>gleam.toml</code> as git dependencies; the guide has the two lines to paste.</p>
+			<p>Beryl packages are currently distributed from GitHub, not Hex. Add the core, channel layer, and Mist transport as Git dependencies.</p>
+			<p class="beryl-path__cmd"><code>gleam deps download</code></p>
 			<a class="beryl-path__go" href="/installation/">Installation guide →</a>
 		</li>
 		<li>
-			<h3>Build your first channel</h3>
-			<p>Wire up server callbacks, the WebSocket transport, and a Phoenix JS client, end to end, in one sitting.</p>
+			<h3>Build your first socket app</h3>
+			<p>Write one channel handler, wire the WebSocket transport, and connect a Phoenix JS client, end to end, in one sitting. Prefer to own the router? <a href="/choosing-an-api/">Choose an API</a> lays out both layers.</p>
 			<a class="beryl-path__go" href="/quick-start/">Open the Quick Start →</a>
 		</li>
 		<li>
 			<h3>See it running</h3>
-			<p>Browse complete, runnable examples, then go deeper in the <a href="/guides/dispatch/">guides</a> or the <a href="/reference/">API reference</a>.</p>
+			<p>Browse complete, runnable examples, then go deeper in the <a href="/guides/channels/">channel guide</a> or the <a href="/reference/api/beryl_channels/">API reference</a>.</p>
 			<a class="beryl-path__go" href="/examples/">View examples →</a>
 		</li>
 	</ol>
@@ -224,9 +225,9 @@ import { Aside } from '@astrojs/starlight/components';
 
 <div class="beryl-features">
 	<article class="beryl-feature beryl-feature--lead">
-		<h3>Real-time channels</h3>
-		<p>One typed init/update pair per socket handles every topic. Join, leave, and broadcast with compile-time guarantees on socket state: the Gleam compiler holds you to your own model type.</p>
-		<a class="beryl-feature__link" href="/guides/channels/">Channels guide →</a>
+		<h3>Channels, or your own router</h3>
+		<p>Register one handler per topic pattern and let <code>beryl_channels</code> route joins, messages, and closes to the channel that owns the topic — each with private, typed state. Or drop to the core and route every event yourself in one typed <code>update</code> function. No registry, no assigns, no type erasure either way.</p>
+		<a class="beryl-feature__link" href="/choosing-an-api/">Choose an API →</a>
 	</article>
 	<article class="beryl-feature">
 		<h3>Presence tracking</h3>

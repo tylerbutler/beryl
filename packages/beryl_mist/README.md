@@ -1,15 +1,26 @@
 # beryl_mist
 
 [Mist](https://hex.pm/packages/mist) WebSocket transport for
-[beryl](https://hex.pm/packages/beryl) real-time sockets.
+[beryl](https://github.com/tylerbutler/beryl/tree/main/packages/beryl)
+real-time sockets.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
 > releases, and quality should not be considered production-ready.
 
-```sh
-gleam add beryl beryl_mist
+## Installation
+
+Beryl packages are currently distributed from GitHub, not Hex:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
+
+Use the same git ref for beryl, beryl_mist, and any channel-layer package.
+See the [installation guide](https://beryl.tylerbutler.com/installation/) for
+release-tag guidance.
 
 ## Usage
 
@@ -70,7 +81,7 @@ limits at the edge.
 ## Documentation
 
 - Guides and API reference: <https://beryl.tylerbutler.com>
-- Package docs: <https://hexdocs.pm/beryl_mist>
+- Package API: <https://beryl.tylerbutler.com/reference/api/beryl_mist/>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl_mist`)
 

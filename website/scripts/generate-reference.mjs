@@ -158,19 +158,46 @@ function descriptionFromDocs(documentation, fallback) {
 	return firstLine ? firstLine.trim() : fallback;
 }
 
-/** Quote a scalar for safe embedding in YAML frontmatter. */
-function yamlQuote(value) {
+// Frontmatter values are arbitrary prose lifted from module docs, so they
+// can contain `:`, `#`, quotes, or a leading `-` — all of which change
+// meaning in bare YAML. Always emit a double-quoted scalar.
+function yamlString(value) {
 	return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
+// Markdown tables are cell-delimited by `|`, so any pipe inside prose has
+// to be escaped or it splits the row.
+function tableCell(value) {
+	return String(value).replaceAll("|", "\\|");
+}
+
 function normalizeDoc(documentation) {
+	let text;
 	if (Array.isArray(documentation)) {
-		return documentation.map((line) => line.trimEnd()).join("\n").trim();
+		text = documentation.map((line) => line.trimEnd()).join("\n").trim();
+	} else if (typeof documentation === "string") {
+		text = documentation.trim();
+	} else {
+		return "";
 	}
-	if (typeof documentation === "string") {
-		return documentation.trim();
-	}
-	return "";
+	return rewriteDocLinks(text);
+}
+
+// Gleam docs use HexDocs HTML paths and case-preserving type fragments.
+// Rewrite them to this site's generated Markdown routes and Starlight slugs.
+function rewriteDocLinks(documentation) {
+	return documentation
+		.replace(
+			/\]\(\.\/([^)\s]+)\.html(?:#([^)]+))?\)/g,
+			(_match, moduleName, fragment) => {
+				const slug = moduleSlug(moduleName);
+				const hash = fragment ? `#${fragment.toLowerCase()}` : "";
+				return `](${referenceBasePath}/${slug}/${hash})`;
+			},
+		)
+		.replace(/\]\(#([^)]+)\)/g, (_match, fragment) => {
+			return `](#${fragment.toLowerCase()})`;
+		});
 }
 
 function code(value) {
@@ -300,7 +327,7 @@ function renderIndex(packages) {
 						moduleInterface.documentation,
 						`Reference for ${moduleName}.`,
 					);
-					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${description} |`;
+					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${tableCell(description)} |`;
 				})
 				.join("\n");
 			return `## ${code(packageInterface.name)} ${code(packageInterface.version)}
@@ -325,7 +352,7 @@ ${GENERATED_MARKER}
 This reference is generated from Gleam's docs metadata for ${packageList}.
 
 :::note[Generated content]
-Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference — beryl is not published to Hex yet, so there is no \`hexdocs.pm\` listing.
+Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference. Beryl packages are currently distributed from GitHub, not Hex.
 :::
 
 ${packageSections}
@@ -345,8 +372,8 @@ function renderModulePage(moduleName, moduleInterface) {
 	].filter(Boolean);
 
 	return `---
-title: ${moduleName}
-description: ${yamlQuote(description)}
+title: ${yamlString(moduleName)}
+description: ${yamlString(description)}
 ---
 
 ${GENERATED_MARKER}

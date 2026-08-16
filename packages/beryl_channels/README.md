@@ -1,6 +1,7 @@
 # beryl_channels
 
-Composable channel layer for [beryl](https://hex.pm/packages/beryl)
+Composable channel layer for
+[beryl](https://github.com/tylerbutler/beryl/tree/main/packages/beryl)
 real-time sockets.
 
 > [!IMPORTANT]
@@ -12,6 +13,20 @@ channel is a record of closures over that channel's own private state.
 Register a list of handlers and the layer routes each socket event to the
 channel that owns its topic — no hand-written message union and no
 hand-written router.
+
+## Installation
+
+Beryl packages are currently distributed from GitHub, not Hex:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
+```
+
+Use the same git ref for beryl, beryl_channels, and your transport package.
+See the [installation guide](https://beryl.tylerbutler.com/installation/) for
+the Mist and Ewe dependency lines and release-tag guidance.
 
 ```gleam
 import beryl
@@ -48,6 +63,10 @@ pub fn main() {
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
+
+  // `sockets` is an ordinary beryl handle: hand it to a transport
+  // (`beryl_mist`, `beryl_ewe`), to `beryl.broadcast`, or to `beryl.stop`.
+  beryl.broadcast(sockets, "room:lobby", "announce", json.string("hello"))
 }
 ```
 
@@ -57,8 +76,8 @@ single `List(channel.Handler)` holds channels that agree on nothing. No
 value is erased to `Dynamic` and no unchecked coercion is involved.
 
 `child_spec` returns an ordinary `beryl.Sockets` handle plus a child
-specification for the application's supervision tree. The handle works
-with the `beryl_mist` and `beryl_ewe` transports, `beryl.broadcast`, and
+specification for the application's supervision tree. The handle works with
+the `beryl_mist` and `beryl_ewe` transports, `beryl.broadcast`, and
 `beryl.stop`.
 
 Handlers are consulted in registration order and the first matching
@@ -69,7 +88,7 @@ list. A join for a topic no handler matches is refused explicitly with
 ## Documentation
 
 - Guides and API reference: <https://beryl.tylerbutler.com>
-- Package docs: <https://hexdocs.pm/beryl_channels>
+- Package API: <https://beryl.tylerbutler.com/reference/api/beryl_channels/>
 - Repository: <https://github.com/tylerbutler/beryl> (monorepo; this package
   lives in `packages/beryl_channels`)
 

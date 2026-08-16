@@ -1,5 +1,5 @@
 ---
-title: beryl/transport/origin
+title: "beryl/transport/origin"
 description: "Origin and handshake-version checks for WebSocket upgrades."
 ---
 

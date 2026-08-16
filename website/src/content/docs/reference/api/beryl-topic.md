@@ -1,5 +1,5 @@
 ---
-title: beryl/topic
+title: "beryl/topic"
 description: "Pattern matching for topic routing."
 ---
 
