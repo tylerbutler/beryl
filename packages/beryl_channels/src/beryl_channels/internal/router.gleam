@@ -117,7 +117,7 @@ pub fn init(
 pub fn update(
   router: Router,
   input: socket.Input(Envelope),
-) -> socket.Next(Router, Envelope) {
+) -> socket.Next(Router) {
   case input {
     socket.Join(topic: name, payload: payload, ref: ref) ->
       join(router, name, payload, ref)
@@ -150,8 +150,8 @@ fn join(
   router: Router,
   name: String,
   payload: dynamic.Dynamic,
-  ref: socket.Ref,
-) -> socket.Next(Router, Envelope) {
+  ref: socket.JoinRef,
+) -> socket.Next(Router) {
   case select(router.handlers, name) {
     Error(Nil) ->
       socket.Next(router, [socket.RejectJoin(ref, unmatched_topic())])
@@ -190,8 +190,8 @@ fn open(
   handler: channel.Handler,
   name: String,
   payload: dynamic.Dynamic,
-  ref: socket.Ref,
-) -> socket.Next(Router, Envelope) {
+  ref: socket.JoinRef,
+) -> socket.Next(Router) {
   let generation = router.generation + 1
   let router = Router(..router, generation: generation)
   let context =
@@ -247,7 +247,7 @@ fn on_live(
   router: Router,
   name: String,
   callback: fn(Instance) -> channel.Step,
-) -> socket.Next(Router, Envelope) {
+) -> socket.Next(Router) {
   case dict.get(router.live, name) {
     Error(Nil) -> socket.Next(router, [])
     Ok(instance) -> advance(router, name, instance, callback(instance))
@@ -265,7 +265,7 @@ fn deliver(
   name: String,
   generation: Int,
   mail: channel.Mail,
-) -> socket.Next(Router, Envelope) {
+) -> socket.Next(Router) {
   case dict.get(router.live, name) {
     Error(Nil) -> socket.Next(router, [])
     Ok(instance) ->
@@ -282,7 +282,7 @@ fn advance(
   name: String,
   instance: Instance,
   step: channel.Step,
-) -> socket.Next(Router, Envelope) {
+) -> socket.Next(Router) {
   case step {
     // The next instance keeps this join's generation: it is the same join.
     channel.StepContinue(next: next, actions: actions) -> {
@@ -339,7 +339,7 @@ fn closed(
   router: Router,
   name: String,
   reason: socket.StopReason,
-) -> socket.Next(Router, Envelope) {
+) -> socket.Next(Router) {
   case dict.get(router.live, name) {
     Error(Nil) -> socket.Next(router, [])
     Ok(instance) -> {

@@ -7,6 +7,7 @@
 import app_test_helpers as h
 import beryl
 import beryl/topic
+import beryl/transport
 import beryl/wire
 import gleam/otp/static_supervisor
 import gleam/string
@@ -183,6 +184,6 @@ pub fn child_spec_admission_fails_before_start_test() {
 
   // The limiter is supervised inside the not-yet-started subtree, so
   // admission fails cleanly rather than panicking.
-  beryl.acquire_connection_slot(sockets, "1.2.3.4")
+  transport.acquire_connection_slot(sockets, "1.2.3.4")
   |> should.be_error
 }

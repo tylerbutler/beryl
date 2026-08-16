@@ -31,28 +31,28 @@ import gleam/erlang/reference.{type Reference}
 import gleam/json.{type Json}
 import gleam/option.{type Option, None, Some}
 
-/// A reply correlation handle.
+/// A pending join correlation handle.
 ///
-/// Carried by `Join` and (when the client requested a reply) `Message`
-/// inputs. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
-/// effects. Message refs may be stored in the model and answered from a later
-/// `update` turn (for example, after an async lookup completes). Join refs are
-/// valid only for their pending join and carry a unique runtime token, so a
-/// delayed completion for an older same-topic join cannot answer a replacement
-/// or retry.
-pub opaque type Ref {
-  Ref(
-    kind: RefKind,
+/// Pass it back in `AcceptJoin` or `RejectJoin`. A join ref is valid only for
+/// its pending join and carries a unique runtime token, so a delayed completion
+/// for an older same-topic join cannot answer a replacement or retry.
+pub opaque type JoinRef {
+  JoinRef(
     topic: String,
     join_ref: Option(String),
     msg_ref: Option(String),
-    join_token: Option(Reference),
+    token: Reference,
   )
 }
 
-type RefKind {
-  JoinRef
-  MessageRef
+/// A client message reply correlation handle.
+///
+/// Pass it back in `ReplyOk` or `ReplyError`. Reply refs may be stored in the
+/// model and answered from a later `update` turn (for example, after an async
+/// lookup completes). They are single-use and remain valid only while the
+/// topic instance that received the message stays open.
+pub opaque type ReplyRef {
+  ReplyRef(topic: String, join_ref: Option(String), msg_ref: Option(String))
 }
 
 @internal
@@ -60,13 +60,12 @@ pub fn make_join_ref(
   topic topic: String,
   join_ref join_ref: Option(String),
   msg_ref msg_ref: Option(String),
-) -> Ref {
-  Ref(
-    kind: JoinRef,
+) -> JoinRef {
+  JoinRef(
     topic: topic,
     join_ref: join_ref,
     msg_ref: msg_ref,
-    join_token: Some(reference.new()),
+    token: reference.new(),
   )
 }
 
@@ -75,38 +74,32 @@ pub fn make_message_ref(
   topic topic: String,
   join_ref join_ref: Option(String),
   msg_ref msg_ref: Option(String),
-) -> Ref {
-  Ref(
-    kind: MessageRef,
-    topic: topic,
-    join_ref: join_ref,
-    msg_ref: msg_ref,
-    join_token: None,
-  )
+) -> ReplyRef {
+  ReplyRef(topic: topic, join_ref: join_ref, msg_ref: msg_ref)
 }
 
 @internal
-pub fn ref_is_join(ref: Ref) -> Bool {
-  ref.kind == JoinRef
-}
-
-@internal
-pub fn refs_match(first: Ref, second: Ref) -> Bool {
+pub fn join_refs_match(first: JoinRef, second: JoinRef) -> Bool {
   first == second
 }
 
 @internal
-pub fn ref_topic(ref: Ref) -> String {
+pub fn join_ref_topic(ref: JoinRef) -> String {
   ref.topic
 }
 
 @internal
-pub fn ref_join_ref(ref: Ref) -> Option(String) {
+pub fn reply_ref_topic(ref: ReplyRef) -> String {
+  ref.topic
+}
+
+@internal
+pub fn reply_ref_join_ref(ref: ReplyRef) -> Option(String) {
   ref.join_ref
 }
 
 @internal
-pub fn ref_msg_ref(ref: Ref) -> Option(String) {
+pub fn reply_ref_msg_ref(ref: ReplyRef) -> Option(String) {
   ref.msg_ref
 }
 
@@ -132,10 +125,10 @@ pub type Input(msg) {
   /// A client asked to join a topic. Answer with `AcceptJoin` or
   /// `RejectJoin` in the returned effects; a `Join` left unanswered by the
   /// end of the update turn is rejected automatically (fail closed).
-  Join(topic: String, payload: Dynamic, ref: Ref)
+  Join(topic: String, payload: Dynamic, ref: JoinRef)
   /// A client message on a joined topic. `ref` is present for messages
   /// that expect a reply.
-  Message(topic: String, event: String, payload: Dynamic, ref: Option(Ref))
+  Message(topic: String, event: String, payload: Dynamic, ref: Option(ReplyRef))
   /// A binary frame on a joined topic (codecs without a binary decoder
   /// deliver the raw frame once per joined topic).
   Binary(topic: String, data: BitArray)
@@ -151,7 +144,7 @@ pub type Input(msg) {
 
 /// The result of one `update` call: the next model plus effects to apply,
 /// or an instruction to stop the whole socket.
-pub type Next(model, msg) {
+pub type Next(model) {
   /// Continue with the given model, applying the effects in order.
   Next(model: model, effects: List(Effect))
   /// Tear down the socket: every joined topic receives a `Closed` input,
@@ -165,13 +158,13 @@ pub type Effect {
   /// Accept a pending join. Subscribes the socket to the topic and sends
   /// the join acknowledgment (with an optional reply payload). Only valid
   /// while the `Join` input's ref is pending.
-  AcceptJoin(ref: Ref, reply: Option(Json))
+  AcceptJoin(ref: JoinRef, reply: Option(Json))
   /// Reject a pending join with an error payload.
-  RejectJoin(ref: Ref, reason: Json)
+  RejectJoin(ref: JoinRef, reason: Json)
   /// Reply successfully to a client message ref.
-  ReplyOk(ref: Ref, payload: Json)
+  ReplyOk(ref: ReplyRef, payload: Json)
   /// Reply with an error to a client message ref.
-  ReplyError(ref: Ref, payload: Json)
+  ReplyError(ref: ReplyRef, payload: Json)
   /// Push a server-initiated message to this socket on a joined topic.
   /// Pushes to topics this socket has not joined (yet) are dropped with a
   /// warning — order a `Push` after its topic's `AcceptJoin`.
@@ -230,10 +223,10 @@ pub type Effect {
 
 /// A `ReplyOk` when the client supplied a ref; no effects otherwise.
 ///
-/// `Message` inputs carry `Option(Ref)` (refless messages expect no
-/// reply) while the `ReplyOk` effect demands a `Ref`, so every handler
+/// `Message` inputs carry `Option(ReplyRef)` (refless messages expect no
+/// reply) while the `ReplyOk` effect demands a `ReplyRef`, so every handler
 /// that replies conditionally needs this gate.
-pub fn reply_ok(ref: Option(Ref), payload: Json) -> List(Effect) {
+pub fn reply_ok(ref: Option(ReplyRef), payload: Json) -> List(Effect) {
   case ref {
     Some(r) -> [ReplyOk(r, payload)]
     None -> []

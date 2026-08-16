@@ -21,8 +21,8 @@ import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimitConfig}
 import beryl/socket.{
-  type ConnectInfo, type ConnectSeed, type Effect, type Input, type Next,
-  type Ref, type StopReason,
+  type ConnectInfo, type ConnectSeed, type Effect, type Input, type JoinRef,
+  type Next, type ReplyRef, type StopReason,
 } as sock
 import beryl/telemetry
 import beryl/topic.{type TopicPattern}
@@ -159,7 +159,7 @@ type State(model, msg) {
     logger: Logger,
     self_subject: Subject(Msg(msg)),
     init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-    update: fn(model, Input(msg)) -> Next(model, msg),
+    update: fn(model, Input(msg)) -> Next(model),
     message_buckets: Dict(String, rate_limit.Bucket),
     join_buckets: Dict(String, rate_limit.Bucket),
     channel_buckets: Dict(String, Dict(String, rate_limit.Bucket)),
@@ -347,7 +347,7 @@ type SocketState(model, msg) {
     /// `Message` is delivered, removed when answered (so a reply is
     /// single-use), and pruned when its topic closes (so a stale ref stored
     /// across a leave/rejoin is not replied to).
-    pending_reply_refs: Set(Ref),
+    pending_reply_refs: Set(ReplyRef),
     last_heartbeat: Int,
     /// Native monotonic timestamp captured when the socket was accepted.
     connected_at: Int,
@@ -360,7 +360,7 @@ type Pending {
     topic: String,
     join_ref: Option(String),
     msg_ref: Option(String),
-    ref: Ref,
+    ref: JoinRef,
   )
 }
 
@@ -370,7 +370,7 @@ type Source {
     topic: String,
     join_ref: Option(String),
     msg_ref: Option(String),
-    ref: Ref,
+    ref: JoinRef,
     started_at: Int,
   )
   MessageSource(topic: String, kind: telemetry.MessageKind, started_at: Int)
@@ -441,7 +441,7 @@ pub fn start_named(
   name name: process.Name(Msg(msg)),
   pubsub pubsub_option: Option(PubSub(Json)),
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Input(msg)) -> Next(model, msg),
+  update update: fn(model, Input(msg)) -> Next(model),
 ) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
   internal.configure(config.logging)
 
@@ -1649,7 +1649,7 @@ fn route_message_with_ref(
   topic_name: String,
   event_name: String,
   payload: Dynamic,
-  message_ref: Ref,
+  message_ref: ReplyRef,
   started_at: Int,
   kind: telemetry.MessageKind,
 ) -> State(model, msg) {
@@ -1665,8 +1665,8 @@ fn route_message_with_ref(
         state,
         socket_id,
         topic_name,
-        sock.ref_join_ref(message_ref),
-        sock.ref_msg_ref(message_ref),
+        sock.reply_ref_join_ref(message_ref),
+        sock.reply_ref_msg_ref(message_ref),
         error_reason("duplicate_ref"),
       )
       emit_message_stop(
@@ -1698,7 +1698,7 @@ fn deliver_client_message(
   topic_name: String,
   event_name: String,
   payload: Dynamic,
-  message_ref: Option(Ref),
+  message_ref: Option(ReplyRef),
   started_at: Int,
   kind: telemetry.MessageKind,
 ) -> State(model, msg) {
@@ -2128,7 +2128,7 @@ fn exec_update_result(
   socket_id: String,
   source: Source,
   cont: Cont,
-  result: Result(Next(model, msg), String),
+  result: Result(Next(model), String),
 ) -> Exec(model, msg) {
   case result {
     Error(crash) -> exec_update_crash(state, socket_id, source, cont, crash)
@@ -2393,7 +2393,7 @@ fn exec_close_topic(
               ),
               join_refs: dict.delete(socket.join_refs, topic_name),
               pending_reply_refs: set.filter(socket.pending_reply_refs, fn(ref) {
-                sock.ref_topic(ref) != topic_name
+                sock.reply_ref_topic(ref) != topic_name
               }),
             )
           let state = store_socket(state, socket)
@@ -2705,7 +2705,7 @@ fn apply_kick_topic(
 fn apply_accept_join(
   state: State(model, msg),
   socket_id: String,
-  ref: Ref,
+  ref: JoinRef,
   reply: Option(Json),
   pending: Option(Pending),
   kicks: List(String),
@@ -2747,7 +2747,7 @@ fn apply_accept_join(
 fn apply_reject_join(
   state: State(model, msg),
   socket_id: String,
-  ref: Ref,
+  ref: JoinRef,
   reason: Json,
   pending: Option(Pending),
   kicks: List(String),
@@ -2770,12 +2770,12 @@ fn apply_reject_join(
 }
 
 fn matching_pending_join(
-  ref: Ref,
+  ref: JoinRef,
   pending: Option(Pending),
 ) -> Option(Pending) {
   case pending {
     Some(p) ->
-      case sock.ref_is_join(ref) && sock.refs_match(ref, p.ref) {
+      case sock.join_refs_match(ref, p.ref) {
         True -> Some(p)
         False -> None
       }
@@ -2786,13 +2786,13 @@ fn matching_pending_join(
 fn warn_unmatched_join_answer(
   state: State(model, msg),
   socket_id: String,
-  ref: Ref,
+  ref: JoinRef,
   effect_name: String,
 ) -> Nil {
   state.logger
   |> log.warn(effect_name <> " ignored: no matching pending join", [
     #("socket_id", socket_id),
-    #("topic", sock.ref_topic(ref)),
+    #("topic", sock.join_ref_topic(ref)),
   ])
 }
 
@@ -2840,60 +2840,50 @@ fn subscribe_socket(
   }
 }
 
-/// Send a reply for a stored `Ref`. Join refs must be answered with
-/// `AcceptJoin`/`RejectJoin`, so replies against them are dropped. Message
-/// refs are single-use and only valid while their topic is open: a ref that
-/// was already answered, or whose topic has since closed (including across a
-/// leave/rejoin), is dropped rather than sent as a stale/duplicate reply.
+/// Send a reply for a stored `ReplyRef`.
+///
+/// Reply refs are single-use and only valid while their topic is open: a ref
+/// that was already answered, or whose topic has since closed (including
+/// across a leave/rejoin), is dropped rather than sent as a stale/duplicate
+/// reply.
 fn apply_reply(
   state: State(model, msg),
   socket_id: String,
-  ref: Ref,
+  ref: ReplyRef,
   status: codec.ReplyStatus,
   payload: Json,
 ) -> State(model, msg) {
-  case sock.ref_is_join(ref) {
-    True -> {
-      state.logger
-      |> log.warn("Reply ignored: join refs require AcceptJoin/RejectJoin", [
-        #("socket_id", socket_id),
-        #("topic", sock.ref_topic(ref)),
-      ])
-      state
-    }
-    False ->
-      case dict.get(state.sockets, socket_id) {
-        Error(Nil) -> state
-        Ok(socket) ->
-          case set.contains(socket.pending_reply_refs, ref) {
-            False -> {
-              state.logger
-              |> log.warn("Reply ignored: unknown or already-answered ref", [
-                #("socket_id", socket_id),
-                #("topic", sock.ref_topic(ref)),
-              ])
-              state
-            }
-            True -> {
-              let frame =
-                codec.encode_reply(socket.codec)(
-                  sock.ref_join_ref(ref),
-                  sock.ref_msg_ref(ref),
-                  sock.ref_topic(ref),
-                  status,
-                  payload,
-                )
-              let _send_result =
-                send_frame_logged(state, socket, sock.ref_topic(ref), frame)
-              store_socket(
-                state,
-                SocketState(
-                  ..socket,
-                  pending_reply_refs: set.delete(socket.pending_reply_refs, ref),
-                ),
-              )
-            }
-          }
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket) ->
+      case set.contains(socket.pending_reply_refs, ref) {
+        False -> {
+          state.logger
+          |> log.warn("Reply ignored: unknown or already-answered ref", [
+            #("socket_id", socket_id),
+            #("topic", sock.reply_ref_topic(ref)),
+          ])
+          state
+        }
+        True -> {
+          let frame =
+            codec.encode_reply(socket.codec)(
+              sock.reply_ref_join_ref(ref),
+              sock.reply_ref_msg_ref(ref),
+              sock.reply_ref_topic(ref),
+              status,
+              payload,
+            )
+          let _send_result =
+            send_frame_logged(state, socket, sock.reply_ref_topic(ref), frame)
+          store_socket(
+            state,
+            SocketState(
+              ..socket,
+              pending_reply_refs: set.delete(socket.pending_reply_refs, ref),
+            ),
+          )
+        }
       }
   }
 }
@@ -2902,7 +2892,7 @@ fn apply_reply(
 fn register_reply_ref(
   state: State(model, msg),
   socket_id: String,
-  ref: Ref,
+  ref: ReplyRef,
 ) -> State(model, msg) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state

@@ -431,7 +431,7 @@ immediately after the join acknowledgment.
 stay joined; override only what the channel cares about.
 
 A `channel.Message` carries `topic`, `event`, the raw `payload` as
-`Dynamic`, and `reply: Option(socket.Ref)` — present only when the client
+`Dynamic`, and `reply: Option(socket.ReplyRef)` — present only when the client
 asked for a reply:
 
 ```gleam

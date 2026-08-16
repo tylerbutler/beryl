@@ -63,7 +63,7 @@ Two practical consequences either way:
 | `handle_in/3` | `channel.on_message` | `socket.Message(topic, event, payload, ref)` |
 | `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(ref, payload)` / `channel.reply_error(ref, payload)` action | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
 | `{:noreply, socket}` | `channel.continue(state)` | `socket.Next(model, [])` |
-| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep the `Ref` in the channel's state, `reply_ok` from a later callback (not from `on_terminate` — see below) | store the `Ref` in your model, `socket.ReplyOk` from a later `update` turn |
+| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep the `ReplyRef` in the channel's state, `reply_ok` from a later callback (not from `on_terminate` — see below) | store the `ReplyRef` in your model, `socket.ReplyOk` from a later `update` turn |
 | `push(socket, event, payload)` | `channel.push(event, payload)` action | `socket.Push(topic, event, payload)` effect |
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
 | `broadcast_from!/3` | `channel.broadcast_from(event, payload)` action | `socket.BroadcastFrom(topic, event, payload)` effect |
@@ -186,7 +186,7 @@ fn init(_info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   #(Model(room_id: ""), [])
 }
 
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
   case ev {
     socket.Join("room:" <> room_id, _payload, ref) ->
       socket.Next(Model(room_id: room_id), [

@@ -389,7 +389,7 @@ fn capturing_init(
   }
 }
 
-fn crashing_update(model: Nil, ev: socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+fn crashing_update(model: Nil, ev: socket.Input(Nil)) -> socket.Next(Nil) {
   case ev {
     Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
     socket.Info(_) -> panic as "boom"
@@ -519,8 +519,8 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
   let _connection =
     process.spawn(fn() {
       let assert Ok(permit) =
-        beryl.acquire_connection_slot(sockets, "203.0.113.10")
-      beryl.bind_connection_slot(permit)
+        transport.acquire_connection_slot(sockets, "203.0.113.10")
+      transport.bind_connection_slot(permit)
       let assert Ok(owner) = transport.runtime_pid(sockets)
       let result =
         transport.admit_socket(
@@ -535,7 +535,7 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
           codec: None,
           seed: socket.empty_seed(),
           close: fn() {
-            beryl.release_connection_slot(permit)
+            transport.release_connection_slot(permit)
             process.send(connection_closed, Nil)
           },
         )
@@ -548,8 +548,8 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() {
   process.receive(connection_closed, 1000) |> should.equal(Ok(Nil))
 
   let assert Ok(reclaimed) =
-    beryl.acquire_connection_slot(sockets, "203.0.113.10")
-  beryl.release_connection_slot(reclaimed)
+    transport.acquire_connection_slot(sockets, "203.0.113.10")
+  transport.release_connection_slot(reclaimed)
 
   release_gate(gate)
   let _fresh_frames = h.connect(sockets, "fresh")
@@ -708,5 +708,5 @@ pub fn stop_leaves_no_registered_name_or_process_test() {
   beryl.app_runtime_pid(sockets) |> should.be_error
   beryl.app_limiter_pid(sockets) |> should.be_error
   // The system is fully gone: a fresh connection cannot be admitted.
-  beryl.acquire_connection_slot(sockets, "1.2.3.4") |> should.be_error
+  transport.acquire_connection_slot(sockets, "1.2.3.4") |> should.be_error
 }

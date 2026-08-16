@@ -13,7 +13,7 @@
 //// Join-level tenant-token auth is preserved: the join payload must carry a
 //// `token` HMAC-signed for the tenant whose document is being joined.
 
-import beryl/socket.{type Effect, type Ref}
+import beryl/socket.{type Effect, type JoinRef, type ReplyRef}
 import beryl/socket/router
 import collab_docs/auth
 import collab_docs/doc_store.{type Store}
@@ -54,7 +54,7 @@ pub fn join(
   _socket_id: String,
   match: router.Match,
   payload: Dynamic,
-  ref: Ref,
+  ref: JoinRef,
 ) -> #(Option(Model), List(Effect)) {
   case match.params {
     [tenant, document] ->
@@ -107,7 +107,7 @@ pub fn update(
   model: Model,
   event_name: String,
   payload: Dynamic,
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
 ) -> #(Model, List(Effect)) {
   case event_name {
     "sync_state" -> sync_state(ctx, topic_name, model, payload, ref)
@@ -202,7 +202,7 @@ fn namespace(ctx: Ctx) -> router.Namespace(OpenDocuments) {
 /// Build the socket-wide update once, sharing the app-owned model.
 pub fn open_documents_update(
   ctx: Ctx,
-) -> fn(OpenDocuments, socket.Input(Nil)) -> socket.Next(OpenDocuments, Nil) {
+) -> fn(OpenDocuments, socket.Input(Nil)) -> socket.Next(OpenDocuments) {
   let namespaces = [namespace(ctx)]
   fn(model, input) {
     router.route(namespaces, error_payload("invalid_topic"), model, input)
@@ -214,7 +214,7 @@ fn sync_state(
   topic_name: String,
   model: Model,
   payload: Dynamic,
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
 ) -> #(Model, List(Effect)) {
   case payload.string_field(payload, "state") {
     Ok(state) ->
@@ -238,7 +238,7 @@ fn sync_state(
 
 /// The channel-module API sent state errors as an ok-status reply with an
 /// error payload (and dropped them without a ref); mirror that.
-fn reply_error(code: String, ref: Option(Ref)) -> List(Effect) {
+fn reply_error(code: String, ref: Option(ReplyRef)) -> List(Effect) {
   socket.reply_ok(ref, error_payload(code))
 }
 

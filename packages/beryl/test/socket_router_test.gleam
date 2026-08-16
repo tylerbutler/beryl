@@ -24,11 +24,11 @@ fn init() -> Model {
   Model(socket_id: "socket-1", topics: dict.new())
 }
 
-fn join_ref(topic: String) -> socket.Ref {
+fn join_ref(topic: String) -> socket.JoinRef {
   socket.make_join_ref(topic:, join_ref: Some("j1"), msg_ref: Some("m1"))
 }
 
-fn message_ref(topic: String) -> socket.Ref {
+fn message_ref(topic: String) -> socket.ReplyRef {
   socket.make_message_ref(topic:, join_ref: Some("j1"), msg_ref: Some("m2"))
 }
 
@@ -99,7 +99,7 @@ fn vip_namespace() -> router.Namespace(Model) {
   )
 }
 
-fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model, Nil) {
+fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model) {
   router.route(
     [vip_namespace(), router.accept_only("lobby"), room_namespace()],
     router.unknown_topic(),

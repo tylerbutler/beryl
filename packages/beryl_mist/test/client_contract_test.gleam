@@ -75,7 +75,7 @@ pub fn aquamarine_client_joins_real_beryl_server_test() {
 }
 
 fn start_test_server(
-  update: fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil),
+  update: fn(Nil, socket.Input(Nil)) -> socket.Next(Nil),
 ) -> Result(TestServer, Nil) {
   let assert Ok(channels) =
     h.start(
@@ -122,7 +122,7 @@ fn stop_test_server(server: TestServer) -> Nil {
 /// reporting join/close through the `events` observer.
 fn lobby_update(
   events: process.Subject(TestEvent),
-) -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+) -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
   fn(model, ev) {
     case ev {
       socket.Join(topic, _payload, ref) -> {
@@ -272,7 +272,7 @@ pub fn gluegun_raw_malformed_frame_gets_error_reply_test() {
 }
 
 /// A `test:rejected` behaviour: reject every join with status `error`.
-fn rejected_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+fn rejected_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
   fn(model, ev) {
     case ev {
       socket.Join(_topic, _payload, ref) ->
@@ -289,7 +289,7 @@ fn rejected_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
 
 /// A `test:echo` behaviour: accept joins and reply to any client message
 /// with `{body: <body>}` echoed from the request payload.
-fn echo_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+fn echo_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
   fn(model, ev) {
     case ev {
       socket.Join(_topic, _payload, ref) ->

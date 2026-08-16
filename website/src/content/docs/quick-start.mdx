@@ -296,7 +296,7 @@ pub fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   #(Model(socket_id: info.socket_id), [])
 }
 
-pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
+pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
   case ev {
     socket.Join("room:" <> _, payload, ref) ->
       socket.Next(

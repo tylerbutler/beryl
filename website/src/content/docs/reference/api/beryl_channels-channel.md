@@ -184,7 +184,7 @@ pub type Message {
     topic: String,
     event: String,
     payload: dynamic.Dynamic,
-    reply: option.Option(socket.Ref)
+    reply: option.Option(socket.ReplyRef)
   )
 }
 ```
@@ -566,7 +566,7 @@ Reply with an error to a client message, using the `reply` handle from
 ```gleam
 pub fn reply_error(
   Actions,
-  socket.Ref,
+  socket.ReplyRef,
   json.Json
 ) -> Actions
 ```
@@ -579,7 +579,7 @@ Reply successfully to a client message, using the `reply` handle from
 ```gleam
 pub fn reply_ok(
   Actions,
-  socket.Ref,
+  socket.ReplyRef,
   json.Json
 ) -> Actions
 ```

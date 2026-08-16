@@ -17,7 +17,7 @@ fn context() -> app.Ctx {
   app.Ctx(presence: presence_tracker, groups: groups)
 }
 
-fn lobby_ref() -> socket.Ref {
+fn lobby_ref() -> socket.JoinRef {
   socket.make_join_ref(
     topic: "lobby",
     join_ref: Some("lobby-join"),
@@ -25,7 +25,7 @@ fn lobby_ref() -> socket.Ref {
   )
 }
 
-fn room_ref(topic: String) -> socket.Ref {
+fn room_ref(topic: String) -> socket.JoinRef {
   socket.make_join_ref(
     topic: topic,
     join_ref: Some("room-join"),

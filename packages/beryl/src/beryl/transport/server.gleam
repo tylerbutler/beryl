@@ -280,7 +280,7 @@ fn handle_matched_upgrade(
     )
   })
   let peer_ip = request_ip(request) |> result.unwrap("unknown")
-  case beryl.acquire_connection_slot(sockets, peer_ip) {
+  case transport.acquire_connection_slot(sockets, peer_ip) {
     Error(Nil) ->
       reject_upgrade(
         reject,
@@ -329,7 +329,7 @@ fn run_on_connect(
           accept(metadata, connection_permit)
           |> finish_upgrade(connection_permit, telemetry, started_at)
         Error(ConnectRejected) -> {
-          beryl.release_connection_slot(connection_permit)
+          transport.release_connection_slot(connection_permit)
           reject_upgrade(
             reject,
             telemetry,
@@ -378,7 +378,7 @@ fn finish_upgrade(
 ) -> Response(resp) {
   case response.status >= 400 {
     True -> {
-      beryl.release_connection_slot(connection_permit)
+      transport.release_connection_slot(connection_permit)
       transport.telemetry_upgrade_stop(
         telemetry,
         started_at,
@@ -472,9 +472,9 @@ pub fn init_connection(
   telemetry telemetry: transport.Telemetry,
   codec socket_codec: Option(Codec),
 ) -> #(ConnectionState, Selector(SendRequest)) {
-  // Bind the per-IP slot to this WebSocket process so it is reclaimed even
-  // if the process dies without running the transport's close callback.
-  beryl.bind_connection_slot(connection_permit)
+  // Bind the connection slot to this WebSocket process so it is reclaimed
+  // even if the process dies without running the transport's close callback.
+  transport.bind_connection_slot(connection_permit)
 
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
@@ -523,7 +523,7 @@ pub fn init_connection(
       socket_id: socket_id,
       sockets: sockets,
       connection_permit: connection_permit,
-      max_inbound_frame_bytes: beryl.max_inbound_frame_bytes(sockets),
+      max_inbound_frame_bytes: transport.max_inbound_frame_bytes(sockets),
       codec: option.unwrap(socket_codec, beryl.configured_codec(sockets)),
       telemetry: telemetry,
       frame_limiter: beryl.frame_limits(sockets)
@@ -537,7 +537,7 @@ pub fn init_connection(
 /// Clean up when a connection closes: release the held connection slot and
 /// announce the disconnect to the runtime.
 pub fn close_connection(state: ConnectionState) -> Nil {
-  beryl.release_connection_slot(state.connection_permit)
+  transport.release_connection_slot(state.connection_permit)
   transport.socket_disconnected(state.sockets, state.socket_id)
 }
 

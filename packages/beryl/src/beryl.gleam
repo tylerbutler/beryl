@@ -599,55 +599,15 @@ pub fn channels_telemetry_enabled(channels: Sockets) -> Bool {
   channels.config.telemetry
 }
 
-/// A held per-IP connection slot returned by `acquire_connection_slot`.
-///
-/// Opaque so Beryl can restructure the connection limiter without breaking
-/// transport authors. Hold it for the lifetime of the connection and pass it
-/// to `release_connection_slot` when the connection closes. When no per-IP
-/// limit is configured the permit is an admit-everything placeholder and
-/// releasing it is a no-op.
-pub opaque type ConnectionPermit {
-  ConnectionPermit(inner: Option(connection_limit.Permit))
-}
-
-/// Try to acquire a configured per-IP connection slot for transports.
-///
-/// Transports call this before admitting a connection, passing the **real
-/// socket peer IP**. Do not pass a client-supplied address (e.g. from
-/// `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
-/// `Ok(permit)` when admitted (release the permit with
-/// `release_connection_slot` on close; when no limit is configured every
-/// connection is admitted), or `Error(Nil)` when the peer is already at its
-/// limit.
-pub fn acquire_connection_slot(
+@internal
+pub fn configured_connection_limiter(
   channels: Sockets,
-  ip: String,
-) -> Result(ConnectionPermit, Nil) {
-  connection_limit.acquire_optional(channels.connection_limiter, ip)
-  |> result.map(ConnectionPermit)
+) -> Option(connection_limit.ConnectionLimiter) {
+  channels.connection_limiter
 }
 
-/// Bind an acquired connection slot to the calling process.
-///
-/// Call this from the long-lived connection process (e.g. the WebSocket
-/// handler's init) after `acquire_connection_slot`. The limiter monitors the
-/// caller so the slot is reclaimed even if the connection process dies
-/// without running its close path — otherwise crashed connections would
-/// permanently exhaust their IP's slots.
-pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
-  connection_limit.bind_optional(permit.inner)
-}
-
-/// Release a per-IP connection slot acquired by a transport.
-///
-/// Call from the process the permit was bound to (or from an unbound
-/// process when releasing before the connection was established).
-pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
-  connection_limit.release_optional(permit.inner)
-}
-
-/// Return the configured inbound frame size cap for transports.
-pub fn max_inbound_frame_bytes(channels: Sockets) -> Int {
+@internal
+pub fn configured_max_inbound_frame_bytes(channels: Sockets) -> Int {
   channels.config.max_inbound_frame_bytes
 }
 
@@ -839,7 +799,7 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
 pub fn child_spec(
   config: Config,
   init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -887,7 +847,7 @@ type AppSubtree {
 fn build_app_subtree(
   config: Config,
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -932,7 +892,7 @@ fn child_spec_supervisor(
   runtime_name: process.Name(runtime.Msg(msg)),
   limiter_name: Option(process.Name(connection_limit.Message)),
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
   let runtime_child =
     supervision.worker(fn() {

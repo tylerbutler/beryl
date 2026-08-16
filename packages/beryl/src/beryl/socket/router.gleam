@@ -24,7 +24,8 @@
 //// rejected, while other inputs for unclaimed topics are ignored.
 
 import beryl/socket.{
-  type Effect, type Input, type Next, type Ref, type StopReason,
+  type Effect, type Input, type JoinRef, type Next, type ReplyRef,
+  type StopReason,
 }
 import beryl/topic.{type TopicPattern}
 import gleam/dynamic.{type Dynamic}
@@ -50,8 +51,8 @@ pub type Match {
 pub opaque type Namespace(model) {
   Namespace(
     pattern: TopicPattern,
-    join: fn(model, Match, Dynamic, Ref) -> #(model, List(Effect)),
-    message: fn(model, Match, String, Dynamic, Option(Ref)) ->
+    join: fn(model, Match, Dynamic, JoinRef) -> #(model, List(Effect)),
+    message: fn(model, Match, String, Dynamic, Option(ReplyRef)) ->
       #(model, List(Effect)),
     closed: fn(model, Match, StopReason) -> #(model, List(Effect)),
   )
@@ -62,8 +63,8 @@ pub opaque type Namespace(model) {
 /// socket-wide model.
 pub fn namespace(
   pattern pattern: String,
-  join join: fn(model, Match, Dynamic, Ref) -> #(model, List(Effect)),
-  message message: fn(model, Match, String, Dynamic, Option(Ref)) ->
+  join join: fn(model, Match, Dynamic, JoinRef) -> #(model, List(Effect)),
+  message message: fn(model, Match, String, Dynamic, Option(ReplyRef)) ->
     #(model, List(Effect)),
   closed closed: fn(model, Match, StopReason) -> #(model, List(Effect)),
 ) -> Namespace(model) {
@@ -98,7 +99,7 @@ pub fn route(
   reject_unknown: Json,
   model: model,
   input: Input(msg),
-) -> Next(model, msg) {
+) -> Next(model) {
   case input {
     socket.Join(topic_name, payload, ref) ->
       case owner(namespaces, topic_name) {
@@ -143,7 +144,7 @@ fn captured(ns: Namespace(model), topic_name: String) -> List(String) {
   |> result.unwrap([])
 }
 
-fn continue(result: #(model, List(Effect))) -> Next(model, msg) {
+fn continue(result: #(model, List(Effect))) -> Next(model) {
   let #(model, effects) = result
   socket.Next(model, effects)
 }

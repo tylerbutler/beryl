@@ -78,7 +78,7 @@ pub type Model {
   Model(user_id: String, room_id: String)
 }
 
-fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model, Nil) {
+fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model) {
   case ev {
     socket.Join("room:" <> room_id, _payload, ref) ->
       socket.Next(Model(..model, room_id: room_id), [socket.AcceptJoin(ref, None)])

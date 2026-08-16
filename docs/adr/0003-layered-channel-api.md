@@ -23,7 +23,7 @@ router, third-party channels usable without app-side wiring. That trade
 was framed as either/or because both models competed to *be* the core.
 They need not: the core's entry-point shape — `init:
 fn(ConnectInfo(msg)) -> #(model, List(Effect))` and `update: fn(model,
-Input(msg)) -> Next(model, msg)` (`beryl.child_spec`) — is expressive
+Input(msg)) -> Next(model)` (`beryl.child_spec`) — is expressive
 enough to host a channel framework *above* the core, as ordinary data,
 using the closure-captured existential encoding ADR 0001 already
 validated ("Option B",

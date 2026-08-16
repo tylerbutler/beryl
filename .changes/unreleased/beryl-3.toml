@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "BREAKING: socket.Next now carries only the model type, and distinct JoinRef and ReplyRef handles prevent join answers and message replies from being mixed. Connection permits and admission helpers now live exclusively under beryl/transport."

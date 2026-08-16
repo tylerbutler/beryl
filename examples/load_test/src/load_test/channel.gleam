@@ -18,7 +18,7 @@ pub fn update(
   presence: session_presence.Tracker,
   model: Nil,
   input: Input(msg),
-) -> Next(Nil, msg) {
+) -> Next(Nil) {
   case input {
     Join("guardrail:forbidden", _, ref) ->
       socket.Next(model, [
@@ -43,7 +43,7 @@ pub fn message_effects(
   topic: String,
   event_name: String,
   payload: Dynamic,
-  ref: Option(socket.Ref),
+  ref: Option(socket.ReplyRef),
 ) -> List(Effect) {
   case event_name {
     "echo" ->
@@ -84,7 +84,7 @@ fn track(
   presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
-  ref: Option(socket.Ref),
+  ref: Option(socket.ReplyRef),
 ) -> List(Effect) {
   case key_and_meta(payload) {
     Error(_) ->
@@ -103,7 +103,7 @@ fn untrack(
   presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
-  ref: Option(socket.Ref),
+  ref: Option(socket.ReplyRef),
 ) -> List(Effect) {
   let decoder = {
     use key <- decode.field("key", decode.string)
@@ -122,14 +122,17 @@ fn untrack(
   }
 }
 
-fn reply_error(ref: Option(socket.Ref), payload: json.Json) -> List(Effect) {
+fn reply_error(
+  ref: Option(socket.ReplyRef),
+  payload: json.Json,
+) -> List(Effect) {
   case ref {
     Some(value) -> [ReplyError(value, payload)]
     None -> []
   }
 }
 
-fn reply_ok(ref: Option(socket.Ref), payload: json.Json) -> List(Effect) {
+fn reply_ok(ref: Option(socket.ReplyRef), payload: json.Json) -> List(Effect) {
   case ref {
     Some(value) -> [ReplyOk(value, payload)]
     None -> []

@@ -13,7 +13,7 @@ import gleam/json
 import gleam/option.{Some}
 import gleeunit/should
 
-fn document_ref() -> socket.Ref {
+fn document_ref() -> socket.JoinRef {
   socket.make_join_ref(
     topic: "document:demo:readme",
     join_ref: Some("jr"),

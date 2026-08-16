@@ -158,7 +158,7 @@ and only needs to decide **authorization** — is this user allowed on *this*
 topic?
 
 ```gleam
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
   case ev {
     socket.Join(topic, _payload, ref) ->
       case model {

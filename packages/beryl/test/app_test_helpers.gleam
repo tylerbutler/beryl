@@ -27,7 +27,7 @@ pub fn accepting_init(
 pub fn accepting_update(
   model: Nil,
   input: socket.Input(Nil),
-) -> socket.Next(Nil, Nil) {
+) -> socket.Next(Nil) {
   case input {
     socket.Join(_, _, ref) -> socket.Next(model, [socket.AcceptJoin(ref, None)])
     _ -> socket.Next(model, [])
@@ -38,7 +38,7 @@ pub fn accepting_update(
 pub fn start_app(
   config: beryl.Config,
   init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
+  update update: fn(model, socket.Input(msg)) -> socket.Next(model),
 ) -> Result(beryl.Sockets, beryl.ConfigError) {
   use #(sockets, spec) <- result.try(beryl.child_spec(config, init:, update:))
   let assert Ok(_) =

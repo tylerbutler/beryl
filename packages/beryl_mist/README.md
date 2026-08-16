@@ -43,7 +43,7 @@ fn init(_info: ConnectInfo(msg)) -> #(Model, List(socket.Effect)) {
   #(Model, [])
 }
 
-fn update(model: Model, ev: socket.Input(msg)) -> socket.Next(Model, msg) {
+fn update(model: Model, ev: socket.Input(msg)) -> socket.Next(Model) {
   case ev {
     Join("room:" <> _, _payload, ref) -> Next(model, [AcceptJoin(ref, None)])
     _ -> Next(model, [])
