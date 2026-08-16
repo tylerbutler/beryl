@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Removed"
-body = "`beryl.start` and `beryl.StartError` are no longer public. Starting a socket runtime without supervision left a crash unrecoverable and every connected socket stranded, so applications use `beryl.child_spec` in their OTP supervision tree. `beryl.stop` remains available for graceful shutdown."

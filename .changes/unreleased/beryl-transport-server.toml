@@ -1,3 +1,0 @@
-project = "beryl"
-kind = "Added"
-body = "Server-agnostic WebSocket transport infrastructure in beryl/transport/server and beryl/transport/origin: generic TransportConfig builders, OriginPolicy and version checks, the shared upgrade pipeline, atomic runtime admission, per-socket codec propagation, connection lifecycle handling, and size/rate/decode routing with text/binary telemetry preserved."

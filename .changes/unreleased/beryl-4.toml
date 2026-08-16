@@ -1,3 +1,3 @@
-project = "beryl"
+package = "beryl"
 kind = "Fixed"
 body = "Preserve binary message classification when transports decode binary frames before routing them to the app runtime."

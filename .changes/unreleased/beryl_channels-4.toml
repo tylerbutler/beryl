@@ -1,3 +1,0 @@
-project = "beryl_channels"
-kind = "Added"
-body = "Lifecycle actions: channel.with_actions attaches ordered accept-time actions to a successful join and lowers them after the join acknowledgment, so a push cannot precede its own join reply. Asynchronous core effects may park that socket while other sockets continue, but its remaining actions resume only after the effect completes. channel.on_terminate returns topic-scoped Actions lowered from Closed after the instance is removed: core drops pushes to the closing topic while broadcasts and presence track/untrack still reach remaining subscribers."
