@@ -55,28 +55,23 @@ type Router {
 fn note_handler(
   replies: process.Subject(channel.Sender(Note)),
 ) -> channel.Handler {
-  channel.handler("room:*", fn(info, _topic, _payload) {
+  channel.handler("room:*", fn(context) {
     let callbacks =
       channel.callbacks()
       |> channel.on_info(fn(count, note) {
         case note {
           Note(text) ->
-            channel.continue_with(
-              count + 1,
-              channel.actions()
-                |> channel.push(
-                  "note",
-                  json.string(text <> "#" <> int.to_string(count + 1)),
-                ),
-            )
-          Bye ->
-            channel.close_with(
-              channel.actions() |> channel.push("bye", json.int(count)),
-            )
+            channel.next(count + 1, [
+              channel.push(
+                "note",
+                json.string(text <> "#" <> int.to_string(count + 1)),
+              ),
+            ])
+          Bye -> channel.close([channel.push("bye", json.int(count))])
         }
       })
-    process.send(replies, info.self)
-    channel.accept(channel.joined(0, callbacks))
+    process.send(replies, context.self)
+    channel.accept(0, callbacks)
   })
 }
 
@@ -85,22 +80,21 @@ fn note_handler(
 fn greeting_handler(
   replies: process.Subject(channel.Sender(Note)),
 ) -> channel.Handler {
-  channel.handler("room:*", fn(info, topic, _payload) {
+  channel.handler("room:*", fn(context) {
     let callbacks =
       channel.callbacks()
       |> channel.on_info(fn(count, note) {
         case note {
           Note(text) ->
-            channel.continue_with(
-              count + 1,
-              channel.actions() |> channel.push("greeting", json.string(text)),
-            )
-          Bye -> channel.close()
+            channel.next(count + 1, [
+              channel.push("greeting", json.string(text)),
+            ])
+          Bye -> channel.close([])
         }
       })
-    process.send(replies, info.self)
-    channel.notify(info.self, Note("welcome to " <> topic))
-    channel.accept(channel.joined(0, callbacks))
+    process.send(replies, context.self)
+    channel.notify(context.self, Note("welcome to " <> context.topic))
+    channel.accept(0, callbacks)
   })
 }
 
@@ -114,10 +108,11 @@ fn open_generation(
   replies: process.Subject(channel.Sender(Note)),
 ) -> channel.LiveChannel {
   let context =
-    channel.JoinContext(
+    channel.RoutedJoinContext(
       socket_id: "socket-1",
       seed: socket.empty_seed(),
       topic: topic,
+      params: ["lobby"],
       payload: dynamic.nil(),
       deliver: fn(mail) {
         process.send(self, ChannelMail(topic, generation, mail))
@@ -203,22 +198,21 @@ fn handle_envelope(
   }
 }
 
-fn record(state: Router, actions: List(channel.Action)) -> List(String) {
-  list.append(state.applied, list.map(actions, describe))
+fn record(
+  state: Router,
+  actions: List(channel.Action(channel.Active)),
+) -> List(String) {
+  list.append(
+    state.applied,
+    channel.effects(state.topic, actions) |> list.map(describe),
+  )
 }
 
-fn describe(action: channel.Action) -> String {
-  case action {
-    channel.PushAction(event, payload) ->
+fn describe(effect: socket.Effect) -> String {
+  case effect {
+    socket.Push(event: event, payload: payload, ..) ->
       event <> "/" <> json.to_string(payload)
-    channel.BroadcastAction(..)
-    | channel.BroadcastFromAction(..)
-    | channel.ReplyOkAction(..)
-    | channel.ReplyErrorAction(..)
-    | channel.PresenceTrackAction(..)
-    | channel.PresenceUntrackAction(..)
-    | channel.PushPresenceAction(..)
-    | channel.BroadcastPresenceAction(..) -> "other"
+    _ -> "other"
   }
 }
 

@@ -10,8 +10,7 @@ description: "The channel composition surface: a channel is a topic pattern pair
 -->
 
 The channel composition surface: a channel is a topic pattern paired
- with a typed `join` callback, and a joined channel is a record of
- closures over that channel's own private state.
+ with a typed `join` callback and callbacks over private state.
 
  ## Shape
 
@@ -24,33 +23,29 @@ The channel composition surface: a channel is a topic pattern paired
  }
 
  pub fn room() -> channel.Handler {
-   channel.handler("room:*", fn(info, topic, _payload) {
+   channel.handler("room:*", fn(context) {
      let callbacks =
        channel.callbacks()
        |> channel.on_message(fn(count, message) {
-         channel.continue_with(
-           count + 1,
-           channel.actions()
-             |> channel.broadcast(message.event, json.int(count + 1)),
-         )
+         channel.next(count + 1, [
+           channel.broadcast(message.event, json.int(count + 1)),
+         ])
        })
        |> channel.on_info(fn(count, note) {
          let Announce(text) = note
-         channel.continue_with(
-           count,
-           channel.actions() |> channel.push("announce", json.string(text)),
-         )
+         channel.next(count, [
+           channel.push("announce", json.string(text)),
+         ])
        })
        |> channel.on_terminate(fn(_count, _reason) {
-         channel.actions()
-         |> channel.broadcast("left", json.string(topic))
+         [channel.broadcast("left", json.string(context.topic))]
        })
 
-     channel.notify(info.self, Announce("later, on this topic"))
-     channel.accept(channel.joined(0, callbacks))
-     |> channel.with_actions(
-       channel.actions() |> channel.push("welcome", json.string(topic)),
-     )
+     channel.notify(context.self, Announce("later, on this topic"))
+     channel.accept(0, callbacks)
+     |> channel.with_actions([
+       channel.push("welcome", json.string(context.topic)),
+     ])
    })
  }
  ```
@@ -59,7 +54,7 @@ The channel composition surface: a channel is a topic pattern paired
 
  A channel picks two types of its own: `state`, its private model, and
  `info`, the type of server-side messages it accepts. Neither escapes:
- [`joined`](#joined) seals `state` inside the callback closures, and
+ [`accept`](#accept) seals `state` inside the callback closures, and
  [`handler`](#handler) seals `info` inside the registration closure, so
  the resulting [`Handler`](#handler) is not generic and handlers with
  unrelated `state` and `info` types compose in one list. No value is
@@ -70,8 +65,8 @@ The channel composition surface: a channel is a topic pattern paired
 
  ## Ordering
 
- [`Actions`](#actions) are applied strictly in the order they were
- added, and they always target the channel's own topic. They lower onto
+ Action lists are applied strictly from left to right, and they always
+ target the channel's own topic. They lower onto
  beryl's core `Effect` values, which the runtime applies in list order —
  so action order is wire order. An asynchronous presence effect can park
  this socket while other sockets continue; the remaining actions resume
@@ -85,26 +80,28 @@ The channel composition surface: a channel is a topic pattern paired
  capacity checks.
 
  [`on_terminate`](#on_terminate) actions are lowered in the turn that
- closes the topic, after the channel instance is gone. The topic is
- already unsubscribed and its reply refs are already purged by then,
- so core **drops pushes** (including presence snapshots pushed to this
- socket) and **drops replies**, while broadcasts still reach the
- topic's remaining subscribers. Core's automatic presence untrack for
- the topic runs straight after that turn, so `presence_untrack` — not
- `presence_track` — is what a terminating channel wants.
+ closes the topic, after the channel instance is gone. Its closing-phase
+ action type permits only operations that remain meaningful then.
 
 ## Types
 
-### `Actions`
+### `Action`
 
-An ordered list of things to do on the channel's own topic.
+One operation on the channel's own topic.
 
- Build one with [`actions`](#actions) and the builder functions below;
- they are applied in the order they were added. Actions are always
- scoped to the current channel's topic, so no action names a topic.
+ The phase parameter prevents active-only operations from being returned
+ by [`on_terminate`](#on_terminate). Put actions in a list in wire order.
 
 ```gleam
-pub type Actions
+pub type Action(a)
+```
+
+### `Active`
+
+Marker for actions valid while a channel is active.
+
+```gleam
+pub type Active
 ```
 
 ### `Callbacks`
@@ -113,11 +110,19 @@ The typed callbacks of one channel, over its private `state` and its
  server-side message type `info`.
 
  Start from [`callbacks`](#callbacks) — which ignores every input and
- stays joined — and override only what the channel cares about. Seal the
- result with [`joined`](#joined).
+ stays joined — and override only what the channel cares about. Pass the
+ result to [`accept`](#accept) with the initial state.
 
 ```gleam
 pub type Callbacks(a, b)
+```
+
+### `Closing`
+
+Marker for actions valid while a channel is closing.
+
+```gleam
+pub type Closing
 ```
 
 ### `Handler`
@@ -132,33 +137,23 @@ A registered channel: a topic pattern plus its sealed `join` callback.
 pub type Handler
 ```
 
-### `JoinedChannel`
+### `JoinContext`
 
-A live channel instance: `state` bound to `callbacks`.
+Everything a `join` callback learns about one join attempt.
 
- The `state` type is sealed inside the closures this builds, so joined
- channels with unrelated private states share one type.
-
-```gleam
-pub type JoinedChannel(a)
-```
-
-### `JoinInfo`
-
-Everything a `join` callback learns about the connection it is joining.
-
- `socket_id` and `seed` come straight from the transport's connect
- information; `self` is this channel's own generation-scoped
- [`Sender`](#sender), for scheduling a *later* turn — including from
- another process. Work that has to be part of the join itself belongs
- in [`with_actions`](#with_actions) instead.
+ `params` contains wildcard captures in pattern order and is empty for
+ exact patterns. `self` is this channel's generation-scoped
+ [`Sender`](#sender), for scheduling a later turn.
 
 ```gleam
-pub type JoinInfo(a) {
-  JoinInfo(
+pub type JoinContext(a) {
+  JoinContext(
     socket_id: String,
     seed: socket.ConnectSeed,
-    self: Sender(a)
+    self: Sender(a),
+    topic: String,
+    params: List(String),
+    payload: dynamic.Dynamic
   )
 }
 ```
@@ -193,8 +188,7 @@ pub type Message {
 
 What a channel callback decided to do next.
 
- Build one with [`continue`](#continue), [`continue_with`](#continue_with),
- [`close`](#close), [`close_with`](#close_with), or
+ Build one with [`next`](#next), [`close`](#close), or
  [`stop_socket`](#stop_socket).
 
 ```gleam
@@ -205,7 +199,7 @@ pub type Next(a)
 
 A typed handle for sending server-side messages to one joined channel.
 
- Obtained from [`JoinInfo`](#joininfo) in the `join` callback and safe to
+ Obtained from [`JoinContext`](#joincontext) in the `join` callback and safe to
  share with any process. Messages sent through it are delivered to the
  channel's `on_info` callback with their type intact.
 
@@ -244,27 +238,13 @@ pub type Sender(a)
 
 Accept the join with an empty acknowledgment.
 
-```gleam
-pub fn accept(JoinedChannel(a)) -> JoinResult(a)
-```
-
-### `accept_with`
-
-Accept the join, returning `reply` in the join acknowledgment.
+ This seals the channel's private state inside its callbacks.
 
 ```gleam
-pub fn accept_with(
-  JoinedChannel(a),
-  json.Json
-) -> JoinResult(a)
-```
-
-### `actions`
-
-An empty action list.
-
-```gleam
-pub fn actions() -> Actions
+pub fn accept(
+  a,
+  Callbacks(a, b)
+) -> JoinResult(b)
 ```
 
 ### `broadcast`
@@ -274,10 +254,9 @@ Broadcast to every subscriber of this channel's topic, including this
 
 ```gleam
 pub fn broadcast(
-  Actions,
   String,
   json.Json
-) -> Actions
+) -> Action(a)
 ```
 
 ### `broadcast_from`
@@ -287,10 +266,9 @@ Broadcast to every subscriber of this channel's topic except this
 
 ```gleam
 pub fn broadcast_from(
-  Actions,
   String,
   json.Json
-) -> Actions
+) -> Action(a)
 ```
 
 ### `broadcast_presence`
@@ -301,10 +279,9 @@ Broadcast a presence snapshot for this channel's topic to every
 
 ```gleam
 pub fn broadcast_presence(
-  Actions,
   String,
   fn(List(presence.PresenceEntry)) -> json.Json
-) -> Actions
+) -> Action(a)
 ```
 
 ### `callbacks`
@@ -317,38 +294,13 @@ pub fn callbacks() -> Callbacks(a, b)
 
 ### `close`
 
-Leave this channel. The socket stays connected and its other channels
- are untouched; this channel's `on_terminate` callback still runs.
-
-```gleam
-pub fn close() -> Next(a)
-```
-
-### `close_with`
-
 Leave this channel after applying `actions` in order.
 
-```gleam
-pub fn close_with(Actions) -> Next(a)
-```
-
-### `continue`
-
-Stay joined with the given state and no actions.
+ The socket stays connected and its other channels are untouched; this
+ channel's [`on_terminate`](#on_terminate) callback still runs.
 
 ```gleam
-pub fn continue(a) -> Next(a)
-```
-
-### `continue_with`
-
-Stay joined with the given state, applying `actions` in order.
-
-```gleam
-pub fn continue_with(
-  a,
-  Actions
-) -> Next(a)
+pub fn close(List(Action(Active))) -> Next(a)
 ```
 
 ### `handler`
@@ -357,34 +309,27 @@ Register a channel for every topic matching `pattern`.
 
  `pattern` uses beryl's topic pattern syntax (`"room:lobby"`,
  `"room:*"`, `"document:*:ops"`, `"*"`) and is validated when the
- handler table is used; see `beryl_channels.validate_handlers`.
+ handler table is used by `beryl_channels.child_spec`.
 
- `join` receives the connection's [`JoinInfo`](#joininfo), the concrete
- topic that matched, and the client's join payload, and answers with
- [`accept`](#accept), [`accept_with`](#accept_with), or
- [`reject`](#reject).
+ `join` receives one [`JoinContext`](#joincontext) containing connection
+ data, the concrete topic, wildcard captures, and the payload.
 
 ```gleam
 pub fn handler(
   String,
-  fn(JoinInfo(a), String, dynamic.Dynamic) -> JoinResult(a)
+  fn(JoinContext(a)) -> JoinResult(a)
 ) -> Handler
 ```
 
-### `joined`
+### `next`
 
-Bind a channel's initial private state to its callbacks.
-
- This is where `state` disappears from the type: every callback is
- wrapped in a closure that captures the current state, and each
- [`continue`](#continue) result rebuilds the same closures over the next
- state. No state value is ever erased or coerced.
+Stay joined with the given state, applying `actions` in order.
 
 ```gleam
-pub fn joined(
+pub fn next(
   a,
-  Callbacks(a, b)
-) -> JoinedChannel(b)
+  List(Action(Active))
+) -> Next(a)
 ```
 
 ### `notify`
@@ -447,32 +392,10 @@ pub fn on_message(
 Run cleanup when the channel ends, for any reason: client leave, a
  [`close`](#close) result, a socket teardown, or a disconnect.
 
- The returned [`Actions`](#actions) are applied in the turn that closes
- this topic, right after the channel instance is gone — which is why a
- leave announcement or a post-leave presence roster belongs here rather
- than in an out-of-band broadcast.
-
- By that point core has unsubscribed the topic and purged its
- outstanding reply refs, and core's own presence untrack for the topic
- runs immediately after this turn. That splits the action table:
-
- - [`broadcast`](#broadcast), [`broadcast_from`](#broadcast_from), and
-   [`broadcast_presence`](#broadcast_presence) take effect and reach
-   the topic's remaining subscribers.
- - [`presence_untrack`](#presence_untrack) takes effect, and is the
-   presence action a terminating channel wants: put it before a
-   [`broadcast_presence`](#broadcast_presence) so the roster is
-   encoded after the departure.
- - [`push`](#push) and [`push_presence`](#push_presence) are dropped:
-   this socket has already left the topic, so they have nowhere to
-   land.
- - [`reply_ok`](#reply_ok) and [`reply_error`](#reply_error) are
-   dropped: the topic's reply refs were purged before this callback
-   ran, so there is no outstanding ref left to answer.
- - [`presence_track`](#presence_track) is applied and then immediately
-   undone by core's automatic untrack, which can emit a join diff
-   followed at once by the matching leave diff. Use
-   [`presence_untrack`](#presence_untrack) instead.
+ The returned closing-phase actions are applied in the turn that closes
+ this topic, right after the channel instance is gone. The phase allows
+ broadcasts, presence untracking, and presence broadcasts, while making
+ pushes, replies, and presence tracking unavailable.
 
  A panic here is not fatal, but it is not free either: core keeps the
  model from before the close, so this instance stays in the channel
@@ -482,7 +405,7 @@ Run cleanup when the channel ends, for any reason: client leave, a
 ```gleam
 pub fn on_terminate(
   Callbacks(a, b),
-  fn(a, socket.StopReason) -> Actions
+  fn(a, socket.StopReason) -> List(Action(Closing))
 ) -> Callbacks(a, b)
 ```
 
@@ -503,10 +426,9 @@ Track this socket's presence under `key` on this channel's topic and
 
 ```gleam
 pub fn presence_track(
-  Actions,
   String,
   json.Json
-) -> Actions
+) -> Action(Active)
 ```
 
 ### `presence_untrack`
@@ -516,10 +438,7 @@ Untrack a presence previously tracked with
  `presence_diff` leave.
 
 ```gleam
-pub fn presence_untrack(
-  Actions,
-  String
-) -> Actions
+pub fn presence_untrack(String) -> Action(a)
 ```
 
 ### `push`
@@ -528,10 +447,9 @@ Push a server-initiated message to this socket on this channel's topic.
 
 ```gleam
 pub fn push(
-  Actions,
   String,
   json.Json
-) -> Actions
+) -> Action(Active)
 ```
 
 ### `push_presence`
@@ -544,10 +462,9 @@ Push a presence snapshot for this channel's topic to this socket.
 
 ```gleam
 pub fn push_presence(
-  Actions,
   String,
   fn(List(presence.PresenceEntry)) -> json.Json
-) -> Actions
+) -> Action(Active)
 ```
 
 ### `reject`
@@ -560,28 +477,30 @@ pub fn reject(json.Json) -> JoinResult(a)
 
 ### `reply_error`
 
-Reply with an error to a client message, using the `reply` handle from
- the [`Message`](#message) that asked for it.
+Reply with an error when a client message supplied a reply handle.
+
+ [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+ lowers to no effect.
 
 ```gleam
 pub fn reply_error(
-  Actions,
-  socket.ReplyRef,
+  option.Option(socket.ReplyRef),
   json.Json
-) -> Actions
+) -> Action(Active)
 ```
 
 ### `reply_ok`
 
-Reply successfully to a client message, using the `reply` handle from
- the [`Message`](#message) that asked for it.
+Reply successfully when a client message supplied a reply handle.
+
+ [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+ lowers to no effect.
 
 ```gleam
 pub fn reply_ok(
-  Actions,
-  socket.ReplyRef,
+  option.Option(socket.ReplyRef),
   json.Json
-) -> Actions
+) -> Action(Active)
 ```
 
 ### `stop_socket`
@@ -617,6 +536,19 @@ Add ordered actions to run as part of accepting this join.
 ```gleam
 pub fn with_actions(
   JoinResult(a),
-  Actions
+  List(Action(Active))
+) -> JoinResult(a)
+```
+
+### `with_reply`
+
+Add a payload to an accepted join's acknowledgment.
+
+ A rejected join remains rejected.
+
+```gleam
+pub fn with_reply(
+  JoinResult(a),
+  json.Json
 ) -> JoinResult(a)
 ```

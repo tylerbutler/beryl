@@ -12,7 +12,6 @@
 //// a live listener. Real listeners are covered by `wire_matrix_test`.
 
 import beryl
-import beryl/topic
 import beryl/transport/server
 import beryl/wire
 import beryl_channels
@@ -46,39 +45,31 @@ type Note {
 }
 
 pub fn room() -> channel.Handler {
-  channel.handler("room:*", fn(info: channel.JoinInfo(Note), topic, _payload) {
-    let state = State(room_id: topic, username: info.socket_id, sent: 0)
+  channel.handler("room:*", fn(context: channel.JoinContext(Note)) {
+    let state =
+      State(room_id: context.topic, username: context.socket_id, sent: 0)
 
-    channel.accept_with(
-      channel.joined(state, callbacks()),
-      json.object([#("room", json.string(topic))]),
-    )
-    |> channel.with_actions(
-      channel.actions()
-      |> channel.broadcast("joined", json.string(state.username)),
-    )
+    channel.accept(state, callbacks())
+    |> channel.with_reply(json.object([#("room", json.string(context.topic))]))
+    |> channel.with_actions([
+      channel.broadcast("joined", json.string(state.username)),
+    ])
   })
 }
 
 fn callbacks() -> channel.Callbacks(State, Note) {
   channel.callbacks()
   |> channel.on_message(fn(state: State, message: channel.Message) {
-    channel.continue_with(
-      State(..state, sent: state.sent + 1),
-      channel.actions()
-        |> channel.broadcast_from(message.event, json.int(state.sent + 1)),
-    )
+    channel.next(State(..state, sent: state.sent + 1), [
+      channel.broadcast_from(message.event, json.int(state.sent + 1)),
+    ])
   })
   |> channel.on_info(fn(state: State, note: Note) {
     let Tick(at) = note
-    channel.continue_with(
-      state,
-      channel.actions() |> channel.push("tick", json.int(at)),
-    )
+    channel.next(state, [channel.push("tick", json.int(at))])
   })
   |> channel.on_terminate(fn(state: State, _reason) {
-    channel.actions()
-    |> channel.broadcast("left", json.string(state.username))
+    [channel.broadcast("left", json.string(state.username))]
   })
 }
 
@@ -124,28 +115,4 @@ pub fn documented_guide_child_spec_example_compiles_and_starts_test() {
     )
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
-}
-
-/// The guide's `validate_handlers` check, run over the guide's own table.
-pub fn documented_guide_handler_table_validates_test() {
-  beryl_channels.validate_handlers(handlers()) |> should.equal(Ok(Nil))
-  check_handlers() |> should.equal(Nil)
-}
-
-// ---------------------------------------------------------------------------
-// guides/channels.md — "Routing rules" (src/my_app/handler_check.gleam)
-// ---------------------------------------------------------------------------
-
-/// The guide's handler-table check, pinning the `HandlerError` match it
-/// documents. The guide reads `my_app.handlers()`; the table is local here.
-pub fn check_handlers() -> Nil {
-  case beryl_channels.validate_handlers(handlers()) {
-    Ok(Nil) -> Nil
-    Error(beryl_channels.InvalidPattern(pattern, topic.EmptyTopic)) ->
-      panic as { "channel pattern " <> pattern <> " is empty" }
-    Error(beryl_channels.InvalidPattern(pattern, topic.InvalidFormat(detail))) ->
-      panic as { "invalid channel pattern " <> pattern <> ": " <> detail }
-    Error(beryl_channels.DuplicatePattern(pattern)) ->
-      panic as { "duplicate channel pattern " <> pattern }
-  }
 }

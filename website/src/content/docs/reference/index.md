@@ -54,8 +54,9 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; ordinary socket/channel presence effects are applied asynchronously by the runtime |
 
 The channel layer exposes topic-scoped equivalents through
-`channel.Actions`: `push`, `broadcast`, `broadcast_from`, `reply_ok`,
-`reply_error`, and the presence actions. They lower onto the same core effects.
+ordered `channel.Action(Active)` lists: `push`, `broadcast`,
+`broadcast_from`, `reply_ok`, `reply_error`, and the presence actions. They
+lower onto the same core effects.
 
 ---
 

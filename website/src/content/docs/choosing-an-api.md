@@ -40,7 +40,7 @@ difference is who writes the router.
 | Routing | Handler table, first matching pattern wins | Your `update`, pattern matching on topics |
 | Per-topic state | One private value per joined topic, pruned on close | Your own model; you prune it in the `Closed` branch |
 | Server-side messages | One typed `info` type per channel | One typed `msg` type per socket |
-| Side effects | `Actions` scoped to the channel's topic | `socket.Effect` values naming any topic |
+| Side effects | Ordered `Action(Active)` lists scoped to the channel's topic | `socket.Effect` values naming any topic |
 | Cleanup | `on_terminate` per channel | `socket.Closed(topic, reason)` in your `update` |
 | Cross-topic effects | External `Sockets` APIs only | Direct, in any effect list |
 | Boilerplate as channels grow | Constant | Grows with the number of topic families |

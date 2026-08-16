@@ -2,7 +2,9 @@
 //// surface: deterministic pattern validation, exact-duplicate detection,
 //// and tolerated non-identical overlaps.
 
+import beryl
 import beryl/topic
+import beryl/wire
 import beryl_channels
 import beryl_channels/channel
 import gleeunit
@@ -13,17 +15,31 @@ pub fn main() {
 }
 
 fn stub(pattern: String) -> channel.Handler {
-  channel.handler(pattern, fn(_info, _topic, _payload) {
-    channel.accept(channel.joined(Nil, channel.callbacks()))
+  channel.handler(pattern, fn(_context) {
+    channel.accept(Nil, channel.callbacks())
   })
 }
 
+fn validate(
+  handlers: List(channel.Handler),
+) -> Result(Nil, beryl_channels.ChildSpecError) {
+  case
+    beryl_channels.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      handlers: handlers,
+    )
+  {
+    Ok(_) -> Ok(Nil)
+    Error(error) -> Error(error)
+  }
+}
+
 pub fn an_empty_handler_table_is_valid_test() {
-  beryl_channels.validate_handlers([]) |> should.equal(Ok(Nil))
+  validate([]) |> should.equal(Ok(Nil))
 }
 
 pub fn distinct_valid_patterns_are_accepted_test() {
-  beryl_channels.validate_handlers([
+  validate([
     stub("room:*"),
     stub("document:*:ops"),
     stub("system"),
@@ -33,12 +49,12 @@ pub fn distinct_valid_patterns_are_accepted_test() {
 }
 
 pub fn an_empty_pattern_is_rejected_test() {
-  beryl_channels.validate_handlers([stub("room:*"), stub("")])
+  validate([stub("room:*"), stub("")])
   |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn a_control_character_pattern_is_rejected_test() {
-  beryl_channels.validate_handlers([stub("room:\u{0001}*")])
+  validate([stub("room:\u{0001}*")])
   |> should.equal(
     Error(beryl_channels.InvalidPattern(
       "room:\u{0001}*",
@@ -48,7 +64,7 @@ pub fn a_control_character_pattern_is_rejected_test() {
 }
 
 pub fn exact_duplicate_patterns_are_rejected_test() {
-  beryl_channels.validate_handlers([
+  validate([
     stub("room:*"),
     stub("document:*"),
     stub("room:*"),
@@ -57,7 +73,7 @@ pub fn exact_duplicate_patterns_are_rejected_test() {
 }
 
 pub fn non_identical_overlaps_are_allowed_test() {
-  beryl_channels.validate_handlers([
+  validate([
     stub("room:lobby"),
     stub("room:*"),
     stub("*"),
@@ -68,20 +84,20 @@ pub fn non_identical_overlaps_are_allowed_test() {
 pub fn validation_checks_syntax_before_duplicates_test() {
   // Pattern syntax is checked for the whole table first, so the invalid
   // empty pattern wins even though a duplicate appears earlier.
-  beryl_channels.validate_handlers([stub("a"), stub("a"), stub("")])
+  validate([stub("a"), stub("a"), stub("")])
   |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 
-  beryl_channels.validate_handlers([stub(""), stub("a"), stub("a")])
+  validate([stub(""), stub("a"), stub("a")])
   |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn validation_reports_the_first_invalid_pattern_in_order_test() {
-  beryl_channels.validate_handlers([stub("room:*"), stub(""), stub("\u{0001}")])
+  validate([stub("room:*"), stub(""), stub("\u{0001}")])
   |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn validation_reports_the_first_repeated_pattern_in_order_test() {
-  beryl_channels.validate_handlers([
+  validate([
     stub("a"),
     stub("b"),
     stub("b"),
@@ -89,8 +105,3 @@ pub fn validation_reports_the_first_repeated_pattern_in_order_test() {
   ])
   |> should.equal(Error(beryl_channels.DuplicatePattern("b")))
 }
-// Error-surface coverage deliberately stops here. `ChildSpecError` is only
-// reachable through `child_spec`, so it is asserted end to end in
-// `entry_point_test`;
-// asserting on hand-constructed values here would test the compiler, not
-// this package.

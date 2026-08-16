@@ -1,6 +1,5 @@
 //// The channel composition surface: a channel is a topic pattern paired
-//// with a typed `join` callback, and a joined channel is a record of
-//// closures over that channel's own private state.
+//// with a typed `join` callback and callbacks over private state.
 ////
 //// ## Shape
 ////
@@ -13,33 +12,29 @@
 //// }
 ////
 //// pub fn room() -> channel.Handler {
-////   channel.handler("room:*", fn(info, topic, _payload) {
+////   channel.handler("room:*", fn(context) {
 ////     let callbacks =
 ////       channel.callbacks()
 ////       |> channel.on_message(fn(count, message) {
-////         channel.continue_with(
-////           count + 1,
-////           channel.actions()
-////             |> channel.broadcast(message.event, json.int(count + 1)),
-////         )
+////         channel.next(count + 1, [
+////           channel.broadcast(message.event, json.int(count + 1)),
+////         ])
 ////       })
 ////       |> channel.on_info(fn(count, note) {
 ////         let Announce(text) = note
-////         channel.continue_with(
-////           count,
-////           channel.actions() |> channel.push("announce", json.string(text)),
-////         )
+////         channel.next(count, [
+////           channel.push("announce", json.string(text)),
+////         ])
 ////       })
 ////       |> channel.on_terminate(fn(_count, _reason) {
-////         channel.actions()
-////         |> channel.broadcast("left", json.string(topic))
+////         [channel.broadcast("left", json.string(context.topic))]
 ////       })
 ////
-////     channel.notify(info.self, Announce("later, on this topic"))
-////     channel.accept(channel.joined(0, callbacks))
-////     |> channel.with_actions(
-////       channel.actions() |> channel.push("welcome", json.string(topic)),
-////     )
+////     channel.notify(context.self, Announce("later, on this topic"))
+////     channel.accept(0, callbacks)
+////     |> channel.with_actions([
+////       channel.push("welcome", json.string(context.topic)),
+////     ])
 ////   })
 //// }
 //// ```
@@ -48,7 +43,7 @@
 ////
 //// A channel picks two types of its own: `state`, its private model, and
 //// `info`, the type of server-side messages it accepts. Neither escapes:
-//// [`joined`](#joined) seals `state` inside the callback closures, and
+//// [`accept`](#accept) seals `state` inside the callback closures, and
 //// [`handler`](#handler) seals `info` inside the registration closure, so
 //// the resulting [`Handler`](#handler) is not generic and handlers with
 //// unrelated `state` and `info` types compose in one list. No value is
@@ -59,8 +54,8 @@
 ////
 //// ## Ordering
 ////
-//// [`Actions`](#actions) are applied strictly in the order they were
-//// added, and they always target the channel's own topic. They lower onto
+//// Action lists are applied strictly from left to right, and they always
+//// target the channel's own topic. They lower onto
 //// beryl's core `Effect` values, which the runtime applies in list order —
 //// so action order is wire order. An asynchronous presence effect can park
 //// this socket while other sockets continue; the remaining actions resume
@@ -74,13 +69,8 @@
 //// capacity checks.
 ////
 //// [`on_terminate`](#on_terminate) actions are lowered in the turn that
-//// closes the topic, after the channel instance is gone. The topic is
-//// already unsubscribed and its reply refs are already purged by then,
-//// so core **drops pushes** (including presence snapshots pushed to this
-//// socket) and **drops replies**, while broadcasts still reach the
-//// topic's remaining subscribers. Core's automatic presence untrack for
-//// the topic runs straight after that turn, so `presence_untrack` — not
-//// `presence_track` — is what a terminating channel wants.
+//// closes the topic, after the channel instance is gone. Its closing-phase
+//// action type permits only operations that remain meaningful then.
 
 import beryl/presence
 import beryl/socket
@@ -97,7 +87,7 @@ import gleam/option
 
 /// A typed handle for sending server-side messages to one joined channel.
 ///
-/// Obtained from [`JoinInfo`](#joininfo) in the `join` callback and safe to
+/// Obtained from [`JoinContext`](#joincontext) in the `join` callback and safe to
 /// share with any process. Messages sent through it are delivered to the
 /// channel's `on_info` callback with their type intact.
 ///
@@ -144,21 +134,25 @@ pub fn notify(sender: Sender(info), message: info) -> Nil {
   sender.send(message)
 }
 
-/// Everything a `join` callback learns about the connection it is joining.
+/// Everything a `join` callback learns about one join attempt.
 ///
-/// `socket_id` and `seed` come straight from the transport's connect
-/// information; `self` is this channel's own generation-scoped
-/// [`Sender`](#sender), for scheduling a *later* turn — including from
-/// another process. Work that has to be part of the join itself belongs
-/// in [`with_actions`](#with_actions) instead.
-pub type JoinInfo(info) {
-  JoinInfo(
+/// `params` contains wildcard captures in pattern order and is empty for
+/// exact patterns. `self` is this channel's generation-scoped
+/// [`Sender`](#sender), for scheduling a later turn.
+pub type JoinContext(info) {
+  JoinContext(
     /// Unique id of the socket that is joining.
     socket_id: String,
     /// Request data assembled by the transport before the upgrade.
     seed: socket.ConnectSeed,
     /// Typed sender for this channel instance.
     self: Sender(info),
+    /// The concrete topic being joined.
+    topic: String,
+    /// Wildcard captures from the matched handler pattern.
+    params: List(String),
+    /// The client's raw join payload.
+    payload: dynamic.Dynamic,
   )
 }
 
@@ -187,82 +181,99 @@ pub type Message {
 // Actions
 // ---------------------------------------------------------------------------
 
-/// An ordered list of things to do on the channel's own topic.
-///
-/// Build one with [`actions`](#actions) and the builder functions below;
-/// they are applied in the order they were added. Actions are always
-/// scoped to the current channel's topic, so no action names a topic.
-pub opaque type Actions {
-  Actions(reversed: List(Action))
+/// Marker for actions valid while a channel is active.
+pub opaque type Active {
+  Active
 }
 
-/// An empty action list.
-pub fn actions() -> Actions {
-  Actions(reversed: [])
+/// Marker for actions valid while a channel is closing.
+pub opaque type Closing {
+  Closing
+}
+
+/// One operation on the channel's own topic.
+///
+/// The phase parameter prevents active-only operations from being returned
+/// by [`on_terminate`](#on_terminate). Put actions in a list in wire order.
+pub opaque type Action(phase) {
+  PushAction(phase: phase, event: String, payload: json.Json)
+  BroadcastAction(event: String, payload: json.Json)
+  BroadcastFromAction(event: String, payload: json.Json)
+  ReplyOkAction(
+    phase: phase,
+    reply: option.Option(socket.ReplyRef),
+    payload: json.Json,
+  )
+  ReplyErrorAction(
+    phase: phase,
+    reply: option.Option(socket.ReplyRef),
+    payload: json.Json,
+  )
+  PresenceTrackAction(phase: phase, key: String, meta: json.Json)
+  PresenceUntrackAction(key: String)
+  PushPresenceAction(
+    phase: phase,
+    event: String,
+    encode: fn(List(presence.PresenceEntry)) -> json.Json,
+  )
+  BroadcastPresenceAction(
+    event: String,
+    encode: fn(List(presence.PresenceEntry)) -> json.Json,
+  )
 }
 
 /// Push a server-initiated message to this socket on this channel's topic.
-pub fn push(actions: Actions, event: String, payload: json.Json) -> Actions {
-  add(actions, PushAction(event, payload))
+pub fn push(event: String, payload: json.Json) -> Action(Active) {
+  PushAction(Active, event, payload)
 }
 
 /// Broadcast to every subscriber of this channel's topic, including this
 /// socket.
-pub fn broadcast(
-  actions: Actions,
-  event: String,
-  payload: json.Json,
-) -> Actions {
-  add(actions, BroadcastAction(event, payload))
+pub fn broadcast(event: String, payload: json.Json) -> Action(phase) {
+  BroadcastAction(event, payload)
 }
 
 /// Broadcast to every subscriber of this channel's topic except this
 /// socket.
-pub fn broadcast_from(
-  actions: Actions,
-  event: String,
-  payload: json.Json,
-) -> Actions {
-  add(actions, BroadcastFromAction(event, payload))
+pub fn broadcast_from(event: String, payload: json.Json) -> Action(phase) {
+  BroadcastFromAction(event, payload)
 }
 
-/// Reply successfully to a client message, using the `reply` handle from
-/// the [`Message`](#message) that asked for it.
+/// Reply successfully when a client message supplied a reply handle.
+///
+/// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+/// lowers to no effect.
 pub fn reply_ok(
-  actions: Actions,
-  reply: socket.ReplyRef,
+  reply: option.Option(socket.ReplyRef),
   payload: json.Json,
-) -> Actions {
-  add(actions, ReplyOkAction(reply, payload))
+) -> Action(Active) {
+  ReplyOkAction(Active, reply, payload)
 }
 
-/// Reply with an error to a client message, using the `reply` handle from
-/// the [`Message`](#message) that asked for it.
+/// Reply with an error when a client message supplied a reply handle.
+///
+/// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+/// lowers to no effect.
 pub fn reply_error(
-  actions: Actions,
-  reply: socket.ReplyRef,
+  reply: option.Option(socket.ReplyRef),
   payload: json.Json,
-) -> Actions {
-  add(actions, ReplyErrorAction(reply, payload))
+) -> Action(Active) {
+  ReplyErrorAction(Active, reply, payload)
 }
 
 /// Track this socket's presence under `key` on this channel's topic and
 /// broadcast the matching `presence_diff` join.
 ///
 /// Requires a presence handle on the `Config` (`beryl.with_presence_handle`).
-pub fn presence_track(
-  actions: Actions,
-  key: String,
-  meta: json.Json,
-) -> Actions {
-  add(actions, PresenceTrackAction(key, meta))
+pub fn presence_track(key: String, meta: json.Json) -> Action(Active) {
+  PresenceTrackAction(Active, key, meta)
 }
 
 /// Untrack a presence previously tracked with
 /// [`presence_track`](#presence_track) and broadcast the matching
 /// `presence_diff` leave.
-pub fn presence_untrack(actions: Actions, key: String) -> Actions {
-  add(actions, PresenceUntrackAction(key))
+pub fn presence_untrack(key: String) -> Action(phase) {
+  PresenceUntrackAction(key)
 }
 
 /// Push a presence snapshot for this channel's topic to this socket.
@@ -271,31 +282,20 @@ pub fn presence_untrack(actions: Actions, key: String) -> Actions {
 /// earlier [`presence_track`](#presence_track) or
 /// [`presence_untrack`](#presence_untrack) in the same list.
 pub fn push_presence(
-  actions: Actions,
   event: String,
   encode: fn(List(presence.PresenceEntry)) -> json.Json,
-) -> Actions {
-  add(actions, PushPresenceAction(event, encode))
+) -> Action(Active) {
+  PushPresenceAction(Active, event, encode)
 }
 
 /// Broadcast a presence snapshot for this channel's topic to every
 /// subscriber, with the same apply-time `encode` semantics as
 /// [`push_presence`](#push_presence).
 pub fn broadcast_presence(
-  actions: Actions,
   event: String,
   encode: fn(List(presence.PresenceEntry)) -> json.Json,
-) -> Actions {
-  add(actions, BroadcastPresenceAction(event, encode))
-}
-
-fn add(actions: Actions, action: Action) -> Actions {
-  Actions(reversed: [action, ..actions.reversed])
-}
-
-/// `first` followed by `second`, preserving both orders.
-fn concat(first: Actions, second: Actions) -> Actions {
-  Actions(reversed: list.append(second.reversed, first.reversed))
+) -> Action(phase) {
+  BroadcastPresenceAction(event, encode)
 }
 
 // ---------------------------------------------------------------------------
@@ -304,33 +304,24 @@ fn concat(first: Actions, second: Actions) -> Actions {
 
 /// What a channel callback decided to do next.
 ///
-/// Build one with [`continue`](#continue), [`continue_with`](#continue_with),
-/// [`close`](#close), [`close_with`](#close_with), or
+/// Build one with [`next`](#next), [`close`](#close), or
 /// [`stop_socket`](#stop_socket).
 pub opaque type Next(state) {
-  NextContinue(state: state, actions: Actions)
-  NextClose(actions: Actions)
+  NextContinue(state: state, actions: List(Action(Active)))
+  NextClose(actions: List(Action(Active)))
   NextStop(reason: socket.StopReason)
 }
 
-/// Stay joined with the given state and no actions.
-pub fn continue(state: state) -> Next(state) {
-  NextContinue(state: state, actions: actions())
-}
-
 /// Stay joined with the given state, applying `actions` in order.
-pub fn continue_with(state: state, actions: Actions) -> Next(state) {
+pub fn next(state: state, actions: List(Action(Active))) -> Next(state) {
   NextContinue(state: state, actions: actions)
 }
 
-/// Leave this channel. The socket stays connected and its other channels
-/// are untouched; this channel's `on_terminate` callback still runs.
-pub fn close() -> Next(state) {
-  NextClose(actions: actions())
-}
-
 /// Leave this channel after applying `actions` in order.
-pub fn close_with(actions: Actions) -> Next(state) {
+///
+/// The socket stays connected and its other channels are untouched; this
+/// channel's [`on_terminate`](#on_terminate) callback still runs.
+pub fn close(actions: List(Action(Active))) -> Next(state) {
   NextClose(actions: actions)
 }
 
@@ -350,25 +341,30 @@ pub fn stop_socket(reason: socket.StopReason) -> Next(state) {
 /// server-side message type `info`.
 ///
 /// Start from [`callbacks`](#callbacks) — which ignores every input and
-/// stays joined — and override only what the channel cares about. Seal the
-/// result with [`joined`](#joined).
+/// stays joined — and override only what the channel cares about. Pass the
+/// result to [`accept`](#accept) with the initial state.
 pub opaque type Callbacks(state, info) {
   Callbacks(
     message: fn(state, Message) -> Next(state),
     binary: fn(state, BitArray) -> Next(state),
     info: fn(state, info) -> Next(state),
-    terminate: fn(state, socket.StopReason) -> Actions,
+    terminate: fn(state, socket.StopReason) -> List(Action(Closing)),
   )
 }
 
 /// Callbacks that ignore every input and keep the channel joined.
 pub fn callbacks() -> Callbacks(state, info) {
   Callbacks(
-    message: fn(state, _message) { continue(state) },
-    binary: fn(state, _data) { continue(state) },
-    info: fn(state, _message) { continue(state) },
-    terminate: fn(_state, _reason) { actions() },
+    message: fn(state, _message) { next(state, []) },
+    binary: fn(state, _data) { next(state, []) },
+    info: fn(state, _message) { next(state, []) },
+    terminate: fn(_state, _reason) { no_closing_actions() },
   )
+}
+
+fn no_closing_actions() -> List(Action(Closing)) {
+  let Closing = Closing
+  []
 }
 
 /// Handle client messages on this channel's topic.
@@ -399,32 +395,10 @@ pub fn on_info(
 /// Run cleanup when the channel ends, for any reason: client leave, a
 /// [`close`](#close) result, a socket teardown, or a disconnect.
 ///
-/// The returned [`Actions`](#actions) are applied in the turn that closes
-/// this topic, right after the channel instance is gone — which is why a
-/// leave announcement or a post-leave presence roster belongs here rather
-/// than in an out-of-band broadcast.
-///
-/// By that point core has unsubscribed the topic and purged its
-/// outstanding reply refs, and core's own presence untrack for the topic
-/// runs immediately after this turn. That splits the action table:
-///
-/// - [`broadcast`](#broadcast), [`broadcast_from`](#broadcast_from), and
-///   [`broadcast_presence`](#broadcast_presence) take effect and reach
-///   the topic's remaining subscribers.
-/// - [`presence_untrack`](#presence_untrack) takes effect, and is the
-///   presence action a terminating channel wants: put it before a
-///   [`broadcast_presence`](#broadcast_presence) so the roster is
-///   encoded after the departure.
-/// - [`push`](#push) and [`push_presence`](#push_presence) are dropped:
-///   this socket has already left the topic, so they have nowhere to
-///   land.
-/// - [`reply_ok`](#reply_ok) and [`reply_error`](#reply_error) are
-///   dropped: the topic's reply refs were purged before this callback
-///   ran, so there is no outstanding ref left to answer.
-/// - [`presence_track`](#presence_track) is applied and then immediately
-///   undone by core's automatic untrack, which can emit a join diff
-///   followed at once by the matching leave diff. Use
-///   [`presence_untrack`](#presence_untrack) instead.
+/// The returned closing-phase actions are applied in the turn that closes
+/// this topic, right after the channel instance is gone. The phase allows
+/// broadcasts, presence untracking, and presence broadcasts, while making
+/// pushes, replies, and presence tracking unavailable.
 ///
 /// A panic here is not fatal, but it is not free either: core keeps the
 /// model from before the close, so this instance stays in the channel
@@ -432,41 +406,33 @@ pub fn on_info(
 /// the topic is rejoined or the socket ends.
 pub fn on_terminate(
   callbacks: Callbacks(state, info),
-  handle: fn(state, socket.StopReason) -> Actions,
+  handle: fn(state, socket.StopReason) -> List(Action(Closing)),
 ) -> Callbacks(state, info) {
   Callbacks(..callbacks, terminate: handle)
 }
 
-/// A live channel instance: `state` bound to `callbacks`.
-///
-/// The `state` type is sealed inside the closures this builds, so joined
-/// channels with unrelated private states share one type.
-pub opaque type JoinedChannel(info) {
-  JoinedChannel(
+/// A live channel instance with `state` sealed in callback closures.
+type SealedChannel(info) {
+  SealedChannel(
     on_message: fn(Message) -> Continuation(info),
     on_binary: fn(BitArray) -> Continuation(info),
     on_info: fn(info) -> Continuation(info),
-    on_terminate: fn(socket.StopReason) -> Actions,
+    on_terminate: fn(socket.StopReason) -> List(Action(Closing)),
   )
 }
 
 type Continuation(info) {
-  ContinueWith(next: JoinedChannel(info), actions: Actions)
-  CloseWith(actions: Actions)
+  ContinueWith(next: SealedChannel(info), actions: List(Action(Active)))
+  CloseWith(actions: List(Action(Active)))
   StopSocketWith(reason: socket.StopReason)
 }
 
-/// Bind a channel's initial private state to its callbacks.
-///
-/// This is where `state` disappears from the type: every callback is
-/// wrapped in a closure that captures the current state, and each
-/// [`continue`](#continue) result rebuilds the same closures over the next
-/// state. No state value is ever erased or coerced.
-pub fn joined(
+/// Bind private state to callbacks without erasing or coercing it.
+fn seal(
   state: state,
   callbacks: Callbacks(state, info),
-) -> JoinedChannel(info) {
-  JoinedChannel(
+) -> SealedChannel(info) {
+  SealedChannel(
     on_message: fn(message) {
       continuation(callbacks, callbacks.message(state, message))
     },
@@ -486,7 +452,7 @@ fn continuation(
 ) -> Continuation(info) {
   case next {
     NextContinue(state, actions) ->
-      ContinueWith(next: joined(state, callbacks), actions: actions)
+      ContinueWith(next: seal(state, callbacks), actions: actions)
     NextClose(actions) -> CloseWith(actions: actions)
     NextStop(reason) -> StopSocketWith(reason: reason)
   }
@@ -499,24 +465,39 @@ fn continuation(
 /// A `join` callback's answer: join this channel, or refuse.
 pub opaque type JoinResult(info) {
   JoinAccepted(
-    channel: JoinedChannel(info),
+    channel: SealedChannel(info),
     reply: option.Option(json.Json),
-    actions: Actions,
+    actions: List(Action(Active)),
   )
   JoinRejected(reason: json.Json)
 }
 
 /// Accept the join with an empty acknowledgment.
-pub fn accept(channel: JoinedChannel(info)) -> JoinResult(info) {
-  JoinAccepted(channel: channel, reply: option.None, actions: actions())
+///
+/// This seals the channel's private state inside its callbacks.
+pub fn accept(
+  state: state,
+  callbacks: Callbacks(state, info),
+) -> JoinResult(info) {
+  JoinAccepted(channel: seal(state, callbacks), reply: option.None, actions: [])
 }
 
-/// Accept the join, returning `reply` in the join acknowledgment.
-pub fn accept_with(
-  channel: JoinedChannel(info),
+/// Add a payload to an accepted join's acknowledgment.
+///
+/// A rejected join remains rejected.
+pub fn with_reply(
+  result: JoinResult(info),
   reply: json.Json,
 ) -> JoinResult(info) {
-  JoinAccepted(channel: channel, reply: option.Some(reply), actions: actions())
+  case result {
+    JoinRejected(_) -> result
+    JoinAccepted(channel: channel, actions: actions, ..) ->
+      JoinAccepted(
+        channel: channel,
+        reply: option.Some(reply),
+        actions: actions,
+      )
+  }
 }
 
 /// Add ordered actions to run as part of accepting this join.
@@ -537,7 +518,7 @@ pub fn accept_with(
 /// results unchanged.
 pub fn with_actions(
   result: JoinResult(info),
-  actions: Actions,
+  actions: List(Action(Active)),
 ) -> JoinResult(info) {
   case result {
     JoinRejected(_) -> result
@@ -545,7 +526,7 @@ pub fn with_actions(
       JoinAccepted(
         channel: channel,
         reply: reply,
-        actions: concat(existing, actions),
+        actions: list.append(existing, actions),
       )
   }
 }
@@ -565,24 +546,22 @@ pub fn reject(reason: json.Json) -> JoinResult(info) {
 /// types are sealed inside the closure captured here, so a single
 /// `List(Handler)` can hold channels that agree on nothing.
 pub opaque type Handler {
-  Handler(pattern: String, open: fn(JoinContext) -> JoinOutcome)
+  Handler(pattern: String, open: fn(RoutedJoinContext) -> JoinOutcome)
 }
 
 /// Register a channel for every topic matching `pattern`.
 ///
 /// `pattern` uses beryl's topic pattern syntax (`"room:lobby"`,
 /// `"room:*"`, `"document:*:ops"`, `"*"`) and is validated when the
-/// handler table is used; see `beryl_channels.validate_handlers`.
+/// handler table is used by `beryl_channels.child_spec`.
 ///
-/// `join` receives the connection's [`JoinInfo`](#joininfo), the concrete
-/// topic that matched, and the client's join payload, and answers with
-/// [`accept`](#accept), [`accept_with`](#accept_with), or
-/// [`reject`](#reject).
+/// `join` receives one [`JoinContext`](#joincontext) containing connection
+/// data, the concrete topic, wildcard captures, and the payload.
 pub fn handler(
   pattern: String,
-  join: fn(JoinInfo(info), String, dynamic.Dynamic) -> JoinResult(info),
+  join: fn(JoinContext(info)) -> JoinResult(info),
 ) -> Handler {
-  Handler(pattern: pattern, open: fn(context: JoinContext) {
+  Handler(pattern: pattern, open: fn(context: RoutedJoinContext) {
     // The typed hand-off point for this join. It lives only inside this
     // closure, where `info` is still in scope, which is what lets
     // server-side sends stay typed without erasure.
@@ -602,15 +581,22 @@ pub fn handler(
           Mail(join: join_id, place: fn() { process.send(handoff, message) }),
         )
       })
-    let info =
-      JoinInfo(socket_id: context.socket_id, seed: context.seed, self: sender)
+    let join_context =
+      JoinContext(
+        socket_id: context.socket_id,
+        seed: context.seed,
+        self: sender,
+        topic: context.topic,
+        params: context.params,
+        payload: context.payload,
+      )
 
-    case join(info, context.topic, context.payload) {
+    case join(join_context) {
       JoinRejected(reason) -> Rejected(reason: reason)
       JoinAccepted(channel, reply, actions) ->
         Accepted(
           reply: reply,
-          actions: action_list(actions),
+          actions: actions,
           channel: live(channel, handoff, join_id),
         )
     }
@@ -629,32 +615,6 @@ pub fn pattern(handler: Handler) -> String {
 // consumes. It is non-generic on purpose: it is what the sealing above
 // produces, and it never carries a typed `info` value.
 // ---------------------------------------------------------------------------
-
-/// One thing to do on the current channel's topic.
-@internal
-pub type Action {
-  PushAction(event: String, payload: json.Json)
-  BroadcastAction(event: String, payload: json.Json)
-  BroadcastFromAction(event: String, payload: json.Json)
-  ReplyOkAction(reply: socket.ReplyRef, payload: json.Json)
-  ReplyErrorAction(reply: socket.ReplyRef, payload: json.Json)
-  PresenceTrackAction(key: String, meta: json.Json)
-  PresenceUntrackAction(key: String)
-  PushPresenceAction(
-    event: String,
-    encode: fn(List(presence.PresenceEntry)) -> json.Json,
-  )
-  BroadcastPresenceAction(
-    event: String,
-    encode: fn(List(presence.PresenceEntry)) -> json.Json,
-  )
-}
-
-/// The actions of an `Actions` value, in the order they were added.
-@internal
-pub fn action_list(actions: Actions) -> List(Action) {
-  list.reverse(actions.reversed)
-}
 
 /// A joined channel with its `state` and `info` types fully sealed.
 @internal
@@ -680,7 +640,7 @@ pub type LiveChannel {
     /// Run this channel's termination callback, returning the actions it
     /// asked for. The router runs them in the turn that closes the topic,
     /// after this instance has been removed.
-    on_terminate: fn(socket.StopReason) -> List(Action),
+    on_terminate: fn(socket.StopReason) -> List(Action(Closing)),
   )
 }
 
@@ -700,8 +660,8 @@ pub opaque type Mail {
 /// The non-generic form of a callback result.
 @internal
 pub type Step {
-  StepContinue(next: LiveChannel, actions: List(Action))
-  StepClose(actions: List(Action))
+  StepContinue(next: LiveChannel, actions: List(Action(Active)))
+  StepClose(actions: List(Action(Active)))
   StepStop(reason: socket.StopReason)
 }
 
@@ -719,11 +679,12 @@ pub type Step {
 /// own `Sender` to schedule a later turn, and the mail it enqueues has to
 /// be addressed to the join being opened rather than to the previous one.
 @internal
-pub type JoinContext {
-  JoinContext(
+pub type RoutedJoinContext {
+  RoutedJoinContext(
     socket_id: String,
     seed: socket.ConnectSeed,
     topic: String,
+    params: List(String),
     payload: dynamic.Dynamic,
     deliver: fn(Mail) -> Nil,
   )
@@ -738,7 +699,7 @@ pub type JoinContext {
 pub type JoinOutcome {
   Accepted(
     reply: option.Option(json.Json),
-    actions: List(Action),
+    actions: List(Action(Active)),
     channel: LiveChannel,
   )
   Rejected(reason: json.Json)
@@ -746,12 +707,12 @@ pub type JoinOutcome {
 
 /// Run a handler's sealed `join` callback for one join attempt.
 @internal
-pub fn open(handler: Handler, context: JoinContext) -> JoinOutcome {
+pub fn open(handler: Handler, context: RoutedJoinContext) -> JoinOutcome {
   handler.open(context)
 }
 
 fn live(
-  channel: JoinedChannel(info),
+  channel: SealedChannel(info),
   handoff: process.Subject(info),
   join_id: reference.Reference,
 ) -> LiveChannel {
@@ -782,7 +743,7 @@ fn live(
         }
       }
     },
-    on_terminate: fn(reason) { action_list(channel.on_terminate(reason)) },
+    on_terminate: fn(reason) { channel.on_terminate(reason) },
   )
 }
 
@@ -793,11 +754,53 @@ fn step(
 ) -> Step {
   case continuation {
     ContinueWith(next, actions) ->
-      StepContinue(
-        next: live(next, handoff, join_id),
-        actions: action_list(actions),
-      )
-    CloseWith(actions) -> StepClose(actions: action_list(actions))
+      StepContinue(next: live(next, handoff, join_id), actions: actions)
+    CloseWith(actions) -> StepClose(actions: actions)
     StopSocketWith(reason) -> StepStop(reason: reason)
+  }
+}
+
+/// Lower actions to core effects, preserving strict left-to-right order.
+///
+/// Reply actions with no ref lower to zero effects.
+@internal
+pub fn effects(
+  topic: String,
+  actions: List(Action(phase)),
+) -> List(socket.Effect) {
+  list.flat_map(actions, fn(action) { effect(topic, action) })
+}
+
+fn effect(topic: String, action: Action(phase)) -> List(socket.Effect) {
+  case action {
+    PushAction(event: event, payload: payload, ..) -> [
+      socket.Push(topic: topic, event: event, payload: payload),
+    ]
+    BroadcastAction(event: event, payload: payload) -> [
+      socket.Broadcast(topic: topic, event: event, payload: payload),
+    ]
+    BroadcastFromAction(event: event, payload: payload) -> [
+      socket.BroadcastFrom(topic: topic, event: event, payload: payload),
+    ]
+    ReplyOkAction(reply: option.None, ..)
+    | ReplyErrorAction(reply: option.None, ..) -> []
+    ReplyOkAction(reply: option.Some(reply), payload: payload, ..) -> [
+      socket.ReplyOk(ref: reply, payload: payload),
+    ]
+    ReplyErrorAction(reply: option.Some(reply), payload: payload, ..) -> [
+      socket.ReplyError(ref: reply, payload: payload),
+    ]
+    PresenceTrackAction(key: key, meta: meta, ..) -> [
+      socket.PresenceTrack(topic: topic, key: key, meta: meta),
+    ]
+    PresenceUntrackAction(key: key) -> [
+      socket.PresenceUntrack(topic: topic, key: key),
+    ]
+    PushPresenceAction(event: event, encode: encode, ..) -> [
+      socket.PushPresence(topic: topic, event: event, encode: encode),
+    ]
+    BroadcastPresenceAction(event: event, encode: encode) -> [
+      socket.BroadcastPresence(topic: topic, event: event, encode: encode),
+    ]
   }
 }

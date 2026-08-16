@@ -34,17 +34,18 @@ fn context(
   topic topic: String,
   payload payload: dynamic.Dynamic,
   deliver deliver: fn(channel.Mail) -> Nil,
-) -> channel.JoinContext {
-  channel.JoinContext(
+) -> channel.RoutedJoinContext {
+  channel.RoutedJoinContext(
     socket_id: "socket-1",
     seed: socket.empty_seed(),
     topic: topic,
+    params: [],
     payload: payload,
     deliver: deliver,
   )
 }
 
-fn quiet_context(topic: String) -> channel.JoinContext {
+fn quiet_context(topic: String) -> channel.RoutedJoinContext {
   context(topic: topic, payload: dynamic.nil(), deliver: fn(_mail) { Nil })
 }
 
@@ -57,30 +58,31 @@ fn client_message(event: String) -> channel.Message {
   )
 }
 
-fn describe(action: channel.Action) -> String {
-  case action {
-    channel.PushAction(event, payload) ->
+fn describe(effect: socket.Effect) -> String {
+  case effect {
+    socket.Push(event: event, payload: payload, ..) ->
       "push/" <> event <> "/" <> json.to_string(payload)
-    channel.BroadcastAction(event, payload) ->
+    socket.Broadcast(event: event, payload: payload, ..) ->
       "broadcast/" <> event <> "/" <> json.to_string(payload)
-    channel.BroadcastFromAction(event, payload) ->
+    socket.BroadcastFrom(event: event, payload: payload, ..) ->
       "broadcast_from/" <> event <> "/" <> json.to_string(payload)
-    channel.ReplyOkAction(_reply, payload) ->
+    socket.ReplyOk(payload: payload, ..) ->
       "reply_ok/" <> json.to_string(payload)
-    channel.ReplyErrorAction(_reply, payload) ->
+    socket.ReplyError(payload: payload, ..) ->
       "reply_error/" <> json.to_string(payload)
-    channel.PresenceTrackAction(key, meta) ->
+    socket.PresenceTrack(key: key, meta: meta, ..) ->
       "presence_track/" <> key <> "/" <> json.to_string(meta)
-    channel.PresenceUntrackAction(key) -> "presence_untrack/" <> key
-    channel.PushPresenceAction(event, encode) ->
+    socket.PresenceUntrack(key: key, ..) -> "presence_untrack/" <> key
+    socket.PushPresence(event: event, encode: encode, ..) ->
       "push_presence/" <> event <> "/" <> json.to_string(encode([]))
-    channel.BroadcastPresenceAction(event, encode) ->
+    socket.BroadcastPresence(event: event, encode: encode, ..) ->
       "broadcast_presence/" <> event <> "/" <> json.to_string(encode([]))
+    _ -> "other"
   }
 }
 
-fn rendered(actions: List(channel.Action)) -> String {
-  actions
+fn rendered(actions: List(channel.Action(phase))) -> String {
+  channel.effects("room:lobby", actions)
   |> list.map(describe)
   |> string.join(",")
 }
@@ -94,49 +96,40 @@ fn accepted_channel(outcome: channel.JoinOutcome) -> channel.LiveChannel {
 /// A minimal counting channel: every `"bump"` message adds one and pushes
 /// the running total; `"quit"` closes the channel; `"boom"` stops the socket.
 fn counter_handler(pattern: String) -> channel.Handler {
-  channel.handler(pattern, fn(info, topic, _payload) {
+  channel.handler(pattern, fn(context) {
     let callbacks =
       channel.callbacks()
       |> channel.on_message(fn(count, message) {
         case message.event {
           "bump" ->
-            channel.continue_with(
-              count + 1,
-              channel.actions()
-                |> channel.push("total", json.int(count + 1))
-                |> channel.broadcast("bumped", json.string(topic)),
-            )
-          "quit" ->
-            channel.close_with(
-              channel.actions() |> channel.push("bye", json.int(count)),
-            )
+            channel.next(count + 1, [
+              channel.push("total", json.int(count + 1)),
+              channel.broadcast("bumped", json.string(context.topic)),
+            ])
+          "quit" -> channel.close([channel.push("bye", json.int(count))])
           "boom" -> channel.stop_socket(socket.Errored("boom"))
-          _ -> channel.continue(count)
+          _ -> channel.next(count, [])
         }
       })
       |> channel.on_binary(fn(count, data) {
-        channel.continue_with(
-          count,
-          channel.actions()
-            |> channel.push("bytes", json.int(bit_array.byte_size(data))),
-        )
+        channel.next(count, [
+          channel.push("bytes", json.int(bit_array.byte_size(data))),
+        ])
       })
       |> channel.on_info(fn(count, note) {
         case note {
           Note(text) ->
-            channel.continue_with(
-              count,
-              channel.actions()
-                |> channel.push(
-                  "note",
-                  json.string(info.socket_id <> ":" <> text),
-                ),
-            )
-          Bye -> channel.close()
+            channel.next(count, [
+              channel.push(
+                "note",
+                json.string(context.socket_id <> ":" <> text),
+              ),
+            ])
+          Bye -> channel.close([])
         }
       })
 
-    channel.accept(channel.joined(0, callbacks))
+    channel.accept(0, callbacks)
   })
 }
 
@@ -159,11 +152,9 @@ pub fn join_accepts_without_a_reply_test() {
 
 pub fn join_accepts_with_a_reply_payload_test() {
   let handler =
-    channel.handler("room:*", fn(_info, _topic, _payload) {
-      channel.accept_with(
-        channel.joined(Nil, channel.callbacks()),
-        json.object([#("ok", json.bool(True))]),
-      )
+    channel.handler("room:*", fn(_context) {
+      channel.accept(Nil, channel.callbacks())
+      |> channel.with_reply(json.object([#("ok", json.bool(True))]))
     })
 
   case channel.open(handler, quiet_context("room:lobby")) {
@@ -178,7 +169,7 @@ pub fn join_accepts_with_a_reply_payload_test() {
 
 pub fn join_can_be_rejected_test() {
   let handler =
-    channel.handler("secret:*", fn(_info, _topic, _payload) {
+    channel.handler("secret:*", fn(_context) {
       channel.reject(json.object([#("reason", json.string("forbidden"))]))
     })
 
@@ -193,14 +184,15 @@ pub fn join_can_be_rejected_test() {
 
 pub fn join_receives_the_topic_and_payload_test() {
   let handler =
-    channel.handler("room:*", fn(info, topic, payload) {
+    channel.handler("room:*", fn(context) {
       let decoded =
-        decode.run(payload, decode.string) |> result.unwrap("<undecodable>")
-      channel.accept_with(
-        channel.joined(Nil, channel.callbacks()),
+        decode.run(context.payload, decode.string)
+        |> result.unwrap("<undecodable>")
+      channel.accept(Nil, channel.callbacks())
+      |> channel.with_reply(
         json.object([
-          #("socket", json.string(info.socket_id)),
-          #("topic", json.string(topic)),
+          #("socket", json.string(context.socket_id)),
+          #("topic", json.string(context.topic)),
           #("payload", json.string(decoded)),
         ]),
       )
@@ -265,8 +257,8 @@ pub fn channel_state_is_threaded_across_messages_test() {
 
 pub fn unhandled_events_continue_without_actions_test() {
   let handler =
-    channel.handler("room:*", fn(_info, _topic, _payload) {
-      channel.accept(channel.joined(Nil, channel.callbacks()))
+    channel.handler("room:*", fn(_context) {
+      channel.accept(Nil, channel.callbacks())
     })
 
   let live =
@@ -318,14 +310,14 @@ pub fn stop_socket_carries_only_a_reason_test() {
 pub fn terminate_runs_the_terminate_callback_test() {
   let observed = process.new_subject()
   let handler =
-    channel.handler("room:*", fn(_info, _topic, _payload) {
+    channel.handler("room:*", fn(_context) {
       let callbacks =
         channel.callbacks()
         |> channel.on_terminate(fn(_state, reason) {
           process.send(observed, reason)
-          channel.actions()
+          []
         })
-      channel.accept(channel.joined(Nil, callbacks))
+      channel.accept(Nil, callbacks)
     })
 
   let live =
@@ -342,21 +334,18 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
   let senders = process.new_subject()
 
   let handler =
-    channel.handler("room:*", fn(info, _topic, _payload) {
-      process.send(senders, info.self)
+    channel.handler("room:*", fn(context) {
+      process.send(senders, context.self)
       let callbacks =
         channel.callbacks()
         |> channel.on_info(fn(_state, note) {
           case note {
             Note(text) ->
-              channel.continue_with(
-                Nil,
-                channel.actions() |> channel.push("note", json.string(text)),
-              )
-            Bye -> channel.close()
+              channel.next(Nil, [channel.push("note", json.string(text))])
+            Bye -> channel.close([])
           }
         })
-      channel.accept(channel.joined(Nil, callbacks))
+      channel.accept(Nil, callbacks)
     })
 
   let live =
@@ -392,18 +381,17 @@ pub fn an_unrun_mail_delivers_nothing_test() {
   let senders = process.new_subject()
 
   let handler =
-    channel.handler("room:*", fn(info, _topic, _payload) {
-      process.send(senders, info.self)
+    channel.handler("room:*", fn(context) {
+      process.send(senders, context.self)
       let callbacks =
         channel.callbacks()
         |> channel.on_info(fn(count, note) {
           let assert Note(text) = note as "only Note values are sent here"
-          channel.continue_with(
-            count + 1,
-            channel.actions() |> channel.push("note", json.string(text)),
-          )
+          channel.next(count + 1, [
+            channel.push("note", json.string(text)),
+          ])
         })
-      channel.accept(channel.joined(0, callbacks))
+      channel.accept(0, callbacks)
     })
 
   let live =
@@ -437,21 +425,18 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   let senders = process.new_subject()
 
   let handler =
-    channel.handler("room:*", fn(info, _topic, _payload) {
-      process.send(senders, info.self)
+    channel.handler("room:*", fn(context) {
+      process.send(senders, context.self)
       let callbacks =
         channel.callbacks()
         |> channel.on_info(fn(_state, note) {
           case note {
             Note(text) ->
-              channel.continue_with(
-                Nil,
-                channel.actions() |> channel.push("note", json.string(text)),
-              )
-            Bye -> channel.close()
+              channel.next(Nil, [channel.push("note", json.string(text))])
+            Bye -> channel.close([])
           }
         })
-      channel.accept(channel.joined(Nil, callbacks))
+      channel.accept(Nil, callbacks)
     })
 
   let join_context =
@@ -486,17 +471,17 @@ pub fn info_can_close_the_channel_test() {
   let outbox = process.new_subject()
   let senders = process.new_subject()
   let handler =
-    channel.handler("room:*", fn(info, _topic, _payload) {
-      process.send(senders, info.self)
+    channel.handler("room:*", fn(context) {
+      process.send(senders, context.self)
       let callbacks =
         channel.callbacks()
         |> channel.on_info(fn(_state, note) {
           case note {
-            Bye -> channel.close()
-            Note(_) -> channel.continue(Nil)
+            Bye -> channel.close([])
+            Note(_) -> channel.next(Nil, [])
           }
         })
-      channel.accept(channel.joined(Nil, callbacks))
+      channel.accept(Nil, callbacks)
     })
 
   let live =
@@ -518,6 +503,31 @@ pub fn info_can_close_the_channel_test() {
 }
 
 // --- actions ---------------------------------------------------------------
+fn shared_active_actions() -> List(channel.Action(channel.Active)) {
+  [
+    channel.broadcast("broadcast", json.int(1)),
+    channel.presence_untrack("user:1"),
+    channel.broadcast_presence("state", fn(_entries) { json.int(2) }),
+  ]
+}
+
+fn shared_closing_actions() -> List(channel.Action(channel.Closing)) {
+  [
+    channel.broadcast("broadcast", json.int(1)),
+    channel.presence_untrack("user:1"),
+    channel.broadcast_presence("state", fn(_entries) { json.int(2) }),
+  ]
+}
+
+pub fn shared_actions_are_valid_in_both_phases_test() {
+  let expected =
+    "broadcast/broadcast/1,presence_untrack/user:1,"
+    <> "broadcast_presence/state/2"
+
+  shared_active_actions() |> rendered |> should.equal(expected)
+  shared_closing_actions() |> rendered |> should.equal(expected)
+}
+
 pub fn actions_cover_the_core_effect_capabilities_test() {
   let reply =
     socket.make_message_ref(
@@ -526,23 +536,23 @@ pub fn actions_cover_the_core_effect_capabilities_test() {
       msg_ref: option.Some("2"),
     )
 
-  let built =
-    channel.actions()
-    |> channel.push("push", json.int(1))
-    |> channel.broadcast("broadcast", json.int(2))
-    |> channel.broadcast_from("broadcast_from", json.int(3))
-    |> channel.reply_ok(reply, json.int(4))
-    |> channel.reply_error(reply, json.int(5))
-    |> channel.presence_track("user:1", json.int(6))
-    |> channel.presence_untrack("user:1")
-    |> channel.push_presence("state", fn(entries) {
+  let built = [
+    channel.push("push", json.int(1)),
+    channel.broadcast("broadcast", json.int(2)),
+    channel.broadcast_from("broadcast_from", json.int(3)),
+    channel.reply_ok(option.Some(reply), json.int(4)),
+    channel.reply_error(option.Some(reply), json.int(5)),
+    channel.presence_track("user:1", json.int(6)),
+    channel.presence_untrack("user:1"),
+    channel.push_presence("state", fn(entries) {
       json.int(list.length(entries))
-    })
-    |> channel.broadcast_presence("state", fn(entries) {
+    }),
+    channel.broadcast_presence("state", fn(entries) {
       json.int(list.length(entries) + 10)
-    })
+    }),
+  ]
 
-  channel.action_list(built)
+  built
   |> rendered
   |> should.equal(
     "push/push/1,broadcast/broadcast/2,broadcast_from/broadcast_from/3,"
@@ -552,17 +562,56 @@ pub fn actions_cover_the_core_effect_capabilities_test() {
   )
 }
 
+pub fn optional_reply_without_a_ref_lowers_to_no_effect_test() {
+  channel.effects("room:lobby", [
+    channel.reply_ok(option.None, json.int(1)),
+    channel.reply_error(option.None, json.int(2)),
+  ])
+  |> should.equal([])
+}
+
+pub fn optional_reply_with_a_ref_lowers_in_order_test() {
+  let reply =
+    socket.make_message_ref(
+      topic: "room:lobby",
+      join_ref: option.Some("1"),
+      msg_ref: option.Some("2"),
+    )
+
+  [
+    channel.reply_ok(option.Some(reply), json.int(1)),
+    channel.reply_error(option.Some(reply), json.int(2)),
+  ]
+  |> rendered
+  |> should.equal("reply_ok/1,reply_error/2")
+}
+
+pub fn repeated_join_action_lists_append_left_to_right_test() {
+  let handler =
+    channel.handler("room:*", fn(_context) {
+      channel.accept(Nil, channel.callbacks())
+      |> channel.with_actions([channel.push("first", json.int(1))])
+      |> channel.with_actions([channel.push("second", json.int(2))])
+    })
+
+  case channel.open(handler, quiet_context("room:lobby")) {
+    channel.Accepted(_reply, actions, _live) ->
+      actions |> rendered |> should.equal("push/first/1,push/second/2")
+    channel.Rejected(_) -> should.fail()
+  }
+}
+
 pub fn presence_encoders_run_against_supplied_entries_test() {
-  let built =
-    channel.actions()
-    |> channel.push_presence("state", fn(entries) {
+  let actions = [
+    channel.push_presence("state", fn(entries) {
       entries
       |> list.map(fn(entry) { entry.key })
       |> json.array(json.string)
-    })
+    }),
+  ]
 
-  case channel.action_list(built) {
-    [channel.PushPresenceAction(_event, encode)] ->
+  case channel.effects("room:lobby", actions) {
+    [socket.PushPresence(encode: encode, ..)] ->
       encode([presence.PresenceEntry("s1", "user:1", json.null())])
       |> json.to_string
       |> should.equal("[\"user:1\"]")
@@ -571,5 +620,5 @@ pub fn presence_encoders_run_against_supplied_entries_test() {
 }
 
 pub fn an_empty_action_list_is_empty_test() {
-  channel.action_list(channel.actions()) |> should.equal([])
+  channel.effects("room:lobby", []) |> should.equal([])
 }

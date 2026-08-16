@@ -40,7 +40,6 @@ own private state.
 import beryl/wire
 import beryl_channels/channel
 import gleam/json
-import gleam/option.{Some}
 
 /// This channel's private state — one value per joined topic.
 type State {
@@ -53,61 +52,58 @@ type Note =
   Nil
 
 pub fn channel() -> channel.Handler {
-  channel.handler("room:*", fn(info: channel.JoinInfo(Note), topic, _payload) {
-    let state = State(room_id: topic, sent: 0)
+  channel.handler("room:*", fn(context: channel.JoinContext(Note)) {
+    let state = State(room_id: context.topic, sent: 0)
 
-    channel.accept_with(
-      channel.joined(state, callbacks()),
+    channel.accept(state, callbacks())
+    |> channel.with_reply(
       json.object([
-        #("room", json.string(topic)),
-        #("socket_id", json.string(info.socket_id)),
+        #("room", json.string(context.topic)),
+        #("socket_id", json.string(context.socket_id)),
       ]),
     )
     // Applied in order immediately after the acknowledgment.
-    |> channel.with_actions(
-      channel.actions()
-      |> channel.broadcast("joined", json.string(info.socket_id)),
-    )
+    |> channel.with_actions([
+      channel.broadcast("joined", json.string(context.socket_id)),
+    ])
   })
 }
 
 fn callbacks() -> channel.Callbacks(State, Note) {
   channel.callbacks()
   |> channel.on_message(fn(state: State, message: channel.Message) {
-    case message.event, message.reply {
+    case message.event {
       // Broadcast the message, then acknowledge the client's push.
-      "new_msg", Some(ref) ->
-        channel.continue_with(
+      "new_msg" ->
+        channel.next(
           State(..state, sent: state.sent + 1),
-          channel.actions()
-            |> channel.broadcast("new_msg", wire.dynamic_to_json(message.payload))
-            |> channel.reply_ok(ref, json.object([#("sent", json.int(state.sent + 1))])),
+          [
+            channel.broadcast(
+              "new_msg",
+              wire.dynamic_to_json(message.payload),
+            ),
+            channel.reply_ok(
+              message.reply,
+              json.object([#("sent", json.int(state.sent + 1))]),
+            ),
+          ],
         )
 
-      "new_msg", _ ->
-        channel.continue_with(
-          State(..state, sent: state.sent + 1),
-          channel.actions()
-            |> channel.broadcast("new_msg", wire.dynamic_to_json(message.payload)),
-        )
-
-      // Anything else with a ref gets an explicit error.
-      _, Some(ref) ->
-        channel.continue_with(
+      // Refless events lower the optional reply action to no effect.
+      _ ->
+        channel.next(
           state,
-          channel.actions()
-            |> channel.reply_error(
-              ref,
+          [
+            channel.reply_error(
+              message.reply,
               json.object([#("error", json.string("unknown_event"))]),
             ),
+          ],
         )
-
-      _, _ -> channel.continue(state)
     }
   })
   |> channel.on_terminate(fn(state: State, _reason) {
-    channel.actions()
-    |> channel.broadcast("left", json.string(state.room_id))
+    [channel.broadcast("left", json.string(state.room_id))]
   })
 }
 ```
@@ -117,7 +113,7 @@ Every action is scoped to the channel's own topic, and they are applied in the o
 - **`channel.reply_ok` / `channel.reply_error`** — send `phx_reply` back to the calling client on the ref from `message.reply`.
 - **`channel.push`** — send a named event to this socket only.
 - **`channel.broadcast`** — send a named event to every socket on this topic, including the sender; **`channel.broadcast_from`** excludes the sender.
-- **`channel.continue(state)`** — continue with no outgoing frames.
+- **`channel.next(state, [])`** — continue with no outgoing frames.
 </Aside>
 
 ## 2. Start the channel system and wire the transport
@@ -231,7 +227,7 @@ const channel = socket.channel("room:lobby", { username: "alice" });
 channel
   .join()
   .receive("ok", (resp) => {
-    // resp is the JSON payload you returned from `channel.accept_with`.
+    // resp is the JSON payload you attached with `channel.with_reply`.
     console.log("Joined room", resp.room);
   })
   .receive("error", (resp) => {
@@ -258,12 +254,13 @@ Return `channel.reject` when a topic should not be admitted. Join-level auth,
 capacity checks, and payload validation all live in the `join` callback:
 
 ```gleam
-channel.handler("room:*", fn(_info, topic, _payload) {
-  case is_room_valid(topic) {
+channel.handler("room:*", fn(context) {
+  case is_room_valid(context.topic) {
     False ->
       channel.reject(json.object([#("reason", json.string("room_not_found"))]))
 
-    True -> channel.accept(channel.joined(State(room_id: topic, sent: 0), callbacks()))
+    True ->
+      channel.accept(State(room_id: context.topic, sent: 0), callbacks())
   }
 })
 ```

@@ -219,10 +219,10 @@ match exact variants only when your handling differs and keep a catch-all
 otherwise.
 
 `beryl_channels.child_spec` validates the handler table first and reports
-`ChildSpecInvalidHandlers(HandlerError)` or
-`ChildSpecInvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
-`beryl/topic.TopicError`; match a catch-all reason unless your code handles a
-specific variant differently.
+`InvalidPattern(pattern, reason)`, `DuplicatePattern(pattern)`, or
+`InvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
+`beryl/topic.TopicError`; match a catch-all reason unless your code handles
+a specific variant differently.
 
 ## Sender delivery is best-effort
 
