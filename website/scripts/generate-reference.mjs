@@ -155,7 +155,12 @@ function moduleSlug(moduleName) {
 function descriptionFromDocs(documentation, fallback) {
 	const text = normalizeDoc(documentation);
 	const firstLine = text.split("\n").find((line) => line.trim().length > 0);
-	return firstLine ? firstLine.replaceAll('"', '\\"') : fallback;
+	return firstLine ? firstLine.trim() : fallback;
+}
+
+/** Quote a scalar for safe embedding in YAML frontmatter. */
+function yamlQuote(value) {
+	return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 function normalizeDoc(documentation) {
@@ -341,7 +346,7 @@ function renderModulePage(moduleName, moduleInterface) {
 
 	return `---
 title: ${moduleName}
-description: ${description}
+description: ${yamlQuote(description)}
 ---
 
 ${GENERATED_MARKER}

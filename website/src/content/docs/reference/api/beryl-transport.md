@@ -1,6 +1,6 @@
 ---
 title: beryl/transport
-description: Transport SPI — the contract between beryl core and WebSocket transport
+description: "Transport SPI — the contract between beryl core and WebSocket transport"
 ---
 
 <!--

@@ -1,6 +1,6 @@
 ---
 title: beryl/error
-description: Shared beryl-owned error helpers.
+description: "Shared beryl-owned error helpers."
 ---
 
 <!--
