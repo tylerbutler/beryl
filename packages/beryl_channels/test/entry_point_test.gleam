@@ -149,6 +149,7 @@ fn lifecycle_handler(trace: process.Subject(String)) -> channel.Handler {
       })
       |> channel.on_terminate(fn(_state, reason) {
         process.send(trace, "terminate:" <> helper.reason_name(reason))
+        channel.actions()
       })
     process.send(trace, "join:" <> topic)
     channel.accept_with(

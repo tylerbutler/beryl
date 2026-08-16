@@ -151,9 +151,10 @@ Three runnable demos are included in the `examples/` directory:
 
 | Example | What it demonstrates |
 |---------|----------------------|
-| [`examples/cursors`](examples/cursors/) | Channels, topic wildcards, presence, `broadcast_from`, rate limiting |
-| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, replies, pushes, groups, validation, typing indicators |
+| [`examples/cursors`](examples/cursors/) | App-side dispatch, topic wildcards, session presence, `BroadcastFrom`, rate limiting |
+| [`examples/chatrooms`](examples/chatrooms/) | App-side dispatch, auth, join rejection, replies, pushes, groups, validation, typing indicators |
 | [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
+| [`examples/showcase`](examples/showcase/) | End-to-end `beryl_channels` composition across every subsystem |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
 

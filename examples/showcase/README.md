@@ -9,10 +9,41 @@ page so they can be deployed together as one Railway service:
 - `/docs`     — collaborative CRDT docs
 - `/healthz`  — health check
 - `/socket/websocket` — shared WebSocket endpoint (one `beryl.Sockets` app
-  routes `cursor:*`, `room:*`, and `document:*:*` through a single `update`
-  function, composed from each example's embeddable `Model`/`update` triple)
+  with a `beryl_channels` handler per topic namespace: `cursor:*`,
+  `room:*`, and `document:`)
 
-## How it works
+## Channels
+
+This is the multi-topic app the `beryl_channels` layer exists for. Each
+namespace is a channel handler in `src/showcase/channels/`, registered as
+one list in `showcase.handlers`; the layer routes every join, message, and
+close to the handler that owns the topic, and each channel keeps its own
+private state per joined topic. There is no socket-wide model, no message
+union, and no hand-written router.
+
+The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay on
+raw `beryl.child_spec` dispatch on purpose: each serves a single topic
+namespace, which the core API already handles directly.
+
+Session presence uses the same example-local ETS tracker as the standalone
+apps. Join and leave callbacks mutate it in their runtime turn, while its
+publisher broadcasts the current snapshot asynchronously. The room departure
+announcement remains a channel termination action.
+
+The read-only `lobby` channel is mounted so the chat UI keeps receiving room
+list invalidations. A room channel cannot target that other topic directly,
+so the announcement goes through `showcase/hub`, a small actor holding the
+`beryl.Sockets` handle — the equivalent of Phoenix's `Endpoint.broadcast/3`.
+
+## Tests
+
+```sh
+cd examples/showcase
+gleam test      # channel behavior over the transport SPI
+pnpm test       # Playwright end-to-end against a running server
+```
+
+## Routing
 
 Each example's router was refactored to accept a `base_path` field on its
 `Context`. The standalone demos still pass `""` and serve assets at

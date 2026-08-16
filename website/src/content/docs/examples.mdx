@@ -1,11 +1,11 @@
 ---
 title: Examples
-description: Three runnable beryl demos — collaborative cursors, multi-room chat, and CRDT documents.
+description: Four runnable beryl demos, including the composed channel showcase.
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-beryl ships three fully runnable example applications in the
+beryl ships four fully runnable example applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
 directory. They use a Gleam/BEAM backend with browser frontends that exercise
 different realtime collaboration patterns.
@@ -21,6 +21,47 @@ cd beryl
 <Aside type="note" title="Pre-1.0">
 beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
 </Aside>
+
+## Showcase
+
+**Source**: [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
+
+One socket runtime and three topic families, composed with `beryl_channels`.
+The cursors, chatrooms, and collab-docs behaviors are each a channel handler
+registered on one supervised socket system — no socket-wide model and no
+hand-written router.
+
+```bash
+cd examples/showcase
+gleam run
+# Open http://localhost:8000
+```
+
+### What it demonstrates
+
+| beryl feature | How it's used |
+|---|---|
+| **Channel composition** | One `beryl_channels.child_spec` handler table owns `cursor:*`, `room:*`, and the `document:` prefix |
+| **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
+| **Lifecycle actions** | Join and termination callbacks lower ordered actions without leaving the runtime turn |
+| **Per-pattern rate limits** | `with_topic_rate` gives cursors, chat, and docs different limits |
+| **Shared presence** | One ETS-backed session-presence tracker serves cursors and chat, publishing snapshots asynchronously |
+| **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
+
+### Architecture
+
+```text
+Browser (Phoenix JS clients across /cursors, /chat, /docs)
+  │  WebSocket (Phoenix wire protocol)
+Server (Gleam)
+  ├── Mist HTTP — serves the landing page and each example UI
+  ├── beryl_channels — handler table owning cursor:*, room:*, document:
+  ├── per-channel state — private to each joined topic
+  ├── session presence — shared across cursors and chat
+  └── groups + doc store — example-specific state
+```
+
+---
 
 ## Collaborative Cursors
 

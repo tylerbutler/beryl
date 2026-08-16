@@ -41,9 +41,16 @@ The channel composition surface: a channel is a topic pattern paired
            channel.actions() |> channel.push("announce", json.string(text)),
          )
        })
+       |> channel.on_terminate(fn(_count, _reason) {
+         channel.actions()
+         |> channel.broadcast("left", json.string(topic))
+       })
 
-     channel.notify(info.self, Announce("welcome to " <> topic))
+     channel.notify(info.self, Announce("later, on this topic"))
      channel.accept(channel.joined(0, callbacks))
+     |> channel.with_actions(
+       channel.actions() |> channel.push("welcome", json.string(topic)),
+     )
    })
  }
  ```
@@ -65,8 +72,24 @@ The channel composition surface: a channel is a topic pattern paired
 
  [`Actions`](#actions) are applied strictly in the order they were
  added, and they always target the channel's own topic. They lower onto
- beryl's core `Effect` values, which the runtime applies in list order
- inside a single actor turn — so action order is wire order.
+ beryl's core `Effect` values, which the runtime applies in list order —
+ so action order is wire order. An asynchronous presence effect can park
+ this socket while other sockets continue; the remaining actions resume
+ only after that effect completes.
+
+ A join's actions (see [`with_actions`](#with_actions)) are emitted with
+ the join acknowledgment, immediately after it: the socket is already
+ subscribed, so a push cannot precede its own join reply. This ordering
+ does not make an asynchronous presence mutation a cross-socket
+ reservation; use application-owned synchronous state for atomic
+ capacity checks.
+
+ [`on_terminate`](#on_terminate) actions are lowered in the turn that
+ closes the topic, after the channel instance is gone. The topic is
+ already unsubscribed by then, so core **drops pushes** (and presence
+ snapshots pushed to this socket) on it; broadcasts, presence tracking,
+ and untracking still take effect and still reach the topic's remaining
+ subscribers.
 
 ## Types
 
@@ -124,8 +147,9 @@ Everything a `join` callback learns about the connection it is joining.
 
  `socket_id` and `seed` come straight from the transport's connect
  information; `self` is this channel's own generation-scoped
- [`Sender`](#sender), which is the supported way to schedule work for
- just after the join acknowledgment.
+ [`Sender`](#sender), for scheduling a *later* turn — including from
+ another process. Work that has to be part of the join itself belongs
+ in [`with_actions`](#with_actions) instead.
 
 ```gleam
 pub type JoinInfo(a) {
@@ -198,10 +222,6 @@ pub type Sender(a)
 ### `accept`
 
 Accept the join with an empty acknowledgment.
-
- To do work right after the acknowledgment — tracking presence, loading
- history — send yourself a message with `notify(info.self, ...)` from
- the `join` callback and act on it in `on_info`.
 
 ```gleam
 pub fn accept(JoinedChannel(a)) -> JoinResult(a)
@@ -405,10 +425,24 @@ pub fn on_message(
 Run cleanup when the channel ends, for any reason: client leave, a
  [`close`](#close) result, a socket teardown, or a disconnect.
 
+ The returned [`Actions`](#actions) are applied in the turn that closes
+ this topic, right after the channel instance is gone — which is why a
+ leave announcement or a post-leave presence roster belongs here rather
+ than in an out-of-band broadcast.
+
+ The topic is already unsubscribed at that point, so core drops
+ [`push`](#push) and [`push_presence`](#push_presence) actions on it
+ (they would have nowhere to land) while
+ [`broadcast`](#broadcast), [`broadcast_from`](#broadcast_from),
+ [`broadcast_presence`](#broadcast_presence),
+ [`presence_track`](#presence_track), and
+ [`presence_untrack`](#presence_untrack) still take effect and still
+ reach the topic's remaining subscribers.
+
 ```gleam
 pub fn on_terminate(
   Callbacks(a, b),
-  fn(a, socket.StopReason) -> Nil
+  fn(a, socket.StopReason) -> Actions
 ) -> Callbacks(a, b)
 ```
 
@@ -519,4 +553,30 @@ Tear down the whole socket, not just this channel.
 
 ```gleam
 pub fn stop_socket(socket.StopReason) -> Next(a)
+```
+
+### `with_actions`
+
+Add ordered actions to run as part of accepting this join.
+
+ They are emitted with the acknowledgment and applied strictly after it,
+ so the socket is already subscribed to the topic: a [`push`](#push)
+ here cannot overtake its own join reply. If an action lowers to an
+ asynchronous presence effect, the runtime may process other sockets
+ while this socket waits; a check followed by [`presence_track`](#presence_track)
+ is therefore not an atomic cross-socket capacity reservation.
+
+ This is what to reach for instead of notifying yourself from `join`:
+ [`notify`](#notify) schedules a *later* input, while actions preserve
+ their declared position immediately after the join acknowledgment.
+
+ Actions already attached stay ahead of the ones added here. A refused
+ join has no topic to act on, so this returns [`reject`](#reject)
+ results unchanged.
+
+```gleam
+pub fn with_actions(
+  JoinResult(a),
+  Actions
+) -> JoinResult(a)
 ```
