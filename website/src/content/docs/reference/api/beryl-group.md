@@ -1,6 +1,6 @@
 ---
 title: beryl/group
-description: Channel Groups - Named collections of topics for multi-topic broadcasting
+description: "Channel Groups - Named collections of topics for multi-topic broadcasting"
 ---
 
 <!--

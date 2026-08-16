@@ -1,6 +1,6 @@
 ---
 title: beryl/transport/origin
-description: Origin and handshake-version checks for WebSocket upgrades.
+description: "Origin and handshake-version checks for WebSocket upgrades."
 ---
 
 <!--

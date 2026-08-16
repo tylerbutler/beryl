@@ -1,6 +1,6 @@
 ---
 title: beryl_channels
-description: Composable channels for beryl real-time sockets.
+description: "Composable channels for beryl real-time sockets."
 ---
 
 <!--
@@ -13,7 +13,7 @@ Composable channels for beryl real-time sockets.
 
  This package layers Phoenix-shaped channel modules on top of beryl's
  public app-side dispatch API. An application registers a list of
- [`channel.Handler`](./beryl_channels/channel.html#Handler) values —
+ [`channel.Handler`](/reference/api/beryl_channels-channel/#handler) values —
  each a topic pattern plus a typed `join` callback — and the layer
  routes every socket event to the channel that owns its topic. No
  hand-written message union and no hand-written router are required,
@@ -21,17 +21,33 @@ Composable channels for beryl real-time sockets.
  type.
 
  ```gleam
+ import beryl
+ import beryl/wire
  import beryl_channels
  import beryl_channels/channel
+ import gleam/otp/static_supervisor
 
  pub fn handlers() -> List(channel.Handler) {
    [rooms.channel(), documents.channel()]
  }
 
  pub fn main() {
-   let assert Ok(Nil) = beryl_channels.validate_handlers(handlers())
+   let assert Ok(#(sockets, spec)) =
+     beryl_channels.child_spec(
+       beryl.config(wire.phoenix_codec()),
+       handlers: handlers(),
+     )
+
+   let assert Ok(_root) =
+     static_supervisor.new(static_supervisor.OneForOne)
+     |> static_supervisor.add(spec)
+     |> static_supervisor.start()
  }
  ```
+
+ The returned `beryl.Sockets` is an ordinary core handle: pass it to a
+ transport (`beryl_mist`, `beryl_ewe`), to `beryl.broadcast`, and to
+ `beryl.stop`.
 
  ## Routing rules
 
@@ -42,12 +58,9 @@ Composable channels for beryl real-time sockets.
  handlers registered with the *same* pattern string are rejected
  instead, because the second one could never be reached.
 
- ## Status
-
- The handler surface, the error surface, and the validation below are
- complete. The supervised socket entry point that builds a child
- specification from a handler table lands together with the dispatch
- adapter; it is deliberately absent rather than present and inert.
+ A join for a topic no handler matches is refused explicitly, with the
+ reason payload `{"reason": "unmatched topic"}`, rather than left
+ unanswered.
 
 ## Types
 
@@ -115,6 +128,39 @@ Two handlers were registered with the same pattern string. The
 
 ## Functions
 
+### `child_spec`
+
+Build a channel system's supervision child specification for embedding
+ in an application's supervision tree.
+
+ Like `beryl.child_spec`, this reports only what can be detected before
+ the tree is started: the handler table is validated first, then the
+ `beryl.Config`, whose error is returned nested in
+ [`ChildSpecInvalidConfig`](#childspecerror). The returned
+ `beryl.Sockets` is usable as soon as the owning tree is running.
+
+ ## Example
+
+ ```gleam
+ let assert Ok(#(sockets, spec)) =
+   beryl_channels.child_spec(
+     beryl.config(wire.phoenix_codec()),
+     handlers: [rooms.channel()],
+   )
+
+ let assert Ok(_root) =
+   static_supervisor.new(static_supervisor.OneForOne)
+   |> static_supervisor.add(spec)
+   |> static_supervisor.start()
+ ```
+
+```gleam
+pub fn child_spec(
+  beryl.Config,
+  handlers: List(channel.Handler)
+) -> Result(#(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ChildSpecError)
+```
+
 ### `validate_handlers`
 
 Validate a handler table without starting anything.
@@ -125,7 +171,7 @@ Validate a handler table without starting anything.
  (`"room:lobby"` and `"room:*"`) are valid: routing resolves them by
  first match.
 
- The socket entry points run exactly this validation before starting
+ [`child_spec`](#child_spec) runs exactly this validation before building
  anything, so a handler table that passes here is accepted there too.
 
 ```gleam

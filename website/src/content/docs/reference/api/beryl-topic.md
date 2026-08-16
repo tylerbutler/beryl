@@ -1,6 +1,6 @@
 ---
 title: beryl/topic
-description: Pattern matching for topic routing.
+description: "Pattern matching for topic routing."
 ---
 
 <!--

@@ -96,7 +96,8 @@ pub fn validation_reports_the_first_repeated_pattern_in_order_test() {
   ])
   |> should.equal(Error(beryl_channels.DuplicatePattern("b")))
 }
-// Error-surface coverage deliberately stops here. `ChildSpecError` is
-// reachable only through the `child_spec` entry point, which lands with
-// the dispatch adapter; asserting on
-// hand-constructed values would test the compiler, not this package.
+// Error-surface coverage deliberately stops here. `ChildSpecError` is only
+// reachable through `child_spec`, so it is asserted end to end in
+// `entry_point_test`;
+// asserting on hand-constructed values here would test the compiler, not
+// this package.

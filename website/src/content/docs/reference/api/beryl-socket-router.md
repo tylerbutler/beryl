@@ -1,6 +1,6 @@
 ---
 title: beryl/socket/router
-description: Topic-namespace routing for app-side dispatch.
+description: "Topic-namespace routing for app-side dispatch."
 ---
 
 <!--

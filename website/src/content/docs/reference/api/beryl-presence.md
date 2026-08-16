@@ -1,6 +1,6 @@
 ---
 title: beryl/presence
-description: Presence - Distributed presence tracking backed by a CRDT
+description: "Presence - Distributed presence tracking backed by a CRDT"
 ---
 
 <!--

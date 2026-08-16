@@ -1,0 +1,3 @@
+project = "beryl_channels"
+kind = "Added"
+body = "A supervised beryl_channels.child_spec entry point compiles ordered handlers into beryl core init and update, giving each socket a router with a live topic dictionary and monotonic join generations. Joins take the first matching pattern and an unmatched topic is refused with the reason unmatched topic; client messages, binary frames and typed server-side sends route to the owning channel; actions lower in order onto core effects scoped to the channel own topic; close applies its actions then kicks the topic; termination runs exactly once per accepted join; and sends bound to a superseded generation are dropped before their payload is unsealed."

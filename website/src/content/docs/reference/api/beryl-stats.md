@@ -1,6 +1,6 @@
 ---
 title: beryl/stats
-description: Local runtime statistics.
+description: "Local runtime statistics."
 ---
 
 <!--

@@ -1,6 +1,6 @@
 ---
 title: beryl/socket
-description: Types for building app-side dispatch systems with `beryl.child_spec`.
+description: "Types for building app-side dispatch systems with `beryl.child_spec`."
 ---
 
 <!--

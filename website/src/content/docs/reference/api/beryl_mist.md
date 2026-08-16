@@ -1,6 +1,6 @@
 ---
 title: beryl_mist
-description: Mist WebSocket Transport - Direct Mist integration for beryl
+description: "Mist WebSocket Transport - Direct Mist integration for beryl"
 ---
 
 <!--

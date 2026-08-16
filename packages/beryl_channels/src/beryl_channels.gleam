@@ -2,7 +2,7 @@
 ////
 //// This package layers Phoenix-shaped channel modules on top of beryl's
 //// public app-side dispatch API. An application registers a list of
-//// [`channel.Handler`](./beryl_channels/channel.html#Handler) values —
+//// [`channel.Handler`](/reference/api/beryl_channels-channel/#handler) values —
 //// each a topic pattern plus a typed `join` callback — and the layer
 //// routes every socket event to the channel that owns its topic. No
 //// hand-written message union and no hand-written router are required,
@@ -10,17 +10,33 @@
 //// type.
 ////
 //// ```gleam
+//// import beryl
+//// import beryl/wire
 //// import beryl_channels
 //// import beryl_channels/channel
+//// import gleam/otp/static_supervisor
 ////
 //// pub fn handlers() -> List(channel.Handler) {
 ////   [rooms.channel(), documents.channel()]
 //// }
 ////
 //// pub fn main() {
-////   let assert Ok(Nil) = beryl_channels.validate_handlers(handlers())
+////   let assert Ok(#(sockets, spec)) =
+////     beryl_channels.child_spec(
+////       beryl.config(wire.phoenix_codec()),
+////       handlers: handlers(),
+////     )
+////
+////   let assert Ok(_root) =
+////     static_supervisor.new(static_supervisor.OneForOne)
+////     |> static_supervisor.add(spec)
+////     |> static_supervisor.start()
 //// }
 //// ```
+////
+//// The returned `beryl.Sockets` is an ordinary core handle: pass it to a
+//// transport (`beryl_mist`, `beryl_ewe`), to `beryl.broadcast`, and to
+//// `beryl.stop`.
 ////
 //// ## Routing rules
 ////
@@ -31,17 +47,18 @@
 //// handlers registered with the *same* pattern string are rejected
 //// instead, because the second one could never be reached.
 ////
-//// ## Status
-////
-//// The handler surface, the error surface, and the validation below are
-//// complete. The supervised socket entry point that builds a child
-//// specification from a handler table lands together with the dispatch
-//// adapter; it is deliberately absent rather than present and inert.
+//// A join for a topic no handler matches is refused explicitly, with the
+//// reason payload `{"reason": "unmatched topic"}`, rather than left
+//// unanswered.
 
 import beryl
+import beryl/socket
 import beryl/topic
 import beryl_channels/channel
+import beryl_channels/internal/router
 import gleam/list
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 import gleam/set
 
@@ -62,7 +79,6 @@ pub type HandlerError {
   DuplicatePattern(pattern: String)
 }
 
-// nolint: unused_exports -- consumed by `child_spec`, which lands with the dispatch adapter
 /// Why building a channel-system child specification failed.
 ///
 /// Like `beryl.child_spec`, this reports only the failures that can be
@@ -84,7 +100,7 @@ pub type ChildSpecError {
 /// (`"room:lobby"` and `"room:*"`) are valid: routing resolves them by
 /// first match.
 ///
-/// The socket entry points run exactly this validation before starting
+/// [`child_spec`](#child_spec) runs exactly this validation before building
 /// anything, so a handler table that passes here is accepted there too.
 pub fn validate_handlers(
   handlers: List(channel.Handler),
@@ -92,6 +108,61 @@ pub fn validate_handlers(
   let patterns = list.map(handlers, channel.pattern)
   use _ <- result.try(list.try_each(patterns, validate_pattern))
   check_duplicates(patterns, set.new())
+}
+
+/// Build a channel system's supervision child specification for embedding
+/// in an application's supervision tree.
+///
+/// Like `beryl.child_spec`, this reports only what can be detected before
+/// the tree is started: the handler table is validated first, then the
+/// `beryl.Config`, whose error is returned nested in
+/// [`ChildSpecInvalidConfig`](#childspecerror). The returned
+/// `beryl.Sockets` is usable as soon as the owning tree is running.
+///
+/// ## Example
+///
+/// ```gleam
+/// let assert Ok(#(sockets, spec)) =
+///   beryl_channels.child_spec(
+///     beryl.config(wire.phoenix_codec()),
+///     handlers: [rooms.channel()],
+///   )
+///
+/// let assert Ok(_root) =
+///   static_supervisor.new(static_supervisor.OneForOne)
+///   |> static_supervisor.add(spec)
+///   |> static_supervisor.start()
+/// ```
+pub fn child_spec(
+  config: beryl.Config,
+  handlers handlers: List(channel.Handler),
+) -> Result(
+  #(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ChildSpecError,
+) {
+  use table <- result.try(
+    compile(handlers) |> result.map_error(ChildSpecInvalidHandlers),
+  )
+
+  beryl.child_spec(config, init: initialise(table), update: router.update)
+  |> result.map_error(ChildSpecInvalidConfig)
+}
+
+/// Validate a handler table and parse its patterns once, before anything
+/// is started.
+fn compile(
+  handlers: List(channel.Handler),
+) -> Result(List(router.Registered), HandlerError) {
+  use _ <- result.map(validate_handlers(handlers))
+  router.table(handlers)
+}
+
+/// The core `init` for a compiled handler table: one router per socket.
+fn initialise(
+  table: List(router.Registered),
+) -> fn(socket.ConnectInfo(router.Envelope)) ->
+  #(router.Router, List(socket.Effect)) {
+  fn(info) { router.init(table, info) }
 }
 
 fn validate_pattern(pattern: String) -> Result(String, HandlerError) {
