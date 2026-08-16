@@ -545,7 +545,7 @@ pub fn close_connection(state: ConnectionState) -> Nil {
 
 /// What a transport should do with its connection after handling an inbound
 /// frame.
-pub type FrameOutcome {
+pub type FrameDisposition {
   /// Keep the connection open with the updated state.
   Continue(ConnectionState)
   /// Close the connection (the frame exceeded the configured size cap).
@@ -558,7 +558,10 @@ pub type FrameOutcome {
 ///
 /// Oversized frames return `Stop` (close the connection); over-rate frames
 /// are shed silently; undecodable frames are logged and dropped.
-pub fn handle_text_frame(state: ConnectionState, text: String) -> FrameOutcome {
+pub fn handle_text_frame(
+  state: ConnectionState,
+  text: String,
+) -> FrameDisposition {
   admit_frame(
     state,
     string.byte_size(text),
@@ -602,7 +605,7 @@ pub fn handle_text_frame(state: ConnectionState, text: String) -> FrameOutcome {
 pub fn handle_binary_frame(
   state: ConnectionState,
   data: BitArray,
-) -> FrameOutcome {
+) -> FrameDisposition {
   let bytes = bit_array.byte_size(data)
   admit_frame(state, bytes, transport.BinaryFrame, fn(state, started_at) {
     case codec.decode_binary(state.codec) {
@@ -661,8 +664,8 @@ fn admit_frame(
   state: ConnectionState,
   bytes: Int,
   kind: transport.FrameKind,
-  handle: fn(ConnectionState, Int) -> FrameOutcome,
-) -> FrameOutcome {
+  handle: fn(ConnectionState, Int) -> FrameDisposition,
+) -> FrameDisposition {
   let started_at = transport.telemetry_start(state.telemetry)
   use <- bool.lazy_guard(
     when: frame_too_large(state.max_inbound_frame_bytes, bytes),

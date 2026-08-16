@@ -576,8 +576,16 @@ pub type AppHandle {
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
-    stats: fn() -> Result(#(Int, Int, Int, Int), Bool),
+    stats: fn() -> Result(runtime.StatsSnapshot, StatsError),
   )
+}
+
+/// Why an internal runtime statistics request failed. Translated to the
+/// public error type by `beryl/stats`.
+@internal
+pub type StatsError {
+  StatsRuntimeUnavailable
+  StatsRequestTimedOut
 }
 
 /// The wire codec configured for this system.
@@ -1044,19 +1052,13 @@ fn app_handle(
     runtime_owner: fn() { process.subject_owner(subject) },
     stats: fn() {
       case process.subject_owner(subject) {
-        Error(Nil) -> Error(False)
+        Error(Nil) -> Error(StatsRuntimeUnavailable)
         Ok(_) -> {
           let reply = process.new_subject()
           send_runtime(subject, runtime.GetStats(reply))
           case process.receive(reply, 1000) {
-            Error(Nil) -> Error(True)
-            Ok(snapshot) ->
-              Ok(#(
-                snapshot.connected_sockets,
-                snapshot.joined_socket_topic_pairs,
-                snapshot.active_topics,
-                snapshot.runtime_mailbox_length,
-              ))
+            Error(Nil) -> Error(StatsRequestTimedOut)
+            Ok(snapshot) -> Ok(snapshot)
           }
         }
       }
@@ -1160,7 +1162,7 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
       DebugLevel -> internal.Debug
       InfoLevel -> internal.Info
       WarnLevel -> internal.Warn
-      ErrorLevel -> internal.Err
+      ErrorLevel -> internal.ErrorLevel
     },
     include_payloads: logging.include_payloads,
     payload_preview_bytes: logging.payload_preview_bytes,

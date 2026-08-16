@@ -82,11 +82,11 @@ pub fn presence_track_updates_actor_and_broadcasts_diff_test() {
 
   // The presence actor has the entry.
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p, "room:a")) == 1 },
+    fn() { list.length(presence_entries(p, "room:a")) == 1 },
     2000,
     20,
   )
-  let assert [entry] = presence.list(p, "room:a")
+  let assert [entry] = presence_entries(p, "room:a")
   entry.key |> should.equal("user:1")
 }
 
@@ -128,7 +128,11 @@ pub fn presence_untrack_broadcasts_leave_and_empty_snapshot_test() {
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("s1\":") |> should.be_false
 
-  test_helpers.wait_until(fn() { presence.list(p, "room:a") == [] }, 2000, 20)
+  test_helpers.wait_until(
+    fn() { presence_entries(p, "room:a") == [] },
+    2000,
+    20,
+  )
 }
 
 pub fn push_presence_goes_only_to_requester_test() {
@@ -175,7 +179,7 @@ pub fn leftover_presence_is_untracked_when_topic_closes_test() {
   let _s1_join_snapshot = h.recv(frames_watcher)
 
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p, "room:a")) == 2 },
+    fn() { list.length(presence_entries(p, "room:a")) == 2 },
     2000,
     20,
   )
@@ -189,7 +193,7 @@ pub fn leftover_presence_is_untracked_when_topic_closes_test() {
   leave_diff |> string.contains("leaves") |> should.be_true
 
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p, "room:a")) == 1 },
+    fn() { list.length(presence_entries(p, "room:a")) == 1 },
     2000,
     20,
   )
@@ -219,4 +223,12 @@ pub fn presence_effects_without_handle_are_dropped_test() {
   let reply = h.recv(frames)
   reply |> string.contains("\"status\":\"ok\"") |> should.be_true
   h.recv_none(frames)
+}
+
+fn presence_entries(
+  tracker: presence.Presence,
+  topic: String,
+) -> List(presence.PresenceEntry) {
+  let assert Ok(entries) = presence.list(tracker, topic)
+  entries
 }

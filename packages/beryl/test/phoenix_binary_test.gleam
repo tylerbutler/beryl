@@ -7,12 +7,7 @@ import beryl/wire/codec
 import gleam/dynamic/decode
 import gleam/option.{None, Some}
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 // === Decoder spec vectors ===
 

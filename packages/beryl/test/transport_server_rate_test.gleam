@@ -23,13 +23,8 @@ import beryl/wire
 import gleam/erlang/process
 import gleam/option
 import gleam/string
-import gleeunit
 import gleeunit/should
-import test_helpers.{begin_capture, receive_log, stop_capture}
-
-pub fn main() {
-  gleeunit.main()
-}
+import test_helpers
 
 /// Palabres's level is a global, singleton setting (see
 /// `beryl/internal.configure`); restore it to Beryl's own default so a
@@ -147,7 +142,7 @@ pub fn message_rate_alone_does_not_shed_at_the_edge_test() {
     ))
   let channels = start_system(config)
   let conn = connect(channels, "10.10.10.3")
-  let selector = begin_capture()
+  let selector = test_helpers.begin_capture()
 
   let conn = send_text(conn, heartbeat("hb-1"))
   let assert Ok(reply) = recv(conn)
@@ -159,10 +154,10 @@ pub fn message_rate_alone_does_not_shed_at_the_edge_test() {
   // The second heartbeat's envelope reached the runtime and was rejected
   // by the message-rate gate there — proof the edge itself admitted the
   // frame and did no shedding of its own.
-  receive_log(selector, "Message rate limited", 10) |> should.be_ok
+  test_helpers.receive_log(selector, "Message rate limited", 10) |> should.be_ok
 
   let _conn = conn
-  stop_capture()
+  test_helpers.stop_capture()
   restore_default_logging_level()
 }
 

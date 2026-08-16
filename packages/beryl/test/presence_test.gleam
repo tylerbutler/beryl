@@ -26,7 +26,7 @@ pub fn presence_track_and_list_test() {
   let meta = json.object([#("status", json.string("online"))])
   let _ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
 
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence_entries(p, "room:lobby")
   list.length(entries) |> should.equal(1)
 
   let assert [entry] = entries
@@ -42,7 +42,7 @@ pub fn presence_track_multiple_test() {
   let _ =
     presence.track(p, "room:lobby", "user:2", "socket-2", json.string("meta2"))
 
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence_entries(p, "room:lobby")
   list.length(entries) |> should.equal(2)
 }
 
@@ -52,7 +52,7 @@ pub fn presence_untrack_test() {
   let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
   presence.untrack(p, ref)
 
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence_entries(p, "room:lobby")
   list.length(entries) |> should.equal(0)
 }
 
@@ -83,7 +83,7 @@ pub fn presence_untrack_removes_only_that_ref_test() {
   // Untracking ref1 removes exactly that presence, leaving ref2's intact.
   presence.untrack(p, ref1)
 
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence_entries(p, "room:lobby")
   list.length(entries) |> should.equal(1)
   let assert [entry] = entries
   entry.session_id |> should.equal("socket-2")
@@ -109,18 +109,18 @@ pub fn presence_untrack_same_tuple_ref_preserves_other_ref_test() {
       json.object([#("device", json.string("mobile"))]),
     )
 
-  presence.count(p, "room:lobby") |> should.equal(2)
+  presence_count(p, "room:lobby") |> should.equal(2)
   presence.untrack(p, ref1)
 
-  let assert [remaining] = presence.list(p, "room:lobby")
+  let assert [remaining] = presence_entries(p, "room:lobby")
   let remaining_meta = json.to_string(remaining.meta)
   remaining_meta |> string.contains(ref2) |> should.be_true
   remaining_meta |> string.contains(ref1) |> should.be_false
 
   presence.untrack(p, ref1)
-  presence.count(p, "room:lobby") |> should.equal(1)
+  presence_count(p, "room:lobby") |> should.equal(1)
   presence.untrack(p, ref2)
-  presence.count(p, "room:lobby") |> should.equal(0)
+  presence_count(p, "room:lobby") |> should.equal(0)
 }
 
 pub fn presence_untrack_unknown_ref_is_noop_test() {
@@ -130,7 +130,7 @@ pub fn presence_untrack_unknown_ref_is_noop_test() {
   // An unknown/stale ref is a harmless no-op.
   presence.untrack(p, "does-not-exist")
 
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
 }
 
 pub fn presence_untrack_all_test() {
@@ -140,14 +140,14 @@ pub fn presence_untrack_all_test() {
   let _ = presence.track(p, "room:general", "user:1", "socket-1", json.null())
 
   // Both topics have entries from socket-1
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-  list.length(presence.list(p, "room:general")) |> should.equal(1)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
+  list.length(presence_entries(p, "room:general")) |> should.equal(1)
 
   // Untrack all for socket-1
   presence.untrack_all(p, "socket-1")
 
-  list.length(presence.list(p, "room:lobby")) |> should.equal(0)
-  list.length(presence.list(p, "room:general")) |> should.equal(0)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(0)
+  list.length(presence_entries(p, "room:general")) |> should.equal(0)
 }
 
 pub fn presence_untrack_all_leaves_no_dangling_refs_test() {
@@ -161,13 +161,13 @@ pub fn presence_untrack_all_leaves_no_dangling_refs_test() {
 
   // A fresh track re-populates state.
   let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
 
   // Replaying a ref that untrack_all should have dropped must be a no-op and
   // must not disturb the surviving presence.
   presence.untrack(p, ref1)
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-  let assert [entry] = presence.list(p, "room:lobby")
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
+  let assert [entry] = presence_entries(p, "room:lobby")
   entry.session_id |> should.equal("socket-2")
 }
 
@@ -179,7 +179,7 @@ pub fn presence_get_by_key_test() {
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", meta1)
   let _ = presence.track(p, "room:lobby", "user:1", "socket-2", meta2)
 
-  let entries = presence.get_by_key(p, "room:lobby", "user:1")
+  let entries = presence_metas(p, "room:lobby", "user:1")
   list.length(entries) |> should.equal(2)
 }
 
@@ -189,14 +189,14 @@ pub fn presence_different_topics_isolated_test() {
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
   let _ = presence.track(p, "room:other", "user:2", "socket-2", json.null())
 
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-  list.length(presence.list(p, "room:other")) |> should.equal(1)
-  list.length(presence.list(p, "room:empty")) |> should.equal(0)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
+  list.length(presence_entries(p, "room:other")) |> should.equal(1)
+  list.length(presence_entries(p, "room:empty")) |> should.equal(0)
 }
 
 pub fn presence_empty_list_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
-  let entries = presence.list(p, "room:empty")
+  let entries = presence_entries(p, "room:empty")
   list.length(entries) |> should.equal(0)
 }
 
@@ -208,7 +208,7 @@ pub fn presence_count_test() {
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
   let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
 
-  presence.count(p, "room:lobby") |> should.equal(2)
+  presence_count(p, "room:lobby") |> should.equal(2)
 }
 
 pub fn presence_count_matches_list_length_test() {
@@ -218,14 +218,14 @@ pub fn presence_count_matches_list_length_test() {
   let _ = presence.track(p, "room:lobby", "user:2", "socket-2", json.null())
   let _ = presence.track(p, "room:lobby", "user:3", "socket-3", json.null())
 
-  presence.count(p, "room:lobby")
-  |> should.equal(list.length(presence.list(p, "room:lobby")))
+  presence_count(p, "room:lobby")
+  |> should.equal(list.length(presence_entries(p, "room:lobby")))
 }
 
 pub fn presence_count_missing_topic_is_zero_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  presence.count(p, "room:never-touched") |> should.equal(0)
+  presence_count(p, "room:never-touched") |> should.equal(0)
 }
 
 pub fn presence_count_empty_after_untrack_all_test() {
@@ -234,7 +234,7 @@ pub fn presence_count_empty_after_untrack_all_test() {
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
   presence.untrack_all(p, "socket-1")
 
-  presence.count(p, "room:lobby") |> should.equal(0)
+  presence_count(p, "room:lobby") |> should.equal(0)
 }
 
 // ── get_by_key on a missing topic ───────────────────────────────────────────
@@ -242,7 +242,7 @@ pub fn presence_count_empty_after_untrack_all_test() {
 pub fn presence_get_by_key_missing_topic_returns_empty_test() {
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  presence.get_by_key(p, "room:never-touched", "user:1")
+  presence_metas(p, "room:never-touched", "user:1")
   |> should.equal([])
 }
 
@@ -259,9 +259,9 @@ pub fn track_is_immediately_visible_to_all_readers_test() {
   let meta = json.object([#("status", json.string("online"))])
   let _ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
 
-  presence.count(p, "room:lobby") |> should.equal(1)
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-  list.length(presence.get_by_key(p, "room:lobby", "user:1")) |> should.equal(1)
+  presence_count(p, "room:lobby") |> should.equal(1)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
+  list.length(presence_metas(p, "room:lobby", "user:1")) |> should.equal(1)
 }
 
 pub fn untrack_is_immediately_visible_to_all_readers_test() {
@@ -270,9 +270,9 @@ pub fn untrack_is_immediately_visible_to_all_readers_test() {
   let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
   presence.untrack(p, ref)
 
-  presence.count(p, "room:lobby") |> should.equal(0)
-  presence.list(p, "room:lobby") |> should.equal([])
-  presence.get_by_key(p, "room:lobby", "user:1") |> should.equal([])
+  presence_count(p, "room:lobby") |> should.equal(0)
+  presence_entries(p, "room:lobby") |> should.equal([])
+  presence_metas(p, "room:lobby", "user:1") |> should.equal([])
 }
 
 pub fn untrack_all_is_immediately_visible_across_topics_test() {
@@ -283,15 +283,15 @@ pub fn untrack_all_is_immediately_visible_across_topics_test() {
 
   presence.untrack_all(p, "socket-1")
 
-  presence.count(p, "room:lobby") |> should.equal(0)
-  presence.count(p, "room:general") |> should.equal(0)
+  presence_count(p, "room:lobby") |> should.equal(0)
+  presence_count(p, "room:general") |> should.equal(0)
 }
 
 pub fn presence_default_config_test() {
   let assert Ok(p) = presence.start(presence.default_config("my-node"))
   let _ = presence.track(p, "room:default", "user:1", "socket-1", json.null())
 
-  presence.list(p, "room:default")
+  presence_entries(p, "room:default")
   |> list.length
   |> should.equal(1)
 }
@@ -455,7 +455,7 @@ pub fn list_fails_after_presence_terminated_test() {
   test_helpers.kill_presence(p)
 
   assert_crashes(fn() {
-    let _ = presence.list(p, "room:lobby")
+    let _ = presence_entries(p, "room:lobby")
     Nil
   })
 }
@@ -467,7 +467,7 @@ pub fn get_by_key_fails_after_presence_terminated_test() {
   test_helpers.kill_presence(p)
 
   assert_crashes(fn() {
-    let _ = presence.get_by_key(p, "room:lobby", "user:1")
+    let _ = presence_metas(p, "room:lobby", "user:1")
     Nil
   })
 }
@@ -478,7 +478,7 @@ pub fn count_fails_after_presence_terminated_test() {
 
   test_helpers.kill_presence(p)
 
-  assert_crashes(fn() { presence.count(p, "room:lobby") |> should.equal(0) })
+  assert_crashes(fn() { presence_count(p, "room:lobby") |> should.equal(0) })
 }
 
 pub fn count_fails_after_presence_terminated_even_for_untouched_topic_test() {
@@ -491,7 +491,7 @@ pub fn count_fails_after_presence_terminated_even_for_untouched_topic_test() {
   test_helpers.kill_presence(p)
 
   assert_crashes(fn() {
-    presence.count(p, "room:never-touched") |> should.equal(0)
+    presence_count(p, "room:never-touched") |> should.equal(0)
   })
 }
 
@@ -514,9 +514,9 @@ pub fn multiple_presence_actors_have_independent_read_tables_test() {
 
   // p3 never tracked anything in "room:lobby"; each actor's read model
   // reflects only what was tracked on it, never a peer's entries.
-  presence.count(p1, "room:lobby") |> should.equal(1)
-  presence.count(p2, "room:lobby") |> should.equal(2)
-  presence.count(p3, "room:lobby") |> should.equal(0)
+  presence_count(p1, "room:lobby") |> should.equal(1)
+  presence_count(p2, "room:lobby") |> should.equal(2)
+  presence_count(p3, "room:lobby") |> should.equal(0)
 }
 
 pub fn killing_one_presence_actor_does_not_affect_others_test() {
@@ -530,11 +530,33 @@ pub fn killing_one_presence_actor_does_not_affect_others_test() {
 
   // p1's table is gone, but p2's is a separate (unnamed) table: its reads
   // keep working exactly as before, untouched by p1's death.
-  presence.count(p2, "room:lobby") |> should.equal(1)
-  list.length(presence.list(p2, "room:lobby")) |> should.equal(1)
+  presence_count(p2, "room:lobby") |> should.equal(1)
+  list.length(presence_entries(p2, "room:lobby")) |> should.equal(1)
 
   assert_crashes(fn() {
-    let _ = presence.list(p1, "room:lobby")
+    let _ = presence_entries(p1, "room:lobby")
     Nil
   })
+}
+
+fn presence_entries(
+  tracker: presence.Presence,
+  topic: String,
+) -> List(presence.PresenceEntry) {
+  let assert Ok(entries) = presence.list(tracker, topic)
+  entries
+}
+
+fn presence_count(tracker: presence.Presence, topic: String) -> Int {
+  let assert Ok(count) = presence.count(tracker, topic)
+  count
+}
+
+fn presence_metas(
+  tracker: presence.Presence,
+  topic: String,
+  key: String,
+) -> List(#(String, json.Json)) {
+  let assert Ok(metas) = presence.get_by_key(tracker, topic, key)
+  metas
 }

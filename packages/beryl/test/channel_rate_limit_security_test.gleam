@@ -9,12 +9,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleam/int
 import gleam/option
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// Start an app that accepts every join and forwards events to the
 /// observer, with a generous channel rate but a small bucket cap.

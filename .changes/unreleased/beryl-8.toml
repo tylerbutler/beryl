@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "BREAKING: presence.list, presence.get_by_key, and presence.count now return Result(_, Nil) instead of panicking when the presence read model is unavailable (actor stopped or handle used from another BEAM node)."

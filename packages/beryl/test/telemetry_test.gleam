@@ -1,20 +1,18 @@
 import beryl/telemetry
-import gleam/dynamic.{type Dynamic}
-import gleeunit
 import gleeunit/should
 
+/// Opaque handle to an attached :telemetry handler, produced and consumed
+/// only by the test FFI — never inspected from Gleam.
+type TelemetryHandle
+
 @external(erlang, "beryl_telemetry_test_ffi", "attach_socket_connected")
-fn attach_socket_connected() -> Dynamic
+fn attach_socket_connected() -> TelemetryHandle
 
 @external(erlang, "beryl_telemetry_test_ffi", "detach")
-fn detach(handler_id: Dynamic) -> Nil
+fn detach(handler_id: TelemetryHandle) -> Nil
 
 @external(erlang, "beryl_telemetry_test_ffi", "received_socket_connected")
 fn received_socket_connected() -> Bool
-
-pub fn main() {
-  gleeunit.main()
-}
 
 pub fn telemetry_clock_returns_non_negative_duration_test() {
   let started_at = telemetry.start_time()

@@ -11,12 +11,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 pub type Msg {
   Boom

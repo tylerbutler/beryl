@@ -12,18 +12,13 @@ import gleam/erlang/process
 import gleam/json
 import gleam/option.{None}
 import gleam/string
-import gleeunit
 import gleeunit/should
 
-pub fn main() {
-  gleeunit.main()
-}
-
 fn start_runtime(scope: String) -> beryl.Sockets {
-  let ps = pubsub.start(pubsub.config_with_scope(scope))
+  let started_pubsub = pubsub.start(pubsub.config_with_scope(scope))
   let assert Ok(channels) =
     h.start_app(
-      beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps),
+      beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(started_pubsub),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {
         case ev {

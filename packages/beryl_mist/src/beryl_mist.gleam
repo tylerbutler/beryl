@@ -155,7 +155,7 @@ fn on_message(
 }
 
 fn resume(
-  outcome: server.FrameOutcome,
+  outcome: server.FrameDisposition,
 ) -> mist.Next(ConnectionState, SendRequest) {
   case outcome {
     server.Continue(state) -> mist.continue(state)

@@ -10,13 +10,8 @@ import beryl/topic
 import beryl/wire
 import gleam/otp/static_supervisor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helpers
-
-pub fn main() {
-  gleeunit.main()
-}
 
 // A control character (U+0001) that topic-pattern validation rejects.
 const control_char = "\u{0001}"

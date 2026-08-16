@@ -10,12 +10,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// Joins accepted for all topics. "kick_b" kicks room:b; a Closed for
 /// room:b kicks room:c (a kick chain); "stop" stops the socket.

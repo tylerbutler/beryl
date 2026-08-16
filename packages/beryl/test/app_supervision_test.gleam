@@ -19,13 +19,8 @@ import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
-import gleeunit
 import gleeunit/should
 import test_helpers
-
-pub fn main() {
-  gleeunit.main()
-}
 
 type Gate
 

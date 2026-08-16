@@ -10,12 +10,7 @@ import beryl/transport
 import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// The Phoenix framing minus its binary decoder, so raw binary frames use
 /// the per-topic fan-out path.

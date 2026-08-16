@@ -10,12 +10,7 @@ import beryl/socket.{Closed, Join}
 import beryl/wire
 import gleam/erlang/process
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   h.start_observed(

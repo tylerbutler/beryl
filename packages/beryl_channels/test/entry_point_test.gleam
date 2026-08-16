@@ -7,7 +7,7 @@ import beryl/topic
 import beryl/wire
 import beryl_channels
 import beryl_channels/channel
-import dispatch_helpers as helper
+import dispatch_helper as helper
 import gleam/erlang/process
 import gleam/json
 import gleam/otp/static_supervisor

@@ -12,12 +12,7 @@ import gleam/erlang/process
 import gleam/json
 import gleam/option
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// Start an app system that accepts every join.
 fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {

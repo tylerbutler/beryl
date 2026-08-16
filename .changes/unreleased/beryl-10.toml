@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "BREAKING: renamed beryl/transport/server.FrameOutcome to FrameDisposition so the transport SPI no longer has two unrelated types named FrameOutcome (beryl/transport.FrameOutcome is telemetry-only)."

@@ -9,6 +9,7 @@ import beryl/wire
 import beryl/wire/codec
 import gleam/json
 import gleam/option
+import gleam/otp/actor
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -409,9 +410,10 @@ pub fn format_decode_error_missing_field_test() {
 // not by asserting that a setter stored its argument.
 
 pub fn start_failure_description_is_public_test() {
-  let describe = beryl_error.describe_start_failure
-  should.be_true(True)
-  let _ = describe
+  beryl_error.from_actor_start_error(actor.InitTimeout)
+  |> beryl_error.describe_start_failure
+  |> string.is_empty
+  |> should.be_false
 }
 
 pub fn topic_namespace_test() {

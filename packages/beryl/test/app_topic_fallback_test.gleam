@@ -10,12 +10,7 @@ import beryl/socket.{Join, Message}
 import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 fn join_room(
   channels: beryl.Sockets,

@@ -31,7 +31,7 @@ Presence - Distributed presence tracking backed by a CRDT
    |> presence.with_broadcast_interval(1500)
  let assert Ok(p) = presence.start(config)
  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
- let entries = presence.list(p, "room:lobby")
+ let assert Ok(entries) = presence.list(p, "room:lobby")
  ```
 
 ## Types
@@ -85,7 +85,7 @@ A running Presence instance.
  the owning actor over distribution (they go through its `Subject`), but
  the read functions would be looking up a table reference that names
  nothing on that node (or, if the identifier happens to collide with an
- unrelated local table, something else entirely), so they would panic or
+ unrelated local table, something else entirely), so they would fail or
  read the wrong data. Keep a Presence handle on the node where `start`
  created it, and use PubSub replication (`with_pubsub`) to share presence
  state across nodes instead.
@@ -142,16 +142,16 @@ Count presences in a topic.
  after each mutation, merge, or prune) rather than calling the actor, so
  this never waits on the actor mailbox.
 
- Panics if the presence read model is unavailable -- either the presence
- actor is not running, or this handle is being used from a process on
- another BEAM node than the one it was started on (see the node affinity
- note on `Presence`).
+ Returns `Error(Nil)` when the presence read model is unavailable --
+ either the presence actor is not running, or this handle is being used
+ from a process on another BEAM node than the one it was started on (see
+ the node affinity note on `Presence`).
 
 ```gleam
 pub fn count(
   Presence,
   String
-) -> Int
+) -> Result(Int, Nil)
 ```
 
 ### `default_config`
@@ -219,17 +219,17 @@ Get presences for a specific key within a topic.
  after each mutation, merge, or prune) rather than calling the actor, so
  this never waits on the actor mailbox.
 
- Panics if the presence read model is unavailable -- either the presence
- actor is not running, or this handle is being used from a process on
- another BEAM node than the one it was started on (see the node affinity
- note on `Presence`).
+ Returns `Error(Nil)` when the presence read model is unavailable --
+ either the presence actor is not running, or this handle is being used
+ from a process on another BEAM node than the one it was started on (see
+ the node affinity note on `Presence`).
 
 ```gleam
 pub fn get_by_key(
   Presence,
   String,
   String
-) -> List(#(String, json.Json))
+) -> Result(List(#(String, json.Json)), Nil)
 ```
 
 ### `list`
@@ -240,16 +240,16 @@ List all presences for a topic.
  after each mutation, merge, or prune) rather than calling the actor, so
  this never waits on the actor mailbox.
 
- Panics if the presence read model is unavailable -- either the presence
- actor is not running, or this handle is being used from a process on
- another BEAM node than the one it was started on (see the node affinity
- note on `Presence`).
+ Returns `Error(Nil)` when the presence read model is unavailable --
+ either the presence actor is not running, or this handle is being used
+ from a process on another BEAM node than the one it was started on (see
+ the node affinity note on `Presence`).
 
 ```gleam
 pub fn list(
   Presence,
   String
-) -> List(PresenceEntry)
+) -> Result(List(PresenceEntry), Nil)
 ```
 
 ### `start`

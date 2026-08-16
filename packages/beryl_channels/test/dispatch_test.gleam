@@ -8,7 +8,7 @@ import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl_channels/channel
-import dispatch_helpers as helper
+import dispatch_helper as helper
 import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/erlang/process
