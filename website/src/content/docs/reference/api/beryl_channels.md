@@ -119,8 +119,13 @@ pub type HandlerError {
 A handler used a pattern string that is not a valid topic pattern.
  `pattern` is the offending pattern and `reason` is the
  [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
- error
- nested rather than flattened to a string, so it stays matchable.
+ error nested rather than flattened to a string, so it stays matchable.
+
+ New
+ [`topic.TopicError`](https://beryl.tylerbutler.com/reference/api/beryl-topic/#topicerror)
+ variants may be added in a minor release. Match exact variants only when
+ you act on them differently, and otherwise keep a catch-all arm such as
+ `InvalidPattern(pattern, _)`.
 
 ##### `DuplicatePattern(pattern: String)`
 

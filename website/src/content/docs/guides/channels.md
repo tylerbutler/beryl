@@ -226,6 +226,19 @@ pub fn check_handlers() -> Nil {
 flattened string, so the reason stays matchable. `ChildSpecError` likewise
 nests the core configuration error instead of flattening it.
 
+The example above matches every `TopicError` variant that exists today.
+New variants may be added in a minor release, so use a catch-all when the
+exact reason does not change your handling:
+
+```gleam
+Error(beryl_channels.InvalidPattern(pattern, _reason)) ->
+  panic as { "invalid channel pattern " <> pattern }
+```
+
+The same rule applies to
+`beryl.InvalidTopicPattern(pattern, reason)`, which nests the identical
+`topic.TopicError`.
+
 Validation is deterministic and two-phase: every pattern's syntax is
 checked in registration order first, then duplicate pattern strings are
 looked for in registration order. `child_spec` runs exactly this check
