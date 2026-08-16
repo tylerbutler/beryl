@@ -656,9 +656,16 @@ pub type ConfigError {
   /// smallest accepted timeout.
   HeartbeatTimeoutTooLow(minimum: Int)
   /// A per-topic-pattern rate limit used a pattern string that is not a valid
-  /// topic pattern. `pattern` is the offending pattern and `reason` describes
-  /// the problem.
-  InvalidTopicPattern(pattern: String, reason: String)
+  /// topic pattern. `pattern` is the offending pattern and `reason` is the
+  /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
+  /// error nested rather than flattened to a string, so it stays matchable.
+  ///
+  /// New
+  /// [`topic.TopicError`](https://beryl.tylerbutler.com/reference/api/beryl-topic/#topicerror)
+  /// variants may be added in a minor release. Match exact variants only
+  /// when you act on them differently, and otherwise keep a catch-all arm
+  /// such as `InvalidTopicPattern(pattern, _)`.
+  InvalidTopicPattern(pattern: String, reason: topic.TopicError)
 }
 
 /// Errors when stopping a Beryl system with [`stop`](#stop).
@@ -685,17 +692,8 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   list.try_each(config.topic_rates, fn(entry) {
     let #(pattern, _limits) = entry
     topic.validate_pattern(pattern)
-    |> result.map_error(fn(error) {
-      InvalidTopicPattern(pattern, topic_error_reason(error))
-    })
+    |> result.map_error(fn(error) { InvalidTopicPattern(pattern, error) })
   })
-}
-
-fn topic_error_reason(error: topic.TopicError) -> String {
-  case error {
-    topic.EmptyTopic -> "pattern cannot be empty"
-    topic.InvalidFormat(reason) -> reason
-  }
 }
 
 /// Stop a Beryl system.
