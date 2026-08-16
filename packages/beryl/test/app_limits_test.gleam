@@ -11,12 +11,7 @@ import beryl/socket.{Join, Message}
 import beryl/wire
 import gleam/erlang/process
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 pub fn join_with_control_character_topic_gets_error_reply_test() {
   let events = process.new_subject()

@@ -191,9 +191,9 @@ pub fn route(
   namespaces: List(Namespace(model)),
   reject_unknown: Json,
   model: model,
-  ev: Input(msg),
+  input: Input(msg),
 ) -> Next(model, msg) {
-  case ev {
+  case input {
     socket.Join(topic_name, payload, ref) ->
       case owner(namespaces, topic_name) {
         Ok(#(ns, match)) -> continue(ns.join(model, match, payload, ref))

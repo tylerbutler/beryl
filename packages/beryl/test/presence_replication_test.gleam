@@ -86,18 +86,18 @@ pub fn two_replicas_converge_via_pubsub_test() {
 
   // Wait for broadcast ticks to fire and replicate
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p1, "room:lobby")) == 2 },
+    fn() { list.length(presence_entries(p1, "room:lobby")) == 2 },
     2000,
     20,
   )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 2 },
+    fn() { list.length(presence_entries(p2, "room:lobby")) == 2 },
     2000,
     20,
   )
 
-  let entries1 = presence.list(p1, "room:lobby")
-  let entries2 = presence.list(p2, "room:lobby")
+  let entries1 = presence_entries(p1, "room:lobby")
+  let entries2 = presence_entries(p2, "room:lobby")
 
   list.length(entries1) |> should.equal(2)
   list.length(entries2) |> should.equal(2)
@@ -119,7 +119,7 @@ pub fn self_broadcast_ignored_test() {
   process.sleep(200)
 
   // Should still only have 1 entry (self-broadcast doesn't duplicate)
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence_entries(p, "room:lobby")
   list.length(entries) |> should.equal(1)
 }
 
@@ -144,13 +144,13 @@ pub fn remote_state_triggers_merge_via_pubsub_test() {
 
   // Wait for node2's broadcast to reach node1
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p1, "room:lobby")) == 1 },
+    fn() { list.length(presence_entries(p1, "room:lobby")) == 1 },
     2000,
     20,
   )
 
   // Node1 should now see node2's entry via PubSub replication
-  let entries = presence.list(p1, "room:lobby")
+  let entries = presence_entries(p1, "room:lobby")
   list.length(entries) |> should.equal(1)
 
   let assert [entry] = entries
@@ -169,18 +169,18 @@ pub fn remote_merge_updates_read_model_count_test() {
   let config2 = test_config(ps, "node2", 50)
   let assert Ok(p2) = presence.start(config2)
 
-  presence.count(p1, "room:lobby") |> should.equal(0)
+  presence_count(p1, "room:lobby") |> should.equal(0)
 
   let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
 
   // `count` is served from the read model too -- confirm the merge
   // republishes it, not just `list`.
   test_helpers.wait_until(
-    fn() { presence.count(p1, "room:lobby") == 1 },
+    fn() { presence_count(p1, "room:lobby") == 1 },
     2000,
     20,
   )
-  presence.count(p1, "room:lobby") |> should.equal(1)
+  presence_count(p1, "room:lobby") |> should.equal(1)
 }
 
 // ── Multi-replica convergence ───────────────────────────────────────
@@ -202,24 +202,24 @@ pub fn three_replicas_converge_test() {
 
   // Wait for convergence (all replicas see all 3 entries)
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p1, "room:lobby")) == 3 },
+    fn() { list.length(presence_entries(p1, "room:lobby")) == 3 },
     2000,
     20,
   )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 3 },
+    fn() { list.length(presence_entries(p2, "room:lobby")) == 3 },
     2000,
     20,
   )
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p3, "room:lobby")) == 3 },
+    fn() { list.length(presence_entries(p3, "room:lobby")) == 3 },
     2000,
     20,
   )
 
-  let entries1 = presence.list(p1, "room:lobby")
-  let entries2 = presence.list(p2, "room:lobby")
-  let entries3 = presence.list(p3, "room:lobby")
+  let entries1 = presence_entries(p1, "room:lobby")
+  let entries2 = presence_entries(p2, "room:lobby")
+  let entries3 = presence_entries(p3, "room:lobby")
 
   list.length(entries1) |> should.equal(3)
   list.length(entries2) |> should.equal(3)
@@ -234,7 +234,7 @@ pub fn presence_without_pubsub_still_works_test() {
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
 
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence_entries(p, "room:lobby")
   list.length(entries) |> should.equal(1)
 }
 
@@ -254,7 +254,7 @@ pub fn untrack_propagates_via_pubsub_test() {
 
   // Wait for convergence -- both should see the entry
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    fn() { list.length(presence_entries(p2, "room:lobby")) == 1 },
     2000,
     20,
   )
@@ -264,13 +264,13 @@ pub fn untrack_propagates_via_pubsub_test() {
 
   // Wait for the untrack to propagate via next broadcast tick
   test_helpers.wait_until(
-    fn() { presence.list(p2, "room:lobby") == [] },
+    fn() { presence_entries(p2, "room:lobby") == [] },
     2000,
     20,
   )
 
   // Node2 should see the removal
-  list.length(presence.list(p2, "room:lobby")) |> should.equal(0)
+  list.length(presence_entries(p2, "room:lobby")) |> should.equal(0)
 }
 
 // ── Resilience: malformed sync messages ──────────────────────────────
@@ -292,7 +292,7 @@ pub fn survives_unknown_envelope_version_test() {
 
   // Track an entry to prove the actor is alive
   let _ = presence.track(p, "room:lobby", "user:1", "s1", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
 
   // Send a sync envelope with a version this node does not understand
   pubsub.broadcast(
@@ -311,7 +311,7 @@ pub fn survives_unknown_envelope_version_test() {
 
   // Track another entry and verify the actor is still alive
   let _ = presence.track(p, "room:lobby", "user:2", "s2", json.null())
-  list.length(presence.list(p, "room:lobby")) |> should.equal(2)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(2)
 }
 
 // ── Resilience: exception raised inside the merge/processing path ─────
@@ -340,7 +340,7 @@ pub fn survives_exception_in_processing_path_test() {
   // Prove the actor is alive and record its state before the poisoned sync.
   let _ =
     presence.track(p1, "room:lobby", "user:safe", "socket-safe", json.null())
-  list.length(presence.list(p1, "room:lobby")) |> should.equal(1)
+  list.length(presence_entries(p1, "room:lobby")) |> should.equal(1)
 
   // Node2 broadcasts a *valid* sync that decodes cleanly but produces a diff
   // touching "room:poison", tripping node1's panicking callback inside the
@@ -356,11 +356,11 @@ pub fn survives_exception_in_processing_path_test() {
   // The actor is still alive: a fresh local track succeeds.
   let _ =
     presence.track(p1, "room:lobby", "user:safe2", "socket-safe2", json.null())
-  list.length(presence.list(p1, "room:lobby")) |> should.equal(2)
+  list.length(presence_entries(p1, "room:lobby")) |> should.equal(2)
 
   // State was not partially mutated: the poisoned sync never merged, so
   // "room:poison" remains empty on node1.
-  presence.list(p1, "room:poison") |> should.equal([])
+  presence_entries(p1, "room:poison") |> should.equal([])
 }
 
 pub fn merge_failure_leaves_read_model_unchanged_test() {
@@ -380,8 +380,8 @@ pub fn merge_failure_leaves_read_model_unchanged_test() {
   // Snapshot the read model for an unrelated topic before the poisoned sync.
   let _ =
     presence.track(p1, "room:lobby", "user:safe", "socket-safe", json.null())
-  let before_entries = presence.list(p1, "room:lobby")
-  let before_count = presence.count(p1, "room:lobby")
+  let before_entries = presence_entries(p1, "room:lobby")
+  let before_count = presence_count(p1, "room:lobby")
 
   let config2 = test_config(ps, "node2", 50)
   let assert Ok(p2) = presence.start(config2)
@@ -392,13 +392,13 @@ pub fn merge_failure_leaves_read_model_unchanged_test() {
   process.sleep(200)
 
   // The read model for the untouched topic is byte-for-byte unchanged.
-  presence.list(p1, "room:lobby") |> should.equal(before_entries)
-  presence.count(p1, "room:lobby") |> should.equal(before_count)
+  presence_entries(p1, "room:lobby") |> should.equal(before_entries)
+  presence_count(p1, "room:lobby") |> should.equal(before_count)
   // The poisoned topic's read model was never published in the first
   // place -- it reads empty because the merge was rejected before any
   // ETS write happened, not because of a later prune or partial write.
-  presence.list(p1, "room:poison") |> should.equal([])
-  presence.count(p1, "room:poison") |> should.equal(0)
+  presence_entries(p1, "room:poison") |> should.equal([])
+  presence_count(p1, "room:poison") |> should.equal(0)
 }
 
 // ── Helper to drain stray messages ──────────────────────────────────
@@ -425,7 +425,7 @@ pub fn restarted_node_presences_replicate_to_peers_test() {
   let _ =
     presence.track(p1, "room:lobby", "user:old", "socket-old", json.null())
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    fn() { list.length(presence_entries(p2, "room:lobby")) == 1 },
     2000,
     10,
   )
@@ -441,13 +441,13 @@ pub fn restarted_node_presences_replicate_to_peers_test() {
     presence.track(p1b, "room:lobby", "user:new", "socket-new", json.null())
   test_helpers.wait_until(
     fn() {
-      presence.list(p2, "room:lobby")
+      presence_entries(p2, "room:lobby")
       |> list.any(fn(entry) { entry.key == "user:new" })
     },
     2000,
     10,
   )
-  presence.list(p2, "room:lobby")
+  presence_entries(p2, "room:lobby")
   |> list.any(fn(entry) { entry.key == "user:new" })
   |> should.be_true
 }
@@ -461,7 +461,7 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() {
   let _ =
     presence.track(p1, "room:lobby", "user:ghost", "socket-dead", json.null())
   test_helpers.wait_until(
-    fn() { list.length(presence.list(p2, "room:lobby")) == 1 },
+    fn() { list.length(presence_entries(p2, "room:lobby")) == 1 },
     2000,
     10,
   )
@@ -478,18 +478,18 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() {
   test_helpers.wait_until(
     fn() {
       let on_p2 =
-        presence.list(p2, "room:lobby") |> list.map(fn(entry) { entry.key })
+        presence_entries(p2, "room:lobby") |> list.map(fn(entry) { entry.key })
       let on_p1b =
-        presence.list(p1b, "room:lobby") |> list.map(fn(entry) { entry.key })
+        presence_entries(p1b, "room:lobby") |> list.map(fn(entry) { entry.key })
       on_p2 == ["user:live"] && on_p1b == ["user:live"]
     },
     3000,
     10,
   )
-  presence.list(p2, "room:lobby")
+  presence_entries(p2, "room:lobby")
   |> list.map(fn(entry) { entry.key })
   |> should.equal(["user:live"])
-  presence.list(p1b, "room:lobby")
+  presence_entries(p1b, "room:lobby")
   |> list.map(fn(entry) { entry.key })
   |> should.equal(["user:live"])
 }
@@ -502,7 +502,7 @@ pub fn restart_prune_updates_read_model_count_test() {
   let _ =
     presence.track(p1, "room:lobby", "user:ghost", "socket-dead", json.null())
   test_helpers.wait_until(
-    fn() { presence.count(p2, "room:lobby") == 1 },
+    fn() { presence_count(p2, "room:lobby") == 1 },
     2000,
     10,
   )
@@ -515,11 +515,11 @@ pub fn restart_prune_updates_read_model_count_test() {
   // The pruned ghost must not inflate the peer's count once it converges
   // on the restarted incarnation.
   test_helpers.wait_until(
-    fn() { presence.count(p2, "room:lobby") == 1 },
+    fn() { presence_count(p2, "room:lobby") == 1 },
     3000,
     10,
   )
-  presence.count(p2, "room:lobby") |> should.equal(1)
+  presence_count(p2, "room:lobby") |> should.equal(1)
 }
 
 // ── Reads stay responsive while the actor mailbox is busy ────────────
@@ -574,9 +574,9 @@ pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() {
   // Reads must stay responsive, and still see the already-published
   // user:1 state, even though the actor's mailbox is busy handling the
   // still-blocked second track call.
-  presence.count(p, "room:lobby") |> should.equal(1)
-  list.length(presence.list(p, "room:lobby")) |> should.equal(1)
-  list.length(presence.get_by_key(p, "room:lobby", "user:1"))
+  presence_count(p, "room:lobby") |> should.equal(1)
+  list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
+  list.length(presence_metas(p, "room:lobby", "user:1"))
   |> should.equal(1)
 
   // The second track call genuinely has not returned yet: this is a
@@ -620,7 +620,7 @@ pub fn actor_reply_is_ordered_after_read_model_publication_test() {
   // happened yet: the tracking call has not returned, and the read model
   // still reports the pre-track state.
   process.receive(track_done, 0) |> should.equal(Error(Nil))
-  presence.count(p, "room:lobby") |> should.equal(0)
+  presence_count(p, "room:lobby") |> should.equal(0)
 
   // Release the callback so the actor finishes handling `Track`: publish
   // the read model, then reply.
@@ -630,5 +630,27 @@ pub fn actor_reply_is_ordered_after_read_model_publication_test() {
   // The moment `track` returns, its read-model snapshot is already
   // published -- this is a reply-ordering guarantee, not eventual
   // consistency, so no polling is needed here.
-  presence.count(p, "room:lobby") |> should.equal(1)
+  presence_count(p, "room:lobby") |> should.equal(1)
+}
+
+fn presence_entries(
+  tracker: presence.Presence,
+  topic: String,
+) -> List(presence.PresenceEntry) {
+  let assert Ok(entries) = presence.list(tracker, topic)
+  entries
+}
+
+fn presence_count(tracker: presence.Presence, topic: String) -> Int {
+  let assert Ok(count) = presence.count(tracker, topic)
+  count
+}
+
+fn presence_metas(
+  tracker: presence.Presence,
+  topic: String,
+  key: String,
+) -> List(#(String, json.Json)) {
+  let assert Ok(metas) = presence.get_by_key(tracker, topic, key)
+  metas
 }

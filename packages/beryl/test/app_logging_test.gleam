@@ -11,9 +11,8 @@ import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/dict
 import gleam/option.{None}
-import gleeunit
 import gleeunit/should
-import test_helpers.{begin_capture, receive_log, stop_capture}
+import test_helpers
 
 /// Palabres's level is a global, singleton setting (see
 /// `beryl/internal.configure`); restore it to Beryl's own default so a
@@ -26,12 +25,8 @@ fn restore_default_logging_level() -> Nil {
   ))
 }
 
-pub fn main() {
-  gleeunit.main()
-}
-
 pub fn start_warns_when_no_abuse_controls_configured_test() {
-  let selector = begin_capture()
+  let selector = test_helpers.begin_capture()
 
   let assert Ok(channels) =
     h.start_app(
@@ -40,15 +35,15 @@ pub fn start_warns_when_no_abuse_controls_configured_test() {
       update: fn(model: Nil, _ev: socket.Input(Nil)) { Next(model, []) },
     )
 
-  receive_log(selector, "No abuse controls configured", 10)
+  test_helpers.receive_log(selector, "No abuse controls configured", 10)
   |> should.be_ok
 
   let _ = beryl.stop(channels)
-  stop_capture()
+  test_helpers.stop_capture()
 }
 
 pub fn start_does_not_warn_when_a_limit_is_configured_test() {
-  let selector = begin_capture()
+  let selector = test_helpers.begin_capture()
 
   let assert Ok(channels) =
     h.start_app(
@@ -58,15 +53,15 @@ pub fn start_does_not_warn_when_a_limit_is_configured_test() {
       update: fn(model: Nil, _ev: socket.Input(Nil)) { Next(model, []) },
     )
 
-  receive_log(selector, "No abuse controls configured", 2)
+  test_helpers.receive_log(selector, "No abuse controls configured", 2)
   |> should.be_error
 
   let _ = beryl.stop(channels)
-  stop_capture()
+  test_helpers.stop_capture()
 }
 
 pub fn inbound_routing_log_omits_payload_by_default_test() {
-  let selector = begin_capture()
+  let selector = test_helpers.begin_capture()
 
   let assert Ok(channels) =
     h.start_app(
@@ -88,7 +83,8 @@ pub fn inbound_routing_log_omits_payload_by_default_test() {
   let _reply = h.recv(frames)
   h.push(channels, "log-socket", "room:lobby", "client_event", "msg-ref")
 
-  let assert Ok(routed) = receive_log(selector, "Inbound message routed", 20)
+  let assert Ok(routed) =
+    test_helpers.receive_log(selector, "Inbound message routed", 20)
   routed.metadata |> dict.get("socket_id") |> should.equal(Ok("log-socket"))
   routed.metadata |> dict.get("topic") |> should.equal(Ok("room:lobby"))
   routed.metadata |> dict.get("event") |> should.equal(Ok("client_event"))
@@ -97,6 +93,6 @@ pub fn inbound_routing_log_omits_payload_by_default_test() {
   routed.metadata |> dict.get("payload") |> should.equal(Error(Nil))
 
   let _ = beryl.stop(channels)
-  stop_capture()
+  test_helpers.stop_capture()
   restore_default_logging_level()
 }

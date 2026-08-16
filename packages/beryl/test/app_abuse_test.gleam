@@ -18,12 +18,7 @@ import beryl/wire/codec
 import gleam/erlang/process
 import gleam/int
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 fn join_ok(
   channels: beryl.Sockets,

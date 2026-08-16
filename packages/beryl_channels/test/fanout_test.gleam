@@ -10,7 +10,7 @@
 import beryl
 import beryl/wire
 import beryl_channels/channel
-import dispatch_helpers as helper
+import dispatch_helper as helper
 import gleam/json
 import gleam/string
 import gleeunit/should

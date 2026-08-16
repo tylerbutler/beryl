@@ -211,7 +211,14 @@ fn describe(action: channel.Action) -> String {
   case action {
     channel.PushAction(event, payload) ->
       event <> "/" <> json.to_string(payload)
-    _ -> "other"
+    channel.BroadcastAction(..)
+    | channel.BroadcastFromAction(..)
+    | channel.ReplyOkAction(..)
+    | channel.ReplyErrorAction(..)
+    | channel.PresenceTrackAction(..)
+    | channel.PresenceUntrackAction(..)
+    | channel.PushPresenceAction(..)
+    | channel.BroadcastPresenceAction(..) -> "other"
   }
 }
 

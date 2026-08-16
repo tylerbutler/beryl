@@ -1,12 +1,7 @@
 import beryl/group
 import gleam/list
 import gleam/set
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 pub fn group_start_test() {
   let result = group.start()

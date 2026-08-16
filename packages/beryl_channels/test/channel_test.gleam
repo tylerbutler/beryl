@@ -240,7 +240,7 @@ pub fn message_actions_keep_their_order_test() {
       actions
       |> rendered
       |> should.equal("push/total/1,broadcast/bumped/\"room:lobby\"")
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -259,7 +259,7 @@ pub fn channel_state_is_threaded_across_messages_test() {
       actions
       |> rendered
       |> should.equal("push/total/3,broadcast/bumped/\"room:lobby\"")
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -274,7 +274,7 @@ pub fn unhandled_events_continue_without_actions_test() {
 
   case live.on_message(client_message("anything")) {
     channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -286,7 +286,7 @@ pub fn binary_frames_reach_the_binary_callback_test() {
   case live.on_binary(<<1, 2, 3>>) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/bytes/3")
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -300,7 +300,7 @@ pub fn close_carries_its_final_actions_test() {
   case live.on_message(client_message("quit")) {
     channel.StepClose(actions) ->
       actions |> rendered |> should.equal("push/bye/0")
-    _ -> should.fail()
+    channel.StepContinue(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -311,7 +311,7 @@ pub fn stop_socket_carries_only_a_reason_test() {
 
   case live.on_message(client_message("boom")) {
     channel.StepStop(reason) -> reason |> should.equal(socket.Errored("boom"))
-    _ -> should.fail()
+    channel.StepContinue(..) | channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -383,7 +383,7 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
   case next.on_mail(second) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"again\"")
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -428,7 +428,7 @@ pub fn an_unrun_mail_delivers_nothing_test() {
   case live.on_mail(kept) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"kept\"")
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -470,7 +470,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   // the mail sealed: the value is only ever readable by its own join.
   case second.on_mail(mail) {
     channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 
   // ...so it is still intact and still the first join's message when the
@@ -478,7 +478,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   case first.on_mail(mail) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"mine\"")
-    _ -> should.fail()
+    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
   }
 }
 
@@ -513,7 +513,7 @@ pub fn info_can_close_the_channel_test() {
 
   case live.on_mail(mail) {
     channel.StepClose(actions) -> actions |> should.equal([])
-    _ -> should.fail()
+    channel.StepContinue(..) | channel.StepStop(..) -> should.fail()
   }
 }
 

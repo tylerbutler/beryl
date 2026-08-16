@@ -9,12 +9,7 @@ import beryl/socket.{Closed, Join, Message}
 import beryl/wire
 import gleam/erlang/process
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   h.start_observed(beryl.config(wire.phoenix_codec()), events)

@@ -8,28 +8,30 @@ import beryl/socket.{
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None, Some}
-import gleeunit
 import gleeunit/should
 
+/// Opaque handle to the attached :telemetry capture handler, produced and
+/// consumed only by the test FFI — never inspected from Gleam.
+type TelemetryHandle
+
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "attach")
-fn attach() -> Dynamic
+fn attach() -> TelemetryHandle
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "detach")
-fn detach(handler_id: Dynamic) -> Nil
+fn detach(handler_id: TelemetryHandle) -> Nil
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_connected")
-fn expect_connected(handler_id: Dynamic) -> Bool
+fn expect_connected(handler_id: TelemetryHandle) -> Bool
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_join")
-fn expect_join(handler_id: Dynamic, outcome: String) -> Bool
+fn expect_join(handler_id: TelemetryHandle, outcome: String) -> Bool
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_message")
 fn expect_message(
-  handler_id: Dynamic,
+  handler_id: TelemetryHandle,
   kind: String,
   outcome: String,
   callback_result: String,
@@ -37,25 +39,21 @@ fn expect_message(
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_disconnect")
 fn expect_disconnect(
-  handler_id: Dynamic,
+  handler_id: TelemetryHandle,
   reason: String,
   joined_channels: Int,
 ) -> Bool
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_broadcast")
 fn expect_broadcast(
-  handler_id: Dynamic,
+  handler_id: TelemetryHandle,
   origin: String,
   recipients: Int,
   send_failures: Int,
 ) -> Bool
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_none")
-fn expect_none(handler_id: Dynamic) -> Bool
-
-pub fn main() {
-  gleeunit.main()
-}
+fn expect_none(handler_id: TelemetryHandle) -> Bool
 
 type AppMessage {
   Tick

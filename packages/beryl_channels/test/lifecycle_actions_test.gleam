@@ -18,7 +18,7 @@ import beryl
 import beryl/presence
 import beryl/wire
 import beryl_channels/channel
-import dispatch_helpers as helper
+import dispatch_helper as helper
 import gleam/erlang/process
 import gleam/json
 import gleam/list
@@ -93,7 +93,8 @@ pub fn the_join_acknowledgment_precedes_the_joins_own_actions_test() {
 /// land in the same turn or the capacity is not a capacity.
 fn capacity_handler(handle: presence.Presence) -> channel.Handler {
   channel.handler("room:*", fn(info, topic, _payload) {
-    case list.length(presence.list(handle, topic)) >= 1 {
+    let assert Ok(entries) = presence.list(handle, topic)
+    case list.length(entries) >= 1 {
       True -> channel.reject(json.object([#("reason", json.string("full"))]))
       False ->
         channel.accept(channel.joined(Nil, channel.callbacks()))
@@ -125,7 +126,7 @@ pub fn a_join_time_presence_track_applies_in_the_join_turn_test() {
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("s1") |> should.be_true
 
-  let assert [entry] = presence.list(handle, "room:a")
+  let assert Ok([entry]) = presence.list(handle, "room:a")
     as "the presence actor holds the joiner"
   entry.key |> should.equal("s1")
 }
@@ -282,7 +283,8 @@ pub fn a_presence_track_from_termination_is_reversed_by_core_test() {
   left_diff |> string.contains("presence_diff") |> should.be_true
   left_diff |> string.contains("leaves") |> should.be_true
 
-  presence.list(handle, "room:a")
+  let assert Ok(entries) = presence.list(handle, "room:a")
+  entries
   |> list.any(fn(entry) { entry.key == "s1" })
   |> should.be_false
 }

@@ -8,12 +8,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleam/option
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// Accepts every join and forwards every event to the observer.
 fn start_observed(

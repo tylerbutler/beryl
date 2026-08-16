@@ -305,9 +305,8 @@ pub fn presence_tracking_produces_the_same_frames_test() {
           matrix.unrefed_event_frame("jr-1", lobby, "track", json.object([])),
         )
         let frames = matrix.take_exactly(client, 2)
-        let keys =
-          presence.list(handle, lobby)
-          |> list.map(fn(entry) { entry.key })
+        let assert Ok(lobby_entries) = presence.list(handle, lobby)
+        let keys = list.map(lobby_entries, fn(entry) { entry.key })
         matrix.close(client)
         let assert [diff, snapshot] = frames
         #(

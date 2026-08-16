@@ -10,12 +10,7 @@ import beryl/wire
 import gleam/json
 import gleam/option.{Some}
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// Accepts every join; replies with an error to "fail" when the client
 /// sent a ref (refless "fail" messages are unanswerable by construction).

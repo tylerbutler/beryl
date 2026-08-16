@@ -46,9 +46,10 @@ pub fn message_effects(
   ref: Option(socket.Ref),
 ) -> List(Effect) {
   case event_name {
-    "echo" -> reply_ok(ref, wire.dynamic_to_json(payload))
+    "echo" ->
+      reply_ok(ref, result.unwrap(wire.dynamic_to_json(payload), json.null()))
     "broadcast" | "broadcast_ack" -> {
-      let outgoing = wire.dynamic_to_json(payload)
+      let outgoing = result.unwrap(wire.dynamic_to_json(payload), json.null())
       [Broadcast(topic, event_name, outgoing), ..reply_ok(ref, outgoing)]
     }
     "presence_track" -> track(presence, topic, payload, ref)
@@ -74,7 +75,7 @@ fn key_and_meta(payload: Dynamic) -> Result(#(String, json.Json), Nil) {
   Ok(
     #(key, case meta {
       None -> json.object([])
-      Some(value) -> wire.dynamic_to_json(value)
+      Some(value) -> result.unwrap(wire.dynamic_to_json(value), json.object([]))
     }),
   )
 }

@@ -182,17 +182,6 @@ fn request(
   }
 }
 
-/// Start a connection limiter enforcing a per-IP ceiling and/or a node-wide
-/// ceiling. A ceiling of 0 disables that dimension.
-fn start(
-  max_per_ip: Int,
-  max_total: Int,
-) -> Result(ConnectionLimiter, actor.StartError) {
-  build(max_per_ip, max_total)
-  |> actor.start
-  |> result.map(fn(started) { ConnectionLimiter(subject: started.data) })
-}
-
 fn build(
   max_per_ip: Int,
   max_total: Int,
@@ -240,22 +229,6 @@ pub fn from_name(name: process.Name(Message)) -> ConnectionLimiter {
 @internal
 pub fn pid(limiter: ConnectionLimiter) -> Result(Pid, Nil) {
   process.subject_owner(limiter.subject)
-}
-
-/// Start a limiter only when at least one ceiling is positive.
-///
-/// `max_per_ip` caps concurrent connections from a single peer; `max_total`
-/// caps concurrent connections across the whole node. They compose: a
-/// connection is admitted only when it is under both configured ceilings. When
-/// both are 0 no limiter is started and every connection is admitted.
-@internal
-pub fn start_optional(
-  max_per_ip: Int,
-  max_total: Int,
-) -> Option(ConnectionLimiter) {
-  use <- bool.guard(when: !enabled(max_per_ip, max_total), return: None)
-  let assert Ok(limiter) = start(max_per_ip, max_total)
-  Some(limiter)
 }
 
 @internal

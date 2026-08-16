@@ -36,14 +36,14 @@ pub type SnapshotError {
 /// Poll no more frequently than roughly once per second.
 pub fn snapshot(sockets: beryl.Sockets) -> Result(Snapshot, SnapshotError) {
   case beryl.app_dispatch(sockets).stats() {
-    Error(False) -> Error(RuntimeUnavailable)
-    Error(True) -> Error(RequestTimedOut)
-    Ok(#(connected, joined, topics, mailbox)) ->
+    Error(beryl.StatsRuntimeUnavailable) -> Error(RuntimeUnavailable)
+    Error(beryl.StatsRequestTimedOut) -> Error(RequestTimedOut)
+    Ok(stats) ->
       Ok(Snapshot(
-        connected_sockets: connected,
-        joined_socket_topic_pairs: joined,
-        active_topics: topics,
-        runtime_mailbox_length: mailbox,
+        connected_sockets: stats.connected_sockets,
+        joined_socket_topic_pairs: stats.joined_socket_topic_pairs,
+        active_topics: stats.active_topics,
+        runtime_mailbox_length: stats.runtime_mailbox_length,
       ))
   }
 }

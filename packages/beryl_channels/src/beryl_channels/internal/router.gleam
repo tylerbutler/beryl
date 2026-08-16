@@ -51,7 +51,6 @@ import gleam/dict
 import gleam/dynamic
 import gleam/json
 import gleam/list
-import gleam/option
 
 /// The socket-level message type of a channel system.
 ///
@@ -154,21 +153,21 @@ fn join(
   ref: socket.Ref,
 ) -> socket.Next(Router, Envelope) {
   case select(router.handlers, name) {
-    option.None ->
+    Error(Nil) ->
       socket.Next(router, [socket.RejectJoin(ref, unmatched_topic())])
-    option.Some(handler) -> open(router, handler, name, payload, ref)
+    Ok(handler) -> open(router, handler, name, payload, ref)
   }
 }
 
 fn select(
   handlers: List(Registered),
   name: String,
-) -> option.Option(channel.Handler) {
+) -> Result(channel.Handler, Nil) {
   case handlers {
-    [] -> option.None
+    [] -> Error(Nil)
     [registered, ..rest] ->
       case topic.matches(registered.pattern, name) {
-        True -> option.Some(registered.handler)
+        True -> Ok(registered.handler)
         False -> select(rest, name)
       }
   }

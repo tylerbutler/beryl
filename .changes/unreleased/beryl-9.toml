@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "BREAKING: wire.dynamic_to_json now returns Result(Json, Nil) instead of silently replacing values nested beyond the wire depth limit with null."

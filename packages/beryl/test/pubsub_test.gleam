@@ -1,6 +1,5 @@
 import beryl/pubsub
 import gleam/erlang/process
-import gleeunit
 import gleeunit/should
 
 @external(erlang, "beryl_pubsub_test_ffi", "is_raw_wire_message")
@@ -10,10 +9,6 @@ fn is_raw_wire_message(
   payload: String,
   timeout: Int,
 ) -> Bool
-
-pub fn main() {
-  gleeunit.main()
-}
 
 pub fn pubsub_start_test() {
   let config = pubsub.config_with_scope("test_pubsub_start")

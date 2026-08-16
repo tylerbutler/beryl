@@ -4,12 +4,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 fn sample_diff() -> presence.Diff {
   presence.diff(
@@ -187,7 +182,7 @@ pub fn tracked_metas_carry_phx_ref_test() {
       json.object([#("status", json.string("online"))]),
     )
 
-  let assert [entry] = presence.list(p, "room:lobby")
+  let assert [entry] = presence_entries(p, "room:lobby")
 
   let phx_ref_decoder = {
     use phx_ref <- decode.field("phx_ref", decode.string)
@@ -216,7 +211,7 @@ pub fn tracked_multi_session_metas_have_distinct_phx_refs_test() {
 
   { ref1 != ref2 } |> should.be_true
 
-  let entries = presence.list(p, "room:lobby")
+  let entries = presence_entries(p, "room:lobby")
   entries |> list.length |> should.equal(2)
 
   let phx_ref_decoder = {
@@ -238,6 +233,14 @@ pub fn non_object_meta_is_stored_unchanged_test() {
   let _ref =
     presence.track(p, "room:lobby", "user:1", "socket-1", json.string("plain"))
 
-  let assert [entry] = presence.list(p, "room:lobby")
+  let assert [entry] = presence_entries(p, "room:lobby")
   json.to_string(entry.meta) |> should.equal("\"plain\"")
+}
+
+fn presence_entries(
+  tracker: presence.Presence,
+  topic: String,
+) -> List(presence.PresenceEntry) {
+  let assert Ok(entries) = presence.list(tracker, topic)
+  entries
 }

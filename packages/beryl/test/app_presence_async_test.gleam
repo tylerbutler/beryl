@@ -361,7 +361,7 @@ pub fn untrack_then_snapshot_keeps_wire_order_test() {
   let snapshot = h.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("\"s1\"") |> should.be_false
-  presence.count(handle, "room:a") |> should.equal(0)
+  presence_count(handle, "room:a") |> should.equal(0)
 }
 
 /// Re-tracking a key is one atomic replacement: one diff frame carrying
@@ -396,7 +396,7 @@ pub fn replacement_is_atomic_and_shares_phx_refs_test() {
   second_ref |> should.equal(stored_phx_ref(handle, "room:a"))
 
   // The replacement never left the key absent: one entry throughout.
-  presence.count(handle, "room:a") |> should.equal(1)
+  presence_count(handle, "room:a") |> should.equal(1)
   let snapshot = h.recv(frames)
   snapshot |> string.contains("away") |> should.be_true
   snapshot |> string.contains("online") |> should.be_false
@@ -440,7 +440,7 @@ pub fn topic_close_emits_one_aggregate_leave_diff_test() {
   let _one = h.recv(watcher)
   let _two = h.recv(watcher)
   let _three = h.recv(watcher)
-  presence.count(handle, "room:a") |> should.equal(6)
+  presence_count(handle, "room:a") |> should.equal(6)
 
   h.route(channels, "s1", "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]")
 
@@ -454,7 +454,7 @@ pub fn topic_close_emits_one_aggregate_leave_diff_test() {
   h.recv_none(watcher)
 
   test_helpers.wait_until(
-    fn() { presence.count(handle, "room:a") == 3 },
+    fn() { presence_count(handle, "room:a") == 3 },
     2000,
     20,
   )
@@ -528,7 +528,7 @@ pub fn late_tracked_ack_after_timeout_is_compensated_test() {
   // so presence itself is still empty from this side's point of view.
   let snapshot = h.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
-  presence.count(handle, "room:a") |> should.equal(0)
+  presence_count(handle, "room:a") |> should.equal(0)
 
   // The actor finally applies the track and acknowledges it. The runtime
   // drops the acknowledgement (nobody is parked on it any more) but must
@@ -537,11 +537,11 @@ pub fn late_tracked_ack_after_timeout_is_compensated_test() {
   release(gate)
   h.recv_none(frames)
   test_helpers.wait_until(
-    fn() { presence.count(handle, "room:a") == 0 },
+    fn() { presence_count(handle, "room:a") == 0 },
     2000,
     20,
   )
-  presence.list(handle, "room:a") |> should.equal([])
+  presence_entries(handle, "room:a") |> should.equal([])
 }
 
 /// After a track times out, the app may reasonably retry it. The first
@@ -570,7 +570,7 @@ pub fn retrack_after_timeout_does_not_double_count_test() {
   release(gate)
   h.recv_none(frames)
   test_helpers.wait_until(
-    fn() { presence.count(handle, "room:a") == 0 },
+    fn() { presence_count(handle, "room:a") == 0 },
     2000,
     20,
   )
@@ -582,8 +582,8 @@ pub fn retrack_after_timeout_does_not_double_count_test() {
 
   // Exactly one entry, and it is the retry's — not a leftover from the
   // timed-out first attempt plus the retry.
-  presence.count(handle, "room:a") |> should.equal(1)
-  let assert [entry] = presence.list(handle, "room:a")
+  presence_count(handle, "room:a") |> should.equal(1)
+  let assert [entry] = presence_entries(handle, "room:a")
   json.to_string(entry.meta) |> string.contains("away") |> should.be_true
 }
 
@@ -649,13 +649,13 @@ pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() {
   // acknowledgement — and room:a's stale entry is cleaned up rather than
   // left stranded.
   test_helpers.wait_until(
-    fn() { presence.count(handle, "room:b") == 1 },
+    fn() { presence_count(handle, "room:b") == 1 },
     2000,
     20,
   )
-  presence.count(handle, "room:b") |> should.equal(1)
+  presence_count(handle, "room:b") |> should.equal(1)
   test_helpers.wait_until(
-    fn() { presence.count(handle, "room:a") == 0 },
+    fn() { presence_count(handle, "room:a") == 0 },
     2000,
     20,
   )
@@ -693,7 +693,7 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
   let #(first_joins, first_leaves) = next_diff(diffs)
   first_leaves |> should.equal([])
   let assert [first_ref] = first_joins
-  presence.count(handle, "room:a") |> should.equal(0)
+  presence_count(handle, "room:a") |> should.equal(0)
 
   // Queued behind the parked socket: a retrack of the *same* key, on the
   // same topic, from the same socket.
@@ -748,9 +748,9 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
   presence.untrack(handle, "no-such-ref")
 
   // Exactly one entry survives, and it is the retrack's.
-  presence.count(handle, "room:a") |> should.equal(1)
+  presence_count(handle, "room:a") |> should.equal(1)
   stored_phx_ref(handle, "room:a") |> should.equal(second_ref)
-  let assert [entry] = presence.list(handle, "room:a")
+  let assert [entry] = presence_entries(handle, "room:a")
   entry.key |> should.equal("user:s1")
   json.to_string(entry.meta) |> string.contains("away") |> should.be_true
   // The compensation changed nothing: no leave diff for the live entry.
@@ -763,12 +763,12 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
   leave_diff |> string.contains("presence_diff") |> should.be_true
   phx_ref_of(leave_diff, "leaves") |> should.equal(second_ref)
   h.recv(frames) |> string.contains("presence_list") |> should.be_true
-  presence.count(handle, "room:a") |> should.equal(0)
+  presence_count(handle, "room:a") |> should.equal(0)
 
   // Closing the topic afterwards has nothing left to clean up.
   h.route(channels, "s1", "[\"jr-1\",\"r-5\",\"room:a\",\"phx_leave\",{}]")
   process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
-  presence.count(handle, "room:a") |> should.equal(0)
+  presence_count(handle, "room:a") |> should.equal(0)
 }
 
 /// A timed-out runtime track may acknowledge after a newer synchronous public
@@ -825,7 +825,7 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
   compensation_leaves |> should.equal([runtime_ref])
   presence.untrack(handle, "no-such-ref")
 
-  let assert [public_entry] = presence.list(handle, "room:a")
+  let assert [public_entry] = presence_entries(handle, "room:a")
   meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
   json.to_string(public_entry.meta)
   |> string.contains("public")
@@ -835,19 +835,19 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
   h.route(channels, "s1", "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]")
   process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
   presence.untrack(handle, "no-such-ref")
-  presence.count(handle, "room:a") |> should.equal(1)
+  presence_count(handle, "room:a") |> should.equal(1)
 
   // Replaying the compensated ref is a no-op, proving it is no longer
   // dangling in the actor's ref index.
   presence.untrack(handle, runtime_ref)
-  presence.count(handle, "room:a") |> should.equal(1)
+  presence_count(handle, "room:a") |> should.equal(1)
   process.receive(diffs, 100) |> should.be_error
 
   presence.untrack(handle, public_ref)
   let #(cleanup_joins, cleanup_leaves) = next_diff(diffs)
   cleanup_joins |> should.equal([])
   cleanup_leaves |> should.equal([public_ref])
-  presence.count(handle, "room:a") |> should.equal(0)
+  presence_count(handle, "room:a") |> should.equal(0)
 
   // A later entry cannot be reached through either old ref.
   let later_ref =
@@ -857,14 +857,14 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
   later_leaves |> should.equal([])
   presence.untrack(handle, runtime_ref)
   presence.untrack(handle, public_ref)
-  presence.count(handle, "room:a") |> should.equal(1)
+  presence_count(handle, "room:a") |> should.equal(1)
   process.receive(diffs, 100) |> should.be_error
 
   presence.untrack(handle, later_ref)
   let #(final_joins, final_leaves) = next_diff(diffs)
   final_joins |> should.equal([])
   final_leaves |> should.equal([later_ref])
-  presence.list(handle, "room:a") |> should.equal([])
+  presence_entries(handle, "room:a") |> should.equal([])
 }
 
 /// Shutdown cannot wait for a timed-out track's ref, so it queues a
@@ -916,17 +916,17 @@ pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() {
   sweep_leaves |> should.equal([runtime_ref])
   presence.untrack(handle, "no-such-ref")
 
-  let assert [public_entry] = presence.list(handle, "room:a")
+  let assert [public_entry] = presence_entries(handle, "room:a")
   meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
   presence.untrack(handle, runtime_ref)
-  presence.count(handle, "room:a") |> should.equal(1)
+  presence_count(handle, "room:a") |> should.equal(1)
   process.receive(diffs, 100) |> should.be_error
 
   presence.untrack(handle, public_ref)
   let #(cleanup_joins, cleanup_leaves) = next_diff(diffs)
   cleanup_joins |> should.equal([])
   cleanup_leaves |> should.equal([public_ref])
-  presence.list(handle, "room:a") |> should.equal([])
+  presence_entries(handle, "room:a") |> should.equal([])
 }
 
 /// A track the runtime already gave up on can still be applied by the
@@ -962,8 +962,8 @@ pub fn shutdown_sweeps_sessions_owed_a_stale_track_test() {
   // Barrier: the sweep was in the actor's mailbox before this synchronous
   // call, so it has been handled by the time it returns.
   presence.untrack(handle, "no-such-ref")
-  presence.count(handle, "room:a") |> should.equal(0)
-  presence.list(handle, "room:a") |> should.equal([])
+  presence_count(handle, "room:a") |> should.equal(0)
+  presence_entries(handle, "room:a") |> should.equal([])
 }
 
 /// A `Closed` handler running during `beryl.stop` may return a
@@ -986,7 +986,7 @@ pub fn closed_presence_track_replacement_during_stop_does_not_orphan_entry_test(
   h.join(channels, "s1", "reclose:room", "jr-1", "r-1")
   let _reply = h.recv(frames)
   let _join_diff = h.recv(frames)
-  presence.count(handle, "reclose:room") |> should.equal(1)
+  presence_count(handle, "reclose:room") |> should.equal(1)
 
   let assert Ok(Nil) = beryl.stop(channels)
   process.receive(events, 500) |> should.equal(Ok("closed:reclose:room"))
@@ -995,8 +995,8 @@ pub fn closed_presence_track_replacement_during_stop_does_not_orphan_entry_test(
   // tearing down is already in the actor's mailbox by the time this
   // synchronous call returns.
   presence.untrack(handle, "no-such-ref")
-  presence.count(handle, "reclose:room") |> should.equal(0)
-  presence.list(handle, "reclose:room") |> should.equal([])
+  presence_count(handle, "reclose:room") |> should.equal(0)
+  presence_entries(handle, "reclose:room") |> should.equal([])
 }
 
 /// The same scenario, but the socket never held the key `Closed` tries to
@@ -1010,15 +1010,15 @@ pub fn closed_presence_track_with_no_previous_ref_during_stop_creates_no_entry_t
   let frames = h.connect(channels, "s1")
   h.join(channels, "s1", "reclose-fresh:room", "jr-1", "r-1")
   let _reply = h.recv(frames)
-  presence.count(handle, "reclose-fresh:room") |> should.equal(0)
+  presence_count(handle, "reclose-fresh:room") |> should.equal(0)
 
   let assert Ok(Nil) = beryl.stop(channels)
   process.receive(events, 500)
   |> should.equal(Ok("closed:reclose-fresh:room"))
 
   presence.untrack(handle, "no-such-ref")
-  presence.count(handle, "reclose-fresh:room") |> should.equal(0)
-  presence.list(handle, "reclose-fresh:room") |> should.equal([])
+  presence_count(handle, "reclose-fresh:room") |> should.equal(0)
+  presence_entries(handle, "reclose-fresh:room") |> should.equal([])
 }
 
 /// Shutdown cannot simply discard a pending replacement after removing the
@@ -1077,7 +1077,7 @@ pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() {
 
   // Barrier: the replacement and both shutdown cleanups are now applied.
   presence.untrack(handle, "no-such-ref")
-  presence.list(handle, "room:a") |> should.equal([])
+  presence_entries(handle, "room:a") |> should.equal([])
 
   // Neither superseded nor swept refs remain capable of touching later state.
   presence.untrack(handle, previous_ref)
@@ -1135,7 +1135,7 @@ pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() {
   watcher_leaves |> should.equal([watcher_ref])
 
   presence.untrack(handle, "no-such-ref")
-  presence.list(handle, "room:a") |> should.equal([])
+  presence_entries(handle, "room:a") |> should.equal([])
 
   presence.untrack(handle, tracked_ref)
   presence.untrack(handle, watcher_ref)
@@ -1196,7 +1196,7 @@ pub fn disconnect_while_track_is_pending_leaves_no_presence_test() {
   let _watcher_reply = h.recv(watcher)
   let _watcher_diff = h.recv(watcher)
   let _watcher_snapshot = h.recv(watcher)
-  presence.count(handle, "room:a") |> should.equal(1)
+  presence_count(handle, "room:a") |> should.equal(1)
 
   let frames = h.connect(channels, "s1")
   arm(gate)
@@ -1219,11 +1219,11 @@ pub fn disconnect_while_track_is_pending_leaves_no_presence_test() {
 
   // Nothing of s1's survives, and nothing resurrects it.
   test_helpers.wait_until(
-    fn() { presence.count(handle, "room:a") == 1 },
+    fn() { presence_count(handle, "room:a") == 1 },
     2000,
     20,
   )
-  let assert [entry] = presence.list(handle, "room:a")
+  let assert [entry] = presence_entries(handle, "room:a")
   entry.key |> should.equal("user:watcher")
   h.recv_none(watcher)
 }
@@ -1258,7 +1258,7 @@ pub fn second_mutation_keeps_queued_work_waiting_test() {
   snapshot |> string.contains("presence_list") |> should.be_true
   // Only then the message that was queued while the socket was parked.
   h.recv(frames) |> string.contains("echoed") |> should.be_true
-  presence.count(handle, "flip:a") |> should.equal(0)
+  presence_count(handle, "flip:a") |> should.equal(0)
 }
 
 /// The public synchronous API is unchanged: a track is visible to the very
@@ -1266,20 +1266,20 @@ pub fn second_mutation_keeps_queued_work_waiting_test() {
 pub fn public_presence_api_keeps_read_after_write_test() {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let ref = presence.track(handle, "room:a", "user:1", "s1", meta("online"))
-  presence.count(handle, "room:a") |> should.equal(1)
-  let assert [entry] = presence.list(handle, "room:a")
+  presence_count(handle, "room:a") |> should.equal(1)
+  let assert [entry] = presence_entries(handle, "room:a")
   entry.session_id |> should.equal("s1")
-  presence.get_by_key(handle, "room:a", "user:1")
+  presence_metas(handle, "room:a", "user:1")
   |> list.length
   |> should.equal(1)
 
   presence.untrack(handle, ref)
-  presence.count(handle, "room:a") |> should.equal(0)
-  presence.list(handle, "room:a") |> should.equal([])
+  presence_count(handle, "room:a") |> should.equal(0)
+  presence_entries(handle, "room:a") |> should.equal([])
 
   let _second = presence.track(handle, "room:b", "user:1", "s1", meta("online"))
   presence.untrack_all(handle, "s1")
-  presence.count(handle, "room:b") |> should.equal(0)
+  presence_count(handle, "room:b") |> should.equal(0)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1321,7 +1321,7 @@ fn phx_ref_of(frame: String, side: String) -> String {
 
 /// The `phx_ref` presence has actually stored for a topic's single entry.
 fn stored_phx_ref(handle: presence.Presence, topic: String) -> String {
-  let assert [entry] = presence.list(handle, topic)
+  let assert [entry] = presence_entries(handle, topic)
   let assert Ok(ref) =
     json.parse(
       json.to_string(entry.meta),
@@ -1334,4 +1334,26 @@ fn count_occurrences(haystack: String, needle: String) -> Int {
   string.split(haystack, needle)
   |> list.length
   |> fn(count) { count - 1 }
+}
+
+fn presence_entries(
+  tracker: presence.Presence,
+  topic: String,
+) -> List(presence.PresenceEntry) {
+  let assert Ok(entries) = presence.list(tracker, topic)
+  entries
+}
+
+fn presence_count(tracker: presence.Presence, topic: String) -> Int {
+  let assert Ok(count) = presence.count(tracker, topic)
+  count
+}
+
+fn presence_metas(
+  tracker: presence.Presence,
+  topic: String,
+  key: String,
+) -> List(#(String, json.Json)) {
+  let assert Ok(metas) = presence.get_by_key(tracker, topic, key)
+  metas
 }

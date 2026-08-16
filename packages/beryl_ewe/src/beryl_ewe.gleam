@@ -160,7 +160,7 @@ fn on_message(
 }
 
 fn resume(
-  outcome: server.FrameOutcome,
+  outcome: server.FrameDisposition,
 ) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
   case outcome {
     server.Continue(state) -> ewe.websocket_continue(state)

@@ -92,9 +92,10 @@ fn raw_effects(
     socket.Message(name, "push_me", _payload, _ref) -> [
       socket.Push(name, pushed_event, pushed_payload()),
     ]
-    socket.Message(name, "shout", payload, _ref) -> [
-      socket.BroadcastFrom(name, shouted_event, wire.dynamic_to_json(payload)),
-    ]
+    socket.Message(name, "shout", payload, _ref) -> {
+      let assert Ok(shout_json) = wire.dynamic_to_json(payload)
+      [socket.BroadcastFrom(name, shouted_event, shout_json)]
+    }
     socket.Message(name, "track", _payload, _ref) -> [
       socket.PresenceTrack(name, presence_key, presence_meta()),
       socket.BroadcastPresence(name, presence_event, encode_presence),
@@ -154,8 +155,8 @@ pub fn handlers() -> List(channel.Handler) {
 
 fn contract_callbacks() -> channel.Callbacks(Nil, Nil) {
   channel.callbacks()
-  |> channel.on_message(fn(state, msg) {
-    channel.continue_with(state, message_actions(msg))
+  |> channel.on_message(fn(state, message) {
+    channel.continue_with(state, message_actions(message))
   })
   |> channel.on_binary(fn(state, data) {
     channel.continue_with(
@@ -169,18 +170,16 @@ fn contract_callbacks() -> channel.Callbacks(Nil, Nil) {
   })
 }
 
-fn message_actions(msg: channel.Message) -> channel.Actions {
+fn message_actions(message: channel.Message) -> channel.Actions {
   let actions = channel.actions()
-  case msg.event, msg.reply {
+  case message.event, message.reply {
     "ping", Some(ref) -> channel.reply_ok(actions, ref, pong_payload())
     "boom", Some(ref) -> channel.reply_error(actions, ref, boom_payload())
     "push_me", _ -> channel.push(actions, pushed_event, pushed_payload())
-    "shout", _ ->
-      channel.broadcast_from(
-        actions,
-        shouted_event,
-        wire.dynamic_to_json(msg.payload),
-      )
+    "shout", _ -> {
+      let assert Ok(shout_json) = wire.dynamic_to_json(message.payload)
+      channel.broadcast_from(actions, shouted_event, shout_json)
+    }
     "track", _ ->
       actions
       |> channel.presence_track(presence_key, presence_meta())
@@ -189,7 +188,7 @@ fn message_actions(msg: channel.Message) -> channel.Actions {
       channel.push(
         actions,
         binary_event,
-        binary_payload("decoded", msg.payload),
+        binary_payload("decoded", message.payload),
       )
     _, _ -> actions
   }
@@ -648,12 +647,13 @@ fn decode_frame(raw: String) -> Frame {
     use name <- decode.subfield([2], decode.string)
     use event <- decode.subfield([3], decode.string)
     use payload <- decode.subfield([4], decode.dynamic)
+    let assert Ok(payload_json) = wire.dynamic_to_json(payload)
     decode.success(Frame(
       join_ref: join_ref,
       ref: ref,
       topic: name,
       event: event,
-      payload: json.to_string(wire.dynamic_to_json(payload)),
+      payload: json.to_string(payload_json),
     ))
   }
 

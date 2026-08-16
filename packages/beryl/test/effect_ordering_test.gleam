@@ -13,12 +13,7 @@ import beryl/wire
 import gleam/json
 import gleam/option.{None}
 import gleam/string
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// Joins to `room:*` are accepted with effects chosen by topic suffix:
 /// - "room:ack-then-push": [AcceptJoin, Push, Push] — ordered pushes

@@ -7,12 +7,7 @@ import beryl
 import beryl/socket.{Join, Message}
 import beryl/wire
 import gleam/erlang/process
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 fn drain_join(
   channels: beryl.Sockets,

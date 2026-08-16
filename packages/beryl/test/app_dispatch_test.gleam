@@ -14,13 +14,8 @@ import gleam/erlang/process
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helpers
-
-pub fn main() {
-  gleeunit.main()
-}
 
 pub type Msg {
   Note(String)

@@ -13,7 +13,7 @@ pub type LogLevel {
   Debug
   Info
   Warn
-  Err
+  ErrorLevel
 }
 
 /// Logging configuration shared by internal Beryl modules.
@@ -40,7 +40,7 @@ fn to_palabres_level(log_level: LogLevel) -> level.Level {
     Debug -> level.Debug
     Info -> level.Info
     Warn -> level.Warning
-    Err -> level.Error
+    ErrorLevel -> level.Error
   }
 }
 

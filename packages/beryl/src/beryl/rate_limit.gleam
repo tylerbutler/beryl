@@ -49,11 +49,11 @@ pub opaque type Bucket {
 const one_second_ns = 1_000_000_000
 
 /// Create a full bucket for the given config.
-pub fn new_bucket(cfg: RateLimitConfig) -> Bucket {
-  let ns_per_token = one_second_ns / int.max(cfg.per_second, 1)
+pub fn new_bucket(config: RateLimitConfig) -> Bucket {
+  let ns_per_token = one_second_ns / int.max(config.per_second, 1)
   Bucket(
-    tokens_ns: cfg.burst * ns_per_token,
-    max_tokens_ns: cfg.burst * ns_per_token,
+    tokens_ns: config.burst * ns_per_token,
+    max_tokens_ns: config.burst * ns_per_token,
     ns_per_token: ns_per_token,
     last_refill_ns: monotonic_time_ns(),
   )

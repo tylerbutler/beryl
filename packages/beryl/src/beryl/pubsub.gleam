@@ -78,8 +78,8 @@ pub type PubSubFrom {
 /// scope representation can evolve without exposing record fields.
 pub opaque type PubSubConfig {
   PubSubConfig(
-    /// The pg scope name (atom). Different scopes are isolated.
-    scope: Dynamic,
+    /// The pg scope name. Different scopes are isolated.
+    scope: atom.Atom,
   )
 }
 
@@ -89,25 +89,25 @@ pub opaque type PubSubConfig {
 /// depend on the runtime representation. `payload` fixes the Gleam type
 /// every `Message` broadcast through this instance carries.
 pub opaque type PubSub(payload) {
-  PubSub(scope: Dynamic)
+  PubSub(scope: atom.Atom)
 }
 
 // ── FFI declarations ────────────────────────────────────────────────────────
 
 @external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
-fn ffi_start_pg_scope(scope: Dynamic) -> Dynamic
+fn ffi_start_pg_scope(scope: atom.Atom) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "join_group")
-fn ffi_join_group(scope: Dynamic, group: String, pid: Pid) -> Dynamic
+fn ffi_join_group(scope: atom.Atom, group: String, pid: Pid) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "leave_group")
-fn ffi_leave_group(scope: Dynamic, group: String, pid: Pid) -> Dynamic
+fn ffi_leave_group(scope: atom.Atom, group: String, pid: Pid) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "get_members")
-fn ffi_get_members(scope: Dynamic, group: String) -> List(Pid)
+fn ffi_get_members(scope: atom.Atom, group: String) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "get_local_members")
-fn ffi_get_local_members(scope: Dynamic, group: String) -> List(Pid)
+fn ffi_get_local_members(scope: atom.Atom, group: String) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "send_to_pid")
 fn ffi_send_to_pid(pid: Pid, msg: Message(payload)) -> Nil
@@ -128,7 +128,7 @@ fn message_tag() -> atom.Atom {
 
 /// Create a default PubSub configuration with scope `beryl_pubsub`
 pub fn default_config() -> PubSubConfig {
-  PubSubConfig(scope: atom.create("beryl_pubsub") |> atom.to_dynamic)
+  PubSubConfig(scope: atom.create("beryl_pubsub"))
 }
 
 /// Create a PubSub configuration with a custom scope name
@@ -154,7 +154,7 @@ pub fn default_config() -> PubSubConfig {
 /// // pubsub.config_with_scope(database_row.name)
 /// ```
 pub fn config_with_scope(name: String) -> PubSubConfig {
-  PubSubConfig(scope: atom.create(name) |> atom.to_dynamic)
+  PubSubConfig(scope: atom.create(name))
 }
 
 /// Start a PubSub instance
@@ -165,9 +165,8 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 /// `payload` is fixed by how the returned value is used (or annotated) at the
 /// call site — e.g. `pubsub.start(config) : PubSub(MySyncPayload)`.
 pub fn start(config: PubSubConfig) -> PubSub(payload) {
-  // pg:start returns {ok, Pid} or {error, {already_started, Pid}}
-  // Both are success cases for us
-  let _start_result = ffi_start_pg_scope(config.scope)
+  // pg:start treats already-started as success; the FFI swallows both
+  ffi_start_pg_scope(config.scope)
   PubSub(scope: config.scope)
 }
 
@@ -181,7 +180,7 @@ pub fn start(config: PubSubConfig) -> PubSub(payload) {
 /// Create it in the process that will receive (e.g. an actor's initialiser),
 /// since a `Subject` only delivers to its owner.
 pub opaque type Subscriber(payload) {
-  Subscriber(scope: Dynamic, owner: Pid)
+  Subscriber(scope: atom.Atom, owner: Pid)
 }
 
 /// Create a subscription handle owned by the current process.
@@ -203,14 +202,12 @@ pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
 /// A subscriber may join many topics; they all deliver through its one
 /// subject. Joining is idempotent per topic.
 pub fn join(sub: Subscriber(payload), topic: String) -> Nil {
-  let _join_result = ffi_join_group(sub.scope, topic, sub.owner)
-  Nil
+  ffi_join_group(sub.scope, topic, sub.owner)
 }
 
 /// Leave a topic previously joined with `join`.
 pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
-  let _leave_result = ffi_leave_group(sub.scope, topic, sub.owner)
-  Nil
+  ffi_leave_group(sub.scope, topic, sub.owner)
 }
 
 /// Add a subscriber's PubSub message delivery to a `Selector`, alongside a

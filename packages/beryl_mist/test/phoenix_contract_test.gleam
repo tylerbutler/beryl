@@ -231,14 +231,12 @@ fn contract_update(
             json.object([#("from", json.string("server"))]),
           ),
         ])
-      socket.Message(topic, "broadcast_from_me", payload, _ref) ->
+      socket.Message(topic, "broadcast_from_me", payload, _ref) -> {
+        let assert Ok(payload_json) = wire.dynamic_to_json(payload)
         socket.Next(model, [
-          socket.BroadcastFrom(
-            topic,
-            "broadcasted",
-            wire.dynamic_to_json(payload),
-          ),
+          socket.BroadcastFrom(topic, "broadcasted", payload_json),
         ])
+      }
       socket.Closed(_topic, reason) -> {
         process.send(terminated, reason)
         socket.Next(model, [])

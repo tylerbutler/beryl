@@ -50,13 +50,13 @@ State maintained per WebSocket connection.
 pub type ConnectionState
 ```
 
-### `FrameOutcome`
+### `FrameDisposition`
 
 What a transport should do with its connection after handling an inbound
  frame.
 
 ```gleam
-pub type FrameOutcome {
+pub type FrameDisposition {
   Continue(ConnectionState)
   Stop
 }
@@ -159,7 +159,7 @@ Size-check, rate-check, and decode an inbound binary frame in the
 pub fn handle_binary_frame(
   ConnectionState,
   BitArray
-) -> FrameOutcome
+) -> FrameDisposition
 ```
 
 ### `handle_text_frame`
@@ -175,7 +175,7 @@ Size-check, rate-check, and decode an inbound text frame in the
 pub fn handle_text_frame(
   ConnectionState,
   String
-) -> FrameOutcome
+) -> FrameDisposition
 ```
 
 ### `handler`

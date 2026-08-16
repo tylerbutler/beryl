@@ -113,7 +113,12 @@ fn validate_inbound_depth(msg: Inbound) -> Result(Inbound, DecodeError) {
 pub fn encode(msg: Inbound) -> String {
   let join_ref_json = option_to_json(codec.inbound_join_ref(msg))
   let ref_json = option_to_json(codec.inbound_ref(msg))
-  let payload_json = dynamic_to_json(codec.inbound_payload(msg))
+  // Decoded inbound payloads are depth-validated at `decode`, so conversion
+  // only fails for hand-built payloads deeper than the wire limit; those
+  // could not round-trip anyway and encode as null.
+  let payload_json =
+    dynamic_to_json(codec.inbound_payload(msg))
+    |> result.unwrap(json.null())
   let event = phoenix_event_name(codec.inbound_kind(msg))
 
   json.to_string(
@@ -153,9 +158,12 @@ fn phoenix_event_name(kind: InboundKind) -> String {
 }
 
 /// Convert a `Dynamic` (decoded from JSON) back into `json.Json`.
-pub fn dynamic_to_json(value: Dynamic) -> json.Json {
+///
+/// Returns `Error(Nil)` when the value nests deeper than the wire
+/// protocol's maximum JSON depth, or contains something JSON cannot
+/// represent.
+pub fn dynamic_to_json(value: Dynamic) -> Result(json.Json, Nil) {
   dynamic_to_json_limited(value, max_json_nesting_depth)
-  |> result.unwrap(json.null())
 }
 
 fn dynamic_to_json_limited(
@@ -463,16 +471,18 @@ pub fn binary_push(
   event event: String,
   payload payload: BitArray,
 ) -> Result(Frame, Nil) {
-  use #(jr_size, jr) <- result.try(u8_component(option.unwrap(join_ref, "")))
+  use #(join_ref_size, join_ref_bytes) <- result.try(
+    u8_component(option.unwrap(join_ref, "")),
+  )
   use #(topic_size, topic) <- result.try(u8_component(topic))
   use #(event_size, event) <- result.try(u8_component(event))
   Ok(
     codec.BinaryFrame(<<
       binary_push_kind,
-      jr_size,
+      join_ref_size,
       topic_size,
       event_size,
-      jr:bits,
+      join_ref_bytes:bits,
       topic:bits,
       event:bits,
       payload:bits,
@@ -495,18 +505,20 @@ pub fn binary_reply(
     StatusOk -> "ok"
     StatusError -> "error"
   }
-  use #(jr_size, jr) <- result.try(u8_component(option.unwrap(join_ref, "")))
+  use #(join_ref_size, join_ref_bytes) <- result.try(
+    u8_component(option.unwrap(join_ref, "")),
+  )
   use #(ref_size, ref) <- result.try(u8_component(option.unwrap(ref, "")))
   use #(topic_size, topic) <- result.try(u8_component(topic))
   use #(status_size, status) <- result.try(u8_component(status_string))
   Ok(
     codec.BinaryFrame(<<
       binary_reply_kind,
-      jr_size,
+      join_ref_size,
       ref_size,
       topic_size,
       status_size,
-      jr:bits,
+      join_ref_bytes:bits,
       ref:bits,
       topic:bits,
       status:bits,

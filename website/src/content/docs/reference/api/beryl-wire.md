@@ -126,8 +126,12 @@ pub fn decode_message(String) -> Result(codec.Inbound, codec.DecodeError)
 
 Convert a `Dynamic` (decoded from JSON) back into `json.Json`.
 
+ Returns `Error(Nil)` when the value nests deeper than the wire
+ protocol's maximum JSON depth, or contains something JSON cannot
+ represent.
+
 ```gleam
-pub fn dynamic_to_json(dynamic.Dynamic) -> json.Json
+pub fn dynamic_to_json(dynamic.Dynamic) -> Result(json.Json, Nil)
 ```
 
 ### `encode`

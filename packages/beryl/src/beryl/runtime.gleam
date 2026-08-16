@@ -439,7 +439,7 @@ fn disconnect_reason_telemetry(
 pub fn start_named(
   config: Config,
   name name: process.Name(Msg(msg)),
-  pubsub ps: Option(PubSub(Json)),
+  pubsub pubsub_option: Option(PubSub(Json)),
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Input(msg)) -> Next(model, msg),
 ) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
@@ -455,7 +455,7 @@ pub fn start_named(
         sockets: dict.new(),
         topics: dict.new(),
         config: config,
-        pubsub: ps,
+        pubsub: pubsub_option,
         subscriber: None,
         logger: internal.logger_with_config("beryl.runtime", config.logging),
         self_subject: subject,
@@ -476,13 +476,17 @@ pub fn start_named(
       process.new_selector()
       |> process.select(subject)
       |> process.select_map(ack_subject, PresenceAcknowledged)
-    case ps {
+    case pubsub_option {
       Some(pubsub_instance) -> {
-        let sub = pubsub.subscriber(pubsub_instance)
-        let state = State(..base, subscriber: Some(sub))
+        let subscriber = pubsub.subscriber(pubsub_instance)
+        let state = State(..base, subscriber: Some(subscriber))
         actor.initialised(state)
         |> actor.returning(subject)
-        |> actor.selecting(pubsub.selecting(selector, sub, RemoteBroadcast))
+        |> actor.selecting(pubsub.selecting(
+          selector,
+          subscriber,
+          RemoteBroadcast,
+        ))
         |> Ok
       }
       None ->
@@ -613,7 +617,15 @@ fn dispatch_socket_msg(
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
     AppInfo(socket_id, app_message) ->
       handle_app_info(state, socket_id, app_message)
-    _ -> state
+    // Not socket-scoped, so never deferred to this dispatcher.
+    AdmitSocket(..)
+    | Broadcast(..)
+    | RemoteBroadcast(..)
+    | CheckHeartbeats
+    | GetStats(..)
+    | PresenceAcknowledged(..)
+    | PresenceOpTimedOut(..)
+    | Stop(..) -> state
   }
 }
 
@@ -1983,7 +1995,13 @@ fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
         sock.Push(_, _, _)
         | sock.Broadcast(_, _, _)
         | sock.BroadcastFrom(_, _, _) -> telemetry.Push
-        _ -> effects_callback_result(rest)
+        sock.AcceptJoin(..)
+        | sock.RejectJoin(..)
+        | sock.PresenceTrack(..)
+        | sock.PresenceUntrack(..)
+        | sock.PushPresence(..)
+        | sock.BroadcastPresence(..)
+        | sock.KickTopic(..) -> effects_callback_result(rest)
       }
   }
 }
@@ -2130,7 +2148,7 @@ fn exec_update_result(
       let pending = case source {
         JoinSource(topic_name, join_ref, msg_ref, ref, _) ->
           Some(Pending(topic_name, join_ref, msg_ref, ref))
-        _ -> None
+        MessageSource(..) | InfoSource(..) | ClosedSource -> None
       }
       Continue(store_model(state, socket_id, new_model), [
         StepEffects(
@@ -2232,7 +2250,7 @@ fn reject_stopped_join(
         socket_id,
         Pending(topic_name, join_ref, msg_ref, ref),
       )
-    _ -> Nil
+    MessageSource(..) | InfoSource(..) | ClosedSource -> Nil
   }
 }
 
@@ -2407,7 +2425,7 @@ fn remove_topic_subscriber(
   case set.is_empty(subscribers) {
     True -> {
       case state.subscriber {
-        Some(sub) -> pubsub.leave(sub, topic_name)
+        Some(subscriber) -> pubsub.leave(subscriber, topic_name)
         None -> Nil
       }
       State(..state, topics: dict.delete(state.topics, topic_name))
@@ -2566,13 +2584,13 @@ fn run_effects(
   case effects {
     [] -> {
       case pending {
-        Some(p) -> {
+        Some(pending_join) -> {
           state.logger
           |> log.warn("Join not acknowledged by update; rejecting", [
             #("socket_id", socket_id),
-            #("topic", p.topic),
+            #("topic", pending_join.topic),
           ])
-          reject_unanswered_join(state, socket_id, p)
+          reject_unanswered_join(state, socket_id, pending_join)
         }
         None -> Nil
       }
@@ -2693,20 +2711,21 @@ fn apply_accept_join(
   kicks: List(String),
 ) -> #(State(model, msg), Option(Pending), List(String)) {
   case matching_pending_join(ref, pending) {
-    Some(p) -> {
-      let state = subscribe_socket(state, socket_id, p)
+    Some(pending_join) -> {
+      let state = subscribe_socket(state, socket_id, pending_join)
       case dict.get(state.sockets, socket_id) {
         Ok(socket) -> {
           let response = option.unwrap(reply, json.object([]))
           let frame =
             codec.encode_reply(socket.codec)(
-              p.join_ref,
-              p.msg_ref,
-              p.topic,
+              pending_join.join_ref,
+              pending_join.msg_ref,
+              pending_join.topic,
               codec.StatusOk,
               response,
             )
-          let _send_result = send_frame_logged(state, socket, p.topic, frame)
+          let _send_result =
+            send_frame_logged(state, socket, pending_join.topic, frame)
           Nil
         }
         Error(Nil) -> Nil
@@ -2714,7 +2733,7 @@ fn apply_accept_join(
       state.logger
       |> log.debug("Join accepted", [
         #("socket_id", socket_id),
-        #("topic", p.topic),
+        #("topic", pending_join.topic),
       ])
       #(state, None, kicks)
     }
@@ -2783,7 +2802,7 @@ fn warn_unmatched_join_answer(
 fn subscribe_socket(
   state: State(model, msg),
   socket_id: String,
-  p: Pending,
+  pending_join: Pending,
 ) -> State(model, msg) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
@@ -2791,22 +2810,29 @@ fn subscribe_socket(
       let socket =
         SocketState(
           ..socket,
-          subscribed_topics: set.insert(socket.subscribed_topics, p.topic),
-          join_refs: dict.insert(socket.join_refs, p.topic, p.join_ref),
+          subscribed_topics: set.insert(
+            socket.subscribed_topics,
+            pending_join.topic,
+          ),
+          join_refs: dict.insert(
+            socket.join_refs,
+            pending_join.topic,
+            pending_join.join_ref,
+          ),
         )
       let state = store_socket(state, socket)
       let existing =
-        dict.get(state.topics, p.topic)
+        dict.get(state.topics, pending_join.topic)
         |> result.unwrap(set.new())
       case state.subscriber, set.is_empty(existing) {
-        Some(sub), True -> pubsub.join(sub, p.topic)
+        Some(subscriber), True -> pubsub.join(subscriber, pending_join.topic)
         _, _ -> Nil
       }
       State(
         ..state,
         topics: dict.insert(
           state.topics,
-          p.topic,
+          pending_join.topic,
           set.insert(existing, socket_id),
         ),
       )
@@ -3659,17 +3685,29 @@ fn presence_snapshot(
       Error(Nil)
     }
     Some(handle) ->
-      case internal.rescue(fn() { encode(presence.list(handle, topic_name)) }) {
-        Ok(payload) -> Ok(payload)
-        Error(crash) -> {
+      case presence.list(handle, topic_name) {
+        Error(Nil) -> {
           state.logger
           |> log.error("Presence snapshot failed", [
             #("socket_id", socket_id),
             #("topic", topic_name),
-            #("crash", crash),
+            #("crash", "presence read model unavailable"),
           ])
           Error(Nil)
         }
+        Ok(entries) ->
+          case internal.rescue(fn() { encode(entries) }) {
+            Ok(payload) -> Ok(payload)
+            Error(crash) -> {
+              state.logger
+              |> log.error("Presence snapshot failed", [
+                #("socket_id", socket_id),
+                #("topic", topic_name),
+                #("crash", crash),
+              ])
+              Error(Nil)
+            }
+          }
       }
   }
 }
