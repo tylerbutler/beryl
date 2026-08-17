@@ -47,10 +47,7 @@ pub type Frames =
 /// the limiter rather than the channels.
 pub fn start(_replica: String) -> System {
   let presence_tracker = session_presence.start()
-  let assert Ok(groups) = group.start()
-  let assert Ok(_) = group.create(groups, "public")
-  let assert Ok(_) = group.add(groups, "public", "room:general")
-  let assert Ok(_) = group.add(groups, "public", "room:random")
+  let #(groups, groups_spec) = group.child_spec()
   let assert Ok(store) = doc_store.start()
   let assert Ok(broadcast_hub) = hub.start()
   let secret = auth.new_secret()
@@ -79,8 +76,12 @@ pub fn start(_replica: String) -> System {
   hub.bind(broadcast_hub, sockets)
   let assert Ok(_) =
     static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(groups_spec)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
+  let assert Ok(_) = group.create(groups, "public")
+  let assert Ok(_) = group.add(groups, "public", "room:general")
+  let assert Ok(_) = group.add(groups, "public", "room:random")
 
   System(sockets: sockets, secret: secret, presence: presence_tracker)
 }

@@ -2,6 +2,7 @@ import beryl/presence
 import gleam/erlang/process
 import gleam/json
 import gleam/list
+import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -16,8 +17,41 @@ fn test_config(replica: String) -> presence.Config {
 }
 
 pub fn presence_start_test() {
-  let result = presence.start(test_config("node1"))
-  should.be_ok(result)
+  let #(p, spec) = presence.child_spec(test_config("node1"))
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  presence.list(p, "room:lobby") |> should.equal(Ok([]))
+}
+
+pub fn presence_handle_and_reads_survive_supervised_restart_test() {
+  let #(p, spec) = presence.child_spec(test_config("node1"))
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  let _ref =
+    presence.track(p, "room:lobby", "user:old", "socket-old", json.null())
+  let assert Ok(old_pid) = process.subject_owner(presence.subject(p))
+
+  process.kill(old_pid)
+  test_helpers.wait_until(
+    fn() {
+      case process.subject_owner(presence.subject(p)) {
+        Ok(pid) -> pid != old_pid
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  presence.list(p, "room:lobby") |> should.equal(Ok([]))
+  let _ref =
+    presence.track(p, "room:lobby", "user:new", "socket-new", json.null())
+  let assert Ok([entry]) = presence.list(p, "room:lobby")
+  entry.key |> should.equal("user:new")
 }
 
 pub fn presence_track_and_list_test() {

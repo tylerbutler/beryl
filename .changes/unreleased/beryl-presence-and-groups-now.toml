@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Presence and groups now expose supervised child specifications with stable restart-safe handles instead of unsupervised start functions."

@@ -15,14 +15,17 @@ Channel Groups - Named collections of topics for multi-topic broadcasting
  Useful for scenarios like broadcasting to all channels in a "team" or
  sending a system-wide notification.
 
- Groups are independent of the Beryl runtime. Start the actor from a
- long-lived application process and include it in the application's
- supervision arrangement as appropriate.
+ Groups are independent of the Beryl runtime and run under your
+ application's supervision tree.
 
  ## Example
 
  ```gleam
- let assert Ok(groups) = group.start()
+ let #(groups, groups_spec) = group.child_spec()
+ let assert Ok(_root) =
+   static_supervisor.new(static_supervisor.OneForOne)
+   |> static_supervisor.add(groups_spec)
+   |> static_supervisor.start()
  let assert Ok(Nil) = group.create(groups, "team:engineering")
  let assert Ok(Nil) = group.add(groups, "team:engineering", "room:frontend")
  let assert Ok(Nil) = group.add(groups, "team:engineering", "room:backend")
@@ -63,22 +66,6 @@ A running Groups instance.
 pub type Groups
 ```
 
-### `GroupStartError`
-
-Errors when starting the groups actor.
-
-```gleam
-pub type GroupStartError {
-  GroupActorStartFailed(error.StartFailure)
-}
-```
-
-#### Constructors
-
-##### `GroupActorStartFailed(error.StartFailure)`
-
-The actor failed to start
-
 ### `Message`
 
 Messages the groups actor handles
@@ -118,6 +105,19 @@ pub fn broadcast(
   String,
   json.Json
 ) -> Nil
+```
+
+### `child_spec`
+
+Build the supervised groups actor.
+
+ Add the returned child specification to your application's supervisor.
+ The returned handle is name-backed, so it reaches the replacement actor
+ after a supervised restart. Group definitions are in-memory state and are
+ reset by a restart.
+
+```gleam
+pub fn child_spec() -> #(Groups, supervision.ChildSpecification(process.Subject(Message)))
 ```
 
 ### `create`
@@ -168,14 +168,6 @@ pub fn remove(
   String,
   String
 ) -> Result(Nil, GroupError)
-```
-
-### `start`
-
-Start the groups actor
-
-```gleam
-pub fn start() -> Result(Groups, GroupStartError)
 ```
 
 ### `topics`
