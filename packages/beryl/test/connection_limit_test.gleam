@@ -24,6 +24,23 @@ fn start_with_limit(max_connections: Int) -> beryl.Sockets {
   channels
 }
 
+fn start_with_rate(
+  per_second per_second: Int,
+  burst burst: Int,
+) -> beryl.Sockets {
+  let assert Ok(channels) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_connection_rate_per_ip(
+          per_second: per_second,
+          burst: burst,
+        ),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model: Nil, _ev: socket.Input(Nil)) { socket.Next(model, []) },
+    )
+  channels
+}
+
 // A limit of 0 means unlimited: every acquire from the same IP succeeds, and
 // releasing the placeholder permit is a harmless no-op.
 pub fn zero_means_unlimited_test() {
@@ -123,6 +140,25 @@ pub fn permit_can_be_released_test() {
   let assert Ok(permit) =
     transport.acquire_connection_slot(channels, "10.0.0.6")
   transport.release_connection_slot(permit)
+
+  beryl.stop(channels)
+}
+
+// Releasing and reconnecting does not refresh the IP's burst allowance. Other
+// IPs have independent buckets, and the exhausted bucket refills over time.
+pub fn connection_rate_survives_reconnect_test() {
+  let channels = start_with_rate(per_second: 1, burst: 1)
+
+  let assert Ok(first) =
+    transport.acquire_connection_slot(channels, "192.0.2.1")
+  transport.release_connection_slot(first)
+
+  transport.acquire_connection_slot(channels, "192.0.2.1")
+  |> should.equal(Error(Nil))
+  should.be_ok(transport.acquire_connection_slot(channels, "192.0.2.2"))
+
+  process.sleep(1100)
+  should.be_ok(transport.acquire_connection_slot(channels, "192.0.2.1"))
 
   beryl.stop(channels)
 }

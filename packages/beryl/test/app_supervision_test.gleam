@@ -140,16 +140,23 @@ pub fn limiter_survives_runtime_restart_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec())
-        |> beryl.with_max_connections_per_ip(5),
+        |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 1),
       init: h.accepting_init,
       update: h.accepting_update,
     )
 
   let limiter = limiter_pid(sockets)
   let old_runtime = h.runtime_pid(sockets)
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.10")
+  transport.release_connection_slot(permit)
 
   // Crash the runtime abnormally; the transient significant child restarts.
   process.kill(old_runtime)
+
+  // The exhausted IP bucket remains live while dispatch restarts.
+  transport.acquire_connection_slot(sockets, "192.0.2.10")
+  |> should.be_error
 
   test_helpers.wait_until(
     fn() {
@@ -162,7 +169,7 @@ pub fn limiter_survives_runtime_restart_test() {
     10,
   )
 
-  // A runtime restart does not restart the limiter: same pid, still serving.
+  // A runtime restart does not restart the limiter: same pid and rate state.
   limiter_pid(sockets) |> should.equal(limiter)
   process.is_alive(limiter) |> should.be_true
 

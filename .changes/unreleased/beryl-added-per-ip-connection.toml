@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Added"
+body = "Added per-IP connection-rate limiting whose allowance survives reconnects and app runtime restarts."

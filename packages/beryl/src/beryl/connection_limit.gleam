@@ -1,17 +1,22 @@
-//// Shared connection counter for transports.
+//// Shared connection admission controls for transports.
 ////
-//// Enforces two independent dimensions in a single serialized actor:
+//// Enforces three independent dimensions in a single serialized actor:
 ////
 //// - a per-IP ceiling (`max_per_ip`), which throttles a single peer, and
 //// - a node-wide ceiling (`max_total`), which caps concurrent connections
 ////   across every IP so distributed/rotating source addresses cannot exhaust
-////   the node's process, socket, and runtime budget.
+////   the node's process, socket, and runtime budget, and
+//// - a per-IP token bucket, which prevents reconnect churn from repeatedly
+////   refreshing per-connection frame and message bursts.
 ////
-//// Both are checked atomically inside `handle_message` on acquire, so
+//// All three are checked atomically inside `handle_message` on acquire, so
 //// concurrent opens cannot race past either ceiling. A single `Permit` tracks
 //// both dimensions and the same process monitor reclaims both when the holder
-//// dies without releasing.
+//// dies without releasing. Rate buckets remain in this supervisor-held actor
+//// across reconnects and runtime restarts, then expire once idle long enough
+//// to have fully refilled.
 
+import beryl/rate_limit
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
@@ -21,6 +26,14 @@ import gleam/otp/actor
 import gleam/result
 
 const registry_call_timeout_ms = 100
+
+const bucket_sweep_interval_ms = 60_000
+
+const one_second_ns = 1_000_000_000
+
+/// Erlang monotonic time in nanoseconds.
+@external(erlang, "beryl_ffi", "monotonic_time_ns")
+fn monotonic_time_ns() -> Int
 
 /// Opaque connection limiter registry.
 pub opaque type ConnectionLimiter {
@@ -32,15 +45,25 @@ pub opaque type Permit {
   Permit(limiter: ConnectionLimiter, ip: String)
 }
 
+type RateBucket {
+  RateBucket(bucket: rate_limit.Bucket, last_seen_ns: Int)
+}
+
 type State {
   State(
     /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
     /// Node-wide ceiling across all IPs; 0 disables the global check.
     max_total: Int,
+    /// Per-IP connection-attempt rate limit; `None` disables it.
+    connection_rate: Option(rate_limit.RateLimitConfig),
+    /// Idle buckets can be dropped without refreshing their allowance after
+    /// this duration because they have naturally refilled to capacity.
+    bucket_ttl_ns: Int,
     /// Live connection count across every IP, checked against `max_total`.
     total: Int,
     counts: Dict(String, Int),
+    rate_buckets: Dict(String, RateBucket),
     /// Monitors on bound permit-holder processes, so slots self-release when
     /// the holder dies without running its close path (crash, brutal kill).
     monitors: Dict(Monitor, #(Pid, String)),
@@ -59,6 +82,7 @@ pub opaque type Message {
   Bind(ip: String, owner: Pid)
   Release(ip: String, owner: Pid)
   HolderDown(down: process.Down)
+  Sweep(subject: Subject(Message))
   Stop(reply: Subject(Nil))
 }
 
@@ -68,32 +92,9 @@ fn handle_message(
 ) -> actor.Next(State, Message) {
   case message {
     Acquire(ip, limiter, reply) -> {
-      let current =
-        dict.get(state.counts, ip)
-        |> result.unwrap(0)
-
-      // Both ceilings are checked here, inside the actor, so concurrent opens
-      // are serialized and cannot race past either limit. A 0 ceiling disables
-      // that dimension.
-      let ip_full = state.max_per_ip > 0 && current >= state.max_per_ip
-      let total_full = state.max_total > 0 && state.total >= state.max_total
-
-      case ip_full || total_full {
-        True -> {
-          process.send(reply, Error(Nil))
-          actor.continue(state)
-        }
-        False -> {
-          process.send(reply, Ok(Permit(limiter: limiter, ip: ip)))
-          actor.continue(
-            State(
-              ..state,
-              total: state.total + 1,
-              counts: dict.insert(state.counts, ip, current + 1),
-            ),
-          )
-        }
-      }
+      let #(state, outcome) = acquire_slot(state, ip, limiter)
+      process.send(reply, outcome)
+      actor.continue(state)
     }
     Bind(ip, owner) -> actor.continue(bind_holder(state, ip, owner))
     Release(ip, owner) -> {
@@ -130,9 +131,85 @@ fn handle_message(
           }
         process.PortDown(_, _, _) -> actor.continue(state)
       }
+    Sweep(subject) -> {
+      schedule_sweep(subject, state.connection_rate)
+      actor.continue(sweep_idle_buckets(state))
+    }
     Stop(reply) -> {
       process.send(reply, Nil)
       actor.stop()
+    }
+  }
+}
+
+fn acquire_slot(
+  state: State,
+  ip: String,
+  limiter: ConnectionLimiter,
+) -> #(State, Result(Permit, Nil)) {
+  let current =
+    dict.get(state.counts, ip)
+    |> result.unwrap(0)
+  let ip_full = state.max_per_ip > 0 && current >= state.max_per_ip
+  let total_full = state.max_total > 0 && state.total >= state.max_total
+  use <- bool.guard(when: ip_full || total_full, return: #(state, Error(Nil)))
+
+  let #(state, token) = take_connection_token(state, ip)
+  case token {
+    Error(Nil) -> #(state, Error(Nil))
+    Ok(Nil) -> #(
+      State(
+        ..state,
+        total: state.total + 1,
+        counts: dict.insert(state.counts, ip, current + 1),
+      ),
+      Ok(Permit(limiter: limiter, ip: ip)),
+    )
+  }
+}
+
+fn take_connection_token(
+  state: State,
+  ip: String,
+) -> #(State, Result(Nil, Nil)) {
+  case state.connection_rate {
+    None -> #(state, Ok(Nil))
+    Some(config) -> {
+      let bucket =
+        dict.get(state.rate_buckets, ip)
+        |> result.map(fn(entry) { entry.bucket })
+        |> result.lazy_unwrap(fn() { rate_limit.new_bucket(config) })
+      let #(bucket, taken) = rate_limit.take(bucket)
+      let entry = RateBucket(bucket: bucket, last_seen_ns: monotonic_time_ns())
+      #(
+        State(..state, rate_buckets: dict.insert(state.rate_buckets, ip, entry)),
+        taken,
+      )
+    }
+  }
+}
+
+fn sweep_idle_buckets(state: State) -> State {
+  let now = monotonic_time_ns()
+  State(
+    ..state,
+    rate_buckets: state.rate_buckets
+      |> dict.filter(fn(_ip, entry) {
+        now - entry.last_seen_ns < state.bucket_ttl_ns
+      }),
+  )
+}
+
+fn schedule_sweep(
+  subject: Subject(Message),
+  connection_rate: Option(rate_limit.RateLimitConfig),
+) -> Nil {
+  case connection_rate {
+    None -> Nil
+    Some(_) -> {
+      let _timer =
+        process.send_after(subject, bucket_sweep_interval_ms, Sweep(subject))
+      Nil
     }
   }
 }
@@ -185,17 +262,38 @@ fn request(
 fn build(
   max_per_ip: Int,
   max_total: Int,
+  connection_rate: Int,
+  connection_burst: Int,
 ) -> actor.Builder(State, Message, Subject(Message)) {
+  let rate_config = case connection_rate > 0 {
+    True ->
+      Some(rate_limit.config(
+        per_second: connection_rate,
+        burst: connection_burst,
+      ))
+    False -> None
+  }
+  let effective_burst = case connection_burst {
+    0 -> connection_rate
+    burst -> burst
+  }
   let state =
     State(
       max_per_ip: max_per_ip,
       max_total: max_total,
+      connection_rate: rate_config,
+      bucket_ttl_ns: int.max(
+        bucket_sweep_interval_ms * 1_000_000,
+        effective_burst * one_second_ns / int.max(connection_rate, 1),
+      ),
       total: 0,
       counts: dict.new(),
+      rate_buckets: dict.new(),
       monitors: dict.new(),
       holders: dict.new(),
     )
   actor.new_with_initialiser(1000, fn(subject) {
+    schedule_sweep(subject, rate_config)
     let selector =
       process.new_selector()
       |> process.select(subject)
@@ -212,9 +310,11 @@ fn build(
 pub fn start_named(
   max_per_ip: Int,
   max_total: Int,
+  connection_rate: Int,
+  connection_burst: Int,
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {
-  build(max_per_ip, max_total)
+  build(max_per_ip, max_total, connection_rate, connection_burst)
   |> actor.named(name)
   |> actor.start
 }
@@ -232,8 +332,8 @@ pub fn pid(limiter: ConnectionLimiter) -> Result(Pid, Nil) {
 }
 
 @internal
-pub fn enabled(max_per_ip: Int, max_total: Int) -> Bool {
-  max_per_ip > 0 || max_total > 0
+pub fn enabled(max_per_ip: Int, max_total: Int, connection_rate: Int) -> Bool {
+  max_per_ip > 0 || max_total > 0 || connection_rate > 0
 }
 
 /// Acquire a connection slot, failing when the IP already has too many sockets.

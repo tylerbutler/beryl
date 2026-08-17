@@ -37,6 +37,9 @@ let config =
   // Joins are much rarer than messages. 10/s per socket tolerates
   // aggressive reconnect/rejoin loops while stopping join floods.
   |> beryl.with_join_rate(per_second: 10, burst: 20)
+  // Cap connection attempts per client IP. This allowance survives
+  // disconnects and app runtime restarts.
+  |> beryl.with_connection_rate_per_ip(per_second: 5, burst: 10)
   // Concurrent connections per client IP. Size to your expected
   // clients-behind-one-NAT worst case; see the caveat below.
   |> beryl.with_max_connections_per_ip(max_connections: 100)
@@ -54,14 +57,20 @@ Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
 starve others.
 
-### Per-IP and node-wide limits compose
+### Per-IP rate and connection limits compose
 
-`with_max_connections_per_ip` throttles a single abusive peer, while
-`with_max_connections` caps concurrent connections across the whole node. When
-both are set a connection must be under **both** ceilings to be admitted;
-otherwise the transport rejects it with `429` **before** allocating any
-long-lived socket or runtime state. Freed capacity is reclaimed on normal
-close, transport failure, heartbeat eviction, crash, and setup failure.
+`with_connection_rate_per_ip` caps how quickly each peer can open connections,
+which prevents reconnect churn from repeatedly refreshing per-connection frame
+and message bursts. Its token buckets live in the supervised connection
+limiter, so they survive disconnects and app runtime restarts. Idle buckets are
+removed after their allowance has fully refilled.
+
+`with_max_connections_per_ip` separately throttles a single peer's concurrent
+connections, while `with_max_connections` caps concurrent connections across
+the whole node. A connection must pass every configured rate and concurrency
+limit; otherwise the transport rejects it with `429` **before** allocating any
+long-lived socket or runtime state. Freed concurrency capacity is reclaimed on
+normal close, transport failure, heartbeat eviction, crash, and setup failure.
 
 The node-wide ceiling exists because a per-IP limit alone cannot stop many
 **distinct** source addresses — a botnet, or a single host rotating through an
@@ -87,13 +96,14 @@ Two consequences:
   the cap high enough for your worst legitimate case, or leave it off and
   rely on rate limits.
 
-### Rate limits reset on reconnect
+### Per-connection rate limits reset on reconnect
 
 Per-socket limits are keyed by connection, so a client that hits a limit
 can reconnect for a fresh allowance. They bound the damage of any single
-connection; they are not a substitute for infrastructure-level controls
-(load balancer connection/request limits, WAF rules) against determined
-attackers rotating connections.
+connection. Configure `with_connection_rate_per_ip` to bound reconnect churn
+from one peer IP, and retain infrastructure-level controls (load balancer
+connection/request limits, WAF rules) against attackers rotating source
+addresses.
 
 ## Origin checking and authentication
 
