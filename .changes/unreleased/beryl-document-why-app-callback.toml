@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Document why app callback crashes are contained within the shared runtime instead of triggering a supervisor restart, and clarify that presence merge rescue is not a cluster security boundary."
