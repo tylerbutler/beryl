@@ -329,26 +329,7 @@ jobs:
         run: node load/k6/render-smoke-comment.mjs smoke-artifacts "$RUN_URL" > smoke-comment.md
 
       - name: Update sticky PR comment
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          marker="<!-- beryl-protocol-smoke -->"
-          comment_id="$(
-            gh api \
-              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-              --paginate \
-              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" \
-              | head -n 1
-          )"
-          if [[ -n "$comment_id" ]]; then
-            gh api \
-              --method PATCH \
-              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
-              --raw-field body="$(cat smoke-comment.md)"
-          else
-            gh api \
-              --method POST \
-              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-              --raw-field body="$(cat smoke-comment.md)"
-          fi
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # ratchet:marocchino/sticky-pull-request-comment@v3
+        with:
+          header: beryl-protocol-smoke
+          path: smoke-comment.md
