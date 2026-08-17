@@ -12,7 +12,8 @@ off; this guide explains what to turn on and why.
 
 Even with no configuration, beryl enforces:
 
-- **Frame size**: inbound WebSocket frames over 1 MiB close the connection
+- **Post-receipt frame size**: once the transport has assembled a complete
+  inbound WebSocket frame, Beryl closes the connection if it exceeds 1 MiB
   (`with_max_inbound_frame_bytes` to adjust).
 - **Topic and event lengths**: topics over 256 bytes and event names over 64
   bytes are rejected before reaching your app
@@ -23,6 +24,12 @@ Even with no configuration, beryl enforces:
   and messages carrying a stale `join_ref` are dropped.
 - **Heartbeat eviction**: sockets that stop sending heartbeats are evicted
   and their connections closed (60 s window by default, `with_heartbeat`).
+
+The frame-size check limits downstream decoding and routing work, but it does
+**not** bound transport-layer memory: buffering and reassembly happen before
+Beryl receives the frame. In production, configure a WebSocket frame/message
+size limit at or below Beryl's limit at your reverse proxy or load balancer,
+plus a matching request/body limit for the HTTP upgrade.
 
 ## What you should configure for production
 
