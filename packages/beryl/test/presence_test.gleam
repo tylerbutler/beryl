@@ -495,6 +495,19 @@ pub fn count_fails_after_presence_terminated_even_for_untouched_topic_test() {
   })
 }
 
+pub fn configured_call_timeout_is_used_test() {
+  let config =
+    presence.default_config("node1")
+    |> presence.with_call_timeout(20)
+  let assert Ok(p) = presence.start(config)
+  test_helpers.kill_presence(p)
+
+  assert_crashes(fn() {
+    let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+    Nil
+  })
+}
+
 // ── multiple presence actors: independent, unnamed read tables ─────────────
 //
 // The read-model ETS table is created unnamed (no `named_table`) so

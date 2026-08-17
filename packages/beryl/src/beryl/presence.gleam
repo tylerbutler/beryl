@@ -72,7 +72,11 @@ const sync_event = "presence_sync"
 /// created it, and use PubSub replication (`with_pubsub`) to share presence
 /// state across nodes instead.
 pub opaque type Presence {
-  Presence(subject: Subject(Message), read_table: ReadTable)
+  Presence(
+    subject: Subject(Message),
+    read_table: ReadTable,
+    call_timeout_ms: Int,
+  )
 }
 
 type State =
@@ -195,6 +199,8 @@ pub opaque type Config {
     replica: String,
     /// How often to broadcast state for replication (ms). 0 = disabled.
     broadcast_interval_ms: Int,
+    /// Timeout for synchronous track and untrack calls (ms).
+    call_timeout_ms: Int,
     /// Optional callback invoked immediately when a merge produces a non-empty diff.
     /// This ensures no diffs are lost when multiple merges occur in rapid succession.
     /// Runs synchronously on the actor, strictly before the read model is
@@ -432,6 +438,7 @@ pub fn default_config(replica: String) -> Config {
     pubsub: None,
     replica: replica,
     broadcast_interval_ms: 1500,
+    call_timeout_ms: 5000,
     on_diff: None,
   )
 }
@@ -446,6 +453,14 @@ pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
 /// Use `0` to disable periodic broadcasts.
 pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
   Config(..config, broadcast_interval_ms: interval_ms)
+}
+
+/// Set the timeout for synchronous presence mutations, in milliseconds.
+///
+/// This applies to `track`, `untrack`, and `untrack_all`. These functions panic
+/// if the actor does not reply within this timeout. The default is 5000 ms.
+pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
+  Config(..config, call_timeout_ms: timeout_ms)
 }
 
 /// Set the callback invoked when local changes or remote merges produce a diff.
@@ -489,7 +504,11 @@ pub fn start(config: Config) -> Result(Presence, PresenceError) {
   |> actor.start
   |> result.map(fn(started) {
     let #(subject, read_table) = started.data
-    Presence(subject: subject, read_table: read_table)
+    Presence(
+      subject: subject,
+      read_table: read_table,
+      call_timeout_ms: config.call_timeout_ms,
+    )
   })
   |> result.map_error(fn(error) {
     PresenceStartFailed(beryl_error.from_actor_start_error(error))
@@ -711,7 +730,8 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
 /// only meaningful to that actor. The ref is also merged into object metas as
 /// `phx_ref` for Phoenix client compatibility.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn track(
   presence: Presence,
   topic: String,
@@ -719,7 +739,7 @@ pub fn track(
   session_id: String,
   meta: json.Json,
 ) -> String {
-  process.call(presence.subject, 5000, fn(reply) {
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
     Track(topic, key, session_id, meta, reply)
   })
 }
@@ -728,16 +748,20 @@ pub fn track(
 ///
 /// Removing an unknown or already-removed ref is a harmless no-op.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn untrack(presence: Presence, ref: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) { Untrack(ref, reply) })
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
+    Untrack(ref, reply)
+  })
 }
 
 /// Untrack all presences for a session (e.g., when a socket disconnects)
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) {
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
     UntrackAll(session_id, reply)
   })
 }

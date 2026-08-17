@@ -18,6 +18,20 @@ let assert Ok(groups) = group.start()
 
 `group.start()` returns `Result(Groups, GroupStartError)`. The only failure case is `GroupActorStartFailed` — an OTP actor spawn failure.
 
+Synchronous group operations wait up to 5 seconds for the actor by default.
+Configure a different timeout when starting the actor:
+
+```gleam
+let config =
+  group.default_config()
+  |> group.with_call_timeout(10_000)
+let assert Ok(groups) = group.start_with_config(config)
+```
+
+`create`, `delete`, `add`, `remove`, `topics`, and `list_groups` panic if the
+actor is unavailable or does not reply within this timeout. `broadcast` is
+fire-and-forget and does not use it.
+
 ## Creating and deleting groups
 
 ```gleam

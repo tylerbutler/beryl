@@ -1,11 +1,56 @@
 import beryl/group
+import gleam/erlang/process
 import gleam/list
 import gleam/set
 import gleeunit/should
 
+fn assert_crashes_within(op: fn() -> Nil, timeout_ms: Int) -> Nil {
+  let pid = process.spawn_unlinked(op)
+  let monitor = process.monitor(pid)
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+
+  case process.selector_receive(selector, timeout_ms) {
+    Ok(process.ProcessDown(reason: process.Normal, ..)) -> should.fail()
+    Ok(process.ProcessDown(..)) -> Nil
+    Ok(process.PortDown(..)) -> should.fail()
+    Error(Nil) -> should.fail()
+  }
+}
+
 pub fn group_start_test() {
   let result = group.start()
   should.be_ok(result)
+}
+
+pub fn configured_call_timeout_is_used_test() {
+  let groups_ready = process.new_subject()
+  let owner =
+    process.spawn_unlinked(fn() {
+      let config =
+        group.default_config()
+        |> group.with_call_timeout(20)
+      let assert Ok(groups) = group.start_with_config(config)
+      process.send(groups_ready, groups)
+      panic as "stop groups owner"
+    })
+  let monitor = process.monitor(owner)
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+  let assert Ok(groups) = process.receive(groups_ready, 1000)
+  let assert Ok(process.ProcessDown(..)) =
+    process.selector_receive(selector, 1000)
+
+  process.sleep(20)
+  assert_crashes_within(
+    fn() {
+      let _ = group.list_groups(groups)
+      Nil
+    },
+    1000,
+  )
 }
 
 pub fn group_create_and_list_test() {

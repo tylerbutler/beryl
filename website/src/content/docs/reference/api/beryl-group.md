@@ -31,6 +31,16 @@ Channel Groups - Named collections of topics for multi-topic broadcasting
 
 ## Types
 
+### `Config`
+
+Configuration for starting a groups actor.
+
+ Build configs with `default_config` and the `with_*` functions.
+
+```gleam
+pub type Config
+```
+
 ### `GroupError`
 
 Errors from group operations
@@ -93,7 +103,8 @@ pub type Message
 
 Add a topic to a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn add(
@@ -124,7 +135,8 @@ pub fn broadcast(
 
 Create a new named group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn create(
@@ -133,11 +145,20 @@ pub fn create(
 ) -> Result(Nil, GroupError)
 ```
 
+### `default_config`
+
+Build a groups configuration with a 5-second actor call timeout.
+
+```gleam
+pub fn default_config() -> Config
+```
+
 ### `delete`
 
 Delete a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn delete(
@@ -150,7 +171,8 @@ pub fn delete(
 
 List all group names
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn list_groups(Groups) -> List(String)
@@ -160,7 +182,8 @@ pub fn list_groups(Groups) -> List(String)
 
 Remove a topic from a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn remove(
@@ -172,21 +195,45 @@ pub fn remove(
 
 ### `start`
 
-Start the groups actor
+Start the groups actor with the default configuration.
 
 ```gleam
 pub fn start() -> Result(Groups, GroupStartError)
+```
+
+### `start_with_config`
+
+Start the groups actor with a custom configuration.
+
+```gleam
+pub fn start_with_config(Config) -> Result(Groups, GroupStartError)
 ```
 
 ### `topics`
 
 Get all topics in a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn topics(
   Groups,
   String
 ) -> Result(set.Set(String), GroupError)
+```
+
+### `with_call_timeout`
+
+Set the timeout for synchronous group operations, in milliseconds.
+
+ This applies to `create`, `delete`, `add`, `remove`, `topics`, and
+ `list_groups`. These functions panic if the actor does not reply within
+ this timeout.
+
+```gleam
+pub fn with_call_timeout(
+  Config,
+  Int
+) -> Config
 ```
