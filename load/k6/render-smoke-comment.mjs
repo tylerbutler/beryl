@@ -73,8 +73,7 @@ export async function renderSmokeComment(directory, runUrl = "") {
     [...summaries.values()].every(passed);
   const runLink = runUrl ? ` [Workflow run](${runUrl}).` : "";
 
-  return `<!-- beryl-protocol-smoke -->
-## Protocol smoke
+  return `## Protocol smoke
 
 ${allPassed ? "✅ All protocol smoke checks passed." : "❌ One or more protocol smoke checks failed or produced no summary."}${runLink}
 
