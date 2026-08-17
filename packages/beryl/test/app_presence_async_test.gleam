@@ -163,7 +163,7 @@ fn app_update(
   model: String,
   event: socket.Input(Nil),
   events: Subject(String),
-) -> Next(String, Nil) {
+) -> Next(String) {
   case event {
     Join(topic, _payload, ref) ->
       case

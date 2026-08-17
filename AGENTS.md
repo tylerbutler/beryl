@@ -62,21 +62,23 @@ runtime stores each socket's typed model and delivers `Join`, `Message`,
 `Binary`, `Closed`, and typed `Info` events without socket-dispatch casts or
 `Dynamic` round-trips. `Dynamic` is limited to decoded wire payloads.
 
-Join `Ref` values are single-pending-join capabilities with unique runtime
+`JoinRef` values are single-pending-join capabilities with unique runtime
 identity. Never reconstruct or compare their wire fields; return the exact ref
 in `AcceptJoin` or `RejectJoin`.
 
 ### Transport SPI Contract
 
 A transport implementation must follow this lifecycle:
-1. **Admit**: call `beryl.acquire_connection_slot` + `beryl.bind_connection_slot`
+1. **Admit**: call `transport.acquire_connection_slot` +
+   `transport.bind_connection_slot`
 2. **Own**: capture `transport.connection_owner` and monitor an `OwnerAlive` pid
 3. **Register atomically**: call `transport.admit_socket` with the captured
    owner and closer; close on failure
 4. **Route**: decode inbound frames with `transport.active_codec`, route via
    `transport.route_decoded` / `transport.route_binary`, shed over-rate frames
    with `transport.new_message_limiter` / `transport.take_token`
-5. **Disconnect**: `transport.socket_disconnected` + `beryl.release_connection_slot`
+5. **Disconnect**: `transport.socket_disconnected` +
+   `transport.release_connection_slot`
 
 ### Wire Protocol
 

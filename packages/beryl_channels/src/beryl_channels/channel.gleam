@@ -179,7 +179,7 @@ pub type Message {
     /// The raw client payload, to decode with `gleam/dynamic/decode`.
     payload: dynamic.Dynamic,
     /// Reply correlation handle, when the client requested a reply.
-    reply: option.Option(socket.Ref),
+    reply: option.Option(socket.ReplyRef),
   )
 }
 
@@ -230,7 +230,7 @@ pub fn broadcast_from(
 /// the [`Message`](#message) that asked for it.
 pub fn reply_ok(
   actions: Actions,
-  reply: socket.Ref,
+  reply: socket.ReplyRef,
   payload: json.Json,
 ) -> Actions {
   add(actions, ReplyOkAction(reply, payload))
@@ -240,7 +240,7 @@ pub fn reply_ok(
 /// the [`Message`](#message) that asked for it.
 pub fn reply_error(
   actions: Actions,
-  reply: socket.Ref,
+  reply: socket.ReplyRef,
   payload: json.Json,
 ) -> Actions {
   add(actions, ReplyErrorAction(reply, payload))
@@ -636,8 +636,8 @@ pub type Action {
   PushAction(event: String, payload: json.Json)
   BroadcastAction(event: String, payload: json.Json)
   BroadcastFromAction(event: String, payload: json.Json)
-  ReplyOkAction(reply: socket.Ref, payload: json.Json)
-  ReplyErrorAction(reply: socket.Ref, payload: json.Json)
+  ReplyOkAction(reply: socket.ReplyRef, payload: json.Json)
+  ReplyErrorAction(reply: socket.ReplyRef, payload: json.Json)
   PresenceTrackAction(key: String, meta: json.Json)
   PresenceUntrackAction(key: String)
   PushPresenceAction(

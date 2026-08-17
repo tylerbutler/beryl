@@ -213,7 +213,7 @@ Initialize a newly upgraded WebSocket connection in its connection
 pub fn init_connection(
   sockets: beryl.Sockets,
   seed: socket.ConnectSeed,
-  connection_permit: beryl.ConnectionPermit,
+  connection_permit: transport.ConnectionPermit,
   base_selector: process.Selector(SendRequest),
   logger_name: String,
   telemetry: transport.Telemetry,
@@ -285,7 +285,7 @@ pub fn upgrade(
   telemetry: transport.Telemetry,
   request_ip: fn(request.Request(a)) -> Result(String, Nil),
   reject: fn(Int) -> response.Response(b),
-  accept: fn(List(#(String, String)), beryl.ConnectionPermit) -> response.Response(b),
+  accept: fn(List(#(String, String)), transport.ConnectionPermit) -> response.Response(b),
   next: fn() -> response.Response(b)
 ) -> response.Response(b)
 ```

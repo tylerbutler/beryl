@@ -14,7 +14,7 @@
 //// replies (an ok-status reply carrying an error payload).
 
 import beryl/group.{type Groups}
-import beryl/socket.{type Effect, type Ref}
+import beryl/socket.{type Effect, type JoinRef, type ReplyRef}
 import beryl/socket/router
 import example_helpers/color
 import example_helpers/payload
@@ -45,7 +45,7 @@ pub fn join(
   socket_id: String,
   match: router.Match,
   payload: Dynamic,
-  ref: Ref,
+  ref: JoinRef,
 ) -> #(Option(Model), List(Effect)) {
   let router.Match(topic:, params:) = match
   let room_name = case params {
@@ -113,7 +113,7 @@ pub fn update(
   model: Model,
   event_name: String,
   payload: Dynamic,
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
 ) -> #(Model, List(Effect)) {
   case event_name {
     "new_msg" -> {
@@ -248,7 +248,7 @@ fn namespace(ctx: Ctx) -> router.Namespace(ChatRooms) {
 /// Build the socket-wide update once, sharing the app-owned model.
 pub fn chat_rooms_update(
   ctx: Ctx,
-) -> fn(ChatRooms, socket.Input(Nil)) -> socket.Next(ChatRooms, Nil) {
+) -> fn(ChatRooms, socket.Input(Nil)) -> socket.Next(ChatRooms) {
   let namespaces = [router.accept_only("lobby"), namespace(ctx)]
   fn(model, input) {
     router.route(namespaces, router.unknown_topic(), model, input)

@@ -49,7 +49,7 @@ flowchart TB
 | `beryl` | Public entry-point: `config/1`, `child_spec/3`, `broadcast/4`, `broadcast_from/5`, `stop/1` | — |
 | `beryl_channels` | Recommended channel layer: handler validation, typed per-topic state, lifecycle callbacks, and lowering onto the public core | [Channels](/guides/channels/) |
 | `beryl_channels/channel` | Type-safe handler builders, callbacks, senders, actions, join results, and callback results | [Channels](/guides/channels/) |
-| `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `Ref`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
+| `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `JoinRef`/`ReplyRef`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
 | `beryl/runtime` | Central OTP actor: per-socket models, event dispatch, effect interpreter, heartbeat enforcement | [Runtime](/architecture/runtime) |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; subscribe, broadcast, and broadcast_from | [PubSub & Distribution](/architecture/pubsub-and-distribution) |
 | `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, cross-node diff broadcast, `on_diff` callbacks | [Presence](/architecture/presence) |

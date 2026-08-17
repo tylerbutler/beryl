@@ -3,24 +3,67 @@
 ////
 //// `beryl/transport/server` owns the shared admission, connection, rate,
 //// decode, and telemetry pipeline. This low-level SPI keeps only the hooks a
-//// transport implementation needs: exact-owner atomic admission, disconnect,
-//// text/binary routing, the configured codec, and transport telemetry.
+//// transport implementation needs: connection-capacity permits, exact-owner
+//// atomic admission, disconnect, text/binary routing, the configured codec,
+//// and transport telemetry.
 
 import beryl
+import beryl/connection_limit
 import beryl/socket
 import beryl/telemetry
 import beryl/wire/codec
 import gleam/bool
 import gleam/erlang/process
 import gleam/option.{type Option}
+import gleam/result
 
 /// Runtime handle accepted by transport implementations.
 pub type Sockets =
   beryl.Sockets
 
-/// Connection slot permit held by a transport connection.
-pub type ConnectionPermit =
-  beryl.ConnectionPermit
+/// A held connection slot returned by `acquire_connection_slot`.
+///
+/// Hold it for the lifetime of the connection and pass it to
+/// `release_connection_slot` when the connection closes. When no connection
+/// limit is configured the permit is an admit-everything placeholder and
+/// releasing it is a no-op.
+pub opaque type ConnectionPermit {
+  ConnectionPermit(inner: Option(connection_limit.Permit))
+}
+
+/// Try to acquire a configured connection slot for a transport.
+///
+/// Pass the real socket peer IP, never a client-supplied address such as
+/// `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
+/// node-wide limit is already reached.
+pub fn acquire_connection_slot(
+  sockets: Sockets,
+  ip: String,
+) -> Result(ConnectionPermit, Nil) {
+  connection_limit.acquire_optional(
+    beryl.configured_connection_limiter(sockets),
+    ip,
+  )
+  |> result.map(ConnectionPermit)
+}
+
+/// Bind an acquired connection slot to the calling connection process.
+///
+/// The limiter monitors the caller so the slot is reclaimed if the process
+/// dies without running its close path.
+pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.bind_optional(permit.inner)
+}
+
+/// Release a connection slot acquired by a transport.
+pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.release_optional(permit.inner)
+}
+
+/// Return the configured inbound frame size cap for transports.
+pub fn max_inbound_frame_bytes(sockets: Sockets) -> Int {
+  beryl.configured_max_inbound_frame_bytes(sockets)
+}
 
 // --- Telemetry ---
 

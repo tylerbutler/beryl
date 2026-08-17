@@ -1,4 +1,4 @@
-//// `Ref` validity and single-use semantics for app-side dispatch. A message
+//// `ReplyRef` validity and single-use semantics for app-side dispatch. A
 //// reply ref is single-use (a second reply against it is dropped) and stops
 //// being valid once its topic closes — a stored ref replied to after the
 //// topic left, or after a leave+rejoin, is dropped rather than sent as a
@@ -7,7 +7,9 @@
 
 import app_test_helpers as h
 import beryl
-import beryl/socket.{type Ref, AcceptJoin, Info, Join, Message, Next, ReplyOk}
+import beryl/socket.{
+  type ReplyRef, AcceptJoin, Info, Join, Message, Next, ReplyOk,
+}
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
@@ -20,7 +22,7 @@ pub type Msg {
 }
 
 type Model {
-  Model(stashed: Option(Ref))
+  Model(stashed: Option(ReplyRef))
 }
 
 /// - "double": reply to the same ref twice in one effects list (single-use).

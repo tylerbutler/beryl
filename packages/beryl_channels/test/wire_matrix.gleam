@@ -72,7 +72,7 @@ pub const room_pattern = "room:*"
 // ---------------------------------------------------------------------------
 
 /// The hand-written `update` half of the matrix.
-pub fn raw_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil, Nil) {
+pub fn raw_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
   let pattern = topic.parse_pattern(room_pattern)
   fn(model, input) { socket.Next(model, raw_effects(pattern, input)) }
 }
@@ -118,7 +118,7 @@ fn raw_join(
   pattern: topic.TopicPattern,
   name: String,
   payload: dynamic.Dynamic,
-  ref: socket.Ref,
+  ref: socket.JoinRef,
 ) -> List(socket.Effect) {
   use <- guard_reject(topic.matches(pattern, name), ref, unmatched_payload())
   use <- guard_reject(!denied(payload), ref, denied_payload())
@@ -127,7 +127,7 @@ fn raw_join(
 
 fn guard_reject(
   allowed: Bool,
-  ref: socket.Ref,
+  ref: socket.JoinRef,
   reason: json.Json,
   otherwise: fn() -> List(socket.Effect),
 ) -> List(socket.Effect) {

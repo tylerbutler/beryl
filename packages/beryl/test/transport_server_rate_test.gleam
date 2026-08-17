@@ -51,7 +51,7 @@ type Conn {
 }
 
 fn connect(channels: beryl.Sockets, ip: String) -> Conn {
-  let assert Ok(permit) = beryl.acquire_connection_slot(channels, ip)
+  let assert Ok(permit) = transport.acquire_connection_slot(channels, ip)
   let #(state, selector) =
     server.init_connection(
       sockets: channels,

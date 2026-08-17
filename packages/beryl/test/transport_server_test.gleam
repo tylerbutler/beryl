@@ -41,7 +41,7 @@ pub fn shared_server_preserves_negotiated_socket_codec_test() {
     )
   let telemetry = transport.telemetry(sockets, transport.Mist)
   let assert Ok(connection_permit) =
-    beryl.acquire_connection_slot(sockets, "127.0.0.1")
+    transport.acquire_connection_slot(sockets, "127.0.0.1")
   let #(state, selector) =
     server.init_connection(
       sockets: sockets,

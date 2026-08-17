@@ -125,20 +125,6 @@ A per-topic-pattern rate limit used a pattern string that is not a valid
  when you act on them differently, and otherwise keep a catch-all arm
  such as `InvalidTopicPattern(pattern, _)`.
 
-### `ConnectionPermit`
-
-A held per-IP connection slot returned by `acquire_connection_slot`.
-
- Opaque so Beryl can restructure the connection limiter without breaking
- transport authors. Hold it for the lifetime of the connection and pass it
- to `release_connection_slot` when the connection closes. When no per-IP
- limit is configured the permit is an admit-everything placeholder and
- releasing it is a no-op.
-
-```gleam
-pub type ConnectionPermit
-```
-
 ### `LoggingConfig`
 
 Logging configuration for Beryl diagnostics.
@@ -211,39 +197,6 @@ The runtime did not acknowledge the stop request within the shutdown
  window. The system may still be terminating.
 
 ## Functions
-
-### `acquire_connection_slot`
-
-Try to acquire a configured per-IP connection slot for transports.
-
- Transports call this before admitting a connection, passing the **real
- socket peer IP**. Do not pass a client-supplied address (e.g. from
- `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
- `Ok(permit)` when admitted (release the permit with
- `release_connection_slot` on close; when no limit is configured every
- connection is admitted), or `Error(Nil)` when the peer is already at its
- limit.
-
-```gleam
-pub fn acquire_connection_slot(
-  Sockets,
-  String
-) -> Result(ConnectionPermit, Nil)
-```
-
-### `bind_connection_slot`
-
-Bind an acquired connection slot to the calling process.
-
- Call this from the long-lived connection process (e.g. the WebSocket
- handler's init) after `acquire_connection_slot`. The limiter monitors the
- caller so the slot is reclaimed even if the connection process dies
- without running its close path — otherwise crashed connections would
- permanently exhaust their IP's slots.
-
-```gleam
-pub fn bind_connection_slot(ConnectionPermit) -> Nil
-```
 
 ### `broadcast`
 
@@ -360,7 +313,7 @@ Build the app-side dispatch supervision child specification.
 pub fn child_spec(
   Config,
   init: fn(socket.ConnectInfo(a)) -> #(b, List(socket.Effect)),
-  update: fn(b, socket.Input(a)) -> socket.Next(b, a)
+  update: fn(b, socket.Input(a)) -> socket.Next(b)
 ) -> Result(#(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ConfigError)
 ```
 
@@ -389,25 +342,6 @@ pub fn logging_config(
   level: LogLevel,
   include_payloads: Bool
 ) -> LoggingConfig
-```
-
-### `max_inbound_frame_bytes`
-
-Return the configured inbound frame size cap for transports.
-
-```gleam
-pub fn max_inbound_frame_bytes(Sockets) -> Int
-```
-
-### `release_connection_slot`
-
-Release a per-IP connection slot acquired by a transport.
-
- Call from the process the permit was bound to (or from an unbound
- process when releasing before the connection was established).
-
-```gleam
-pub fn release_connection_slot(ConnectionPermit) -> Nil
 ```
 
 ### `stop`

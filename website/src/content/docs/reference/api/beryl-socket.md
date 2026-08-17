@@ -76,19 +76,19 @@ One update may return several effects, applied strictly in list order
 ```gleam
 pub type Effect {
   AcceptJoin(
-    ref: Ref,
+    ref: JoinRef,
     reply: option.Option(json.Json)
   )
   RejectJoin(
-    ref: Ref,
+    ref: JoinRef,
     reason: json.Json
   )
   ReplyOk(
-    ref: Ref,
+    ref: ReplyRef,
     payload: json.Json
   )
   ReplyError(
-    ref: Ref,
+    ref: ReplyRef,
     payload: json.Json
   )
   Push(
@@ -132,7 +132,7 @@ pub type Effect {
 #### Constructors
 
 ##### `AcceptJoin(
-  ref: Ref,
+  ref: JoinRef,
   reply: option.Option(json.Json)
 )`
 
@@ -141,21 +141,21 @@ Accept a pending join. Subscribes the socket to the topic and sends
  while the `Join` input's ref is pending.
 
 ##### `RejectJoin(
-  ref: Ref,
+  ref: JoinRef,
   reason: json.Json
 )`
 
 Reject a pending join with an error payload.
 
 ##### `ReplyOk(
-  ref: Ref,
+  ref: ReplyRef,
   payload: json.Json
 )`
 
 Reply successfully to a client message ref.
 
 ##### `ReplyError(
-  ref: Ref,
+  ref: ReplyRef,
   payload: json.Json
 )`
 
@@ -259,13 +259,13 @@ pub type Input(a) {
   Join(
     topic: String,
     payload: dynamic.Dynamic,
-    ref: Ref
+    ref: JoinRef
   )
   Message(
     topic: String,
     event: String,
     payload: dynamic.Dynamic,
-    ref: option.Option(Ref)
+    ref: option.Option(ReplyRef)
   )
   Binary(
     topic: String,
@@ -284,7 +284,7 @@ pub type Input(a) {
 ##### `Join(
   topic: String,
   payload: dynamic.Dynamic,
-  ref: Ref
+  ref: JoinRef
 )`
 
 A client asked to join a topic. Answer with `AcceptJoin` or
@@ -295,7 +295,7 @@ A client asked to join a topic. Answer with `AcceptJoin` or
   topic: String,
   event: String,
   payload: dynamic.Dynamic,
-  ref: option.Option(Ref)
+  ref: option.Option(ReplyRef)
 )`
 
 A client message on a joined topic. `ref` is present for messages
@@ -324,13 +324,25 @@ A joined topic ended (client leave, kick, crash, or socket close).
 A typed server-side message, sent via the socket's `Sender` (see
  `ConnectInfo.self` and `notify`).
 
+### `JoinRef`
+
+A pending join correlation handle.
+
+ Pass it back in `AcceptJoin` or `RejectJoin`. A join ref is valid only for
+ its pending join and carries a unique runtime token, so a delayed completion
+ for an older same-topic join cannot answer a replacement or retry.
+
+```gleam
+pub type JoinRef
+```
+
 ### `Next`
 
 The result of one `update` call: the next model plus effects to apply,
  or an instruction to stop the whole socket.
 
 ```gleam
-pub type Next(a, b) {
+pub type Next(a) {
   Next(
     model: a,
     effects: List(Effect)
@@ -353,20 +365,17 @@ Continue with the given model, applying the effects in order.
 Tear down the socket: every joined topic receives a `Closed` input,
  terminal frames are sent, and the transport connection is closed.
 
-### `Ref`
+### `ReplyRef`
 
-A reply correlation handle.
+A client message reply correlation handle.
 
- Carried by `Join` and (when the client requested a reply) `Message`
- inputs. Pass it back in `AcceptJoin`/`RejectJoin`/`ReplyOk`/`ReplyError`
- effects. Message refs may be stored in the model and answered from a later
- `update` turn (for example, after an async lookup completes). Join refs are
- valid only for their pending join and carry a unique runtime token, so a
- delayed completion for an older same-topic join cannot answer a replacement
- or retry.
+ Pass it back in `ReplyOk` or `ReplyError`. Reply refs may be stored in the
+ model and answered from a later `update` turn (for example, after an async
+ lookup completes). They are single-use and remain valid only while the
+ topic instance that received the message stays open.
 
 ```gleam
-pub type Ref
+pub type ReplyRef
 ```
 
 ### `Sender`
@@ -444,13 +453,13 @@ pub fn notify(
 
 A `ReplyOk` when the client supplied a ref; no effects otherwise.
 
- `Message` inputs carry `Option(Ref)` (refless messages expect no
- reply) while the `ReplyOk` effect demands a `Ref`, so every handler
+ `Message` inputs carry `Option(ReplyRef)` (refless messages expect no
+ reply) while the `ReplyOk` effect demands a `ReplyRef`, so every handler
  that replies conditionally needs this gate.
 
 ```gleam
 pub fn reply_ok(
-  option.Option(Ref),
+  option.Option(ReplyRef),
   json.Json
 ) -> List(Effect)
 ```

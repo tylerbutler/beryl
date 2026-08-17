@@ -85,8 +85,8 @@ Build a namespace from a topic pattern (`beryl/topic` syntax, e.g.
 ```gleam
 pub fn namespace(
   pattern: String,
-  join: fn(a, Match, dynamic.Dynamic, socket.Ref) -> #(a, List(socket.Effect)),
-  message: fn(a, Match, String, dynamic.Dynamic, option.Option(socket.Ref)) -> #(a, List(socket.Effect)),
+  join: fn(a, Match, dynamic.Dynamic, socket.JoinRef) -> #(a, List(socket.Effect)),
+  message: fn(a, Match, String, dynamic.Dynamic, option.Option(socket.ReplyRef)) -> #(a, List(socket.Effect)),
   closed: fn(a, Match, socket.StopReason) -> #(a, List(socket.Effect))
 ) -> Namespace(a)
 ```
@@ -105,7 +105,7 @@ pub fn route(
   json.Json,
   a,
   socket.Input(b)
-) -> socket.Next(a, b)
+) -> socket.Next(a)
 ```
 
 ### `unknown_topic`

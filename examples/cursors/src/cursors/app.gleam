@@ -15,7 +15,7 @@
 ////   `cursor_rooms_update` wrappers that drive the standalone cursors server
 ////   through a `beryl.child_spec` runtime, reusing that per-topic surface.
 
-import beryl/socket.{type Effect, type Ref}
+import beryl/socket.{type Effect, type JoinRef}
 import beryl/socket/router
 import example_helpers/color
 import example_helpers/payload
@@ -43,7 +43,7 @@ pub fn join(
   socket_id: String,
   topic: String,
   payload: Dynamic,
-  ref: Ref,
+  ref: JoinRef,
 ) -> #(Option(Model), List(Effect)) {
   let username = payload.string_or(payload, "username", "Anonymous")
   let color = color.pastel_for(socket_id)
@@ -196,7 +196,7 @@ fn namespace(ctx: Ctx) -> router.Namespace(CursorRooms) {
 /// Build the socket-wide update once, sharing the app-owned model.
 pub fn cursor_rooms_update(
   ctx: Ctx,
-) -> fn(CursorRooms, socket.Input(Nil)) -> socket.Next(CursorRooms, Nil) {
+) -> fn(CursorRooms, socket.Input(Nil)) -> socket.Next(CursorRooms) {
   let namespaces = [namespace(ctx)]
   fn(model, input) {
     router.route(namespaces, router.unknown_topic(), model, input)

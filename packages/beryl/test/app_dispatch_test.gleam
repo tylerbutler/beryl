@@ -5,7 +5,7 @@
 import app_test_helpers as h
 import beryl
 import beryl/socket.{
-  type Ref, AcceptJoin, Closed, Info, Join, Message, Next, RejectJoin,
+  type JoinRef, AcceptJoin, Closed, Info, Join, Message, Next, RejectJoin,
   ReplyError, ReplyOk,
 }
 import beryl/transport
@@ -27,7 +27,7 @@ type JoinRaceMode {
 }
 
 type JoinRaceModel {
-  JoinRaceModel(previous: Option(Ref), mode: JoinRaceMode)
+  JoinRaceModel(previous: Option(JoinRef), mode: JoinRaceMode)
 }
 
 fn start_join_race(mode: JoinRaceMode) -> beryl.Sockets {

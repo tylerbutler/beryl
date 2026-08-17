@@ -9,7 +9,7 @@ This guide covers how beryl surfaces errors to your app and to connected clients
 Return a `RejectJoin` effect to reject a client. The error payload is sent back as a `phx_reply` with `status: "error"`:
 
 ```gleam
-fn update(model: Model, ev: Input(Msg)) -> Next(Model, Msg) {
+fn update(model: Model, ev: Input(Msg)) -> Next(Model) {
   case ev {
     socket.Join(topic, payload, ref) ->
       case authenticate(payload) {
@@ -89,7 +89,7 @@ socket.Message(_topic, "create_item", payload, option.Some(ref)) ->
 ```
 
 :::note[Refless messages cannot be answered]
-`ReplyOk`/`ReplyError` need the message's `Ref`, which is `Some` only when the client expects a reply. A `Message` whose ref is `None` has nothing to correlate an answer with — the type system makes an unanswerable reply unrepresentable. Use `Push` for server-initiated messages with your own event name.
+`ReplyOk`/`ReplyError` need the message's `ReplyRef`, which is `Some` only when the client expects a reply. A `Message` whose ref is `None` has nothing to correlate an answer with — the type system makes an unanswerable reply unrepresentable. Use `Push` for server-initiated messages with your own event name.
 :::
 
 ## Unmatched topics

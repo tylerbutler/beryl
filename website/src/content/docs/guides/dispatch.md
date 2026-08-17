@@ -95,7 +95,7 @@ fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   #(Model(joined_topics: [], self: info.self), [])
 }
 
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
   let room_pattern = topic.parse_pattern("room:*")
 
   case ev {
@@ -253,7 +253,7 @@ fn rooms(ctx: Ctx) -> router.Namespace(Model) {
   )
 }
 
-fn update(ctx: Ctx) -> fn(Model, socket.Input(Msg)) -> socket.Next(Model, Msg) {
+fn update(ctx: Ctx) -> fn(Model, socket.Input(Msg)) -> socket.Next(Model) {
   let namespaces = [router.accept_only("lobby"), rooms(ctx)]
   fn(model, input) {
     router.route(namespaces, router.unknown_topic(), model, input)

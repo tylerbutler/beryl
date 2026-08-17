@@ -199,7 +199,7 @@ fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
   #(Model(bridge: forwarder), [])
 }
 
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
   case ev {
     Info(DocUpdated(version)) ->
       Next(model, [

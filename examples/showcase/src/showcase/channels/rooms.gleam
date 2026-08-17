@@ -11,7 +11,7 @@
 //// join cannot slip between them and overshoot the cap.
 
 import beryl/group.{type Groups}
-import beryl/socket.{type Ref}
+import beryl/socket.{type ReplyRef}
 import beryl_channels/channel
 import example_helpers/color
 import example_helpers/payload
@@ -149,7 +149,11 @@ fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
 
 /// The message broadcast and its reply, in that order: the sender sees its
 /// own message before the acknowledgment, exactly as before.
-fn new_msg(state: State, raw: Dynamic, ref: Option(Ref)) -> channel.Actions {
+fn new_msg(
+  state: State,
+  raw: Dynamic,
+  ref: Option(ReplyRef),
+) -> channel.Actions {
   case string.trim(payload.string_or(raw, "text", "")) {
     "" ->
       channel.actions()

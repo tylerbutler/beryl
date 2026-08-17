@@ -14,10 +14,24 @@ Transport SPI — the contract between beryl core and WebSocket transport
 
  `beryl/transport/server` owns the shared admission, connection, rate,
  decode, and telemetry pipeline. This low-level SPI keeps only the hooks a
- transport implementation needs: exact-owner atomic admission, disconnect,
- text/binary routing, the configured codec, and transport telemetry.
+ transport implementation needs: connection-capacity permits, exact-owner
+ atomic admission, disconnect, text/binary routing, the configured codec,
+ and transport telemetry.
 
 ## Types
+
+### `ConnectionPermit`
+
+A held connection slot returned by `acquire_connection_slot`.
+
+ Hold it for the lifetime of the connection and pass it to
+ `release_connection_slot` when the connection closes. When no connection
+ limit is configured the permit is an admit-everything placeholder and
+ releasing it is a no-op.
+
+```gleam
+pub type ConnectionPermit
+```
 
 ### `FrameKind`
 
@@ -80,14 +94,6 @@ pub type UpgradeOutcome {
 
 ## Type aliases
 
-### `ConnectionPermit`
-
-Connection slot permit held by a transport connection.
-
-```gleam
-pub type ConnectionPermit = beryl.ConnectionPermit
-```
-
 ### `Sockets`
 
 Runtime handle accepted by transport implementations.
@@ -97,6 +103,21 @@ pub type Sockets = beryl.Sockets
 ```
 
 ## Functions
+
+### `acquire_connection_slot`
+
+Try to acquire a configured connection slot for a transport.
+
+ Pass the real socket peer IP, never a client-supplied address such as
+ `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
+ node-wide limit is already reached.
+
+```gleam
+pub fn acquire_connection_slot(
+  beryl.Sockets,
+  String
+) -> Result(ConnectionPermit, Nil)
+```
 
 ### `active_codec`
 
@@ -127,6 +148,33 @@ pub fn admit_socket(
   seed: socket.ConnectSeed,
   close: fn() -> Nil
 ) -> Result(Nil, Nil)
+```
+
+### `bind_connection_slot`
+
+Bind an acquired connection slot to the calling connection process.
+
+ The limiter monitors the caller so the slot is reclaimed if the process
+ dies without running its close path.
+
+```gleam
+pub fn bind_connection_slot(ConnectionPermit) -> Nil
+```
+
+### `max_inbound_frame_bytes`
+
+Return the configured inbound frame size cap for transports.
+
+```gleam
+pub fn max_inbound_frame_bytes(beryl.Sockets) -> Int
+```
+
+### `release_connection_slot`
+
+Release a connection slot acquired by a transport.
+
+```gleam
+pub fn release_connection_slot(ConnectionPermit) -> Nil
 ```
 
 ### `route_binary`
