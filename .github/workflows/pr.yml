@@ -57,39 +57,16 @@ jobs:
             --head ${{ github.event.pull_request.head.sha }} \
             --format github >> "$GITHUB_OUTPUT"
 
-      # Sticky comment keyed on an HTML marker: one comment per PR, rewritten
-      # on every push. `gh pr comment --edit-last` can't be used here — it
-      # edits the newest github-actions[bot] comment whatever its content, so
-      # it clobbers the protocol-smoke comment from ci.yml and both workflows
-      # then keep re-creating each other's comments.
+      # `header` scopes the sticky comment to this workflow. `gh pr comment
+      # --edit-last` can't be used here — it edits the newest
+      # github-actions[bot] comment whatever its content, so it clobbers the
+      # protocol-smoke comment from ci.yml and both then re-create each other.
       - name: Comment changelog preview
         if: steps.changelog.outputs.preview != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PREVIEW: ${{ steps.changelog.outputs.preview }}
-        run: |
-          marker="<!-- beryl-changelog-check -->"
-          body="$marker
-          $PREVIEW"
-          comment_id="$(
-            gh api \
-              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-              --paginate \
-              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" \
-              | head -n 1
-          )"
-          if [[ -n "$comment_id" ]]; then
-            gh api \
-              --method PATCH \
-              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
-              --raw-field body="$body"
-          else
-            gh api \
-              --method POST \
-              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-              --raw-field body="$body"
-          fi
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # ratchet:marocchino/sticky-pull-request-comment@v3
+        with:
+          header: beryl-changelog-check
+          message: ${{ steps.changelog.outputs.preview }}
 
       - name: Fail on missing changelog fragments
         if: steps.changelog.outcome == 'failure'
