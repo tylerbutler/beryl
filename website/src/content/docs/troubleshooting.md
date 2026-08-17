@@ -70,7 +70,7 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 ## Channel-layer symptoms
 
-### `child_spec` returns `ChildSpecInvalidHandlers`
+### `child_spec` returns a handler error
 
 - `InvalidPattern(pattern, reason)` means the pattern is not valid
   `beryl/topic` syntax. `reason` is the nested `TopicError` (`EmptyTopic` or
@@ -82,14 +82,14 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
 
 The sender is generation-scoped. Mail for a closed or rejoined channel is
 dropped still sealed, and `notify` never reports liveness. Capture
-`info.self` from each new join and install `channel.on_info`.
+`context.self` from each new join and install `channel.on_info`.
 
-### Termination actions do not arrive
+### A termination action does not compile
 
-- `push`, `push_presence`, `reply_ok`, and `reply_error` are dropped because
-  the topic is already unsubscribed and its reply refs are already purged.
-- `presence_track` is immediately reversed by core's automatic close cleanup;
-  use `presence_untrack`.
+`on_terminate` accepts `Action(Closing)`. Use `broadcast`, `broadcast_from`,
+`presence_untrack`, or `broadcast_presence`; active-only pushes, replies, and
+presence tracking are rejected by the type checker.
+
 - If `on_terminate` panics, its actions are lost. Core still closes sibling
   channels, but the old instance remains reachable through its own typed
   sender until rejoin or socket teardown.

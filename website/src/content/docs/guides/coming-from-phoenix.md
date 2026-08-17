@@ -53,24 +53,24 @@ Two practical consequences either way:
 | Phoenix | beryl channel layer (`beryl_channels`) | beryl raw dispatch (`beryl`) |
 | --- | --- | --- |
 | `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
-| `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `info.seed` | `init(info)` — request data in `info.seed` |
+| `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)` — request data in `info.seed` |
 | `channel "room:*", RoomChannel` routing table | the handler list passed to `beryl_channels.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
 | One channel process per joined topic | one private state value per joined topic, in the socket's runtime actor | one `model` per socket, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
 | `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
-| `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(..)` / `channel.accept_with(.., reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |
+| `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state, callbacks)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |
 | `{:error, %{reason: ...}}` | `channel.reject(reason)` | `socket.RejectJoin(ref, reason)` |
 | `handle_in/3` | `channel.on_message` | `socket.Message(topic, event, payload, ref)` |
-| `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(ref, payload)` / `channel.reply_error(ref, payload)` action | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
-| `{:noreply, socket}` | `channel.continue(state)` | `socket.Next(model, [])` |
-| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep the `ReplyRef` in the channel's state, `reply_ok` from a later callback (not from `on_terminate` — see below) | store the `ReplyRef` in your model, `socket.ReplyOk` from a later `update` turn |
+| `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(message.reply, payload)` / `channel.reply_error(message.reply, payload)` action | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
+| `{:noreply, socket}` | `channel.next(state, [])` | `socket.Next(model, [])` |
+| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep `Option(ReplyRef)` in the channel's state and call `reply_ok` from a later active callback | store the `ReplyRef` in your model, `socket.ReplyOk` from a later `update` turn |
 | `push(socket, event, payload)` | `channel.push(event, payload)` action | `socket.Push(topic, event, payload)` effect |
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
 | `broadcast_from!/3` | `channel.broadcast_from(event, payload)` action | `socket.BroadcastFrom(topic, event, payload)` effect |
 | `handle_info(msg, socket)` + `send(pid, msg)` | `channel.on_info` + `channel.notify(sender, msg)` — typed per channel | `socket.Info(msg)` + `socket.notify(sender, msg)` — typed per socket |
 | `:after_join` self-send | `channel.with_actions` on the accepted join (ordered immediately after the ack) | order the effects after `AcceptJoin` in the same list |
 | `terminate/2` | `channel.on_terminate`, which returns actions | `socket.Closed(topic, reason)` event, delivered on every exit path |
-| `{:stop, reason, socket}` (ends one channel) | `channel.close()` / `channel.close_with(actions)` | `socket.KickTopic(topic)` |
+| `{:stop, reason, socket}` (ends one channel) | `channel.close(actions)` | `socket.KickTopic(topic)` |
 | ending the whole socket | `channel.stop_socket(reason)` | `socket.Stop(reason)` |
 | `MyAppWeb.Endpoint.broadcast/3` from anywhere | `beryl.broadcast(sockets, topic, event, payload)` | same |
 | `Phoenix.PubSub` | `beryl/pubsub`, also built on `pg` | same |
@@ -113,7 +113,6 @@ calls into ordered action values:
 ```gleam
 import beryl_channels/channel
 import gleam/json
-import gleam/option.{Some}
 
 type State {
   State(room_id: String)
@@ -124,10 +123,10 @@ pub type Note {
 }
 
 pub fn room() -> channel.Handler {
-  channel.handler("room:*", fn(_info: channel.JoinInfo(Note), topic, _payload) {
-    channel.accept_with(
-      channel.joined(State(room_id: topic), callbacks()),
-      json.object([#("room_id", json.string(topic))]),
+  channel.handler("room:*", fn(context: channel.JoinContext(Note)) {
+    channel.accept(State(room_id: context.topic), callbacks())
+    |> channel.with_reply(
+      json.object([#("room_id", json.string(context.topic))]),
     )
   })
 }
@@ -135,33 +134,28 @@ pub fn room() -> channel.Handler {
 fn callbacks() -> channel.Callbacks(State, Note) {
   channel.callbacks()
   |> channel.on_message(fn(state: State, message: channel.Message) {
-    case message.event, message.reply {
-      "ping", Some(ref) ->
-        channel.continue_with(
-          state,
-          channel.actions()
-            |> channel.reply_ok(
-              ref,
+    case message.event {
+      "ping" ->
+        channel.next(state, [
+          channel.reply_ok(
+              message.reply,
               json.object([#("status", json.string("ok"))]),
-            ),
-        )
+          ),
+        ])
 
-      "typing", _ ->
-        channel.continue_with(
-          state,
-          channel.actions() |> channel.broadcast_from("typing", json.object([])),
-        )
+      "typing" ->
+        channel.next(state, [
+          channel.broadcast_from("typing", json.object([])),
+        ])
 
-      _, _ -> channel.continue(state)
+      _ -> channel.next(state, [])
     }
   })
   |> channel.on_info(fn(state: State, note: Note) {
     let Tick(at) = note
-    channel.continue_with(
-      state,
-      channel.actions()
-        |> channel.push("tick", json.object([#("at", json.int(at))])),
-    )
+    channel.next(state, [
+      channel.push("tick", json.object([#("at", json.int(at))])),
+    ])
   })
 }
 ```
@@ -234,7 +228,7 @@ Three shifts to notice, common to both layers:
   `{"reason": "unmatched topic"}`.
 - **Server-side messages are typed.** Phoenix's `handle_info` receives any
   term. The channel layer's `on_info` receives *this channel's* own `info`
-  type, delivered through the `channel.Sender(info)` in `JoinInfo.self`; raw
+  type, delivered through the `channel.Sender(info)` in `JoinContext.self`; raw
   dispatch's `Info(msg)` carries the socket's `msg` type. Nothing is coerced in
   either direction — the layer seals the typed value in a closure and stamps
   the envelope with the join it belongs to, so a send to a channel that has
@@ -252,7 +246,7 @@ type State {
 ```
 
 There is no `assign/3`: a callback returns the next state directly, for example
-with `channel.continue_with(State(..state, joined_at: now), actions)`. Because
+with `channel.next(State(..state, joined_at: now), actions)`. Because
 the state type is sealed inside the channel's closures, two channels in the
 same handler table can have states with nothing in common — and the compiler
 still checks every field access.
@@ -275,15 +269,14 @@ accepted join; they are applied strictly after the acknowledgment, so the
 socket is already subscribed:
 
 ```gleam
-channel.accept(channel.joined(state, callbacks()))
-|> channel.with_actions(
-  channel.actions()
-  |> channel.presence_track(
+channel.accept(state, callbacks())
+|> channel.with_actions([
+  channel.presence_track(
     "user:" <> state.user_id,
     json.object([#("status", json.string("online"))]),
-  )
-  |> channel.push_presence("presence_state", presence_wire.encode_state),
-)
+  ),
+  channel.push_presence("presence_state", presence_wire.encode_state),
+])
 ```
 
 Snapshot actions encode when they are applied, so `presence_state` already
@@ -298,16 +291,16 @@ stay inside the channel:
 
 ```gleam
 channel.on_terminate(fn(state: State, _reason) {
-  channel.actions()
-  |> channel.presence_untrack("user:" <> state.user_id)
-  |> channel.broadcast_presence("presence_state", presence_wire.encode_state)
+  [
+    channel.presence_untrack("user:" <> state.user_id),
+    channel.broadcast_presence("presence_state", presence_wire.encode_state),
+  ]
 })
 ```
 
-The topic is already unsubscribed at that point and its reply refs are already
-purged, so `push` and `reply_ok`/`reply_error` actions are dropped while
-broadcasts and `presence_untrack` still apply. See
-[Termination](/guides/channels/#termination).
+The closing phase allows broadcasts, presence untracking, and presence
+broadcasts; active-only pushes, replies, and presence tracking do not
+type-check there. See [Termination](/guides/channels/#termination).
 
 The wire payloads (`presence_state`, `presence_diff`) match Phoenix Presence's
 shapes. See the [Presence guide](/guides/presence/) for setup and cross-node
@@ -334,7 +327,7 @@ That actor is the layer's `Endpoint.broadcast/3`; see
 [Limitations](/guides/channels/#limitations).
 
 To message one specific channel (Phoenix: `send(channel_pid, msg)`), keep the
-`channel.Sender(info)` from `JoinInfo.self` and call `channel.notify` — the
+`channel.Sender(info)` from `JoinContext.self` and call `channel.notify` — the
 message arrives as a typed `on_info` call. With raw dispatch, keep the
 `socket.Sender(msg)` from `ConnectInfo.self` and call `socket.notify`.
 

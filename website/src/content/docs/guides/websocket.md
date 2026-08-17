@@ -141,7 +141,7 @@ beryl.child_spec(
 ```
 
 With the channel layer, the same request-derived seed arrives in every
-handler's `join` callback as `channel.JoinInfo.seed`; there is no app-level
+handler's `join` callback as `channel.JoinContext.seed`; there is no app-level
 `init`. See [Authentication with the channel layer](/guides/authentication/#with-the-channel-layer).
 
 :::tip[Troubleshooting connections]

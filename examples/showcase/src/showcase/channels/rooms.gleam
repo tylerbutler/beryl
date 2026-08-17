@@ -23,7 +23,6 @@ import gleam/option.{type Option}
 import gleam/set
 import gleam/string
 import showcase/hub.{type Hub}
-import showcase/reply
 
 /// Maximum users per room — join rejected when full.
 const max_room_users = 20
@@ -53,14 +52,14 @@ type Note =
 
 /// The `room:*` channel.
 pub fn channel(ctx: Ctx) -> channel.Handler {
-  channel.handler("room:*", fn(info, topic, join_payload) {
-    let room_name = room_name(topic)
+  channel.handler("room:*", fn(context) {
+    let room_name = room_name(context.topic)
 
-    case room_exists(ctx, topic) {
+    case room_exists(ctx, context.topic) {
       False -> channel.reject(error("Room not found: " <> room_name))
 
       True ->
-        case room_is_full(ctx, topic) {
+        case room_is_full(ctx, context.topic) {
           True ->
             channel.reject(error_with_code(
               403,
@@ -70,14 +69,14 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
           False -> {
             let state =
               State(
-                topic: topic,
-                socket_id: info.socket_id,
+                topic: context.topic,
+                socket_id: context.socket_id,
                 username: payload.string_or(
-                  join_payload,
+                  context.payload,
                   "username",
                   "Anonymous",
                 ),
-                color: color.pastel_for(info.socket_id),
+                color: color.pastel_for(context.socket_id),
                 room_name: room_name,
               )
 
@@ -86,13 +85,13 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
             announce_rooms_changed(ctx, state.room_name)
             session_presence.track(
               ctx.presence,
-              topic,
+              context.topic,
               state.socket_id,
               presence_meta(state, typing: False),
             )
 
-            channel.accept_with(
-              channel.joined(state, callbacks(ctx)),
+            channel.accept(state, callbacks(ctx))
+            |> channel.with_reply(
               json.object([
                 #("socket_id", json.string(state.socket_id)),
                 #("username", json.string(state.username)),
@@ -102,13 +101,12 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
             )
             // Applied right after the acknowledgment, in the same turn as
             // the capacity check and session-presence mutation above.
-            |> channel.with_actions(
-              channel.actions()
-              |> channel.broadcast(
+            |> channel.with_actions([
+              channel.broadcast(
                 "new_msg",
                 system_message(state.username <> " joined the room"),
               ),
-            )
+            ])
           }
         }
     }
@@ -120,17 +118,13 @@ fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
   |> channel.on_message(fn(state: State, message: channel.Message) {
     case message.event {
       "new_msg" ->
-        channel.continue_with(
-          state,
-          new_msg(state, message.payload, message.reply),
-        )
+        channel.next(state, new_msg(state, message.payload, message.reply))
 
-      "typing" -> channel.continue_with(state, typing(ctx, state, typing: True))
+      "typing" -> channel.next(state, typing(ctx, state, typing: True))
 
-      "stop_typing" ->
-        channel.continue_with(state, typing(ctx, state, typing: False))
+      "stop_typing" -> channel.next(state, typing(ctx, state, typing: False))
 
-      _ -> channel.continue(state)
+      _ -> channel.next(state, [])
     }
   })
   |> channel.on_terminate(fn(state: State, _reason) {
@@ -139,11 +133,12 @@ fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
 
     // The departure remains a termination action. Session presence publishes
     // the post-leave roster asynchronously from its ETS snapshot.
-    channel.actions()
-    |> channel.broadcast(
-      "new_msg",
-      system_message(state.username <> " left the room"),
-    )
+    [
+      channel.broadcast(
+        "new_msg",
+        system_message(state.username <> " left the room"),
+      ),
+    ]
   })
 }
 
@@ -153,43 +148,48 @@ fn new_msg(
   state: State,
   raw: Dynamic,
   ref: Option(ReplyRef),
-) -> channel.Actions {
+) -> List(channel.Action(channel.Active)) {
   case string.trim(payload.string_or(raw, "text", "")) {
-    "" ->
-      channel.actions()
-      |> reply.ok(ref, error_with_code(422, "Message cannot be empty"))
+    "" -> [
+      channel.reply_ok(ref, error_with_code(422, "Message cannot be empty")),
+    ]
 
-    trimmed ->
-      channel.actions()
-      |> channel.broadcast("new_msg", user_message(state, trimmed))
-      |> reply.ok(
+    trimmed -> [
+      channel.broadcast("new_msg", user_message(state, trimmed)),
+      channel.reply_ok(
         ref,
         json.object([
           #("status", json.string("ok")),
           #("timestamp", json.int(timestamp_ms())),
         ]),
-      )
+      ),
+    ]
   }
 }
 
 /// Re-tracking the same key replaces the entry, so a typing toggle is a
 /// track with updated meta plus the indicator broadcast to everyone else.
-fn typing(ctx: Ctx, state: State, typing typing: Bool) -> channel.Actions {
+fn typing(
+  ctx: Ctx,
+  state: State,
+  typing typing: Bool,
+) -> List(channel.Action(channel.Active)) {
   session_presence.track(
     ctx.presence,
     state.topic,
     state.socket_id,
     presence_meta(state, typing: typing),
   )
-  channel.actions()
-  |> channel.broadcast_from(
-    "typing",
-    json.object([
-      #("username", json.string(state.username)),
-      #("socket_id", json.string(state.socket_id)),
-      #("typing", json.bool(typing)),
-    ]),
-  )
+  [
+    channel.broadcast_from(
+      "typing",
+      json.object([
+        #("username", json.string(state.username)),
+        #("socket_id", json.string(state.socket_id)),
+        #("typing", json.bool(typing)),
+      ]),
+    ),
+  ]
 }
 
 /// The room list is announced on the application-wide read-only `lobby`

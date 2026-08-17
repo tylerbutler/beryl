@@ -15,11 +15,9 @@ import gleam/string
 import gleeunit/should
 
 fn ok_handler(pattern: String) -> channel.Handler {
-  channel.handler(pattern, fn(_info, _topic, _payload) {
-    channel.accept_with(
-      channel.joined(Nil, channel.callbacks()),
-      json.object([#("handler", json.string(pattern))]),
-    )
+  channel.handler(pattern, fn(_context) {
+    channel.accept(Nil, channel.callbacks())
+    |> channel.with_reply(json.object([#("handler", json.string(pattern))]))
   })
 }
 
@@ -30,14 +28,7 @@ pub fn child_spec_rejects_an_invalid_pattern_before_building_test() {
     ok_handler("room:*"),
     ok_handler(""),
   ])
-  |> should.equal(
-    Error(
-      beryl_channels.ChildSpecInvalidHandlers(beryl_channels.InvalidPattern(
-        "",
-        topic.EmptyTopic,
-      )),
-    ),
-  )
+  |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn child_spec_rejects_an_invalid_handler_table_test() {
@@ -48,13 +39,7 @@ pub fn child_spec_rejects_an_invalid_handler_table_test() {
     ])
 
   result
-  |> should.equal(
-    Error(
-      beryl_channels.ChildSpecInvalidHandlers(beryl_channels.DuplicatePattern(
-        "room:*",
-      )),
-    ),
-  )
+  |> should.equal(Error(beryl_channels.DuplicatePattern("room:*")))
 }
 
 pub fn child_spec_nests_the_core_config_error_verbatim_test() {
@@ -64,9 +49,7 @@ pub fn child_spec_nests_the_core_config_error_verbatim_test() {
 
   beryl_channels.child_spec(config, handlers: [ok_handler("room:*")])
   |> should.equal(
-    Error(
-      beryl_channels.ChildSpecInvalidConfig(beryl.HeartbeatTimeoutTooLow(2)),
-    ),
+    Error(beryl_channels.InvalidConfig(beryl.HeartbeatTimeoutTooLow(2))),
   )
 }
 
@@ -138,25 +121,20 @@ fn drive_lifecycle(channels: beryl.Sockets) -> List(String) {
 
 /// A channel that traces its whole lifecycle.
 fn lifecycle_handler(trace: process.Subject(String)) -> channel.Handler {
-  channel.handler("room:*", fn(_info, topic, _payload) {
+  channel.handler("room:*", fn(context) {
     let callbacks =
       channel.callbacks()
       |> channel.on_message(fn(state, message) {
         process.send(trace, "message:" <> message.event)
-        channel.continue_with(
-          state,
-          channel.actions() |> channel.push("pong", json.int(1)),
-        )
+        channel.next(state, [channel.push("pong", json.int(1))])
       })
       |> channel.on_terminate(fn(_state, reason) {
         process.send(trace, "terminate:" <> helper.reason_name(reason))
-        channel.actions()
+        []
       })
-    process.send(trace, "join:" <> topic)
-    channel.accept_with(
-      channel.joined(Nil, callbacks),
-      json.object([#("handler", json.string("room:*"))]),
-    )
+    process.send(trace, "join:" <> context.topic)
+    channel.accept(Nil, callbacks)
+    |> channel.with_reply(json.object([#("handler", json.string("room:*"))]))
   })
 }
 

@@ -56,7 +56,7 @@ and [`mist`'s `Dynamic` request
 internals](https://github.com/rawhat/mist/blob/v6.0.3/src/mist/internal/http.gleam#L64).
 
 Also make erasure closure-captured ("Option B"): a handler carries only
-`join`, which returns a `JoinedChannel` — closures capturing the typed
+`join`, which returns sealed callback closures capturing the typed
 assigns, each callback returning the next instance — so the coordinator
 never sees erased assigns and needs no per-callback coercions.
 

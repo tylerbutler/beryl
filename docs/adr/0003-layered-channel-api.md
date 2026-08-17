@@ -48,28 +48,26 @@ API, with no access to internal modules:
   unsupervised start path.
 - A handler pairs a topic pattern with a typed `join` callback. The layer
   owns the socket-level model, so `join` receives a layer-built
-  `channel.JoinInfo(info)` — the socket id, the transport's
-  `socket.ConnectSeed`, and a `channel.Sender(info)` scoped to this join —
-  rather than the core `ConnectInfo` itself, along with the concrete topic
-  that matched and the client's join payload. It answers with a rejection
-  or a `JoinedChannel`: a record of closures (message, binary, info,
-  terminate) that capture the channel's typed state, each returning the
-  next `JoinedChannel` plus a list of channel actions. No channel state
-  value is erased — heterogeneity is encoded entirely in closures.
-- The router's model is the handler table plus one live `JoinedChannel`
-  per joined topic; its `update` matches each `Input` by topic to the
-  owning instance. Channel actions map one-to-one onto core `Effect`
-  values (the old API's single-action `HandleResult` shape generalizes to
-  a list, a strict superset) and lower in the order they were added.
+  `channel.JoinContext(info)` — socket id, transport seed, a scoped typed
+  sender, concrete topic, wildcard captures, and join payload — rather than
+  the core `ConnectInfo` itself. It answers with a rejection or
+  `channel.accept(state, callbacks)`, which seals the typed state inside
+  message, binary, info, and terminate closures. No channel state value is
+  erased — heterogeneity is encoded entirely in closures.
+- The router's model is the handler table plus one live sealed channel per
+  joined topic; its `update` matches each `Input` by topic to the owning
+  instance. The parsed matching pattern is reused to compute wildcard
+  captures once. Channel callbacks return ordered lists of opaque,
+  phase-typed actions that lower onto core `Effect` values in list order.
   A join's accept-time actions (`channel.with_actions`) lower strictly
   after the acknowledgment, so the socket is already subscribed and a
   push cannot overtake its own join reply. Asynchronous core effects may
   park that socket while other sockets continue; its remaining actions
   resume in order after the effect completes.
-  `on_terminate` returns topic-scoped actions that lower in the turn
-  closing the topic, after the instance is removed: the topic is already
-  unsubscribed there, so core drops pushes to it while broadcasts and
-  presence track/untrack still reach the topic's remaining subscribers.
+  `on_terminate` returns `List(Action(Closing))`, so only broadcasts,
+  presence untracking, and presence broadcasts can be requested after the
+  instance is removed. Pushes, replies, and presence tracking are
+  active-phase operations and cannot be returned there.
 - The layer owns the socket-level `msg` type, and it carries no typed
   value: a socket message is an envelope stamped with a topic and a
   per-socket monotonic join generation, wrapping one sealed `Mail`.
@@ -82,7 +80,7 @@ API, with no access to internal modules:
 - ADR 0001's remaining unchecked channel/socket dispatch coercion —
   connect-time assigns seeded erased and restored unchecked — closes
   structurally: a channel's state is created inside `join` and sealed by
-  `channel.joined`, so there is no pre-join erased seed to restore.
+  `channel.accept`, so there is no pre-join erased seed to restore.
 
 ## Consequences
 
@@ -131,14 +129,14 @@ after the package shipped. Two of its bullets described intentions that the
 implementation improved on, and both were rewritten in place so the record
 does not contradict `packages/beryl_channels`. What changed, and why:
 
-- **`join` receives `JoinInfo`, not the core `ConnectInfo`.** The layer
+- **`join` receives `JoinContext`, not the core `ConnectInfo`.** The layer
   owns the socket-level model and message type, so handing a channel the
   core `ConnectInfo(msg)` would have exposed the layer's own envelope type
-  to application code. `channel.JoinInfo(info)` carries what a channel can
-  actually use — `socket_id`, the transport's `socket.ConnectSeed`, and
-  this join's typed `Sender` — and nothing else. The soundness claim is
+  to application code. `channel.JoinContext(info)` carries what a channel
+  can use — connection data, the concrete topic, wildcard captures, the
+  join payload, and this join's typed `Sender`. The soundness claim is
   unaffected: there is still no pre-join erased seed, because a channel's
-  state is created inside `join` and sealed by `channel.joined`.
+  state is created inside `join` and sealed by `channel.accept`.
 - **No erase/restore pair returns.** The proposal budgeted for one sound
   erase-at-send/restore-at-receive pair per handler registration. It was
   not needed. `channel.notify` seals the typed value in a closure that

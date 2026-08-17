@@ -8,8 +8,8 @@ real-time sockets.
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
 > releases, and quality should not be considered production-ready.
 
-A channel is a topic pattern plus a typed `join` callback, and a joined
-channel is a record of closures over that channel's own private state.
+A channel is a topic pattern plus a typed `join` callback and callbacks
+over that channel's own private state.
 Register a list of handlers and the layer routes each socket event to the
 channel that owns its topic — no hand-written message union and no
 hand-written router.
@@ -37,18 +37,16 @@ import gleam/json
 import gleam/otp/static_supervisor
 
 pub fn room() -> channel.Handler {
-  channel.handler("room:*", fn(_info, _topic, _payload) {
+  channel.handler("room:*", fn(_context) {
     let callbacks =
       channel.callbacks()
       |> channel.on_message(fn(count, message) {
-        channel.continue_with(
-          count + 1,
-          channel.actions()
-            |> channel.broadcast(message.event, json.int(count + 1)),
-        )
+        channel.next(count + 1, [
+          channel.broadcast(message.event, json.int(count + 1)),
+        ])
       })
 
-    channel.accept(channel.joined(0, callbacks))
+    channel.accept(0, callbacks)
   })
 }
 

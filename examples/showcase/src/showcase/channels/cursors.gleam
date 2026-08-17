@@ -36,19 +36,24 @@ pub type Ctx {
 
 /// The `cursor:*` channel.
 pub fn channel(ctx: Ctx) -> channel.Handler {
-  channel.handler("cursor:*", fn(info, topic, join_payload) {
-    let username = payload.string_or(join_payload, "username", "Anonymous")
+  channel.handler("cursor:*", fn(context) {
+    let username = payload.string_or(context.payload, "username", "Anonymous")
     let state =
       State(
-        socket_id: info.socket_id,
+        socket_id: context.socket_id,
         username: username,
-        color: color.pastel_for(info.socket_id),
+        color: color.pastel_for(context.socket_id),
       )
 
-    session_presence.track(ctx.presence, topic, info.socket_id, meta(state))
+    session_presence.track(
+      ctx.presence,
+      context.topic,
+      context.socket_id,
+      meta(state),
+    )
 
-    channel.accept_with(
-      channel.joined(state, callbacks(ctx, topic)),
+    channel.accept(state, callbacks(ctx, context.topic))
+    |> channel.with_reply(
       json.object([
         #("socket_id", json.string(state.socket_id)),
         #("username", json.string(state.username)),
@@ -63,31 +68,25 @@ fn callbacks(ctx: Ctx, topic: String) -> channel.Callbacks(State, Note) {
   |> channel.on_message(fn(state: State, message: channel.Message) {
     case message.event {
       "cursor_move" ->
-        channel.continue_with(
-          state,
-          channel.actions()
-            |> channel.broadcast_from(
-              "cursor_move",
-              move(state, message.payload),
-            ),
-        )
+        channel.next(state, [
+          channel.broadcast_from("cursor_move", move(state, message.payload)),
+        ])
 
       "reaction" ->
         case decode_reaction(message.payload) {
           Some(reaction) ->
-            channel.continue_with(
-              state,
-              channel.actions() |> channel.broadcast_from("reaction", reaction),
-            )
-          None -> channel.continue(state)
+            channel.next(state, [
+              channel.broadcast_from("reaction", reaction),
+            ])
+          None -> channel.next(state, [])
         }
 
-      _ -> channel.continue(state)
+      _ -> channel.next(state, [])
     }
   })
   |> channel.on_terminate(fn(state: State, _reason) {
     session_presence.untrack(ctx.presence, topic, state.socket_id)
-    channel.actions()
+    []
   })
 }
 

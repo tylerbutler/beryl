@@ -195,13 +195,13 @@ fn forbidden() -> json.Json {
 Transport authentication is unchanged: `with_on_connect` still validates the
 handshake once before upgrade. A channel system has no app-level `init`, so
 each handler receives the same request-derived `ConnectSeed` as
-`channel.JoinInfo.seed` inside its `join` callback. Decode the already-verified
+`channel.JoinContext.seed` inside its `join` callback. Decode the already-verified
 identity from `seed.query` or `seed.headers`, apply topic authorization, and
-store the typed claims as that channel's private state with `channel.joined`.
+store the typed claims as that channel's private state with `channel.accept`.
 
 Keep expensive signature and expiry checks in `with_on_connect`; the per-join
 callback should only decode request data and apply cheap authorization rules.
-See [JoinInfo and the typed sender](/guides/channels/#joininfo-and-the-typed-sender).
+See [JoinContext and the typed sender](/guides/channels/#joincontext-and-the-typed-sender).
 
 ## Notes
 

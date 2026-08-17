@@ -62,59 +62,19 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/set
 
-/// Why a handler table was rejected.
-///
-/// Validation is deterministic and two-phase: every pattern's syntax is
-/// checked in registration order first, then duplicate pattern strings are
-/// looked for in registration order. The first problem found in that order
-/// is the one reported.
-pub type HandlerError {
-  /// A handler used a pattern string that is not a valid topic pattern.
-  /// `pattern` is the offending pattern and `reason` is the
-  /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
-  /// error nested rather than flattened to a string, so it stays matchable.
-  ///
-  /// New
-  /// [`topic.TopicError`](https://beryl.tylerbutler.com/reference/api/beryl-topic/#topicerror)
-  /// variants may be added in a minor release. Match exact variants only when
-  /// you act on them differently, and otherwise keep a catch-all arm such as
-  /// `InvalidPattern(pattern, _)`.
-  InvalidPattern(pattern: String, reason: topic.TopicError)
-  /// Two handlers were registered with the same pattern string. The
-  /// second one could never receive a join, because routing takes the
-  /// first match.
-  DuplicatePattern(pattern: String)
-}
-
 /// Why building a channel-system child specification failed.
 ///
-/// Like `beryl.child_spec`, this reports only the failures that can be
-/// detected before the supervision tree is started.
+/// Handler patterns are validated before the core configuration. Validation
+/// checks every pattern's syntax in registration order, then checks exact
+/// duplicates in registration order. Overlapping non-identical patterns are
+/// allowed because routing takes the first match.
 pub type ChildSpecError {
-  /// The handler table failed validation, exactly as
-  /// [`validate_handlers`](#validate_handlers) reports it.
-  ChildSpecInvalidHandlers(HandlerError)
-  /// The `beryl.Config` failed the core's eager validation. The wrapped
-  /// value is the core error exactly as `beryl.child_spec` returned it.
-  ChildSpecInvalidConfig(beryl.ConfigError)
-}
-
-/// Validate a handler table without starting anything.
-///
-/// Checks, in registration order, that every pattern is a valid beryl
-/// topic pattern, then — again in registration order — that no pattern
-/// string is registered twice. Overlapping but non-identical patterns
-/// (`"room:lobby"` and `"room:*"`) are valid: routing resolves them by
-/// first match.
-///
-/// [`child_spec`](#child_spec) runs exactly this validation before building
-/// anything, so a handler table that passes here is accepted there too.
-pub fn validate_handlers(
-  handlers: List(channel.Handler),
-) -> Result(Nil, HandlerError) {
-  let patterns = list.map(handlers, channel.pattern)
-  use _ <- result.try(list.try_each(patterns, validate_pattern))
-  check_duplicates(patterns, set.new())
+  /// A handler used an invalid topic pattern.
+  InvalidPattern(pattern: String, reason: topic.TopicError)
+  /// Two handlers registered the same pattern string.
+  DuplicatePattern(pattern: String)
+  /// The core `beryl.Config` failed eager validation.
+  InvalidConfig(reason: beryl.ConfigError)
 }
 
 /// Build a channel system's supervision child specification for embedding
@@ -122,9 +82,8 @@ pub fn validate_handlers(
 ///
 /// Like `beryl.child_spec`, this reports only what can be detected before
 /// the tree is started: the handler table is validated first, then the
-/// `beryl.Config`, whose error is returned nested in
-/// [`ChildSpecInvalidConfig`](#childspecerror). The returned
-/// `beryl.Sockets` is usable as soon as the owning tree is running.
+/// `beryl.Config`. The returned `beryl.Sockets` is usable as soon as the
+/// owning tree is running.
 ///
 /// ## Example
 ///
@@ -147,21 +106,21 @@ pub fn child_spec(
   #(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ChildSpecError,
 ) {
-  use table <- result.try(
-    compile(handlers) |> result.map_error(ChildSpecInvalidHandlers),
-  )
+  use table <- result.try(compile(handlers))
 
   beryl.child_spec(config, init: initialise(table), update: router.update)
-  |> result.map_error(ChildSpecInvalidConfig)
+  |> result.map_error(InvalidConfig)
 }
 
 /// Validate a handler table and parse its patterns once, before anything
 /// is started.
 fn compile(
   handlers: List(channel.Handler),
-) -> Result(List(router.Registered), HandlerError) {
-  use _ <- result.map(validate_handlers(handlers))
-  router.table(handlers)
+) -> Result(List(router.Registered), ChildSpecError) {
+  let patterns = list.map(handlers, channel.pattern)
+  use _ <- result.try(list.try_each(patterns, validate_pattern))
+  use _ <- result.try(check_duplicates(patterns, set.new()))
+  Ok(router.table(handlers))
 }
 
 /// The core `init` for a compiled handler table: one router per socket.
@@ -172,7 +131,7 @@ fn initialise(
   fn(info) { router.init(table, info) }
 }
 
-fn validate_pattern(pattern: String) -> Result(String, HandlerError) {
+fn validate_pattern(pattern: String) -> Result(String, ChildSpecError) {
   topic.validate_pattern(pattern)
   |> result.map_error(fn(error) {
     InvalidPattern(pattern: pattern, reason: error)
@@ -182,7 +141,7 @@ fn validate_pattern(pattern: String) -> Result(String, HandlerError) {
 fn check_duplicates(
   patterns: List(String),
   seen: set.Set(String),
-) -> Result(Nil, HandlerError) {
+) -> Result(Nil, ChildSpecError) {
   case patterns {
     [] -> Ok(Nil)
     [pattern, ..rest] ->

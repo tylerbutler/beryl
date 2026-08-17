@@ -20,31 +20,27 @@ fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
 /// join acknowledgment) and untracks-then-snapshots on a client message —
 /// both in a single action list, and neither naming a topic.
 fn presence_handler() -> channel.Handler {
-  channel.handler("room:*", fn(info, _topic, _payload) {
+  channel.handler("room:*", fn(context) {
     let callbacks =
       channel.callbacks()
       |> channel.on_info(fn(state, _message) {
-        channel.continue_with(
-          state,
-          channel.actions()
-            |> channel.presence_track(
-              "alice",
-              json.object([#("status", json.string("online"))]),
-            )
-            |> channel.broadcast_presence("presence_list", encode_users),
-        )
+        channel.next(state, [
+          channel.presence_track(
+            "alice",
+            json.object([#("status", json.string("online"))]),
+          ),
+          channel.broadcast_presence("presence_list", encode_users),
+        ])
       })
       |> channel.on_message(fn(state, _message) {
-        channel.continue_with(
-          state,
-          channel.actions()
-            |> channel.presence_untrack("alice")
-            |> channel.push_presence("presence_list", encode_users),
-        )
+        channel.next(state, [
+          channel.presence_untrack("alice"),
+          channel.push_presence("presence_list", encode_users),
+        ])
       })
 
-    channel.notify(info.self, Nil)
-    channel.accept(channel.joined(Nil, callbacks))
+    channel.notify(context.self, Nil)
+    channel.accept(Nil, callbacks)
   })
 }
 

@@ -32,8 +32,8 @@ See [Installation](/installation/) for version and transport choices.
 ## The shape
 
 A channel is a **topic pattern** plus a typed `join` callback. The `join`
-callback answers with a rejection, or with a joined channel: a set of
-callbacks bound to that channel's own private state.
+callback receives one context value and answers with a rejection or an
+accepted private state and callback set.
 
 ```gleam
 // src/my_app/room_channel.gleam
@@ -51,39 +51,40 @@ type Note {
 }
 
 pub fn room() -> channel.Handler {
-  channel.handler("room:*", fn(info: channel.JoinInfo(Note), topic, _payload) {
-    let state = State(room_id: topic, username: info.socket_id, sent: 0)
+  channel.handler("room:*", fn(context: channel.JoinContext(Note)) {
+    let state =
+      State(
+        room_id: context.topic,
+        username: context.socket_id,
+        sent: 0,
+      )
 
-    channel.accept_with(
-      channel.joined(state, callbacks()),
-      json.object([#("room", json.string(topic))]),
+    channel.accept(state, callbacks())
+    |> channel.with_reply(
+      json.object([#("room", json.string(context.topic))]),
     )
-    |> channel.with_actions(
-      channel.actions()
-      |> channel.broadcast("joined", json.string(state.username)),
-    )
+    |> channel.with_actions([
+      channel.broadcast("joined", json.string(state.username)),
+    ])
   })
 }
 
 fn callbacks() -> channel.Callbacks(State, Note) {
   channel.callbacks()
   |> channel.on_message(fn(state: State, message: channel.Message) {
-    channel.continue_with(
+    channel.next(
       State(..state, sent: state.sent + 1),
-      channel.actions()
-        |> channel.broadcast_from(message.event, json.int(state.sent + 1)),
+      [
+        channel.broadcast_from(message.event, json.int(state.sent + 1)),
+      ],
     )
   })
   |> channel.on_info(fn(state: State, note: Note) {
     let Tick(at) = note
-    channel.continue_with(
-      state,
-      channel.actions() |> channel.push("tick", json.int(at)),
-    )
+    channel.next(state, [channel.push("tick", json.int(at))])
   })
   |> channel.on_terminate(fn(state: State, _reason) {
-    channel.actions()
-    |> channel.broadcast("left", json.string(state.username))
+    [channel.broadcast("left", json.string(state.username))]
   })
 }
 ```
@@ -169,8 +170,9 @@ same transports. The layer only supplies the `init`/`update` pair.
 
 | Variant | Meaning |
 |---|---|
-| `ChildSpecInvalidHandlers(HandlerError)` | The handler table failed validation |
-| `ChildSpecInvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
+| `InvalidPattern(pattern, reason)` | A handler pattern is invalid |
+| `DuplicatePattern(pattern)` | The same pattern was registered twice |
+| `InvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
 
 ## Handler patterns and precedence
 
@@ -200,35 +202,11 @@ A bigger `handlers()` returns one entry per channel module:
 - **A join for a topic no handler matches is refused explicitly** with
   `{"reason": "unmatched topic"}` rather than left unanswered.
 
-Validate a table without starting anything:
-
-```gleam
-// src/my_app/handler_check.gleam
-import beryl/topic
-import beryl_channels
-import my_app
-
-pub fn check_handlers() -> Nil {
-  case beryl_channels.validate_handlers(my_app.handlers()) {
-    Ok(Nil) -> Nil
-    Error(beryl_channels.InvalidPattern(pattern, topic.EmptyTopic)) ->
-      panic as { "channel pattern " <> pattern <> " is empty" }
-    Error(beryl_channels.InvalidPattern(pattern, topic.InvalidFormat(detail))) ->
-      panic as { "invalid channel pattern " <> pattern <> ": " <> detail }
-    Error(beryl_channels.DuplicatePattern(pattern)) ->
-      panic as { "duplicate channel pattern " <> pattern }
-  }
-}
-```
-
 `InvalidPattern` carries the core
 [`topic.TopicError`](/reference/api/beryl-topic/) itself rather than a
-flattened string, so the reason stays matchable. `ChildSpecError` likewise
-nests the core configuration error instead of flattening it.
-
-The example above matches every `TopicError` variant that exists today.
-New variants may be added in a minor release, so use a catch-all when the
-exact reason does not change your handling:
+flattened string, so the reason stays matchable. New variants may be added
+in a minor release, so use a catch-all when the exact reason does not
+change your handling:
 
 ```gleam
 Error(beryl_channels.InvalidPattern(pattern, _reason)) ->
@@ -241,8 +219,8 @@ The same rule applies to
 
 Validation is deterministic and two-phase: every pattern's syntax is
 checked in registration order first, then duplicate pattern strings are
-looked for in registration order. `child_spec` runs exactly this check
-before building the supervised subtree.
+looked for in registration order. `child_spec` performs this check before
+building the supervised subtree.
 
 ## Typed state instead of assigns
 
@@ -256,12 +234,15 @@ type State {
 }
 
 // Inside the `join` callback:
-channel.joined(State(room_id: topic, username: name, sent: 0), callbacks())
+channel.accept(
+  State(room_id: context.topic, username: name, sent: 0),
+  callbacks(),
+)
 ```
 
-`channel.joined` binds the state to the callbacks by capturing it in
-closures. Each `channel.continue`/`continue_with` result rebuilds the same
-closures over the next state. No value is ever erased to `Dynamic`, and no
+`channel.accept` binds the state to the callbacks by capturing it in
+closures. Each `channel.next` result rebuilds the same closures over the
+next state. No value is ever erased to `Dynamic`, and no
 unchecked coercion is involved — which is why a `List(Handler)` can hold
 channels whose states have nothing in common.
 
@@ -270,21 +251,24 @@ The layer keeps **one instance per joined topic**. A socket joined to
 the layer prunes an instance when its topic closes. You do not write
 cleanup code for the state itself.
 
-## `JoinInfo` and the typed sender
+## `JoinContext` and the typed sender
 
-The `join` callback receives a `channel.JoinInfo(info)`:
+The `join` callback receives a `channel.JoinContext(info)`:
 
 | Field | Type | What it is |
 |---|---|---|
 | `socket_id` | `String` | Unique id of the socket that is joining |
 | `seed` | `socket.ConnectSeed` | Request data the transport assembled before the upgrade: path, query, headers, and any `on_connect` metadata |
 | `self` | `channel.Sender(info)` | This channel instance's own typed sender |
+| `topic` | `String` | Concrete topic being joined |
+| `params` | `List(String)` | Wildcard captures in pattern order; exact patterns receive `[]` |
+| `payload` | `Dynamic` | Raw client join payload |
 
-`JoinInfo` is a per-join view built by the layer, not beryl's core
+`JoinContext` is a per-join view built by the layer, not beryl's core
 `socket.ConnectInfo`. The layer owns the socket-level model and the
 socket-level message type — that is what lets channels keep private state
 and private message types — so it hands each join the connection facts it
-needs (`socket_id`, `seed`) plus a sender scoped to *this* join, rather
+needs plus a sender scoped to *this* join, rather
 than the core connect record.
 
 `channel.notify(sender, message)` delivers `message` to that channel's
@@ -321,7 +305,7 @@ A sender is scoped to the join that produced it. Sending is asynchronous
 and never fails, so it cannot report that the channel is gone — liveness
 is decided where the message is delivered:
 
-- If the channel has **closed** normally — a client leave, a `close()`
+- If the channel has **closed** normally — a client leave, a `close([])`
   result, a socket teardown — the envelope is dropped, still sealed.
 - If the same topic has since been **joined again**, the envelope's
   generation no longer matches the live instance, so it is dropped rather
@@ -347,16 +331,16 @@ process. Work that has to be part of the join itself belongs in
 
 ## Actions
 
-An action is one thing to do **on this channel's own topic**. Build an
-ordered list with `channel.actions()` and the builder functions:
+An action is one thing to do **on this channel's own topic**. Constructors
+return one opaque action; put them in a list in wire order:
 
 | Action | Effect |
 |---|---|
 | `push(event, payload)` | Server-initiated message to this socket on this topic |
 | `broadcast(event, payload)` | To every subscriber of this topic, including this socket |
 | `broadcast_from(event, payload)` | To every subscriber except this socket |
-| `reply_ok(ref, payload)` | Success reply, using the `reply` handle from a `Message` |
-| `reply_error(ref, payload)` | Error reply, using the same handle |
+| `reply_ok(reply, payload)` | Success reply when `Message.reply` is `Some`; no effect for `None` |
+| `reply_error(reply, payload)` | Error reply with the same optional-ref behavior |
 | `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
 | `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
 | `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |
@@ -381,9 +365,10 @@ The `encode` callbacks of `push_presence` and `broadcast_presence` run
 `presence_track` or `presence_untrack` earlier in the same list:
 
 ```gleam
-channel.actions()
-|> channel.presence_track(state.username, meta(state))
-|> channel.broadcast_presence("presence_list", presence_helpers.encode_users)
+[
+  channel.presence_track(state.username, meta(state)),
+  channel.broadcast_presence("presence_list", presence_helpers.encode_users),
+]
 ```
 
 ## Join actions
@@ -392,13 +377,13 @@ channel.actions()
 are emitted with the acknowledgment and applied strictly after it:
 
 ```gleam
-channel.accept_with(channel.joined(state, callbacks()), reply)
-|> channel.with_actions(
-  channel.actions()
-  |> channel.presence_track(state.username, meta(state))
-  |> channel.broadcast("new_msg", joined_message(state))
-  |> channel.broadcast_presence("presence_list", encode_users),
-)
+channel.accept(state, callbacks())
+|> channel.with_reply(reply)
+|> channel.with_actions([
+  channel.presence_track(state.username, meta(state)),
+  channel.broadcast("new_msg", joined_message(state)),
+  channel.broadcast_presence("presence_list", encode_users),
+])
 ```
 
 Two consequences worth designing around:
@@ -425,7 +410,7 @@ immediately after the join acknowledgment.
 | `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
 | `on_binary` | A binary frame on this topic | `fn(state, BitArray) -> Next(state)` |
 | `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
-| `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> Actions` |
+| `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
 
 `channel.callbacks()` starts from callbacks that ignore every input and
 stay joined; override only what the channel cares about.
@@ -436,22 +421,19 @@ asked for a reply:
 
 ```gleam
 channel.on_message(fn(state: State, message: channel.Message) {
-  case message.event, message.reply {
-    "new_msg", Some(ref) ->
-      channel.continue_with(
-        state,
-        channel.actions()
-          |> channel.broadcast("new_msg", body(message.payload))
-          |> channel.reply_ok(ref, json.object([])),
-      )
+  case message.event {
+    "new_msg" ->
+      channel.next(state, [
+        channel.broadcast("new_msg", body(message.payload)),
+        channel.reply_ok(message.reply, json.object([])),
+      ])
 
-    "typing", _ ->
-      channel.continue_with(
-        state,
-        channel.actions() |> channel.broadcast_from("typing", json.object([])),
-      )
+    "typing" ->
+      channel.next(state, [
+        channel.broadcast_from("typing", json.object([])),
+      ])
 
-    _, _ -> channel.continue(state)
+    _ -> channel.next(state, [])
   }
 })
 ```
@@ -460,13 +442,11 @@ Every callback answers with a `channel.Next(state)`:
 
 | Result | Meaning |
 |---|---|
-| `continue(state)` | Stay joined, no actions |
-| `continue_with(state, actions)` | Stay joined, apply `actions` in order |
-| `close()` | Leave this channel; the socket and its other channels are untouched |
-| `close_with(actions)` | Apply `actions`, then leave |
+| `next(state, actions)` | Stay joined, applying the active-phase actions in order |
+| `close(actions)` | Apply active-phase actions, then leave this channel |
 | `stop_socket(reason)` | Tear down the whole socket |
 
-`close_with` applies its actions first and then closes the topic, so a
+`close` applies its actions first and then closes the topic, so a
 farewell broadcast still reaches the topic's subscribers.
 `stop_socket` deliberately carries no actions: the socket and every
 channel on it are going away, so there is nothing left to apply them to —
@@ -475,44 +455,34 @@ but each channel still runs its `on_terminate`.
 ## Termination
 
 `on_terminate` runs **exactly once per accepted join**, on every exit
-path: a client `phx_leave`, a `close()` result, `stop_socket`, a socket
+path: a client `phx_leave`, a `close([])` result, `stop_socket`, a socket
 disconnect, a heartbeat timeout, and `beryl.stop`. A join that was
 *rejected* never started an instance, so it never terminates.
 
 The actions it returns are lowered inside the turn that closes the topic,
-right after the instance has been removed. By then core has dropped the
-subscription and purged the topic's outstanding reply refs, and its own
-automatic presence untrack for the topic runs immediately after the turn.
-That splits the action table:
-
-| Action | During termination |
-|---|---|
-| `broadcast`, `broadcast_from` | Delivered to the remaining subscribers |
-| `broadcast_presence` | Delivered, encoded at apply time |
-| `presence_untrack` | Applied — the presence action to use here |
-| `push`, `push_presence` | Dropped — the socket has already left the topic |
-| `reply_ok`, `reply_error` | Dropped — the topic's reply refs are purged before `on_terminate` runs |
-| `presence_track` | Applied, then reversed by core's automatic untrack — can emit a join diff followed at once by the matching leave diff. Use `presence_untrack` instead |
+right after the instance has been removed. Closing-phase lists can contain
+`broadcast`, `broadcast_from`, `presence_untrack`, and
+`broadcast_presence`. Active-only pushes, replies, presence tracking, and
+presence pushes do not type-check in `on_terminate`.
 
 This is why a leave announcement and a post-leave roster belong here
 rather than in an out-of-band broadcast:
 
 ```gleam
 channel.on_terminate(fn(state: State, _reason) {
-  channel.actions()
-  |> channel.broadcast("new_msg", departure(state))
-  |> channel.presence_untrack(state.username)
-  |> channel.broadcast_presence("presence_list", encode_users)
+  [
+    channel.broadcast("new_msg", departure(state)),
+    channel.presence_untrack(state.username),
+    channel.broadcast_presence("presence_list", encode_users),
+  ]
 })
 ```
 
 Ordering the explicit `presence_untrack` *before* the
 `broadcast_presence` is what makes the roster correct: the snapshot is
 encoded when the action is applied, after the untrack, so it cannot be
-stale. Presence entries are auto-untracked when the topic closes anyway,
-but the automatic untrack runs after `Closed`, not before your actions —
-which is also why a `presence_track` here is pointless: the same
-automatic pass takes it straight back out.
+stale. Presence entries are auto-untracked when the topic closes anyway, but the
+automatic untrack runs after `Closed`, not before your actions.
 
 ## Lifecycle at a glance
 
@@ -523,17 +493,17 @@ sequenceDiagram
   participant Ch as your channel
   Client->>Router: phx_join "room:lobby"
   Router->>Router: first matching pattern wins
-  Router->>Ch: join(JoinInfo, topic, payload)
-  Ch-->>Router: accept_with(joined(state, callbacks), reply) |> with_actions(..)
+  Router->>Ch: join(JoinContext)
+  Ch-->>Router: accept(state, callbacks) |> with_reply(reply) |> with_actions(..)
   Router-->>Client: phx_reply ok, then the join's actions
   Client->>Router: event on "room:lobby"
   Router->>Ch: on_message(state, Message)
-  Ch-->>Router: continue_with(state', actions)
+  Ch-->>Router: next(state', actions)
   Router-->>Client: actions, in order
   Client->>Router: phx_leave / disconnect
   Router->>Router: remove the instance
   Router->>Ch: on_terminate(state, reason)
-  Ch-->>Router: actions (pushes dropped, broadcasts delivered)
+  Ch-->>Router: closing-phase actions
 ```
 
 ## Crash behavior
@@ -606,8 +576,9 @@ It reports only what can be detected before the tree starts, as
 
 | Variant | Meaning |
 |---|---|
-| `ChildSpecInvalidHandlers(HandlerError)` | The handler table failed validation |
-| `ChildSpecInvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
+| `InvalidPattern(pattern, reason)` | A handler pattern is invalid |
+| `DuplicatePattern(pattern)` | The same pattern was registered twice |
+| `InvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
 
 The subtree, restart policy, and `beryl.stop` semantics are the core's,
 unchanged — see the [Supervision guide](/guides/supervision/). PubSub,
@@ -642,13 +613,13 @@ edges to know before you design around it:
 - **The layer owns the socket-level model and message type.** Pick raw
   dispatch or the channel layer per socket endpoint; mixing hand-written
   `update` logic into a channel system is not a supported surface.
-- **`stop_socket` carries no actions**, and termination `push` and reply
-  actions are dropped. Both follow from the topic already being gone.
+- **`stop_socket` carries no actions.** The socket and all its channels are
+  going away.
 - **`beryl/bridge` targets the core sender, not a channel's.**
   `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
   channel never sees. To adapt an existing actor's messages into
   `on_info`, forward them yourself from your own process by calling
-  `channel.notify(info.self, ..)` — the sealed sender is safe to hold and
+  `channel.notify(context.self, ..)` — the sealed sender is safe to hold and
   is dropped after the join ends.
 - **Nothing is per-topic-process.** Like raw dispatch, all of a socket's
   channels run in the runtime actor, sequentially. Long or blocking work

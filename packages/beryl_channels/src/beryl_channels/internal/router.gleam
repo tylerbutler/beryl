@@ -51,6 +51,7 @@ import gleam/dict
 import gleam/dynamic
 import gleam/json
 import gleam/list
+import gleam/result
 
 /// The socket-level message type of a channel system.
 ///
@@ -155,20 +156,25 @@ fn join(
   case select(router.handlers, name) {
     Error(Nil) ->
       socket.Next(router, [socket.RejectJoin(ref, unmatched_topic())])
-    Ok(handler) -> open(router, handler, name, payload, ref)
+    Ok(#(handler, params)) -> open(router, handler, name, params, payload, ref)
   }
 }
 
 fn select(
   handlers: List(Registered),
   name: String,
-) -> Result(channel.Handler, Nil) {
+) -> Result(#(channel.Handler, List(String)), Nil) {
   case handlers {
     [] -> Error(Nil)
     [registered, ..rest] ->
       case topic.matches(registered.pattern, name) {
-        True -> Ok(registered.handler)
         False -> select(rest, name)
+        True -> {
+          let params =
+            topic.extract_wildcards(registered.pattern, name)
+            |> result.unwrap([])
+          Ok(#(registered.handler, params))
+        }
       }
   }
 }
@@ -189,16 +195,18 @@ fn open(
   router: Router,
   handler: channel.Handler,
   name: String,
+  params: List(String),
   payload: dynamic.Dynamic,
   ref: socket.JoinRef,
 ) -> socket.Next(Router) {
   let generation = router.generation + 1
   let router = Router(..router, generation: generation)
   let context =
-    channel.JoinContext(
+    channel.RoutedJoinContext(
       socket_id: router.socket_id,
       seed: router.seed,
       topic: name,
+      params: params,
       payload: payload,
       deliver: mailbox(router.self, name, generation),
     )
@@ -216,7 +224,7 @@ fn open(
         // so a push can never precede its own join reply and the
         // subscription the accept creates is already in place when they
         // run. Same turn, so nothing can interleave between them.
-        [socket.AcceptJoin(ref, reply), ..effects(name, actions)],
+        [socket.AcceptJoin(ref, reply), ..channel.effects(name, actions)],
       )
     }
   }
@@ -288,7 +296,7 @@ fn advance(
     channel.StepContinue(next: next, actions: actions) -> {
       let live =
         dict.insert(router.live, name, Instance(..instance, channel: next))
-      socket.Next(Router(..router, live: live), effects(name, actions))
+      socket.Next(Router(..router, live: live), channel.effects(name, actions))
     }
 
     // Actions first, then the kick. The instance stays live until the
@@ -297,7 +305,7 @@ fn advance(
     channel.StepClose(actions: actions) ->
       socket.Next(
         router,
-        list.append(effects(name, actions), [socket.KickTopic(name)]),
+        list.append(channel.effects(name, actions), [socket.KickTopic(name)]),
       )
 
     // Stopping the socket carries no actions: every channel on it is
@@ -344,39 +352,10 @@ fn closed(
     Error(Nil) -> socket.Next(router, [])
     Ok(instance) -> {
       let router = Router(..router, live: dict.delete(router.live, name))
-      socket.Next(router, effects(name, instance.channel.on_terminate(reason)))
+      socket.Next(
+        router,
+        channel.effects(name, instance.channel.on_terminate(reason)),
+      )
     }
-  }
-}
-
-// --- action lowering -------------------------------------------------------
-
-/// Lower a channel's actions onto core effects, in order, all scoped to
-/// the channel's own topic. Core applies effects in list order, so action
-/// order is wire order.
-fn effects(name: String, actions: List(channel.Action)) -> List(socket.Effect) {
-  list.map(actions, fn(action) { effect(name, action) })
-}
-
-fn effect(name: String, action: channel.Action) -> socket.Effect {
-  case action {
-    channel.PushAction(event: event, payload: payload) ->
-      socket.Push(topic: name, event: event, payload: payload)
-    channel.BroadcastAction(event: event, payload: payload) ->
-      socket.Broadcast(topic: name, event: event, payload: payload)
-    channel.BroadcastFromAction(event: event, payload: payload) ->
-      socket.BroadcastFrom(topic: name, event: event, payload: payload)
-    channel.ReplyOkAction(reply: reply, payload: payload) ->
-      socket.ReplyOk(ref: reply, payload: payload)
-    channel.ReplyErrorAction(reply: reply, payload: payload) ->
-      socket.ReplyError(ref: reply, payload: payload)
-    channel.PresenceTrackAction(key: key, meta: meta) ->
-      socket.PresenceTrack(topic: name, key: key, meta: meta)
-    channel.PresenceUntrackAction(key: key) ->
-      socket.PresenceUntrack(topic: name, key: key)
-    channel.PushPresenceAction(event: event, encode: encode) ->
-      socket.PushPresence(topic: name, event: event, encode: encode)
-    channel.BroadcastPresenceAction(event: event, encode: encode) ->
-      socket.BroadcastPresence(topic: name, event: event, encode: encode)
   }
 }

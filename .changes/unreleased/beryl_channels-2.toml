@@ -1,0 +1,3 @@
+package = "beryl_channels"
+kind = "Changed"
+body = "BREAKING: Simplify channel joins with JoinContext, direct accept, ordered phase-typed Action lists, optional-ref replies, and flattened child_spec errors."

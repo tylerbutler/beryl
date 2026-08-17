@@ -50,19 +50,20 @@ type State {
 }
 
 fn room_channel() -> channel.Handler {
-  channel.handler("room:*", fn(_info, topic, _payload) {
-    channel.accept(channel.joined(State(room: topic), callbacks()))
+  channel.handler("room:*", fn(context) {
+    channel.accept(State(room: context.topic), callbacks())
   })
 }
 
 fn callbacks() -> channel.Callbacks(State, Nil) {
   channel.callbacks()
   |> channel.on_message(fn(state, message) {
-    channel.continue_with(
-      state,
-      channel.actions()
-      |> channel.broadcast(message.event, wire.dynamic_to_json(message.payload)),
-    )
+    channel.next(state, [
+      channel.broadcast(
+        message.event,
+        wire.dynamic_to_json(message.payload),
+      ),
+    ])
   })
 }
 

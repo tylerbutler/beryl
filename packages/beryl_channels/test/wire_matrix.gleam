@@ -140,14 +140,12 @@ fn guard_reject(
 /// The handler-table half of the matrix.
 pub fn handlers() -> List(channel.Handler) {
   [
-    channel.handler(room_pattern, fn(_info, name, payload) {
-      case denied(payload) {
+    channel.handler(room_pattern, fn(context) {
+      case denied(context.payload) {
         True -> channel.reject(denied_payload())
         False ->
-          channel.accept_with(
-            channel.joined(Nil, contract_callbacks()),
-            join_reply(name),
-          )
+          channel.accept(Nil, contract_callbacks())
+          |> channel.with_reply(join_reply(context.topic))
       }
     }),
   ]
@@ -156,41 +154,37 @@ pub fn handlers() -> List(channel.Handler) {
 fn contract_callbacks() -> channel.Callbacks(Nil, Nil) {
   channel.callbacks()
   |> channel.on_message(fn(state, message) {
-    channel.continue_with(state, message_actions(message))
+    channel.next(state, message_actions(message))
   })
   |> channel.on_binary(fn(state, data) {
-    channel.continue_with(
-      state,
-      channel.actions()
-        |> channel.push(
-          binary_event,
-          binary_size_payload("raw", bit_array.byte_size(data)),
-        ),
-    )
+    channel.next(state, [
+      channel.push(
+        binary_event,
+        binary_size_payload("raw", bit_array.byte_size(data)),
+      ),
+    ])
   })
 }
 
-fn message_actions(message: channel.Message) -> channel.Actions {
-  let actions = channel.actions()
-  case message.event, message.reply {
-    "ping", Some(ref) -> channel.reply_ok(actions, ref, pong_payload())
-    "boom", Some(ref) -> channel.reply_error(actions, ref, boom_payload())
-    "push_me", _ -> channel.push(actions, pushed_event, pushed_payload())
-    "shout", _ -> {
+fn message_actions(
+  message: channel.Message,
+) -> List(channel.Action(channel.Active)) {
+  case message.event {
+    "ping" -> [channel.reply_ok(message.reply, pong_payload())]
+    "boom" -> [channel.reply_error(message.reply, boom_payload())]
+    "push_me" -> [channel.push(pushed_event, pushed_payload())]
+    "shout" -> {
       let assert Ok(shout_json) = wire.dynamic_to_json(message.payload)
-      channel.broadcast_from(actions, shouted_event, shout_json)
+      [channel.broadcast_from(shouted_event, shout_json)]
     }
-    "track", _ ->
-      actions
-      |> channel.presence_track(presence_key, presence_meta())
-      |> channel.broadcast_presence(presence_event, encode_presence)
-    "blob", _ ->
-      channel.push(
-        actions,
-        binary_event,
-        binary_payload("decoded", message.payload),
-      )
-    _, _ -> actions
+    "track" -> [
+      channel.presence_track(presence_key, presence_meta()),
+      channel.broadcast_presence(presence_event, encode_presence),
+    ]
+    "blob" -> [
+      channel.push(binary_event, binary_payload("decoded", message.payload)),
+    ]
+    _ -> []
   }
 }
 
