@@ -1,7 +1,7 @@
 //// Presence - Distributed presence tracking backed by a CRDT
 ////
 //// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
-//// - Handles track/untrack calls
+//// - Handles track/update/untrack calls
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state from PubSub and merges it internally
 //// - Invokes `on_diff` callback when merges produce non-empty diffs
@@ -54,8 +54,8 @@ const sync_event = "presence_sync"
 ///
 /// This handle is intentionally opaque so callers cannot forge actor subjects
 /// or depend on the runtime representation. It carries both the actor's
-/// subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
-/// reference to the actor-owned ETS read model that `list`, `get_by_key`,
+/// subject (for the still-synchronous `track`/`update`/`untrack`/`untrack_all`)
+/// and a reference to the actor-owned ETS read model that `list`, `get_by_key`,
 /// and `count` read directly, without going through the actor mailbox.
 ///
 /// ## Node affinity
@@ -63,14 +63,14 @@ const sync_event = "presence_sync"
 /// `list`, `get_by_key`, and `count` read the ETS read model directly
 /// in-process, which only works for ETS tables local to the calling node.
 /// Do not send this handle to, or otherwise use it from, a process on a
-/// different BEAM node: `track`/`untrack`/`untrack_all` would still reach
-/// the owning actor over distribution (they go through its `Subject`), but
-/// the read functions would be looking up a table reference that names
+/// different BEAM node: `track`/`update`/`untrack`/`untrack_all` would still
+/// reach the owning actor over distribution (they go through its `Subject`),
+/// but the read functions would be looking up a table reference that names
 /// nothing on that node (or, if the identifier happens to collide with an
-/// unrelated local table, something else entirely), so they would fail or
-/// read the wrong data. Keep a Presence handle on the node where `start`
-/// created it, and use PubSub replication (`with_pubsub`) to share presence
-/// state across nodes instead.
+/// unrelated local table, something else entirely), so they would fail or read
+/// the wrong data. Keep a Presence handle on the node where `start` created it,
+/// and use PubSub replication (`with_pubsub`) to share presence state across
+/// nodes instead.
 pub opaque type Presence {
   Presence(subject: Subject(Message), read_table: ReadTable)
 }
@@ -209,6 +209,12 @@ pub type PresenceError {
   PresenceStartFailed(beryl_error.StartFailure)
 }
 
+/// Errors from updating a tracked presence.
+pub type PresenceUpdateError {
+  /// The ref is unknown, already removed, or was not returned by `track`.
+  UnknownRef
+}
+
 /// Messages the presence actor handles
 pub opaque type Message {
   Track(
@@ -217,6 +223,11 @@ pub opaque type Message {
     session_id: String,
     meta: json.Json,
     reply: Subject(String),
+  )
+  Update(
+    ref: String,
+    meta: json.Json,
+    reply: Subject(Result(String, PresenceUpdateError)),
   )
   Untrack(ref: String, reply: Subject(Nil))
   UntrackAll(session_id: String, reply: Subject(Nil))
@@ -724,6 +735,25 @@ pub fn track(
   })
 }
 
+/// Replace the meta of a presence created by `track`.
+///
+/// The old ref's leave and the new ref's join are emitted together in one
+/// diff, so subscribers never observe an intermediate state without the
+/// presence key. Other tracked refs for the same key are left unchanged.
+///
+/// Returns the replacement ref, which must be used for subsequent `update`
+/// or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+/// unknown, already removed, or belongs to the internal runtime.
+///
+/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+pub fn update(
+  presence: Presence,
+  ref: String,
+  meta: json.Json,
+) -> Result(String, PresenceUpdateError) {
+  process.call(presence.subject, 5000, fn(reply) { Update(ref, meta, reply) })
+}
+
 /// Untrack a specific presence using the ref returned by `track`.
 ///
 /// Removing an unknown or already-removed ref is a harmless no-op.
@@ -907,6 +937,29 @@ fn handle_message(
       actor.continue(new_state)
     }
 
+    Update(ref, meta, reply) -> {
+      case dict.get(actor_state.refs, ref) {
+        Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
+          let #(new_state, new_ref, _meta) =
+            do_track(
+              actor_state,
+              topic,
+              key,
+              session_id,
+              meta,
+              SupersedePublicRef(ref),
+            )
+          log_tracked(logger, topic, key, session_id, new_ref)
+          process.send(reply, Ok(new_ref))
+          actor.continue(new_state)
+        }
+        _ -> {
+          process.send(reply, Error(UnknownRef))
+          actor.continue(actor_state)
+        }
+      }
+    }
+
     TrackAsync(topic, key, session_id, meta, replace, tag, op_id, reply) -> {
       let #(new_state, ref, stored_meta) =
         do_track(
@@ -1056,6 +1109,9 @@ type Supersede {
   /// and several refs for one key (each with its own `phx_ref` meta) is a
   /// meaningful, supported shape there.
   SupersedeNothing
+  /// The public synchronous `update`: supersede exactly the ref supplied by
+  /// its owner, leaving every other public ref for the same key unchanged.
+  SupersedePublicRef(String)
   /// The runtime's asynchronous track: supersede `explicit` (the previous
   /// runtime ref, when the caller still knows it) and every other
   /// runtime-owned ref this actor holds for the same `(session_id, topic, key)`.
@@ -1080,6 +1136,7 @@ fn superseded_refs(
 ) -> List(String) {
   case supersede {
     SupersedeNothing -> []
+    SupersedePublicRef(ref) -> [ref]
     SupersedeSameKey(explicit) -> {
       let same_key =
         refs
@@ -1130,7 +1187,7 @@ fn do_track(
     )
   let new_crdt = state.join(removed.crdt, session_id, topic, key, stored_meta)
   let owner = case supersede {
-    SupersedeNothing -> PublicOwner
+    SupersedeNothing | SupersedePublicRef(_) -> PublicOwner
     SupersedeSameKey(_) -> RuntimeOwner
   }
   let replica = state.replica(new_crdt)

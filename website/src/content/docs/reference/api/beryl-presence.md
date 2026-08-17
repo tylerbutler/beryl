@@ -12,7 +12,7 @@ description: "Presence - Distributed presence tracking backed by a CRDT"
 Presence - Distributed presence tracking backed by a CRDT
 
  Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
- - Handles track/untrack calls
+ - Handles track/update/untrack calls
  - Periodically broadcasts state via PubSub for cross-node replication
  - Receives remote state from PubSub and merges it internally
  - Invokes `on_diff` callback when merges produce non-empty diffs
@@ -72,8 +72,8 @@ A running Presence instance.
 
  This handle is intentionally opaque so callers cannot forge actor subjects
  or depend on the runtime representation. It carries both the actor's
- subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
- reference to the actor-owned ETS read model that `list`, `get_by_key`,
+ subject (for the still-synchronous `track`/`update`/`untrack`/`untrack_all`)
+ and a reference to the actor-owned ETS read model that `list`, `get_by_key`,
  and `count` read directly, without going through the actor mailbox.
 
  ## Node affinity
@@ -81,14 +81,14 @@ A running Presence instance.
  `list`, `get_by_key`, and `count` read the ETS read model directly
  in-process, which only works for ETS tables local to the calling node.
  Do not send this handle to, or otherwise use it from, a process on a
- different BEAM node: `track`/`untrack`/`untrack_all` would still reach
- the owning actor over distribution (they go through its `Subject`), but
- the read functions would be looking up a table reference that names
+ different BEAM node: `track`/`update`/`untrack`/`untrack_all` would still
+ reach the owning actor over distribution (they go through its `Subject`),
+ but the read functions would be looking up a table reference that names
  nothing on that node (or, if the identifier happens to collide with an
- unrelated local table, something else entirely), so they would fail or
- read the wrong data. Keep a Presence handle on the node where `start`
- created it, and use PubSub replication (`with_pubsub`) to share presence
- state across nodes instead.
+ unrelated local table, something else entirely), so they would fail or read
+ the wrong data. Keep a Presence handle on the node where `start` created it,
+ and use PubSub replication (`with_pubsub`) to share presence state across
+ nodes instead.
 
 ```gleam
 pub type Presence
@@ -126,6 +126,22 @@ pub type PresenceError {
 ##### `PresenceStartFailed(error.StartFailure)`
 
 The presence actor failed to start.
+
+### `PresenceUpdateError`
+
+Errors from updating a tracked presence.
+
+```gleam
+pub type PresenceUpdateError {
+  UnknownRef
+}
+```
+
+#### Constructors
+
+##### `UnknownRef`
+
+The ref is unknown, already removed, or was not returned by `track`.
 
 ## Functions
 
@@ -311,6 +327,28 @@ pub fn untrack_all(
   Presence,
   String
 ) -> Nil
+```
+
+### `update`
+
+Replace the meta of a presence created by `track`.
+
+ The old ref's leave and the new ref's join are emitted together in one
+ diff, so subscribers never observe an intermediate state without the
+ presence key. Other tracked refs for the same key are left unchanged.
+
+ Returns the replacement ref, which must be used for subsequent `update`
+ or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+ unknown, already removed, or belongs to the internal runtime.
+
+ Panics if the presence actor is unavailable or does not reply within 5 seconds.
+
+```gleam
+pub fn update(
+  Presence,
+  String,
+  json.Json
+) -> Result(String, PresenceUpdateError)
 ```
 
 ### `with_broadcast_interval`

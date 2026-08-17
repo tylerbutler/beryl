@@ -75,6 +75,7 @@ Two practical consequences either way:
 | `MyAppWeb.Endpoint.broadcast/3` from anywhere | `beryl.broadcast(sockets, topic, event, payload)` | same |
 | `Phoenix.PubSub` | `beryl/pubsub`, also built on `pg` | same |
 | `Phoenix.Presence.track/3` / `untrack/3` | `channel.presence_track(key, meta)` / `channel.presence_untrack(key)` actions | `socket.PresenceTrack(topic, key, meta)` / `socket.PresenceUntrack(topic, key)` effects |
+| `Phoenix.Presence.update/4` | repeat `channel.presence_track(key, meta)`; for standalone refs, `presence.update(handle, ref, meta)` | repeat `socket.PresenceTrack(topic, key, meta)`; for standalone refs, `presence.update(handle, ref, meta)` |
 | `push(socket, "presence_state", Presence.list(socket))` | `channel.push_presence("presence_state", presence_wire.encode_state)` | `socket.PushPresence(topic, "presence_state", presence_wire.encode_state)` |
 | `intercept` / `handle_out` | no equivalent — shape payloads before `broadcast`, or per-socket with `push` | no equivalent — same advice |
 
