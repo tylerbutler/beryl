@@ -12,15 +12,16 @@
 //// All three are checked atomically inside `handle_message` on acquire, so
 //// concurrent opens cannot race past either ceiling. A single `Permit` tracks
 //// both dimensions and the same process monitor reclaims both when the holder
-//// dies without releasing. Rate buckets remain in this supervisor-held actor
-//// across reconnects and runtime restarts, then expire once idle long enough
-//// to have fully refilled.
+//// dies without releasing. Counts and rate buckets are checkpointed to an ETS
+//// table with a supervisor-scoped heir, so they survive reconnects and worker
+//// restarts, then expire once idle long enough to have fully refilled.
 
 import beryl/rate_limit
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
 import gleam/int
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -51,6 +52,7 @@ type RateBucket {
 
 type State {
   State(
+    store_key: process.Name(Message),
     /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
     /// Node-wide ceiling across all IPs; 0 disables the global check.
@@ -86,6 +88,17 @@ pub opaque type Message {
   Stop(reply: Subject(Nil))
 }
 
+@external(erlang, "beryl_ffi", "connection_limit_state_open")
+fn open_state(store_key: process.Name(Message), initial: State) -> State
+
+@external(erlang, "beryl_ffi", "connection_limit_state_put")
+fn put_state(store_key: process.Name(Message), state: State) -> Nil
+
+fn persist(state: State) -> State {
+  put_state(state.store_key, state)
+  state
+}
+
 fn handle_message(
   state: State,
   message: Message,
@@ -93,10 +106,11 @@ fn handle_message(
   case message {
     Acquire(ip, limiter, reply) -> {
       let #(state, outcome) = acquire_slot(state, ip, limiter)
+      let state = persist(state)
       process.send(reply, outcome)
       actor.continue(state)
     }
-    Bind(ip, owner) -> actor.continue(bind_holder(state, ip, owner))
+    Bind(ip, owner) -> actor.continue(bind_holder(state, ip, owner) |> persist)
     Release(ip, owner) -> {
       // Drop the holder's monitor (when bound) before decrementing, so a
       // later exit of the same process cannot decrement this IP twice.
@@ -111,7 +125,7 @@ fn handle_message(
         }
         Error(Nil) -> state
       }
-      actor.continue(release_slot(state, ip))
+      actor.continue(release_slot(state, ip) |> persist)
     }
     HolderDown(down) ->
       case down {
@@ -124,7 +138,7 @@ fn handle_message(
                   monitors: dict.delete(state.monitors, monitor),
                   holders: dict.delete(state.holders, pid),
                 )
-              actor.continue(release_slot(state, ip))
+              actor.continue(release_slot(state, ip) |> persist)
             }
             // Already explicitly released (or an unrelated monitor).
             Error(Nil) -> actor.continue(state)
@@ -133,7 +147,7 @@ fn handle_message(
       }
     Sweep(subject) -> {
       schedule_sweep(subject, state.connection_rate)
-      actor.continue(sweep_idle_buckets(state))
+      actor.continue(sweep_idle_buckets(state) |> persist)
     }
     Stop(reply) -> {
       process.send(reply, Nil)
@@ -242,6 +256,25 @@ fn release_slot(state: State, ip: String) -> State {
   }
 }
 
+fn recover_holders(state: State) -> State {
+  let holders = dict.values(state.monitors)
+  let state = State(..state, monitors: dict.new(), holders: dict.new())
+  list.fold(holders, state, fn(state, holder) {
+    let #(owner, ip) = holder
+    case process.is_alive(owner) {
+      True -> {
+        let monitor = process.monitor(owner)
+        State(
+          ..state,
+          monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
+          holders: dict.insert(state.holders, owner, monitor),
+        )
+      }
+      False -> release_slot(state, ip)
+    }
+  })
+}
+
 fn request(
   subject: Subject(Message),
   build_message: fn(Subject(Result(Permit, Nil))) -> Message,
@@ -264,6 +297,7 @@ fn build(
   max_total: Int,
   connection_rate: Int,
   connection_burst: Int,
+  name: process.Name(Message),
 ) -> actor.Builder(State, Message, Subject(Message)) {
   let rate_config = case connection_rate > 0 {
     True ->
@@ -279,6 +313,7 @@ fn build(
   }
   let state =
     State(
+      store_key: name,
       max_per_ip: max_per_ip,
       max_total: max_total,
       connection_rate: rate_config,
@@ -294,6 +329,7 @@ fn build(
     )
   actor.new_with_initialiser(1000, fn(subject) {
     schedule_sweep(subject, rate_config)
+    let state = open_state(name, state) |> recover_holders |> persist
     let selector =
       process.new_selector()
       |> process.select(subject)
@@ -314,7 +350,7 @@ pub fn start_named(
   connection_burst: Int,
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {
-  build(max_per_ip, max_total, connection_rate, connection_burst)
+  build(max_per_ip, max_total, connection_rate, connection_burst, name)
   |> actor.named(name)
   |> actor.start
 }
