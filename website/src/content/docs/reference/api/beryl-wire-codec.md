@@ -16,10 +16,9 @@ Pluggable wire codec for beryl.
  the Phoenix array format (`[join_ref, ref, topic, event, payload]`).
 
  To run beryl over your own framing, build a `Codec` value and pass it
- to `beryl.config(codec)`. The runtime decodes inbound text via
- `codec.decode_text`, optionally decodes inbound binary via
- `codec.decode_binary`, dispatches based on the structural `InboundKind`,
- and produces outbound text or binary frames via `codec.encode_*` helpers.
+ to `beryl.config(codec)`. The runtime decodes inbound frames and produces
+ outbound frames using the configured callbacks. Codec authors can exercise
+ those callbacks directly with the public `apply_*` functions.
 
  All codecs must normalise inbound traffic to the `Inbound` shape so
  the runtime can stay framing-agnostic.
@@ -152,6 +151,103 @@ The handler failed (`"error"` in Phoenix framing).
 
 ## Functions
 
+### `apply_decode_binary`
+
+Decode a binary frame with a codec, if it has a binary decoder.
+
+ Returns `None` when the codec has no decoder configured with
+ `with_binary_decoder`.
+
+```gleam
+pub fn apply_decode_binary(
+  Codec,
+  data: BitArray
+) -> option.Option(Result(Inbound, DecodeError))
+```
+
+### `apply_decode_text`
+
+Decode a text frame with a codec.
+
+ Codec authors can use this to test the decoder supplied to `new`.
+
+```gleam
+pub fn apply_decode_text(
+  Codec,
+  text: String
+) -> Result(Inbound, DecodeError)
+```
+
+### `apply_encode_close`
+
+Encode a graceful topic close with a codec, if it has a close encoder.
+
+ Returns `None` when the codec has no encoder configured with
+ `with_close_encoder`.
+
+```gleam
+pub fn apply_encode_close(
+  Codec,
+  join_ref: option.Option(String),
+  topic: String
+) -> option.Option(Frame)
+```
+
+### `apply_encode_error`
+
+Encode an abnormal topic termination with a codec, if it has an error
+ encoder.
+
+ Returns `None` when the codec has no encoder configured with
+ `with_error_encoder`.
+
+```gleam
+pub fn apply_encode_error(
+  Codec,
+  join_ref: option.Option(String),
+  topic: String
+) -> option.Option(Frame)
+```
+
+### `apply_encode_heartbeat_reply`
+
+Encode a heartbeat reply with a codec.
+
+```gleam
+pub fn apply_encode_heartbeat_reply(
+  Codec,
+  ref: option.Option(String)
+) -> Frame
+```
+
+### `apply_encode_push`
+
+Encode a server-initiated push with a codec.
+
+```gleam
+pub fn apply_encode_push(
+  Codec,
+  topic: String,
+  event: String,
+  payload: json.Json
+) -> Frame
+```
+
+### `apply_encode_reply`
+
+Encode a reply with a codec.
+
+```gleam
+pub fn apply_encode_reply(
+  Codec,
+  join_ref: option.Option(String),
+  ref: option.Option(String),
+  topic: String,
+  status: ReplyStatus,
+  response: json.Json
+) -> Frame
+```
+
 ### `format_decode_error`
 
 Format a `DecodeError` as a human-readable string. Used by the
@@ -244,6 +340,16 @@ pub fn new(
   encode_push: fn(String, String, json.Json) -> Frame,
   encode_heartbeat_reply: fn(option.Option(String)) -> Frame
 ) -> Codec
+```
+
+### `uses_topicless_events`
+
+Whether the codec routes events without an explicit topic.
+
+ Codec authors can use this to test `with_topicless_events`.
+
+```gleam
+pub fn uses_topicless_events(Codec) -> Bool
 ```
 
 ### `with_binary_decoder`
