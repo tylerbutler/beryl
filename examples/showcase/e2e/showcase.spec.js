@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 
 // The showcase is the acceptance gate for composing independent channels
 // onto ONE WebSocket: cursors, chatrooms, and collab_docs are three
-// `beryl_channels` handlers on a single socket system. These tests drive
+// `beryl/channel` handlers on a single socket system. These tests drive
 // all three flows over a single raw Phoenix-framed socket and assert the
 // ordering guarantees the design depends on (join ack before subsequent
 // frames, per-channel isolation).
@@ -79,7 +79,7 @@ const replyStatus = (frame) => frame[4]?.response !== undefined
   ? frame[4].status
   : frame[4]?.status;
 
-test.describe("Showcase (beryl_channels)", () => {
+test.describe("Showcase (beryl/channel)", () => {
   test("landing page and health check respond", async ({ page }) => {
     await page.goto("/");
     await expect(page).toHaveTitle(/beryl/);

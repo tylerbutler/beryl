@@ -5,7 +5,7 @@ title: Supervision
 Beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
 handle and a child specification that you add to your application's OTP
 supervisor. Your `init`/`update` functions are captured in that specification.
-`beryl_channels.child_spec` returns the same handle/spec shape after compiling
+`channel.child_spec` returns the same handle/spec shape after compiling
 its handler table into the core `init`/`update` pair.
 
 ## What child_spec supervises

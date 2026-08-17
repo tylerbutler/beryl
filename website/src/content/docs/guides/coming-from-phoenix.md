@@ -10,7 +10,7 @@ maps one onto the other.
 
 beryl gives you two layers, and Phoenix maps onto both:
 
-- **`beryl_channels`, the channel layer** — the close analogue, and the
+- **`beryl/channel`, the channel layer** — the close analogue, and the
   recommended default for a Phoenix-shaped app. You register a handler per
   topic pattern, and each channel gets colocated callbacks plus its own
   private state.
@@ -50,11 +50,11 @@ Two practical consequences either way:
 
 ## Concept map
 
-| Phoenix | beryl channel layer (`beryl_channels`) | beryl raw dispatch (`beryl`) |
+| Phoenix | beryl channel layer (`beryl/channel`) | beryl raw dispatch (`beryl`) |
 | --- | --- | --- |
 | `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
 | `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)` — request data in `info.seed` |
-| `channel "room:*", RoomChannel` routing table | the handler list passed to `beryl_channels.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
+| `channel "room:*", RoomChannel` routing table | the handler list passed to `channel.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
 | One channel process per joined topic | one private state value per joined topic, in the socket's runtime actor | one `model` per socket, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
 | `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
@@ -111,7 +111,7 @@ callbacks, per-topic state — and turns the imperative `push`/`broadcast_from!`
 calls into ordered action values:
 
 ```gleam
-import beryl_channels/channel
+import beryl/channel
 import gleam/json
 
 type State {
@@ -310,7 +310,7 @@ replication.
 
 Where you would call `MyAppWeb.Endpoint.broadcast("room:lobby", "notice", %{})`
 from a controller or background job, call `beryl.broadcast` with the `Sockets`
-handle returned by `beryl_channels.child_spec` or `beryl.child_spec`:
+handle returned by `channel.child_spec` or `beryl.child_spec`:
 
 ```gleam
 beryl.broadcast(sockets, "room:lobby", "notice", json.object([]))

@@ -1,164 +1,127 @@
+import beryl
+import beryl/channel
 import beryl/group
 import beryl/socket
-import beryl/socket/router as topic_router
+import beryl/transport
+import beryl/wire
+import beryl/wire/codec
 import chatrooms/app
+import example_helpers/broadcast_hub
 import example_helpers/session_presence
-import gleam/dict
-import gleam/dynamic
-import gleam/json
-import gleam/option.{None, Some}
+import gleam/erlang/process
+import gleam/option.{None}
+import gleam/otp/static_supervisor
+import gleam/string
 import gleeunit/should
 
-fn context() -> app.Ctx {
-  let presence_tracker = session_presence.start()
+fn start() -> #(beryl.Sockets, session_presence.Tracker) {
+  let presence = session_presence.start()
   let assert Ok(groups) = group.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
-  app.Ctx(presence: presence_tracker, groups: groups)
+  let assert Ok(hub) = broadcast_hub.start()
+  let ctx = app.Ctx(presence: presence, groups: groups, hub: hub)
+  let assert Ok(#(sockets, spec)) =
+    channel.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      handlers: app.handlers(ctx),
+    )
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  broadcast_hub.bind(hub, sockets)
+  #(sockets, presence)
 }
 
-fn lobby_ref() -> socket.JoinRef {
-  socket.make_join_ref(
-    topic: "lobby",
-    join_ref: Some("lobby-join"),
-    msg_ref: Some("lobby-ref"),
-  )
-}
-
-fn room_ref(topic: String) -> socket.JoinRef {
-  socket.make_join_ref(
-    topic: topic,
-    join_ref: Some("room-join"),
-    msg_ref: Some("room-ref"),
-  )
-}
-
-fn room_match(name: String) -> topic_router.Match {
-  topic_router.Match(topic: "room:" <> name, params: [name])
-}
-
-fn empty_payload() -> dynamic.Dynamic {
-  dynamic.properties([])
-}
-
-fn connect_info() -> socket.ConnectInfo(Nil) {
-  socket.ConnectInfo(
-    socket_id: "socket-1",
+fn connect(
+  sockets: beryl.Sockets,
+  socket_id: String,
+) -> process.Subject(String) {
+  let frames = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(sockets)
+  transport.admit_socket(
+    sockets: sockets,
+    owner: owner,
+    socket_id: socket_id,
+    send: fn(frame) {
+      process.send(frames, frame)
+      Ok(Nil)
+    },
+    send_binary: fn(_frame) { Ok(Nil) },
+    codec: None,
     seed: socket.empty_seed(),
-    self: socket.make_sender(fn(_message) { Nil }),
+    close: fn() { Nil },
   )
+  |> should.equal(Ok(Nil))
+  frames
 }
 
-pub fn standalone_routes_lobby_join_test() {
-  let #(model, _) = app.chat_rooms_init(connect_info())
-  let next =
-    app.chat_rooms_update(context())(
-      model,
-      socket.Join("lobby", empty_payload(), lobby_ref()),
-    )
-
-  let assert socket.Next(_, [socket.AcceptJoin(_, None)]) = next
+fn route(sockets: beryl.Sockets, socket_id: String, frame: String) -> Nil {
+  let assert Ok(decoded) =
+    codec.decode_text(transport.active_codec(sockets))(frame)
+  transport.route_decoded(sockets, socket_id, decoded)
 }
 
-pub fn lobby_messages_are_ignored_test() {
-  let #(model, _) = app.chat_rooms_init(connect_info())
-
-  let assert socket.Next(next_model, effects) =
-    app.chat_rooms_update(context())(
-      model,
-      socket.Message("lobby", "refresh", empty_payload(), None),
-    )
-
-  next_model |> should.equal(model)
-  effects |> should.equal([])
+fn recv(frames: process.Subject(String)) -> String {
+  let assert Ok(frame) = process.receive(frames, 500)
+  frame
 }
 
-pub fn closing_lobby_preserves_room_models_test() {
-  let room =
-    app.Model(username: "Alice", color: "#abcdef", room_name: "general")
-  let model =
-    app.ChatRooms(
-      socket_id: "socket-1",
-      topics: dict.from_list([#("room:general", room)]),
-    )
+pub fn lobby_join_is_accepted_test() {
+  let #(sockets, _presence) = start()
+  let frames = connect(sockets, "lobby-socket")
+  route(sockets, "lobby-socket", "[\"jr-1\",\"r-1\",\"lobby\",\"phx_join\",{}]")
 
-  let next =
-    app.chat_rooms_update(context())(
-      model,
-      socket.Closed("lobby", socket.Normal),
-    )
-
-  let assert socket.Next(app.ChatRooms(socket_id: _, topics: rooms), []) = next
-  dict.has_key(rooms, "room:general") |> should.be_true
+  recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
 pub fn unrelated_topic_is_rejected_test() {
-  let #(model, _) = app.chat_rooms_init(connect_info())
-  let next =
-    app.chat_rooms_update(context())(
-      model,
-      socket.Join(
-        "notifications:alice",
-        empty_payload(),
-        room_ref("notifications:alice"),
-      ),
-    )
+  let #(sockets, _presence) = start()
+  let frames = connect(sockets, "unknown-socket")
+  route(
+    sockets,
+    "unknown-socket",
+    "[\"jr-1\",\"r-1\",\"notifications:alice\",\"phx_join\",{}]",
+  )
 
-  let assert socket.Next(_, [socket.RejectJoin(_, reason)]) = next
-  json.to_string(reason)
-  |> should.equal("{\"reason\":\"unknown_topic\"}")
+  recv(frames)
+  |> string.contains("\"reason\":\"unmatched topic\"")
+  |> should.be_true
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
-pub fn accepted_room_join_tracks_session_and_invalidates_lobby_test() {
-  let ctx = context()
-  let app.Ctx(presence: tracker, groups: _) = ctx
-  let #(joined, effects) =
-    app.join(
-      ctx,
-      "socket-1",
-      room_match("general"),
-      dynamic.properties([
-        #(dynamic.string("username"), dynamic.string("Alice")),
-      ]),
-      room_ref("room:general"),
-    )
+pub fn accepted_room_join_tracks_presence_and_updates_lobby_test() {
+  let #(sockets, presence) = start()
+  let lobby = connect(sockets, "lobby-socket")
+  route(sockets, "lobby-socket", "[\"jr-l\",\"r-l\",\"lobby\",\"phx_join\",{}]")
+  let _lobby_join = recv(lobby)
 
-  joined |> should.be_some
-  let assert [
-    socket.AcceptJoin(_, _),
-    socket.Broadcast("lobby", "rooms_changed", changed),
-    socket.Broadcast("room:general", "new_msg", _),
-  ] = effects
-  session_presence.count(tracker, "room:general") |> should.equal(1)
-  json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
+  let room = connect(sockets, "room-socket")
+  route(
+    sockets,
+    "room-socket",
+    "[\"jr-r\",\"r-r\",\"room:general\",\"phx_join\",{\"username\":\"Alice\"}]",
+  )
+
+  recv(room) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  recv(room) |> string.contains("\"new_msg\"") |> should.be_true
+  recv(lobby) |> string.contains("\"rooms_changed\"") |> should.be_true
+  session_presence.count(presence, "room:general") |> should.equal(1)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
-pub fn rejected_room_join_does_not_invalidate_lobby_test() {
-  let #(joined, effects) =
-    app.join(
-      context(),
-      "socket-1",
-      room_match("missing"),
-      empty_payload(),
-      room_ref("room:missing"),
-    )
+pub fn missing_room_is_rejected_test() {
+  let #(sockets, presence) = start()
+  let frames = connect(sockets, "room-socket")
+  route(
+    sockets,
+    "room-socket",
+    "[\"jr-r\",\"r-r\",\"room:missing\",\"phx_join\",{}]",
+  )
 
-  joined |> should.be_none
-  let assert [socket.RejectJoin(_, _)] = effects
-}
-
-pub fn room_close_untracks_session_and_invalidates_lobby_test() {
-  let ctx = context()
-  let app.Ctx(presence: tracker, groups: _) = ctx
-  session_presence.track(tracker, "room:general", "socket-1", json.object([]))
-  let model =
-    app.Model(username: "Alice", color: "#abcdef", room_name: "general")
-  let effects = app.closed(ctx, "socket-1", "room:general", model)
-
-  let assert [
-    socket.Broadcast("lobby", "rooms_changed", changed),
-    socket.Broadcast("room:general", "new_msg", _),
-  ] = effects
-  session_presence.count(tracker, "room:general") |> should.equal(0)
-  json.to_string(changed) |> should.equal("{\"room\":\"general\"}")
+  recv(frames) |> string.contains("Room not found") |> should.be_true
+  session_presence.count(presence, "room:missing") |> should.equal(0)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }

@@ -110,7 +110,7 @@ The same `Closed` path is used for client leaves, heartbeat timeouts,
 
 ## Where the channel layer fits
 
-`beryl_channels` supplies the `init`/`update` pair in every diagram above.
+`beryl/channel` supplies the `init`/`update` pair in every diagram above.
 Its `init` builds one router per socket; its `update` maps each input to the
 live channel instance for that topic.
 

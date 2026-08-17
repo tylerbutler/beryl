@@ -3,10 +3,9 @@
 //// Every scenario in this module is written **once** and run by
 //// [`wire_matrix.compare`](./wire_matrix.html) against two systems that
 //// implement the same application contract: a raw `beryl.child_spec`
-//// with a hand-written `update`, and a `beryl_channels.child_spec` with a
-//// handler table. Both are served by the same `beryl_mist` transport over
-//// a real WebSocket and share one `beryl.Config`, so the only variable is
-//// the dispatch layer.
+//// with a hand-written `update`, and a `channel.child_spec` with a
+//// handler table. Both are driven through the same public transport SPI and
+//// share one `beryl.Config`, so the only variable is the dispatch layer.
 ////
 //// `compare` fails if the two systems observe different frames, and
 //// returns the shared observation so each scenario can also pin what that
@@ -15,12 +14,12 @@
 
 import beryl
 import beryl/presence
+import channel_wire_matrix as matrix
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
-import wire_matrix as matrix
 
 const lobby = "room:lobby"
 

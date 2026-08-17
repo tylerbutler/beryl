@@ -18,7 +18,7 @@ beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path =
 beryl_ewe = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_ewe" }
 ```
 
-Use the same git ref for beryl, beryl_ewe, and any channel-layer package.
+Use the same git ref for beryl and beryl_ewe.
 See the [installation guide](https://beryl.tylerbutler.com/installation/) for
 release-tag guidance.
 

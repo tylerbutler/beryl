@@ -7,14 +7,15 @@
 //// So these assertions are made on the frames a browser would receive.
 
 import beryl
+import beryl/channel
 import beryl/group
 import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import beryl_channels
 import collab_docs/auth
 import collab_docs/doc_store
+import example_helpers/broadcast_hub as hub
 import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/list
@@ -23,7 +24,6 @@ import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
 import showcase
-import showcase/hub
 
 /// A running showcase system plus the tenant secret its document channel
 /// verifies join tokens against.
@@ -64,7 +64,7 @@ pub fn start(_replica: String) -> System {
     ))
 
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(
+    channel.child_spec(
       config,
       handlers: showcase.handlers(showcase.Deps(
         presence: presence_tracker,

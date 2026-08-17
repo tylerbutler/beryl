@@ -1,30 +1,21 @@
 //// Compiles the flagship channel-layer guide example from
 //// `website/src/content/docs/guides/channels.md` — the room channel from
-//// "The shape", the `child_spec` and transport wiring from "Starting a
-//// channel system", and the handler-table check from "Routing rules" —
+//// "The shape", the `child_spec` from "Starting a channel system", and the
+//// handler-table check from "Routing rules" —
 //// so the guide's supervised start shape cannot drift from the real API.
 ////
 //// Two deliberate deviations from the published text: the guide splits the
 //// two snippets across `src/my_app/room_channel.gleam` and
-//// `src/my_app.gleam`, which are one module here, and the guide's `main`
-//// binds a Mist listener to port 8000. This test builds the same request
-//// handler without binding a port — it pins the types the guide shows, not
-//// a live listener. Real listeners are covered by `wire_matrix_test`.
+//// `src/my_app.gleam`, which are one module here, and transport wiring is
+//// covered by the transport packages.
 
 import beryl
-import beryl/transport/server
+import beryl/channel
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
-import beryl_mist as mist_transport
-import gleam/bytes_tree
-import gleam/http/request
-import gleam/http/response
 import gleam/json
 import gleam/otp/static_supervisor
 import gleeunit
 import gleeunit/should
-import mist
 
 pub fn main() {
   gleeunit.main()
@@ -81,15 +72,7 @@ pub fn handlers() -> List(channel.Handler) {
   [room()]
 }
 
-fn handle_http(
-  _req: request.Request(mist.Connection),
-) -> response.Response(mist.ResponseData) {
-  response.new(404)
-  |> response.set_body(mist.Bytes(bytes_tree.new()))
-}
-
-/// The guide's `child_spec` call, its config, and the transport wiring it hands
-/// the returned handle to, compiled and run.
+/// The guide's `child_spec` call and config, compiled and run.
 pub fn documented_guide_child_spec_example_compiles_and_starts_test() {
   let config =
     beryl.config(wire.phoenix_codec())
@@ -97,22 +80,13 @@ pub fn documented_guide_child_spec_example_compiles_and_starts_test() {
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(config, handlers: handlers())
+    channel.child_spec(config, handlers: handlers())
     as "the guide's handler table builds"
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
     as "the guide's supervision tree starts"
-
-  // `sockets` is an ordinary core handle: the guide hands it straight to
-  // `mist_transport.handler` alongside the guide's `handle_http` fallback.
-  let _request_handler =
-    mist_transport.handler(
-      sockets,
-      server.default_config("/socket/websocket"),
-      handle_http,
-    )
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }

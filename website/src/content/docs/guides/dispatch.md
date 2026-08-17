@@ -7,7 +7,7 @@ Raw **app-side dispatch** is beryl's core programming model: build one
 supervised runtime with `beryl.child_spec`, build a per-socket model in
 `init`, and route every socket event in one `update` function. For
 multi-channel or Phoenix-shaped apps, the recommended
-[`beryl_channels` layer](/guides/channels/) supplies this router for you.
+[`beryl/channel` layer](/guides/channels/) supplies this router for you.
 
 There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `socket.Input` values and returning `socket.Next(model, effects)`.
 
@@ -70,7 +70,9 @@ topic.extract_wildcards(
 // -> Ok(["tenant-a", "doc-42"])
 ```
 
-For one namespace, matching inside `update` is fine, and `beryl/socket/router` keeps pattern ownership and fail-closed dispatch declarative. When several namespaces share a socket, use [`beryl_channels`](/guides/channels/) instead — see [Routing many topics from one app](#routing-many-topics-from-one-app).
+For one namespace, match directly inside `update`. When several namespaces
+share a socket, use [`beryl/channel`](/guides/channels/) instead — see
+[Routing many topics from one app](#routing-many-topics-from-one-app).
 
 ## Single-topic example
 
@@ -194,86 +196,31 @@ A few important details:
 
 ## Routing many topics from one app
 
-Use [`beryl_channels`](/guides/channels/). Register a list of channel handlers
+Use [`beryl/channel`](/guides/channels/). Register a list of channel handlers
 and the layer routes every socket event to the channel that owns its topic.
 Each channel keeps its own private state and server-side message type, so
 channels that share no types compose in one list, and there is no socket-wide
 model, message union, or `update` function to write.
 
-`beryl/socket/router` is the alternative when you want `beryl.child_spec` and
-your own `update` with no additional dependency — typically a server around a
-single topic namespace. Every namespace on a socket shares one model type, and
-the app owns how per-topic state is stored in it:
+The `showcase` example composes three topic families with `beryl/channel`.
+The `cursors` example stays on raw dispatch and matches its single
+`cursor:*` pattern directly with `beryl/topic`.
 
-```gleam
-import beryl/socket as socket
-import beryl/socket/router
-import gleam/dict.{type Dict}
-import gleam/option.{None, Some}
+### Migrating from `beryl/socket/router`
 
-pub type Model {
-  Model(socket_id: String, rooms: Dict(String, chat.Model))
-}
+There is no replacement router API. Let the compiler expose every old import
+and choose one of the two models:
 
-fn rooms(ctx: Ctx) -> router.Namespace(Model) {
-  router.namespace(
-    pattern: "room:*",
-    join: fn(model: Model, match: router.Match, payload, ref) {
-      // Commit the room's state only when the join is accepted.
-      case chat.join(ctx, model.socket_id, match, payload, ref) {
-        #(Some(room), effects) -> #(
-          Model(..model, rooms: dict.insert(model.rooms, match.topic, room)),
-          effects,
-        )
-        #(None, effects) -> #(model, effects)
-      }
-    },
-    message: fn(model: Model, match: router.Match, event, payload, ref) {
-      case dict.get(model.rooms, match.topic) {
-        Ok(room) -> {
-          let #(room, effects) =
-            chat.on_message(ctx, match.topic, room, event, payload, ref)
-          #(
-            Model(..model, rooms: dict.insert(model.rooms, match.topic, room)),
-            effects,
-          )
-        }
-        Error(Nil) -> #(model, [])
-      }
-    },
-    closed: fn(model: Model, match: router.Match, reason) {
-      case dict.get(model.rooms, match.topic) {
-        Ok(room) -> #(
-          Model(..model, rooms: dict.delete(model.rooms, match.topic)),
-          chat.on_closed(ctx, match.topic, room, reason),
-        )
-        Error(Nil) -> #(model, [])
-      }
-    },
-  )
-}
+- For one topic family, match `socket.Input` directly and use
+  `topic.matches` or `topic.extract_wildcards`.
+- For several topic families, replace each `Namespace` with a
+  `channel.Handler`, move its state into `channel.accept`, and start the table
+  with `channel.child_spec`.
 
-fn update(ctx: Ctx) -> fn(Model, socket.Input(Msg)) -> socket.Next(Model) {
-  let namespaces = [router.accept_only("lobby"), rooms(ctx)]
-  fn(model, input) {
-    router.route(namespaces, router.unknown_topic(), model, input)
-  }
-}
-```
-
-Build the namespace list once in a factory like this rather than rebuilding it
-for every input. Patterns use the same syntax as `beryl.with_topic_rate`, and
-handlers receive `router.Match(topic:, params:)` with wildcard captures.
-
-Routing fails closed: unclaimed joins are rejected with the supplied payload,
-other unclaimed inputs are ignored, and `Binary`/`Info` pass through unchanged.
-Use `router.accept_only` for read-only topics and `router.namespace` for topics
-that carry state. Close handlers receive `socket.StopReason`, so normal closes,
-shutdown, heartbeat timeouts, and crashes can be handled differently.
-
-The `cursors` example is the smallest complete server written this way; the
-`showcase` example is the same three topic namespaces composed with
-`beryl_channels`.
+Delete calls to `namespace`, `accept_only`, `unknown_topic`, and `route`; do
+not rebuild the same abstraction locally. `gleam check` then points to the
+remaining `Match` and `Namespace` types that need direct topic values or
+`JoinContext.params`.
 
 ## Typed server-side messages
 

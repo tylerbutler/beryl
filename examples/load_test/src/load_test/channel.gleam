@@ -1,6 +1,6 @@
 import beryl/socket.{
   type Effect, type Input, type Next, AcceptJoin, Broadcast, Join, Message,
-  RejectJoin, ReplyError, ReplyOk,
+  RejectJoin, ReplyError,
 }
 import beryl/wire
 import example_helpers/session_presence
@@ -47,10 +47,13 @@ pub fn message_effects(
 ) -> List(Effect) {
   case event_name {
     "echo" ->
-      reply_ok(ref, result.unwrap(wire.dynamic_to_json(payload), json.null()))
+      socket.reply_ok(
+        ref,
+        result.unwrap(wire.dynamic_to_json(payload), json.null()),
+      )
     "broadcast" | "broadcast_ack" -> {
       let outgoing = result.unwrap(wire.dynamic_to_json(payload), json.null())
-      [Broadcast(topic, event_name, outgoing), ..reply_ok(ref, outgoing)]
+      [Broadcast(topic, event_name, outgoing), ..socket.reply_ok(ref, outgoing)]
     }
     "presence_track" -> track(presence, topic, payload, ref)
     "presence_untrack" -> untrack(presence, topic, payload, ref)
@@ -94,7 +97,7 @@ fn track(
       )
     Ok(#(key, meta)) -> {
       session_presence.track(presence, topic, key, meta)
-      reply_ok(ref, json.object([#("key", json.string(key))]))
+      socket.reply_ok(ref, json.object([#("key", json.string(key))]))
     }
   }
 }
@@ -117,7 +120,7 @@ fn untrack(
       )
     Ok(key) -> {
       session_presence.untrack(presence, topic, key)
-      reply_ok(ref, json.object([#("key", json.string(key))]))
+      socket.reply_ok(ref, json.object([#("key", json.string(key))]))
     }
   }
 }
@@ -128,13 +131,6 @@ fn reply_error(
 ) -> List(Effect) {
   case ref {
     Some(value) -> [ReplyError(value, payload)]
-    None -> []
-  }
-}
-
-fn reply_ok(ref: Option(socket.ReplyRef), payload: json.Json) -> List(Effect) {
-  case ref {
-    Some(value) -> [ReplyOk(value, payload)]
     None -> []
   }
 }

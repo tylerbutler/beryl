@@ -9,12 +9,12 @@ page so they can be deployed together as one Railway service:
 - `/docs`     — collaborative CRDT docs
 - `/healthz`  — health check
 - `/socket/websocket` — shared WebSocket endpoint (one `beryl.Sockets` app
-  with a `beryl_channels` handler per topic namespace: `cursor:*`,
+  with a `beryl/channel` handler per topic namespace: `cursor:*`,
   `room:*`, and `document:`)
 
 ## Channels
 
-This is the multi-topic app the `beryl_channels` layer exists for. Each
+This is the multi-topic app the `beryl/channel` layer exists for. Each
 namespace is a channel handler in `src/showcase/channels/`, registered as
 one list in `showcase.handlers`; the layer routes every join, message, and
 close to the handler that owns the topic, and each channel keeps its own
@@ -32,7 +32,7 @@ announcement remains a channel termination action.
 
 The read-only `lobby` channel is mounted so the chat UI keeps receiving room
 list invalidations. A room channel cannot target that other topic directly,
-so the announcement goes through `showcase/hub`, a small actor holding the
+so the announcement goes through `example_helpers/broadcast_hub`, a small actor holding the
 `beryl.Sockets` handle — the equivalent of Phoenix's `Endpoint.broadcast/3`.
 
 ## Tests

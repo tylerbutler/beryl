@@ -2,28 +2,13 @@
 //// dispatch document handler): document-key encoding and join-level
 //// tenant-token authorization.
 
-import beryl/socket
-import beryl/socket/router
 import collab_docs/app
 import collab_docs/auth
 import collab_docs/doc_store
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/json
-import gleam/option.{Some}
 import gleeunit/should
-
-fn document_ref() -> socket.JoinRef {
-  socket.make_join_ref(
-    topic: "document:demo:readme",
-    join_ref: Some("jr"),
-    msg_ref: Some("r"),
-  )
-}
-
-fn document_match() -> router.Match {
-  router.Match(topic: "document:demo:readme", params: ["demo", "readme"])
-}
 
 fn payload_from_json(raw: String) -> dynamic.Dynamic {
   let assert Ok(value) = json.parse(from: raw, using: decode.dynamic)
@@ -47,14 +32,7 @@ pub fn join_with_valid_tenant_token_is_accepted_test() {
   let ctx = app.Ctx(store: store, secret: secret)
 
   let payload = payload_from_json("{\"token\":\"" <> token <> "\"}")
-  let #(model, effects) =
-    app.join(ctx, "s1", document_match(), payload, document_ref())
-
-  model |> should.be_some
-  case effects {
-    [socket.AcceptJoin(_, _)] -> Nil
-    _ -> should.fail()
-  }
+  app.authorize_join(ctx, ["demo:readme"], payload) |> should.be_ok
 }
 
 pub fn join_without_token_is_rejected_test() {
@@ -62,20 +40,8 @@ pub fn join_without_token_is_rejected_test() {
   let secret = auth.new_secret()
   let ctx = app.Ctx(store: store, secret: secret)
 
-  let #(model, effects) =
-    app.join(
-      ctx,
-      "s1",
-      document_match(),
-      payload_from_json("{}"),
-      document_ref(),
-    )
-
-  model |> should.be_none
-  case effects {
-    [socket.RejectJoin(_, _)] -> Nil
-    _ -> should.fail()
-  }
+  app.authorize_join(ctx, ["demo:readme"], payload_from_json("{}"))
+  |> should.be_error
 }
 
 pub fn join_with_token_for_other_tenant_is_rejected_test() {
@@ -86,12 +52,5 @@ pub fn join_with_token_for_other_tenant_is_rejected_test() {
   let ctx = app.Ctx(store: store, secret: secret)
 
   let payload = payload_from_json("{\"token\":\"" <> token <> "\"}")
-  let #(model, effects) =
-    app.join(ctx, "s1", document_match(), payload, document_ref())
-
-  model |> should.be_none
-  case effects {
-    [socket.RejectJoin(_, _)] -> Nil
-    _ -> should.fail()
-  }
+  app.authorize_join(ctx, ["demo:readme"], payload) |> should.be_error
 }

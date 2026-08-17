@@ -38,7 +38,7 @@ existentials, no type classes) cannot express.
    type-safe, but per-channel lifecycle, authorization, rate limiting, and
    presence move into application code.
 
-3. **Type erasure behind a typed facade (current design).** The registry
+3. **Type erasure behind a typed facade (the design at the time).** The registry
    stores a homogeneous `List(ChannelHandler)`; typed values are erased at
    registration and restored by closures from the same `register` call. The
    public API stays fully typed; erasure never leaks from `beryl.gleam`.

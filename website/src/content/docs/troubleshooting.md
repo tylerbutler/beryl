@@ -40,10 +40,10 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    socket.Join("room:" <> _, payload, ref) ->
      socket.Next(model, [socket.AcceptJoin(ref, option.None)])
    ```
-   With `beryl_channels`, confirm a handler pattern matches the topic. The
+   With `beryl/channel`, confirm a handler pattern matches the topic. The
    layer rejects an unclaimed topic with `{"reason": "unmatched topic"}`.
 
-2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` or `beryl_channels.child_spec` after its child spec is started:
+2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` or `channel.child_spec` after its child spec is started:
    ```gleam
    use <- mist_transport.upgrade(req, channels, config)
    ```

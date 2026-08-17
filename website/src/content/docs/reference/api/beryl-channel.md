@@ -1,5 +1,5 @@
 ---
-title: "beryl_channels/channel"
+title: "beryl/channel"
 description: "The channel composition surface: a channel is a topic pattern paired"
 ---
 
@@ -15,7 +15,7 @@ The channel composition surface: a channel is a topic pattern paired
  ## Shape
 
  ```gleam
- import beryl_channels/channel
+ import beryl/channel
  import gleam/json
 
  pub type Note {
@@ -116,6 +116,43 @@ The typed callbacks of one channel, over its private `state` and its
 ```gleam
 pub type Callbacks(a, b)
 ```
+
+### `ChildSpecError`
+
+Why building a channel-system child specification failed.
+
+ Handler patterns are validated before the core configuration. Validation
+ checks every pattern's syntax in registration order, then checks exact
+ duplicates in registration order. Overlapping non-identical patterns are
+ allowed because routing takes the first match.
+
+```gleam
+pub type ChildSpecError {
+  InvalidPattern(
+    pattern: String,
+    reason: topic.TopicError
+  )
+  DuplicatePattern(pattern: String)
+  InvalidConfig(reason: beryl.ConfigError)
+}
+```
+
+#### Constructors
+
+##### `InvalidPattern(
+  pattern: String,
+  reason: topic.TopicError
+)`
+
+A handler used an invalid topic pattern.
+
+##### `DuplicatePattern(pattern: String)`
+
+Two handlers registered the same pattern string.
+
+##### `InvalidConfig(reason: beryl.ConfigError)`
+
+The core `beryl.Config` failed eager validation.
 
 ### `Closing`
 
@@ -292,6 +329,38 @@ Callbacks that ignore every input and keep the channel joined.
 pub fn callbacks() -> Callbacks(a, b)
 ```
 
+### `child_spec`
+
+Build a channel system's supervision child specification for embedding
+ in an application's supervision tree.
+
+ Like `beryl.child_spec`, this reports only what can be detected before
+ the tree is started: the handler table is validated first, then the
+ `beryl.Config`. The returned `beryl.Sockets` is usable as soon as the
+ owning tree is running.
+
+ ## Example
+
+ ```gleam
+ let assert Ok(#(sockets, spec)) =
+   channel.child_spec(
+     beryl.config(wire.phoenix_codec()),
+     handlers: [rooms.channel()],
+   )
+
+ let assert Ok(_root) =
+   static_supervisor.new(static_supervisor.OneForOne)
+   |> static_supervisor.add(spec)
+   |> static_supervisor.start()
+ ```
+
+```gleam
+pub fn child_spec(
+  beryl.Config,
+  handlers: List(Handler)
+) -> Result(#(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ChildSpecError)
+```
+
 ### `close`
 
 Leave this channel after applying `actions` in order.
@@ -309,7 +378,7 @@ Register a channel for every topic matching `pattern`.
 
  `pattern` uses beryl's topic pattern syntax (`"room:lobby"`,
  `"room:*"`, `"document:*:ops"`, `"*"`) and is validated when the
- handler table is used by `beryl_channels.child_spec`.
+ handler table is used by `channel.child_spec`.
 
  `join` receives one [`JoinContext`](#joincontext) containing connection
  data, the concrete topic, wildcard captures, and the payload.
@@ -529,7 +598,7 @@ Add ordered actions to run as part of accepting this join.
  [`notify`](#notify) schedules a *later* input, while actions preserve
  their declared position immediately after the join acknowledgment.
 
- Actions already attached stay ahead of the ones added here. A refused
+ Existing actions stay ahead of the ones added here. A refused
  join has no topic to act on, so this returns [`reject`](#reject)
  results unchanged.
 

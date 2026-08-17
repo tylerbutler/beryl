@@ -37,7 +37,7 @@ The client sees:
 
 On rejection the client remains connected but is not subscribed to the topic. If the reject payload carries a `reason` field, Phoenix-style clients surface it directly on the `.join().receive("error", ...)` callback.
 
-With `beryl_channels`, return `channel.reject(reason)` from the handler's
+With `beryl/channel`, return `channel.reject(reason)` from the handler's
 `join` callback. A topic no handler matches is rejected automatically with
 `{"reason": "unmatched topic"}`.
 
@@ -218,7 +218,7 @@ to a string. New `TopicError` variants may be added in a minor release, so
 match exact variants only when your handling differs and keep a catch-all
 otherwise.
 
-`beryl_channels.child_spec` validates the handler table first and reports
+`channel.child_spec` validates the handler table first and reports
 `InvalidPattern(pattern, reason)`, `DuplicatePattern(pattern)`, or
 `InvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
 `beryl/topic.TopicError`; match a catch-all reason unless your code handles

@@ -13,7 +13,6 @@ Gleam project as git dependencies by editing `gleam.toml`:
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
-beryl_channels = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_channels" }
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
@@ -26,8 +25,8 @@ gleam deps download
 `gleam add` only installs Hex packages, so these dependency entries must be
 written by hand.
 
-`beryl` is the core runtime, `beryl_channels` is the recommended programming
-layer for multi-channel apps, and `beryl_mist` is the
+`beryl` includes the core runtime and the recommended `beryl/channel`
+programming layer. `beryl_mist` is the
 [Mist](https://hex.pm/packages/mist) WebSocket transport. If you prefer
 [Ewe](https://hex.pm/packages/ewe), use `path = "packages/beryl_ewe"` instead.
 All packages share the same `git` and `ref` values.
@@ -36,23 +35,16 @@ beryl targets the **Erlang (BEAM)** runtime — it does not support the JavaScri
 
 ## Packages
 
-A typical application adds three packages: the core, a programming layer, and a WebSocket transport.
+A typical application adds two packages: beryl and a WebSocket transport.
 
 | Package | Add it when |
 |---------|-------------|
-| `beryl` | Always — the runtime, wire codec, presence, PubSub, groups, and the app-side dispatch API |
-| `beryl_channels` | You want the [channel layer](/guides/channels/), the recommended default for multi-channel and Phoenix-shaped apps |
+| `beryl` | Always — the runtime, raw dispatch API, `beryl/channel`, wire codec, presence, PubSub, and groups |
 | `beryl_mist` | You serve HTTP with [Mist](https://hex.pm/packages/mist) |
 | `beryl_ewe` | You serve HTTP with [Ewe](https://hex.pm/packages/ewe) |
 
-For raw app-side dispatch on Mist, use the same dependency block without the
-`beryl_channels` line.
-
-`beryl_channels` depends on `beryl` plus the shared Gleam libraries beryl
-already pulls in (`gleam_stdlib`, `gleam_erlang`, `gleam_otp`, `gleam_json`),
-so adding it introduces no new transitive runtime dependencies beyond beryl's
-existing graph. See [Choose an API](/choosing-an-api/) if you are deciding
-between the two layers.
+Import `beryl/channel` for the recommended channel model, or `beryl/socket`
+for raw dispatch. See [Choose an API](/choosing-an-api/) for the tradeoff.
 
 ## Requirements
 
@@ -63,7 +55,7 @@ between the two layers.
 ### Why Gleam 1.18?
 
 beryl is a monorepo: the packages live in subdirectories (`packages/beryl`,
-`packages/beryl_channels`, `packages/beryl_mist`, `packages/beryl_ewe`) rather
+`packages/beryl_mist`, `packages/beryl_ewe`) rather
 than at the repository root.
 Pointing a git dependency at a subdirectory needs the `path` field, which Gleam
 added in 1.18. Gleam 1.17 and earlier have no way to point a git dependency at
@@ -95,13 +87,12 @@ upgrade Gleam.
 
 ## Choosing a ref
 
-The channel layer has not appeared in a GitHub release tag yet, so the example
-uses `main`, which matches these docs but can change without warning. Check
-[GitHub Releases](https://github.com/tylerbutler/beryl/releases); once a tag
-contains every package you use, replace `main` with that tag.
+The example uses `main`, which matches these docs but can change without
+warning. Check [GitHub Releases](https://github.com/tylerbutler/beryl/releases);
+once a tag contains every package you use, replace `main` with that tag.
 
 Git dependencies are resolved at the exact ref you name. Always use the same
-ref for `beryl`, `beryl_channels`, and the transport package; mixing versions
+ref for `beryl` and the transport package; mixing versions
 across them is unsupported.
 
 ## Dependencies

@@ -1,9 +1,9 @@
 //// Cursor-channel logic for app-side dispatch.
 ////
-//// This example is deliberately the one built without `beryl_channels`: it
-//// shows `beryl.child_spec` driven by a hand-written `update`, with
-//// `beryl/socket/router` matching topics and the app owning its own model.
-//// Applications composing several channels should prefer `beryl_channels`
+//// This example deliberately uses raw dispatch. It shows
+//// `beryl.child_spec` driven by direct `socket.Input` matching, with
+//// `beryl/topic` matching topics and the app owning its own model.
+//// Applications composing several channels should prefer `beryl/channel`
 //// (see the showcase example), which keeps each channel's state and
 //// server-side message type private and needs no hand-written dispatch.
 ////
@@ -16,7 +16,7 @@
 ////   through a `beryl.child_spec` runtime, reusing that per-topic surface.
 
 import beryl/socket.{type Effect, type JoinRef}
-import beryl/socket/router
+import beryl/topic
 import example_helpers/color
 import example_helpers/payload
 import example_helpers/session_presence
@@ -120,10 +120,6 @@ pub fn closed(
 
 /// Socket-wide model for the standalone cursors server: the socket id plus
 /// one per-topic `Model` per joined `cursor:*` topic.
-///
-/// The app owns this type. `beryl/socket/router` only decides which
-/// namespace an input belongs to; storing per-topic state is the app's job,
-/// which is what keeps the router itself free of any state-shape opinion.
 pub type CursorRooms {
   CursorRooms(socket_id: String, topics: Dict(String, Model))
 }
@@ -135,72 +131,83 @@ pub fn cursor_rooms_init(
   #(CursorRooms(socket_id: info.socket_id, topics: dict.new()), [])
 }
 
-/// Adapt the `cursor:*` handlers to the socket-wide model. A
-/// join's model is committed only when the join is accepted.
-fn namespace(ctx: Ctx) -> router.Namespace(CursorRooms) {
-  router.namespace(
-    pattern: "cursor:*",
-    join: fn(state: CursorRooms, match: router.Match, payload, ref) {
-      case join(ctx, state.socket_id, match.topic, payload, ref) {
-        #(Some(model), effects) -> #(
-          CursorRooms(
-            ..state,
-            topics: dict.insert(state.topics, match.topic, model),
-          ),
-          effects,
-        )
-        #(None, effects) -> #(state, effects)
-      }
-    },
-    message: fn(
-      state: CursorRooms,
-      match: router.Match,
-      event_name,
-      payload,
-      _ref,
-    ) {
-      case dict.get(state.topics, match.topic) {
-        Ok(model) -> {
-          let #(model, effects) =
-            update(
-              ctx,
-              state.socket_id,
-              match.topic,
-              model,
-              event_name,
-              payload,
-            )
-          #(
-            CursorRooms(
-              ..state,
-              topics: dict.insert(state.topics, match.topic, model),
-            ),
-            effects,
-          )
-        }
-        Error(Nil) -> #(state, [])
-      }
-    },
-    closed: fn(state: CursorRooms, match: router.Match, _reason) {
-      case dict.get(state.topics, match.topic) {
-        Ok(model) -> #(
-          CursorRooms(..state, topics: dict.delete(state.topics, match.topic)),
-          closed(ctx, state.socket_id, match.topic, model),
-        )
-        Error(Nil) -> #(state, [])
-      }
-    },
-  )
-}
-
-/// Build the socket-wide update once, sharing the app-owned model.
+/// Build the raw socket update. A join's model is committed only when the
+/// join is accepted.
 pub fn cursor_rooms_update(
   ctx: Ctx,
 ) -> fn(CursorRooms, socket.Input(Nil)) -> socket.Next(CursorRooms) {
-  let namespaces = [namespace(ctx)]
-  fn(model, input) {
-    router.route(namespaces, router.unknown_topic(), model, input)
+  let pattern = topic.parse_pattern("cursor:*")
+  fn(state: CursorRooms, input) {
+    case input {
+      socket.Join(topic_name, payload, ref) ->
+        case topic.matches(pattern, topic_name) {
+          False ->
+            socket.Next(state, [
+              socket.RejectJoin(ref, unknown_topic()),
+            ])
+          True ->
+            case join(ctx, state.socket_id, topic_name, payload, ref) {
+              #(Some(model), effects) ->
+                socket.Next(
+                  CursorRooms(
+                    ..state,
+                    topics: dict.insert(state.topics, topic_name, model),
+                  ),
+                  effects,
+                )
+              #(None, effects) -> socket.Next(state, effects)
+            }
+        }
+
+      socket.Message(topic_name, event_name, payload, _ref) ->
+        case
+          topic.matches(pattern, topic_name),
+          dict.get(state.topics, topic_name)
+        {
+          True, Ok(model) -> {
+            let #(model, effects) =
+              update(
+                ctx,
+                state.socket_id,
+                topic_name,
+                model,
+                event_name,
+                payload,
+              )
+            socket.Next(
+              CursorRooms(
+                ..state,
+                topics: dict.insert(state.topics, topic_name, model),
+              ),
+              effects,
+            )
+          }
+          _, _ -> socket.Next(state, [])
+        }
+
+      socket.Closed(topic_name, _reason) ->
+        case
+          topic.matches(pattern, topic_name),
+          dict.get(state.topics, topic_name)
+        {
+          True, Ok(model) ->
+            socket.Next(
+              CursorRooms(
+                ..state,
+                topics: dict.delete(state.topics, topic_name),
+              ),
+              closed(ctx, state.socket_id, topic_name, model),
+            )
+          _, _ -> socket.Next(state, [])
+        }
+
+      socket.Binary(_, _) | socket.Info(_) -> socket.Next(state, [])
+    }
   }
+}
+
+fn unknown_topic() -> json.Json {
+  json.object([#("reason", json.string("unknown_topic"))])
 }
 
 fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {

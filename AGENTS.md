@@ -52,6 +52,11 @@ and are hidden from the public API. Functions in `beryl/transport` that are
 consumed by transport packages carry `// nolint: unused_exports` annotations
 because they appear unused within beryl itself.
 
+**`beryl/channel` MUST stay layered on beryl's public core APIs.** Do not
+import `beryl/runtime` or the other internal modules listed above. Keep its
+private routing machinery behind the module's internal seam, and preserve the
+raw-dispatch/channel Phoenix parity matrix in `packages/beryl/test/`.
+
 ## Architecture (Non-Obvious)
 
 ### Typed App Dispatch

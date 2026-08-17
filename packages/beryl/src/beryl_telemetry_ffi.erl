@@ -22,13 +22,13 @@ execute({transport_frame_stop, Duration, Bytes, Transport, Kind, Outcome}) ->
 execute(socket_connected) ->
     telemetry:execute([beryl, socket, connected], #{count => 1}, #{}),
     nil;
-execute({socket_disconnected, Duration, JoinedChannels, Reason}) ->
+execute({socket_disconnected, Duration, JoinedTopics, Reason}) ->
     telemetry:execute(
         [beryl, socket, disconnected],
         #{
             count => 1,
             duration => Duration,
-            joined_channels => JoinedChannels
+            joined_channels => JoinedTopics
         },
         #{reason => disconnect_reason(Reason)}
     ),

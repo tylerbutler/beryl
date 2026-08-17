@@ -7,9 +7,9 @@ Type-safe real-time channels and presence for Gleam, targeting the Erlang
 monorepo with three packages (two currently publishable — `beryl_ewe` is
 excluded from release via the `@release` key in the root `gleam.toml`):
 
-- **`packages/beryl`** — core app-dispatch library (runtime, typed
-  events/effects, presence, PubSub, wire protocol, abuse controls, transport
-  SPI)
+- **`packages/beryl`** — raw app dispatch plus `beryl/channel` (runtime,
+  typed events/effects, presence, PubSub, wire protocol, abuse controls,
+  transport SPI)
 - **`packages/beryl_mist`** — Mist WebSocket transport (module `beryl_mist`),
   built on the public `beryl/transport` SPI
 - **`packages/beryl_ewe`** — Ewe WebSocket transport (module `beryl_ewe`),

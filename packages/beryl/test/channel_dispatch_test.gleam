@@ -4,11 +4,11 @@
 //// wire frames, against a real running system.
 
 import beryl
+import beryl/channel
 import beryl/socket
 import beryl/transport
 import beryl/wire
-import beryl_channels/channel
-import dispatch_helper as helper
+import channel_dispatch_helper as helper
 import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/erlang/process

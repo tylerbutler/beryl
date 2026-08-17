@@ -1,4 +1,5 @@
 import beryl
+import beryl/channel
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
@@ -20,11 +21,9 @@ pub fn main() {
   let ctx = docs_app.Ctx(store: store, secret: secret)
 
   let assert Ok(#(channels, beryl_spec)) =
-    beryl.child_spec(
-      beryl.config(wire.phoenix_codec()),
-      init: docs_app.open_documents_init,
-      update: docs_app.open_documents_update(ctx),
-    )
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+      docs_app.handler(ctx),
+    ])
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(beryl_spec)

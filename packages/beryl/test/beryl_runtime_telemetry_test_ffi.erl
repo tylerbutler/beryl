@@ -77,7 +77,7 @@ expect_message(HandlerId, Kind, Outcome, CallbackResult) ->
         false
     end.
 
-expect_disconnect(HandlerId, Reason, JoinedChannels) ->
+expect_disconnect(HandlerId, Reason, JoinedTopics) ->
     ExpectedReason = expected_atom(Reason),
     receive
         {
@@ -86,7 +86,7 @@ expect_disconnect(HandlerId, Reason, JoinedChannels) ->
             #{
                 count := 1,
                 duration := Duration,
-                joined_channels := JoinedChannels
+                joined_channels := JoinedTopics
             },
             #{reason := ExpectedReason}
         } when is_integer(Duration), Duration >= 0 ->

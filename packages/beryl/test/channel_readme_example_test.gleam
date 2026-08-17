@@ -1,5 +1,5 @@
-//// Compiles the quick-start example from `packages/beryl_channels/README.md`
-//// — the package's Hex landing page — so the first code a new user copies
+//// Compiles the channel quick-start from `packages/beryl/README.md` so the
+//// first code a new user copies
 //// cannot drift from the real API.
 ////
 //// One deliberate deviation from the published text: the README's entry
@@ -7,9 +7,8 @@
 //// its body lives in the test function below instead.
 
 import beryl
+import beryl/channel
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
 import gleam/json
 import gleam/otp/static_supervisor
 import gleeunit
@@ -36,7 +35,7 @@ pub fn room() -> channel.Handler {
 /// The README's `main`, compiled and run.
 pub fn readme_quick_start_compiles_and_starts_test() {
   let assert Ok(#(sockets, spec)) =
-    beryl_channels.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       room(),
     ])
     as "the README handler table builds"

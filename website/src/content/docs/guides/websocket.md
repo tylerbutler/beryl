@@ -40,7 +40,7 @@ fn handle_request(
 The `upgrade` function checks if the request path matches, performs the WebSocket upgrade, and wires the connection to the beryl runtime.
 
 The transport is layer-agnostic. A handle from
-`beryl_channels.child_spec` is the same `beryl.Sockets` type as one from
+`channel.child_spec` is the same `beryl.Sockets` type as one from
 `beryl.child_spec`, so this wiring is identical for both.
 
 :::tip[Phoenix JS clients]

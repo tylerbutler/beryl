@@ -5,12 +5,11 @@
 Accepted (2026-07-21). Supersedes [ADR 0001](0001-type-erased-channel-registry.md).
 
 Amended by [ADR 0003](0003-layered-channel-api.md) (accepted 2026-08-02),
-which adds `beryl_channels`, an optional channel layer built entirely on
-this ADR's public API. Every decision below stands unchanged: app-side
-dispatch remains the single core programming model, `packages/beryl` keeps
-one entry-point pair, and the core still contains no erasure. ADR 0003
-layers channel-module ergonomics *above* the core for applications that
-want them; it does not restore anything inside it.
+which adds `beryl/channel`, an optional channel layer built entirely on this
+ADR's public API. Every decision below stands unchanged: app-side dispatch
+remains the core programming model and the core still contains no erasure.
+ADR 0003 layers channel-module ergonomics above that API; co-locating the
+layer in `packages/beryl` does not move it into the runtime internals.
 
 ## Context
 
@@ -73,17 +72,19 @@ the generated [API reference](https://beryl.tylerbutler.com/reference/api/);
 
 - Full breaking rewrite of the `packages/beryl` public API, docs, and
   examples. Hex publishing was disabled during the cutover, so external
-  migration cost was low and the old channel API (`beryl/channel`,
+  migration cost was low and the legacy pre-dispatch channel API
+  (`beryl/channel`,
   `beryl/socket`, `beryl/coordinator`, `beryl/supervisor`) was deleted
-  rather than deprecated.
+  rather than deprecated. ADR 0003 later reused the `beryl/channel` module
+  name for its closure-sealed layer.
 - The typed core stays behind a monomorphic frame-level SPI. Transports
   capture the exact runtime pid, monitor it, and atomically install the
   socket, closer, codec, and `ConnectSeed` with `admit_socket`.
 - Union-and-router boilerplate scales with channel count: zero for
-  single-channel apps (use your types directly), linear otherwise.
-  That cost was later absorbed by `beryl/socket/router`: multi-topic apps
-  register pattern-keyed namespaces, receive wildcard captures in `Match`,
-  and use fail-closed dispatch instead of hand-writing the router.
+  single-channel apps (use your types directly), linear otherwise. ADR 0003's
+  `beryl/channel` layer later absorbed that cost for multi-topic apps. An
+  unreleased intermediate `beryl/socket/router` API was removed before
+  release rather than becoming a third programming model.
 - The effects type carried the main join-ack ordering risk. Effects apply
   strictly in list order within one runtime actor turn, so list order is
   wire order. Presence integration is deliberately separate in Lane B:

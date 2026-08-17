@@ -1,7 +1,7 @@
 //// The `room:*` channel: one joined chat room per topic.
 ////
 //// The same behavior the standalone chatrooms server implements with raw
-//// app-side dispatch (`chatrooms/app`), written as a `beryl_channels`
+//// app-side dispatch (`chatrooms/app`), written as a `beryl/channel`
 //// channel. Wire shapes are unchanged, including the ok-status replies
 //// that carry an error payload and the refless events that get no reply
 //// at all.
@@ -10,9 +10,10 @@
 //// part of accepting the join, so they share one update turn: a second
 //// join cannot slip between them and overshoot the cap.
 
+import beryl/channel
 import beryl/group.{type Groups}
 import beryl/socket.{type ReplyRef}
-import beryl_channels/channel
+import example_helpers/broadcast_hub as hub
 import example_helpers/color
 import example_helpers/payload
 import example_helpers/session_presence
@@ -22,7 +23,6 @@ import gleam/json.{type Json}
 import gleam/option.{type Option}
 import gleam/set
 import gleam/string
-import showcase/hub.{type Hub}
 
 /// Maximum users per room — join rejected when full.
 const max_room_users = 20
@@ -31,7 +31,7 @@ const max_room_users = 20
 /// validation, presence for the capacity check, and the hub for the one
 /// announcement that targets another topic.
 pub type Ctx {
-  Ctx(presence: session_presence.Tracker, groups: Groups, hub: Hub)
+  Ctx(presence: session_presence.Tracker, groups: Groups, hub: hub.Hub)
 }
 
 /// Private state of one joined room.

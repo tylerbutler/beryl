@@ -1,13 +1,12 @@
-//// Coverage for the package entry points: handler validation runs before
+//// Coverage for the channel entry point: handler validation runs before
 //// anything is started, core errors are nested verbatim, and a
 //// `child_spec` system really dispatches once its supervisor is running.
 
 import beryl
+import beryl/channel
 import beryl/topic
 import beryl/wire
-import beryl_channels
-import beryl_channels/channel
-import dispatch_helper as helper
+import channel_dispatch_helper as helper
 import gleam/erlang/process
 import gleam/json
 import gleam/otp/static_supervisor
@@ -24,22 +23,22 @@ fn ok_handler(pattern: String) -> channel.Handler {
 // --- validation happens first ----------------------------------------------
 
 pub fn child_spec_rejects_an_invalid_pattern_before_building_test() {
-  beryl_channels.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+  channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
     ok_handler("room:*"),
     ok_handler(""),
   ])
-  |> should.equal(Error(beryl_channels.InvalidPattern("", topic.EmptyTopic)))
+  |> should.equal(Error(channel.InvalidPattern("", topic.EmptyTopic)))
 }
 
 pub fn child_spec_rejects_an_invalid_handler_table_test() {
   let result =
-    beryl_channels.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       ok_handler("room:*"),
       ok_handler("room:*"),
     ])
 
   result
-  |> should.equal(Error(beryl_channels.DuplicatePattern("room:*")))
+  |> should.equal(Error(channel.DuplicatePattern("room:*")))
 }
 
 pub fn child_spec_nests_the_core_config_error_verbatim_test() {
@@ -47,17 +46,15 @@ pub fn child_spec_nests_the_core_config_error_verbatim_test() {
     beryl.config(wire.phoenix_codec())
     |> beryl.with_heartbeat(timeout_ms: 1)
 
-  beryl_channels.child_spec(config, handlers: [ok_handler("room:*")])
-  |> should.equal(
-    Error(beryl_channels.InvalidConfig(beryl.HeartbeatTimeoutTooLow(2))),
-  )
+  channel.child_spec(config, handlers: [ok_handler("room:*")])
+  |> should.equal(Error(channel.InvalidConfig(beryl.HeartbeatTimeoutTooLow(2))))
 }
 
 // --- a supervised system dispatches ----------------------------------------
 
 pub fn child_spec_dispatches_once_its_supervisor_runs_test() {
   let assert Ok(#(channels, spec)) =
-    beryl_channels.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       ok_handler("room:*"),
     ])
     as "the handler table and config are valid"
@@ -88,7 +85,7 @@ pub fn child_spec_runs_the_same_lifecycle_through_both_supervised_paths_test() {
     ])
 
   let assert Ok(#(channels, spec)) =
-    beryl_channels.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       lifecycle_handler(supervised),
     ])
     as "the handler table and config are valid"
