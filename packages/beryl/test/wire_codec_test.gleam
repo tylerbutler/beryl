@@ -78,9 +78,7 @@ pub fn phoenix_codec_defaults_to_native_implementation_test() {
       codec.decode_text(phoenix)("[null,\"1\",123,\"event\",{}]")
 
     reason
-    |> should.equal(
-      "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
-    )
+    |> should.equal("Expected String at index 2, found Int")
   })
 }
 
@@ -92,9 +90,7 @@ pub fn phoenix_codec_uses_native_when_env_is_unknown_test() {
       codec.decode_text(phoenix)("[null,\"1\",123,\"event\",{}]")
 
     reason
-    |> should.equal(
-      "Expected array of 5 elements [join_ref, ref, topic, event, payload]",
-    )
+    |> should.equal("Expected String at index 2, found Int")
   })
 }
 
@@ -215,6 +211,15 @@ pub fn public_codec_operations_apply_configured_behaviour_test() {
   codec.apply_encode_error(configured, join_ref: None, topic: "room:1")
   |> should.equal(Some(codec.TextFrame("error:room:1")))
   codec.uses_topicless_events(configured) |> should.be_true()
+}
+
+pub fn dynamic_to_json_decodes_nested_json_values_test() {
+  let encoded = "[\"text\",1,1.5,true,null,{\"nested\":[false]}]"
+  let assert Ok(dynamic_value) =
+    json.parse(from: encoded, using: decode.dynamic)
+  let assert Ok(json_value) = wire.dynamic_to_json(dynamic_value)
+
+  json.to_string(json_value) |> should.equal(encoded)
 }
 
 // === Reply status ===
