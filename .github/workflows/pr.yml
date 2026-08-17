@@ -57,16 +57,39 @@ jobs:
             --head ${{ github.event.pull_request.head.sha }} \
             --format github >> "$GITHUB_OUTPUT"
 
-      # `--edit-last --create-if-none` makes this a sticky comment: one
-      # comment per PR, rewritten on every push.
+      # Sticky comment keyed on an HTML marker: one comment per PR, rewritten
+      # on every push. `gh pr comment --edit-last` can't be used here — it
+      # edits the newest github-actions[bot] comment whatever its content, so
+      # it clobbers the protocol-smoke comment from ci.yml and both workflows
+      # then keep re-creating each other's comments.
       - name: Comment changelog preview
         if: steps.changelog.outputs.preview != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW: ${{ steps.changelog.outputs.preview }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} \
-            --edit-last --create-if-none --body "$PREVIEW"
+          marker="<!-- beryl-changelog-check -->"
+          body="$marker
+          $PREVIEW"
+          comment_id="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --paginate \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" \
+              | head -n 1
+          )"
+          if [[ -n "$comment_id" ]]; then
+            gh api \
+              --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+              --raw-field body="$body"
+          else
+            gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --raw-field body="$body"
+          fi
 
       - name: Fail on missing changelog fragments
         if: steps.changelog.outcome == 'failure'
