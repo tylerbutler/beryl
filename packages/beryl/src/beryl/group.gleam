@@ -35,6 +35,13 @@ import gleam/set.{type Set}
 ///
 /// This handle is intentionally opaque so callers cannot forge the backing
 /// actor subject or depend on its runtime representation.
+///
+/// ## Node affinity
+///
+/// The stable registered subject is resolved on the caller's node. Keep a
+/// `Groups` handle on the node where its child specification runs. Calls from
+/// another BEAM node cannot reach the owning actor; synchronous operations
+/// panic as unavailable, and fire-and-forget broadcasts are not delivered.
 pub opaque type Groups {
   Groups(subject: Subject(Message))
 }

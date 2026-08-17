@@ -147,4 +147,10 @@ a stable registered name and reaches the replacement actor after a supervised
 restart. Group definitions and topic memberships are in-memory state and reset
 when the actor restarts.
 
+The registered name is node-local. Keep a `Groups` handle on the node where its
+child specification runs. From another BEAM node, synchronous operations cannot
+reach the owning actor and panic as unavailable, while fire-and-forget
+`broadcast` calls are not delivered. Group definitions and memberships are not
+replicated between nodes.
+
 See the [Supervision guide](/guides/supervision) for the overall startup pattern.

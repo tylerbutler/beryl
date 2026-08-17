@@ -61,17 +61,13 @@ const sync_event = "presence_sync"
 ///
 /// ## Node affinity
 ///
-/// `list`, `get_by_key`, and `count` read the ETS read model directly
-/// in-process, which only works for ETS tables local to the calling node.
-/// Do not send this handle to, or otherwise use it from, a process on a
-/// different BEAM node: `track`/`untrack`/`untrack_all` would still reach
-/// the owning actor over distribution (they go through its `Subject`), but
-/// the read functions would be looking up a table name that names
-/// nothing on that node (or, if the identifier happens to collide with an
-/// unrelated local table, something else entirely), so they would fail or
-/// read the wrong data. Keep a Presence handle on the node where `child_spec`
-/// created it, and use PubSub replication (`with_pubsub`) to share presence
-/// state across nodes instead.
+/// The stable registered subject and ETS read model are resolved on the
+/// caller's node. Keep a `Presence` handle on the node where its child
+/// specification runs. From another BEAM node, synchronous mutations cannot
+/// reach the owning actor and panic as unavailable, while `list`, `get_by_key`,
+/// and `count` return `Error(Nil)` because the read model is unavailable.
+/// Use PubSub replication (`with_pubsub`) to share presence state across nodes
+/// instead of moving the handle itself.
 pub opaque type Presence {
   Presence(subject: Subject(Message), read_name: process.Name(Message))
 }

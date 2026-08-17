@@ -41,9 +41,11 @@ read-after-write behavior.
 |---|---|
 | `child_spec(config)` | Return a stable presence handle and its supervised child specification |
 
-The handle keeps working across actor restarts because both the process and
-its ETS read model use the same stable name. The replacement actor starts with
-fresh in-memory CRDT state and tracking refs.
+On the node where the child specification runs, the handle keeps working across
+actor restarts because both the process and its ETS read model use the same
+stable name. The replacement actor starts with fresh in-memory CRDT state and
+tracking refs. The handle itself is node-affine; PubSub replicates presence
+state between nodes.
 
 ### Configuration builders
 
