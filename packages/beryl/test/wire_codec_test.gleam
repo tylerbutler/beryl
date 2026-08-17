@@ -142,6 +142,81 @@ pub fn inbound_supports_optional_refs_test() {
   codec.inbound_ref(inbound) |> should.equal(None)
 }
 
+pub fn public_codec_operations_apply_configured_behaviour_test() {
+  let base =
+    codec.new(
+      decode_text: fn(text) {
+        Ok(codec.inbound(
+          join_ref: None,
+          ref: None,
+          topic: "text",
+          kind: codec.Event(text),
+          payload: dynamic.nil(),
+        ))
+      },
+      encode_reply: fn(_, _, _, _, _) { codec.TextFrame("reply") },
+      encode_push: fn(topic, event, _) {
+        codec.TextFrame(topic <> ":" <> event)
+      },
+      encode_heartbeat_reply: fn(_) { codec.TextFrame("heartbeat") },
+    )
+
+  let assert Ok(text_inbound) = codec.apply_decode_text(base, text: "decoded")
+  codec.inbound_kind(text_inbound) |> should.equal(codec.Event("decoded"))
+  codec.apply_decode_binary(base, data: <<1>>) |> should.equal(None)
+  codec.apply_encode_reply(
+    base,
+    join_ref: None,
+    ref: None,
+    topic: "room:1",
+    status: codec.StatusOk,
+    response: json.null(),
+  )
+  |> should.equal(codec.TextFrame("reply"))
+  codec.apply_encode_push(
+    base,
+    topic: "room:1",
+    event: "updated",
+    payload: json.null(),
+  )
+  |> should.equal(codec.TextFrame("room:1:updated"))
+  codec.apply_encode_heartbeat_reply(base, ref: None)
+  |> should.equal(codec.TextFrame("heartbeat"))
+  codec.apply_encode_close(base, join_ref: None, topic: "room:1")
+  |> should.equal(None)
+  codec.apply_encode_error(base, join_ref: None, topic: "room:1")
+  |> should.equal(None)
+  codec.uses_topicless_events(base) |> should.be_false()
+
+  let configured =
+    base
+    |> codec.with_binary_decoder(fn(_) {
+      Ok(codec.inbound(
+        join_ref: None,
+        ref: None,
+        topic: "binary",
+        kind: codec.Event("decoded"),
+        payload: dynamic.nil(),
+      ))
+    })
+    |> codec.with_close_encoder(fn(_, topic) {
+      codec.TextFrame("close:" <> topic)
+    })
+    |> codec.with_error_encoder(fn(_, topic) {
+      codec.TextFrame("error:" <> topic)
+    })
+    |> codec.with_topicless_events()
+
+  let assert Some(Ok(binary_inbound)) =
+    codec.apply_decode_binary(configured, data: <<1>>)
+  codec.inbound_topic(binary_inbound) |> should.equal("binary")
+  codec.apply_encode_close(configured, join_ref: None, topic: "room:1")
+  |> should.equal(Some(codec.TextFrame("close:room:1")))
+  codec.apply_encode_error(configured, join_ref: None, topic: "room:1")
+  |> should.equal(Some(codec.TextFrame("error:room:1")))
+  codec.uses_topicless_events(configured) |> should.be_true()
+}
+
 // === Reply status ===
 
 pub fn reply_status_round_trips_through_phoenix_codec_test() {
