@@ -12,6 +12,7 @@ import gleam/json
 import gleam/option
 import gleam/string
 import gleeunit/should
+import test_helpers
 
 /// Start an app system that accepts every join and forwards every event to
 /// the observer, with the given heartbeat timeout (server checks at half
@@ -65,10 +66,32 @@ fn socket_is_connected(
 ) -> Bool {
   drain(frames)
   send_heartbeat(channels, socket_id, "probe")
-  case process.receive(frames, 50) {
+  case process.receive(frames, 500) {
     Ok(_) -> True
     Error(_) -> False
   }
+}
+
+fn keep_alive_until_evicted(
+  channels: beryl.Sockets,
+  socket_id: String,
+  frames: process.Subject(String),
+  evicted: process.Subject(Nil),
+) -> Nil {
+  test_helpers.wait_until(
+    fn() {
+      case process.receive(evicted, 0) {
+        Ok(Nil) -> True
+        Error(Nil) -> {
+          send_heartbeat(channels, socket_id, "keep-alive")
+          let _reply = h.recv(frames)
+          False
+        }
+      }
+    },
+    2000,
+    25,
+  )
 }
 
 pub fn heartbeat_reply_is_sent_test() {
@@ -111,18 +134,15 @@ pub fn heartbeat_timeout_evicts_stale_socket_test() {
 
 pub fn heartbeat_resets_timeout_test() {
   let events = process.new_subject()
-  let channels = start_hb_app(150, events)
+  let channels = start_hb_app(500, events)
+  let evicted = process.new_subject()
+  let _stale_frames =
+    h.connect_with_close(channels, "hb-stale-control", fn() {
+      process.send(evicted, Nil)
+    })
   let frames = h.connect(channels, "hb-alive")
 
-  // Keep heartbeating at under half the timeout for two full windows.
-  process.sleep(60)
-  send_heartbeat(channels, "hb-alive", "hb-1")
-  process.sleep(60)
-  send_heartbeat(channels, "hb-alive", "hb-2")
-  process.sleep(60)
-  send_heartbeat(channels, "hb-alive", "hb-3")
-  process.sleep(60)
-
+  keep_alive_until_evicted(channels, "hb-alive", frames, evicted)
   socket_is_connected(channels, "hb-alive", frames) |> should.be_true
 
   beryl.stop(channels)
@@ -130,18 +150,15 @@ pub fn heartbeat_resets_timeout_test() {
 
 pub fn heartbeat_timeout_only_evicts_stale_sockets_test() {
   let events = process.new_subject()
-  let channels = start_hb_app(150, events)
-  let stale_frames = h.connect(channels, "hb-idle")
+  let channels = start_hb_app(500, events)
+  let evicted = process.new_subject()
+  let _stale_frames =
+    h.connect_with_close(channels, "hb-idle", fn() {
+      process.send(evicted, Nil)
+    })
   let active_frames = h.connect(channels, "hb-busy")
 
-  process.sleep(80)
-  send_heartbeat(channels, "hb-busy", "hb-1")
-  process.sleep(80)
-  send_heartbeat(channels, "hb-busy", "hb-2")
-  process.sleep(80)
-  send_heartbeat(channels, "hb-busy", "hb-3")
-
-  socket_is_connected(channels, "hb-idle", stale_frames) |> should.be_false
+  keep_alive_until_evicted(channels, "hb-busy", active_frames, evicted)
   socket_is_connected(channels, "hb-busy", active_frames) |> should.be_true
 
   beryl.stop(channels)
@@ -200,25 +217,20 @@ fn wait_for_closed(events: process.Subject(socket.Input(Nil))) -> Nil {
 
 pub fn eviction_cleans_topic_but_keeps_other_members_test() {
   let events = process.new_subject()
-  let channels = start_hb_app(150, events)
+  let channels = start_hb_app(500, events)
+  let evicted = process.new_subject()
 
-  let stale_frames = h.connect(channels, "hb-gone")
+  let stale_frames =
+    h.connect_with_close(channels, "hb-gone", fn() {
+      process.send(evicted, Nil)
+    })
   h.join(channels, "hb-gone", "room:shared", "j1", "r1")
   let _ = h.recv(stale_frames)
 
   let active_frames = h.connect(channels, "hb-here")
   h.join(channels, "hb-here", "room:shared", "j2", "r2")
   let _ = h.recv(active_frames)
-
-  // Keep the active socket alive while the stale one times out.
-  process.sleep(80)
-  send_heartbeat(channels, "hb-here", "hb-1")
-  process.sleep(80)
-  send_heartbeat(channels, "hb-here", "hb-2")
-  process.sleep(80)
-  send_heartbeat(channels, "hb-here", "hb-3")
-
-  socket_is_connected(channels, "hb-gone", stale_frames) |> should.be_false
+  keep_alive_until_evicted(channels, "hb-here", active_frames, evicted)
 
   // The surviving member still receives topic broadcasts.
   drain(active_frames)
