@@ -1,13 +1,13 @@
 # Follow-up: enforce frame limits before WebSocket payload buffering
 
-Tracking record for the upstream half of GitHub issue #198,
+Tracking record for GitHub issue #198,
 "Enforce frame limits before WebSocket payload buffering".
 
 ## Resolution
 
-Beryl temporarily pins Mist commit
-`e69e44edf4c0ca41a3bab771c2dd6e2151ecf3e5`, proposed upstream as
-[rawhat/mist#91](https://github.com/rawhat/mist/pull/91).
+Beryl pins its maintained Mist fork at commit
+`e69e44edf4c0ca41a3bab771c2dd6e2151ecf3e5`. The fix is carried downstream
+and does not depend on an upstream change.
 
 The bounded Mist entry point scans WebSocket headers before decoding:
 
@@ -27,6 +27,3 @@ post-assembly check remains as defense in depth.
 - [x] Bound fragmented-message aggregation to the same limit.
 - [x] Exercise header-only streamed payloads and fragmented payloads.
 - [x] Document the in-process guarantee and remaining adapter responsibility.
-
-Once rawhat/mist#91 is released, replace the temporary Git pin with the
-corresponding Hex version.
