@@ -3,7 +3,6 @@ import beryl
 import beryl/error as beryl_error
 import beryl/group
 import beryl/internal
-import beryl/socket
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec
@@ -421,24 +420,38 @@ pub fn topic_namespace_test() {
   topic.namespace("doc:tenant:123") |> should.equal(Ok("doc"))
 }
 
-pub fn group_broadcast_preserves_nil_and_missing_group_noop_test() {
+pub fn group_broadcast_delivers_to_members_and_missing_group_noops_test() {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, _ev) { socket.Next(model, []) },
+      init: h.accepting_init,
+      update: h.accepting_update,
     )
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
   let assert Ok(Nil) = group.add(groups, "team:eng", "room:lobby")
 
-  // Broadcasting to a populated group returns Nil after resolving its topics.
-  group.broadcast(groups, channels, "team:eng", "announce", json.object([]))
+  let member = h.connect(channels, "member")
+  h.join_ok(channels, member, "member", "room:lobby", "jr-1", "r-1")
+  let outsider = h.connect(channels, "outsider")
+  h.join_ok(channels, outsider, "outsider", "room:other", "jr-2", "r-2")
+
+  group.broadcast(
+    groups,
+    channels,
+    "team:eng",
+    "announce",
+    json.string("hello"),
+  )
   |> should.equal(Nil)
+  h.recv(member)
+  |> should.equal("[null,null,\"room:lobby\",\"announce\",\"hello\"]")
+  h.recv_none(outsider)
 
   // Broadcasting to a missing group is a silent no-op
   group.broadcast(groups, channels, "missing", "announce", json.object([]))
   |> should.equal(Nil)
+  h.recv_none(member)
 }
 
 // ── Payload preview hardening ────────────────────────────────────────────────
