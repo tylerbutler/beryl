@@ -66,12 +66,6 @@ pub opaque type Message {
   )
   GetTopics(group_name: String, reply: Subject(Result(Set(String), GroupError)))
   ListGroups(reply: Subject(List(String)))
-  BroadcastToGroup(
-    group_name: String,
-    channels: beryl.Sockets,
-    event: String,
-    payload: json.Json,
-  )
 }
 
 /// Internal state
@@ -152,7 +146,10 @@ pub fn list_groups(groups: Groups) -> List(String) {
 /// Broadcast a message to all topics in a group
 ///
 /// Sends the message to every topic in the named group via beryl.broadcast().
-/// If the group doesn't exist, this is a silent no-op (fire and forget).
+/// The topic lookup runs through the groups actor, then fan-out runs in the
+/// caller. If the group doesn't exist, this is a silent no-op.
+///
+/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
 pub fn broadcast(
   groups: Groups,
   channels: beryl.Sockets,
@@ -160,10 +157,11 @@ pub fn broadcast(
   event: String,
   payload: json.Json,
 ) -> Nil {
-  process.send(
-    groups.subject,
-    BroadcastToGroup(group_name, channels, event, payload),
-  )
+  case topics(groups, group_name) {
+    Ok(topics) -> broadcast_to_topics(topics, channels, event, payload)
+    Error(GroupAlreadyExists) -> Nil
+    Error(GroupNotFound) -> Nil
+  }
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
@@ -248,16 +246,6 @@ fn handle_message(
       let names = dict.keys(state.groups)
       process.send(reply, names)
       actor.continue(state)
-    }
-
-    BroadcastToGroup(group_name, channels, event, payload) -> {
-      case dict.get(state.groups, group_name) {
-        Error(Nil) -> actor.continue(state)
-        Ok(topics) -> {
-          broadcast_to_topics(topics, channels, event, payload)
-          actor.continue(state)
-        }
-      }
     }
   }
 }

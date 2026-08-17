@@ -108,7 +108,10 @@ pub fn add(
 Broadcast a message to all topics in a group
 
  Sends the message to every topic in the named group via beryl.broadcast().
- If the group doesn't exist, this is a silent no-op (fire and forget).
+ The topic lookup runs through the groups actor, then fan-out runs in the
+ caller. If the group doesn't exist, this is a silent no-op.
+
+ Panics if the groups actor is unavailable or does not reply within 5 seconds.
 
 ```gleam
 pub fn broadcast(

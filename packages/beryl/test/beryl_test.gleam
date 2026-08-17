@@ -421,7 +421,7 @@ pub fn topic_namespace_test() {
   topic.namespace("doc:tenant:123") |> should.equal(Ok("doc"))
 }
 
-pub fn group_broadcast_is_fire_and_forget_test() {
+pub fn group_broadcast_preserves_nil_and_missing_group_noop_test() {
   let assert Ok(channels) =
     h.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -432,7 +432,7 @@ pub fn group_broadcast_is_fire_and_forget_test() {
   let assert Ok(Nil) = group.create(groups, "team:eng")
   let assert Ok(Nil) = group.add(groups, "team:eng", "room:lobby")
 
-  // Broadcasting to a populated group returns Nil (fire and forget)
+  // Broadcasting to a populated group returns Nil after resolving its topics.
   group.broadcast(groups, channels, "team:eng", "announce", json.object([]))
   |> should.equal(Nil)
 
