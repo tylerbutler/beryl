@@ -182,7 +182,7 @@ implement application-level tracking in `update` and return an explicit
 
 ## Group errors
 
-Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(_, GroupError)`:
+Group operations (`create`, `delete`, `add`, `remove`, `topics`, `broadcast_checked`) return `Result(_, GroupError)`:
 
 ```gleam
 case group.create(groups, name) {
@@ -192,7 +192,7 @@ case group.create(groups, name) {
 }
 ```
 
-`group.broadcast` is fire-and-forget and never returns an error. If the group does not exist, the call is a no-op.
+`group.broadcast` is fire-and-forget and never returns an error. If the group does not exist, the call is a no-op. Use `group.broadcast_checked` to receive `Error(GroupNotFound)` for an unknown group; `Ok(Nil)` confirms submission for the group's current topics, not delivery to subscribers.
 
 ## Startup failures
 

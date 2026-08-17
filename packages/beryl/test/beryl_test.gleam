@@ -441,6 +441,36 @@ pub fn group_broadcast_is_fire_and_forget_test() {
   |> should.equal(Nil)
 }
 
+pub fn group_broadcast_checked_reports_missing_group_test() {
+  let assert Ok(channels) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, _ev) { socket.Next(model, []) },
+    )
+  let assert Ok(groups) = group.start()
+  let assert Ok(Nil) = group.create(groups, "team:eng")
+  let assert Ok(Nil) = group.add(groups, "team:eng", "room:lobby")
+
+  group.broadcast_checked(
+    groups,
+    channels,
+    "team:eng",
+    "announce",
+    json.object([]),
+  )
+  |> should.equal(Ok(Nil))
+
+  group.broadcast_checked(
+    groups,
+    channels,
+    "missing",
+    "announce",
+    json.object([]),
+  )
+  |> should.equal(Error(group.GroupNotFound))
+}
+
 // ── Payload preview hardening ────────────────────────────────────────────────
 
 pub fn payload_preview_metadata_is_bounded_test() {

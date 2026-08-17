@@ -90,15 +90,33 @@ group.broadcast(
 This is equivalent to calling `beryl.broadcast` on each topic in the group in sequence.
 
 :::note[Missing group is a no-op]
-`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `GroupNotFound`.
+`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing.
 :::
+
+Use `group.broadcast_checked` when an unknown group should return `Error(GroupNotFound)`:
+
+```gleam
+case group.broadcast_checked(
+  groups,
+  channels,
+  "team:engineering",
+  "deploy_started",
+  payload,
+) {
+  Ok(Nil) -> Nil
+  Error(group.GroupNotFound) -> handle_unknown_group()
+  Error(group.GroupAlreadyExists) -> Nil
+}
+```
+
+`Ok(Nil)` confirms that the group existed and broadcasts were submitted for its current topics. It does not confirm that any subscribers existed or received the event.
 
 ## Error reference
 
 | Error | When |
 |-------|------|
 | `GroupAlreadyExists` | `create` called for a name already in use |
-| `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
+| `GroupNotFound` | `delete`, `add`, `remove`, `topics`, or `broadcast_checked` called for an unknown group name |
 | `GroupActorStartFailed` | `group.start()` — the internal group actor failed to initialize |
 
 ## Full example: team rooms
