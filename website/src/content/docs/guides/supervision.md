@@ -47,6 +47,14 @@ triggered them:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
+This boundary is intentional: all app callbacks run inside the one runtime
+actor, so a supervisor restart for one callback would discard every socket's
+model and close every connection on that `Sockets` handle. The boundary is
+used only when Beryl can discard the failed callback result and reject or tear
+down the narrowest safe scope. Other runtime faults still escape to the
+supervisor. See [Runtime crash containment](/architecture/runtime/#crash-containment)
+for the design trade-off.
+
 See the [Error Handling guide](/guides/error-handling/) for details.
 
 For channel callbacks, those rows map to `join`, `on_message`/`on_binary`,

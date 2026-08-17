@@ -1297,15 +1297,10 @@ fn merge_remote_sync(
   sender: String,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
-  // Merge, diff, on_diff, prune, and the read-model publication that follows
-  // all run inside a crash boundary. The remote state originates from
-  // another cluster node (possibly a mixed version, a compromised peer, or a
-  // malformed dynamic value coerced from the wire); an exception here must
-  // not terminate the shared presence actor. On failure we return the
-  // previous, unchanged `actor_state` so invalid sync input cannot partially
-  // mutate presence state or its read model: the read model is only
-  // republished once merge, on_diff, and prune have all completed
-  // successfully below.
+  // Crash boundary — see internal.rescue. Version skew or bugs can produce
+  // malformed sync state; Erlang distribution peers are fully trusted (see
+  // the production-hardening guide). Preserve the previous actor state unless
+  // merge, on_diff, prune, and read-model publication all complete.
   let processed =
     internal.rescue(fn() {
       let #(new_crdt, state_diff) =

@@ -51,6 +51,15 @@ Most lists are applied in a single actor turn. `PresenceTrack` and `PresenceUntr
 
 Crashes in app callbacks are rescued rather than allowed to take down the shared runtime. The blast radius is scoped to what crashed: a crashing `Join` is rejected; a crashing topic-scoped `Message` or `Binary` closes only that topic; a crashing `Info` tears down the whole socket because it has no topic to attribute; a crashing `Closed` is logged while teardown continues; and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging. Other sockets remain isolated.
 
+This is a deliberate trade-off with OTP's usual "let it crash" model. Every
+socket's model lives in the same runtime actor, so allowing one app callback
+crash to reach supervision would restart that actor, discard every socket's
+state, and close every connection on the handle. Beryl uses a crash boundary
+only where it can discard the callback result and reject or tear down the
+narrowest affected scope; it never continues with a partial result. Faults
+outside those explicit boundaries still crash the runtime and invoke
+supervision.
+
 For the channel layer, those scopes map to `join`, `on_message` /
 `on_binary`, `on_info`, and `on_terminate`. A terminate panic discards that
 router update, so its actions are lost and the old instance remains reachable
