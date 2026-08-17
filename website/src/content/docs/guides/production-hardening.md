@@ -55,7 +55,15 @@ let config =
 `with_frame_rate` and `with_message_rate` are independent. Joins consume frame
 and join quota, but not message quota; leaves and heartbeats consume both frame
 and message quota. Configure both, with frame capacity slightly higher for
-protocol traffic and malformed frames that never reach the runtime.
+protocol traffic and malformed frames that never reach the runtime. If either
+limiter sheds a heartbeat, the socket's heartbeat deadline is not refreshed.
+Sustained over-rate traffic is therefore terminated by heartbeat eviction
+rather than merely being shed forever.
+
+Size both rate and burst allowances with enough headroom for legitimate client
+traffic **plus heartbeats**. A limit that admits an application's normal events
+but leaves no heartbeat capacity can evict healthy clients during ordinary
+bursts.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
