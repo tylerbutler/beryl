@@ -47,6 +47,14 @@ triggered them:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
+This boundary is intentional: all app callbacks run inside the one runtime
+actor, so a supervisor restart for one callback would discard every socket's
+model and close every connection on that `Sockets` handle. The boundary is
+used only when Beryl can discard the failed callback result and reject or tear
+down the narrowest safe scope. Other runtime faults still escape to the
+supervisor. See [Runtime crash containment](/architecture/runtime/#crash-containment)
+for the design trade-off.
+
 See the [Error Handling guide](/guides/error-handling/) for details.
 
 For channel callbacks, those rows map to `join`, `on_message`/`on_binary`,
@@ -56,9 +64,9 @@ but does not stop sibling-channel teardown; see
 
 ## Presence and groups
 
-`presence.start` and `group.start` return plain OTP actors linked to the
-calling process. Start them alongside `child_spec` from your long-lived
-application process:
+`presence.child_spec` and `group.child_spec` return stable handles and child
+specifications, just like the socket runtime. Add all three specifications to
+your application supervisor:
 
 ```gleam
 import beryl
@@ -68,11 +76,11 @@ import beryl/wire
 import gleam/otp/static_supervisor
 
 pub fn main() {
-  let assert Ok(presence_actor) =
-    presence.start(presence.default_config("node1"))
-  let assert Ok(groups) = group.start()
+  let #(presence_actor, presence_spec) =
+    presence.child_spec(presence.default_config("node1"))
+  let #(groups, groups_spec) = group.child_spec()
 
-  let assert Ok(#(channels, spec)) =
+  let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: init,
@@ -80,7 +88,9 @@ pub fn main() {
     )
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(presence_spec)
+    |> static_supervisor.add(groups_spec)
+    |> static_supervisor.add(beryl_spec)
     |> static_supervisor.start()
 
   // ... start the transport, run forever
@@ -93,9 +103,9 @@ actions. The runtime applies those mutations asynchronously and parks only the
 affected socket until completion. Do not call the synchronous public presence
 API directly from `init`, `update`, or a channel callback.
 
-Both also offer `start_named` variants that register the actor under a
-`process.Name` for callers integrating them into their own supervision
-arrangements.
+Both handles are name-backed and reach the replacement actor after a supervised
+restart. Presence entries and tracking refs, and group definitions and
+memberships, are in-memory state and reset when their actor restarts.
 
 :::note[PubSub is not supervised]
 `beryl/pubsub` is backed by Erlang's `pg` module, whose lifecycle is
@@ -128,7 +138,8 @@ quiet no-ops.
 ## Production checklist
 
 - Add the returned specification to your long-lived application supervisor.
-- Start application-owned presence and group actors alongside the Beryl child.
+- Add application-owned presence and group child specifications alongside the
+  Beryl child.
 - Configure PubSub when running more than one BEAM node.
 - Configure rate limits to protect against runaway clients — see
   [Production Hardening](/guides/production-hardening/).

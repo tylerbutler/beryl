@@ -1,8 +1,10 @@
 import beryl/group
 import gleam/erlang/process
 import gleam/list
+import gleam/otp/static_supervisor
 import gleam/set
 import gleeunit/should
+import test_helpers
 
 fn assert_crashes_within(op: fn() -> Nil, timeout_ms: Int) -> Nil {
   let pid = process.spawn_unlinked(op)
@@ -20,30 +22,45 @@ fn assert_crashes_within(op: fn() -> Nil, timeout_ms: Int) -> Nil {
 }
 
 pub fn group_start_test() {
-  let result = group.start()
-  should.be_ok(result)
+  let #(groups, spec) = group.child_spec()
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  group.list_groups(groups) |> should.equal([])
+}
+
+pub fn group_handle_survives_supervised_restart_test() {
+  let #(groups, spec) = group.child_spec()
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  let assert Ok(Nil) = group.create(groups, "before:restart")
+  let assert Ok(old_pid) = process.subject_owner(group.subject(groups))
+
+  process.kill(old_pid)
+  test_helpers.wait_until(
+    fn() {
+      case process.subject_owner(group.subject(groups)) {
+        Ok(pid) -> pid != old_pid
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  group.list_groups(groups) |> should.equal([])
+  group.create(groups, "after:restart") |> should.equal(Ok(Nil))
 }
 
 pub fn configured_call_timeout_is_used_test() {
-  let groups_ready = process.new_subject()
-  let owner =
-    process.spawn_unlinked(fn() {
-      let config =
-        group.default_config()
-        |> group.with_call_timeout(20)
-      let assert Ok(groups) = group.start_with_config(config)
-      process.send(groups_ready, groups)
-      panic as "stop groups owner"
-    })
-  let monitor = process.monitor(owner)
-  let selector =
-    process.new_selector()
-    |> process.select_specific_monitor(monitor, fn(down) { down })
-  let assert Ok(groups) = process.receive(groups_ready, 1000)
-  let assert Ok(process.ProcessDown(..)) =
-    process.selector_receive(selector, 1000)
+  let config =
+    group.default_config()
+    |> group.with_call_timeout(20)
+  let #(groups, _spec) = group.child_spec_with_config(config)
 
-  process.sleep(20)
   assert_crashes_within(
     fn() {
       let _ = group.list_groups(groups)
