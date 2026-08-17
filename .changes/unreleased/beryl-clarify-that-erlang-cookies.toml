@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Security"
+body = "Clarify that Erlang cookies prevent accidental cluster joins while network isolation and mutually verified TLS secure distribution peers."

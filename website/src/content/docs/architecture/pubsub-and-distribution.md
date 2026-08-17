@@ -75,8 +75,11 @@ When socket A sends a message on Node 1, its runtime calls `broadcast_from`, whi
 ## Trust Model
 
 All traffic arriving over Erlang distribution is treated as **fully trusted
-cluster input**. There is no additional authentication layer between nodes:
-the Erlang cookie and network controls are the security boundary.
+cluster input**. A peer can execute arbitrary code on connected nodes; the
+beryl-specific capabilities below are only a subset of that access. Network
+isolation and mutually verified TLS distribution enforce the security
+boundary. Erlang cookies prevent accidental cross-cluster connections but are
+not cryptographically secure peer authentication.
 
 A process on any peer node can:
 
@@ -92,8 +95,8 @@ applies only to inbound WebSocket frames. It does not screen messages that
 arrive via distribution.
 
 Refer to the [Production Hardening guide](/guides/production-hardening/#erlang-cluster-security-boundary)
-for the full cluster security requirements (cookie strength, TLS
-distribution, EPMD port restrictions, and cluster isolation).
+for the full cluster security requirements (network isolation, mutually
+verified TLS distribution, EPMD port restrictions, and cookie handling).
 
 ## Where this lives
 
