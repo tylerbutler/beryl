@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Added"
+body = "Expose public codec operations so custom codecs can be tested without internal accessors"

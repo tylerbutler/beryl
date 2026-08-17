@@ -5,10 +5,9 @@
 //// the Phoenix array format (`[join_ref, ref, topic, event, payload]`).
 ////
 //// To run beryl over your own framing, build a `Codec` value and pass it
-//// to `beryl.config(codec)`. The runtime decodes inbound text via
-//// `codec.decode_text`, optionally decodes inbound binary via
-//// `codec.decode_binary`, dispatches based on the structural `InboundKind`,
-//// and produces outbound text or binary frames via `codec.encode_*` helpers.
+//// to `beryl.config(codec)`. The runtime decodes inbound frames and produces
+//// outbound frames using the configured callbacks. Codec authors can exercise
+//// those callbacks directly with the public `apply_*` functions.
 ////
 //// All codecs must normalise inbound traffic to the `Inbound` shape so
 //// the runtime can stay framing-agnostic.
@@ -222,6 +221,91 @@ pub fn with_error_encoder(
   Codec(..codec, encode_error: Some(encode_error))
 }
 
+/// Decode a text frame with a codec.
+///
+/// Codec authors can use this to test the decoder supplied to `new`.
+pub fn apply_decode_text(
+  codec: Codec,
+  text text: String,
+) -> Result(Inbound, DecodeError) {
+  codec.decode_text(text)
+}
+
+/// Decode a binary frame with a codec, if it has a binary decoder.
+///
+/// Returns `None` when the codec has no decoder configured with
+/// `with_binary_decoder`.
+pub fn apply_decode_binary(
+  codec: Codec,
+  data data: BitArray,
+) -> Option(Result(Inbound, DecodeError)) {
+  case codec.decode_binary {
+    Some(decode) -> Some(decode(data))
+    None -> None
+  }
+}
+
+/// Encode a reply with a codec.
+pub fn apply_encode_reply(
+  codec: Codec,
+  join_ref join_ref: Option(String),
+  ref ref: Option(String),
+  topic topic: String,
+  status status: ReplyStatus,
+  response response: json.Json,
+) -> Frame {
+  codec.encode_reply(join_ref, ref, topic, status, response)
+}
+
+/// Encode a server-initiated push with a codec.
+pub fn apply_encode_push(
+  codec: Codec,
+  topic topic: String,
+  event event: String,
+  payload payload: json.Json,
+) -> Frame {
+  codec.encode_push(topic, event, payload)
+}
+
+/// Encode a heartbeat reply with a codec.
+pub fn apply_encode_heartbeat_reply(
+  codec: Codec,
+  ref ref: Option(String),
+) -> Frame {
+  codec.encode_heartbeat_reply(ref)
+}
+
+/// Encode a graceful topic close with a codec, if it has a close encoder.
+///
+/// Returns `None` when the codec has no encoder configured with
+/// `with_close_encoder`.
+pub fn apply_encode_close(
+  codec: Codec,
+  join_ref join_ref: Option(String),
+  topic topic: String,
+) -> Option(Frame) {
+  case codec.encode_close {
+    Some(encode) -> Some(encode(join_ref, topic))
+    None -> None
+  }
+}
+
+/// Encode an abnormal topic termination with a codec, if it has an error
+/// encoder.
+///
+/// Returns `None` when the codec has no encoder configured with
+/// `with_error_encoder`.
+pub fn apply_encode_error(
+  codec: Codec,
+  join_ref join_ref: Option(String),
+  topic topic: String,
+) -> Option(Frame) {
+  case codec.encode_error {
+    Some(encode) -> Some(encode(join_ref, topic))
+    None -> None
+  }
+}
+
 /// Accessor for the codec's text decoder.
 @internal
 pub fn decode_text(codec: Codec) -> fn(String) -> Result(Inbound, DecodeError) {
@@ -273,6 +357,13 @@ pub fn encode_close(
 /// empty-topic frames are rejected instead of guessed at.
 pub fn with_topicless_events(codec: Codec) -> Codec {
   Codec(..codec, topicless_events: True)
+}
+
+/// Whether the codec routes events without an explicit topic.
+///
+/// Codec authors can use this to test `with_topicless_events`.
+pub fn uses_topicless_events(codec: Codec) -> Bool {
+  codec.topicless_events
 }
 
 /// Accessor for the codec's topicless-events flag.
