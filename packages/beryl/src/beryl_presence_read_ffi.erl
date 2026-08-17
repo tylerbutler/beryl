@@ -1,5 +1,5 @@
 -module(beryl_presence_read_ffi).
--export([new_table/0, put_topic/4, delete_topic/2, get_topic/2, get_count/2]).
+-export([new_table/1, put_topic/4, delete_topic/2, get_topic/2, get_count/2]).
 
 %% Create the materialized presence read-model table.
 %%
@@ -8,10 +8,12 @@
 %% automatically along with it, and any read attempted afterward observes a
 %% dead table rather than silently reading stale or empty data. The table is
 %% `protected` so any process can read it directly (no actor call), while
-%% only the owning (actor) process may write to it. Unnamed (no
-%% `named_table`), so repeated actor starts never collide on a shared name.
-new_table() ->
-    ets:new(beryl_presence_reads, [set, protected, {read_concurrency, true}]).
+%% only the owning (actor) process may write to it. The stable process name is
+%% also used as the table name (process registration and ETS use separate
+%% namespaces), so a name-backed Presence handle finds the replacement table
+%% after a supervised actor restart.
+new_table(Name) ->
+    ets:new(Name, [named_table, set, protected, {read_concurrency, true}]).
 
 %% Replace the materialized snapshot for a topic. Overwrites atomically:
 %% `ets:insert/2` replaces any prior entry for the same key in one step, so

@@ -85,11 +85,7 @@ pub fn main() {
   let presence_tracker = session_presence.start()
 
   // Chatrooms-specific state.
-  let assert Ok(groups) = group.start()
-  let assert Ok(_) = group.create(groups, "public")
-  let assert Ok(_) = group.add(groups, "public", "room:general")
-  let assert Ok(_) = group.add(groups, "public", "room:random")
-  let assert Ok(_) = group.add(groups, "public", "room:help")
+  let #(groups, groups_spec) = group.child_spec()
 
   // collab_docs-specific state.
   let docs_secret = docs_auth.new_secret()
@@ -129,8 +125,13 @@ pub fn main() {
   hub.bind(hub, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(groups_spec)
     |> static_supervisor.add(beryl_spec)
     |> static_supervisor.start()
+  let assert Ok(_) = group.create(groups, "public")
+  let assert Ok(_) = group.add(groups, "public", "room:general")
+  let assert Ok(_) = group.add(groups, "public", "room:random")
+  let assert Ok(_) = group.add(groups, "public", "room:help")
 
   // Build per-example contexts pinned to their URL prefix.
   let cursors_ctx = cursors_router.Context(channels:, base_path: "/cursors")

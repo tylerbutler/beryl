@@ -20,6 +20,17 @@ fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   )
 }
 
+fn start_message_limited_system(
+  events: process.Subject(socket.Input(Nil)),
+) -> beryl.Sockets {
+  h.start_observed(
+    beryl.config(wire.phoenix_codec())
+      |> beryl.with_heartbeat(timeout_ms: 40)
+      |> beryl.with_message_rate(per_second: 1, burst: 1),
+    events,
+  )
+}
+
 fn connect_with_closer(
   channels: beryl.Sockets,
   socket_id: String,
@@ -94,6 +105,37 @@ pub fn active_socket_survives_while_stale_peer_is_evicted_test() {
   // The active socket still serves: it can join another topic.
   h.join(channels, "active", "room:b", "jr-3", "r-3")
   h.recv(active) |> string.contains("\"status\":\"ok\"") |> should.be_true
+}
+
+pub fn message_rate_limited_heartbeats_lead_to_eviction_test() {
+  let events = process.new_subject()
+  let channels = start_message_limited_system(events)
+  let closed = process.new_subject()
+  let frames = connect_with_closer(channels, "flooding", closed)
+
+  // Spend the only burst token on a heartbeat, then keep sending heartbeats
+  // faster than the bucket can refill. The shed heartbeats must not refresh
+  // last_heartbeat, so the normal timeout path closes the connection.
+  h.route(channels, "flooding", "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]")
+  let _heartbeat_reply = h.recv(frames)
+  flood_heartbeats(channels, "flooding", 20)
+
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+}
+
+fn flood_heartbeats(
+  channels: beryl.Sockets,
+  socket_id: String,
+  remaining: Int,
+) -> Nil {
+  case remaining <= 0 {
+    True -> Nil
+    False -> {
+      h.route(channels, socket_id, "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]")
+      process.sleep(5)
+      flood_heartbeats(channels, socket_id, remaining - 1)
+    }
+  }
 }
 
 fn send_heartbeats(

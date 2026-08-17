@@ -2,7 +2,7 @@
 title: Runtime & Supervision
 ---
 
-The runtime is the central OTP actor for app-side socket dispatch. Transports send admitted, decoded frames to it, and your application's `init`/`update` functions run inside it during event dispatch. Presence and groups are independent application-owned actors; PubSub is an Erlang `pg` wrapper rather than a child of the runtime.
+The runtime is the central OTP actor for app-side socket dispatch. Transports send admitted, decoded frames to it, and your application's `init`/`update` functions run inside it during event dispatch. Presence and groups are independent application-owned supervised children; PubSub is an Erlang `pg` wrapper rather than a child of the runtime.
 
 ## Role
 
@@ -51,6 +51,15 @@ Most lists are applied in a single actor turn. `PresenceTrack` and `PresenceUntr
 
 Crashes in app callbacks are rescued rather than allowed to take down the shared runtime. The blast radius is scoped to what crashed: a crashing `Join` is rejected; a crashing topic-scoped `Message` or `Binary` closes only that topic; a crashing `Info` tears down the whole socket because it has no topic to attribute; a crashing `Closed` is logged while teardown continues; and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging. Other sockets remain isolated.
 
+This is a deliberate trade-off with OTP's usual "let it crash" model. Every
+socket's model lives in the same runtime actor, so allowing one app callback
+crash to reach supervision would restart that actor, discard every socket's
+state, and close every connection on the handle. Beryl uses a crash boundary
+only where it can discard the callback result and reject or tear down the
+narrowest affected scope; it never continues with a partial result. Faults
+outside those explicit boundaries still crash the runtime and invoke
+supervision.
+
 For the channel layer, those scopes map to `join`, `on_message` /
 `on_binary`, `on_info`, and `on_terminate`. A terminate panic discards that
 router update, so its actions are lost and the old instance remains reachable
@@ -78,7 +87,7 @@ flowchart TB
 - A restart drops per-socket state (models, joined topics); clients rejoin exactly as they would after any server restart.
 - The child is `Transient`, so a graceful `beryl.stop` is final.
 
-PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which manages its own lifecycle. Presence and groups are independent actors started by the application (see the [Supervision guide](/guides/supervision/)).
+PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which manages its own lifecycle. Presence and groups expose their own child specifications for the application's supervision tree (see the [Supervision guide](/guides/supervision/)).
 
 ## Where this lives
 

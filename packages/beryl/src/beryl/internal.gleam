@@ -49,9 +49,15 @@ pub fn result_error(error: e) -> Result(a, e) {
 }
 
 // nolint: stringly_typed_error -- the error is the formatted BEAM crash description; callers wrap or log it at use sites
+/// Crash boundary for work that runs inside a shared actor.
+///
 /// Run a callback, converting any BEAM crash (error/exit/throw) into an
-/// `Error(description)` so a faulty callback cannot take down the shared actor
-/// that invoked it.
+/// `Error(description)`. This is deliberately not left to OTP supervision:
+/// restarting the runtime or presence actor would discard every socket's or
+/// subscriber's state to recover from one scoped failure. Callers must discard
+/// the failed result and preserve or tear down only the affected scope; they
+/// must never continue with a partial result. Faults outside an explicit
+/// boundary still crash the actor and are handled by supervision.
 ///
 /// The description is depth-limited and truncated by the FFI so a
 /// client-triggered crash cannot bloat log metadata.

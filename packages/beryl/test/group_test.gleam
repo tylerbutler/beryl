@@ -1,11 +1,43 @@
 import beryl/group
+import gleam/erlang/process
 import gleam/list
+import gleam/otp/static_supervisor
 import gleam/set
 import gleeunit/should
+import test_helpers
 
 pub fn group_start_test() {
-  let result = group.start()
-  should.be_ok(result)
+  let #(groups, spec) = group.child_spec()
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  group.list_groups(groups) |> should.equal([])
+}
+
+pub fn group_handle_survives_supervised_restart_test() {
+  let #(groups, spec) = group.child_spec()
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  let assert Ok(Nil) = group.create(groups, "before:restart")
+  let assert Ok(old_pid) = process.subject_owner(group.subject(groups))
+
+  process.kill(old_pid)
+  test_helpers.wait_until(
+    fn() {
+      case process.subject_owner(group.subject(groups)) {
+        Ok(pid) -> pid != old_pid
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  group.list_groups(groups) |> should.equal([])
+  group.create(groups, "after:restart") |> should.equal(Ok(Nil))
 }
 
 pub fn group_create_and_list_test() {

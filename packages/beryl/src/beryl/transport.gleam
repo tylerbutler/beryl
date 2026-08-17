@@ -189,6 +189,11 @@ pub fn socket_disconnected(
 /// Route a transport-decoded inbound message to the runtime. Decode in
 /// the connection process (see `active_codec`) so parse cost and malformed
 /// input never reach the shared runtime.
+///
+/// Runtime message-rate limiting applies after routing. If it sheds a
+/// heartbeat, that heartbeat does not refresh the socket's deadline; sustained
+/// over-rate traffic therefore leads to heartbeat eviction and a call to the
+/// closer registered by `admit_socket`.
 pub fn route_decoded(
   sockets sockets: Sockets,
   socket_id socket_id: String,

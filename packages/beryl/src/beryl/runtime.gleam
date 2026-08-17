@@ -559,9 +559,8 @@ fn handle_message(
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
-      // Delivered through the typed subscriber subject, but the payload's
-      // own shape is a frozen wire contract across nodes; a malformed frame
-      // from a mismatched peer must not crash the runtime.
+      // Crash boundary — see internal.rescue. The payload's own shape is a
+      // frozen wire contract; drop malformed frames from mismatched peers.
       case
         internal.rescue(fn() { handle_remote_broadcast(state, pubsub_msg) })
       {
@@ -748,6 +747,7 @@ fn register_socket(
   let sender = make_socket_sender(state, socket_id)
   let info = sock.ConnectInfo(socket_id: socket_id, seed: seed, self: sender)
   let init = state.init
+  // Crash boundary — see internal.rescue. A failed init never registers.
   case internal.rescue(fn() { init(info) }) {
     Error(crash) -> {
       state.logger
@@ -2112,6 +2112,8 @@ fn exec_input(
     Ok(socket) -> {
       let update = state.update
       let model = socket.model
+      // Crash boundary — see internal.rescue. The error path discards the
+      // callback result and tears down the narrowest safe scope.
       exec_update_result(
         state,
         socket_id,
@@ -3657,8 +3659,9 @@ fn begin_topic_cleanup(
 /// are already reflected: the presence actor publishes a topic's read-model
 /// snapshot before acknowledging the mutation that changed it, and the
 /// socket does not resume until that acknowledgement arrives. The encoder
-/// is app code and runs rescued: a crash drops the snapshot with an error
-/// log instead of taking down the runtime.
+/// is app code and runs inside the crash boundary (see `internal.rescue`):
+/// a crash drops the snapshot with an error log instead of taking down the
+/// runtime.
 fn presence_snapshot(
   state: State(model, msg),
   socket_id: String,

@@ -16,9 +16,7 @@ import gleeunit/should
 
 fn start() -> #(beryl.Sockets, session_presence.Tracker) {
   let presence = session_presence.start()
-  let assert Ok(groups) = group.start()
-  let assert Ok(_) = group.create(groups, "public")
-  let assert Ok(_) = group.add(groups, "public", "room:general")
+  let #(groups, groups_spec) = group.child_spec()
   let assert Ok(hub) = broadcast_hub.start()
   let ctx = app.Ctx(presence: presence, groups: groups, hub: hub)
   let assert Ok(#(sockets, spec)) =
@@ -28,8 +26,11 @@ fn start() -> #(beryl.Sockets, session_presence.Tracker) {
     )
   let assert Ok(_) =
     static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(groups_spec)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
+  let assert Ok(_) = group.create(groups, "public")
+  let assert Ok(_) = group.add(groups, "public", "room:general")
   broadcast_hub.bind(hub, sockets)
   #(sockets, presence)
 }

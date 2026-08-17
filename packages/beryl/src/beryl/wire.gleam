@@ -25,10 +25,13 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 
-const expected_array_message = "Expected array of 5 elements [join_ref, ref, topic, event, payload]"
+const expected_array_message = "array of 5 elements [join_ref, ref, topic, event, payload]"
 
 const max_json_nesting_depth = 64
+
+const max_decode_error_length = 256
 
 /// The canonical Phoenix wire codec. Pass to `beryl.config`.
 ///
@@ -64,23 +67,33 @@ pub fn decode_message(json_string: String) -> Result(Inbound, DecodeError) {
     Error(json.UnexpectedSequence(seq)) ->
       Error(InvalidJson("Unexpected sequence: " <> seq))
     Error(json.UnableToDecode(_)) ->
-      Error(InvalidFormat(expected_array_message))
+      Error(InvalidFormat("Expected " <> expected_array_message))
   }
 }
 
 fn decode_inbound_value(value: Dynamic) -> Result(Inbound, DecodeError) {
-  case decode.run(value, decode.list(decode.dynamic)) {
-    Ok(items) ->
-      case list.length(items) {
-        5 -> decode_inbound_fields(value)
-        _ -> Error(InvalidFormat(expected_array_message))
-      }
-    Error(_) -> Error(InvalidFormat(expected_array_message))
+  case decode.run(value, inbound_decoder()) {
+    Ok(message) -> validate_inbound_depth(message)
+    Error(errors) -> Error(InvalidFormat(format_decode_errors(errors)))
   }
 }
 
-fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
-  let wire_decoder = {
+fn inbound_decoder() -> decode.Decoder(Inbound) {
+  decode.list(decode.dynamic)
+  |> decode.then(fn(items) {
+    case items {
+      [_, _, _, _, _] -> inbound_fields_decoder()
+      _ ->
+        decode.failure(
+          codec.inbound(None, None, "", Event(""), dynamic.nil()),
+          expected: expected_array_message,
+        )
+    }
+  })
+}
+
+fn inbound_fields_decoder() -> decode.Decoder(Inbound) {
+  {
     use join_ref <- decode.subfield([0], decode.optional(decode.string))
     use ref <- decode.subfield([1], decode.optional(decode.string))
     use topic <- decode.subfield([2], decode.string)
@@ -94,10 +107,23 @@ fn decode_inbound_fields(value: Dynamic) -> Result(Inbound, DecodeError) {
       payload: payload,
     ))
   }
+}
 
-  case decode.run(value, wire_decoder) {
-    Ok(msg) -> validate_inbound_depth(msg)
-    Error(_) -> Error(InvalidFormat(expected_array_message))
+fn format_decode_errors(errors: List(decode.DecodeError)) -> String {
+  errors
+  |> list.map(fn(error) {
+    let decode.DecodeError(expected, found, path) = error
+    "Expected " <> expected <> format_decode_path(path) <> ", found " <> found
+  })
+  |> string.join("; ")
+  |> string.slice(0, max_decode_error_length)
+}
+
+fn format_decode_path(path: List(String)) -> String {
+  case path {
+    [] -> ""
+    [index] -> " at index " <> index
+    _ -> " at path " <> string.join(path, ".")
   }
 }
 
@@ -170,92 +196,32 @@ fn dynamic_to_json_limited(
   value: Dynamic,
   remaining_depth: Int,
 ) -> Result(json.Json, Nil) {
-  decode.run(value, decode.string)
-  |> result.map(json.string)
+  decode.run(value, json_decoder(remaining_depth))
   |> result.replace_error(Nil)
-  |> result.lazy_or(fn() { try_decode_int(value, remaining_depth) })
 }
 
-fn try_decode_int(
-  value: Dynamic,
-  remaining_depth: Int,
-) -> Result(json.Json, Nil) {
-  decode.run(value, decode.int)
-  |> result.map(json.int)
-  |> result.replace_error(Nil)
-  |> result.lazy_or(fn() { try_decode_float(value, remaining_depth) })
-}
+fn json_decoder(remaining_depth: Int) -> decode.Decoder(json.Json) {
+  let scalar_decoder =
+    decode.one_of(decode.string |> decode.map(json.string), [
+      decode.int |> decode.map(json.int),
+      decode.float |> decode.map(json.float),
+      decode.bool |> decode.map(json.bool),
+      decode.optional(decode.failure(json.null(), expected: "Nil"))
+        |> decode.map(fn(_) { json.null() }),
+    ])
 
-fn try_decode_float(
-  value: Dynamic,
-  remaining_depth: Int,
-) -> Result(json.Json, Nil) {
-  decode.run(value, decode.float)
-  |> result.map(json.float)
-  |> result.replace_error(Nil)
-  |> result.lazy_or(fn() { try_decode_bool(value, remaining_depth) })
-}
-
-fn try_decode_bool(
-  value: Dynamic,
-  remaining_depth: Int,
-) -> Result(json.Json, Nil) {
-  decode.run(value, decode.bool)
-  |> result.map(json.bool)
-  |> result.replace_error(Nil)
-  |> result.lazy_or(fn() { try_decode_complex(value, remaining_depth) })
-}
-
-fn try_decode_complex(
-  value: Dynamic,
-  remaining_depth: Int,
-) -> Result(json.Json, Nil) {
-  case dynamic.classify(value) {
-    "Nil" -> Ok(json.null())
-    "List" -> decode_list_to_json(value, remaining_depth)
-    _ -> decode_object_to_json(value, remaining_depth)
+  case remaining_depth <= 0 {
+    True -> scalar_decoder
+    False -> {
+      let nested_decoder =
+        decode.recursive(fn() { json_decoder(remaining_depth - 1) })
+      decode.one_of(scalar_decoder, [
+        decode.list(nested_decoder) |> decode.map(json.preprocessed_array),
+        decode.dict(decode.string, nested_decoder)
+          |> decode.map(fn(fields) { fields |> dict.to_list() |> json.object() }),
+      ])
+    }
   }
-}
-
-fn decode_list_to_json(
-  value: Dynamic,
-  remaining_depth: Int,
-) -> Result(json.Json, Nil) {
-  use _ <- result.try(require_depth(remaining_depth))
-  use items <- result.try(
-    decode.run(value, decode.list(decode.dynamic))
-    |> result.replace_error(Nil),
-  )
-  items
-  |> list.map(fn(item) { dynamic_to_json_limited(item, remaining_depth - 1) })
-  |> result.all()
-  |> result.map(json.preprocessed_array)
-}
-
-fn decode_object_to_json(
-  value: Dynamic,
-  remaining_depth: Int,
-) -> Result(json.Json, Nil) {
-  use _ <- result.try(require_depth(remaining_depth))
-  let dict_decoder = decode.dict(decode.string, decode.dynamic)
-  use decoded <- result.try(
-    decode.run(value, dict_decoder)
-    |> result.replace_error(Nil),
-  )
-  decoded
-  |> dict.to_list()
-  |> list.map(fn(pair) {
-    let #(key, nested) = pair
-    dynamic_to_json_limited(nested, remaining_depth - 1)
-    |> result.map(fn(json_value) { #(key, json_value) })
-  })
-  |> result.all()
-  |> result.map(json.object)
-}
-
-fn require_depth(remaining_depth: Int) -> Result(Nil, Nil) {
-  use <- bool.guard(when: remaining_depth <= 0, return: Error(Nil))
-  Ok(Nil)
 }
 
 fn within_json_depth(value: Dynamic, remaining_depth: Int) -> Bool {
