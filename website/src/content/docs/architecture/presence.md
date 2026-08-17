@@ -10,8 +10,9 @@ Every tracked entry is stamped with a **replica name** (the `replica` argument t
 
 ## How Beryl apps use it
 
-The presence actor is a standalone process that the application starts and
-supervises, then supplies to `beryl.Config` with `with_presence_handle`.
+The presence actor is a standalone supervised child that the application
+builds with `presence.child_spec`, adds to its supervision tree, and supplies
+to `beryl.Config` with `with_presence_handle`.
 
 App-side dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
 `BroadcastPresence` effects. Mutations are sent asynchronously to the presence
@@ -38,8 +39,13 @@ read-after-write behavior.
 
 | Function | Description |
 |---|---|
-| `start(config)` | Start an anonymous presence actor |
-| `start_named(config, name)` | Start a named presence actor |
+| `child_spec(config)` | Return a stable presence handle and its supervised child specification |
+
+On the node where the child specification runs, the handle keeps working across
+actor restarts because both the process and its ETS read model use the same
+stable name. The replacement actor starts with fresh in-memory CRDT state and
+tracking refs. The handle itself is node-affine; PubSub replicates presence
+state between nodes.
 
 ### Configuration builders
 

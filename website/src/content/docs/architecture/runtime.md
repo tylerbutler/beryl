@@ -2,7 +2,7 @@
 title: Runtime & Supervision
 ---
 
-The runtime is the central OTP actor for app-side socket dispatch. Transports send admitted, decoded frames to it, and your application's `init`/`update` functions run inside it during event dispatch. Presence and groups are independent application-owned actors; PubSub is an Erlang `pg` wrapper rather than a child of the runtime.
+The runtime is the central OTP actor for app-side socket dispatch. Transports send admitted, decoded frames to it, and your application's `init`/`update` functions run inside it during event dispatch. Presence and groups are independent application-owned supervised children; PubSub is an Erlang `pg` wrapper rather than a child of the runtime.
 
 ## Role
 
@@ -87,7 +87,7 @@ flowchart TB
 - A restart drops per-socket state (models, joined topics); clients rejoin exactly as they would after any server restart.
 - The child is `Transient`, so a graceful `beryl.stop` is final.
 
-PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which manages its own lifecycle. Presence and groups are independent actors started by the application (see the [Supervision guide](/guides/supervision/)).
+PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which manages its own lifecycle. Presence and groups expose their own child specifications for the application's supervision tree (see the [Supervision guide](/guides/supervision/)).
 
 ## Where this lives
 
