@@ -125,7 +125,7 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    ./scripts/gleam-each.sh build chatrooms collab_docs cursors example_helpers showcase load_test collab_docs_client
+    ./scripts/gleam-each.sh build chatrooms collab_docs cursors example_helpers showcase load_test blog_series collab_docs_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
