@@ -244,39 +244,21 @@ covers:
 For client-facing abuse controls (rate limits, connection caps, origin checks),
 see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/production-hardening/).
 
-### Required: an edge proxy frame-size limit
+### In-process WebSocket frame bound
 
-Beryl's `with_max_inbound_frame_bytes` limit is enforced **post-assembly** —
-the WebSocket transport (Mist/gramps) buffers and reassembles a complete frame
-*before* Beryl measures it and rejects oversized frames. This bounds
-per-message processing cost, but it does **not** bound transport memory.
+`beryl_mist` passes `with_max_inbound_frame_bytes` to Mist's WebSocket parser.
+Mist rejects an oversized declared payload as soon as its header is available,
+before retaining an incomplete body, and closes fragmented messages before
+their aggregate declared length exceeds the same limit. Oversized connections
+receive WebSocket close code 1009.
 
-A hostile client can therefore exhaust node memory with a single connection by
-either:
+Beryl also keeps its post-assembly check as defense in depth before decoding
+or dispatch. Other transport adapters must provide an equivalent pre-buffer
+guard to make the same memory-bound guarantee.
 
-- declaring a huge payload length in a frame header and streaming the body
-  slowly, or
-- sending a long run of fragmented continuation frames that the transport
-  aggregates into one buffer.
-
-In both cases the transport's receive buffer grows unbounded *before* Beryl's
-frame-size check ever runs. **Beryl's per-IP connection limit
-(`with_max_connections_per_ip`), per-connection frame-rate limit
-(`with_frame_rate`), and per-socket message-rate limit (`with_message_rate`)
-do not mitigate this vector** — all run post-assembly, so the buffer grows
-within one admitted connection before dispatch.
-
-To bound transport memory in production you **must** place an edge proxy or
-load balancer (e.g. nginx, HAProxy, Envoy, or your cloud LB) in front of Beryl
-and configure:
-
-- a **maximum WebSocket frame/message size** at or below your chosen
-  `with_max_inbound_frame_bytes` value, and
-- a matching **request/body size limit** for the initial HTTP upgrade.
-
-Set the proxy limit to reject oversized frames at the edge, before they are
-buffered by the BEAM node. Beryl's in-process limit should be treated as
-defense-in-depth for per-message cost, not as a memory bound.
+An edge proxy or load balancer frame-size limit remains useful defense in
+depth, especially when you need a cluster-wide policy, but it is no longer
+required to protect `beryl_mist` from unbounded frame buffering.
 
 ## Development
 

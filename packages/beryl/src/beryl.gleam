@@ -453,21 +453,14 @@ pub fn with_max_event_length(
 // nolint: unused_exports -- enforced in sibling transport handler tests
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
-/// The limit is enforced **post-assembly**: the transport (Mist/gramps)
-/// buffers and assembles a complete frame first, and only then does Beryl
-/// measure it and close the connection if it exceeds `max_bytes`. This bounds
-/// per-message processing cost (decode, routing, rate-limit accounting), but
-/// it does **not** by itself bound transport memory. A hostile client can
-/// declare a huge payload and stream it slowly, or send many fragmented
-/// continuation frames, and the transport's receive buffer grows before this
-/// check ever runs — so this setting alone does not stop a single connection
-/// from exhausting node memory.
+/// `beryl_mist` enforces this limit from the declared WebSocket payload length
+/// before retaining an incomplete frame body. It also closes the connection
+/// when the aggregate declared length of continuation fragments exceeds the
+/// limit. Oversized connections receive WebSocket close code 1009.
 ///
-/// For a true transport memory bound you **must** place an edge proxy or load
-/// balancer in front of Beryl and configure a WebSocket frame-size limit
-/// there (and a matching request/body size limit). Beryl's connection,
-/// frame-rate, and message-rate limits all run after frame assembly and do not
-/// mitigate this vector. See the README's "Security" section.
+/// Beryl keeps a post-assembly check as defense in depth. Other transport
+/// adapters must enforce an equivalent pre-buffer limit to provide the same
+/// memory bound.
 ///
 /// Values <= 0 disable the cap. The default is 1 MiB.
 pub fn with_max_inbound_frame_bytes(

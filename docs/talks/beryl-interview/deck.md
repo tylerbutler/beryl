@@ -626,11 +626,11 @@ per cluster; published capacity benchmarks remain important post-1.0 work.
 
 ## Production ready?
 
-**Built in:** per-IP connection caps · node-wide connection ceiling
-token-bucket rate limits · same-origin WebSocket policy by default
+**Built in:** pre-buffer frame-size bound · per-IP connection caps
+node-wide connection ceiling · token-bucket rate limits · same-origin policy
 
-**Still on you:** edge proxy with a frame-size limit
-Erlang distribution trusts every cluster node — keep the cluster closed
+**Still on you:** Erlang distribution trusts every cluster node
+keep the cluster closed
 
 > The API is stable — what's still accruing is production mileage.
 
@@ -650,15 +650,12 @@ BUILT IN (config on the transport, name the real APIs):
   cross-site WebSockets, so this closes cross-site hijacking by
   default rather than by remembering to configure it.
 
-STILL ON YOU — two boundaries, stated plainly:
-1. Frame-size limits are enforced POST-ASSEMBLY: the transport buffers
-   a complete frame before beryl measures it. A hostile client can
-   declare a huge frame, or stream endless fragments, and balloon the
-   buffer BEFORE the check runs. So in production you MUST cap frame
-   size at an edge proxy (nginx/HAProxy/Envoy) — beryl's limit is
-   defense-in-depth for processing cost, not a memory bound. The
-   upstream fix (cap-before-buffer in mist/gramps) is tracked publicly.
-2. Erlang distribution — the clustering from the pg slide — TRUSTS
+`with_max_inbound_frame_bytes` reaches Mist's parser, so oversized declared
+payloads are rejected from their header before the body is retained. The same
+limit bounds fragmented-message aggregation.
+
+STILL ON YOU — one boundary, stated plainly:
+1. Erlang distribution — the clustering from the pg slide — TRUSTS
    every peer completely. It's a clustering protocol, not a security
    boundary. A hostile node can inject any internal traffic. Closed
    cluster, strong cookie, TLS distribution; SECURITY.md walks through

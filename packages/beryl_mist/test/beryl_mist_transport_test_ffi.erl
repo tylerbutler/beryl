@@ -1,7 +1,9 @@
 -module(beryl_mist_transport_test_ffi).
 -export([connect_websocket/2, connect_websocket_with_origin/3,
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
-         send_text/2, send_binary/2, receive_text/2, receive_binary/2,
+         send_text/2, send_binary/2, send_declared_text/2,
+         send_fragmented_text/3, receive_text/2, receive_binary/2,
+         receive_close_code/2,
          close/1, http_get/2, stop_supervisor/1,
          attach_transport_events/0, detach_transport_events/1,
          receive_upgrade_event/1, receive_frame_event/1,
@@ -244,10 +246,42 @@ send_binary(Socket, Data) ->
         _ -> {error, nil}
     end.
 
+send_declared_text(Socket, Length) ->
+    Mask = crypto:strong_rand_bytes(4),
+    case gen_tcp:send(Socket, [<<16#81>>, encode_client_length(Length), Mask]) of
+        ok -> {ok, Socket};
+        _ -> {error, nil}
+    end.
+
+send_fragmented_text(Socket, First, Second) ->
+    Frames = [
+        client_frame(16#01, First),
+        client_frame(16#80, Second)
+    ],
+    case gen_tcp:send(Socket, Frames) of
+        ok -> {ok, Socket};
+        _ -> {error, nil}
+    end.
+
+client_frame(FirstByte, Data) ->
+    Mask = crypto:strong_rand_bytes(4),
+    [
+        <<FirstByte>>,
+        encode_client_length(byte_size(Data)),
+        Mask,
+        mask_payload(Data, Mask)
+    ].
+
 receive_text(Socket, Timeout) ->
     case read_frame(Socket, Timeout) of
         {text, Text} -> {ok, Text};
         skip -> receive_text(Socket, Timeout);
+        _ -> {error, nil}
+    end.
+
+receive_close_code(Socket, Timeout) ->
+    case read_frame(Socket, Timeout) of
+        {close, <<Code:16/big, _/binary>>} -> {ok, Code};
         _ -> {error, nil}
     end.
 
@@ -292,7 +326,7 @@ read_frame(Socket, Timeout) ->
                     case Opcode of
                         1 -> {text, Payload};
                         2 -> {binary, Payload};
-                        8 -> closed;
+                        8 -> {close, Payload};
                         9 -> skip;
                         10 -> skip;
                         _ -> skip

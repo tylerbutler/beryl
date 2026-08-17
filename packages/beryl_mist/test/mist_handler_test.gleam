@@ -57,6 +57,19 @@ fn send_binary(
   data: BitArray,
 ) -> Result(WebsocketClient, Nil)
 
+@external(erlang, "beryl_mist_transport_test_ffi", "send_declared_text")
+fn send_declared_text(
+  client: WebsocketClient,
+  declared_bytes: Int,
+) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "send_fragmented_text")
+fn send_fragmented_text(
+  client: WebsocketClient,
+  first: String,
+  second: String,
+) -> Result(WebsocketClient, Nil)
+
 @external(erlang, "beryl_mist_transport_test_ffi", "attach_transport_events")
 fn attach_transport_events() -> Dynamic
 
@@ -76,6 +89,9 @@ fn receive_message_event(timeout: Int) -> Result(#(String, String, String), Nil)
 
 @external(erlang, "beryl_mist_transport_test_ffi", "receive_text")
 fn receive_text(client: WebsocketClient, timeout: Int) -> Result(String, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_close_code")
+fn receive_close_code(client: WebsocketClient, timeout: Int) -> Result(Int, Nil)
 
 @external(erlang, "beryl_mist_transport_test_ffi", "close")
 fn close(client: WebsocketClient) -> Nil
@@ -543,8 +559,33 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() {
 
   let oversized_frame = string.repeat("a", 64)
   let assert Ok(_) = send_text(client, oversized_frame)
-  receive_text(client, 200)
-  |> should.equal(Error(Nil))
+  receive_close_code(client, 200)
+  |> should.equal(Ok(1009))
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_rejects_oversized_declared_frame_before_body_test() {
+  let #(port, server_pid) = start_frame_limited_server()
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  let assert Ok(_) = send_declared_text(client, 64)
+  receive_close_code(client, 200)
+  |> should.equal(Ok(1009))
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_rejects_oversized_fragmented_message_test() {
+  let #(port, server_pid) = start_frame_limited_server()
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  let fragment = string.repeat("a", 20)
+  let assert Ok(_) = send_fragmented_text(client, fragment, fragment)
+  receive_close_code(client, 200)
+  |> should.equal(Ok(1009))
 
   close(client)
   stop_supervisor(server_pid)

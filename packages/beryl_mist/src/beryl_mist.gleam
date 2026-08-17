@@ -109,7 +109,7 @@ fn do_upgrade(
   telemetry: transport.Telemetry,
 ) -> Response(ResponseData) {
   let seed = server.connect_seed(request, connect_metadata)
-  mist.websocket(
+  mist.websocket_with_frame_limit(
     request: request,
     handler: on_message,
     on_init: fn(_connection) {
@@ -126,6 +126,7 @@ fn do_upgrade(
       #(state, Some(selector))
     },
     on_close: server.close_connection,
+    max_frame_bytes: transport.max_inbound_frame_bytes(channels),
   )
 }
 

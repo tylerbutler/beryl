@@ -1,0 +1,3 @@
+package = "beryl_mist"
+kind = "Security"
+body = "Bound inbound WebSocket memory before buffering oversized declared or fragmented payloads."
