@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "BREAKING: PubSub broadcasts now carry their scope in the raw BEAM wire tuple, so selecting discriminates subscribers from different scopes and payload types sharing one mailbox. The scoped and previous unscoped wire shapes do not interoperate during rolling upgrades."
