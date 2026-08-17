@@ -72,13 +72,6 @@ pub opaque type Message {
     event: String,
     payload: json.Json,
   )
-  BroadcastToGroupChecked(
-    group_name: String,
-    channels: beryl.Sockets,
-    event: String,
-    payload: json.Json,
-    reply: Subject(Result(Nil, GroupError)),
-  )
 }
 
 /// Internal state
@@ -173,24 +166,6 @@ pub fn broadcast(
   )
 }
 
-/// Broadcast a message to all topics in a group, returning an error if missing.
-///
-/// `Ok(Nil)` means the group existed and broadcasts were submitted for its
-/// current topics. It does not guarantee that any subscribers received them.
-///
-/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
-pub fn broadcast_checked(
-  groups: Groups,
-  channels: beryl.Sockets,
-  group_name: String,
-  event: String,
-  payload: json.Json,
-) -> Result(Nil, GroupError) {
-  process.call(groups.subject, 5000, fn(reply) {
-    BroadcastToGroupChecked(group_name, channels, event, payload, reply)
-  })
-}
-
 // ── Actor loop ──────────────────────────────────────────────────────────────
 
 fn handle_message(
@@ -280,20 +255,6 @@ fn handle_message(
         Error(Nil) -> actor.continue(state)
         Ok(topics) -> {
           broadcast_to_topics(topics, channels, event, payload)
-          actor.continue(state)
-        }
-      }
-    }
-
-    BroadcastToGroupChecked(group_name, channels, event, payload, reply) -> {
-      case dict.get(state.groups, group_name) {
-        Error(Nil) -> {
-          process.send(reply, Error(GroupNotFound))
-          actor.continue(state)
-        }
-        Ok(topics) -> {
-          broadcast_to_topics(topics, channels, event, payload)
-          process.send(reply, Ok(Nil))
           actor.continue(state)
         }
       }

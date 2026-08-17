@@ -120,25 +120,6 @@ pub fn broadcast(
 ) -> Nil
 ```
 
-### `broadcast_checked`
-
-Broadcast a message to all topics in a group, returning an error if missing.
-
- `Ok(Nil)` means the group existed and broadcasts were submitted for its
- current topics. It does not guarantee that any subscribers received them.
-
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
-
-```gleam
-pub fn broadcast_checked(
-  Groups,
-  beryl.Sockets,
-  String,
-  String,
-  json.Json
-) -> Result(Nil, GroupError)
-```
-
 ### `create`
 
 Create a new named group

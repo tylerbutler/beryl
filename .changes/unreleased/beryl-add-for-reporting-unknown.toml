@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add `group.broadcast_checked` for reporting unknown group names before broadcasting."
