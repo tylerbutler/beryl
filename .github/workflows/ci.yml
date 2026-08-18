@@ -226,7 +226,7 @@ jobs:
         run: just load-check protocol-smoke
 
       - name: Build load-test server
-        run: ./scripts/gleam-each.sh build load_test
+        run: trellis run build load_test
 
       # protocol-smoke contains protocol/error thresholds only: this job does
       # not enforce latency, throughput, or other hardware-dependent gates.
