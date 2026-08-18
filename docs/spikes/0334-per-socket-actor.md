@@ -3,6 +3,11 @@
 A plan, not a spike. Nothing has been prototyped or measured. Read against
 `main` at `d2acc2b`; every file and line reference below is that tree.
 
+**Update:** the prototype this plan describes has since been built on
+`feat/334-per-socket-actor-spike`. See
+[`0334-per-socket-actor-findings.md`](./0334-per-socket-actor-findings.md)
+for what it found. Still unmeasured — step 0 below remains blocking.
+
 [#337](https://github.com/tylerbutler/beryl/issues/337) was spiked first and
 concluded it is downstream of this issue — see
 [`0337-process-per-channel.md`](./0337-process-per-channel.md). Two of the
