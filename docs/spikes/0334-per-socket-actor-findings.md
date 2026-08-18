@@ -38,9 +38,9 @@ had to change branches on that one field, in six places:
 suites pass unchanged (29 and 21 tests). The transport SPI never sees the
 topology, because `beryl.app_dispatch` was already a record of closures.
 
-## The whole suite runs: 487 passed, 3 failed
+## The whole suite runs: 496 passed, 3 failed
 
-All 60 test modules in `packages/beryl/test`, including `channel_wire_matrix`,
+All test modules in `packages/beryl/test`, including `channel_wire_matrix`,
 `phoenix_binary_test`, `presence_replication_test`, and `pubsub_test`. No test
 was edited. The three failures are the contract breaks, and all three are ones
 the issue is asking for rather than accidents:
@@ -64,6 +64,21 @@ the issue is asking for rather than accidents:
 Failures 2 and 3 are the same finding wearing two hats: **the statistics API
 has to be split before this topology can ship**, exactly as phasing step 2
 predicted, and it is the one piece that is shippable on `main` today.
+
+## #337's prototype runs on top of it unchanged
+
+`spike_channel_worker.gleam` and its 9 tests, written against the shared
+runtime on `feat/337-process-per-channel-spike`, pass without a single edit on
+top of the per-socket runtime — including
+`a_dead_worker_does_not_stall_the_runtime_test` and
+`a_disconnect_terminates_every_worker_test`, the two that exercise the
+monitoring and drain [#337](./0337-process-per-channel.md) found had no owner.
+
+That does not close #337 by itself: the prototype still supervises its workers
+from the runtime process, which is now the socket actor rather than the router,
+so the per-socket ownership those tests need is available but not yet claimed.
+It does confirm the "downstream of #334" conclusion concretely rather than by
+argument.
 
 ## Two orderings the plan did not name, both fixable
 
