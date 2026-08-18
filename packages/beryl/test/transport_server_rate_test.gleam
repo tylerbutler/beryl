@@ -89,6 +89,17 @@ fn recv(conn: Conn) -> Result(String, Nil) {
   }
 }
 
+fn flood_heartbeats(conn: Conn, remaining: Int) -> Conn {
+  case remaining <= 0 {
+    True -> conn
+    False -> {
+      let conn = send_text(conn, heartbeat("flood"))
+      process.sleep(5)
+      flood_heartbeats(conn, remaining - 1)
+    }
+  }
+}
+
 // ── Frame-only ───────────────────────────────────────────────────────────
 
 pub fn frame_rate_alone_sheds_flood_before_decode_test() {
@@ -121,6 +132,26 @@ pub fn frame_rate_counts_malformed_frames_test() {
   // The single frame token was spent on the malformed frame, so the
   // following valid heartbeat is shed at the edge with no reply.
   recv(conn) |> should.equal(Error(Nil))
+}
+
+pub fn frame_rate_limited_heartbeats_lead_to_eviction_test() {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_heartbeat(timeout_ms: 40)
+    |> beryl.with_frame_rate(per_second: 1, burst: 1)
+  let channels = start_system(config)
+  let conn = connect(channels, "10.10.10.6")
+
+  // Spend the only burst token on a heartbeat, then keep sending heartbeats
+  // faster than the edge bucket can refill. None of the shed frames reach the
+  // runtime, so the normal timeout path asks the transport to close.
+  let conn = send_text(conn, heartbeat("hb-1"))
+  let assert Ok(reply) = recv(conn)
+  reply |> string.contains("hb-1") |> should.be_true
+  let conn = flood_heartbeats(conn, 20)
+
+  process.selector_receive(from: conn.selector, within: 1000)
+  |> should.equal(Ok(server.Close))
 }
 
 // ── Message-only ─────────────────────────────────────────────────────────

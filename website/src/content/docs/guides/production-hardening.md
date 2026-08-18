@@ -12,7 +12,8 @@ off; this guide explains what to turn on and why.
 
 Even with no configuration, beryl enforces:
 
-- **Frame size**: inbound WebSocket frames over 1 MiB close the connection
+- **Post-receipt frame size**: once the transport has assembled a complete
+  inbound WebSocket frame, Beryl closes the connection if it exceeds 1 MiB
   (`with_max_inbound_frame_bytes` to adjust).
 - **Topic and event lengths**: topics over 256 bytes and event names over 64
   bytes are rejected before reaching your app
@@ -23,6 +24,12 @@ Even with no configuration, beryl enforces:
   and messages carrying a stale `join_ref` are dropped.
 - **Heartbeat eviction**: sockets that stop sending heartbeats are evicted
   and their connections closed (60 s window by default, `with_heartbeat`).
+
+The frame-size check limits downstream decoding and routing work, but it does
+**not** bound transport-layer memory: buffering and reassembly happen before
+Beryl receives the frame. In production, configure a WebSocket frame/message
+size limit at or below Beryl's limit at your reverse proxy or load balancer,
+plus a matching request/body limit for the HTTP upgrade.
 
 ## What you should configure for production
 
@@ -51,7 +58,15 @@ let config =
 `with_frame_rate` and `with_message_rate` are independent. Joins consume frame
 and join quota, but not message quota; leaves and heartbeats consume both frame
 and message quota. Configure both, with frame capacity slightly higher for
-protocol traffic and malformed frames that never reach the runtime.
+protocol traffic and malformed frames that never reach the runtime. If either
+limiter sheds a heartbeat, the socket's heartbeat deadline is not refreshed.
+Sustained over-rate traffic is therefore terminated by heartbeat eviction
+rather than merely being shed forever.
+
+Size both rate and burst allowances with enough headroom for legitimate client
+traffic **plus heartbeats**. A limit that admits an application's normal events
+but leaves no heartbeat capacity can evict healthy clients during ordinary
+bursts.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
@@ -117,31 +132,36 @@ addresses.
 ## Erlang cluster security boundary
 
 Beryl's distributed PubSub and presence replication run over Erlang
-distribution. Every node in your Erlang cluster is **fully trusted**: a
-process on any peer node can subscribe to any topic, receive all
-broadcasts, and deliver messages that beryl's runtime will process as
-legitimate internal traffic. Channel authorization callbacks and
-WebSocket-layer controls do **not** apply to messages delivered over
-distribution — they protect only inbound WebSocket clients.
+distribution. Every connected peer is **fully trusted**: distributed Erlang
+allows peers to execute arbitrary code on connected nodes, so a hostile peer
+means full node compromise that can extend across the cluster. Subscribing to
+beryl topics, receiving broadcasts, injecting trusted internal traffic, and
+reading or corrupting presence state are only a subset of that access. Channel
+authorization callbacks and WebSocket-layer controls do **not** apply to
+messages delivered over distribution — they protect only inbound WebSocket
+clients.
 
 ### Internal vs. client messages
 
 | Source | Trust level | Gated by |
 |---|---|---|
 | WebSocket clients | Untrusted | `with_on_connect` authentication, `Join` authorization, and `Message` handling in `update` |
-| Erlang distribution peers | Fully trusted | Erlang cookie + network controls |
+| Erlang distribution peers | Fully trusted | Network isolation + mutually verified TLS distribution (cookies prevent accidental cross-cluster connections only) |
 
-A hostile distribution peer can broadcast arbitrary messages into any
-topic and read all presence state. Secure the cluster boundary **before**
-deploying multi-node beryl.
+This is not a beryl-specific deployment prerequisite. Network isolation and
+secure distribution are the baseline for every distributed BEAM application;
+beryl assumes that boundary is already enforced.
 
 ### Erlang cookie
 
 Set a long, randomly generated cookie in `vm.args` or the
-`RELEASE_COOKIE` environment variable. The cookie is the only
-authentication mechanism for distribution peers; a weak or default cookie
-(`CHANGE_ME`, the hostname, etc.) allows any process that can reach your
-distribution port to join the cluster.
+`RELEASE_COOKIE` environment variable. Erlang
+[uses the cookie to distinguish clusters](https://www.erlang.org/doc/system/distributed.html#security)
+and prevent accidental cross-cluster connections; its handshake is not
+cryptographically secure authentication against an adversary. A strong cookie
+prevents accidental matches and makes offline guessing harder, but it must
+never be the security boundary. Keep distribution ports isolated and use
+mutually verified TLS distribution.
 
 Generate a strong cookie with, for example:
 
@@ -151,9 +171,8 @@ openssl rand -base64 48
 
 ### TLS distribution
 
-When nodes communicate across networks you do not fully control — cloud
-subnets, VPNs, or any link that may traverse untrusted infrastructure —
-enable TLS distribution. See the
+Use TLS distribution with mutual certificate verification for secure
+multi-node deployments, including traffic within private networks. See the
 [Erlang TLS Distribution guide](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html)
 for setup instructions.
 
@@ -175,10 +194,10 @@ and your chosen distribution port at the network layer.
 
 ### Do not share clusters with untrusted tenants
 
-Adding a node to an existing cluster grants it full visibility into all `pg`
-groups (PubSub topics) and all presence state on every node. Never connect
-beryl to a cluster that contains nodes owned or operated by parties outside
-your trust boundary.
+Adding a node to an existing cluster grants it arbitrary code execution on
+connected nodes; visibility into all `pg` groups (PubSub topics) and presence
+state is only part of that access. Never connect beryl to a cluster that
+contains nodes owned or operated by parties outside your trust boundary.
 
 See [SECURITY.md](https://github.com/tylerbutler/beryl/blob/main/SECURITY.md)
 for the full trust-boundary and distribution-hardening reference.

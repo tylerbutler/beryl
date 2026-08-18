@@ -19,12 +19,7 @@ import mist
 pub fn main() {
   let presence_tracker = session_presence.start()
 
-  // Start groups and create default room group.
-  let assert Ok(groups) = group.start()
-  let assert Ok(_) = group.create(groups, "public")
-  let assert Ok(_) = group.add(groups, "public", "room:general")
-  let assert Ok(_) = group.add(groups, "public", "room:random")
-  let assert Ok(_) = group.add(groups, "public", "room:help")
+  let #(groups, groups_spec) = group.child_spec()
   let assert Ok(hub) = broadcast_hub.start()
 
   let ctx = chat_app.Ctx(presence: presence_tracker, groups: groups, hub: hub)
@@ -45,8 +40,13 @@ pub fn main() {
   broadcast_hub.bind(hub, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(groups_spec)
     |> static_supervisor.add(beryl_spec)
     |> static_supervisor.start()
+  let assert Ok(_) = group.create(groups, "public")
+  let assert Ok(_) = group.add(groups, "public", "room:general")
+  let assert Ok(_) = group.add(groups, "public", "room:random")
+  let assert Ok(_) = group.add(groups, "public", "room:help")
 
   io.println("💬 Chat Rooms Demo")
   io.println("   Open http://localhost:8001?token=beryl-demo")

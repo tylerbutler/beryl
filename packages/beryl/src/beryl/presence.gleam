@@ -6,9 +6,8 @@
 //// - Receives remote state from PubSub and merges it internally
 //// - Invokes `on_diff` callback when merges produce non-empty diffs
 ////
-//// Presence is independent of the Beryl runtime. Start the actor from a
-//// long-lived application process and include it in the application's
-//// supervision arrangement as appropriate.
+//// Presence is independent of the Beryl runtime and runs under your
+//// application's supervision tree.
 ////
 //// ## Example
 ////
@@ -18,12 +17,15 @@
 ////   presence.default_config("node1")
 ////   |> presence.with_pubsub(ps)
 ////   |> presence.with_broadcast_interval(1500)
-//// let assert Ok(p) = presence.start(config)
+//// let #(p, presence_spec) = presence.child_spec(config)
+//// let assert Ok(_root) =
+////   static_supervisor.new(static_supervisor.OneForOne)
+////   |> static_supervisor.add(presence_spec)
+////   |> static_supervisor.start()
 //// let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
 //// let assert Ok(entries) = presence.list(p, "room:lobby")
 //// ```
 
-import beryl/error as beryl_error
 import beryl/internal
 import beryl/log
 import beryl/pubsub.{type PubSub}
@@ -39,6 +41,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/result
 import gleam/set.{type Set}
 import gleam/string
@@ -53,26 +56,20 @@ const sync_event = "presence_sync"
 /// A running Presence instance.
 ///
 /// This handle is intentionally opaque so callers cannot forge actor subjects
-/// or depend on the runtime representation. It carries both the actor's
-/// subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
-/// reference to the actor-owned ETS read model that `list`, `get_by_key`,
-/// and `count` read directly, without going through the actor mailbox.
+/// or depend on the runtime representation. It carries the actor's stable
+/// registered subject and the name of its actor-owned ETS read model.
 ///
 /// ## Node affinity
 ///
-/// `list`, `get_by_key`, and `count` read the ETS read model directly
-/// in-process, which only works for ETS tables local to the calling node.
-/// Do not send this handle to, or otherwise use it from, a process on a
-/// different BEAM node: `track`/`untrack`/`untrack_all` would still reach
-/// the owning actor over distribution (they go through its `Subject`), but
-/// the read functions would be looking up a table reference that names
-/// nothing on that node (or, if the identifier happens to collide with an
-/// unrelated local table, something else entirely), so they would fail or
-/// read the wrong data. Keep a Presence handle on the node where `start`
-/// created it, and use PubSub replication (`with_pubsub`) to share presence
-/// state across nodes instead.
+/// The stable registered subject and ETS read model are resolved on the
+/// caller's node. Keep a `Presence` handle on the node where its child
+/// specification runs. From another BEAM node, synchronous mutations cannot
+/// reach the owning actor and panic as unavailable, while `list`, `get_by_key`,
+/// and `count` return `Error(Nil)` because the read model is unavailable.
+/// Use PubSub replication (`with_pubsub`) to share presence state across nodes
+/// instead of moving the handle itself.
 pub opaque type Presence {
-  Presence(subject: Subject(Message), read_table: ReadTable)
+  Presence(subject: Subject(Message), read_name: process.Name(Message))
 }
 
 type State =
@@ -203,12 +200,6 @@ pub opaque type Config {
   )
 }
 
-/// Errors from presence operations
-pub type PresenceError {
-  /// The presence actor failed to start.
-  PresenceStartFailed(beryl_error.StartFailure)
-}
-
 /// Messages the presence actor handles
 pub opaque type Message {
   Track(
@@ -327,7 +318,7 @@ type CountLookup {
 type ReadTable
 
 @external(erlang, "beryl_presence_read_ffi", "new_table")
-fn ffi_new_read_table() -> ReadTable
+fn ffi_new_read_table(name: process.Name(Message)) -> ReadTable
 
 @external(erlang, "beryl_presence_read_ffi", "put_topic")
 fn ffi_put_topic(
@@ -341,10 +332,10 @@ fn ffi_put_topic(
 fn ffi_delete_topic(table: ReadTable, topic: String) -> Nil
 
 @external(erlang, "beryl_presence_read_ffi", "get_topic")
-fn ffi_get_topic(table: ReadTable, topic: String) -> TopicLookup
+fn ffi_get_topic(name: process.Name(Message), topic: String) -> TopicLookup
 
 @external(erlang, "beryl_presence_read_ffi", "get_count")
-fn ffi_get_count(table: ReadTable, topic: String) -> CountLookup
+fn ffi_get_count(name: process.Name(Message), topic: String) -> CountLookup
 
 /// Materialize a topic's current entries (and their count) from `crdt` into
 /// the read model, or remove its snapshot entirely once it has no entries
@@ -372,12 +363,12 @@ fn publish_topics(table: ReadTable, crdt: State, topics: List(String)) -> Nil {
 /// Returns `Error(Nil)` if the read model table is unavailable -- either
 /// because the presence actor that owns it is no longer running, or because
 /// this handle is being used from a process on a different BEAM node than
-/// the one `start` was called on (see the node affinity note on `Presence`).
+/// the one the child was started on (see the node affinity note on `Presence`).
 fn read_entries(
   presence: Presence,
   topic: String,
 ) -> Result(List(PresenceEntry), Nil) {
-  case ffi_get_topic(presence.read_table, topic) {
+  case ffi_get_topic(presence.read_name, topic) {
     Found(entries) -> Ok(entries)
     NotFound -> Ok([])
     TableGone -> Error(Nil)
@@ -483,22 +474,43 @@ pub fn subject(presence: Presence) -> Subject(Message) {
   presence.subject
 }
 
-/// Start the presence actor
-pub fn start(config: Config) -> Result(Presence, PresenceError) {
-  build_presence(config)
+/// Build the supervised presence actor.
+///
+/// Add the returned child specification to your application's supervisor.
+/// The returned handle is name-backed and resumes working after a supervised
+/// restart. Presence entries and tracking refs are in-memory state and are
+/// reset by a restart.
+pub fn child_spec(
+  config: Config,
+) -> #(Presence, supervision.ChildSpecification(Subject(Message))) {
+  let name = process.new_name("beryl_presence")
+  #(from_name(name), supervision.worker(fn() { start_named(config, name) }))
+}
+
+@internal
+pub fn start(config: Config) -> Result(Presence, actor.StartError) {
+  let name = process.new_name("beryl_presence")
+  start_named(config, name)
+  |> result.map(fn(_started) { from_name(name) })
+}
+
+fn from_name(name: process.Name(Message)) -> Presence {
+  Presence(subject: process.named_subject(name), read_name: name)
+}
+
+fn start_named(
+  config: Config,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_presence(config, name)
+  |> actor.named(name)
   |> actor.start
-  |> result.map(fn(started) {
-    let #(subject, read_table) = started.data
-    Presence(subject: subject, read_table: read_table)
-  })
-  |> result.map_error(fn(error) {
-    PresenceStartFailed(beryl_error.from_actor_start_error(error))
-  })
 }
 
 fn build_presence(
   config: Config,
-) -> actor.Builder(ActorState, Message, #(Subject(Message), ReadTable)) {
+  read_name: process.Name(Message),
+) -> actor.Builder(ActorState, Message, Subject(Message)) {
   // Each actor start is a fresh CRDT incarnation. Reusing the bare replica
   // name after a restart would reset its clocks while peers still remember
   // the old ones: new joins would be silently filtered as already-seen,
@@ -512,7 +524,7 @@ fn build_presence(
     // lifetime is tied to the actor: it is destroyed automatically if this
     // process stops or crashes, matching the "actor unavailable" failure
     // mode readers already get from a dead actor.
-    let read_table = ffi_new_read_table()
+    let read_table = ffi_new_read_table(read_name)
     let initial =
       ActorState(
         crdt: crdt,
@@ -546,7 +558,7 @@ fn build_presence(
 
         actor.initialised(initial)
         |> actor.selecting(selector)
-        |> actor.returning(#(subject, read_table))
+        |> actor.returning(subject)
         |> Ok
       }
       None -> {
@@ -560,7 +572,7 @@ fn build_presence(
             read_table: read_table,
           )
         actor.initialised(no_pubsub_initial)
-        |> actor.returning(#(subject, read_table))
+        |> actor.returning(subject)
         |> Ok
       }
     }
@@ -882,7 +894,7 @@ pub fn get_by_key(
 /// from a process on another BEAM node than the one it was started on (see
 /// the node affinity note on `Presence`).
 pub fn count(presence: Presence, topic: String) -> Result(Int, Nil) {
-  case ffi_get_count(presence.read_table, topic) {
+  case ffi_get_count(presence.read_name, topic) {
     CountFound(count) -> Ok(count)
     CountTableGone -> Error(Nil)
   }
@@ -1281,15 +1293,10 @@ fn merge_remote_sync(
   sender: String,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
-  // Merge, diff, on_diff, prune, and the read-model publication that follows
-  // all run inside a crash boundary. The remote state originates from
-  // another cluster node (possibly a mixed version, a compromised peer, or a
-  // malformed dynamic value coerced from the wire); an exception here must
-  // not terminate the shared presence actor. On failure we return the
-  // previous, unchanged `actor_state` so invalid sync input cannot partially
-  // mutate presence state or its read model: the read model is only
-  // republished once merge, on_diff, and prune have all completed
-  // successfully below.
+  // Crash boundary — see internal.rescue. Version skew or bugs can produce
+  // malformed sync state; Erlang distribution peers are fully trusted (see
+  // the production-hardening guide). Preserve the previous actor state unless
+  // merge, on_diff, prune, and read-model publication all complete.
   let processed =
     internal.rescue(fn() {
       let #(new_crdt, state_diff) =

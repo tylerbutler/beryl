@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Compose Phoenix wire decoders and report structured field-level format errors."
