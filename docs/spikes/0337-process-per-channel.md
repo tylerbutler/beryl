@@ -1,9 +1,7 @@
 # Spike: process-per-channel isolation (#337)
 
-The prototype and its tests are not merged. They live on the branch
-`feat/337-process-per-channel-spike` as
-`packages/beryl/test/spike_channel_worker.gleam` and
-`spike_channel_worker_test.gleam`; only these findings are merged here.
+Prototype: `packages/beryl/test/spike_channel_worker.gleam`.
+Pinned behaviour: `packages/beryl/test/spike_channel_worker_test.gleam`.
 
 The prototype reuses `beryl/channel`'s own router seam: handlers, `join`,
 state sealing, callbacks, actions, and action lowering are unchanged —
