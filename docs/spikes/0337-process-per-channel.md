@@ -3,11 +3,10 @@
 Prototype: `packages/beryl/test/spike_channel_worker.gleam`.
 Pinned behaviour: `packages/beryl/test/spike_channel_worker_test.gleam`.
 
-The prototype is built entirely on beryl's public core API, the way
-`beryl/channel` is. It reuses that layer's handlers, `join`, state sealing,
-callbacks, actions, and action lowering unchanged — `channel.open` returns
-the same non-generic `LiveChannel` — and changes only which process holds
-that value:
+The prototype reuses `beryl/channel`'s own router seam: handlers, `join`,
+state sealing, callbacks, actions, and action lowering are unchanged —
+`channel.open` returns the same non-generic `LiveChannel` — and only which
+process holds that value differs:
 
 ```text
 shipped:  runtime actor ── LiveChannel per joined topic (in its model)
@@ -17,6 +16,13 @@ spike:    runtime actor ── worker(topic) ── LiveChannel
 
 That is the whole difference, which is what makes the two comparable.
 No `Dynamic`, no coercion, and no core change was needed to build it.
+
+The seam it reuses (`channel.open`, `channel.effects`, `LiveChannel`,
+`Step`, `RoutedJoinContext`, `JoinOutcome`) is `@internal`, so the spike
+only compiles from inside the `beryl` package. **A transport package or a
+user application could not build this shape at all** — which is a finding in
+its own right, and sharpens the one below: this topology is not something a
+layer can reach for from outside the core.
 
 ## The finding that reframes the issue
 
@@ -32,8 +38,16 @@ inside the one shared runtime actor:
 - It cannot hold a per-socket in-flight budget, because there is nowhere
   per-socket to hold one.
 - It cannot link workers to the connection. If the runtime actor dies, every
-  worker on every socket is orphaned until the factory supervisor goes down
-  with it.
+  worker on every socket is orphaned. The prototype pins that with
+  `OneForAll`, so the factory restarts alongside the runtime; without it a
+  restarted runtime leaves every worker holding a `Sender` for a dead
+  process, with no `Finish` ever arriving to end them.
+- It cannot start its workers off the hot path. `supervisor:start_child` is
+  a `gen_server:call` handled synchronously in the factory supervisor, so
+  **every join on every socket queues behind one process**, each for up to
+  `join_timeout_ms`. Today the shared runtime already serialises joins, so
+  this is not a regression — but it survives #334 unchanged, and would be
+  the next thing to hit.
 
 So #337 is downstream of [#334](https://github.com/tylerbutler/beryl/issues/334),
 not parallel to it. Process-per-channel on top of process-per-socket is a
@@ -49,9 +63,11 @@ concurrently?** Concurrently after join, serially during it. `join` and
 cast, so N joined topics on one socket can be executing callbacks at once.
 
 **What ordering remains between actions from different topics on one
-socket?** Per topic, total order is preserved: one worker mailbox, FIFO, and
-the VM orders messages between one pair of processes. Across topics on one
-socket, nothing is preserved — two topics' replies can be interleaved in any
+socket?** Per topic, order is preserved *between batches*: one worker
+mailbox, FIFO, and the VM orders messages between one pair of processes. It
+is **not** preserved between a batch and the topic's own close, which take
+different paths home and race — see the third contract break below. Across
+topics on one socket, nothing is preserved — two topics' replies can be interleaved in any
 order regardless of the order the client sent them. **This is a change from
 today**, where the shared runtime serialises the whole socket. Phoenix does
 not promise cross-topic ordering either, so the question is whether beryl
@@ -91,7 +107,7 @@ answers each one with a synchronous `Finish` call before the turn ends —
 on the way out, and `a_disconnect_terminates_every_worker_test` pins that no
 worker outlives its socket.
 
-## Two contract breaks, both pinned by tests
+## Three contract breaks, all pinned by tests
 
 1. **A crashed worker cannot run `on_terminate`.** Today core rescues the
    callback, keeps the model, and delivers `Closed`, so the channel's state
@@ -103,20 +119,42 @@ worker outlives its socket.
    it no longer owns is `KickTopic`, which is `Shutdown`. Preserving this
    needs a core effect that carries a reason.
 
-A third difference is arguably an improvement: a panic in `on_info` closes
+3. **A close discards the worker's in-flight batch.** A client that pushes
+   and then leaves loses the push's reply entirely: the batch travels the
+   slow path (worker → socket `Sender` → a later runtime turn) while the
+   close is answered on a direct subject, so the router drops the topic
+   before the batch gets home and then discards it. The client's `ref` is
+   never answered. `a_leave_discards_the_reply_it_raced_test` pins it; the
+   shipped shared runtime cannot lose this, because it runs `on_message` in
+   the same process that handles the leave.
+
+   **This one is not fixable from the router**, and that is the point. The
+   router would have to drain its socket's outstanding envelopes before
+   finishing, and it cannot: it is not a process, so it cannot selectively
+   receive from the mailbox its own batches arrive in. A per-socket process
+   (#334) can. This is the sharpest single piece of evidence that #337 is
+   downstream of #334 rather than parallel to it.
+
+A fourth difference is arguably an improvement: a panic in `on_info` closes
 only its topic here, where today it tears down the whole socket.
 
 There is also a cost that is not a contract break but is worse
-operationally, and the prototype does not currently pay it down: **a panic
-inside `on_terminate` freezes every socket for a full second.** The worker
-dies before it can answer the router's synchronous `Finish`, so the `Closed`
-turn blocks in `process.receive` — inside the one shared runtime actor —
-until `terminate_timeout_ms` expires. Nothing else on that runtime moves in
-the meantime. It is fixable within this topology by selecting on the
-worker's `DOWN` alongside its reply, so a dead worker ends the wait at once;
-it is worth stating plainly because the shared runtime has no equivalent
-failure mode, and because a socket session (#334) would confine the stall to
-one connection instead of all of them.
+operationally. A worker that dies before answering the router's synchronous
+`Finish` would leave the `Closed` turn blocked — inside the one shared
+runtime actor, so every socket with it — until `terminate_timeout_ms`
+expired. That applies to a panicking `on_terminate` and, more commonly, to
+any close that overtakes a crash the router has not yet learned about. The
+prototype pays it down: `finish` selects on the worker's `DOWN` alongside
+its reply, so a dead worker ends the wait at once, and
+`a_dead_worker_does_not_stall_the_runtime_test` pins that.
+
+What remains is an `on_terminate` that *blocks* rather than dies, which
+still stalls every socket for up to `terminate_timeout_ms`. The shared
+runtime has the same exposure to a blocking callback, so it is not new; what
+a socket session (#334) adds is confinement of the stall to one connection.
+A worker that blocks in `on_terminate` forever also leaks itself and its
+watcher, since the router has already moved on — bounded in practice by the
+same thing that bounds an infinite callback today, which is nothing.
 
 ## What was not done
 
@@ -135,6 +173,17 @@ one connection instead of all of them.
 ## Recommendation
 
 Do not pursue process-per-channel before #334. Reassess afterwards, when a
-socket session actually exists to own monitoring, backpressure, and worker
-lifetime, and when the watcher process — currently half the per-channel cost
-— disappears.
+socket session actually exists to own monitoring, backpressure, worker
+lifetime, and the drain that the third contract break needs, and when the
+watcher process — currently half the per-channel cost — disappears.
+
+Things to carry forward into a real implementation, none of which the spike
+resolves:
+
+- The close/batch drain (third contract break). Needs the per-socket process.
+- Join serialisation through the factory supervisor. Needs joins started off
+  the calling process, or a supervisor per socket.
+- A `Died` that arrives after a close, and a close that arrives after a
+  `Died`, are both handled here by deleting the topic first and letting the
+  other path miss. That works because a topic has exactly one ending; it
+  will not survive a design where a worker can be replaced in place.

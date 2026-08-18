@@ -100,6 +100,19 @@ fn message_panics(trace: process.Subject(String)) -> channel.Handler {
   })
 }
 
+/// A channel whose `on_terminate` panics, taking the worker down before it
+/// can answer the router's synchronous `Finish`.
+fn terminate_panics() -> channel.Handler {
+  channel.handler("crash_term:*", fn(_context) {
+    let callbacks =
+      channel.callbacks()
+      |> channel.on_terminate(fn(_state, _reason) {
+        panic as "terminate exploded"
+      })
+    channel.accept(Nil, callbacks)
+  })
+}
+
 // --- helpers ---------------------------------------------------------------
 
 fn next_pid(pids: process.Subject(process.Pid)) -> process.Pid {
@@ -306,4 +319,57 @@ pub fn a_disconnect_terminates_every_worker_test() -> Nil {
   |> should.be_true
   { await_exit(channel_a, 50) } |> should.be_true
   { await_exit(channel_b, 50) } |> should.be_true
+}
+
+/// A worker that dies instead of answering `Finish` must not hold the
+/// shared runtime actor: the `Closed` turn selects on the worker's `DOWN`
+/// alongside its reply, so the wait ends with the process rather than with
+/// `terminate_timeout_ms`.
+///
+/// The disconnect is a cast, so a runtime that blocked for the full second
+/// would still be inside that turn when the second socket joins, and its
+/// join frame would miss `recv`'s 500ms window.
+pub fn a_dead_worker_does_not_stall_the_runtime_test() -> Nil {
+  let channels = start([terminate_panics()])
+  let first = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "crash_term:a", "jr-1", "r-1")
+  let _join = helper.recv(first)
+
+  helper.disconnect(channels, "s1")
+
+  let second = helper.connect(channels, "s2")
+  helper.join(channels, "s2", "crash_term:b", "jr-2", "r-2")
+  helper.recv(second) |> string.contains("phx_reply") |> should.be_true
+}
+
+/// **Third contract break.** A close overtakes the worker's own in-flight
+/// batch, and the batch loses.
+///
+/// The push is cast to the worker and the leave is handled in the very next
+/// turn, so the router drops the topic before the worker's reply gets home
+/// — and then discards it. The client's `r-2` is never answered. The
+/// shipped shared runtime cannot lose this: it runs `on_message` in the
+/// same process that handles the leave, so the reply is already lowered.
+///
+/// It is not fixable from the router, which is not a process and so cannot
+/// drain its own socket's envelopes before finishing. It needs a per-socket
+/// owner (#334).
+pub fn a_leave_discards_the_reply_it_raced_test() -> Nil {
+  let pids = process.new_subject()
+  let trace = process.new_subject()
+  let channels = start([room(pids, trace)])
+  let frames = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _join = helper.recv(frames)
+
+  helper.push(channels, "s1", "room:a", "ping", "r-2")
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-3")
+
+  // The leave is answered and the topic closes, but nothing the push
+  // produced — neither its reply nor its `pong` — ever reaches the client.
+  helper.recv(frames) |> string.contains("\"r-3\"") |> should.be_true
+  helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  helper.recv_none(frames)
 }

@@ -42,10 +42,13 @@
 ////
 //// `ponytail:` spike-scope cuts — no backpressure, no binary frames, no
 //// pattern validation, workers not linked to their socket (nothing
-//// per-socket exists to link them to), and a panicking `on_terminate`
-//// stalling every socket for `terminate_timeout_ms` (see `finish`). Each
-//// one's upgrade path, and what the prototype found, is in
-//// `docs/spikes/0337-process-per-channel.md`.
+//// per-socket exists to link them to), and a *blocking* `on_terminate`
+//// stalling every socket for `terminate_timeout_ms` (see `finish`).
+////
+//// One thing is not a cut but a finding: a close races the worker's own
+//// in-flight batch, and the batch loses (see `apply`). It is not fixable
+//// from here. Each ceiling's upgrade path, and what the prototype found,
+//// is in `docs/spikes/0337-process-per-channel.md`.
 
 import beryl
 import beryl/channel
@@ -64,9 +67,10 @@ import gleam/otp/supervision
 import gleam/result
 
 /// How long a `join` callback has to finish before the worker's start is
-/// abandoned and the join rejected. The runtime actor is blocked for this
-/// long in the worst case — a real design would want it much lower than
-/// the supervisor's own call timeout, which is what actually bounds it.
+/// abandoned and the join rejected. This is the *only* bound on the wait:
+/// `supervisor:start_child` calls with `infinity`, so the runtime actor is
+/// blocked for this long in the worst case. A real design would want it
+/// much lower.
 const join_timeout_ms = 1000
 
 /// How long the `Closed` turn waits for a worker's termination actions.
@@ -294,6 +298,9 @@ type Worker {
   Worker(
     generation: Int,
     work: process.Subject(Work),
+    /// Kept so `finish` can monitor the worker rather than trust that it is
+    /// still alive.
+    pid: process.Pid,
     /// The highest batch sequence applied for this join.
     sequence: Int,
   )
@@ -338,8 +345,12 @@ pub fn child_spec(
     |> factory_supervisor.named(factory)
     |> factory_supervisor.supervised()
 
+  // `OneForAll`, not `OneForOne`: a worker's `home` `Sender` closes over the
+  // runtime actor's subject, so a runtime that restarts alone would leave
+  // every worker on every socket talking to a dead process, with no `Finish`
+  // ever arriving to end them. Restarting the factory with it bounds that.
   let tree = fn() {
-    static_supervisor.new(static_supervisor.OneForOne)
+    static_supervisor.new(static_supervisor.OneForAll)
     |> static_supervisor.add(workers)
     |> static_supervisor.add(runtime)
     |> static_supervisor.start()
@@ -471,7 +482,7 @@ fn join(
             dict.insert(
               router.live,
               name,
-              Worker(generation: generation, work: work, sequence: 0),
+              Worker(generation: generation, work: work, pid: pid, sequence: 0),
             )
           socket.Next(Router(..router, live: live), [
             socket.AcceptJoin(ref, reply),
@@ -520,6 +531,15 @@ fn cast(router: Router, name: String, work: Work) -> Nil {
 /// the VM already orders messages between one pair of processes — so it is
 /// here for the distributed case and as a live assertion that the
 /// invariant holds.
+///
+/// **A close beats a batch it should have followed.** A batch travels the
+/// slow path (worker → socket `Sender` → this turn) while `finish` answers
+/// on a direct subject, so a client that pushes and then leaves can have
+/// its reply produced, reported, and then dropped here — the topic is gone
+/// from `live` by the time the batch is read. Draining first is not
+/// available to the router: it is not a process, so it cannot selectively
+/// receive its own socket's envelopes. See the spike doc's third contract
+/// break.
 fn apply(
   router: Router,
   name: String,
@@ -575,11 +595,15 @@ fn died(router: Router, name: String, generation: Int) -> socket.Next(Router) {
 /// A topic ended: collect the worker's termination actions synchronously,
 /// because they have to be lowered inside this turn.
 ///
-/// `ponytail:` a worker that panics in `on_terminate` never replies, so
-/// this blocks the shared runtime actor — and therefore every socket on it
-/// — for the full `terminate_timeout_ms`. The timeout is the only thing
-/// that ends the wait. Upgrade: monitor the worker and select on its
-/// `DOWN` alongside the reply, so a dead worker ends the wait immediately.
+/// The wait selects on the worker's `DOWN` alongside its reply, so a worker
+/// that is already dead — or that panics inside `on_terminate` — ends the
+/// wait at once instead of holding the shared runtime actor, and every
+/// socket on it, for the full timeout.
+///
+/// `ponytail:` an `on_terminate` that *blocks* rather than dies still stalls
+/// every socket, up to `terminate_timeout_ms`. The shared runtime has the
+/// same exposure to a blocking callback, so this is not new; what a socket
+/// session (#334) would add is confinement of the stall to one connection.
 fn finish(
   router: Router,
   name: String,
@@ -590,12 +614,21 @@ fn finish(
     Ok(worker) -> {
       let router = Router(..router, live: dict.delete(router.live, name))
       let reply = process.new_subject()
+      let monitor = process.monitor(worker.pid)
       process.send(worker.work, Finish(reply: reply, reason: reason))
-      case process.receive(reply, terminate_timeout_ms) {
-        Ok(effects) -> socket.Next(router, effects)
-        // The worker died between the cast and the reply. Its termination
-        // actions are lost; the topic still closes.
-        Error(Nil) -> socket.Next(router, [])
+      let answer =
+        process.new_selector()
+        |> process.select_map(reply, Ok)
+        |> process.select_specific_monitor(monitor, fn(_down) { Error(Nil) })
+        |> process.selector_receive(terminate_timeout_ms)
+      // Flushes a `DOWN` that raced the reply, so none is left for the
+      // runtime actor's own selector to trip over.
+      process.demonitor_process(monitor)
+      case answer {
+        Ok(Ok(effects)) -> socket.Next(router, effects)
+        // The worker died before replying, or never replied at all. Its
+        // termination actions are lost; the topic still closes.
+        Ok(Error(Nil)) | Error(Nil) -> socket.Next(router, [])
       }
     }
   }
