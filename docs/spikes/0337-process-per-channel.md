@@ -1,5 +1,12 @@
 # Spike: process-per-channel isolation (#337)
 
+> **Superseded in part by
+> [round 2](./0337-process-per-channel-round-2.md)**, which re-ran this
+> prototype on the per-socket runtime (#334). Three claims below did not
+> survive: the third contract break is core's close ordering rather than a
+> missing drain, the per-channel watcher was never a #334 cost, and a
+> per-socket in-flight budget always had somewhere to live.
+
 Prototype: `packages/beryl/test/spike_channel_worker.gleam`.
 Pinned behaviour: `packages/beryl/test/spike_channel_worker_test.gleam`.
 

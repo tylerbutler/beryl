@@ -7,11 +7,13 @@
 
 import beryl
 import beryl/channel
+import beryl/socket
 import beryl/transport
 import beryl/wire
 import channel_dispatch_helper as helper
 import gleam/erlang/process
 import gleam/json
+import gleam/option
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
@@ -352,9 +354,11 @@ pub fn a_dead_worker_does_not_stall_the_runtime_test() -> Nil {
 /// shipped shared runtime cannot lose this: it runs `on_message` in the
 /// same process that handles the leave, so the reply is already lowered.
 ///
-/// It is not fixable from the router, which is not a process and so cannot
-/// drain its own socket's envelopes before finishing. It needs a per-socket
-/// owner (#334).
+/// Round 1 read this as a missing drain and expected #334 to supply it. It
+/// does not: the reply is unanswerable from the closing turn regardless of
+/// topology, because core invalidates the topic's reply refs before it
+/// delivers `Closed`. See `a_reply_ref_is_dead_by_the_closed_turn_test`,
+/// which loses the same reply with no workers at all.
 pub fn a_leave_discards_the_reply_it_raced_test() -> Nil {
   let pids = process.new_subject()
   let trace = process.new_subject()
@@ -369,6 +373,159 @@ pub fn a_leave_discards_the_reply_it_raced_test() -> Nil {
 
   // The leave is answered and the topic closes, but nothing the push
   // produced — neither its reply nor its `pong` — ever reaches the client.
+  helper.recv(frames) |> string.contains("\"r-3\"") |> should.be_true
+  helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  helper.recv_none(frames)
+}
+
+// --- round 2: what the per-socket actor (#334) actually changed ------------
+
+/// A channel whose `join` sleeps for longer than a frame wait.
+fn slow_join(delay: Int) -> channel.Handler {
+  channel.handler("slow:*", fn(_context) {
+    process.sleep(delay)
+    channel.accept(Nil, channel.callbacks())
+  })
+}
+
+/// A channel whose `on_terminate` blocks — the ceiling round 1 could not
+/// pay down, because a blocked `Finish` held the one shared runtime actor.
+fn terminate_blocks(delay: Int) -> channel.Handler {
+  channel.handler("slow_term:*", fn(_context) {
+    channel.callbacks()
+    |> channel.on_terminate(fn(_state, _reason) {
+      process.sleep(delay)
+      []
+    })
+    |> channel.accept(Nil, _)
+  })
+}
+
+/// Joins no longer serialise across sockets.
+///
+/// Round 1 started every worker through one globally named factory
+/// supervisor, so `supervisor:start_child` — a `gen_server:call` — put every
+/// join on every socket behind one process. Each socket now has its own
+/// supervisor, started by and linked to its own socket actor, so a join
+/// that blocks for 700ms delays only the socket that asked for it.
+///
+/// The delay is longer than `recv`'s 500ms window on purpose: under round
+/// 1's shared factory, `s2`'s join frame could not arrive in time.
+pub fn a_slow_join_does_not_block_another_socket_test() -> Nil {
+  let pids = process.new_subject()
+  let trace = process.new_subject()
+  let channels = start([slow_join(700), room(pids, trace)])
+  let first = helper.connect(channels, "s1")
+  let second = helper.connect(channels, "s2")
+
+  helper.join(channels, "s1", "slow:a", "jr-1", "r-1")
+  helper.join(channels, "s2", "room:b", "jr-2", "r-2")
+
+  // `recv`'s window is 500ms, so `s2` cannot have queued behind the 700ms
+  // join `s1` is still inside.
+  helper.recv(second)
+  |> string.contains("\"handler\":\"room\"")
+  |> should.be_true
+
+  // `s1`'s own join still takes the full 700ms, which is the point: the
+  // wait is confined to the socket that asked for it.
+  let assert Ok(frame) = process.receive(first, 2000) as "s1 joined eventually"
+  frame |> string.contains("phx_reply") |> should.be_true
+}
+
+/// A blocking `on_terminate` stalls one connection, not the server.
+///
+/// This is the ceiling round 1 named and could not lift: `finish` is a
+/// synchronous call, and on the shared runtime the socket it blocked was
+/// every socket. The `Finish` wait is unchanged here — only the process it
+/// blocks is different.
+pub fn a_blocking_terminate_stalls_only_its_own_socket_test() -> Nil {
+  let pids = process.new_subject()
+  let trace = process.new_subject()
+  let channels = start([terminate_blocks(700), room(pids, trace)])
+  let first = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "slow_term:a", "jr-1", "r-1")
+  let _join = helper.recv(first)
+
+  helper.disconnect(channels, "s1")
+
+  let second = helper.connect(channels, "s2")
+  helper.join(channels, "s2", "room:b", "jr-2", "r-2")
+  helper.recv(second)
+  |> string.contains("\"handler\":\"room\"")
+  |> should.be_true
+}
+
+// --- round 2: why the raced reply is not a topology problem ---------------
+
+/// The app-dispatch model for `a_reply_ref_is_dead_by_the_closed_turn_test`:
+/// the pending reply ref for the one topic, if any.
+type Stashed =
+  option.Option(socket.ReplyRef)
+
+/// A minimal app that answers a client's `ref` one turn too late — from the
+/// topic's own `Closed` input, which is exactly where a drained worker
+/// batch would land.
+fn late_reply_app() -> beryl.Sockets {
+  let assert Ok(#(sockets, spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(option.None, []) },
+      update: fn(stashed: Stashed, input) {
+        case input {
+          socket.Join(ref: ref, ..) ->
+            socket.Next(stashed, [socket.AcceptJoin(ref, option.None)])
+          socket.Message(ref: option.Some(ref), ..) ->
+            socket.Next(option.Some(ref), [])
+          socket.Closed(..) ->
+            case stashed {
+              option.Some(ref) ->
+                socket.Next(option.None, [
+                  socket.ReplyOk(ref, json.object([#("late", json.bool(True))])),
+                ])
+              option.None -> socket.Next(stashed, [])
+            }
+          _ -> socket.Next(stashed, [])
+        }
+      },
+    )
+    as "the late-reply app config is valid"
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+    as "the late-reply app starts"
+  sockets
+}
+
+/// **The third contract break is core's rule, not the topology's.**
+///
+/// Round 1 recorded that a close discards the worker's in-flight batch, and
+/// blamed the router for not being a process: it could not drain its own
+/// socket's envelopes before finishing, so #334 would fix it.
+///
+/// It does not, and no drain can. This test uses no workers at all — one
+/// plain `beryl.child_spec` app, one socket, one process — and it still
+/// loses the reply. `exec_close_topic` deletes the topic's
+/// `pending_reply_refs` *before* it delivers `Closed`, so by the time any
+/// layer sees the close its refs are already invalid. A drained batch lands
+/// in that same turn and is dropped for that same reason.
+///
+/// Fixing it means core must hold the close until the worker is quiescent,
+/// which means core must know the worker exists — so process-per-channel
+/// belongs in `beryl/runtime`, not in a layer above it.
+pub fn a_reply_ref_is_dead_by_the_closed_turn_test() -> Nil {
+  let channels = late_reply_app()
+  let frames = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  helper.recv(frames) |> string.contains("\"r-1\"") |> should.be_true
+
+  helper.push(channels, "s1", "room:a", "ping", "r-2")
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-3")
+
+  // The leave is acknowledged and the topic closes; `r-2` never is.
   helper.recv(frames) |> string.contains("\"r-3\"") |> should.be_true
   helper.recv(frames) |> string.contains("phx_close") |> should.be_true
   helper.recv_none(frames)

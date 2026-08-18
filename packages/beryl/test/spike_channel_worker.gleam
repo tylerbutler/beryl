@@ -24,9 +24,12 @@
 ////
 //// ## Shape
 ////
-//// - A `factory_supervisor` starts one `Temporary` worker per accepted
-////   join. Temporary is the point: a worker whose join and authorization
-////   state died must not be restarted behind the client's back.
+//// - Each socket starts **its own** `factory_supervisor` in `init`, linked
+////   to its own socket actor, and one `Temporary` worker per accepted join
+////   runs under it. Temporary is the point: a worker whose join and
+////   authorization state died must not be restarted behind the client's
+////   back. Per-socket is round 2's change (see below) — round 1 used one
+////   globally named factory for the whole server.
 //// - `join` runs **inside the worker's initialiser**, and the router waits
 ////   for it, because the core rejects a `Join` that is unanswered when the
 ////   update turn ends. There is no way to represent an asynchronous join
@@ -38,17 +41,31 @@
 //// - `on_terminate` is synchronous again, for the same reason `join` is:
 ////   its actions have to be lowered inside the `Closed` turn.
 ////
+//// ## Round 2, on the per-socket runtime (#334)
+////
+//// Round 1 ran on the shared runtime actor and concluded that #337 was
+//// downstream of #334. Round 2 re-ran it on the per-socket runtime and
+//// claimed what that made available:
+////
+//// - **A supervisor per socket**, started by and linked to the socket's own
+////   actor. Joins no longer serialise across sockets through one
+////   `supervisor:start_child`, and no worker outlives its connection. The
+////   global name and the `OneForAll` runtime coupling are both gone.
+//// - **One watcher per socket** instead of one per worker (see
+////   `start_watcher`). This was never a #334 cost; round 1 over-booked it.
+////
 //// ## Known ceilings
 ////
-//// `ponytail:` spike-scope cuts — no backpressure, no binary frames, no
-//// pattern validation, workers not linked to their socket (nothing
-//// per-socket exists to link them to), and a *blocking* `on_terminate`
-//// stalling every socket for `terminate_timeout_ms` (see `finish`).
+//// `ponytail:` spike-scope cuts — no backpressure, no binary frames, and no
+//// pattern validation. A *blocking* `on_terminate` still holds `finish` for
+//// `terminate_timeout_ms`, but #334 confines that to its own socket for
+//// free.
 ////
-//// One thing is not a cut but a finding: a close races the worker's own
-//// in-flight batch, and the batch loses (see `apply`). It is not fixable
-//// from here. Each ceiling's upgrade path, and what the prototype found,
-//// is in `docs/spikes/0337-process-per-channel.md`.
+//// One thing is not a cut and is not a topology problem either: a close
+//// races the worker's own in-flight batch, and the batch loses (see
+//// `apply`). Round 1 expected #334 to fix it. It does not, and no drain
+//// can — see `a_reply_ref_is_dead_by_the_closed_turn_test`. Findings are in
+//// `docs/spikes/0337-process-per-channel-round-2.md`.
 
 import beryl
 import beryl/channel
@@ -244,29 +261,60 @@ fn report(active: Channel, outcome: Outcome) -> Nil {
   )
 }
 
-/// Notify the socket when a worker exits, from a process that is allowed
-/// to receive `DOWN`.
+/// What the per-socket watcher is told to monitor.
+type Watch {
+  Watch(pid: process.Pid, topic: String, generation: Int)
+}
+
+/// Notify the socket when any of its workers exits.
 ///
-/// The router runs inside beryl's shared runtime actor and does not own
-/// that actor's selector, so it cannot monitor anything itself. One
-/// short-lived watcher per worker is the price of that, and it doubles the
-/// per-channel process count — the first thing #334 would pay back.
-fn watch(
-  pid: process.Pid,
-  home: socket.Sender(Envelope),
-  name: String,
-  generation: Int,
-) -> Nil {
-  let _watcher =
-    process.spawn_unlinked(fn() {
-      let monitor = process.monitor(pid)
-      let selector =
-        process.new_selector()
-        |> process.select_specific_monitor(monitor, fn(down) { down })
-      let _down = process.selector_receive_forever(selector)
-      socket.notify(home, Died(topic: name, generation: generation))
+/// **One process per socket, not per channel.** Round 1 spawned a watcher
+/// per worker and booked that as a cost #334 would repay. It was never a
+/// #334 cost: `init` has always run once per socket and `info.self` has
+/// always been that socket's own `Sender`, so a single watcher holding a
+/// monitor per worker was available on the shared runtime too. What #334
+/// does add is that the watcher can be started *by* the socket's own
+/// process, so it dies with the socket instead of outliving it.
+fn start_watcher(home: socket.Sender(Envelope)) -> process.Subject(Watch) {
+  let ready = process.new_subject()
+  let _pid =
+    process.spawn(fn() {
+      let inbox = process.new_subject()
+      process.send(ready, inbox)
+      watch_loop(inbox, home, dict.new())
     })
-  Nil
+  let assert Ok(inbox) = process.receive(ready, 1000)
+    as "the socket's watcher started"
+  inbox
+}
+
+fn watch_loop(
+  inbox: process.Subject(Watch),
+  home: socket.Sender(Envelope),
+  watched: dict.Dict(process.Pid, #(String, Int)),
+) -> Nil {
+  let selector =
+    process.new_selector()
+    |> process.select_map(inbox, Ok)
+    |> process.select_monitors(Error)
+  case process.selector_receive_forever(selector) {
+    Ok(Watch(pid: pid, topic: name, generation: generation)) -> {
+      let _monitor = process.monitor(pid)
+      watch_loop(inbox, home, dict.insert(watched, pid, #(name, generation)))
+    }
+    Error(down) ->
+      case down {
+        process.ProcessDown(pid: pid, ..) -> {
+          case dict.get(watched, pid) {
+            Ok(#(name, generation)) ->
+              socket.notify(home, Died(topic: name, generation: generation))
+            Error(Nil) -> Nil
+          }
+          watch_loop(inbox, home, dict.delete(watched, pid))
+        }
+        _ -> watch_loop(inbox, home, watched)
+      }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +357,11 @@ type Worker {
 type Router {
   Router(
     handlers: List(Registered),
-    factory: process.Name(factory_supervisor.Message(Spawn, Report)),
+    /// This socket's own worker supervisor, started in `init` and linked
+    /// to the socket's process.
+    factory: factory_supervisor.Supervisor(Spawn, Report),
+    /// This socket's single watcher (see `start_watcher`).
+    watcher: process.Subject(Watch),
     socket_id: String,
     seed: socket.ConnectSeed,
     self: socket.Sender(Envelope),
@@ -318,11 +370,14 @@ type Router {
   )
 }
 
-/// Build a spike channel system: a factory supervisor for channel workers,
-/// then beryl's runtime.
+/// Build a spike channel system.
 ///
-/// Start order matters — the runtime's first join looks the factory up by
-/// name.
+/// Round 1 needed a supervision tree here: one globally named factory
+/// supervisor for every worker on every socket, wrapped with the runtime in
+/// `OneForAll` so a restarted runtime could not orphan them. Post-#334 the
+/// socket actor owns its own workers, so this is `beryl.child_spec` and
+/// nothing else — the whole tree, the global name, and the `OneForAll`
+/// coupling are gone.
 pub fn child_spec(
   config: beryl.Config,
   handlers handlers: List(channel.Handler),
@@ -330,33 +385,8 @@ pub fn child_spec(
   #(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   beryl.ConfigError,
 ) {
-  let factory = process.new_name("spike_channel_factory")
   let table = table(handlers)
-
-  use #(sockets, runtime) <- result.map(beryl.child_spec(
-    config,
-    init: fn(info) { init(table, factory, info) },
-    update: update,
-  ))
-
-  let workers =
-    factory_supervisor.worker_child(start_worker)
-    |> factory_supervisor.restart_strategy(supervision.Temporary)
-    |> factory_supervisor.named(factory)
-    |> factory_supervisor.supervised()
-
-  // `OneForAll`, not `OneForOne`: a worker's `home` `Sender` closes over the
-  // runtime actor's subject, so a runtime that restarts alone would leave
-  // every worker on every socket talking to a dead process, with no `Finish`
-  // ever arriving to end them. Restarting the factory with it bounds that.
-  let tree = fn() {
-    static_supervisor.new(static_supervisor.OneForAll)
-    |> static_supervisor.add(workers)
-    |> static_supervisor.add(runtime)
-    |> static_supervisor.start()
-  }
-
-  #(sockets, supervision.supervisor(tree))
+  beryl.child_spec(config, init: fn(info) { init(table, info) }, update: update)
 }
 
 fn table(handlers: List(channel.Handler)) -> List(Registered) {
@@ -368,15 +398,26 @@ fn table(handlers: List(channel.Handler)) -> List(Registered) {
   })
 }
 
+/// Start this socket's worker supervisor and watcher.
+///
+/// Both are linked to the socket's own process, which is what #334 bought:
+/// worker lifetime is now bounded by the connection rather than by a global
+/// tree, and no worker can outlive the socket that joined it.
 fn init(
   handlers: List(Registered),
-  factory: process.Name(factory_supervisor.Message(Spawn, Report)),
   info: socket.ConnectInfo(Envelope),
 ) -> #(Router, List(socket.Effect)) {
+  let assert Ok(actor.Started(data: factory, pid: _)) =
+    factory_supervisor.worker_child(start_worker)
+    |> factory_supervisor.restart_strategy(supervision.Temporary)
+    |> factory_supervisor.start()
+    as "the socket's worker supervisor started"
+
   #(
     Router(
       handlers: handlers,
       factory: factory,
+      watcher: start_watcher(info.self),
       socket_id: info.socket_id,
       seed: info.seed,
       self: info.self,
@@ -452,12 +493,7 @@ fn join(
           generation: generation,
         )
 
-      case
-        factory_supervisor.start_child(
-          factory_supervisor.get_by_name(router.factory),
-          spawn,
-        )
-      {
+      case factory_supervisor.start_child(router.factory, spawn) {
         // A `join` that ran past `join_timeout_ms`. Core has no equivalent
         // — it cannot time a callback out — so this reason is the
         // prototype's own.
@@ -477,7 +513,10 @@ fn join(
           pid: pid,
           data: Opened(work: work, reply: reply, effects: accepted),
         )) -> {
-          watch(pid, router.self, name, generation)
+          process.send(
+            router.watcher,
+            Watch(pid: pid, topic: name, generation: generation),
+          )
           let live =
             dict.insert(
               router.live,
@@ -536,10 +575,15 @@ fn cast(router: Router, name: String, work: Work) -> Nil {
 /// slow path (worker → socket `Sender` → this turn) while `finish` answers
 /// on a direct subject, so a client that pushes and then leaves can have
 /// its reply produced, reported, and then dropped here — the topic is gone
-/// from `live` by the time the batch is read. Draining first is not
-/// available to the router: it is not a process, so it cannot selectively
-/// receive its own socket's envelopes. See the spike doc's third contract
-/// break.
+/// from `live` by the time the batch is read.
+///
+/// Round 1 read this as a missing drain that #334 would supply. It is not.
+/// Core deletes a topic's `pending_reply_refs` *before* it delivers
+/// `Closed`, so the raced reply is unanswerable from the closing turn no
+/// matter which process drains what — with no workers in the picture at
+/// all, `a_reply_ref_is_dead_by_the_closed_turn_test` loses the same reply.
+/// Preserving it needs core to hold the close until the worker is
+/// quiescent, which means core has to own the worker.
 fn apply(
   router: Router,
   name: String,
@@ -600,10 +644,11 @@ fn died(router: Router, name: String, generation: Int) -> socket.Next(Router) {
 /// wait at once instead of holding the shared runtime actor, and every
 /// socket on it, for the full timeout.
 ///
-/// `ponytail:` an `on_terminate` that *blocks* rather than dies still stalls
-/// every socket, up to `terminate_timeout_ms`. The shared runtime has the
-/// same exposure to a blocking callback, so this is not new; what a socket
-/// session (#334) would add is confinement of the stall to one connection.
+/// `ponytail:` an `on_terminate` that *blocks* rather than dies still holds
+/// this wait for up to `terminate_timeout_ms`. On the per-socket runtime
+/// that stalls only its own connection — pinned by
+/// `a_blocking_terminate_stalls_only_its_own_socket_test`, which needed no
+/// change here to pass.
 fn finish(
   router: Router,
   name: String,
