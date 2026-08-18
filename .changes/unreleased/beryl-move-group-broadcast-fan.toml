@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Move group broadcast fan-out out of the groups actor and into each caller to provide backpressure under high broadcast traffic."

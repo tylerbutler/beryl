@@ -200,7 +200,7 @@ case group.create(groups, name) {
 }
 ```
 
-`group.broadcast` is fire-and-forget and never returns an error. If the group does not exist, the call is a no-op.
+`group.broadcast` resolves the group's topics synchronously and never returns an error. If the group does not exist, the call is a no-op. Like other group operations, it panics if the groups actor is unavailable or does not reply within 5 seconds.
 
 ## Startup failures
 
