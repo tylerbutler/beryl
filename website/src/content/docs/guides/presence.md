@@ -79,11 +79,30 @@ let ref = presence.track(
 The **key** groups multiple connections from the same user. The **session ID**
 uniquely identifies each connection (typically the socket ID).
 
+## Updating metadata
+
+Replace one tracked presence's metadata without briefly removing its key from
+the roster:
+
+```gleam
+let assert Ok(new_ref) =
+  presence.update(
+    p,
+    ref,
+    json.object([#("status", json.string("away"))]),
+  )
+```
+
+`update` emits the old ref's leave and the new ref's join in one diff, while
+leaving other refs for the same key unchanged. Keep the returned ref for the
+next `update` or `untrack`; the previous ref becomes stale. An unknown, removed,
+or non-public ref returns `Error(presence.UnknownRef)`.
+
 ## Untracking
 
 ```gleam
 // Remove a specific presence, using the ref returned by `track`
-presence.untrack(p, ref)
+presence.untrack(p, new_ref)
 
 // Remove all presences for a session ID / socket (e.g., on disconnect)
 presence.untrack_all(p, socket_id)
@@ -123,10 +142,10 @@ unaffected.
 
 Both the stable actor name and the read model's ETS table are node-local, so a
 `Presence` handle must stay on the node where its child specification runs.
-From another BEAM node, `track`/`untrack`/`untrack_all` cannot reach the owning
-actor and panic as unavailable, while `list`/`get_by_key`/`count` return
-`Error(Nil)`. Use PubSub replication (`with_pubsub`) to share presence state
-across nodes instead of moving the handle itself.
+From another BEAM node, `track`/`update`/`untrack`/`untrack_all` cannot reach
+the owning actor and panic as unavailable, while `list`/`get_by_key`/`count`
+return `Error(Nil)`. Use PubSub replication (`with_pubsub`) to share presence
+state across nodes instead of moving the handle itself.
 
 The handle is backed by stable process and ETS names, so it reaches the
 replacement actor and read model after a supervised restart. Presence entries
@@ -247,6 +266,9 @@ The runtime owns refs created by `PresenceTrack` and automatically removes any
 remaining refs when the topic closes. Public synchronous `presence.track`
 calls remain available to application actors and other out-of-band workflows;
 their refs are independently addressable and are not part of runtime cleanup.
+Repeating `PresenceTrack` for the same topic and key replaces the runtime-owned
+meta atomically. Out-of-band workflows should use `presence.update` with the
+ref returned by `presence.track`.
 
 ## Next steps
 

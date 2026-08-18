@@ -12,7 +12,7 @@ description: "Presence - Distributed presence tracking backed by a CRDT"
 Presence - Distributed presence tracking backed by a CRDT
 
  Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
- - Handles track/untrack calls
+ - Handles track/update/untrack calls
  - Periodically broadcasts state via PubSub for cross-node replication
  - Receives remote state from PubSub and merges it internally
  - Invokes `on_diff` callback when merges produce non-empty diffs
@@ -81,11 +81,12 @@ A running Presence instance.
 
  The stable registered subject and ETS read model are resolved on the
  caller's node. Keep a `Presence` handle on the node where its child
- specification runs. From another BEAM node, synchronous mutations cannot
- reach the owning actor and panic as unavailable, while `list`, `get_by_key`,
- and `count` return `Error(Nil)` because the read model is unavailable.
- Use PubSub replication (`with_pubsub`) to share presence state across nodes
- instead of moving the handle itself.
+ specification runs. From another BEAM node, synchronous mutations
+ (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
+ actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+ return `Error(Nil)` because the read model is unavailable. Use PubSub
+ replication (`with_pubsub`) to share presence state across nodes instead of
+ moving the handle itself.
 
 ```gleam
 pub type Presence
@@ -107,6 +108,22 @@ pub type PresenceEntry {
   )
 }
 ```
+
+### `PresenceUpdateError`
+
+Errors from updating a tracked presence.
+
+```gleam
+pub type PresenceUpdateError {
+  UnknownRef
+}
+```
+
+#### Constructors
+
+##### `UnknownRef`
+
+The ref is unknown, already removed, or was not returned by `track`.
 
 ## Functions
 
@@ -300,6 +317,28 @@ pub fn untrack_all(
   Presence,
   String
 ) -> Nil
+```
+
+### `update`
+
+Replace the meta of a presence created by `track`.
+
+ The old ref's leave and the new ref's join are emitted together in one
+ diff, so subscribers never observe an intermediate state without the
+ presence key. Other tracked refs for the same key are left unchanged.
+
+ Returns the replacement ref, which must be used for subsequent `update`
+ or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+ unknown, already removed, or belongs to the internal runtime.
+
+ Panics if the presence actor is unavailable or does not reply within 5 seconds.
+
+```gleam
+pub fn update(
+  Presence,
+  String,
+  json.Json
+) -> Result(String, PresenceUpdateError)
 ```
 
 ### `with_broadcast_interval`
