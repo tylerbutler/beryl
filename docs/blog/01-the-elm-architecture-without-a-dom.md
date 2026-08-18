@@ -118,33 +118,28 @@ of a browser event loop, the transition runs inside a concurrent process.
 ## The same loop inside an OTP actor
 
 A Gleam OTP actor applies the same state transition to a process mailbox. It
-owns state and processes messages sequentially. The live-poll example stores
-every active room's poll in one actor.
-These selected protocol variants come from
-[`examples/blog_series/src/blog_series/store.gleam`](../../examples/blog_series/src/blog_series/store.gleam):
+owns state and processes messages sequentially. Keeping the counter from the
+Lustre example makes the change of runtime easier to see:
 
 ```gleam
 type Message {
-  Join(room: String)
-  Leave(room: String)
-  Get(room: String, reply: Subject(poll.Poll))
-  Vote(
-    room: String,
-    choice: poll.Choice,
-    reply: Subject(Result(poll.Poll, poll.VoteError)),
-  )
-  Close(room: String, reply: Subject(CloseResult))
+  Incr
+  Decr
 }
 
-```
-
-```gleam
-Get(room, reply) -> {
-  let #(current, polls) = find(state.polls, room)
-  process.send(reply, current)
-  actor.continue(State(..state, polls: polls))
+fn on_message(count: Int, message: Message) -> actor.Next(Int, Message) {
+  case message {
+    Incr -> actor.continue(count + 1)
+    Decr -> actor.continue(count - 1)
+  }
 }
 ```
+
+The model is still an `Int`, and the messages are still `Incr` and `Decr`.
+The difference is where they come from and what happens to the result. A
+Lustre runtime receives interface messages and passes the next model to
+`view`. An actor receives messages from its mailbox and uses `actor.continue`
+to replace its process state.
 
 The common model becomes clearer side by side:
 
@@ -190,7 +185,7 @@ The three domains now line up:
 | Role | Lustre | Gleam OTP actor | Beryl raw dispatch |
 |---|---|---|---|
 | state | application model | actor state | one app-defined `Model` per socket |
-| input | `Message` | actor message | `socket.Input(msg)` |
+| input | `Message` | actor message | `socket.Input(Message)` |
 | transition | `update` | `on_message` handler | `update` |
 | next step | model and optional effect | `actor.Next` | `socket.Next(model, effects)` |
 
@@ -233,12 +228,20 @@ This excerpt comes from
 The names carry specific meanings:
 
 - `Model` is application-defined state for one connected socket.
-- `Message` is the typed server-side message type accepted through this socket's
-  `socket.Sender`.
+- `Message` is the application's domain-specific type for server-side events.
+  The poll defines `ClosePoll` because a timer needs to tell a socket that one
+  of its polls has expired. Another application would define variants from its
+  own domain.
 - `socket.Effect` describes work for Beryl to interpret after `init` or
   `update`.
 - `socket.ConnectInfo.self` is the socket-scoped sender. It is not a general
   process `Subject`.
+
+The type parameter connects the server-message path:
+`ConnectInfo(Message)` supplies a `Sender(Message)`, and Beryl delivers values
+sent through that sender as `Info(Message)`. Client frames follow a separate
+path through the `Join`, `Message`, and `Binary` variants of `socket.Input`.
+The app-defined `Message` type never represents decoded client data.
 
 The `update` function returns
 `fn(Model, socket.Input(Message)) -> socket.Next(Model)` and exhaustively matches
@@ -282,10 +285,12 @@ That does not mean Beryl starts one OTP actor per socket. One shared runtime
 actor holds many logical per-socket models. The distinction becomes important
 for blocking work and crash behavior, which the fifth post covers.
 
-The example keeps poll totals somewhere else: `store.Store` is an
-application-owned actor captured by the update closure. Every browser socket
-gets its own raw `Model`, while all sockets consult the same poll store.
-Per-socket state and shared domain state are separate choices.
+The live poll now gives us a reason to add an application-owned actor. Every
+browser connected to a room must see the same totals, so those totals cannot
+belong to one socket's `Model`. The example captures a shared `store.Store`
+actor in the update closure. Every browser socket gets its own raw `Model`,
+while all sockets send poll operations to the same store. Per-socket state and
+shared domain state remain separate.
 
 ## The first mismatch is useful
 

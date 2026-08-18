@@ -89,30 +89,16 @@ application work.
 This policy contains app callback failures without pretending every failure
 has the same scope.
 
-## Supervision covers runtime crashes
+## Supervision restores dispatch, not sessions
 
 `beryl.child_spec` and `channel.child_spec` return a child specification for
-the application's supervisor. Beryl starts an internal one-for-one subtree
-with a restart tolerance of 3 restarts in 5 seconds. The runtime child is
-transient, so a graceful `beryl.stop` does not restart it.
+your application's supervisor. A runtime crash starts a fresh runtime under
+the same name-backed `beryl.Sockets` handle. Connected clients close, then
+reconnect and rejoin with new socket models and channel state.
 
-The child specification retains the typed `init` and `update` closures. A
-runtime restart can resume dispatch without re-registering application code,
-and the name-backed `beryl.Sockets` handle remains usable. Fire-and-forget
-operations during the restart window become quiet no-ops, while connection
-admission fails cleanly.
-
-Runtime state is ephemeral:
-
-- connected socket records disappear;
-- raw per-socket models disappear;
-- channel instances disappear;
-- joined-topic and subscriber maps disappear;
-- clients must reconnect and rejoin.
-
-Supervision restores the service process, not the live WebSocket sessions it
-held. Keep durable or reconstructable domain state in application-owned
-storage, as the example does with `store.Store`.
+Keep durable or reconstructable domain state in application-owned storage, as
+the example does with `store.Store`. The next post covers the supervision
+tree, restart windows, restart intensity, and graceful shutdown.
 
 ## Heartbeats test connection liveness
 
@@ -195,7 +181,7 @@ cross-topic coordination stays ordinary app code.
 
 ## The boundaries to remember
 
-The five posts began with a familiar update loop. The production model needs
+The preceding posts began with a familiar update loop. The production model needs
 the mismatches kept in view:
 
 - Beryl has no `view`.
@@ -235,4 +221,4 @@ poll now or wait 60 seconds. The behavior matches step 04 while the runtime
 uses the heartbeat and abuse-control settings shown above. In another shell,
 run `curl http://localhost:8105/healthz`; the expected response is `ok`.
 
-Series index: [Beryl introduction series](README.md).
+Next: [Supervising Beryl](06-supervising-beryl.md).

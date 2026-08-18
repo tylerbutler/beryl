@@ -11,15 +11,15 @@ protocol capabilities and an intentionally untyped wire boundary.
 
 ## The five inputs
 
-`socket.Input(msg)` has five variants:
+`socket.Input(message)` has five variants:
 
 ```gleam
-pub type Input(msg) {
+pub type Input(message) {
   Join(topic: String, payload: Dynamic, ref: JoinRef)
   Message(topic: String, event: String, payload: Dynamic, ref: Option(ReplyRef))
   Binary(topic: String, data: BitArray)
   Closed(topic: String, reason: StopReason)
-  Info(msg)
+  Info(message)
 }
 ```
 
@@ -31,7 +31,7 @@ Each variant marks a different boundary:
 - `Message` carries a client event on a topic the socket has joined.
 - `Binary` carries binary data associated with a joined topic.
 - `Closed` reports that a joined topic ended.
-- `Info` carries the app-defined typed `msg` sent through this socket's
+- `Info` carries the app-defined typed `message` sent through this socket's
   `Sender`.
 
 A socket is the client connection. A topic is one subscription string inside
@@ -143,7 +143,7 @@ do not leak into the store actor. The wire payload remains `Dynamic`; the
 domain command does not.
 
 This boundary does not imply that Beryl erases the application's model or
-typed server messages. The core runtime is generic over `model` and `msg`.
+typed server messages. The core runtime is generic over `model` and `message`.
 `beryl.child_spec` captures concrete typed closures while exposing a
 non-generic transport handle. `Dynamic` is limited to data that arrived from
 the wire.
@@ -237,7 +237,7 @@ specific client request. Pushes are server-initiated frames to one socket.
 Broadcasts fan out by topic. A topic is the routing key; it is not a socket,
 channel, `Subject`, or `Sender`.
 
-The next post adds `Info(msg)`, the remaining input variant, and compares its
+The next post adds `Info(message)`, the remaining input variant, and compares its
 socket-scoped `Sender` with a general OTP `Subject`.
 
 ## Sources and further reading

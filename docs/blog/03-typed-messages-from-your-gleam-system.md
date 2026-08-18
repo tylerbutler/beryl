@@ -2,8 +2,8 @@
 
 Client frames are only one source of socket work. A database worker may
 finish, a timer may expire, or an application actor may publish a domain
-event. Beryl routes those server-side events through `socket.Sender(msg)` and
-delivers them to the owning update function as `socket.Info(msg)`.
+event. Beryl routes those server-side events through `socket.Sender(Message)`
+and delivers them to the owning update function as `socket.Info(Message)`.
 
 The design resembles a typed OTP send, but a Beryl sender has a narrower
 contract than `process.Subject`.
@@ -63,8 +63,8 @@ Beryl's socket lifecycle rules.
 
 ## A socket sender has one destination
 
-Raw Beryl `init` receives `socket.ConnectInfo(msg)`. Its `self` field is a
-`socket.Sender(msg)`:
+Raw Beryl `init` receives `socket.ConnectInfo(Message)`. Its `self` field is a
+`socket.Sender(Message)`:
 
 ```gleam
 pub type Model {
@@ -76,15 +76,39 @@ pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) 
 }
 ```
 
-The example stores that sender in each socket's `Model`. Calling
-`socket.notify(sender, message)` schedules typed delivery to that socket's
-update function. The raw app defines this exact message type:
+The application defines `Message` as its domain-specific vocabulary for
+server-side events that may enter the socket's update loop. In the poll, the
+only such event tells a socket that a timer has expired for one topic:
 
 ```gleam
 pub type Message {
   ClosePoll(topic: String)
 }
 ```
+
+This `Message` is distinct from the `socket.Message` input variant, which
+contains a decoded client event. A chat application might instead define
+`NewChatMessage`, `UserBanned`, or other variants produced by its own actors
+and workers.
+
+The example stores `info.self` in each socket's `Model`. Beryl constructs that
+sender when the socket connects. Internally, it wraps the runtime actor's
+subject and captures the socket id, so every notification can be routed back
+to the correct socket model. The sender remains an opaque `socket.Sender`
+rather than exposing that subject.
+
+The same application-defined type appears throughout the path:
+
+```gleam
+socket.ConnectInfo(Message)
+socket.Sender(Message)
+socket.Input(Message)
+socket.Info(ClosePoll(topic))
+```
+
+Calling `socket.notify(sender, ClosePoll(topic))` sends the typed value to the
+runtime actor. Beryl finds the target socket and passes it to that socket's
+update function as `Info(ClosePoll(topic))`.
 
 Its update handles the message with this exact excerpt:
 
@@ -110,9 +134,9 @@ These excerpts come from
 
 The sender is narrower than a general `process.Subject`:
 
-- it only permits values of the raw app's `msg` type;
+- it only permits values of the raw app's `Message` type;
 - it only targets the socket update that created it;
-- the runtime wraps delivery as `socket.Info(msg)`;
+- the runtime wraps delivery as `socket.Info(Message)`;
 - if that socket has disconnected, delivery is ignored;
 - it does not expose mailbox selection or a general request/reply protocol.
 
@@ -178,6 +202,14 @@ That split gives each piece one job:
 - The timer actor schedules delayed work.
 - `socket.Sender` reconnects external work to one socket update.
 
+`store.Store` is also the persistence seam. Socket code calls `get`, `vote`,
+and `close` without knowing that the current actor keeps a `Dict` in memory.
+The actor could keep serializing those operations while storing polls in
+[Stóráil](https://hexdocs.pm/storail/) or a database. These are separate
+decisions: the actor orders concurrent updates; the storage backend determines
+whether state survives an application restart. A production backend also
+needs an explicit policy for I/O latency and write failures.
+
 Closing returns a descriptive result:
 
 ```gleam
@@ -233,7 +265,7 @@ sends share the same cross-abstraction ordering rules.
 
 ## `Info` has socket-wide scope
 
-`Info(msg)` does not carry a topic automatically. The app message must include
+`Info(Message)` does not carry a topic automatically. The app message must include
 the routing information it needs. The example defines
 `ClosePoll(topic: String)` because one raw socket may join several poll topics.
 

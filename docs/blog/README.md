@@ -22,6 +22,7 @@ pre-1.0, so treat the API as evolving rather than stable.
 3. [Typed messages from the rest of your Gleam system](03-typed-messages-from-your-gleam-system.md)
 4. [Composition: raw dispatch and `beryl/channel`](04-composition-raw-dispatch-and-channels.md)
 5. [Where the analogy ends](05-where-the-analogy-ends.md)
+6. [Supervising Beryl](06-supervising-beryl.md)
 
 Each post stands on its own, but the checkpoints build from read-only raw
 dispatch to a production-shaped channel system.
@@ -37,6 +38,7 @@ Run each command from the repository root:
 | 3 | `cd examples/blog_series && gleam run -m blog_series/step_03` | <http://localhost:8103> |
 | 4 | `cd examples/blog_series && gleam run -m blog_series/step_04` | <http://localhost:8104> |
 | 5 | `cd examples/blog_series && gleam run -m blog_series/step_05` | <http://localhost:8105> |
+| 6 | `cd examples/blog_series && gleam run -m blog_series/step_05` | <http://localhost:8105> |
 
 Stop a checkpoint with Ctrl-C before starting the next one. The browser client
 loads Phoenix JavaScript 1.7.20 from unpkg, so the first page load needs
