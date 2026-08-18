@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Document that rate-limited heartbeats do not refresh socket deadlines and sustained over-rate traffic is closed by heartbeat eviction."

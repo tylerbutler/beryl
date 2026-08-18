@@ -16,7 +16,10 @@ let ps = pubsub.start(pubsub.default_config())
 let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 ```
 
-The scope maps to a `pg` scope atom. Different scopes are completely isolated from each other.
+The scope maps to a `pg` scope atom and identifies the PubSub instance at
+runtime. Different scopes are completely isolated and can safely use different
+payload types in the same process mailbox. Every handle using the same scope
+must use the same payload type.
 
 :::danger[The scope must be a static, bounded deployment value]
 The scope name is converted to an Erlang atom. Atoms are never
@@ -45,8 +48,10 @@ let selector =
 pubsub.leave(sub, "room:lobby")
 ```
 
-Use one `Subscriber(payload)` per payload type in a process. PubSub records
-arrive as raw BEAM messages, so `selecting` is the typed validation boundary.
+PubSub records arrive as raw BEAM messages, so `selecting` is the typed
+validation boundary. It matches the subscriber's scope, allowing one process
+to select subscribers with different payload types as long as their scopes
+differ.
 
 ## Messages
 
@@ -69,9 +74,12 @@ pub type PubSubFrom {
 }
 ```
 
-The raw record tag plus these four fields, in this order, are a frozen
-cross-node wire contract. Version changes to your own payload type explicitly
-when rolling upgrades must accept old and new nodes concurrently.
+On the wire, the PubSub scope atom replaces the public record tag and is
+followed by these four fields in order. This five-element tuple is a frozen
+cross-node wire contract. Nodes using the old unscoped message shape do not
+interoperate, so upgrade the cluster together when adopting this version.
+Version changes to your own payload type explicitly when rolling upgrades must
+accept old and new nodes concurrently.
 
 `FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving runtimes use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
 

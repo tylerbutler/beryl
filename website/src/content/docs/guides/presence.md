@@ -18,9 +18,11 @@ The presence system has two layers:
 ```gleam
 import beryl/presence
 import beryl/pubsub
+import gleam/otp/static_supervisor
 
 // Without PubSub (single-node only)
-let assert Ok(p) = presence.start(presence.default_config("node1"))
+let #(p, presence_spec) =
+  presence.child_spec(presence.default_config("node1"))
 
 // With PubSub for cross-node replication
 let ps = pubsub.start(pubsub.default_config())
@@ -28,8 +30,31 @@ let config =
   presence.default_config("node1")
   |> presence.with_pubsub(ps)
   |> presence.with_broadcast_interval(1500)
-let assert Ok(p) = presence.start(config)
+let #(p, presence_spec) = presence.child_spec(config)
+
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(presence_spec)
+  |> static_supervisor.start()
 ```
+
+Synchronous presence mutations wait up to 5 seconds for the actor by default.
+Use `with_call_timeout` to configure the timeout:
+
+```gleam
+let config =
+  presence.default_config("node1")
+  |> presence.with_call_timeout(10_000)
+let #(p, presence_spec) = presence.child_spec(config)
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(presence_spec)
+  |> static_supervisor.start()
+```
+
+`track`, `untrack`, and `untrack_all` panic if the actor is unavailable or does
+not reply within this timeout. Presence reads bypass the actor mailbox and do
+not use it.
 
 ## Tracking presences
 
@@ -90,11 +115,23 @@ calling through the actor mailbox, so reads remain nonblocking while the actor
 is busy. Synchronous mutations publish before replying, giving immediate
 read-after-write consistency. `count` reads a materialized count in O(1).
 
-The table lifetime follows the actor: reads panic after that actor stops rather
-than returning a misleading empty result. Other presence actors own independent
-tables and remain unaffected.
+The table lifetime follows the actor. Before startup, after the actor stops, or
+during the brief window before a supervisor starts its replacement,
+`list`, `get_by_key`, and `count` return `Error(Nil)` rather than a misleading
+empty result. Other presence actors own independent tables and remain
+unaffected.
 
-The read model's ETS table is node-local: a `Presence` handle must stay on the node where `presence.start` created it. Sending the handle to (or otherwise calling `list`/`get_by_key`/`count` from) a process on a different BEAM node looks up a table reference that names nothing on that node, so those calls panic there too (`track`/`untrack`/`untrack_all` still work remotely, since they only need to reach the owning actor's process). Use PubSub replication (`with_pubsub`) to share presence state across nodes instead of moving the handle itself.
+Both the stable actor name and the read model's ETS table are node-local, so a
+`Presence` handle must stay on the node where its child specification runs.
+From another BEAM node, `track`/`untrack`/`untrack_all` cannot reach the owning
+actor and panic as unavailable, while `list`/`get_by_key`/`count` return
+`Error(Nil)`. Use PubSub replication (`with_pubsub`) to share presence state
+across nodes instead of moving the handle itself.
+
+The handle is backed by stable process and ETS names, so it reaches the
+replacement actor and read model after a supervised restart. Presence entries
+and tracking refs are in-memory state and reset on restart; connected clients
+must re-track their presence.
 
 ## Diff callbacks
 

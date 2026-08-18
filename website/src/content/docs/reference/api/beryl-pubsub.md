@@ -16,10 +16,10 @@ PubSub - Distributed publish/subscribe using Erlang pg
  to all nodes in the cluster automatically.
 
  The payload is generic: `PubSub(payload)` and `Message(payload)` carry
- whatever Gleam type a given instance is started with. A broadcast sends
- that value as a native BEAM term — there is no encoding step, even across
- nodes, since Erlang's own distribution protocol marshals arbitrary terms
- for you. Reach for a `gleam/json` payload only when the data is also
+ whatever Gleam type a given scope is started with. A broadcast sends that
+ value as a scope-tagged native BEAM term — there is no encoding step, even
+ across nodes, since Erlang's own distribution protocol marshals arbitrary
+ terms for you. Use a `gleam/json` payload only when the data is also
  destined for a JSON-speaking client (e.g. relayed on to a WebSocket
  browser); payloads that never leave the cluster are cheaper and safer as
  plain Gleam types.
@@ -54,11 +54,10 @@ A PubSub message delivered to subscribers.
 
  ## Frozen wire contract
 
- `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
- the record tag and its four fields, in this order — is a frozen wire
- contract, not just a source-level API, for any given `payload` type: a
- rolling cluster upgrade must never mis-parse a frame from an older node
- running the same payload type. The same applies to `PubSubFrom`.
+ Beryl sends broadcasts **raw between nodes** via `pg` as a five-element tuple:
+ the PubSub scope atom followed by this message's four fields in order. That
+ scope-tagged runtime shape forms the frozen wire contract for each `payload`
+ type. The contract also applies to `PubSubFrom`.
 
  Because payloads travel as native terms rather than a self-describing
  format like JSON, evolving the *shape* of your own `payload` type is also
@@ -84,7 +83,9 @@ A running PubSub instance.
 
  This handle is intentionally opaque so callers cannot forge pg scopes or
  depend on the runtime representation. `payload` fixes the Gleam type
- every `Message` broadcast through this instance carries.
+ every `Message` broadcast through this instance carries. The scope is the
+ runtime instance identity, so all handles using one scope must use the same
+ payload type.
 
 ```gleam
 pub type PubSub(a)
@@ -277,13 +278,13 @@ Add a subscriber's PubSub message delivery to a `Selector`, alongside a
  process's own subjects.
 
  `pg` tracks bare pids, so broadcasts arrive as raw process messages.
- `selecting` is the one place that validates the frozen `Message` tag and
- four-field arity before recovering the subscriber's compile-time payload
- type. Fold it once; every joined topic is delivered through the same
- mailbox.
+ `selecting` is the one place that validates the subscriber's scope tag and
+ four-field arity before recovering its compile-time payload type. Fold it
+ once; every joined topic is delivered through the same mailbox.
 
- Each `Subscriber` should be created with one `payload` type per process,
- since one raw mailbox cannot safely multiplex different payload types.
+ Subscribers for different scopes may safely use different payload types in
+ one process. All subscribers for the same scope must use the same payload
+ type.
 
  ```gleam
  let sub = pubsub.subscriber(ps)
@@ -311,6 +312,8 @@ Start a PubSub instance
 
  `payload` is fixed by how the returned value is used (or annotated) at the
  call site — e.g. `pubsub.start(config) : PubSub(MySyncPayload)`.
+ Starting the same scope again returns another handle to the same runtime
+ instance, so every use of that scope must choose the same payload type.
 
 ```gleam
 pub fn start(PubSubConfig) -> PubSub(a)
@@ -324,10 +327,9 @@ Create a subscription handle owned by the current process.
  initialiser or test process), then `join` topics and fold `selecting` into
  that process's `Selector`.
 
- **Important:** A single process should create only one `Subscriber` for a
- given `payload` type. Raw PubSub records do not carry runtime payload type
- information, so one mailbox cannot safely multiplex different payload
- types.
+ A process may create subscribers for multiple scopes and payload types.
+ `selecting` uses each subscriber's scope to keep their raw mailbox messages
+ separate.
 
 ```gleam
 pub fn subscriber(PubSub(a)) -> Subscriber(a)

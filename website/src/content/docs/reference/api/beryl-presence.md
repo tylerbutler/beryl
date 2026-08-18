@@ -17,9 +17,8 @@ Presence - Distributed presence tracking backed by a CRDT
  - Receives remote state from PubSub and merges it internally
  - Invokes `on_diff` callback when merges produce non-empty diffs
 
- Presence is independent of the Beryl runtime. Start the actor from a
- long-lived application process and include it in the application's
- supervision arrangement as appropriate.
+ Presence is independent of the Beryl runtime and runs under your
+ application's supervision tree.
 
  ## Example
 
@@ -29,7 +28,11 @@ Presence - Distributed presence tracking backed by a CRDT
    presence.default_config("node1")
    |> presence.with_pubsub(ps)
    |> presence.with_broadcast_interval(1500)
- let assert Ok(p) = presence.start(config)
+ let #(p, presence_spec) = presence.child_spec(config)
+ let assert Ok(_root) =
+   static_supervisor.new(static_supervisor.OneForOne)
+   |> static_supervisor.add(presence_spec)
+   |> static_supervisor.start()
  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
  let assert Ok(entries) = presence.list(p, "room:lobby")
  ```
@@ -71,24 +74,18 @@ pub type Message
 A running Presence instance.
 
  This handle is intentionally opaque so callers cannot forge actor subjects
- or depend on the runtime representation. It carries both the actor's
- subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
- reference to the actor-owned ETS read model that `list`, `get_by_key`,
- and `count` read directly, without going through the actor mailbox.
+ or depend on the runtime representation. It carries the actor's stable
+ registered subject and the name of its actor-owned ETS read model.
 
  ## Node affinity
 
- `list`, `get_by_key`, and `count` read the ETS read model directly
- in-process, which only works for ETS tables local to the calling node.
- Do not send this handle to, or otherwise use it from, a process on a
- different BEAM node: `track`/`untrack`/`untrack_all` would still reach
- the owning actor over distribution (they go through its `Subject`), but
- the read functions would be looking up a table reference that names
- nothing on that node (or, if the identifier happens to collide with an
- unrelated local table, something else entirely), so they would fail or
- read the wrong data. Keep a Presence handle on the node where `start`
- created it, and use PubSub replication (`with_pubsub`) to share presence
- state across nodes instead.
+ The stable registered subject and ETS read model are resolved on the
+ caller's node. Keep a `Presence` handle on the node where its child
+ specification runs. From another BEAM node, synchronous mutations cannot
+ reach the owning actor and panic as unavailable, while `list`, `get_by_key`,
+ and `count` return `Error(Nil)` because the read model is unavailable.
+ Use PubSub replication (`with_pubsub`) to share presence state across nodes
+ instead of moving the handle itself.
 
 ```gleam
 pub type Presence
@@ -111,23 +108,20 @@ pub type PresenceEntry {
 }
 ```
 
-### `PresenceError`
+## Functions
 
-Errors from presence operations
+### `child_spec`
+
+Build the supervised presence actor.
+
+ Add the returned child specification to your application's supervisor.
+ The returned handle is name-backed and resumes working after a supervised
+ restart. Presence entries and tracking refs are in-memory state and are
+ reset by a restart.
 
 ```gleam
-pub type PresenceError {
-  PresenceStartFailed(error.StartFailure)
-}
+pub fn child_spec(Config) -> #(Presence, supervision.ChildSpecification(process.Subject(Message)))
 ```
-
-#### Constructors
-
-##### `PresenceStartFailed(error.StartFailure)`
-
-The presence actor failed to start.
-
-## Functions
 
 ### `count`
 
@@ -252,14 +246,6 @@ pub fn list(
 ) -> Result(List(PresenceEntry), Nil)
 ```
 
-### `start`
-
-Start the presence actor
-
-```gleam
-pub fn start(Config) -> Result(Presence, PresenceError)
-```
-
 ### `track`
 
 Track a presence in a topic.
@@ -273,7 +259,8 @@ Track a presence in a topic.
  only meaningful to that actor. The ref is also merged into object metas as
  `phx_ref` for Phoenix client compatibility.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn track(
@@ -291,7 +278,8 @@ Untrack a specific presence using the ref returned by `track`.
 
  Removing an unknown or already-removed ref is a harmless no-op.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn untrack(
@@ -304,7 +292,8 @@ pub fn untrack(
 
 Untrack all presences for a session (e.g., when a socket disconnects)
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn untrack_all(
@@ -321,6 +310,20 @@ Set how often presence state is broadcast for replication.
 
 ```gleam
 pub fn with_broadcast_interval(
+  Config,
+  Int
+) -> Config
+```
+
+### `with_call_timeout`
+
+Set the timeout for synchronous presence mutations, in milliseconds.
+
+ This applies to `track`, `untrack`, and `untrack_all`. These functions panic
+ if the actor does not reply within this timeout. The default is 5000 ms.
+
+```gleam
+pub fn with_call_timeout(
   Config,
   Int
 ) -> Config

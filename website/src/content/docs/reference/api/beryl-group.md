@@ -15,14 +15,17 @@ Channel Groups - Named collections of topics for multi-topic broadcasting
  Useful for scenarios like broadcasting to all channels in a "team" or
  sending a system-wide notification.
 
- Groups are independent of the Beryl runtime. Start the actor from a
- long-lived application process and include it in the application's
- supervision arrangement as appropriate.
+ Groups are independent of the Beryl runtime and run under your
+ application's supervision tree.
 
  ## Example
 
  ```gleam
- let assert Ok(groups) = group.start()
+ let #(groups, groups_spec) = group.child_spec()
+ let assert Ok(_root) =
+   static_supervisor.new(static_supervisor.OneForOne)
+   |> static_supervisor.add(groups_spec)
+   |> static_supervisor.start()
  let assert Ok(Nil) = group.create(groups, "team:engineering")
  let assert Ok(Nil) = group.add(groups, "team:engineering", "room:frontend")
  let assert Ok(Nil) = group.add(groups, "team:engineering", "room:backend")
@@ -30,6 +33,16 @@ Channel Groups - Named collections of topics for multi-topic broadcasting
  ```
 
 ## Types
+
+### `Config`
+
+Configuration for starting a groups actor.
+
+ Build configs with `default_config` and the `with_*` functions.
+
+```gleam
+pub type Config
+```
 
 ### `GroupError`
 
@@ -59,25 +72,16 @@ A running Groups instance.
  This handle is intentionally opaque so callers cannot forge the backing
  actor subject or depend on its runtime representation.
 
+ ## Node affinity
+
+ The stable registered subject is resolved on the caller's node. Keep a
+ `Groups` handle on the node where its child specification runs. Calls from
+ another BEAM node cannot reach the owning actor; synchronous operations
+ panic as unavailable, and fire-and-forget broadcasts are not delivered.
+
 ```gleam
 pub type Groups
 ```
-
-### `GroupStartError`
-
-Errors when starting the groups actor.
-
-```gleam
-pub type GroupStartError {
-  GroupActorStartFailed(error.StartFailure)
-}
-```
-
-#### Constructors
-
-##### `GroupActorStartFailed(error.StartFailure)`
-
-The actor failed to start
 
 ### `Message`
 
@@ -93,7 +97,8 @@ pub type Message
 
 Add a topic to a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn add(
@@ -123,11 +128,33 @@ pub fn broadcast(
 ) -> Nil
 ```
 
+### `child_spec`
+
+Build the supervised groups actor with the default configuration.
+
+ Add the returned child specification to your application's supervisor.
+ The returned handle is name-backed, so it reaches the replacement actor
+ after a supervised restart. Group definitions are in-memory state and are
+ reset by a restart.
+
+```gleam
+pub fn child_spec() -> #(Groups, supervision.ChildSpecification(process.Subject(Message)))
+```
+
+### `child_spec_with_config`
+
+Build the supervised groups actor with a custom configuration.
+
+```gleam
+pub fn child_spec_with_config(Config) -> #(Groups, supervision.ChildSpecification(process.Subject(Message)))
+```
+
 ### `create`
 
 Create a new named group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn create(
@@ -136,11 +163,20 @@ pub fn create(
 ) -> Result(Nil, GroupError)
 ```
 
+### `default_config`
+
+Build a groups configuration with a 5-second actor call timeout.
+
+```gleam
+pub fn default_config() -> Config
+```
+
 ### `delete`
 
 Delete a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn delete(
@@ -153,7 +189,8 @@ pub fn delete(
 
 List all group names
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn list_groups(Groups) -> List(String)
@@ -163,7 +200,8 @@ pub fn list_groups(Groups) -> List(String)
 
 Remove a topic from a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn remove(
@@ -173,23 +211,31 @@ pub fn remove(
 ) -> Result(Nil, GroupError)
 ```
 
-### `start`
-
-Start the groups actor
-
-```gleam
-pub fn start() -> Result(Groups, GroupStartError)
-```
-
 ### `topics`
 
 Get all topics in a group
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn topics(
   Groups,
   String
 ) -> Result(set.Set(String), GroupError)
+```
+
+### `with_call_timeout`
+
+Set the timeout for synchronous group operations, in milliseconds.
+
+ This applies to `create`, `delete`, `add`, `remove`, `topics`, and
+ `list_groups`. These functions panic if the actor does not reply within
+ this timeout.
+
+```gleam
+pub fn with_call_timeout(
+  Config,
+  Int
+) -> Config
 ```

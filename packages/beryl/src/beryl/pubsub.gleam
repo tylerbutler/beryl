@@ -5,10 +5,10 @@
 //// to all nodes in the cluster automatically.
 ////
 //// The payload is generic: `PubSub(payload)` and `Message(payload)` carry
-//// whatever Gleam type a given instance is started with. A broadcast sends
-//// that value as a native BEAM term — there is no encoding step, even across
-//// nodes, since Erlang's own distribution protocol marshals arbitrary terms
-//// for you. Reach for a `gleam/json` payload only when the data is also
+//// whatever Gleam type a given scope is started with. A broadcast sends that
+//// value as a scope-tagged native BEAM term — there is no encoding step, even
+//// across nodes, since Erlang's own distribution protocol marshals arbitrary
+//// terms for you. Use a `gleam/json` payload only when the data is also
 //// destined for a JSON-speaking client (e.g. relayed on to a WebSocket
 //// browser); payloads that never leave the cluster are cheaper and safer as
 //// plain Gleam types.
@@ -44,11 +44,10 @@ import gleam/list
 ///
 /// ## Frozen wire contract
 ///
-/// `Message` is sent **raw between nodes** via `pg`, so its runtime shape —
-/// the record tag and its four fields, in this order — is a frozen wire
-/// contract, not just a source-level API, for any given `payload` type: a
-/// rolling cluster upgrade must never mis-parse a frame from an older node
-/// running the same payload type. The same applies to `PubSubFrom`.
+/// Beryl sends broadcasts **raw between nodes** via `pg` as a five-element tuple:
+/// the PubSub scope atom followed by this message's four fields in order. That
+/// scope-tagged runtime shape forms the frozen wire contract for each `payload`
+/// type. The contract also applies to `PubSubFrom`.
 ///
 /// Because payloads travel as native terms rather than a self-describing
 /// format like JSON, evolving the *shape* of your own `payload` type is also
@@ -78,7 +77,8 @@ pub type PubSubFrom {
 /// scope representation can evolve without exposing record fields.
 pub opaque type PubSubConfig {
   PubSubConfig(
-    /// The pg scope name. Different scopes are isolated.
+    /// The pg scope name. Different scopes are isolated and may use different
+    /// payload types.
     scope: atom.Atom,
   )
 }
@@ -87,7 +87,9 @@ pub opaque type PubSubConfig {
 ///
 /// This handle is intentionally opaque so callers cannot forge pg scopes or
 /// depend on the runtime representation. `payload` fixes the Gleam type
-/// every `Message` broadcast through this instance carries.
+/// every `Message` broadcast through this instance carries. The scope is the
+/// runtime instance identity, so all handles using one scope must use the same
+/// payload type.
 pub opaque type PubSub(payload) {
   PubSub(scope: atom.Atom)
 }
@@ -110,19 +112,14 @@ fn ffi_get_members(scope: atom.Atom, group: String) -> List(Pid)
 fn ffi_get_local_members(scope: atom.Atom, group: String) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "send_to_pid")
-fn ffi_send_to_pid(pid: Pid, msg: Message(payload)) -> Nil
+fn ffi_send_to_pid(pid: Pid, scope: atom.Atom, msg: Message(payload)) -> Nil
 
 /// Recover a `Message(payload)` from the raw process message `selecting`
-/// matched on. Safe only because `selecting` first confirms the message has
-/// the `message` tag and exactly four fields, matching the frozen shape all
-/// broadcast functions construct.
-@external(erlang, "beryl_ffi", "identity")
+/// matched on. Safe only because `selecting` first confirms the message has the
+/// subscriber's scope tag and exactly four fields, matching the frozen shape
+/// all broadcast functions construct.
+@external(erlang, "beryl_pubsub_ffi", "scoped_to_message")
 fn unsafe_coerce_to_message(value: Dynamic) -> Message(payload)
-
-/// The frozen record tag for raw PubSub messages.
-fn message_tag() -> atom.Atom {
-  atom.create("message")
-}
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -164,6 +161,8 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 ///
 /// `payload` is fixed by how the returned value is used (or annotated) at the
 /// call site — e.g. `pubsub.start(config) : PubSub(MySyncPayload)`.
+/// Starting the same scope again returns another handle to the same runtime
+/// instance, so every use of that scope must choose the same payload type.
 pub fn start(config: PubSubConfig) -> PubSub(payload) {
   // pg:start treats already-started as success; the FFI swallows both
   ffi_start_pg_scope(config.scope)
@@ -189,10 +188,9 @@ pub opaque type Subscriber(payload) {
 /// initialiser or test process), then `join` topics and fold `selecting` into
 /// that process's `Selector`.
 ///
-/// **Important:** A single process should create only one `Subscriber` for a
-/// given `payload` type. Raw PubSub records do not carry runtime payload type
-/// information, so one mailbox cannot safely multiplex different payload
-/// types.
+/// A process may create subscribers for multiple scopes and payload types.
+/// `selecting` uses each subscriber's scope to keep their raw mailbox messages
+/// separate.
 pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
   Subscriber(scope: ps.scope, owner: process.self())
 }
@@ -214,13 +212,13 @@ pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
 /// process's own subjects.
 ///
 /// `pg` tracks bare pids, so broadcasts arrive as raw process messages.
-/// `selecting` is the one place that validates the frozen `Message` tag and
-/// four-field arity before recovering the subscriber's compile-time payload
-/// type. Fold it once; every joined topic is delivered through the same
-/// mailbox.
+/// `selecting` is the one place that validates the subscriber's scope tag and
+/// four-field arity before recovering its compile-time payload type. Fold it
+/// once; every joined topic is delivered through the same mailbox.
 ///
-/// Each `Subscriber` should be created with one `payload` type per process,
-/// since one raw mailbox cannot safely multiplex different payload types.
+/// Subscribers for different scopes may safely use different payload types in
+/// one process. All subscribers for the same scope must use the same payload
+/// type.
 ///
 /// ```gleam
 /// let sub = pubsub.subscriber(ps)
@@ -235,8 +233,7 @@ pub fn selecting(
   sub: Subscriber(payload),
   transform: fn(Message(payload)) -> message,
 ) -> Selector(message) {
-  let Subscriber(..) = sub
-  process.select_record(selector, message_tag(), 4, fn(raw) {
+  process.select_record(selector, sub.scope, 4, fn(raw) {
     transform(unsafe_coerce_to_message(raw))
   })
 }
@@ -250,7 +247,7 @@ pub fn broadcast(
 ) -> Nil {
   let msg = Message(topic: topic, event: event, payload: payload, from: System)
   let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) { ffi_send_to_pid(pid, msg) })
+  list.each(members, fn(pid) { ffi_send_to_pid(pid, ps.scope, msg) })
 }
 
 /// Broadcast a message to all subscribers except those from a specific pid
@@ -265,7 +262,7 @@ pub fn broadcast_from(
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
   ffi_get_members(ps.scope, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, msg))
+  |> list.each(ffi_send_to_pid(_, ps.scope, msg))
 }
 
 /// Broadcast a message to all subscribers except a process, preserving a socket
@@ -287,7 +284,7 @@ pub fn broadcast_from_socket(
     )
   ffi_get_members(ps.scope, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, msg))
+  |> list.each(ffi_send_to_pid(_, ps.scope, msg))
 }
 
 // nolint: unused_exports -- public PubSub API intended for downstream consumers
@@ -300,7 +297,7 @@ pub fn local_broadcast(
 ) -> Nil {
   let msg = Message(topic: topic, event: event, payload: payload, from: System)
   let members = ffi_get_local_members(ps.scope, topic)
-  list.each(members, fn(pid) { ffi_send_to_pid(pid, msg) })
+  list.each(members, fn(pid) { ffi_send_to_pid(pid, ps.scope, msg) })
 }
 
 /// Get all subscribers for a topic (all nodes)

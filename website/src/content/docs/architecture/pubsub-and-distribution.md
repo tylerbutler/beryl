@@ -8,7 +8,11 @@ Beryl's PubSub layer is built on Erlang's built-in [`pg`](https://www.erlang.org
 
 Because `pg` is cluster-aware, this works transparently across nodes in an Erlang cluster: a process on Node A subscribing to `"room:lobby"` will receive broadcasts from Node B without any additional configuration.
 
-Each PubSub instance is isolated by a **scope** (an Erlang atom). The default scope is `beryl_pubsub`; use `config_with_scope/1` to create isolated namespaces.
+Each PubSub instance is identified and isolated by a **scope** (an Erlang
+atom). The default scope is `beryl_pubsub`; use `config_with_scope/1` to create
+isolated namespaces. Different scopes can safely carry different payload types
+into one process mailbox; all handles for one scope must use the same payload
+type.
 
 ## The FFI Boundary
 
@@ -22,7 +26,7 @@ The Gleam module `beryl/pubsub` delegates all low-level pg operations to `src/be
 | `subscriber(ps)` | Create a typed subscriber owned by the calling process |
 | `join(subscriber, topic)` | Join the subscriber to a topic |
 | `leave(subscriber, topic)` | Leave a previously joined topic |
-| `selecting(selector, subscriber, transform)` | Validate raw four-field `Message(payload)` records and fold them into an actor selector |
+| `selecting(selector, subscriber, transform)` | Match scope-tagged four-field messages and fold them into an actor selector |
 | `broadcast(ps, topic, event, payload)` | Deliver to all subscribers on all nodes |
 | `broadcast_from(ps, from, topic, event, payload)` | Deliver to all subscribers **except** `from` pid |
 | `broadcast_from_socket(ps, from, except_socket_id, topic, event, payload)` | Deliver to all subscribers except `from`, carrying a socket exclusion hint |
@@ -30,9 +34,11 @@ The Gleam module `beryl/pubsub` delegates all low-level pg operations to `src/be
 | `subscribers(ps, topic)` | Return all subscriber pids (all nodes) |
 | `subscriber_count(ps, topic)` | Return subscriber count (all nodes) |
 
-`Message(payload)` is sent raw through `pg`. Its record tag and four fields
-(`topic`, `event`, `payload`, `from`) are a frozen rolling-upgrade contract;
-applications must version payload-shape changes that cross nodes.
+Broadcasts are sent raw through `pg` as the scope atom followed by the four
+`Message(payload)` fields (`topic`, `event`, `payload`, `from`). This
+five-element tuple is a frozen wire contract. The scoped and previously
+unscoped shapes do not interoperate during a rolling upgrade; applications
+must also version payload-shape changes that cross nodes.
 
 The `PubSubFrom` type tags each message with its origin so downstream receivers can inspect whether a message came from the system, a specific process, or a process with an associated socket:
 
@@ -75,8 +81,11 @@ When socket A sends a message on Node 1, its runtime calls `broadcast_from`, whi
 ## Trust Model
 
 All traffic arriving over Erlang distribution is treated as **fully trusted
-cluster input**. There is no additional authentication layer between nodes:
-the Erlang cookie and network controls are the security boundary.
+cluster input**. A peer can execute arbitrary code on connected nodes; the
+beryl-specific capabilities below are only a subset of that access. Network
+isolation and mutually verified TLS distribution enforce the security
+boundary. Erlang cookies prevent accidental cross-cluster connections but are
+not cryptographically secure peer authentication.
 
 A process on any peer node can:
 
@@ -92,8 +101,8 @@ applies only to inbound WebSocket frames. It does not screen messages that
 arrive via distribution.
 
 Refer to the [Production Hardening guide](/guides/production-hardening/#erlang-cluster-security-boundary)
-for the full cluster security requirements (cookie strength, TLS
-distribution, EPMD port restrictions, and cluster isolation).
+for the full cluster security requirements (network isolation, mutually
+verified TLS distribution, EPMD port restrictions, and cookie handling).
 
 ## Where this lives
 

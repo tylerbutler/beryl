@@ -97,9 +97,10 @@ default.
 
 ### PubSub Wire Contract
 
-`pubsub.Message(payload)` is sent **raw between BEAM nodes** via `pg`. Its
-record tag and four fields (in order) are a frozen wire contract. A rolling
-cluster upgrade must not mis-parse a frame from an older node.
+PubSub broadcasts are sent **raw between BEAM nodes** via `pg` as the scope
+atom followed by the four `pubsub.Message(payload)` fields. This five-element
+tuple is a frozen wire contract. The scoped and previously unscoped shapes do
+not interoperate during a rolling upgrade.
 
 ### Opaque Types with Builder Pattern
 

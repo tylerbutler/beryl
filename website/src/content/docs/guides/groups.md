@@ -12,11 +12,35 @@ Groups are a server concern. Clients join individual topics via `phx_join`; they
 
 ```gleam
 import beryl/group
+import gleam/otp/static_supervisor
 
-let assert Ok(groups) = group.start()
+let #(groups, groups_spec) = group.child_spec()
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.start()
 ```
 
-`group.start()` returns `Result(Groups, GroupStartError)`. The only failure case is `GroupActorStartFailed` — an OTP actor spawn failure.
+`group.child_spec()` returns the stable `Groups` handle immediately. Add its
+child specification to your application supervisor before using the handle.
+
+Synchronous group operations wait up to 5 seconds for the actor by default.
+Configure a different timeout when starting the actor:
+
+```gleam
+let config =
+  group.default_config()
+  |> group.with_call_timeout(10_000)
+let #(groups, groups_spec) = group.child_spec_with_config(config)
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.start()
+```
+
+`create`, `delete`, `add`, `remove`, `topics`, and `list_groups` panic if the
+actor is unavailable or does not reply within this timeout. `broadcast` is
+fire-and-forget and does not use it.
 
 ## Creating and deleting groups
 
@@ -99,7 +123,6 @@ This is equivalent to calling `beryl.broadcast` on each topic in the group in se
 |-------|------|
 | `GroupAlreadyExists` | `create` called for a name already in use |
 | `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
-| `GroupActorStartFailed` | `group.start()` — the internal group actor failed to initialize |
 
 ## Full example: team rooms
 
@@ -107,9 +130,14 @@ This is equivalent to calling `beryl.broadcast` on each topic in the group in se
 import beryl
 import beryl/group
 import gleam/json
+import gleam/otp/static_supervisor
 
 // At startup
-let assert Ok(groups) = group.start()
+let #(groups, groups_spec) = group.child_spec()
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.start()
 let assert Ok(Nil) = group.create(groups, "team:eng")
 let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
 let assert Ok(Nil) = group.add(groups, "team:eng", "room:backend")
@@ -132,6 +160,15 @@ let assert Ok(Nil) = group.delete(groups, "team:eng")
 
 ## Lifecycle
 
-The groups actor is a plain OTP actor linked to the process that calls `group.start()` — start it from your long-lived application process alongside `beryl.child_spec`. A `start_named` variant registers the actor under a `process.Name` for callers integrating it into their own supervision arrangements.
+The groups actor only starts through `group.child_spec`. Its handle is backed by
+a stable registered name and reaches the replacement actor after a supervised
+restart. Group definitions and topic memberships are in-memory state and reset
+when the actor restarts.
+
+The registered name is node-local. Keep a `Groups` handle on the node where its
+child specification runs. From another BEAM node, synchronous operations cannot
+reach the owning actor and panic as unavailable, while fire-and-forget
+`broadcast` calls are not delivered. Group definitions and memberships are not
+replicated between nodes.
 
 See the [Supervision guide](/guides/supervision) for the overall startup pattern.

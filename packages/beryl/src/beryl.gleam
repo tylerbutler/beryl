@@ -372,6 +372,8 @@ pub fn with_payload_preview_bytes(
 /// Every complete inbound text or binary frame consumes this independent
 /// bucket before decoding. Configure it alongside `with_message_rate` to
 /// combine edge shedding with a runtime cap on decoded non-join traffic.
+/// An over-rate heartbeat is shed before it can refresh the socket's heartbeat
+/// deadline, so a sustained flood is eventually closed by heartbeat eviction.
 pub fn with_frame_rate(
   config: Config,
   per_second rate: Int,
@@ -384,7 +386,9 @@ pub fn with_frame_rate(
 ///
 /// Joins use `with_join_rate`; decoded leaves, heartbeats, events, decoded
 /// binary, and raw `Binary` inputs consume this bucket. It is independent of
-/// `with_frame_rate`.
+/// `with_frame_rate`. An over-rate heartbeat does not refresh the socket's
+/// heartbeat deadline, so a sustained flood is eventually closed by heartbeat
+/// eviction. Leave enough rate and burst headroom for legitimate heartbeats.
 pub fn with_message_rate(
   config: Config,
   per_second rate: Int,
@@ -508,10 +512,7 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
   |> log.warn("No abuse controls configured", [
     #(
       "hint",
-      "rate and connection limits are all disabled; fine for development, "
-        <> "but for production configure with_frame_rate, with_message_rate, "
-        <> "with_join_rate, with_max_connections_per_ip, and "
-        <> "with_max_connections (see the production hardening guide)",
+      "rate and connection limits are all disabled; fine for development, but for production configure with_frame_rate, with_message_rate, with_join_rate, with_max_connections_per_ip, and with_max_connections (see the production hardening guide)",
     ),
   ])
 }
