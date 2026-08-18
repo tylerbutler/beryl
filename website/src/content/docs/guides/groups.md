@@ -24,6 +24,24 @@ let assert Ok(_root) =
 `group.child_spec()` returns the stable `Groups` handle immediately. Add its
 child specification to your application supervisor before using the handle.
 
+Synchronous group operations wait up to 5 seconds for the actor by default.
+Configure a different timeout when starting the actor:
+
+```gleam
+let config =
+  group.default_config()
+  |> group.with_call_timeout(10_000)
+let #(groups, groups_spec) = group.child_spec_with_config(config)
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.start()
+```
+
+`create`, `delete`, `add`, `remove`, `topics`, and `list_groups` panic if the
+actor is unavailable or does not reply within this timeout. `broadcast` is
+fire-and-forget and does not use it.
+
 ## Creating and deleting groups
 
 ```gleam

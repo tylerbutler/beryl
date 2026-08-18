@@ -6,6 +6,21 @@ import gleam/set
 import gleeunit/should
 import test_helpers
 
+fn assert_crashes_within(op: fn() -> Nil, timeout_ms: Int) -> Nil {
+  let pid = process.spawn_unlinked(op)
+  let monitor = process.monitor(pid)
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+
+  case process.selector_receive(selector, timeout_ms) {
+    Ok(process.ProcessDown(reason: process.Normal, ..)) -> should.fail()
+    Ok(process.ProcessDown(..)) -> Nil
+    Ok(process.PortDown(..)) -> should.fail()
+    Error(Nil) -> should.fail()
+  }
+}
+
 pub fn group_start_test() {
   let #(groups, spec) = group.child_spec()
   let assert Ok(_root) =
@@ -38,6 +53,21 @@ pub fn group_handle_survives_supervised_restart_test() {
 
   group.list_groups(groups) |> should.equal([])
   group.create(groups, "after:restart") |> should.equal(Ok(Nil))
+}
+
+pub fn configured_call_timeout_is_used_test() {
+  let config =
+    group.default_config()
+    |> group.with_call_timeout(20)
+  let #(groups, _spec) = group.child_spec_with_config(config)
+
+  assert_crashes_within(
+    fn() {
+      let _ = group.list_groups(groups)
+      Nil
+    },
+    1000,
+  )
 }
 
 pub fn group_create_and_list_test() {

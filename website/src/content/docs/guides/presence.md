@@ -38,6 +38,24 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
+Synchronous presence mutations wait up to 5 seconds for the actor by default.
+Use `with_call_timeout` to configure the timeout:
+
+```gleam
+let config =
+  presence.default_config("node1")
+  |> presence.with_call_timeout(10_000)
+let #(p, presence_spec) = presence.child_spec(config)
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(presence_spec)
+  |> static_supervisor.start()
+```
+
+`track`, `untrack`, and `untrack_all` panic if the actor is unavailable or does
+not reply within this timeout. Presence reads bypass the actor mailbox and do
+not use it.
+
 ## Tracking presences
 
 Track a user's presence when they join a channel:

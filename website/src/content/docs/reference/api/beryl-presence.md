@@ -259,7 +259,8 @@ Track a presence in a topic.
  only meaningful to that actor. The ref is also merged into object metas as
  `phx_ref` for Phoenix client compatibility.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn track(
@@ -277,7 +278,8 @@ Untrack a specific presence using the ref returned by `track`.
 
  Removing an unknown or already-removed ref is a harmless no-op.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn untrack(
@@ -290,7 +292,8 @@ pub fn untrack(
 
 Untrack all presences for a session (e.g., when a socket disconnects)
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn untrack_all(
@@ -307,6 +310,20 @@ Set how often presence state is broadcast for replication.
 
 ```gleam
 pub fn with_broadcast_interval(
+  Config,
+  Int
+) -> Config
+```
+
+### `with_call_timeout`
+
+Set the timeout for synchronous presence mutations, in milliseconds.
+
+ This applies to `track`, `untrack`, and `untrack_all`. These functions panic
+ if the actor does not reply within this timeout. The default is 5000 ms.
+
+```gleam
+pub fn with_call_timeout(
   Config,
   Int
 ) -> Config
