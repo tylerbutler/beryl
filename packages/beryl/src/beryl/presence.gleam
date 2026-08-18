@@ -1,7 +1,7 @@
 //// Presence - Distributed presence tracking backed by a CRDT
 ////
 //// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
-//// - Handles track/untrack calls
+//// - Handles track/update/untrack calls
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state from PubSub and merges it internally
 //// - Invokes `on_diff` callback when merges produce non-empty diffs
@@ -63,13 +63,18 @@ const sync_event = "presence_sync"
 ///
 /// The stable registered subject and ETS read model are resolved on the
 /// caller's node. Keep a `Presence` handle on the node where its child
-/// specification runs. From another BEAM node, synchronous mutations cannot
-/// reach the owning actor and panic as unavailable, while `list`, `get_by_key`,
-/// and `count` return `Error(Nil)` because the read model is unavailable.
-/// Use PubSub replication (`with_pubsub`) to share presence state across nodes
-/// instead of moving the handle itself.
+/// specification runs. From another BEAM node, synchronous mutations
+/// (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
+/// actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+/// return `Error(Nil)` because the read model is unavailable. Use PubSub
+/// replication (`with_pubsub`) to share presence state across nodes instead of
+/// moving the handle itself.
 pub opaque type Presence {
-  Presence(subject: Subject(Message), read_name: process.Name(Message))
+  Presence(
+    subject: Subject(Message),
+    read_name: process.Name(Message),
+    call_timeout_ms: Int,
+  )
 }
 
 type State =
@@ -192,12 +197,20 @@ pub opaque type Config {
     replica: String,
     /// How often to broadcast state for replication (ms). 0 = disabled.
     broadcast_interval_ms: Int,
+    /// Timeout for synchronous presence mutations (ms).
+    call_timeout_ms: Int,
     /// Optional callback invoked immediately when a merge produces a non-empty diff.
     /// This ensures no diffs are lost when multiple merges occur in rapid succession.
     /// Runs synchronously on the actor, strictly before the read model is
     /// republished for the topics the diff touches -- see `with_on_diff`.
     on_diff: Option(fn(Diff) -> Nil),
   )
+}
+
+/// Errors from updating a tracked presence.
+pub type PresenceUpdateError {
+  /// The ref is unknown, already removed, or was not returned by `track`.
+  UnknownRef
 }
 
 /// Messages the presence actor handles
@@ -208,6 +221,11 @@ pub opaque type Message {
     session_id: String,
     meta: json.Json,
     reply: Subject(String),
+  )
+  Update(
+    ref: String,
+    meta: json.Json,
+    reply: Subject(Result(String, PresenceUpdateError)),
   )
   Untrack(ref: String, reply: Subject(Nil))
   UntrackAll(session_id: String, reply: Subject(Nil))
@@ -423,6 +441,7 @@ pub fn default_config(replica: String) -> Config {
     pubsub: None,
     replica: replica,
     broadcast_interval_ms: 1500,
+    call_timeout_ms: 5000,
     on_diff: None,
   )
 }
@@ -437,6 +456,14 @@ pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
 /// Use `0` to disable periodic broadcasts.
 pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
   Config(..config, broadcast_interval_ms: interval_ms)
+}
+
+/// Set the timeout for synchronous presence mutations, in milliseconds.
+///
+/// This applies to `track`, `untrack`, and `untrack_all`. These functions panic
+/// if the actor does not reply within this timeout. The default is 5000 ms.
+pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
+  Config(..config, call_timeout_ms: timeout_ms)
 }
 
 /// Set the callback invoked when local changes or remote merges produce a diff.
@@ -484,18 +511,25 @@ pub fn child_spec(
   config: Config,
 ) -> #(Presence, supervision.ChildSpecification(Subject(Message))) {
   let name = process.new_name("beryl_presence")
-  #(from_name(name), supervision.worker(fn() { start_named(config, name) }))
+  #(
+    from_name(name, config.call_timeout_ms),
+    supervision.worker(fn() { start_named(config, name) }),
+  )
 }
 
 @internal
 pub fn start(config: Config) -> Result(Presence, actor.StartError) {
   let name = process.new_name("beryl_presence")
   start_named(config, name)
-  |> result.map(fn(_started) { from_name(name) })
+  |> result.map(fn(_started) { from_name(name, config.call_timeout_ms) })
 }
 
-fn from_name(name: process.Name(Message)) -> Presence {
-  Presence(subject: process.named_subject(name), read_name: name)
+fn from_name(name: process.Name(Message), call_timeout_ms: Int) -> Presence {
+  Presence(
+    subject: process.named_subject(name),
+    read_name: name,
+    call_timeout_ms: call_timeout_ms,
+  )
 }
 
 fn start_named(
@@ -723,7 +757,8 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
 /// only meaningful to that actor. The ref is also merged into object metas as
 /// `phx_ref` for Phoenix client compatibility.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn track(
   presence: Presence,
   topic: String,
@@ -731,25 +766,48 @@ pub fn track(
   session_id: String,
   meta: json.Json,
 ) -> String {
-  process.call(presence.subject, 5000, fn(reply) {
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
     Track(topic, key, session_id, meta, reply)
   })
+}
+
+/// Replace the meta of a presence created by `track`.
+///
+/// The old ref's leave and the new ref's join are emitted together in one
+/// diff, so subscribers never observe an intermediate state without the
+/// presence key. Other tracked refs for the same key are left unchanged.
+///
+/// Returns the replacement ref, which must be used for subsequent `update`
+/// or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+/// unknown, already removed, or belongs to the internal runtime.
+///
+/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+pub fn update(
+  presence: Presence,
+  ref: String,
+  meta: json.Json,
+) -> Result(String, PresenceUpdateError) {
+  process.call(presence.subject, 5000, fn(reply) { Update(ref, meta, reply) })
 }
 
 /// Untrack a specific presence using the ref returned by `track`.
 ///
 /// Removing an unknown or already-removed ref is a harmless no-op.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn untrack(presence: Presence, ref: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) { Untrack(ref, reply) })
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
+    Untrack(ref, reply)
+  })
 }
 
 /// Untrack all presences for a session (e.g., when a socket disconnects)
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) {
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
     UntrackAll(session_id, reply)
   })
 }
@@ -919,6 +977,29 @@ fn handle_message(
       actor.continue(new_state)
     }
 
+    Update(ref, meta, reply) -> {
+      case dict.get(actor_state.refs, ref) {
+        Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
+          let #(new_state, new_ref, _meta) =
+            do_track(
+              actor_state,
+              topic,
+              key,
+              session_id,
+              meta,
+              SupersedePublicRef(ref),
+            )
+          log_tracked(logger, topic, key, session_id, new_ref)
+          process.send(reply, Ok(new_ref))
+          actor.continue(new_state)
+        }
+        _ -> {
+          process.send(reply, Error(UnknownRef))
+          actor.continue(actor_state)
+        }
+      }
+    }
+
     TrackAsync(topic, key, session_id, meta, replace, tag, op_id, reply) -> {
       let #(new_state, ref, stored_meta) =
         do_track(
@@ -1068,6 +1149,9 @@ type Supersede {
   /// and several refs for one key (each with its own `phx_ref` meta) is a
   /// meaningful, supported shape there.
   SupersedeNothing
+  /// The public synchronous `update`: supersede exactly the ref supplied by
+  /// its owner, leaving every other public ref for the same key unchanged.
+  SupersedePublicRef(String)
   /// The runtime's asynchronous track: supersede `explicit` (the previous
   /// runtime ref, when the caller still knows it) and every other
   /// runtime-owned ref this actor holds for the same `(session_id, topic, key)`.
@@ -1092,6 +1176,7 @@ fn superseded_refs(
 ) -> List(String) {
   case supersede {
     SupersedeNothing -> []
+    SupersedePublicRef(ref) -> [ref]
     SupersedeSameKey(explicit) -> {
       let same_key =
         refs
@@ -1142,7 +1227,7 @@ fn do_track(
     )
   let new_crdt = state.join(removed.crdt, session_id, topic, key, stored_meta)
   let owner = case supersede {
-    SupersedeNothing -> PublicOwner
+    SupersedeNothing | SupersedePublicRef(_) -> PublicOwner
     SupersedeSameKey(_) -> RuntimeOwner
   }
   let replica = state.replica(new_crdt)

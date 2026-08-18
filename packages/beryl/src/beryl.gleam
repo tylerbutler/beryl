@@ -541,11 +541,7 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
   |> log.warn("No abuse controls configured", [
     #(
       "hint",
-      "rate and connection limits are all disabled; fine for development, "
-        <> "but for production configure with_frame_rate, with_message_rate, "
-        <> "with_join_rate, with_connection_rate_per_ip, "
-        <> "with_max_connections_per_ip, and "
-        <> "with_max_connections (see the production hardening guide)",
+      "rate and connection limits are all disabled; fine for development, but for production configure with_frame_rate, with_message_rate, with_join_rate, with_connection_rate_per_ip, with_max_connections_per_ip, and with_max_connections (see the production hardening guide)",
     ),
   ])
 }

@@ -24,6 +24,24 @@ let assert Ok(_root) =
 `group.child_spec()` returns the stable `Groups` handle immediately. Add its
 child specification to your application supervisor before using the handle.
 
+Synchronous group operations wait up to 5 seconds for the actor by default.
+Configure a different timeout when starting the actor:
+
+```gleam
+let config =
+  group.default_config()
+  |> group.with_call_timeout(10_000)
+let #(groups, groups_spec) = group.child_spec_with_config(config)
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.start()
+```
+
+`create`, `delete`, `add`, `remove`, `topics`, and `list_groups` panic if the
+actor is unavailable or does not reply within this timeout. `broadcast` is
+fire-and-forget and does not use it.
+
 ## Creating and deleting groups
 
 ```gleam
@@ -81,7 +99,7 @@ let names = group.list_groups(groups)  // ["team:engineering", "team:design"]
 
 ## Broadcasting to a group
 
-`group.broadcast` sends an event to every topic in the named group using `beryl.broadcast` internally. It is **fire-and-forget**: the return type is `Nil`, not `Result`. If the named group does not exist, the call silently does nothing.
+`group.broadcast` looks up the group's topics through the groups actor, then sends an event to every topic using `beryl.broadcast` in the caller's process. The lookup provides backpressure without making the actor perform fan-out. The return type is `Nil`, not `Result`. If the named group does not exist, the call silently does nothing.
 
 ```gleam
 group.broadcast(
@@ -96,7 +114,7 @@ group.broadcast(
 This is equivalent to calling `beryl.broadcast` on each topic in the group in sequence.
 
 :::note[Missing group is a no-op]
-`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `GroupNotFound`.
+`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. Like other group operations, it panics if the groups actor is unavailable or does not reply within 5 seconds. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `GroupNotFound`.
 :::
 
 ## Error reference

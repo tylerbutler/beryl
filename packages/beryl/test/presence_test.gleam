@@ -2,6 +2,7 @@ import beryl/presence
 import gleam/erlang/process
 import gleam/json
 import gleam/list
+import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit
@@ -165,6 +166,105 @@ pub fn presence_untrack_unknown_ref_is_noop_test() {
   presence.untrack(p, "does-not-exist")
 
   list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
+}
+
+pub fn presence_update_replaces_one_ref_in_one_diff_test() {
+  let diff_subject = process.new_subject()
+  let config =
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) { process.send(diff_subject, diff) })
+  let assert Ok(p) = presence.start(config)
+
+  let old_ref =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("device", json.string("desktop"))]),
+    )
+  let other_ref =
+    presence.track(
+      p,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.object([#("device", json.string("mobile"))]),
+    )
+  let assert Ok(_) = process.receive(diff_subject, 1000)
+  let assert Ok(_) = process.receive(diff_subject, 1000)
+
+  let assert Ok(new_ref) =
+    presence.update(
+      p,
+      old_ref,
+      json.object([#("device", json.string("tablet"))]),
+    )
+  new_ref |> should.not_equal(old_ref)
+  new_ref |> should.not_equal(other_ref)
+
+  let assert Ok(diff) = process.receive(diff_subject, 1000)
+  process.receive(diff_subject, 0) |> should.be_error
+  let assert [joined] = presence.diff_joins(diff, "room:lobby")
+  let assert [left] = presence.diff_leaves(diff, "room:lobby")
+  json.to_string(joined.meta) |> string.contains("tablet") |> should.be_true
+  json.to_string(joined.meta) |> string.contains(new_ref) |> should.be_true
+  json.to_string(left.meta) |> string.contains("desktop") |> should.be_true
+  json.to_string(left.meta) |> string.contains(old_ref) |> should.be_true
+
+  presence_count(p, "room:lobby") |> should.equal(2)
+  let metas =
+    presence_metas(p, "room:lobby", "user:1")
+    |> list.map(fn(entry) { json.to_string(entry.1) })
+    |> string.join(",")
+  metas |> string.contains("tablet") |> should.be_true
+  metas |> string.contains("mobile") |> should.be_true
+  metas |> string.contains("desktop") |> should.be_false
+}
+
+pub fn presence_update_unknown_or_stale_ref_is_error_test() {
+  let diff_subject = process.new_subject()
+  let config =
+    presence.default_config("node1")
+    |> presence.with_on_diff(fn(diff) { process.send(diff_subject, diff) })
+  let assert Ok(p) = presence.start(config)
+  let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+  let assert Ok(_) = process.receive(diff_subject, 1000)
+
+  presence.update(p, "does-not-exist", json.null())
+  |> should.equal(Error(presence.UnknownRef))
+  process.receive(diff_subject, 0) |> should.be_error
+
+  let assert Ok(new_ref) = presence.update(p, ref, json.null())
+  let assert Ok(_) = process.receive(diff_subject, 1000)
+  presence.update(p, ref, json.null())
+  |> should.equal(Error(presence.UnknownRef))
+  presence.untrack(p, new_ref)
+}
+
+pub fn presence_update_rejects_runtime_owned_ref_test() {
+  let assert Ok(p) = presence.start(test_config("node1"))
+  let reply = process.new_subject()
+  presence.track_async(
+    p,
+    "room:lobby",
+    "user:1",
+    "socket-1",
+    json.object([#("status", json.string("online"))]),
+    None,
+    "test",
+    1,
+    reply,
+  )
+  let assert Ok(presence.MutationAck(
+    outcome: presence.Tracked(runtime_ref, _),
+    ..,
+  )) = process.receive(reply, 1000)
+
+  presence.update(p, runtime_ref, json.null())
+  |> should.equal(Error(presence.UnknownRef))
+  let assert [entry] = presence_entries(p, "room:lobby")
+  json.to_string(entry.meta) |> string.contains("online") |> should.be_true
 }
 
 pub fn presence_untrack_all_test() {
@@ -526,6 +626,18 @@ pub fn count_fails_after_presence_terminated_even_for_untouched_topic_test() {
 
   assert_crashes(fn() {
     presence_count(p, "room:never-touched") |> should.equal(0)
+  })
+}
+
+pub fn configured_call_timeout_is_used_test() {
+  let config =
+    presence.default_config("node1")
+    |> presence.with_call_timeout(20)
+  let #(p, _spec) = presence.child_spec(config)
+
+  assert_crashes(fn() {
+    let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
+    Nil
   })
 }
 

@@ -10,18 +10,21 @@ targets:
 - copilot
 
 dependencies:
-  apm:
-    # - tylerbutler/agent-marketplace/plugins/repo-tools
-    # - tylerbutler/agent-marketplace/plugins/specialists
-    - JuliusBrussee/caveman/skills/caveman-commit
-    # - git: https://github.com/obra/superpowers
-    - DietrichGebert/ponytail
-  mcp: []
   lsp:
     - name: gleam
       command: gleam
       args: ["lsp"]
       extensionToLanguage:
         ".gleam": gleam
+
+devDependencies:
+  apm:
+    - tylerbutler/apm-base
+    # - tylerbutler/agent-marketplace/plugins/repo-tools
+    # - tylerbutler/agent-marketplace/plugins/specialists
+    - JuliusBrussee/caveman/skills/caveman-commit
+    # - git: https://github.com/obra/superpowers
+    - DietrichGebert/ponytail
+  mcp: []
 includes: auto
 scripts: {}

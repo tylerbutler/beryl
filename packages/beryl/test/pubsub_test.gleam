@@ -1,9 +1,11 @@
 import beryl/pubsub
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleeunit/should
 
-@external(erlang, "beryl_pubsub_test_ffi", "is_raw_wire_message")
-fn is_raw_wire_message(
+@external(erlang, "beryl_pubsub_test_ffi", "is_scoped_wire_message")
+fn is_scoped_wire_message(
+  scope: atom.Atom,
   topic: String,
   event: String,
   payload: String,
@@ -81,8 +83,9 @@ pub fn pubsub_broadcast_delivers_message_test() {
   pubsub.leave(sub, "room:lobby")
 }
 
-pub fn pubsub_broadcast_preserves_raw_wire_shape_test() {
-  let config = pubsub.config_with_scope("test_pubsub_raw_wire_shape")
+pub fn pubsub_broadcast_uses_scope_tagged_wire_shape_test() {
+  let scope = "test_pubsub_scoped_wire_shape"
+  let config = pubsub.config_with_scope(scope)
   let ps: pubsub.PubSub(String) = pubsub.start(config)
   let topic = "wire:raw"
   let event = "shape"
@@ -92,10 +95,42 @@ pub fn pubsub_broadcast_preserves_raw_wire_shape_test() {
   pubsub.join(sub, topic)
   pubsub.broadcast(ps, topic, event, payload)
 
-  is_raw_wire_message(topic, event, payload, 100)
+  is_scoped_wire_message(atom.create(scope), topic, event, payload, 100)
   |> should.be_true
 
   pubsub.leave(sub, topic)
+}
+
+pub fn pubsub_selecting_discriminates_scopes_test() {
+  let text_ps: pubsub.PubSub(String) =
+    pubsub.start(pubsub.config_with_scope("test_pubsub_scope_text"))
+  let number_ps: pubsub.PubSub(Int) =
+    pubsub.start(pubsub.config_with_scope("test_pubsub_scope_number"))
+  let topic = "scope:shared-mailbox"
+  let text_sub = pubsub.subscriber(text_ps)
+  let number_sub = pubsub.subscriber(number_ps)
+  pubsub.join(text_sub, topic)
+  pubsub.join(number_sub, topic)
+
+  pubsub.broadcast(number_ps, topic, "number", 42)
+  pubsub.broadcast(text_ps, topic, "text", "correct scope")
+
+  let text_selector =
+    process.new_selector()
+    |> pubsub.selecting(text_sub, fn(message) { message.payload })
+  let assert Ok(text) =
+    process.selector_receive(from: text_selector, within: 100)
+  text |> should.equal("correct scope")
+
+  let number_selector =
+    process.new_selector()
+    |> pubsub.selecting(number_sub, fn(message) { message.payload })
+  let assert Ok(number) =
+    process.selector_receive(from: number_selector, within: 100)
+  number |> should.equal(42)
+
+  pubsub.leave(text_sub, topic)
+  pubsub.leave(number_sub, topic)
 }
 
 pub fn pubsub_broadcast_from_excludes_sender_test() {
