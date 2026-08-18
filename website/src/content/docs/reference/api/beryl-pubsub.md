@@ -19,7 +19,7 @@ PubSub - Distributed publish/subscribe using Erlang pg
  whatever Gleam type a given scope is started with. A broadcast sends that
  value as a scope-tagged native BEAM term — there is no encoding step, even
  across nodes, since Erlang's own distribution protocol marshals arbitrary
- terms for you. Reach for a `gleam/json` payload only when the data is also
+ terms for you. Use a `gleam/json` payload only when the data is also
  destined for a JSON-speaking client (e.g. relayed on to a WebSocket
  browser); payloads that never leave the cluster are cheaper and safer as
  plain Gleam types.
@@ -54,10 +54,10 @@ A PubSub message delivered to subscribers.
 
  ## Frozen wire contract
 
- Broadcasts are sent **raw between nodes** via `pg` as a five-element tuple:
+ Beryl sends broadcasts **raw between nodes** via `pg` as a five-element tuple:
  the PubSub scope atom followed by this message's four fields in order. That
- scope-tagged runtime shape is a frozen wire contract, not just a source-level
- API, for any given `payload` type. The same applies to `PubSubFrom`.
+ scope-tagged runtime shape forms the frozen wire contract for each `payload`
+ type. The contract also applies to `PubSubFrom`.
 
  Because payloads travel as native terms rather than a self-describing
  format like JSON, evolving the *shape* of your own `payload` type is also
