@@ -29,13 +29,34 @@ fn read_snapshot(sockets: beryl.Sockets) -> stats.Snapshot {
   snapshot
 }
 
+/// Snapshots are documented as eventually consistent: counts may lag
+/// in-flight lifecycle notifications. Poll until the predicate holds, then
+/// return the snapshot for exact assertions; fail loudly on timeout.
+fn read_until(
+  sockets: beryl.Sockets,
+  predicate: fn(stats.Snapshot) -> Bool,
+  deadline_ms: Int,
+) -> stats.Snapshot {
+  let snapshot = read_snapshot(sockets)
+  case predicate(snapshot), deadline_ms > 0 {
+    True, _ -> snapshot
+    False, True -> {
+      process.sleep(10)
+      read_until(sockets, predicate, deadline_ms - 10)
+    }
+    False, False -> {
+      should.be_true(False)
+      snapshot
+    }
+  }
+}
+
 pub fn snapshot_tracks_socket_lifecycle_test() {
   let sockets = start_sockets()
   let initial = read_snapshot(sockets)
   stats.connected_sockets(initial) |> should.equal(0)
   stats.joined_socket_topic_pairs(initial) |> should.equal(0)
   stats.active_topics(initial) |> should.equal(0)
-  should.be_true(stats.runtime_mailbox_length(initial) >= 0)
 
   let first = h.connect(sockets, "socket-1")
   let second = h.connect(sockets, "socket-2")
@@ -52,7 +73,8 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   stats.active_topics(joined) |> should.equal(2)
 
   transport.socket_disconnected(sockets, "socket-2")
-  let after_disconnect = read_snapshot(sockets)
+  let after_disconnect =
+    read_until(sockets, fn(snap) { stats.connected_sockets(snap) == 1 }, 500)
   stats.connected_sockets(after_disconnect) |> should.equal(1)
   stats.joined_socket_topic_pairs(after_disconnect) |> should.equal(2)
   stats.active_topics(after_disconnect) |> should.equal(2)

@@ -11,10 +11,13 @@ description: "Local runtime statistics."
 
 Local runtime statistics.
 
- Snapshots are point-in-time values captured when the local socket runtime
- services a request. They are intended for operational polling, not as an
- event stream. Poll no more frequently than roughly once per second so
- observation does not add meaningful runtime load.
+ Snapshots are point-in-time values as observed by the runtime process
+ servicing the request. Counts may lag in-flight connect and disconnect
+ notifications that have not yet reached that process, so they are
+ eventually consistent rather than exact at the instant of the call. They
+ are intended for operational polling, not as an event stream. Poll no
+ more frequently than roughly once per second so observation does not add
+ meaningful runtime load.
 
 ## Types
 
@@ -73,14 +76,6 @@ Return the number of joined socket/topic pairs.
 
 ```gleam
 pub fn joined_socket_topic_pairs(Snapshot) -> Int
-```
-
-### `runtime_mailbox_length`
-
-Return the runtime mailbox length when it serviced the request.
-
-```gleam
-pub fn runtime_mailbox_length(Snapshot) -> Int
 ```
 
 ### `snapshot`
