@@ -194,7 +194,7 @@ pub fn route_binary(
 
 Route a transport-decoded inbound message to the runtime. Decode in
  the connection process (see `active_codec`) so parse cost and malformed
- input never reach the shared runtime.
+ input never reach the runtime.
 
  Runtime message-rate limiting applies after routing. If it sheds a
  heartbeat, that heartbeat does not refresh the socket's deadline; sustained

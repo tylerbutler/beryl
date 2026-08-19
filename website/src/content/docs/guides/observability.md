@@ -127,7 +127,7 @@ shutdown. No exporter dependency is required in Beryl itself.
 
 Useful derived signals include upgrade rejection rate by outcome, frame decode
 and rate-limit rates, join/message callback failures, connection lifetime,
-broadcast send-failure ratio, and latency histograms. Alert on sustained rates
+broadcast recipient counts, and latency histograms. Alert on sustained rates
 and tail latency rather than individual events.
 
 ## Runtime snapshots
