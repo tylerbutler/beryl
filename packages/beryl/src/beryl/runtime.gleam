@@ -108,6 +108,12 @@ pub type Msg(msg) {
     close: fn() -> Nil,
     admission: AdmissionToken,
     reply: Subject(Bool),
+    /// The socket's actor, started by the transport's connection process
+    /// so connection setup never serialises through the router. The router
+    /// admits it atomically (monitor, index, forward) and the actor runs
+    /// the app `init` and answers `reply` itself.
+    actor: Subject(Msg(msg)),
+    actor_pid: process.Pid,
   )
   SocketDisconnected(socket_id: String)
   RouteText(socket_id: String, raw_text: String)
@@ -545,36 +551,54 @@ pub fn start_named(
   |> actor.start
 }
 
-/// Prototype (#334): start one actor to own one socket.
+/// Start one actor to own one socket.
 ///
 /// It runs the same `handle_message` on the same `State` as the router —
 /// the socket actor is the router with `sockets` capped at one entry, no
 /// topic index beyond its own memberships, no PubSub subscriber, and
 /// `router` set. That is the whole lift of `dispatch_socket_msg`.
-fn start_socket_actor(
-  router_state: State(model, msg),
-  router_pid: process.Pid,
+///
+/// Called from the transport's connection process (via `beryl`'s admission
+/// closure), not from the router, so connection setup stays parallel and
+/// the router's admission turn stays O(1). The caller is expected to
+/// unlink the started actor and hand it to the router with `AdmitSocket`.
+pub fn start_socket_actor(
+  config config: Config,
+  init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
+  update update: fn(model, Input(msg)) -> Next(model),
+  router router: Subject(Msg(msg)),
+  router_pid router_pid: process.Pid,
 ) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
-  let router = router_state.self_subject
-  let config = router_state.config
   actor.new_with_initialiser(5000, fn(subject) {
     let ack_subject = process.new_subject()
-    // The router's own per-socket dicts are always empty, so copying its
-    // state is the same as building a fresh one.
     let state =
       State(
-        ..router_state,
+        sockets: dict.new(),
+        topics: dict.new(),
+        config: config,
         pubsub: None,
         subscriber: None,
+        logger: internal.logger_with_config("beryl.runtime", config.logging),
         self_subject: subject,
+        init: init,
+        update: update,
+        message_buckets: dict.new(),
+        join_buckets: dict.new(),
+        channel_buckets: dict.new(),
         presence_ack: ack_subject,
+        next_op_id: 1,
+        suspended: dict.new(),
+        queued: dict.new(),
+        unacked_tracks: dict.new(),
+        stopping: False,
         router: Some(router),
         socket_actors: dict.new(),
         stop_reply: None,
         stop_finalized: 0,
       )
-    // Decision 5: router death must take its socket actors with it. A
-    // monitor is the prototype's stand-in for `one_for_all`.
+    // Router death must take its socket actors with it: each actor
+    // monitors the router and stops on its `Down`, while staying unlinked
+    // so a socket crash cannot travel the other way.
     let monitor = process.monitor(router_pid)
     schedule_heartbeat_check(subject, config)
     process.new_selector()
@@ -615,8 +639,10 @@ fn handle_message(
       close,
       admission,
       reply,
+      actor_subject,
+      actor_pid,
     ) ->
-      actor.continue(handle_admit_socket(
+      handle_admit_socket(
         state,
         owner,
         socket_id,
@@ -627,7 +653,9 @@ fn handle_message(
         close,
         admission,
         reply,
-      ))
+        actor_subject,
+        actor_pid,
+      )
     // Socket-scoped work. A socket parked on a presence acknowledgement
     // queues its own messages instead of dispatching them, so its inbound
     // order survives the suspension; every other socket is unaffected.
@@ -926,12 +954,14 @@ fn handle_admit_socket(
   close: fn() -> Nil,
   admission: AdmissionToken,
   reply: Subject(Bool),
-) -> State(model, msg) {
+  actor_subject: Subject(Msg(msg)),
+  actor_pid: process.Pid,
+) -> actor.Next(State(model, msg), Msg(msg)) {
   case state.router {
-    // Prototype (#334): in a socket actor, the router has already made the
-    // owner and admission-pending checks atomically in its own turn; this
-    // actor only registers.
-    Some(_) -> {
+    // In a socket actor: the router has already admitted this socket
+    // atomically in its own turn; this actor runs the app `init` and
+    // answers the transport directly.
+    Some(router) -> {
       let #(state, admitted) =
         register_socket(
           state,
@@ -944,67 +974,60 @@ fn handle_admit_socket(
           Some(admission),
         )
       process.send(reply, admitted)
-      state
+      case admitted {
+        True -> actor.continue(state)
+        // Refused: the app `init` crashed, or the transport's wait timed
+        // out and cancelled the token. The router already indexed this
+        // actor, so unwind that entry on the way out.
+        False -> {
+          process.send(router, SocketClosed(socket_id))
+          actor.stop()
+        }
+      }
     }
+    // The router's whole admission turn: the checks that must be atomic
+    // with each other, one monitor-free insert, and a forward. It never
+    // waits on the socket actor — the actor answers the transport itself,
+    // so a slow or crashing `init` cannot block admission of other
+    // sockets (and the router must never block on a socket actor).
     None ->
-      case process.self() == owner && admission_pending(admission) {
+      case
+        !state.stopping
+        && process.self() == owner
+        && admission_pending(admission)
+      {
         False -> {
           process.send(reply, False)
-          state
+          actor.continue(state)
         }
-        // ponytail: the router starts the socket actor and waits for it to
-        // register, inside the admission turn — decision 4's cheap option.
-        // Ceiling: connection setup serialises through the router, exactly
-        // the bottleneck #337 hit on joins. Upgrade: have the transport's
-        // connection process start the actor and hand it over for an O(1)
-        // atomic admit.
-        True ->
-          case start_socket_actor(state, process.self()) {
-            Error(start_error) -> {
-              state.logger
-              |> log.error("Socket actor failed to start", [
-                #("socket_id", socket_id),
-                #("error", string.inspect(start_error)),
-              ])
-              process.send(reply, False)
-              state
-            }
-            Ok(started) -> {
-              // Unlinked: a socket actor crash must not take the router,
-              // and the actor monitors the router for the other direction.
-              process.unlink(started.pid)
-              let admitted =
-                process.call(started.data, 5000, fn(register_reply) {
-                  AdmitSocket(
-                    owner,
-                    socket_id,
-                    send,
-                    send_binary,
-                    socket_codec,
-                    seed,
-                    close,
-                    admission,
-                    register_reply,
-                  )
-                })
-              process.send(reply, admitted)
-              case admitted {
-                True ->
-                  State(
-                    ..state,
-                    socket_actors: dict.insert(
-                      state.socket_actors,
-                      socket_id,
-                      started.data,
-                    ),
-                  )
-                False -> {
-                  process.send(started.data, Stop(process.new_subject()))
-                  state
-                }
-              }
-            }
-          }
+        True -> {
+          process.send(
+            actor_subject,
+            AdmitSocket(
+              owner,
+              socket_id,
+              send,
+              send_binary,
+              socket_codec,
+              seed,
+              close,
+              admission,
+              reply,
+              actor_subject,
+              actor_pid,
+            ),
+          )
+          actor.continue(
+            State(
+              ..state,
+              socket_actors: dict.insert(
+                state.socket_actors,
+                socket_id,
+                actor_subject,
+              ),
+            ),
+          )
+        }
       }
   }
 }
