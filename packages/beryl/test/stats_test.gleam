@@ -82,6 +82,46 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   let _ = beryl.stop(sockets)
 }
 
+/// A socket actor that dies without reporting `SocketClosed` (killed, or
+/// crashed outside a rescue boundary) must be swept by the router's
+/// monitor: neither its connection count nor its topic-index entries may
+/// leak.
+pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
+  let pids = process.new_subject()
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) {
+        // `init` runs in the socket's own actor, so this is the actor pid.
+        process.send(pids, process.self())
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, None)])
+          _ -> socket.Next(model, [])
+        }
+      },
+    )
+  let frames = h.connect(sockets, "doomed")
+  h.join(sockets, "doomed", "room:x", "jr-1", "1")
+  let assert Ok(_) = process.receive(frames, 500)
+  let assert Ok(actor_pid) = process.receive(pids, 500)
+    as "init reported the socket actor's pid"
+  let joined =
+    read_until(sockets, fn(snap) { stats.connected_sockets(snap) == 1 }, 500)
+  stats.active_topics(joined) |> should.equal(1)
+
+  process.kill(actor_pid)
+
+  let swept =
+    read_until(sockets, fn(snap) { stats.connected_sockets(snap) == 0 }, 500)
+  stats.joined_socket_topic_pairs(swept) |> should.equal(0)
+  stats.active_topics(swept) |> should.equal(0)
+  let _ = beryl.stop(sockets)
+}
+
 pub fn snapshot_returns_unavailable_after_stop_test() {
   let sockets = start_sockets()
   let assert Ok(Nil) = beryl.stop(sockets)
@@ -89,7 +129,12 @@ pub fn snapshot_returns_unavailable_after_stop_test() {
   |> should.equal(Error(stats.RuntimeUnavailable))
 }
 
-pub fn snapshot_times_out_while_runtime_is_busy_test() {
+/// The positive pin of #334's topology: an app callback blocks only its
+/// own socket's actor, so the router answers stats requests while a
+/// callback is mid-flight. (A flooded router can still return
+/// `RequestTimedOut`; `snapshot_returns_unavailable_after_stop_test`
+/// covers the unavailable path.)
+pub fn snapshot_succeeds_while_a_socket_callback_is_busy_test() {
   let entered = process.new_subject()
   let assert Ok(sockets) =
     h.start_app(
@@ -114,7 +159,9 @@ pub fn snapshot_times_out_while_runtime_is_busy_test() {
   h.push(sockets, "slow", "room:slow", "block", "ref")
   let assert Ok(Nil) = process.receive(entered, 500)
 
-  stats.snapshot(sockets)
-  |> should.equal(Error(stats.RequestTimedOut))
+  let snapshot = read_snapshot(sockets)
+  stats.connected_sockets(snapshot) |> should.equal(1)
+  stats.joined_socket_topic_pairs(snapshot) |> should.equal(1)
+  stats.active_topics(snapshot) |> should.equal(1)
   let _ = beryl.stop(sockets)
 }
