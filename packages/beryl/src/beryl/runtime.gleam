@@ -144,10 +144,15 @@ pub type Msg(msg) {
   /// Prototype (#334): a socket actor finished its teardown and is about to
   /// stop; the router drops it from the index and the actor table.
   SocketClosed(socket_id: String)
-  /// Prototype (#334): the router died. Decision 5 wants router death to
-  /// take every socket actor with it; the prototype monitors rather than
-  /// supervises.
+  /// The router died. Every socket actor monitors the router and stops on
+  /// its `Down`, so router death takes the whole socket population with it
+  /// (and the transports, which monitor the same pid, close the
+  /// connections).
   RouterDown
+  /// A socket actor exited without reporting `SocketClosed` first — it
+  /// crashed, or was killed. The router sweeps its index and actor-table
+  /// entries so a crashed actor cannot leak a phantom subscription.
+  SocketActorDown(down: process.Down)
   /// Prototype (#334): shut one socket actor down. Unlike `Stop` there is
   /// no reply — the router waits for `SocketClosed`, so a socket actor's
   /// teardown broadcasts still reach the router on their way out.
@@ -226,14 +231,26 @@ type State(model, msg) {
     /// one entry in `sockets`; this field is what the handful of
     /// router-owned operations (fan-out, topic index, PubSub) branch on.
     router: Option(Subject(Msg(msg))),
-    /// Prototype (#334): router-only. socket_id -> its socket actor.
-    socket_actors: Dict(String, Subject(Msg(msg))),
+    /// Router-only. socket_id -> its admitted socket actor.
+    socket_actors: Dict(String, SocketActorRef(msg)),
     /// Prototype (#334): router-only. Set while the router is draining its
     /// socket actors; answered once the last `SocketClosed` arrives.
     stop_reply: Option(Subject(Nil)),
     /// Prototype (#334): router-only. How many socket actors have finished
     /// shutdown phase one. Teardown starts when every one of them has.
     stop_finalized: Int,
+  )
+}
+
+/// The router's record of one admitted socket actor. The monitor is the
+/// crash side of the actor's lifecycle: a normal close reports
+/// `SocketClosed` and is demonitored, while a crash is swept via
+/// `SocketActorDown`.
+type SocketActorRef(msg) {
+  SocketActorRef(
+    subject: Subject(Msg(msg)),
+    pid: process.Pid,
+    monitor: process.Monitor,
   )
 }
 
@@ -520,12 +537,18 @@ pub fn start_named(
         stop_reply: None,
         stop_finalized: 0,
       )
-    // Prototype (#334): heartbeats are per-socket timers now (phasing step
-    // 3), so the router runs no sweep and schedules nothing.
+    // Heartbeats are per-socket timers, so the router runs no sweep and
+    // schedules nothing.
+    //
+    // `select_monitors` claims every monitor `Down` this process receives,
+    // so the router turn must never create a monitor for anything but a
+    // socket actor — which the no-blocking-call rule (no `process.call`
+    // from the router) already guarantees.
     let selector =
       process.new_selector()
       |> process.select(subject)
       |> process.select_map(ack_subject, PresenceAcknowledged)
+      |> process.select_monitors(SocketActorDown)
     case pubsub_option {
       Some(pubsub_instance) -> {
         let subscriber = pubsub.subscriber(pubsub_instance)
@@ -674,7 +697,7 @@ fn handle_message(
         // admission (or keep a registry) so transports send direct.
         None -> {
           case dict.get(state.socket_actors, socket_id) {
-            Ok(socket_actor) -> process.send(socket_actor, message)
+            Ok(ref) -> process.send(ref.subject, message)
             Error(Nil) -> Nil
           }
           actor.continue(state)
@@ -757,12 +780,7 @@ fn handle_message(
     }
     StopPhaseDone(_) -> {
       let state = State(..state, stop_finalized: state.stop_finalized + 1)
-      case state.stop_finalized >= dict.size(state.socket_actors) {
-        True ->
-          dict.values(state.socket_actors)
-          |> list.each(process.send(_, StopSocketActor))
-        False -> Nil
-      }
+      begin_stop_phase_two_if_ready(state)
       actor.continue(state)
     }
     StopSocketActor -> {
@@ -781,40 +799,108 @@ fn handle_message(
       case state.stop_reply {
         None -> actor.continue(state)
         Some(reply) -> {
+          // Escalate rather than abandon: a teardown stuck in a
+          // pathological app callback is killed so shutdown stays inside
+          // `beryl.stop`'s budget without leaking the process.
           state.logger
-          |> log.warn("Runtime stop: socket actors did not all report back", [
+          |> log.warn("Runtime stop: killing unresponsive socket actors", [
             #("socket_count", int.to_string(dict.size(state.socket_actors))),
           ])
+          dict.values(state.socket_actors)
+          |> list.each(fn(ref) { process.kill(ref.pid) })
           process.send(reply, Nil)
           actor.stop()
         }
       }
     IndexJoin(socket_id, topic_name) ->
-      actor.continue(add_topic_subscriber(state, socket_id, topic_name))
+      // Only index sockets this router admitted: a cast from an actor that
+      // outlived a router restart must not plant a phantom entry. A
+      // legitimate join is always preceded by the router's own insert, so
+      // this never drops a real one.
+      case dict.has_key(state.socket_actors, socket_id) {
+        True ->
+          actor.continue(add_topic_subscriber(state, socket_id, topic_name))
+        False -> actor.continue(state)
+      }
     IndexLeave(socket_id, topic_name) ->
       actor.continue(remove_topic_subscriber(state, socket_id, topic_name))
-    SocketClosed(socket_id) -> {
-      // A teardown emits `IndexLeave` per joined topic, but sweeping is
-      // cheap and makes a dropped one impossible to leak.
-      let state =
-        dict.keys(state.topics)
-        |> list.fold(state, fn(st, topic_name) {
-          remove_topic_subscriber(st, socket_id, topic_name)
-        })
-      let state =
-        State(
-          ..state,
-          socket_actors: dict.delete(state.socket_actors, socket_id),
-        )
-      case state.stop_reply, dict.is_empty(state.socket_actors) {
-        Some(reply), True -> {
+    SocketClosed(socket_id) -> remove_socket_actor(state, socket_id)
+    SocketActorDown(down) ->
+      case down {
+        process.ProcessDown(pid: pid, monitor: _, reason: _) ->
+          case
+            dict.to_list(state.socket_actors)
+            |> list.find(fn(entry) {
+              let #(_, ref) = entry
+              ref.pid == pid
+            })
+          {
+            Ok(#(socket_id, _)) -> {
+              state.logger
+              |> log.warn("Socket actor exited without reporting; sweeping", [
+                #("socket_id", socket_id),
+              ])
+              remove_socket_actor(state, socket_id)
+            }
+            // Already removed via `SocketClosed`, or never admitted.
+            Error(Nil) -> actor.continue(state)
+          }
+        process.PortDown(..) -> actor.continue(state)
+      }
+    RouterDown -> actor.stop()
+  }
+}
+
+/// Drop one socket actor from the router: demonitor, sweep any topic-index
+/// entries it left behind, and keep a stop drain moving if one is in
+/// progress. Shared by the normal close (`SocketClosed`) and the crash
+/// sweep (`SocketActorDown`).
+fn remove_socket_actor(
+  state: State(model, msg),
+  socket_id: String,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case dict.get(state.socket_actors, socket_id) {
+    // Demonitoring flushes a `Down` already in the mailbox, so a normal
+    // close can never be swept a second time as a crash.
+    Ok(ref) -> process.demonitor_process(ref.monitor)
+    Error(Nil) -> Nil
+  }
+  // A teardown emits `IndexLeave` per joined topic, but sweeping is
+  // cheap and makes a dropped one impossible to leak.
+  let state =
+    dict.keys(state.topics)
+    |> list.fold(state, fn(st, topic_name) {
+      remove_topic_subscriber(st, socket_id, topic_name)
+    })
+  let state =
+    State(..state, socket_actors: dict.delete(state.socket_actors, socket_id))
+  case state.stop_reply {
+    None -> actor.continue(state)
+    Some(reply) ->
+      case dict.is_empty(state.socket_actors) {
+        True -> {
           process.send(reply, Nil)
           actor.stop()
         }
-        _, _ -> actor.continue(state)
+        False -> {
+          // A crash during drain phase one would otherwise leave the
+          // router waiting on a `StopPhaseDone` that never arrives.
+          begin_stop_phase_two_if_ready(state)
+          actor.continue(state)
+        }
       }
-    }
-    RouterDown -> actor.stop()
+  }
+}
+
+/// Start drain phase two once every surviving socket actor has finished
+/// phase one. Re-sending `StopSocketActor` to an actor that already got
+/// one is harmless: it stops on the first and never reads the second.
+fn begin_stop_phase_two_if_ready(state: State(model, msg)) -> Nil {
+  case state.stop_finalized >= dict.size(state.socket_actors) {
+    True ->
+      dict.values(state.socket_actors)
+      |> list.each(fn(ref) { process.send(ref.subject, StopSocketActor) })
+    False -> Nil
   }
 }
 
@@ -872,6 +958,7 @@ fn dispatch_socket_msg(
     | IndexJoin(..)
     | IndexLeave(..)
     | SocketClosed(..)
+    | SocketActorDown(..)
     | RouterDown -> state
   }
 }
@@ -1001,6 +1088,9 @@ fn handle_admit_socket(
           actor.continue(state)
         }
         True -> {
+          // Monitor before forwarding: an actor that dies mid-registration
+          // is swept by `SocketActorDown` instead of leaking its entry.
+          let monitor = process.monitor(actor_pid)
           process.send(
             actor_subject,
             AdmitSocket(
@@ -1023,7 +1113,7 @@ fn handle_admit_socket(
               socket_actors: dict.insert(
                 state.socket_actors,
                 socket_id,
-                actor_subject,
+                SocketActorRef(actor_subject, actor_pid, monitor),
               ),
             ),
           )
@@ -1124,16 +1214,18 @@ fn handle_socket_disconnected(
   run(state, socket_id, [StepTeardown(sock.Normal)])
 }
 
-/// Prototype (#334): drain the socket actors, then stop.
+/// How long the router waits for its socket actors to drain before it
+/// kills the stragglers, chosen to sit inside `beryl.stop`'s own 5s
+/// budget. Crashed actors report promptly through their monitors, so this
+/// only fires for a teardown genuinely stuck in an app callback.
+const stop_drain_timeout_ms = 2000
+
+/// Drain the socket actors, then stop.
 ///
 /// The router casts `StopSocketActor` rather than calling, so a socket
 /// actor's teardown broadcasts and index updates still route through this
-/// mailbox. The router answers `reply` once the last `SocketClosed` lands.
-///
-/// ponytail: the fallback timeout is a hardcoded 2s, chosen only to sit
-/// inside `beryl.stop`'s own 5s budget. Ceiling: a socket actor whose
-/// teardown legitimately takes longer is abandoned. Upgrade: make it a
-/// config knob, or monitor the socket actors instead of timing out.
+/// mailbox. The router answers `reply` once the last `SocketClosed` lands,
+/// or kills the survivors at `stop_drain_timeout_ms`.
 fn begin_router_stop(
   state: State(model, msg),
   reply: Subject(Nil),
@@ -1147,8 +1239,9 @@ fn begin_router_stop(
     actor.stop()
   })
   dict.values(state.socket_actors)
-  |> list.each(process.send(_, FinalizeForStop))
-  let _timer = process.send_after(state.self_subject, 2000, StopTimedOut)
+  |> list.each(fn(ref) { process.send(ref.subject, FinalizeForStop) })
+  let _timer =
+    process.send_after(state.self_subject, stop_drain_timeout_ms, StopTimedOut)
   actor.continue(State(..state, stopping: True, stop_reply: Some(reply)))
 }
 
@@ -4154,9 +4247,9 @@ fn local_broadcast(
     None -> {
       list.each(recipients, fn(socket_id) {
         case dict.get(state.socket_actors, socket_id) {
-          Ok(socket_actor) ->
+          Ok(ref) ->
             process.send(
-              socket_actor,
+              ref.subject,
               Broadcast(topic_name, event_name, payload, except),
             )
           Error(Nil) -> Nil
