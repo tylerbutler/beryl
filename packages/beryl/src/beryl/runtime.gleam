@@ -130,6 +130,32 @@ pub type Msg(msg) {
   /// socket is still waiting on exactly that operation.
   PresenceOpTimedOut(socket_id: String, op_id: Int)
   Stop(reply: Subject(Nil))
+  /// Prototype (#334): a socket actor joined a topic. The router owns the
+  /// global index and the pg subscription.
+  IndexJoin(socket_id: String, topic: String)
+  /// Prototype (#334): a socket actor left a topic.
+  IndexLeave(socket_id: String, topic: String)
+  /// Prototype (#334): a socket actor finished its teardown and is about to
+  /// stop; the router drops it from the index and the actor table.
+  SocketClosed(socket_id: String)
+  /// Prototype (#334): the router died. Decision 5 wants router death to
+  /// take every socket actor with it; the prototype monitors rather than
+  /// supervises.
+  RouterDown
+  /// Prototype (#334): shut one socket actor down. Unlike `Stop` there is
+  /// no reply — the router waits for `SocketClosed`, so a socket actor's
+  /// teardown broadcasts still reach the router on their way out.
+  StopSocketActor
+  /// Prototype (#334): a socket actor never reported back during shutdown
+  /// (it crashed, or its teardown hung). The router stops anyway.
+  StopTimedOut
+  /// Prototype (#334): shutdown phase one. Finalize in-flight presence work
+  /// while every other socket actor is still alive to receive the leaves it
+  /// publishes; the shared runtime got this for free by doing it before its
+  /// teardown loop.
+  FinalizeForStop
+  /// Prototype (#334): a socket actor finished shutdown phase one.
+  StopPhaseDone(socket_id: String)
 }
 
 pub type StatsSnapshot {
@@ -188,6 +214,20 @@ type State(model, msg) {
     /// are then fire-and-forget: there is no longer a runtime to deliver
     /// the acknowledgement to.
     stopping: Bool,
+    /// Prototype (#334): `None` in the router, `Some(router)` in a
+    /// per-socket actor. Every socket-scoped function below is lifted
+    /// unchanged by handing the socket actor this same `State` with exactly
+    /// one entry in `sockets`; this field is what the handful of
+    /// router-owned operations (fan-out, topic index, PubSub) branch on.
+    router: Option(Subject(Msg(msg))),
+    /// Prototype (#334): router-only. socket_id -> its socket actor.
+    socket_actors: Dict(String, Subject(Msg(msg))),
+    /// Prototype (#334): router-only. Set while the router is draining its
+    /// socket actors; answered once the last `SocketClosed` arrives.
+    stop_reply: Option(Subject(Nil)),
+    /// Prototype (#334): router-only. How many socket actors have finished
+    /// shutdown phase one. Teardown starts when every one of them has.
+    stop_finalized: Int,
   )
 }
 
@@ -469,8 +509,13 @@ pub fn start_named(
         queued: dict.new(),
         unacked_tracks: dict.new(),
         stopping: False,
+        router: None,
+        socket_actors: dict.new(),
+        stop_reply: None,
+        stop_finalized: 0,
       )
-    schedule_heartbeat_check(subject, config)
+    // Prototype (#334): heartbeats are per-socket timers now (phasing step
+    // 3), so the router runs no sweep and schedules nothing.
     let selector =
       process.new_selector()
       |> process.select(subject)
@@ -497,6 +542,49 @@ pub fn start_named(
   })
   |> actor.on_message(handle_message)
   |> actor.named(name)
+  |> actor.start
+}
+
+/// Prototype (#334): start one actor to own one socket.
+///
+/// It runs the same `handle_message` on the same `State` as the router —
+/// the socket actor is the router with `sockets` capped at one entry, no
+/// topic index beyond its own memberships, no PubSub subscriber, and
+/// `router` set. That is the whole lift of `dispatch_socket_msg`.
+fn start_socket_actor(
+  router_state: State(model, msg),
+  router_pid: process.Pid,
+) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
+  let router = router_state.self_subject
+  let config = router_state.config
+  actor.new_with_initialiser(5000, fn(subject) {
+    let ack_subject = process.new_subject()
+    // The router's own per-socket dicts are always empty, so copying its
+    // state is the same as building a fresh one.
+    let state =
+      State(
+        ..router_state,
+        pubsub: None,
+        subscriber: None,
+        self_subject: subject,
+        presence_ack: ack_subject,
+        router: Some(router),
+        socket_actors: dict.new(),
+        stop_reply: None,
+        stop_finalized: 0,
+      )
+    // Decision 5: router death must take its socket actors with it. A
+    // monitor is the prototype's stand-in for `one_for_all`.
+    let monitor = process.monitor(router_pid)
+    schedule_heartbeat_check(subject, config)
+    process.new_selector()
+    |> process.select(subject)
+    |> process.select_map(ack_subject, PresenceAcknowledged)
+    |> process.select_specific_monitor(monitor, fn(_) { RouterDown })
+    |> actor.selecting(actor.returning(actor.initialised(state), subject), _)
+    |> Ok
+  })
+  |> actor.on_message(handle_message)
   |> actor.start
 }
 
@@ -549,12 +637,41 @@ fn handle_message(
     | RouteDecodedBinary(socket_id, _)
     | HandleBinary(socket_id, _)
     | AppInfo(socket_id, _) ->
-      case dict.has_key(state.suspended, socket_id) {
-        True -> actor.continue(enqueue_socket_msg(state, socket_id, message))
-        False -> actor.continue(dispatch_socket_msg(state, message))
+      case state.router {
+        // ponytail: the router forwards every inbound message to the
+        // socket's actor, so it stays on the inbound path for one send per
+        // message. Ceiling: router throughput is still O(messages), though
+        // its turn is now a match-and-send instead of an app callback.
+        // Upgrade: hand the socket actor's subject back to the transport at
+        // admission (or keep a registry) so transports send direct.
+        None -> {
+          case dict.get(state.socket_actors, socket_id) {
+            Ok(socket_actor) -> process.send(socket_actor, message)
+            Error(Nil) -> Nil
+          }
+          actor.continue(state)
+        }
+        Some(_) ->
+          case dict.has_key(state.suspended, socket_id) {
+            True ->
+              actor.continue(enqueue_socket_msg(state, socket_id, message))
+            False ->
+              after_socket_turn(state, dispatch_socket_msg(state, message))
+          }
       }
     Broadcast(topic_name, event_name, payload, except) -> {
-      broadcast_with_pubsub(state, topic_name, event_name, payload, except)
+      case state.router {
+        // In a socket actor this is a delivery, not an origination: the
+        // router already resolved the recipients (decision 1's hop) and
+        // this actor encodes and sends for its own socket.
+        Some(_) -> {
+          let _counts =
+            local_broadcast(state, topic_name, event_name, payload, except)
+          Nil
+        }
+        None ->
+          broadcast_with_pubsub(state, topic_name, event_name, payload, except)
+      }
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
@@ -573,25 +690,122 @@ fn handle_message(
         }
       }
     CheckHeartbeats -> actor.continue(handle_check_heartbeats(state))
-    PresenceAcknowledged(ack) -> actor.continue(handle_presence_ack(state, ack))
+    PresenceAcknowledged(ack) ->
+      after_socket_turn(state, handle_presence_ack(state, ack))
     PresenceOpTimedOut(socket_id, op_id) ->
-      actor.continue(handle_presence_timeout(state, socket_id, op_id))
+      after_socket_turn(state, handle_presence_timeout(state, socket_id, op_id))
     GetStats(reply) -> {
+      // Answered entirely from the router's index; no socket actor is
+      // polled, so counts may lag in-flight socket lifecycle messages —
+      // the eventual consistency the stats API documents.
       process.send(
         reply,
         StatsSnapshot(
-          connected_sockets: dict.size(state.sockets),
-          joined_socket_topic_pairs: state.sockets
+          connected_sockets: dict.size(state.socket_actors),
+          joined_socket_topic_pairs: state.topics
             |> dict.values
-            |> list.fold(0, fn(total, socket) {
-              total + set.size(socket.subscribed_topics)
-            }),
+            |> list.fold(0, fn(total, ids) { total + set.size(ids) }),
           active_topics: dict.size(state.topics),
         ),
       )
       actor.continue(state)
     }
-    Stop(reply) -> handle_stop(state, reply)
+    Stop(reply) ->
+      case state.router {
+        Some(_) -> handle_stop(state, Some(reply))
+        None -> begin_router_stop(state, reply)
+      }
+    FinalizeForStop -> {
+      let state = finalize_for_stop(state)
+      case state.router, dict.keys(state.sockets) {
+        Some(router), [socket_id] ->
+          process.send(router, StopPhaseDone(socket_id))
+        // No socket ever registered here; report under a name the router
+        // does not need, since it only counts.
+        Some(router), _ -> process.send(router, StopPhaseDone(""))
+        None, _ -> Nil
+      }
+      actor.continue(state)
+    }
+    StopPhaseDone(_) -> {
+      let state = State(..state, stop_finalized: state.stop_finalized + 1)
+      case state.stop_finalized >= dict.size(state.socket_actors) {
+        True ->
+          dict.values(state.socket_actors)
+          |> list.each(process.send(_, StopSocketActor))
+        False -> Nil
+      }
+      actor.continue(state)
+    }
+    StopSocketActor -> {
+      // The router is waiting on `SocketClosed`, not on a reply, so the
+      // teardown's own broadcasts reach it before the actor goes away.
+      let socket_ids = dict.keys(state.sockets)
+      let next = handle_stop(state, None)
+      case state.router, socket_ids {
+        Some(router), [socket_id] ->
+          process.send(router, SocketClosed(socket_id))
+        _, _ -> Nil
+      }
+      next
+    }
+    StopTimedOut ->
+      case state.stop_reply {
+        None -> actor.continue(state)
+        Some(reply) -> {
+          state.logger
+          |> log.warn("Runtime stop: socket actors did not all report back", [
+            #("socket_count", int.to_string(dict.size(state.socket_actors))),
+          ])
+          process.send(reply, Nil)
+          actor.stop()
+        }
+      }
+    IndexJoin(socket_id, topic_name) ->
+      actor.continue(add_topic_subscriber(state, socket_id, topic_name))
+    IndexLeave(socket_id, topic_name) ->
+      actor.continue(remove_topic_subscriber(state, socket_id, topic_name))
+    SocketClosed(socket_id) -> {
+      // A teardown emits `IndexLeave` per joined topic, but sweeping is
+      // cheap and makes a dropped one impossible to leak.
+      let state =
+        dict.keys(state.topics)
+        |> list.fold(state, fn(st, topic_name) {
+          remove_topic_subscriber(st, socket_id, topic_name)
+        })
+      let state =
+        State(
+          ..state,
+          socket_actors: dict.delete(state.socket_actors, socket_id),
+        )
+      case state.stop_reply, dict.is_empty(state.socket_actors) {
+        Some(reply), True -> {
+          process.send(reply, Nil)
+          actor.stop()
+        }
+        _, _ -> actor.continue(state)
+      }
+    }
+    RouterDown -> actor.stop()
+  }
+}
+
+/// Prototype (#334): a socket actor's turn is over. If the socket is gone
+/// the actor has nothing left to own, so it tells the router and stops.
+fn after_socket_turn(
+  before: State(model, msg),
+  after: State(model, msg),
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case dict.keys(before.sockets), after.router {
+    [socket_id], Some(router) ->
+      case dict.has_key(after.sockets, socket_id) {
+        True -> actor.continue(after)
+        False -> {
+          process.send(router, SocketClosed(socket_id))
+          actor.stop()
+        }
+      }
+    _, _ -> actor.continue(after)
   }
 }
 
@@ -622,7 +836,15 @@ fn dispatch_socket_msg(
     | GetStats(..)
     | PresenceAcknowledged(..)
     | PresenceOpTimedOut(..)
-    | Stop(..) -> state
+    | Stop(..)
+    | StopSocketActor
+    | StopTimedOut
+    | FinalizeForStop
+    | StopPhaseDone(..)
+    | IndexJoin(..)
+    | IndexLeave(..)
+    | SocketClosed(..)
+    | RouterDown -> state
   }
 }
 
@@ -705,12 +927,11 @@ fn handle_admit_socket(
   admission: AdmissionToken,
   reply: Subject(Bool),
 ) -> State(model, msg) {
-  case process.self() == owner && admission_pending(admission) {
-    False -> {
-      process.send(reply, False)
-      state
-    }
-    True -> {
+  case state.router {
+    // Prototype (#334): in a socket actor, the router has already made the
+    // owner and admission-pending checks atomically in its own turn; this
+    // actor only registers.
+    Some(_) -> {
       let #(state, admitted) =
         register_socket(
           state,
@@ -725,6 +946,66 @@ fn handle_admit_socket(
       process.send(reply, admitted)
       state
     }
+    None ->
+      case process.self() == owner && admission_pending(admission) {
+        False -> {
+          process.send(reply, False)
+          state
+        }
+        // ponytail: the router starts the socket actor and waits for it to
+        // register, inside the admission turn — decision 4's cheap option.
+        // Ceiling: connection setup serialises through the router, exactly
+        // the bottleneck #337 hit on joins. Upgrade: have the transport's
+        // connection process start the actor and hand it over for an O(1)
+        // atomic admit.
+        True ->
+          case start_socket_actor(state, process.self()) {
+            Error(start_error) -> {
+              state.logger
+              |> log.error("Socket actor failed to start", [
+                #("socket_id", socket_id),
+                #("error", string.inspect(start_error)),
+              ])
+              process.send(reply, False)
+              state
+            }
+            Ok(started) -> {
+              // Unlinked: a socket actor crash must not take the router,
+              // and the actor monitors the router for the other direction.
+              process.unlink(started.pid)
+              let admitted =
+                process.call(started.data, 5000, fn(register_reply) {
+                  AdmitSocket(
+                    owner,
+                    socket_id,
+                    send,
+                    send_binary,
+                    socket_codec,
+                    seed,
+                    close,
+                    admission,
+                    register_reply,
+                  )
+                })
+              process.send(reply, admitted)
+              case admitted {
+                True ->
+                  State(
+                    ..state,
+                    socket_actors: dict.insert(
+                      state.socket_actors,
+                      socket_id,
+                      started.data,
+                    ),
+                  )
+                False -> {
+                  process.send(started.data, Stop(process.new_subject()))
+                  state
+                }
+              }
+            }
+          }
+      }
   }
 }
 
@@ -820,14 +1101,62 @@ fn handle_socket_disconnected(
   run(state, socket_id, [StepTeardown(sock.Normal)])
 }
 
-fn handle_stop(
+/// Prototype (#334): drain the socket actors, then stop.
+///
+/// The router casts `StopSocketActor` rather than calling, so a socket
+/// actor's teardown broadcasts and index updates still route through this
+/// mailbox. The router answers `reply` once the last `SocketClosed` lands.
+///
+/// ponytail: the fallback timeout is a hardcoded 2s, chosen only to sit
+/// inside `beryl.stop`'s own 5s budget. Ceiling: a socket actor whose
+/// teardown legitimately takes longer is abandoned. Upgrade: make it a
+/// config knob, or monitor the socket actors instead of timing out.
+fn begin_router_stop(
   state: State(model, msg),
   reply: Subject(Nil),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   state.logger
   |> log.info("Runtime stopping", [
+    #("socket_count", int.to_string(dict.size(state.socket_actors))),
+  ])
+  use <- bool.lazy_guard(when: dict.is_empty(state.socket_actors), return: fn() {
+    process.send(reply, Nil)
+    actor.stop()
+  })
+  dict.values(state.socket_actors)
+  |> list.each(process.send(_, FinalizeForStop))
+  let _timer = process.send_after(state.self_subject, 2000, StopTimedOut)
+  actor.continue(State(..state, stopping: True, stop_reply: Some(reply)))
+}
+
+fn handle_stop(
+  state: State(model, msg),
+  reply: Option(Subject(Nil)),
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  state.logger
+  |> log.info("Runtime stopping", [
     #("socket_count", int.to_string(dict.size(state.sockets))),
   ])
+  let state = finalize_for_stop(state)
+  dict.keys(state.sockets)
+  |> list.fold(state, fn(st, socket_id) {
+    run(st, socket_id, [StepTeardown(sock.Shutdown)])
+  })
+  case reply {
+    Some(reply) -> process.send(reply, Nil)
+    None -> Nil
+  }
+  actor.stop()
+}
+
+/// The pre-teardown half of a shutdown: mark the actor stopping and settle
+/// every in-flight presence mutation it still owns.
+///
+/// Prototype (#334): the shared runtime ran this for all sockets before it
+/// tore any of them down. Per-socket actors have to be told to do it as a
+/// separate phase, or a socket's shutdown leaves can be fanned out to
+/// sockets that are already gone.
+fn finalize_for_stop(state: State(model, msg)) -> State(model, msg) {
   // From here on there is no runtime left to receive an acknowledgement,
   // so presence mutations are sent fire-and-forget and never suspend.
   let state = State(..state, stopping: True)
@@ -840,15 +1169,8 @@ fn handle_stop(
   // swept now, while there is still something to sweep them with. The sweep is
   // ordered behind the in-flight tracks themselves (same sender, same
   // mailbox), so it removes them rather than racing them.
-  let state =
-    dict.keys(state.unacked_tracks)
-    |> list.fold(state, sweep_unacked_track)
-  dict.keys(state.sockets)
-  |> list.fold(state, fn(st, socket_id) {
-    run(st, socket_id, [StepTeardown(sock.Shutdown)])
-  })
-  process.send(reply, Nil)
-  actor.stop()
+  dict.keys(state.unacked_tracks)
+  |> list.fold(state, sweep_unacked_track)
 }
 
 /// Finalize a socket's in-flight presence mutation during shutdown.
@@ -2422,6 +2744,10 @@ fn remove_topic_subscriber(
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
     |> set.delete(socket_id)
+  case state.router {
+    Some(router) -> process.send(router, IndexLeave(socket_id, topic_name))
+    None -> Nil
+  }
   case set.is_empty(subscribers) {
     True -> {
       case state.subscriber {
@@ -2433,6 +2759,44 @@ fn remove_topic_subscriber(
     False ->
       State(..state, topics: dict.insert(state.topics, topic_name, subscribers))
   }
+}
+
+/// Add a socket to a topic's subscriber set, joining the pg group when the
+/// topic becomes locally active.
+///
+/// Prototype (#334): in a socket actor the set only ever holds that one
+/// socket, and the router is told so it can keep the global index and the
+/// pg subscription. That notification is a cast, not a call — the router
+/// calls into socket actors during admission and shutdown, so a call back
+/// would deadlock. It is sent from `subscribe_socket`, before the join
+/// reply frame leaves this turn, so a client that acts on its own reply
+/// cannot beat its index entry to the router. A broadcast from a third
+/// process that races the cast still misses the socket: that is decision
+/// 2's cast option and its documented window.
+fn add_topic_subscriber(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+) -> State(model, msg) {
+  let existing =
+    dict.get(state.topics, topic_name)
+    |> result.unwrap(set.new())
+  case state.router {
+    Some(router) -> process.send(router, IndexJoin(socket_id, topic_name))
+    None ->
+      case state.subscriber, set.is_empty(existing) {
+        Some(subscriber), True -> pubsub.join(subscriber, topic_name)
+        _, _ -> Nil
+      }
+  }
+  State(
+    ..state,
+    topics: dict.insert(
+      state.topics,
+      topic_name,
+      set.insert(existing, socket_id),
+    ),
+  )
 }
 
 /// Notify the client that its topic ended. Phoenix clients rely on
@@ -2820,22 +3184,8 @@ fn subscribe_socket(
             pending_join.join_ref,
           ),
         )
-      let state = store_socket(state, socket)
-      let existing =
-        dict.get(state.topics, pending_join.topic)
-        |> result.unwrap(set.new())
-      case state.subscriber, set.is_empty(existing) {
-        Some(subscriber), True -> pubsub.join(subscriber, pending_join.topic)
-        _, _ -> Nil
-      }
-      State(
-        ..state,
-        topics: dict.insert(
-          state.topics,
-          pending_join.topic,
-          set.insert(existing, socket_id),
-        ),
-      )
+      store_socket(state, socket)
+      |> add_topic_subscriber(socket_id, pending_join.topic)
     }
   }
 }
@@ -3747,24 +4097,51 @@ fn local_broadcast(
     #("recipient_count", int.to_string(list.length(recipients))),
     #("except", optional_string(except)),
   ])
-  list.fold(recipients, #(0, 0), fn(counts, socket_id) {
-    case dict.get(state.sockets, socket_id) {
-      Ok(socket) -> {
-        let frame =
-          codec.encode_push(socket.codec)(topic_name, event_name, payload)
-        let send_result = send_frame_logged(state, socket, topic_name, frame)
-        #(
-          counts.0 + 1,
-          counts.1
-            + case send_result {
-            Ok(Nil) -> 0
-            Error(Nil) -> 1
-          },
-        )
-      }
-      Error(Nil) -> counts
+  case state.router {
+    // Socket actor: it is the only possible recipient, so encode and send
+    // inline exactly as the shared runtime did.
+    Some(_) ->
+      list.fold(recipients, #(0, 0), fn(counts, socket_id) {
+        case dict.get(state.sockets, socket_id) {
+          Ok(socket) -> {
+            let frame =
+              codec.encode_push(socket.codec)(topic_name, event_name, payload)
+            let send_result =
+              send_frame_logged(state, socket, topic_name, frame)
+            #(
+              counts.0 + 1,
+              counts.1
+                + case send_result {
+                Ok(Nil) -> 0
+                Error(Nil) -> 1
+              },
+            )
+          }
+          Error(Nil) -> counts
+        }
+      })
+    // Decision 1: the router resolves recipients and hands each one to its
+    // own actor, so encoding happens on N schedulers instead of in this
+    // turn, and only one process ever writes to a given transport.
+    //
+    // ponytail: send failures are no longer visible here, so the broadcast
+    // telemetry reports zero of them. Ceiling: `send_failures` is dead in
+    // this topology. Upgrade: have socket actors report failures back, or
+    // move the counter into per-socket telemetry.
+    None -> {
+      list.each(recipients, fn(socket_id) {
+        case dict.get(state.socket_actors, socket_id) {
+          Ok(socket_actor) ->
+            process.send(
+              socket_actor,
+              Broadcast(topic_name, event_name, payload, except),
+            )
+          Error(Nil) -> Nil
+        }
+      })
+      #(list.length(recipients), 0)
     }
-  })
+  }
 }
 
 fn emit_broadcast(
@@ -3801,6 +4178,29 @@ fn broadcast_with_pubsub(
   payload: Json,
   except: Option(String),
 ) -> Nil {
+  // Prototype (#334): a socket actor owns neither the topic index nor the
+  // PubSub handle, so everything it originates goes to the router, which
+  // fans out locally (decision 1's hop) and forwards to other nodes.
+  //
+  // This socket's own copy is sent inline first, so a broadcast to a topic
+  // it is joined to still lands in effect-list order instead of arriving a
+  // round trip later, behind the frames that followed it. The only
+  // `except` a socket actor ever originates is its own id (`BroadcastFrom`),
+  // so the exclusion handed to the router is always this socket.
+  use <- with_router(state, fn(router) {
+    case except, dict.keys(state.sockets) {
+      None, [socket_id] -> {
+        let _counts =
+          local_broadcast(state, topic_name, event_name, payload, None)
+        process.send(
+          router,
+          Broadcast(topic_name, event_name, payload, Some(socket_id)),
+        )
+      }
+      _, _ ->
+        process.send(router, Broadcast(topic_name, event_name, payload, except))
+    }
+  })
   emit_broadcast(
     state,
     topic_name,
@@ -3831,6 +4231,20 @@ fn broadcast_with_pubsub(
           )
       }
     None -> Nil
+  }
+}
+
+/// Prototype (#334): branch on topology. In a socket actor, run
+/// `in_socket_actor` with the router's subject and stop; in the router,
+/// fall through to the calling function's body.
+fn with_router(
+  state: State(model, msg),
+  in_socket_actor: fn(Subject(Msg(msg))) -> Nil,
+  in_router: fn() -> Nil,
+) -> Nil {
+  case state.router {
+    Some(router) -> in_socket_actor(router)
+    None -> in_router()
   }
 }
 
