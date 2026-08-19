@@ -6,7 +6,7 @@ A skill for removing AI tells from prose.
 
 ## What this is
 
-AI prose repeats predictable phrasing and sentence structures. This skill teaches Claude (or any LLM) to catch and remove them.
+AI writing has patterns. Predictable phrases, structures, rhythms. This skill teaches Claude (or any LLM) to catch and remove them.
 
 ## Skill Structure
 
