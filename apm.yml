@@ -20,6 +20,7 @@ dependencies:
 devDependencies:
   apm:
     - tylerbutler/apm-base
+    - tylerbutler/agent-marketplace/plugins/gleam
     # - tylerbutler/agent-marketplace/plugins/repo-tools
     # - tylerbutler/agent-marketplace/plugins/specialists
     - JuliusBrussee/caveman/skills/caveman-commit
