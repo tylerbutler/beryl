@@ -49,7 +49,6 @@ fn expect_broadcast(
   handler_id: TelemetryHandle,
   origin: String,
   recipients: Int,
-  send_failures: Int,
 ) -> Bool
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_none")
@@ -284,11 +283,11 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() {
 
   beryl.broadcast(sockets, "room:lobby", "event", json.object([]))
   let _local = h.recv(frames)
-  expect_broadcast(handler, "local", 1, 0) |> should.be_true
+  expect_broadcast(handler, "local", 1) |> should.be_true
 
   pubsub.broadcast(ps, "room:lobby", "remote", json.object([]))
   let _remote = h.recv(frames)
-  expect_broadcast(handler, "remote", 1, 0) |> should.be_true
+  expect_broadcast(handler, "remote", 1) |> should.be_true
 
   expect_none(handler) |> should.be_true
   detach(handler)

@@ -6,7 +6,7 @@
     expect_join/2,
     expect_message/4,
     expect_disconnect/3,
-    expect_broadcast/4,
+    expect_broadcast/3,
     expect_none/1
 ]).
 
@@ -95,7 +95,7 @@ expect_disconnect(HandlerId, Reason, JoinedTopics) ->
         false
     end.
 
-expect_broadcast(HandlerId, Origin, Recipients, SendFailures) ->
+expect_broadcast(HandlerId, Origin, Recipients) ->
     ExpectedOrigin = expected_atom(Origin),
     receive
         {
@@ -104,8 +104,7 @@ expect_broadcast(HandlerId, Origin, Recipients, SendFailures) ->
             #{
                 count := 1,
                 duration := Duration,
-                recipients := Recipients,
-                send_failures := SendFailures
+                recipients := Recipients
             },
             #{origin := ExpectedOrigin}
         } when is_integer(Duration), Duration >= 0 ->

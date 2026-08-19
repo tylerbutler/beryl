@@ -39,7 +39,7 @@ low-cardinality telemetry taxonomy:
 | `[:beryl, :socket, :disconnected]` | `count`, `duration`, `joined_channels` | `reason` |
 | `[:beryl, :channel, :join, :stop]` | `count`, `duration` | `outcome` |
 | `[:beryl, :channel, :message, :stop]` | `count`, `duration` | `kind`, `outcome`, `callback_result` |
-| `[:beryl, :broadcast, :stop]` | `count`, `duration`, `recipients`, `send_failures` | `origin` |
+| `[:beryl, :broadcast, :stop]` | `count`, `duration`, `recipients` | `origin` |
 
 The `:channel` event-name segment is retained for telemetry compatibility
 even though app-side dispatch now owns routing. For an app `update`,
