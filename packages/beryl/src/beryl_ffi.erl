@@ -9,7 +9,7 @@ identity(X) -> X.
 
 %% Run a callback, converting any crash (error/exit/throw) into an
 %% {error, Description} result so a crashing callback cannot take down the
-%% shared runtime actor. The description is depth-limited and truncated so
+%% runtime actor running it. The description is depth-limited and truncated so
 %% client-triggered crashes cannot bloat log metadata.
 rescue(Fun) ->
     try

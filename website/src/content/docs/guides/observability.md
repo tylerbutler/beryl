@@ -23,7 +23,8 @@ let config =
 
 Attach handlers before traffic begins. Erlang `:telemetry` invokes handlers
 **synchronously in the process emitting the event**. A slow handler therefore
-adds latency to a WebSocket connection process or the shared runtime.
+adds latency to a WebSocket connection process, a socket's runtime actor,
+or the runtime's router.
 Perform bounded counter/histogram updates or enqueue a small message and
 return immediately; never make network calls, format logs, or run expensive
 label conversion in the handler.

@@ -160,7 +160,7 @@ let logging =
      ])
    ```
    The runtime applies presence effects asynchronously. Do not call the
-   synchronous public presence API inside the shared runtime.
+   synchronous public presence API inside `init` or `update`.
 
 2. **Cross-node sync.** If running multiple nodes, each node must be configured with the same PubSub instance and each presence actor needs a unique replica ID. The CRDT merges state over PubSub; without PubSub, nodes have independent state.
 

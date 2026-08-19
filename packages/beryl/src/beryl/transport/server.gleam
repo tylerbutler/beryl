@@ -554,7 +554,7 @@ pub type FrameDisposition {
 
 /// Size-check, rate-check, and decode an inbound text frame in the
 /// connection process, so parse cost stays there and only valid,
-/// rate-admitted messages reach the shared runtime.
+/// rate-admitted messages reach the runtime.
 ///
 /// Oversized frames return `Stop` (close the connection); over-rate frames
 /// are shed silently; undecodable frames are logged and dropped.
