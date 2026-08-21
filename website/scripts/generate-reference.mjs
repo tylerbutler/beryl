@@ -344,15 +344,15 @@ ${moduleRows}`;
 
 	return `---
 title: API Reference
-description: Generated API reference from Gleam docs metadata.
+description: API reference generated from Gleam docs metadata.
 ---
 
 ${GENERATED_MARKER}
 
-This reference is generated from Gleam's docs metadata for ${packageList}.
+This reference uses Gleam docs metadata for ${packageList}.
 
 :::note[Generated content]
-Pages under \`${referenceBasePath}/\` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference. Beryl packages are currently distributed from GitHub, not Hex.
+The generator creates pages under \`${referenceBasePath}/\` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
 :::
 
 ${packageSections}

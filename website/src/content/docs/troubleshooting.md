@@ -2,15 +2,19 @@
 title: Troubleshooting
 ---
 
-This page lists common symptoms with targeted diagnosis steps. Start from your symptom and follow the checks in order.
+Find the symptom that matches your problem. Perform its checks in order.
 
 ## Clients cannot connect at all
 
-**Symptoms:** Browser WebSocket error, `net::ERR_CONNECTION_REFUSED`, or immediate close before any Phoenix messages.
+**Symptoms:** The browser reports a WebSocket error or
+`net::ERR_CONNECTION_REFUSED`. The connection can also close before a Phoenix
+message arrives.
 
 **Checks:**
 
-1. **Is Mist listening?** Confirm your HTTP server started without error. `mist.serve` or `mist.serve_ssl` returns a `Result` — make sure you handle `Error`.
+1. **Check that Mist is listening.** Confirm that the HTTP server started
+   without an error. `mist.serve` and `mist.serve_ssl` return a `Result`.
+   Handle the `Error` case.
 
 2. **Path mismatch.** The Phoenix JS client appends `/websocket` to the socket path you pass:
    ```js
@@ -22,19 +26,26 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    ```
    Raw WebSocket clients (non-Phoenix) connect directly to the path with no suffix.
 
-3. **on_connect rejection.** If you configured `with_on_connect`, returning `Error(server.ConnectRejected)` sends an HTTP 403 before the upgrade. Check your auth logic and incoming headers.
+3. **Check `on_connect`.** If `with_on_connect` returns
+   `Error(server.ConnectRejected)`, the server sends HTTP 403 before the
+   upgrade. Check the authentication logic and request headers.
 
-4. **Reverse proxy not forwarding upgrade headers.** See [Reverse proxy / nginx](#reverse-proxy--nginx) below.
+4. **Check the reverse proxy headers.** See
+   [Reverse proxy / nginx](#reverse-proxy--nginx).
 
 ---
 
 ## Client connects but joins are never acknowledged
 
-**Symptoms:** Phoenix JS client hangs in "connecting" or "joining" state; no `phx_reply` received.
+**Symptoms:** The Phoenix JS client stays in the `connecting` or `joining`
+state. It does not receive `phx_reply`.
 
 **Checks:**
 
-1. **Does your `update` answer the join?** Every `Join` event must be answered with an `AcceptJoin` or `RejectJoin` effect. An unanswered join is rejected automatically (fail closed) — check the server logs for `Join not acknowledged by update; rejecting`, and confirm your topic match arms cover the topic the client is joining:
+1. **Check that `update` answers the join.** Return `AcceptJoin` or
+   `RejectJoin` for each `Join` event. The runtime rejects an unanswered join.
+   Check the logs for `Join not acknowledged by update; rejecting`. Confirm
+   that a match branch covers the client topic:
    ```gleam
    // "room:" <> _ matches "room:lobby", "room:42", etc.
    socket.Join("room:" <> _, payload, ref) ->
@@ -48,23 +59,33 @@ This page lists common symptoms with targeted diagnosis steps. Start from your s
    use <- mist_transport.upgrade(req, channels, config)
    ```
 
-3. **Update crashes on `Join`.** A crash while handling a `Join` rejects that join (the socket survives). Check the logs for the crash description and fix the panic.
+3. **Check for a `Join` crash.** A crash during `Join` rejects the join but
+   keeps the socket open. Check the crash description in the logs and fix the
+   panic.
 
-4. **Topic string mismatch.** Your `update` routes topics with ordinary pattern matching — verify the prefix or shape you match covers the exact topic the client sends (`"room:" <> _` does not match `"rooms:lobby"`). For multi-segment shapes, `topic.extract_wildcards` with `topic.parse_pattern("document:*:*")` verifies the shape explicitly.
+4. **Check the topic string.** `update` routes topics with pattern matching.
+   Confirm that the prefix or shape matches the exact client topic.
+   `"room:" <> _` does not match `"rooms:lobby"`. For multiple segments, use
+   `topic.extract_wildcards` with
+   `topic.parse_pattern("document:*:*")`.
 
 ---
 
 ## Messages sent from the client are not received
 
-**Symptoms:** `update` never receives a `Message` event; no reply or push received.
+**Symptoms:** `update` does not receive a `Message` event. The client does not
+receive a reply or push.
 
 **Checks:**
 
 1. **Did the client successfully join?** `Message` events are only delivered after a successful `phx_join`. If join was rejected, messages to the topic get an `unmatched topic` error reply (when they carry a ref) or are dropped.
 
-2. **Rate limits dropping traffic.** `with_frame_rate` sheds complete frames at the transport edge before decode. `with_message_rate`, `with_channel_rate`, and `with_topic_rate` apply after decode in the runtime.
+2. **Check rate limits.** `with_frame_rate` drops complete frames before
+   decoding. `with_message_rate`, `with_channel_rate`, and `with_topic_rate`
+   apply after decoding in the runtime.
 
-3. **Event name mismatch.** The `Message` event carries the raw event string. Verify the client sends the exact event name your `update` matches on.
+3. **Check the event name.** `Message` contains the event string from the
+   client. Confirm that it matches the string in `update`.
 
 ---
 
@@ -104,7 +125,8 @@ socket. See [Crash behavior](/guides/channels/#crash-behavior).
 
 ## Enable Beryl debug diagnostics
 
-Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*` namespaces. Normal configurations keep production output quiet, but you can opt into detailed runtime lifecycle diagnostics while debugging integration issues:
+Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*`
+namespaces. Enable debug logs when you diagnose integration problems:
 
 ```gleam
 let config =
@@ -127,11 +149,15 @@ let logging =
 
 ## Broadcasts are not received by clients
 
-**Symptoms:** `beryl.broadcast` is called server-side but connected clients do not receive the event.
+**Symptoms:** Server code calls `beryl.broadcast`, but connected clients do not
+receive the event.
 
 **Checks:**
 
-1. **Topic string must match exactly.** `beryl.broadcast("room:lobby", ...)` delivers only to sockets subscribed to the *exact* topic `"room:lobby"`. Wildcard patterns are for *routing incoming messages*, not for targeting broadcasts.
+1. **Check the exact topic string.**
+   `beryl.broadcast("room:lobby", ...)` sends only to sockets on
+   `"room:lobby"`. Wildcard patterns route incoming messages. They do not
+   select broadcast targets.
 
 2. **Client has not joined the topic.** A socket must have successfully completed `phx_join` for the topic before it receives broadcasts on that topic.
 
@@ -147,7 +173,8 @@ let logging =
 
 ## Presence is stale or incorrect
 
-**Symptoms:** `presence.list` returns entries for users who have disconnected; joins/leaves are not reflected.
+**Symptoms:** `presence.list` includes disconnected users. It does not show
+recent joins or leaves.
 
 **Checks:**
 
@@ -172,7 +199,7 @@ let logging =
 
 ## Authentication failures
 
-**Symptoms:** All clients get 403 on connect, or all joins are rejected.
+**Symptoms:** All connections receive HTTP 403, or all joins are rejected.
 
 **Checks:**
 
@@ -180,13 +207,16 @@ let logging =
 
 2. **Token validation error.** Check that your token validation logic handles expired or malformed tokens gracefully and returns `Error(Nil)` rather than panicking.
 
-3. **`update` rejecting every join.** Log the `payload` argument of the `Join` event to confirm the client is sending the expected shape. `payload` arrives as `Dynamic` (already decoded from the raw frame) — run your decoder against it explicitly.
+3. **Check whether `update` rejects each join.** Log the `Join` payload and
+   confirm its shape. The transport has decoded the raw frame, but `payload`
+   is still `Dynamic`. Run your decoder on it.
 
 ---
 
 ## Heartbeat disconnects
 
-**Symptoms:** Clients are disconnected after a period of inactivity; `update` receives `Closed(topic, HeartbeatTimeout)`.
+**Symptoms:** Clients disconnect after inactivity. `update` receives
+`Closed(topic, HeartbeatTimeout)`.
 
 **Checks:**
 
@@ -200,7 +230,8 @@ let logging =
 
 ## PubSub cluster issues
 
-**Symptoms:** Broadcasts do not propagate across Erlang nodes; presence state diverges.
+**Symptoms:** Broadcasts do not reach other Erlang nodes. Presence state differs
+between nodes.
 
 **Checks:**
 
@@ -212,9 +243,10 @@ let logging =
 
 ---
 
-## Rate limiting is unexpectedly aggressive
+## Rate limits drop valid traffic
 
-**Symptoms:** Clients receive partial message delivery; high-frequency operations are silently dropped.
+**Symptoms:** Clients receive only some messages. High-rate operations are
+dropped.
 
 **Checks:**
 
@@ -230,7 +262,8 @@ let logging =
 
 ## Reverse proxy / nginx
 
-WebSocket upgrades require forwarding the `Upgrade` and `Connection` headers. A minimal nginx configuration:
+WebSocket upgrades require the `Upgrade` and `Connection` headers. Use this
+minimal nginx configuration:
 
 ```nginx
 location /socket/websocket {
@@ -243,18 +276,27 @@ location /socket/websocket {
 }
 ```
 
-Without `proxy_http_version 1.1` and the upgrade headers, nginx downgrades to HTTP/1.0 and the WebSocket handshake fails. `proxy_read_timeout` should exceed your client heartbeat interval to avoid proxy-side idle disconnects.
+Without HTTP/1.1 and the upgrade headers, nginx uses HTTP/1.0 and the WebSocket
+handshake fails. Set `proxy_read_timeout` above the client heartbeat interval.
+This prevents proxy idle disconnects.
 
 ---
 
 ## Runtime crash / no messages processed
 
-**Symptoms:** All WebSocket operations stop working; the runtime is unresponsive.
+**Symptoms:** All WebSocket operations stop. The runtime does not respond.
 
 **Checks:**
 
-1. **Crash loop exhausted the restart budget.** The runtime always starts supervised and restarts automatically, but after 3 restarts in 5 seconds the supervisor gives up and the crash propagates to the process that called `child_spec`. Check the logs for the underlying crash.
+1. **Check the restart budget.** The supervised runtime restarts after a crash.
+   After 3 restarts in 5 seconds, the supervisor stops and sends the failure to
+   the process that called `child_spec`. Check the logs for the first crash.
 
-2. **Panic in your app code.** Crashes inside `init`/`update` are rescued and scoped to one socket or topic — they do not stop the runtime. A runtime-wide stop points at a crash outside the rescued paths; audit `let assert` expressions in code the runtime calls indirectly (e.g. presence `on_diff` callbacks).
+2. **Check for an app panic.** The runtime catches crashes in `init` and
+   `update` and limits them to one socket or topic. They do not stop the
+   runtime. A runtime stop indicates a crash outside those paths. Check
+   indirect callbacks, such as presence `on_diff`, for `let assert`.
 
-3. **After a restart, clients must rejoin.** A restarted runtime has no socket state. Connected clients will see their topics close (or stop receiving replies) and the Phoenix JS client will reconnect and rejoin automatically.
+3. **Rejoin after a restart.** A restarted runtime has no socket state.
+   Connected clients see their topics close or stop receiving replies. The
+   Phoenix JS client reconnects and rejoins.

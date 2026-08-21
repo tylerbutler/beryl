@@ -2,11 +2,19 @@
 title: Runtime & Supervision
 ---
 
-The runtime is the central OTP actor for app-side socket dispatch. Transports send admitted, decoded frames to it, and your application's `init`/`update` functions run inside it during event dispatch. Presence and groups are independent application-owned supervised children; PubSub is an Erlang `pg` wrapper rather than a child of the runtime.
+The runtime is the main OTP actor for socket dispatch. Transports send admitted
+and decoded frames to it. The runtime calls your application's `init` and
+`update` functions for each event. The application owns separate supervised
+children for presence and groups. PubSub wraps Erlang `pg` and is not a runtime
+child.
 
 ## Role
 
-The runtime is the single source of truth for connected socket IDs, app models, topic subscriptions, and heartbeat timestamps. It processes its mailbox sequentially, which gives it a consistent view of app dispatch without locks. Transport connection processes still own edge concerns such as WebSocket state, frame limits, decoding, and the local message-rate bucket; the model returned by `update` is the app state the next event sees.
+The runtime stores connected socket IDs, app models, topic subscriptions, and
+heartbeat times. It processes mailbox messages in sequence. This gives it a
+consistent view without locks. Transport connection processes manage WebSocket
+state, frame limits, decoding, and the local message-rate bucket. The next event
+uses the model returned by `update`.
 
 ## What it tracks
 
@@ -19,7 +27,12 @@ The runtime maintains four categories of state:
 
 ## Typed dispatch without erasure
 
-The runtime actor is generic over the app's `model` and `msg` types. `beryl.child_spec` captures those types in a record of monomorphic closures at construction time, so the public `Sockets` handle — and the frame-level transport SPI behind it — stays unparameterized while the runtime holds fully typed state. This is plain closure capture by a generic function: there are no unchecked casts, `Dynamic` round-trips, or identity FFI in the socket-dispatch path. PubSub separately validates the frozen raw mailbox record before its package-internal payload coercion.
+The runtime actor is generic over the app's `model` and `msg` types.
+`beryl.child_spec` captures those types in monomorphic closures. The public
+`Sockets` handle and transport SPI do not need type parameters. The runtime
+still keeps typed state. This path uses no unchecked casts, `Dynamic`
+round-trips, or identity FFI. PubSub validates its raw mailbox record before
+its internal payload coercion.
 
 Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `socket.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
@@ -43,13 +56,25 @@ Inbound WebSocket frames follow a two-step path:
 
 ## Effect ordering
 
-Effects are applied strictly in list order. Because the same runtime actor interprets the list and writes frames for that socket, list order is wire order; an `AcceptJoin` is guaranteed to reach the wire before a `Push` later in the same list.
+The runtime applies effects in list order. The same actor interprets the list
+and writes the frames. Thus, list order is wire order. An `AcceptJoin` reaches
+the wire before a later `Push`.
 
-Most lists are applied in a single actor turn. `PresenceTrack` and `PresenceUntrack` are applied by the presence actor instead, so the runtime holds the rest of that socket's list — and queues that socket's later inbound messages — until the mutation is acknowledged, then resumes exactly where it left off. Ordering for the socket is unchanged; what changes is that only that socket waits. Every other socket, broadcast, heartbeat check, and shutdown keeps being processed, which also means an unrelated broadcast can land between two of the waiting socket's effects.
+The runtime applies most lists in one actor turn. The presence actor applies
+`PresenceTrack` and `PresenceUntrack`. The runtime pauses the rest of that
+socket's list until the presence actor responds. It also queues later input for
+that socket. Then it resumes at the next effect. The socket keeps its effect
+order. Other sockets, broadcasts, heartbeat checks, and shutdown work continue.
+An unrelated broadcast can occur between two effects from the paused socket.
 
 ## Crash containment
 
-Crashes in app callbacks are rescued rather than allowed to take down the shared runtime. The blast radius is scoped to what crashed: a crashing `Join` is rejected; a crashing topic-scoped `Message` or `Binary` closes only that topic; a crashing `Info` tears down the whole socket because it has no topic to attribute; a crashing `Closed` is logged while teardown continues; and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging. Other sockets remain isolated.
+The runtime catches crashes in app callbacks. A `Join` crash rejects that join.
+A topic `Message` or `Binary` crash closes only that topic. An `Info` crash
+closes the socket because the message has no topic. A `Closed` crash is logged,
+and teardown continues. An `init` crash prevents socket registration. The
+runtime limits and truncates crash descriptions before logging. Other sockets
+continue.
 
 This is a deliberate trade-off with OTP's usual "let it crash" model. Every
 socket's model lives in the same runtime actor, so allowing one app callback
@@ -68,7 +93,12 @@ finishes closing the topic and continues closing sibling channels.
 
 ## Heartbeat enforcement
 
-The runtime schedules a recurring self-check at `heartbeat_timeout_ms / 2`. On each check it compares the current monotonic time to each socket's `last_heartbeat` and evicts any socket past the timeout. Eviction delivers `Closed(topic, HeartbeatTimeout)` for each joined topic, invokes the transport's registered closer so the underlying connection is actually shut, and removes the socket from all state. `child_spec` rejects timeouts below 2 loudly, because integer division would otherwise round the check interval to zero and silently disable eviction.
+The runtime checks heartbeats every `heartbeat_timeout_ms / 2`. It compares the
+current monotonic time with each socket's `last_heartbeat`. It removes each
+socket that exceeds the timeout. Removal sends
+`Closed(topic, HeartbeatTimeout)` for each joined topic. It also calls the
+transport closer and removes all socket state. `child_spec` rejects timeouts
+below 2 because integer division would set the check interval to zero.
 
 ## Supervision
 
@@ -82,12 +112,16 @@ flowchart TB
   SUP -. optional .-> LIMITER["connection limiter"]
 ```
 
-- The `init`/`update` closures live in the child specification, so a restart resumes dispatch immediately — there is no registration step to replay.
-- The runtime is registered under a stable name; the `Sockets` handle keeps working across restarts, and sends during a restart window degrade to quiet no-ops.
+- The child specification contains the `init` and `update` closures. A restart
+  resumes dispatch without a registration step.
+- The runtime uses a stable registered name. The `Sockets` handle works after a
+  restart. Sends during the restart window do nothing.
 - A restart drops per-socket state (models, joined topics); clients rejoin exactly as they would after any server restart.
 - The child is `Transient`, so a graceful `beryl.stop` is final.
 
-PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which manages its own lifecycle. Presence and groups expose their own child specifications for the application's supervision tree (see the [Supervision guide](/guides/supervision/)).
+PubSub is **not** part of this tree. Erlang `pg` manages its lifecycle.
+Presence and groups provide child specifications for the application
+supervision tree. See the [Supervision guide](/guides/supervision/).
 
 ## Where this lives
 

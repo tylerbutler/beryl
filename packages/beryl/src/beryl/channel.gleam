@@ -606,7 +606,7 @@ pub fn with_reply(
 /// while this socket waits; a check followed by [`presence_track`](#presence_track)
 /// is therefore not an atomic cross-socket capacity reservation.
 ///
-/// This is what to reach for instead of notifying yourself from `join`:
+/// Use this function instead of notifying the channel from `join`:
 /// [`notify`](#notify) schedules a *later* input, while actions preserve
 /// their declared position immediately after the join acknowledgment.
 ///

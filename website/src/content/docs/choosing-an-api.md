@@ -1,21 +1,19 @@
 ---
 title: Choose an API
-description: Channel layer or raw app-side dispatch — a short decision guide for beryl's two programming models.
+description: Compare beryl's channel layer and raw app-side dispatch APIs.
 ---
 
 beryl has one runtime and two ways to program it.
 
-- **The channel layer** (`beryl/channel`) — register a list of channel
-  handlers, one per topic pattern. Each channel keeps private state and a
-  private server-side message type, and the layer routes every event to
-  the channel that owns the topic. **This is the recommended default.**
-- **Raw app-side dispatch** (`beryl`) — one `init`/`update` pair per
-  socket. You match on `socket.Input` values and return ordered effects.
-  This is the core; the channel layer is built on top of it, using nothing
-  but its public API.
+- **The channel layer** (`beryl/channel`): Register one handler for each topic
+  pattern. Each channel keeps private state and a server-side message type. The
+  layer routes each event to the correct channel. **Use this API by default.**
+- **Raw app-side dispatch** (`beryl`): Define one `init` and `update` pair for
+  each socket. Match `socket.Input` values and return ordered effects. The
+  channel layer uses this public core API.
 
-Both lower to the same runtime, wire codec, presence, PubSub, and abuse
-controls. Neither is faster or more capable at the wire level — the
+Both APIs use the same runtime, wire codec, presence, PubSub, and abuse
+controls. They have the same wire-level features and performance. The main
 difference is who writes the router.
 
 ## Pick in one line
@@ -42,42 +40,36 @@ difference is who writes the router.
 | Side effects | Ordered `Action(Active)` lists scoped to the channel's topic | `socket.Effect` values naming any topic |
 | Cleanup | `on_terminate` per channel | `socket.Closed(topic, reason)` in your `update` |
 | Cross-topic effects | External `Sockets` APIs only | Direct, in any effect list |
-| Boilerplate as channels grow | Constant | Grows with the number of topic families |
+| Routing code as channels grow | Handler list stays the same shape | More topic families require more branches |
 
 ## What the layer buys you
 
-Adding a fourth topic family to a raw-dispatch app means widening the
-socket model, widening the message union, and adding branches to the
-router — work that grows linearly with the number of channel types. With
-the channel layer, it means adding one value to a list.
+To add a topic family to raw dispatch, extend the socket model and message
+union. Then add router branches. With the channel layer, add one handler to the
+list.
 
-The layer also gives each channel a *private* state type and a *private*
-server-side message type, so unrelated channels never have to agree on a
-shared `Model` or `Msg`. And because a channel is just a value, a channel
-can be published by a library and used without app-side wiring.
+The layer gives each channel a private state type and server-side message type.
+Unrelated channels do not need a shared `Model` or `Msg`. A library can publish
+a channel value for direct use.
 
 ## What raw dispatch buys you
 
-One `update` sees everything for a socket, so cross-topic behavior is
-ordinary code: an event on one topic can broadcast on another in the same
-effect list, in a guaranteed order. The channel layer gives that up on
-purpose — its actions are always scoped to the channel's own topic, and
-cross-topic publishing has to go through the `Sockets` handle.
+One `update` sees all events for a socket. An event on one topic can broadcast
+on another topic in the same ordered effect list. Channel actions apply only to
+their own topic. Use the `Sockets` handle for cross-topic publishing.
 
 Raw dispatch is the smaller API surface: no handler table and no routing
 rules other than the ones you write.
 
 ## Mixing them
 
-Pick one per socket endpoint. The channel layer owns the socket-level
-model and message type — that is what lets channels keep private state —
-so a channel system is not something you embed inside a hand-written
-`update`. Two different endpoints in one application can use different
-layers, and both can share the same presence, PubSub, and group actors.
+Select one API for each socket endpoint. The channel layer owns the
+socket-level model and message type. This design lets each channel keep private
+state. Do not embed a channel system in a hand-written `update`. Different
+endpoints can use different APIs and share presence, PubSub, and group actors.
 
-Migrating later is a rewrite of your routing code, not of your protocol:
-the wire format, join semantics, presence payloads, and client code are
-identical either way.
+A later migration changes routing code only. Both APIs use the same wire
+format, join rules, presence payloads, and client code.
 
 ## Next steps
 

@@ -2,11 +2,11 @@
 title: Production Hardening
 ---
 
-Beryl ships with all rate and connection limits **disabled**, because no
-default is right for every deployment. That is fine for development, but a
-production server with no abuse controls can be degraded by a single hostile
-(or buggy) client. Beryl logs a warning at startup when every control is
-off; this guide explains what to turn on and why.
+Beryl disables all rate and connection limits by default. Each deployment
+needs different limits. The defaults are suitable for development. In
+production, one hostile or faulty client can degrade a server with no abuse
+controls. Beryl logs a startup warning when all controls are off. This guide
+explains which controls to configure.
 
 ## What is always on
 
@@ -25,11 +25,11 @@ Even with no configuration, beryl enforces:
 - **Heartbeat eviction**: sockets that stop sending heartbeats are evicted
   and their connections closed (60 s window by default, `with_heartbeat`).
 
-The frame-size check limits downstream decoding and routing work, but it does
-**not** bound transport-layer memory: buffering and reassembly happen before
-Beryl receives the frame. In production, configure a WebSocket frame/message
-size limit at or below Beryl's limit at your reverse proxy or load balancer,
-plus a matching request/body limit for the HTTP upgrade.
+The frame-size check limits decoding and routing work. It does **not** limit
+transport memory because buffering and reassembly occur before Beryl receives
+the frame. In production, set a WebSocket frame or message limit in the reverse
+proxy or load balancer. Set it at or below Beryl's limit. Also set a matching
+HTTP request or body limit for the upgrade.
 
 ## What you should configure for production
 
@@ -55,13 +55,12 @@ let config =
   |> beryl.with_max_connections(max_connections: 10_000)
 ```
 
-`with_frame_rate` and `with_message_rate` are independent. Joins consume frame
-and join quota, but not message quota; leaves and heartbeats consume both frame
-and message quota. Configure both, with frame capacity slightly higher for
-protocol traffic and malformed frames that never reach the runtime. If either
-limiter sheds a heartbeat, the socket's heartbeat deadline is not refreshed.
-Sustained over-rate traffic is therefore terminated by heartbeat eviction
-rather than merely being shed forever.
+`with_frame_rate` and `with_message_rate` are independent. Joins use frame and
+join quota, but not message quota. Leaves and heartbeats use frame and message
+quota. Configure both limits. Give the frame limit more capacity for protocol
+traffic and malformed frames. If a limiter drops a heartbeat, the runtime does
+not refresh the heartbeat deadline. Continued excess traffic then causes
+heartbeat eviction.
 
 Size both rate and burst allowances with enough headroom for legitimate client
 traffic **plus heartbeats**. A limit that admits an application's normal events
@@ -87,11 +86,10 @@ limit; otherwise the transport rejects it with `429` **before** allocating any
 long-lived socket or runtime state. Freed concurrency capacity is reclaimed on
 normal close, transport failure, heartbeat eviction, crash, and setup failure.
 
-The node-wide ceiling exists because a per-IP limit alone cannot stop many
-**distinct** source addresses — a botnet, or a single host rotating through an
-IPv6 range — from each opening a few connections and collectively exhausting
-the node's process, socket, and runtime budget. The global ceiling bounds
-that total regardless of how the connections are spread across IPs.
+A per-IP limit cannot stop many source addresses. A botnet or a host that
+rotates IPv6 addresses can open a few connections from each address. Together,
+these connections can exhaust the node. The node-wide ceiling limits the total
+number of connections across all IP addresses.
 
 Because it is enforced per BEAM node, a load-balanced cluster of N nodes has an
 effective ceiling of roughly `max_connections × N`. Size the per-node value
@@ -100,9 +98,9 @@ connection/rate controls when you need a cluster-wide cap.
 
 ### The per-IP caveat
 
-The connection limit uses the **real TCP peer address** and deliberately
-ignores forwarded headers like `X-Forwarded-For`, which clients can forge.
-Two consequences:
+The connection limit uses the **TCP peer address**. It ignores forwarded
+headers such as `X-Forwarded-For` because clients can forge them. This has two
+effects:
 
 - Behind a reverse proxy or load balancer, every connection appears to come
   from the proxy's IP, so a per-IP cap would throttle all clients together.
@@ -131,15 +129,12 @@ addresses.
 
 ## Erlang cluster security boundary
 
-Beryl's distributed PubSub and presence replication run over Erlang
-distribution. Every connected peer is **fully trusted**: distributed Erlang
-allows peers to execute arbitrary code on connected nodes, so a hostile peer
-means full node compromise that can extend across the cluster. Subscribing to
-beryl topics, receiving broadcasts, injecting trusted internal traffic, and
-reading or corrupting presence state are only a subset of that access. Channel
-authorization callbacks and WebSocket-layer controls do **not** apply to
-messages delivered over distribution — they protect only inbound WebSocket
-clients.
+Beryl PubSub and presence replication use Erlang distribution. Trust every
+connected peer. Erlang peers can run arbitrary code on connected nodes. A
+hostile peer can compromise the full cluster. Topic access, broadcasts,
+internal traffic, and presence state are only part of that access. Channel
+authorization and WebSocket controls do not apply to distribution messages.
+They protect only WebSocket clients.
 
 ### Internal vs. client messages
 
@@ -148,9 +143,8 @@ clients.
 | WebSocket clients | Untrusted | `with_on_connect` authentication, `Join` authorization, and `Message` handling in `update` |
 | Erlang distribution peers | Fully trusted | Network isolation + mutually verified TLS distribution (cookies prevent accidental cross-cluster connections only) |
 
-This is not a beryl-specific deployment prerequisite. Network isolation and
-secure distribution are the baseline for every distributed BEAM application;
-beryl assumes that boundary is already enforced.
+All distributed BEAM applications need network isolation and secure
+distribution. Beryl assumes that you enforce this boundary.
 
 ### Erlang cookie
 
@@ -194,10 +188,9 @@ and your chosen distribution port at the network layer.
 
 ### Do not share clusters with untrusted tenants
 
-Adding a node to an existing cluster grants it arbitrary code execution on
-connected nodes; visibility into all `pg` groups (PubSub topics) and presence
-state is only part of that access. Never connect beryl to a cluster that
-contains nodes owned or operated by parties outside your trust boundary.
+Adding a node to a cluster lets it run arbitrary code on connected nodes. It
+can also access all `pg` groups and presence state. Do not connect beryl to
+nodes outside your trust boundary.
 
 See [SECURITY.md](https://github.com/tylerbutler/beryl/blob/main/SECURITY.md)
 for the full trust-boundary and distribution-hardening reference.

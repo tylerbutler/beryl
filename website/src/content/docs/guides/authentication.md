@@ -3,10 +3,10 @@ title: Authentication
 description: Verify real tokens in on_connect, decode claims into your model in init, and authorize joins.
 ---
 
-beryl authenticates a connection **once**, at the transport's `on_connect` hook,
-before any topic join. This guide shows a realistic token flow: read a token
-from the handshake, verify it into typed **claims**, carry those claims in the
-socket's model, and then authorize individual topic joins in `update`.
+beryl authenticates a connection once in the transport `on_connect` hook. This
+happens before any topic join. This guide reads a token from the handshake and
+verifies it into typed **claims**. It stores the claims in the socket model.
+Then `update` uses them to authorize topic joins.
 
 For the mechanics of `with_on_connect` and rejection behavior, see the
 [WebSocket Transport guide](/guides/websocket#authentication). This page focuses
@@ -14,8 +14,8 @@ on wiring *real* auth end to end.
 
 ## 1. Model your claims
 
-Decode the token into a typed record so your app logic never touches raw token
-strings:
+Decode the token into a typed record. Do not use raw token strings in app
+logic:
 
 ```gleam
 pub type Claims {
@@ -23,16 +23,16 @@ pub type Claims {
 }
 ```
 
-The claims live in your per-socket model, so every `Join` and `Message` arm of
-`update` can read them without re-authenticating.
+Store the claims in the per-socket model. Each `Join` and `Message` branch can
+then read them without another authentication check.
 
 ## 2. Read the token from the handshake
 
-Browsers cannot set custom headers on a WebSocket handshake, so the two common
-transports for a token are a **query parameter** (browser clients) or the
-**`Authorization` header** (server-to-server clients). Support whichever you
-need. The same helpers work on the transport request in `on_connect` and on
-the `ConnectSeed` in `init`:
+Browsers cannot set custom headers on a WebSocket handshake. Browser clients
+usually send a token in a **query parameter**. Server clients can use the
+**`Authorization` header**. Support the methods that your clients need. The
+same helpers work with the transport request in `on_connect` and the
+`ConnectSeed` in `init`:
 
 ```gleam
 import beryl/socket
@@ -85,13 +85,13 @@ fn seed_bearer(seed: socket.ConnectSeed) -> Result(String, Nil) {
 
 ## 3. Verify the token in `on_connect`
 
-`verify_token` is where you plug in your token library — for example a call to
-[`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature, or
-a JWT library to validate a signed token issued by your identity provider. It
-must validate the signature and expiry and return typed `Claims`. (The upstream
-sign-in flow that mints these tokens is a separate concern — an OAuth2 library
-such as [`vestibule`](https://vestibule.tylerbutler.com) handles social login
-and hands you an authenticated identity to build the token from.)
+Implement `verify_token` with your token library. For example, use
+[`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature.
+You can also use a JWT library for signed identity-provider tokens. The
+function must validate the signature and expiry and return typed `Claims`.
+Token creation is a separate process. An OAuth2 library such as
+[`vestibule`](https://vestibule.tylerbutler.com) can provide an authenticated
+identity for token creation.
 
 ```gleam
 import beryl_mist as mist_transport
@@ -115,14 +115,14 @@ let ws_config =
   })
 ```
 
-Returning `Error(server.ConnectRejected)` sends HTTP 403 before the
-upgrade, so an unauthenticated client never reaches your app.
+Return `Error(server.ConnectRejected)` to send HTTP 403 before the upgrade.
+The app does not receive an unauthenticated connection.
 
 ## 4. Decode claims into the model in `init`
 
-`on_connect` gates the connection; `init` builds the socket's state. The same
-request data arrives in `init` as `ConnectInfo.seed`, so decode the (already
-gate-checked) token into claims there and carry them in the model:
+`on_connect` accepts or rejects the connection. `init` builds the socket state.
+The same request data reaches `init` as `ConnectInfo.seed`. Decode the verified
+token into claims and store them in the model:
 
 ```gleam
 pub type Model {
@@ -147,15 +147,14 @@ beryl.child_spec(
 )
 ```
 
-`verify_token` is a pure check, so running it in both places is cheap; the
-`Anonymous` arm exists only for defense in depth (it is unreachable when
-`on_connect` gates correctly, and every join under it rejects).
+`verify_token` is a pure check, so this example calls it in both places. The
+`Anonymous` branch provides a second check. Correct `on_connect` logic makes
+that branch unreachable, and it rejects all joins.
 
 ## 5. Authorize the topic at join
 
-Because the claims are already in the model, `update` authenticates for free
-and only needs to decide **authorization** — is this user allowed on *this*
-topic?
+The model already contains the claims. `update` only decides whether the user
+can join the topic:
 
 ```gleam
 fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
@@ -192,15 +191,15 @@ fn forbidden() -> json.Json {
 
 ## With the channel layer
 
-Transport authentication is unchanged: `with_on_connect` still validates the
-handshake once before upgrade. A channel system has no app-level `init`, so
-each handler receives the same request-derived `ConnectSeed` as
-`channel.JoinContext.seed` inside its `join` callback. Decode the already-verified
-identity from `seed.query` or `seed.headers`, apply topic authorization, and
-store the typed claims as that channel's private state with `channel.accept`.
+Transport authentication is the same for the channel layer.
+`with_on_connect` validates the handshake before the upgrade. A channel system
+has no app-level `init`. Each handler receives the request `ConnectSeed` as
+`channel.JoinContext.seed`. Decode the verified identity from `seed.query` or
+`seed.headers`. Apply topic authorization and store the typed claims with
+`channel.accept`.
 
-Keep expensive signature and expiry checks in `with_on_connect`; the per-join
-callback should only decode request data and apply cheap authorization rules.
+Put signature and expiry checks in `with_on_connect`. In each join callback,
+only decode request data and apply authorization rules.
 See [JoinContext and the typed sender](/guides/channels/#joincontext-and-the-typed-sender).
 
 ## Notes

@@ -1,6 +1,6 @@
 ---
 title: API Reference
-description: Generated API reference from Gleam docs metadata.
+description: API reference generated from Gleam docs metadata.
 ---
 
 <!--
@@ -9,10 +9,10 @@ description: Generated API reference from Gleam docs metadata.
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-This reference is generated from Gleam's docs metadata for `beryl`, `beryl_ewe`, and `beryl_mist`.
+This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, and `beryl_mist`.
 
 :::note[Generated content]
-Pages under `/reference/api/` are generated from Gleam's docs metadata and reflect every public type, function, and constant. This is beryl's canonical API reference. Beryl packages are currently distributed from GitHub, not Hex.
+The generator creates pages under `/reference/api/` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
 :::
 
 ## `beryl` `0.3.0`

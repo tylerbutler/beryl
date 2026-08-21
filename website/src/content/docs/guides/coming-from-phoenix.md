@@ -1,48 +1,45 @@
 ---
 title: Coming from Phoenix
-description: Map Phoenix Channels concepts — channel modules, join/handle_in/handle_info, assigns, Presence — onto beryl's channel layer and its dispatch core.
+description: Compare Phoenix Channels modules, callbacks, assigns, and Presence with both beryl APIs.
 ---
 
 beryl speaks the same wire protocol as Phoenix Channels (`phx_join`, refs,
 heartbeats, `presence_state`/`presence_diff`), so Phoenix client libraries
-work unchanged. The server-side programming model is different, and this page
-maps one onto the other.
+work without changes. The server programming model is different. This page
+compares the two systems.
 
 beryl gives you two layers, and Phoenix maps onto both:
 
-- **`beryl/channel`, the channel layer** — the close analogue, and the
-  recommended default for a Phoenix-shaped app. You register a handler per
-  topic pattern, and each channel gets colocated callbacks plus its own
-  private state.
-- **`beryl`, raw app-side dispatch** — the core underneath. One `init`/`update`
-  pair per socket; you own the router.
+- **`beryl/channel`, the channel layer:** This is the closest match and the
+  recommended default for a Phoenix style app. Register one handler for each
+  topic pattern. Each channel has callbacks and private state.
+- **`beryl`, raw app-side dispatch:** This is the core API. Define one `init`
+  and `update` pair for each socket. Your code owns the router.
 
-[Choose an API](/choosing-an-api/) has the decision in one table. Everything
-below the programming model works the way you expect from Phoenix:
-colon-delimited topics with wildcard patterns, CRDT-backed presence, pg-backed
-PubSub, heartbeats, and the JSON array wire format.
+[Choose an API](/choosing-an-api/) compares both APIs. Both support
+colon-delimited topics, wildcard patterns, CRDT presence, `pg` PubSub,
+heartbeats, and the Phoenix JSON array format.
 
 ## The core difference: processes and state
 
-In Phoenix, the framework owns the router *and* the process tree. You declare a
-routing table in your socket module (`channel "room:*", RoomChannel`), Phoenix
-spawns **one channel process per joined topic**, and it calls your callbacks
-(`join`, `handle_in`, `handle_info`, `terminate`) with per-channel state in
-`socket.assigns` — a map of atoms to untyped terms.
+In Phoenix, the framework owns the router and process tree. You define a
+routing table in the socket module, such as
+`channel "room:*", RoomChannel`. Phoenix starts **one channel process for each
+joined topic**. It calls `join`, `handle_in`, `handle_info`, and `terminate`.
+Each callback receives channel state in `socket.assigns`, which is a map of
+atoms to untyped terms.
 
-beryl keeps the routing table idea and drops the process-per-topic idea. With
-the channel layer you declare handlers and get colocated callbacks with
-per-topic state, but every channel on a socket runs sequentially inside that
-socket's runtime actor, and its state is a **value of your own type**, not an
-assigns map. With raw dispatch there is no routing table at all: every event
-for a socket arrives at one `update` as a `socket.Input(msg)` value, and
-per-socket state lives in one `model`.
+beryl keeps the routing table but does not start one process for each topic.
+With the channel layer, define handlers, callbacks, and per-topic state. All
+channels on one socket run in sequence in the runtime actor. Each channel state
+is a **value of your type**, not an assigns map. Raw dispatch has no routing
+table. One `update` receives each socket event as `socket.Input(msg)`. One
+`model` stores the per-socket state.
 
-Two practical consequences either way:
+Both APIs have these effects:
 
-- **Long or blocking work belongs in your own process.** A slow callback holds
-  up the socket. Hand results back with `channel.notify` (layer) or
-  `socket.notify` (core).
+- **Run long or blocking work in another process.** A slow callback delays the
+  socket. Return results with `channel.notify` or `socket.notify`.
 - **Crash scope depends on the callback.** A join panic rejects that join;
   message/binary panics close that topic; an `on_info` panic ends the socket;
   and a terminate panic loses that callback's actions while core teardown
@@ -215,17 +212,17 @@ fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
 }
 ```
 
-Three shifts to notice, common to both layers:
+Both beryl APIs differ from Phoenix in these ways:
 
 - **Side effects are values.** Phoenix callbacks call `push` and
-  `broadcast_from!` imperatively; a beryl callback returns a list, and the
-  runtime applies it strictly in order after the turn ends. List order is wire
-  order, so an acknowledgment followed by a push guarantees the client sees
-  them in that order.
-- **Join acks are explicit and fail closed.** Phoenix infers the ack from
-  `join/3`'s return value. In beryl you answer with `accept`/`reject` (layer)
-  or `AcceptJoin`/`RejectJoin` (core); a join left unanswered is rejected
-  automatically, and with the layer a topic no handler claims is refused with
+  `broadcast_from!`. A beryl callback returns a list. The runtime applies the
+  list in order after the turn. List order is wire order, so an acknowledgment
+  before a push reaches the client first.
+- **Join acknowledgments are explicit and fail closed.** Phoenix infers the
+  acknowledgment from the `join/3` return value. In beryl, return
+  `accept` or `reject` from the channel layer. In raw dispatch, return
+  `AcceptJoin` or `RejectJoin`. The runtime rejects an unanswered join. The
+  channel layer rejects an unmatched topic with
   `{"reason": "unmatched topic"}`.
 - **Server-side messages are typed.** Phoenix's `handle_info` receives any
   term. The channel layer's `on_info` receives *this channel's* own `info`
@@ -266,8 +263,8 @@ end
 ```
 
 You do not need the self-send. `channel.with_actions` attaches actions to the
-accepted join; they are applied strictly after the acknowledgment, so the
-socket is already subscribed:
+accepted join. The runtime applies them after the acknowledgment, when the
+socket has joined the topic:
 
 ```gleam
 channel.accept(state, callbacks())
@@ -309,9 +306,10 @@ replication.
 
 ## Broadcasting from outside a socket
 
-Where you would call `MyAppWeb.Endpoint.broadcast("room:lobby", "notice", %{})`
-from a controller or background job, call `beryl.broadcast` with the `Sockets`
-handle returned by `channel.child_spec` or `beryl.child_spec`:
+From a controller or background job, Phoenix uses
+`MyAppWeb.Endpoint.broadcast("room:lobby", "notice", %{})`. In beryl, call
+`beryl.broadcast` with the `Sockets` handle from `channel.child_spec` or
+`beryl.child_spec`:
 
 ```gleam
 beryl.broadcast(sockets, "room:lobby", "notice", json.object([]))

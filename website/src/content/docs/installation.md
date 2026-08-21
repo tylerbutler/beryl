@@ -3,12 +3,14 @@ title: Installation
 ---
 
 :::note[Pre-1.0]
-beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
+beryl is not yet version 1.0. Minor releases can change the API. The library is
+not ready for production. Try it and report problems. Your feedback will help
+define version 1.0.
 :::
 
-Beryl packages are currently distributed from
-[GitHub](https://github.com/tylerbutler/beryl), not Hex. Add them to your
-Gleam project as git dependencies by editing `gleam.toml`:
+Install beryl packages from
+[GitHub](https://github.com/tylerbutler/beryl). They are not on Hex. Add them
+as Git dependencies in `gleam.toml`:
 
 ```toml
 [dependencies]
@@ -16,26 +18,26 @@ beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path =
 beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
-Then download the dependencies:
+Download the dependencies:
 
 ```bash
 gleam deps download
 ```
 
-`gleam add` only installs Hex packages, so these dependency entries must be
-written by hand.
+`gleam add` installs only Hex packages. Add these entries by hand.
 
-`beryl` includes the core runtime and the recommended `beryl/channel`
-programming layer. `beryl_mist` is the
-[Mist](https://hex.pm/packages/mist) WebSocket transport. If you prefer
-[Ewe](https://hex.pm/packages/ewe), use `path = "packages/beryl_ewe"` instead.
-All packages share the same `git` and `ref` values.
+`beryl` includes the core runtime and the recommended `beryl/channel` API.
+`beryl_mist` provides the [Mist](https://hex.pm/packages/mist) WebSocket
+transport. For [Ewe](https://hex.pm/packages/ewe), use
+`path = "packages/beryl_ewe"`. Use the same `git` and `ref` values for all
+packages.
 
-beryl targets the **Erlang (BEAM)** runtime — it does not support the JavaScript target.
+beryl supports only the **Erlang (BEAM)** target. It does not support the
+JavaScript target.
 
 ## Packages
 
-A typical application adds two packages: beryl and a WebSocket transport.
+A typical application needs beryl and one WebSocket transport.
 
 | Package | Add it when |
 |---------|-------------|
@@ -54,17 +56,15 @@ for raw dispatch. See [Choose an API](/choosing-an-api/) for the tradeoff.
 
 ### Why Gleam 1.18?
 
-beryl is a monorepo: the packages live in subdirectories (`packages/beryl`,
-`packages/beryl_mist`, `packages/beryl_ewe`) rather
-than at the repository root.
-Pointing a git dependency at a subdirectory needs the `path` field, which Gleam
-added in 1.18. Gleam 1.17 and earlier have no way to point a git dependency at
-anything but the repository root, so beryl cannot be used as a dependency from
-those versions.
+beryl is a monorepo. Its packages are in the `packages/beryl`,
+`packages/beryl_mist`, and `packages/beryl_ewe` subdirectories. Git
+dependencies use the `path` field to select a subdirectory. Gleam added this
+field in version 1.18. Older versions can select only the repository root and
+cannot install beryl.
 
-This is a requirement on *your* Gleam, not on beryl's code: the packages
-themselves declare `gleam = ">= 1.13.0"` and compile fine on older toolchains.
-1.18 is only what it takes to write the dependency line above.
+This requirement applies to the Gleam version that installs beryl. The packages
+declare `gleam = ">= 1.13.0"` and can compile with older toolchains. You need
+Gleam 1.18 only to use the dependency entries above.
 
 On an older Gleam, `gleam deps download` fails while parsing your `gleam.toml`
 rather than reporting a version problem:
@@ -87,13 +87,12 @@ upgrade Gleam.
 
 ## Choosing a ref
 
-The example uses `main`, which matches these docs but can change without
-warning. Check [GitHub Releases](https://github.com/tylerbutler/beryl/releases);
-once a tag contains every package you use, replace `main` with that tag.
+The example uses `main`, which matches these docs. The branch can change without
+warning. Check [GitHub Releases](https://github.com/tylerbutler/beryl/releases).
+When one tag contains all required packages, replace `main` with that tag.
 
-Git dependencies are resolved at the exact ref you name. Always use the same
-ref for `beryl` and the transport package; mixing versions
-across them is unsupported.
+Gleam resolves Git dependencies at the specified ref. Use the same ref for
+`beryl` and its transport package. Do not mix versions.
 
 ## Dependencies
 

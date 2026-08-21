@@ -29,8 +29,8 @@ const isHome = Boolean(gem);
 const snippet = `import beryl
 import beryl/presence
 
-// Track who's online and broadcast every change to the room —
-// Phoenix-compatible presence diffs, backed by a CRDT.
+// Track connected users and send each change to the room.
+// The CRDT produces Phoenix-compatible presence diffs.
 let config =
   presence.Config(
     pubsub: Some(ps),
@@ -41,11 +41,11 @@ let config =
     }),
   )
 
-// …then, inside your channel's join callback:
+// In the channel join callback:
 let _ref =
   presence.track(p, "room:lobby", "user:alice", socket.id(socket), meta)
 
-// ps, channels, p and meta come from your app — see the Presence guide.
+// Your app provides ps, channels, p, and meta. See the Presence guide.
 `;
 ---
 
