@@ -297,28 +297,38 @@ fn seats(count: Int) -> List(Int) {
 pub fn a_full_room_rejects_the_next_join_test() {
   let system = h.start("room-capacity")
 
-  // Twenty joins run concurrently across their socket actors. The tracker
-  // serializes each count-and-track reservation, so the cap holds without
-  // a settling delay.
-  list.each(seats(20), fn(index) {
-    let socket_id = "s" <> int.to_string(index)
-    let _frames = h.connect(system, socket_id)
-    h.join(
-      system,
-      socket_id,
-      "room:general",
-      "1",
-      "{\"username\":\"user" <> int.to_string(index) <> "\"}",
-    )
-  })
+  // Twenty-one joins run concurrently across their socket actors. Their
+  // relative reservation order is intentionally unspecified, but the
+  // serialized tracker operation must admit exactly twenty.
+  let replies =
+    seats(21)
+    |> list.map(fn(index) {
+      let socket_id = "s" <> int.to_string(index)
+      let frames = h.connect(system, socket_id)
+      h.join(
+        system,
+        socket_id,
+        "room:general",
+        "1",
+        "{\"username\":\"user" <> int.to_string(index) <> "\"}",
+      )
+      frames
+    })
+    |> list.map(h.recv)
 
-  let overflow = h.connect(system, "s21")
-  h.join(system, "s21", "room:general", "1", "{\"username\":\"late\"}")
-
-  h.contains(h.recv(overflow), [
-    "phx_reply", "\"status\":\"error\"", "\"code\":403", "Room is full (max 20)",
-  ])
-  |> should.be_true
+  replies
+  |> list.filter(h.contains(_, ["phx_reply", "\"status\":\"ok\""]))
+  |> list.length
+  |> should.equal(20)
+  replies
+  |> list.filter(
+    h.contains(_, [
+      "phx_reply", "\"status\":\"error\"", "\"code\":403",
+      "Room is full (max 20)",
+    ]),
+  )
+  |> list.length
+  |> should.equal(1)
   h.stop(system)
 }
 
