@@ -1,5 +1,5 @@
 lockfile_version: '1'
-generated_at: '2026-08-21T19:25:21.234647+00:00'
+generated_at: '2026-08-21T20:04:08.022772+00:00'
 apm_version: 0.28.0
 dependencies:
 - repo_url: dietrichgebert/ponytail
@@ -147,18 +147,22 @@ dependencies:
 - repo_url: tylerbutler/apm-base
   name: apm-base
   host: github.com
-  resolved_commit: 22b36b9ac4cb78993103de51fd7d003b8ec9609a
-  version: 0.2.0
+  resolved_commit: 6592417b524d462ebb058f129558ad319d5fdf7d
+  version: 0.2.1
   package_type: apm_package
   deployed_files:
   - .agents/skills/prose-banlist
   - .agents/skills/prose-banlist/SKILL.md
+  - .claude/rules/use-ste.md
   - .claude/skills/prose-banlist
   - .claude/skills/prose-banlist/SKILL.md
+  - .github/instructions/use-ste.instructions.md
   deployed_file_hashes:
     .agents/skills/prose-banlist/SKILL.md: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
+    .claude/rules/use-ste.md: sha256:6bfec65cbeaf6e78cf7885d6119fb868ad789db4a34a7dd28c2e71abfe69f803
     .claude/skills/prose-banlist/SKILL.md: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
-  content_hash: sha256:e03d1098569536149429efa6390166e999a0f875603588c9139cf15a84b4235e
+    .github/instructions/use-ste.instructions.md: sha256:c4512aac8ae85c13578effb80b704cc72a14a6a13a3c5f3db036ca2e899513de
+  content_hash: sha256:4e4c6dad97bf9cfb0f950027a4a979d80bd0883e1a06683dd0cab680964e40f6
   is_dev: true
 - repo_url: hardikpandya/stop-slop
   name: stop-slop
@@ -284,6 +288,15 @@ deployments:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
   content_hash: sha256:7f6bee86702a488d29ef0dcaabf424bbe2aca345a6a642319d43a1fe0276792e
+- kind: project-relative
+  target: claude
+  value: .claude/rules/use-ste.md
+  runtime: null
+  scope: project
+  owners:
+  - tylerbutler/apm-base
+  active_owner: tylerbutler/apm-base
+  content_hash: sha256:6bfec65cbeaf6e78cf7885d6119fb868ad789db4a34a7dd28c2e71abfe69f803
 - kind: project-relative
   target: claude
   value: .claude/skills/caveman-commit
@@ -941,6 +954,15 @@ deployments:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
   content_hash: sha256:7f6bee86702a488d29ef0dcaabf424bbe2aca345a6a642319d43a1fe0276792e
+- kind: project-relative
+  target: copilot
+  value: .github/instructions/use-ste.instructions.md
+  runtime: null
+  scope: project
+  owners:
+  - tylerbutler/apm-base
+  active_owner: tylerbutler/apm-base
+  content_hash: sha256:c4512aac8ae85c13578effb80b704cc72a14a6a13a3c5f3db036ca2e899513de
 lsp_servers:
 - gleam
 lsp_configs:
