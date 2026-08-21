@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add per-IP connection-attempt rate limits that persist across reconnects, app runtime restarts, and limiter restarts."

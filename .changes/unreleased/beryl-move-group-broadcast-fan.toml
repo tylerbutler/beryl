@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Group broadcast calls now apply backpressure to senders under heavy traffic."

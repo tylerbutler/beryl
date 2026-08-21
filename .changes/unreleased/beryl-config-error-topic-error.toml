@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: `beryl.ConfigError.InvalidTopicPattern` now carries a `beryl/topic.TopicError` instead of a `String`. Match unknown `TopicError` variants with a catch-all unless you handle them separately."

@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add `presence.update` to replace one presence entry atomically without briefly removing its key."

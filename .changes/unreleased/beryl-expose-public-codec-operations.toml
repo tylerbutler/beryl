@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add public codec operations for implementing and testing custom codecs."

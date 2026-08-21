@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add `beryl/channel`, a supervised, typed API for routing topics to handlers and sending ordered effects and server messages."

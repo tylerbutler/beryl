@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: Replace `beryl.start_app` and `beryl/event` with supervised `beryl.child_spec` and `beryl/socket`. `socket.Next` now carries only the model type, and separate `JoinRef` and `ReplyRef` values prevent join responses and message replies from being mixed."

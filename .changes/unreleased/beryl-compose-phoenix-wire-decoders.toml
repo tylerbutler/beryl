@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Phoenix wire decoding now identifies the field with an invalid format instead of returning a generic decoding error."

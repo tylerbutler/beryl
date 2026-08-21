@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Removed"
-body = "BREAKING: Remove the v0.2 channel registry API, including `beryl.register`, `beryl.send_info`, and `RegisteredChannel`. Use `beryl.child_spec` for raw dispatch or `beryl/channel` for typed channel handlers."

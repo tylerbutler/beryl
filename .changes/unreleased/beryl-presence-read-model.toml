@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Presence reads no longer wait on the presence process, and the new `presence.count` returns a topic's entry count. `presence.list`, `presence.get_by_key`, and `presence.count` now return `Result(_, Nil)` when presence is unavailable or a handle is used from another node."

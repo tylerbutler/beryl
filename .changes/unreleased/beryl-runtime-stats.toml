@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: Runtime snapshots now expose `runtime_mailbox_length` and `RuntimeUnavailable` instead of `coordinator_mailbox_length` and `CoordinatorUnavailable`. Remove uses of the deleted `registered_channel_handlers` gauge."

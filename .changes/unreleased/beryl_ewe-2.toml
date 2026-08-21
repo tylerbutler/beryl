@@ -1,3 +1,0 @@
-package = "beryl_ewe"
-kind = "Changed"
-body = "BREAKING: `with_on_connect` now returns ordered connection metadata in `Result(List(#(String, String)), ConnectError)`. Beryl merges this metadata into `ConnectSeed.metadata` instead of treating the callback as a `Nil`-only authentication gate."

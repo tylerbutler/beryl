@@ -1,3 +1,0 @@
-package = "beryl_mist"
-kind = "Changed"
-body = "BREAKING: `with_on_connect` now returns connection metadata merged into `ConnectSeed.metadata` instead of app-typed assigns. The app receives the request path, query, headers, and metadata through `ConnectInfo.seed`."

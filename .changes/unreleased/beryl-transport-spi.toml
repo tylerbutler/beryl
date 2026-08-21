@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING for transport authors: Use `beryl/transport/server` and `beryl/transport/origin` for shared configuration, origin checks, admission, and routing. Replace `connection_owner` and `ConnectionOwner` with `runtime_pid`, pass an optional codec to `admit_socket`, and use the timeout-only `with_heartbeat`."
