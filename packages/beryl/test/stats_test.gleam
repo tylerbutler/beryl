@@ -7,6 +7,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
 import gleeunit/should
+import test_helpers
 
 fn start_sockets() -> beryl.Sockets {
   let assert Ok(sockets) =
@@ -27,28 +28,6 @@ fn start_sockets() -> beryl.Sockets {
 fn read_snapshot(sockets: beryl.Sockets) -> stats.Snapshot {
   let assert Ok(snapshot) = stats.snapshot(sockets)
   snapshot
-}
-
-/// Snapshots are documented as eventually consistent: counts may lag
-/// in-flight lifecycle notifications. Poll until the predicate holds, then
-/// return the snapshot for exact assertions; fail loudly on timeout.
-fn read_until(
-  sockets: beryl.Sockets,
-  predicate: fn(stats.Snapshot) -> Bool,
-  deadline_ms: Int,
-) -> stats.Snapshot {
-  let snapshot = read_snapshot(sockets)
-  case predicate(snapshot), deadline_ms > 0 {
-    True, _ -> snapshot
-    False, True -> {
-      process.sleep(10)
-      read_until(sockets, predicate, deadline_ms - 10)
-    }
-    False, False -> {
-      should.be_true(False)
-      snapshot
-    }
-  }
 }
 
 pub fn snapshot_tracks_socket_lifecycle_test() {
@@ -73,12 +52,12 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   stats.active_topics(joined) |> should.equal(2)
 
   transport.socket_disconnected(sockets, "socket-2")
-  let after_disconnect =
-    read_until(
-      sockets,
-      fn(snapshot) { stats.connected_sockets(snapshot) == 1 },
-      500,
-    )
+  test_helpers.wait_until(
+    fn() { stats.connected_sockets(read_snapshot(sockets)) == 1 },
+    500,
+    10,
+  )
+  let after_disconnect = read_snapshot(sockets)
   stats.connected_sockets(after_disconnect) |> should.equal(1)
   stats.joined_socket_topic_pairs(after_disconnect) |> should.equal(2)
   stats.active_topics(after_disconnect) |> should.equal(2)
