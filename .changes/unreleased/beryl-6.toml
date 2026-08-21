@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "The app runtime subtree now recovers from restart-intensity exhaustion in the nested supervisor, including when the runtime crashes during beryl.stop, so later stops behave correctly."
