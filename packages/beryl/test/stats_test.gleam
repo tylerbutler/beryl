@@ -18,7 +18,10 @@ fn start_sockets() -> beryl.Sockets {
         case input {
           socket.Join(_, _, ref) ->
             socket.Next(model, [socket.AcceptJoin(ref, None)])
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )
@@ -83,7 +86,10 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
         case input {
           socket.Join(_, _, ref) ->
             socket.Next(model, [socket.AcceptJoin(ref, None)])
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )
@@ -140,7 +146,10 @@ pub fn snapshot_succeeds_while_a_socket_callback_is_busy_test() {
             process.sleep(1200)
             socket.Next(model, [])
           }
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )

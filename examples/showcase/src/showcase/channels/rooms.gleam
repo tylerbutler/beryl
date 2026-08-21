@@ -19,7 +19,7 @@ import example_helpers/session_presence
 import gleam/dynamic.{type Dynamic}
 import gleam/int
 import gleam/json.{type Json}
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/set
 import gleam/string
 
@@ -85,12 +85,12 @@ fn accept_room(
       max_room_users,
     )
   {
-    None ->
+    Error(Nil) ->
       channel.reject(error_with_code(
         403,
         "Room is full (max " <> int.to_string(max_room_users) <> ")",
       ))
-    Some(roster) -> {
+    Ok(roster) -> {
       // The room list lives on another topic, so it is the one thing here
       // that goes through the hub.
       announce_rooms_changed(ctx, state.room_name)

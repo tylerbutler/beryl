@@ -225,20 +225,10 @@ type State(model, msg) {
     /// are then fire-and-forget: there is no longer a runtime to deliver
     /// the acknowledgement to.
     stopping: Bool,
-    /// `None` in the router, `Some(router)` in a per-socket actor. Every
-    /// socket-scoped function below serves both roles unchanged: a socket
-    /// actor is this same `State` with exactly one entry in `sockets`, and
-    /// this field is what the handful of router-owned operations (fan-out,
-    /// topic index, PubSub) branch on.
-    router: Option(Subject(Msg(msg))),
-    /// Router-only. socket_id -> its admitted socket actor.
-    socket_actors: Dict(String, SocketActorRef(msg)),
-    /// Router-only. Set while the router is draining its socket actors;
-    /// answered once the last `SocketClosed` arrives.
-    stop_reply: Option(Subject(Nil)),
-    /// Router-only. How many socket actors have finished shutdown phase
-    /// one. Teardown starts when every one of them has.
-    stop_finalized: Int,
+    /// The process's topology-specific state. A socket actor is this same
+    /// `State` with exactly one entry in `sockets`; router-only shutdown and
+    /// actor-index fields cannot be constructed for that role.
+    role: RuntimeRole(msg),
   )
 }
 
@@ -252,6 +242,15 @@ type SocketActorRef(msg) {
     pid: process.Pid,
     monitor: process.Monitor,
   )
+}
+
+type RuntimeRole(msg) {
+  RouterRole(
+    socket_actors: Dict(String, SocketActorRef(msg)),
+    stop_reply: Option(Subject(Nil)),
+    stop_finalized: Int,
+  )
+  SocketActorRole(router: Subject(Msg(msg)))
 }
 
 // ── Suspended per-socket work ───────────────────────────────────────────────
@@ -532,10 +531,11 @@ pub fn start_named(
         queued: dict.new(),
         unacked_tracks: dict.new(),
         stopping: False,
-        router: None,
-        socket_actors: dict.new(),
-        stop_reply: None,
-        stop_finalized: 0,
+        role: RouterRole(
+          socket_actors: dict.new(),
+          stop_reply: None,
+          stop_finalized: 0,
+        ),
       )
     // Heartbeats are per-socket timers, so the router runs no sweep and
     // schedules nothing.
@@ -614,10 +614,7 @@ pub fn start_socket_actor(
         queued: dict.new(),
         unacked_tracks: dict.new(),
         stopping: False,
-        router: Some(router),
-        socket_actors: dict.new(),
-        stop_reply: None,
-        stop_finalized: 0,
+        role: SocketActorRole(router),
       )
     // Router death must take its socket actors with it: each actor
     // monitors the router and stops on its `Down`, while staying unlinked
@@ -688,7 +685,7 @@ fn handle_message(
     | RouteDecodedBinary(socket_id, _)
     | HandleBinary(socket_id, _)
     | AppInfo(socket_id, _) ->
-      case state.router {
+      case state.role {
         // The router stays on the inbound path, one send per message: its
         // turn is a match-and-forward, never an app callback, and the
         // benchmarks showed no measurable cost from the extra hop even at
@@ -696,14 +693,14 @@ fn handle_message(
         // the transport so it sends direct is deliberate future work,
         // coupled to backpressure (a per-socket in-flight budget) rather
         // than worth doing on its own.
-        None -> {
-          case dict.get(state.socket_actors, socket_id) {
+        RouterRole(socket_actors:, ..) -> {
+          case dict.get(socket_actors, socket_id) {
             Ok(ref) -> process.send(ref.subject, message)
             Error(Nil) -> Nil
           }
           actor.continue(state)
         }
-        Some(_) ->
+        SocketActorRole(_) ->
           case dict.has_key(state.suspended, socket_id) {
             True ->
               actor.continue(enqueue_socket_msg(state, socket_id, message))
@@ -712,16 +709,16 @@ fn handle_message(
           }
       }
     Broadcast(topic_name, event_name, payload, except) -> {
-      case state.router {
+      case state.role {
         // In a socket actor this is a delivery, not an origination: the
         // router already resolved the recipients (decision 1's hop) and
         // this actor encodes and sends for its own socket.
-        Some(_) -> {
-          let _ =
+        SocketActorRole(_) -> {
+          let _recipient_count =
             local_broadcast(state, topic_name, event_name, payload, except)
           Nil
         }
-        None ->
+        RouterRole(..) ->
           broadcast_with_pubsub(state, topic_name, event_name, payload, except)
       }
       actor.continue(state)
@@ -750,10 +747,14 @@ fn handle_message(
       // Answered entirely from the router's index; no socket actor is
       // polled, so counts may lag in-flight socket lifecycle messages —
       // the eventual consistency the stats API documents.
+      let connected_sockets = case state.role {
+        RouterRole(socket_actors:, ..) -> dict.size(socket_actors)
+        SocketActorRole(_) -> 0
+      }
       process.send(
         reply,
         StatsSnapshot(
-          connected_sockets: dict.size(state.socket_actors),
+          connected_sockets: connected_sockets,
           joined_socket_topic_pairs: state.topics
             |> dict.values
             |> list.fold(0, fn(total, ids) { total + set.size(ids) }),
@@ -763,51 +764,64 @@ fn handle_message(
       actor.continue(state)
     }
     Stop(reply) ->
-      case state.router {
-        Some(_) -> handle_stop(state, Some(reply))
-        None -> begin_router_stop(state, reply)
+      case state.role {
+        SocketActorRole(_) -> handle_stop(state, Some(reply))
+        RouterRole(..) -> begin_router_stop(state, reply)
       }
     FinalizeForStop -> {
       let state = finalize_for_stop(state)
-      case state.router, dict.keys(state.sockets) {
-        Some(router), [socket_id] ->
+      case state.role, dict.keys(state.sockets) {
+        SocketActorRole(router), [socket_id] ->
           process.send(router, StopPhaseDone(socket_id))
         // No socket ever registered here; report under a name the router
         // does not need, since it only counts.
-        Some(router), _ -> process.send(router, StopPhaseDone(""))
-        None, _ -> Nil
+        SocketActorRole(router), _ -> process.send(router, StopPhaseDone(""))
+        RouterRole(..), _ -> Nil
       }
       actor.continue(state)
     }
-    StopPhaseDone(_) -> {
-      let state = State(..state, stop_finalized: state.stop_finalized + 1)
-      begin_stop_phase_two_if_ready(state)
-      actor.continue(state)
-    }
+    StopPhaseDone(_) ->
+      case state.role {
+        RouterRole(socket_actors:, stop_reply:, stop_finalized:) -> {
+          let state =
+            State(
+              ..state,
+              role: RouterRole(
+                socket_actors: socket_actors,
+                stop_reply: stop_reply,
+                stop_finalized: stop_finalized + 1,
+              ),
+            )
+          begin_stop_phase_two_if_ready(state)
+          actor.continue(state)
+        }
+        SocketActorRole(_) -> actor.continue(state)
+      }
     StopSocketActor -> {
       // The router is waiting on `SocketClosed`, not on a reply, so the
       // teardown's own broadcasts reach it before the actor goes away.
       let socket_ids = dict.keys(state.sockets)
       let next = handle_stop(state, None)
-      case state.router, socket_ids {
-        Some(router), [socket_id] ->
+      case state.role, socket_ids {
+        SocketActorRole(router), [socket_id] ->
           process.send(router, SocketClosed(socket_id))
         _, _ -> Nil
       }
       next
     }
     StopTimedOut ->
-      case state.stop_reply {
-        None -> actor.continue(state)
-        Some(reply) -> {
+      case state.role {
+        RouterRole(stop_reply: None, ..) | SocketActorRole(_) ->
+          actor.continue(state)
+        RouterRole(socket_actors:, stop_reply: Some(reply), ..) -> {
           // Escalate rather than abandon: a teardown stuck in a
           // pathological app callback is killed so shutdown stays inside
           // `beryl.stop`'s budget without leaking the process.
           state.logger
           |> log.warn("Runtime stop: killing unresponsive socket actors", [
-            #("socket_count", int.to_string(dict.size(state.socket_actors))),
+            #("socket_count", int.to_string(dict.size(socket_actors))),
           ])
-          dict.values(state.socket_actors)
+          dict.values(socket_actors)
           |> list.each(fn(ref) { process.kill(ref.pid) })
           process.send(reply, Nil)
           actor.stop()
@@ -818,37 +832,53 @@ fn handle_message(
       // outlived a router restart must not plant a phantom entry. A
       // legitimate join is always preceded by the router's own insert, so
       // this never drops a real one.
-      case dict.has_key(state.socket_actors, socket_id) {
-        True ->
-          actor.continue(add_topic_subscriber(state, socket_id, topic_name))
-        False -> actor.continue(state)
+      case state.role {
+        RouterRole(socket_actors:, ..) ->
+          case dict.has_key(socket_actors, socket_id) {
+            True ->
+              actor.continue(add_topic_subscriber(state, socket_id, topic_name))
+            False -> actor.continue(state)
+          }
+        SocketActorRole(_) -> actor.continue(state)
       }
     IndexLeave(socket_id, topic_name) ->
       actor.continue(remove_topic_subscriber(state, socket_id, topic_name))
     SocketClosed(socket_id) -> remove_socket_actor(state, socket_id)
     SocketActorDown(down) ->
-      case down {
-        process.ProcessDown(pid: pid, monitor: _, reason: _) ->
-          case
-            dict.to_list(state.socket_actors)
-            |> list.find(fn(entry) {
-              let #(_, ref) = entry
-              ref.pid == pid
-            })
-          {
-            Ok(#(socket_id, _)) -> {
-              state.logger
-              |> log.warn("Socket actor exited without reporting; sweeping", [
-                #("socket_id", socket_id),
-              ])
-              remove_socket_actor(state, socket_id)
-            }
-            // Already removed via `SocketClosed`, or never admitted.
-            Error(Nil) -> actor.continue(state)
-          }
-        process.PortDown(..) -> actor.continue(state)
+      case state.role {
+        SocketActorRole(_) -> actor.continue(state)
+        RouterRole(socket_actors:, ..) ->
+          handle_router_socket_actor_down(state, down, socket_actors)
       }
     RouterDown -> actor.stop()
+  }
+}
+
+fn handle_router_socket_actor_down(
+  state: State(model, msg),
+  down: process.Down,
+  socket_actors: Dict(String, SocketActorRef(msg)),
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case down {
+    process.ProcessDown(pid: pid, monitor: _, reason: _) ->
+      case
+        dict.to_list(socket_actors)
+        |> list.find(fn(entry) {
+          let #(_, ref) = entry
+          ref.pid == pid
+        })
+      {
+        Ok(#(socket_id, _)) -> {
+          state.logger
+          |> log.warn("Socket actor exited without reporting; sweeping", [
+            #("socket_id", socket_id),
+          ])
+          remove_socket_actor(state, socket_id)
+        }
+        // Already removed via `SocketClosed`, or never admitted.
+        Error(Nil) -> actor.continue(state)
+      }
+    process.PortDown(..) -> actor.continue(state)
   }
 }
 
@@ -860,7 +890,27 @@ fn remove_socket_actor(
   state: State(model, msg),
   socket_id: String,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  case dict.get(state.socket_actors, socket_id) {
+  case state.role {
+    SocketActorRole(_) -> actor.continue(state)
+    RouterRole(socket_actors:, stop_reply:, stop_finalized:) ->
+      remove_router_socket_actor(
+        state,
+        socket_id,
+        socket_actors,
+        stop_reply,
+        stop_finalized,
+      )
+  }
+}
+
+fn remove_router_socket_actor(
+  state: State(model, msg),
+  socket_id: String,
+  socket_actors: Dict(String, SocketActorRef(msg)),
+  stop_reply: Option(Subject(Nil)),
+  stop_finalized: Int,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case dict.get(socket_actors, socket_id) {
     // Demonitoring flushes a `Down` already in the mailbox, so a normal
     // close can never be swept a second time as a crash.
     Ok(ref) -> process.demonitor_process(ref.monitor)
@@ -873,12 +923,20 @@ fn remove_socket_actor(
     |> list.fold(state, fn(st, topic_name) {
       remove_topic_subscriber(st, socket_id, topic_name)
     })
+  let socket_actors = dict.delete(socket_actors, socket_id)
   let state =
-    State(..state, socket_actors: dict.delete(state.socket_actors, socket_id))
-  case state.stop_reply {
+    State(
+      ..state,
+      role: RouterRole(
+        socket_actors: socket_actors,
+        stop_reply: stop_reply,
+        stop_finalized: stop_finalized,
+      ),
+    )
+  case stop_reply {
     None -> actor.continue(state)
     Some(reply) ->
-      case dict.is_empty(state.socket_actors) {
+      case dict.is_empty(socket_actors) {
         True -> {
           process.send(reply, Nil)
           actor.stop()
@@ -897,11 +955,15 @@ fn remove_socket_actor(
 /// phase one. Re-sending `StopSocketActor` to an actor that already got
 /// one is harmless: it stops on the first and never reads the second.
 fn begin_stop_phase_two_if_ready(state: State(model, msg)) -> Nil {
-  case state.stop_finalized >= dict.size(state.socket_actors) {
-    True ->
-      dict.values(state.socket_actors)
-      |> list.each(fn(ref) { process.send(ref.subject, StopSocketActor) })
-    False -> Nil
+  case state.role {
+    SocketActorRole(_) -> Nil
+    RouterRole(socket_actors:, stop_finalized:, ..) ->
+      case stop_finalized >= dict.size(socket_actors) {
+        True ->
+          dict.values(socket_actors)
+          |> list.each(fn(ref) { process.send(ref.subject, StopSocketActor) })
+        False -> Nil
+      }
   }
 }
 
@@ -911,8 +973,8 @@ fn after_socket_turn(
   before: State(model, msg),
   after: State(model, msg),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  case dict.keys(before.sockets), after.router {
-    [socket_id], Some(router) ->
+  case dict.keys(before.sockets), after.role {
+    [socket_id], SocketActorRole(router) ->
       case dict.has_key(after.sockets, socket_id) {
         True -> actor.continue(after)
         False -> {
@@ -1045,11 +1107,11 @@ fn handle_admit_socket(
   actor_subject: Subject(Msg(msg)),
   actor_pid: process.Pid,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  case state.router {
+  case state.role {
     // In a socket actor: the router has already admitted this socket
     // atomically in its own turn; this actor runs the app `init` and
     // answers the transport directly.
-    Some(router) -> {
+    SocketActorRole(router) -> {
       let #(state, admitted) =
         register_socket(
           state,
@@ -1078,7 +1140,7 @@ fn handle_admit_socket(
     // waits on the socket actor — the actor answers the transport itself,
     // so a slow or crashing `init` cannot block admission of other
     // sockets (and the router must never block on a socket actor).
-    None ->
+    RouterRole(socket_actors:, stop_reply:, stop_finalized:) ->
       case
         !state.stopping
         && process.self() == owner
@@ -1111,10 +1173,14 @@ fn handle_admit_socket(
           actor.continue(
             State(
               ..state,
-              socket_actors: dict.insert(
-                state.socket_actors,
-                socket_id,
-                SocketActorRef(actor_subject, actor_pid, monitor),
+              role: RouterRole(
+                socket_actors: dict.insert(
+                  socket_actors,
+                  socket_id,
+                  SocketActorRef(actor_subject, actor_pid, monitor),
+                ),
+                stop_reply: stop_reply,
+                stop_finalized: stop_finalized,
               ),
             ),
           )
@@ -1231,19 +1297,38 @@ fn begin_router_stop(
   state: State(model, msg),
   reply: Subject(Nil),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
-  state.logger
-  |> log.info("Runtime stopping", [
-    #("socket_count", int.to_string(dict.size(state.socket_actors))),
-  ])
-  use <- bool.lazy_guard(when: dict.is_empty(state.socket_actors), return: fn() {
-    process.send(reply, Nil)
-    actor.stop()
-  })
-  dict.values(state.socket_actors)
-  |> list.each(fn(ref) { process.send(ref.subject, FinalizeForStop) })
-  let _timer =
-    process.send_after(state.self_subject, stop_drain_timeout_ms, StopTimedOut)
-  actor.continue(State(..state, stopping: True, stop_reply: Some(reply)))
+  case state.role {
+    SocketActorRole(_) -> handle_stop(state, Some(reply))
+    RouterRole(socket_actors:, stop_finalized:, ..) -> {
+      state.logger
+      |> log.info("Runtime stopping", [
+        #("socket_count", int.to_string(dict.size(socket_actors))),
+      ])
+      use <- bool.lazy_guard(when: dict.is_empty(socket_actors), return: fn() {
+        process.send(reply, Nil)
+        actor.stop()
+      })
+      dict.values(socket_actors)
+      |> list.each(fn(ref) { process.send(ref.subject, FinalizeForStop) })
+      let _timer =
+        process.send_after(
+          state.self_subject,
+          stop_drain_timeout_ms,
+          StopTimedOut,
+        )
+      actor.continue(
+        State(
+          ..state,
+          stopping: True,
+          role: RouterRole(
+            socket_actors: socket_actors,
+            stop_reply: Some(reply),
+            stop_finalized: stop_finalized,
+          ),
+        ),
+      )
+    }
+  }
 }
 
 fn handle_stop(
@@ -2861,9 +2946,10 @@ fn remove_topic_subscriber(
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
     |> set.delete(socket_id)
-  case state.router {
-    Some(router) -> process.send(router, IndexLeave(socket_id, topic_name))
-    None -> Nil
+  case state.role {
+    SocketActorRole(router) ->
+      process.send(router, IndexLeave(socket_id, topic_name))
+    RouterRole(..) -> Nil
   }
   case set.is_empty(subscribers) {
     True -> {
@@ -2897,9 +2983,10 @@ fn add_topic_subscriber(
   let existing =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
-  case state.router {
-    Some(router) -> process.send(router, IndexJoin(socket_id, topic_name))
-    None ->
+  case state.role {
+    SocketActorRole(router) ->
+      process.send(router, IndexJoin(socket_id, topic_name))
+    RouterRole(..) ->
       case state.subscriber, set.is_empty(existing) {
         Some(subscriber), True -> pubsub.join(subscriber, topic_name)
         _, _ -> Nil
@@ -4213,17 +4300,18 @@ fn local_broadcast(
     #("recipient_count", int.to_string(list.length(recipients))),
     #("except", optional_string(except)),
   ])
-  case state.router {
+  case state.role {
     // Socket actor: it is the only possible recipient, so encode and send
     // inline exactly as the shared runtime did. Send failures are logged
     // by `send_frame_logged` in this, the only process that sees them.
-    Some(_) ->
+    SocketActorRole(_) ->
       list.fold(recipients, 0, fn(count, socket_id) {
         case dict.get(state.sockets, socket_id) {
           Ok(socket) -> {
             let frame =
               codec.encode_push(socket.codec)(topic_name, event_name, payload)
-            let _ = send_frame_logged(state, socket, topic_name, frame)
+            let _send_result =
+              send_frame_logged(state, socket, topic_name, frame)
             count + 1
           }
           Error(Nil) -> count
@@ -4232,9 +4320,9 @@ fn local_broadcast(
     // Decision 1: the router resolves recipients and hands each one to its
     // own actor, so encoding happens on N schedulers instead of in this
     // turn, and only one process ever writes to a given transport.
-    None -> {
+    RouterRole(socket_actors:, ..) -> {
       list.each(recipients, fn(socket_id) {
-        case dict.get(state.socket_actors, socket_id) {
+        case dict.get(socket_actors, socket_id) {
           Ok(ref) ->
             process.send(
               ref.subject,
@@ -4293,7 +4381,8 @@ fn broadcast_with_pubsub(
   use <- with_router(state, fn(router) {
     case except, dict.keys(state.sockets) {
       None, [socket_id] -> {
-        let _ = local_broadcast(state, topic_name, event_name, payload, None)
+        let _recipient_count =
+          local_broadcast(state, topic_name, event_name, payload, None)
         process.send(
           router,
           Broadcast(topic_name, event_name, payload, Some(socket_id)),
@@ -4344,9 +4433,9 @@ fn with_router(
   in_socket_actor: fn(Subject(Msg(msg))) -> Nil,
   in_router: fn() -> Nil,
 ) -> Nil {
-  case state.router {
-    Some(router) -> in_socket_actor(router)
-    None -> in_router()
+  case state.role {
+    SocketActorRole(router) -> in_socket_actor(router)
+    RouterRole(..) -> in_router()
   }
 }
 

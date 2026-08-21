@@ -5,7 +5,6 @@
 //// full snapshots through a normal Beryl broadcast after each mutation.
 
 import beryl
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Pid, type Selector, type Subject}
 import gleam/json
 import gleam/option.{type Option, None, Some}
@@ -15,8 +14,10 @@ const start_timeout_ms = 5000
 const call_timeout_ms = 1000
 
 pub opaque type Tracker {
-  Tracker(pid: Pid, subject: Subject(Command), table: Dynamic)
+  Tracker(pid: Pid, subject: Subject(Command), table: Store)
 }
+
+type Store
 
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
@@ -25,7 +26,7 @@ type Command {
     session_id: String,
     meta: json.Json,
     maximum: Int,
-    reply: Subject(Option(json.Json)),
+    reply: Subject(Result(json.Json, Nil)),
   )
   Publish(topic: String)
   Stop(reply: Subject(Nil))
@@ -41,24 +42,24 @@ type State {
 }
 
 @external(erlang, "example_session_presence_ffi", "new_store")
-fn new_store() -> Dynamic
+fn new_store() -> Store
 
 @external(erlang, "example_session_presence_ffi", "track")
 fn store_track(
-  table: Dynamic,
+  table: Store,
   topic: String,
   session_id: String,
   meta: json.Json,
 ) -> Nil
 
 @external(erlang, "example_session_presence_ffi", "untrack")
-fn store_untrack(table: Dynamic, topic: String, session_id: String) -> Nil
+fn store_untrack(table: Store, topic: String, session_id: String) -> Nil
 
 @external(erlang, "example_session_presence_ffi", "count")
-fn store_count(table: Dynamic, topic: String) -> Int
+fn store_count(table: Store, topic: String) -> Int
 
 @external(erlang, "example_session_presence_ffi", "snapshot")
-fn store_snapshot(table: Dynamic, topic: String) -> List(#(String, json.Json))
+fn store_snapshot(table: Store, topic: String) -> List(#(String, json.Json))
 
 pub fn start() -> Tracker {
   let table = new_store()
@@ -138,7 +139,7 @@ pub fn track_snapshot_if_below(
   session_id: String,
   meta: json.Json,
   maximum: Int,
-) -> Option(json.Json) {
+) -> Result(json.Json, Nil) {
   process.call(tracker.subject, call_timeout_ms, fn(reply) {
     TrackSnapshotIfBelow(topic, session_id, meta, maximum, reply)
   })
@@ -153,7 +154,7 @@ pub fn count(tracker: Tracker, topic: String) -> Int {
   store_count(tracker.table, topic)
 }
 
-fn loop(selector: Selector(Event), table: Dynamic, state: State) -> Nil {
+fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
   case process.selector_receive_forever(selector) {
     Message(Configure(sockets, reply)) -> {
       process.send(reply, Nil)
@@ -163,9 +164,9 @@ fn loop(selector: Selector(Event), table: Dynamic, state: State) -> Nil {
       let result = case store_count(table, topic) < maximum {
         True -> {
           store_track(table, topic, session_id, meta)
-          Some(json.object(store_snapshot(table, topic)))
+          Ok(json.object(store_snapshot(table, topic)))
         }
-        False -> None
+        False -> Error(Nil)
       }
       process.send(reply, result)
       loop(selector, table, state)

@@ -24,7 +24,7 @@ import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/json
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{Some}
 
 /// Per-topic state for one socket in a cursor room.
 pub type Model {
@@ -37,14 +37,14 @@ pub type Ctx {
 
 const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
-/// Handle a join for a `cursor:*` topic. Returns `None` when rejected.
+/// Handle a join for a `cursor:*` topic.
 pub fn join(
   ctx: Ctx,
   socket_id: String,
   topic: String,
   payload: Dynamic,
   ref: JoinRef,
-) -> #(Option(Model), List(Effect)) {
+) -> #(Model, List(Effect)) {
   let username = payload.string_or(payload, "username", "Anonymous")
   let color = color.pastel_for(socket_id)
   let meta =
@@ -61,7 +61,7 @@ pub fn join(
     ])
   let roster =
     session_presence.track_snapshot(ctx.presence, topic, socket_id, meta)
-  #(Some(Model(username: username, color: color)), [
+  #(Model(username: username, color: color), [
     socket.AcceptJoin(ref, Some(reply)),
     socket.Broadcast(topic, "presence_list", roster),
   ])
@@ -90,7 +90,7 @@ pub fn update(
     }
     "reaction" ->
       case decode_reaction(payload) {
-        Some(#(reaction, x, y)) -> {
+        Ok(#(reaction, x, y)) -> {
           let reaction_payload =
             json.object([
               #("reaction", json.string(reaction)),
@@ -101,7 +101,7 @@ pub fn update(
             socket.BroadcastFrom(topic, "reaction", reaction_payload),
           ])
         }
-        None -> #(model, [])
+        Error(Nil) -> #(model, [])
       }
     _ -> #(model, [])
   }
@@ -147,18 +147,17 @@ pub fn cursor_rooms_update(
             socket.Next(state, [
               socket.RejectJoin(ref, unknown_topic()),
             ])
-          True ->
-            case join(ctx, state.socket_id, topic_name, payload, ref) {
-              #(Some(model), effects) ->
-                socket.Next(
-                  CursorRooms(
-                    ..state,
-                    topics: dict.insert(state.topics, topic_name, model),
-                  ),
-                  effects,
-                )
-              #(None, effects) -> socket.Next(state, effects)
-            }
+          True -> {
+            let #(model, effects) =
+              join(ctx, state.socket_id, topic_name, payload, ref)
+            socket.Next(
+              CursorRooms(
+                ..state,
+                topics: dict.insert(state.topics, topic_name, model),
+              ),
+              effects,
+            )
+          }
         }
 
       socket.Message(topic_name, event_name, payload, _ref) ->
@@ -212,7 +211,7 @@ fn unknown_topic() -> json.Json {
   json.object([#("reason", json.string("unknown_topic"))])
 }
 
-fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {
+fn decode_reaction(payload: Dynamic) -> Result(#(String, Float, Float), Nil) {
   case
     payload.string_field(payload, "reaction"),
     payload.float_field(payload, "x"),
@@ -224,11 +223,11 @@ fn decode_reaction(payload: Dynamic) -> Option(#(String, Float, Float)) {
         && coordinate_in_range(x)
         && coordinate_in_range(y)
       case valid {
-        True -> Some(#(reaction, x, y))
-        False -> None
+        True -> Ok(#(reaction, x, y))
+        False -> Error(Nil)
       }
     }
-    _, _, _ -> None
+    _, _, _ -> Error(Nil)
   }
 }
 
