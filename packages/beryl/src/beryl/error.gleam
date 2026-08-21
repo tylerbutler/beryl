@@ -17,7 +17,7 @@ type StartFailureReason {
   StartExited(String)
 }
 
-/// Convert a startup failure to a human-readable diagnostic string.
+/// Return a human-readable description of a startup failure.
 pub fn describe_start_failure(failure: StartFailure) -> String {
   case failure.reason {
     StartTimedOut -> "actor init timed out"
@@ -26,7 +26,7 @@ pub fn describe_start_failure(failure: StartFailure) -> String {
   }
 }
 
-/// Convert a `gleam/otp/actor.StartError` into beryl's `StartFailure`.
+/// Convert a `gleam/otp/actor.StartError` to Beryl's `StartFailure`.
 pub fn from_actor_start_error(error: actor.StartError) -> StartFailure {
   case error {
     actor.InitTimeout -> StartFailure(StartTimedOut)

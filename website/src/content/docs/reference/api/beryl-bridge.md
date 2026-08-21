@@ -65,11 +65,11 @@ Bridge - Forward an external OTP actor's message stream to a socket via
 
 ### `Bridge`
 
-A handle to a running bridge forwarder process.
+A handle to a running bridge forwarder.
 
- `message` is the type emitted by the external actor and received on the
- bridge's `Subject`. Obtain that subject with `subject` to wire it up to a
- domain actor, and call `stop` to tear the forwarder down.
+ `message` is the type that the external actor sends to the bridge's
+ `Subject`. Get the subject with `subject`. Call `stop` to stop the
+ forwarder.
 
 ```gleam
 pub type Bridge(a)
@@ -89,17 +89,17 @@ pub type StartError {
 
 ##### `ForwarderUnavailable`
 
-The forwarder process did not report its subjects within
- `handshake_timeout_ms` — it failed to spawn or start.
+The forwarder did not report its subjects within
+ `handshake_timeout_ms`. It failed to spawn or start.
 
 ## Functions
 
 ### `pid`
 
-The forwarder process id.
+Return the forwarder process ID.
 
- Exposed for diagnostics and supervision; you normally only need `subject`
- and `stop`.
+ Use this value for diagnostics and supervision. Most callers need only
+ `subject` and `stop`.
 
 ```gleam
 pub fn pid(Bridge(a)) -> process.Pid
@@ -107,22 +107,21 @@ pub fn pid(Bridge(a)) -> process.Pid
 
 ### `start`
 
-Start a bridge that forwards values from an external `Subject` to a
- socket's `update` function as `Info` events.
+Start a bridge from an external `Subject` to a socket's `update` function.
 
- The returned `Bridge` owns a freshly spawned forwarder process. Pass
- `subject(bridge)` to the external/domain actor so it delivers its stream
- to the forwarder; each received value is mapped with `transform` and
- delivered via `socket.notify(sender, transform(value))`.
+ The returned `Bridge` owns a new forwarder process. Pass `subject(bridge)`
+ to the external or domain actor. The forwarder maps each received value
+ with `transform` and sends it as an `Info` event through
+ `socket.notify(sender, transform(value))`.
 
  Use `transform` to translate the domain message into your app's
  server-side `msg` type (the `Info` payload). If no translation is needed,
  pass the identity function `fn(value) { value }`.
 
- Always call `stop` when the owning socket or topic ends — that is the
- per-owner cleanup. The forwarder also monitors the calling process, but
- that monitor is only a backstop: it fires if the owner dies without a
- `stop`, not as a per-topic lifecycle.
+ Always call `stop` when the owning socket or topic ends. The forwarder
+ also monitors the calling process. This monitor stops the forwarder if
+ the owner dies without calling `stop`, but it does not track topic
+ lifecycles.
 
 ```gleam
 pub fn start(
@@ -133,7 +132,7 @@ pub fn start(
 
 ### `stop`
 
-Stop the bridge's forwarder process.
+Stop the bridge's forwarder.
 
  Call this when the owning socket or topic ends. It is safe to call more
  than once and after the forwarder has already exited.
@@ -144,10 +143,10 @@ pub fn stop(Bridge(a)) -> Nil
 
 ### `subject`
 
-The `Subject` the external actor should send its stream to.
+Return the `Subject` that receives the external actor's stream.
 
- Hand this to your domain actor (e.g. as its subscriber) so each emitted
- value is forwarded to the bridged socket.
+ Give this subject to the domain actor, for example as its subscriber.
+ Each value is then sent to the bridged socket.
 
 ```gleam
 pub fn subject(Bridge(a)) -> process.Subject(a)

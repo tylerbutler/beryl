@@ -49,17 +49,17 @@
 //// unrelated `state` and `info` types compose in one list. No value is
 //// ever erased to `Dynamic` and no unchecked coercion is involved:
 //// typed `info` values travel inside a closure that only the join which
-//// created it can open, and the socket that owns the join opens it — or
-//// drops it unopened, if the join has since ended.
+//// created it can open. The socket that owns the join opens it. If the join
+//// has ended, the socket drops it unopened.
 ////
 //// ## Ordering
 ////
 //// Action lists are applied strictly from left to right, and they always
 //// target the channel's own topic. They lower onto
-//// beryl's core `Effect` values, which the runtime applies in list order —
-//// so action order is wire order. An asynchronous presence effect can park
-//// this socket while other sockets continue; the remaining actions resume
-//// only after that effect completes.
+//// beryl's core `Effect` values, which the runtime applies in list order.
+//// Action order is therefore wire order. An asynchronous presence effect can
+//// park this socket while other sockets continue. The remaining actions
+//// resume only after that effect completes.
 ////
 //// A join's actions (see [`with_actions`](#with_actions)) are emitted with
 //// the join acknowledgment, immediately after it: the socket is already
@@ -94,10 +94,10 @@ import gleam/set
 
 /// Why building a channel-system child specification failed.
 ///
-/// Handler patterns are validated before the core configuration. Validation
-/// checks every pattern's syntax in registration order, then checks exact
-/// duplicates in registration order. Overlapping non-identical patterns are
-/// allowed because routing takes the first match.
+/// The function validates handler patterns before the core configuration. It
+/// checks each pattern's syntax in registration order. It then checks for
+/// exact duplicates in the same order. Overlapping patterns are allowed when
+/// they are not identical because routing uses the first match.
 pub type ChildSpecError {
   /// A handler used an invalid topic pattern.
   InvalidPattern(pattern: String, reason: topic.TopicError)
@@ -110,10 +110,10 @@ pub type ChildSpecError {
 /// Build a channel system's supervision child specification for embedding
 /// in an application's supervision tree.
 ///
-/// Like `beryl.child_spec`, this reports only what can be detected before
-/// the tree is started: the handler table is validated first, then the
-/// `beryl.Config`. The returned `beryl.Sockets` is usable as soon as the
-/// owning tree is running.
+/// Like `beryl.child_spec`, this function reports only errors that it can
+/// detect before the tree starts. It validates the handler table first and
+/// then validates `beryl.Config`. You can use the returned `beryl.Sockets`
+/// after the owning tree starts.
 ///
 /// ## Example
 ///
@@ -184,24 +184,24 @@ fn check_duplicates(
 
 /// A typed handle for sending server-side messages to one joined channel.
 ///
-/// Obtained from [`JoinContext`](#joincontext) in the `join` callback and safe to
-/// share with any process. Messages sent through it are delivered to the
-/// channel's `on_info` callback with their type intact.
+/// Get this handle from [`JoinContext`](#joincontext) in the `join` callback.
+/// You can share it with any process. The channel's `on_info` callback
+/// receives each message with its type intact.
 ///
-/// A sender is scoped to the join that produced it. Sending is
-/// asynchronous and never fails, so it cannot report that the channel is
-/// gone: liveness is decided where the message is delivered. After a
-/// normal close — a client leave, a [`close`](#close) result, a socket
-/// teardown — or after the same topic has been joined again, the message
-/// is dropped there and is never handed to a different join.
+/// A sender is scoped to the join that produced it. Sending is asynchronous
+/// and never fails. It cannot report that the channel is gone. The delivery
+/// point checks liveness. It drops the message after a normal close, such as
+/// a client leave, a [`close`](#close) result, or a socket teardown. It also
+/// drops the message after the same topic is joined again. A different join
+/// never receives the message.
 ///
 /// The one exception is a panic inside [`on_terminate`](#on_terminate).
 /// Core's policy for a crash while closing a topic is to log it and keep
 /// the model from before the close, so the channel system keeps that
 /// instance: a sender created by it can still reach its `on_info` until
 /// the topic is joined again or the socket ends. Nothing is handed to
-/// another join in that window either — it is the *same* instance,
-/// outliving its own termination.
+/// another join in that window. It is the *same* instance, outliving its own
+/// termination.
 ///
 /// ## Cost
 ///
@@ -218,20 +218,19 @@ pub opaque type Sender(info) {
 
 /// Send a typed server-side message to the channel that owns `sender`.
 ///
-/// Each call enqueues exactly one message, and each enqueued message
-/// produces exactly one `on_info` call — sends are never coalesced, and
-/// they are delivered in the order the owning socket receives them.
+/// Each call enqueues one message. Each enqueued message produces one
+/// `on_info` call. The runtime does not combine sends. It delivers them in
+/// the order that the owning socket receives them.
 ///
-/// This is a fire-and-forget send: it returns as soon as the message is
-/// enqueued, whether or not the channel is still joined. A message
-/// enqueued for a channel that has already ended is discarded on arrival
-/// (see [`Sender`](#sender), which also covers the cost of a delivery and
-/// the one case where an ended channel still receives one).
+/// This is a fire-and-forget send. It returns when the message is enqueued,
+/// whether or not the channel is still joined. The runtime discards a message
+/// for a channel that has ended. See [`Sender`](#sender) for delivery cost and
+/// the one case in which an ended channel can still receive a message.
 pub fn notify(sender: Sender(info), message: info) -> Nil {
   sender.send(message)
 }
 
-/// Everything a `join` callback learns about one join attempt.
+/// Information about one join attempt.
 ///
 /// `params` contains wildcard captures in pattern order and is empty for
 /// exact patterns. `self` is this channel's generation-scoped
@@ -290,8 +289,8 @@ pub opaque type Closing {
 
 /// One operation on the channel's own topic.
 ///
-/// The phase parameter prevents active-only operations from being returned
-/// by [`on_terminate`](#on_terminate). Put actions in a list in wire order.
+/// The phase parameter prevents [`on_terminate`](#on_terminate) from returning
+/// active-only operations. Put actions in a list in wire order.
 pub opaque type Action(phase) {
   PushAction(phase: phase, event: String, payload: json.Json)
   BroadcastAction(event: String, payload: json.Json)
@@ -339,7 +338,7 @@ pub fn broadcast_from(event: String, payload: json.Json) -> Action(phase) {
 /// Reply successfully when a client message supplied a reply handle.
 ///
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
-/// lowers to no effect.
+/// produces no effect.
 pub fn reply_ok(
   reply: option.Option(socket.ReplyRef),
   payload: json.Json,
@@ -350,7 +349,7 @@ pub fn reply_ok(
 /// Reply with an error when a client message supplied a reply handle.
 ///
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
-/// lowers to no effect.
+/// produces no effect.
 pub fn reply_error(
   reply: option.Option(socket.ReplyRef),
   payload: json.Json,
@@ -416,7 +415,7 @@ pub fn next(state: state, actions: List(Action(Active))) -> Next(state) {
 
 /// Leave this channel after applying `actions` in order.
 ///
-/// The socket stays connected and its other channels are untouched; this
+/// The socket stays connected. Its other channels do not change. This
 /// channel's [`on_terminate`](#on_terminate) callback still runs.
 pub fn close(actions: List(Action(Active))) -> Next(state) {
   NextClose(actions: actions)
@@ -424,8 +423,8 @@ pub fn close(actions: List(Action(Active))) -> Next(state) {
 
 /// Tear down the whole socket, not just this channel.
 ///
-/// This deliberately carries no actions: the socket and every channel on
-/// it are going away, so there is nothing left to apply them to.
+/// This result carries no actions. The socket and all its channels are
+/// stopping, so no target remains for the actions.
 pub fn stop_socket(reason: socket.StopReason) -> Next(state) {
   NextStop(reason: reason)
 }
@@ -437,9 +436,9 @@ pub fn stop_socket(reason: socket.StopReason) -> Next(state) {
 /// The typed callbacks of one channel, over its private `state` and its
 /// server-side message type `info`.
 ///
-/// Start from [`callbacks`](#callbacks) — which ignores every input and
-/// stays joined — and override only what the channel cares about. Pass the
-/// result to [`accept`](#accept) with the initial state.
+/// Start with [`callbacks`](#callbacks), which ignores every input and stays
+/// joined. Override only the callbacks that the channel needs. Pass the result
+/// to [`accept`](#accept) with the initial state.
 pub opaque type Callbacks(state, info) {
   Callbacks(
     message: fn(state, Message) -> Next(state),
@@ -489,18 +488,18 @@ pub fn on_info(
   Callbacks(..callbacks, info: handle)
 }
 
-/// Run cleanup when the channel ends, for any reason: client leave, a
+/// Run cleanup when the channel ends for any reason: client leave, a
 /// [`close`](#close) result, a socket teardown, or a disconnect.
 ///
-/// The returned closing-phase actions are applied in the turn that closes
-/// this topic, right after the channel instance is gone. The phase allows
-/// broadcasts, presence untracking, and presence broadcasts, while making
-/// pushes, replies, and presence tracking unavailable.
+/// The runtime applies the returned closing-phase actions in the turn that
+/// closes this topic, after it removes the channel instance. This phase
+/// allows broadcasts, presence untracking, and presence broadcasts. It does
+/// not allow pushes, replies, or presence tracking.
 ///
-/// A panic here is not fatal, but it is not free either: core keeps the
-/// model from before the close, so this instance stays in the channel
-/// system's map and its own [`Sender`](#sender) can still reach it until
-/// the topic is rejoined or the socket ends.
+/// A panic here is not fatal. Core keeps the model from before the close.
+/// This instance stays in the channel system's map, and its
+/// [`Sender`](#sender) can reach it until the topic is rejoined or the socket
+/// ends.
 pub fn on_terminate(
   callbacks: Callbacks(state, info),
   handle: fn(state, socket.StopReason) -> List(Action(Closing)),
@@ -597,22 +596,22 @@ pub fn with_reply(
   }
 }
 
-/// Add ordered actions to run as part of accepting this join.
+/// Add ordered actions to an accepted join.
 ///
-/// They are emitted with the acknowledgment and applied strictly after it,
-/// so the socket is already subscribed to the topic: a [`push`](#push)
-/// here cannot overtake its own join reply. If an action lowers to an
+/// The runtime emits the actions with the acknowledgment and applies them
+/// after it. The socket is therefore already subscribed to the topic. A
+/// [`push`](#push) cannot overtake its own join reply. If an action becomes an
 /// asynchronous presence effect, the runtime may process other sockets
-/// while this socket waits; a check followed by [`presence_track`](#presence_track)
-/// is therefore not an atomic cross-socket capacity reservation.
+/// while this socket waits. A check followed by
+/// [`presence_track`](#presence_track) is not an atomic cross-socket capacity
+/// reservation.
 ///
 /// Use this function instead of notifying the channel from `join`:
 /// [`notify`](#notify) schedules a *later* input, while actions preserve
 /// their declared position immediately after the join acknowledgment.
 ///
-/// Existing actions stay ahead of the ones added here. A refused
-/// join has no topic to act on, so this returns [`reject`](#reject)
-/// results unchanged.
+/// Existing actions stay before the actions added here. A refused join has no
+/// topic, so this function returns [`reject`](#reject) results unchanged.
 pub fn with_actions(
   result: JoinResult(info),
   actions: List(Action(Active)),
@@ -639,9 +638,9 @@ pub fn reject(reason: json.Json) -> JoinResult(info) {
 
 /// A registered channel: a topic pattern plus its sealed `join` callback.
 ///
-/// `Handler` is deliberately not generic. A channel's `state` and `info`
-/// types are sealed inside the closure captured here, so a single
-/// `List(Handler)` can hold channels that agree on nothing.
+/// `Handler` is not generic. The closure contains the channel's sealed `state`
+/// and `info` types. A single `List(Handler)` can therefore hold channels
+/// with unrelated types.
 pub opaque type Handler {
   Handler(pattern: String, open: fn(RoutedJoinContext) -> JoinOutcome)
 }

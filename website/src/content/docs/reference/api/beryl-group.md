@@ -46,7 +46,7 @@ pub type Config
 
 ### `GroupError`
 
-Errors from group operations
+Errors from group operations.
 
 ```gleam
 pub type GroupError {
@@ -59,18 +59,18 @@ pub type GroupError {
 
 ##### `GroupAlreadyExists`
 
-The group already exists
+The group already exists.
 
 ##### `GroupNotFound`
 
-The group was not found
+The group was not found.
 
 ### `Groups`
 
-A running Groups instance.
+A running groups instance.
 
- This handle is intentionally opaque so callers cannot forge the backing
- actor subject or depend on its runtime representation.
+ This handle is opaque. Callers cannot forge the actor subject or depend
+ on its runtime representation.
 
  ## Node affinity
 
@@ -85,7 +85,7 @@ pub type Groups
 
 ### `Message`
 
-Messages the groups actor handles
+Messages that the groups actor handles.
 
 ```gleam
 pub type Message
@@ -95,7 +95,7 @@ pub type Message
 
 ### `add`
 
-Add a topic to a group
+Add a topic to a group.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
@@ -110,13 +110,14 @@ pub fn add(
 
 ### `broadcast`
 
-Broadcast a message to all topics in a group
+Broadcast a message to all topics in a group.
 
- Sends the message to every topic in the named group via beryl.broadcast().
- The topic lookup runs through the groups actor, then fan-out runs in the
- caller. If the group doesn't exist, this is a silent no-op.
+ This function sends the message to each topic through `beryl.broadcast`.
+ The groups actor performs the topic lookup. The caller performs the
+ fan-out. If the group does not exist, this function does nothing.
 
- Panics if the groups actor is unavailable or does not reply within 5 seconds.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout.
 
 ```gleam
 pub fn broadcast(
@@ -151,7 +152,7 @@ pub fn child_spec_with_config(Config) -> #(Groups, supervision.ChildSpecificatio
 
 ### `create`
 
-Create a new named group
+Create a named group.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
@@ -173,7 +174,7 @@ pub fn default_config() -> Config
 
 ### `delete`
 
-Delete a group
+Delete a group.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
@@ -187,7 +188,7 @@ pub fn delete(
 
 ### `list_groups`
 
-List all group names
+Return all group names.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
@@ -198,7 +199,7 @@ pub fn list_groups(Groups) -> List(String)
 
 ### `remove`
 
-Remove a topic from a group
+Remove a topic from a group.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
@@ -213,7 +214,7 @@ pub fn remove(
 
 ### `topics`
 
-Get all topics in a group
+Return all topics in a group.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).

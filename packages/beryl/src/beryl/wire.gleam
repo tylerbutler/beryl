@@ -1,4 +1,4 @@
-//// Phoenix Wire Protocol — encoding/decoding helpers and the canonical
+//// Phoenix Wire Protocol: encoding/decoding helpers and the canonical
 //// `phoenix_codec()` for `beryl/wire/codec`.
 ////
 //// Phoenix uses a JSON array format: `[join_ref, ref, topic, event, payload]`.
@@ -33,9 +33,11 @@ const max_json_nesting_depth = 64
 
 const max_decode_error_length = 256
 
-/// The canonical Phoenix wire codec. Pass to `beryl.config`.
+/// Return the canonical Phoenix wire codec.
 ///
-/// Handles both the JSON array framing on text frames and the Phoenix V2
+/// Pass this codec to `beryl.config`.
+///
+/// The codec handles JSON array framing on text frames and Phoenix V2
 /// binary framing on binary frames (see `decode_binary_message`). Decoded
 /// binary frames follow the normal inbound path, producing `Join` or
 /// `Message` events according to their event name. The app receives a
@@ -56,7 +58,7 @@ pub fn phoenix_codec() -> Codec {
 /// Parse a JSON string into an `Inbound`.
 ///
 /// Expected format: `[join_ref, ref, topic, event, payload]` where
-/// `join_ref` and `ref` may be `null`.
+/// The `join_ref` and `ref` values can be `null`.
 pub fn decode_message(json_string: String) -> Result(Inbound, DecodeError) {
   case json.parse(from: json_string, using: decode.dynamic) {
     Ok(value) -> decode_inbound_value(value)
@@ -183,11 +185,10 @@ fn phoenix_event_name(kind: InboundKind) -> String {
   }
 }
 
-/// Convert a `Dynamic` (decoded from JSON) back into `json.Json`.
+/// Convert a `Dynamic` value decoded from JSON back to `json.Json`.
 ///
-/// Returns `Error(Nil)` when the value nests deeper than the wire
-/// protocol's maximum JSON depth, or contains something JSON cannot
-/// represent.
+/// Returns `Error(Nil)` when the value exceeds the wire protocol's maximum
+/// JSON depth or contains a value that JSON cannot represent.
 pub fn dynamic_to_json(value: Dynamic) -> Result(json.Json, Nil) {
   dynamic_to_json_limited(value, max_json_nesting_depth)
 }
@@ -297,14 +298,16 @@ pub fn push(topic: String, event: String, payload: json.Json) -> Frame {
   )
 }
 
-/// Create a Phoenix `phx_close` frame, sent when a channel terminates
-/// gracefully. Phoenix mirrors the channel's `join_ref` into the `ref` slot.
+/// Create a Phoenix `phx_close` frame for a normal channel termination.
+///
+/// Phoenix copies the channel's `join_ref` to the `ref` slot.
 pub fn channel_close(join_ref: Option(String), topic: String) -> Frame {
   terminal_event(join_ref, topic, "phx_close")
 }
 
-/// Create a Phoenix `phx_error` frame, sent when a channel terminates
-/// abnormally. Phoenix clients respond by scheduling an automatic rejoin.
+/// Create a Phoenix `phx_error` frame for an abnormal channel termination.
+///
+/// Phoenix clients respond by scheduling an automatic rejoin.
 pub fn channel_error(join_ref: Option(String), topic: String) -> Frame {
   terminal_event(join_ref, topic, "phx_error")
 }
@@ -377,12 +380,12 @@ const expected_binary_message = "Expected Phoenix V2 binary push frame"
 
 /// Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
 ///
-/// The payload remains a `BitArray` wrapped in `Dynamic`, but the decoded
+/// The payload remains a `BitArray` wrapped in `Dynamic`. The decoded
 /// frame follows normal event classification and reaches the app as a
 /// `Join` or `Message` event rather than `Binary`. Decode the payload with
-/// `gleam/dynamic/decode.bit_array` if needed. Zero-length join_ref/ref
-/// components decode as `None`. Reserved protocol events are classified the
-/// same way as on the text framing.
+/// `gleam/dynamic/decode.bit_array` if needed. Zero-length `join_ref` and
+/// `ref` components decode as `None`. Reserved protocol events use the same
+/// classification as text frames.
 pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
   case data {
     <<
@@ -429,8 +432,8 @@ fn required_utf8(bytes: BitArray, name: String) -> Result(String, DecodeError) {
 
 /// Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 ///
-/// Errors when a metadata component exceeds the framing's 255-byte length
-/// limit.
+/// Returns `Error(Nil)` when a metadata component exceeds the framing's
+/// 255-byte limit.
 pub fn binary_push(
   join_ref join_ref: Option(String),
   topic topic: String,
@@ -458,8 +461,8 @@ pub fn binary_push(
 
 /// Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
 ///
-/// Errors when a metadata component exceeds the framing's 255-byte length
-/// limit.
+/// Returns `Error(Nil)` when a metadata component exceeds the framing's
+/// 255-byte limit.
 pub fn binary_reply(
   join_ref join_ref: Option(String),
   ref ref: Option(String),
@@ -495,8 +498,8 @@ pub fn binary_reply(
 
 /// Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 ///
-/// Errors when a metadata component exceeds the framing's 255-byte length
-/// limit.
+/// Returns `Error(Nil)` when a metadata component exceeds the framing's
+/// 255-byte limit.
 pub fn binary_broadcast(
   topic topic: String,
   event event: String,

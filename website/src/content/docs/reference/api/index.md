@@ -30,10 +30,10 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 | [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.child_spec`. |
 | [`beryl/stats`](/reference/api/beryl-stats/) | Local runtime statistics. |
 | [`beryl/topic`](/reference/api/beryl-topic/) | Pattern matching for topic routing. |
-| [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI — the contract between beryl core and WebSocket transport |
+| [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI: the contract between beryl core and WebSocket transport |
 | [`beryl/transport/origin`](/reference/api/beryl-transport-origin/) | Origin and handshake-version checks for WebSocket upgrades. |
 | [`beryl/transport/server`](/reference/api/beryl-transport-server/) | Server-agnostic WebSocket transport infrastructure. |
-| [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol — encoding/decoding helpers and the canonical |
+| [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol: encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
 
 ## `beryl_ewe` `0.2.0`
