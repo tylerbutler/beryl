@@ -4,17 +4,19 @@ description: Module map, wire protocol, broadcast cheatsheet, and client compati
 ---
 
 :::note[Pre-1.0]
-beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. See the [stability policy](#pre-10-stability-policy) below.
+beryl is not yet version 1.0. Minor releases can change the API. The library is
+not ready for production. See the
+[stability policy](#pre-10-stability-policy).
 :::
 
-The canonical function-level API reference is generated from Gleam's docs
-metadata and hosted on this site. Beryl packages are currently distributed
-from GitHub, not Hex:
+The site generates the function-level API reference from Gleam docs metadata.
+Install beryl packages from GitHub. They are not on Hex:
 
 **[beryl](/reference/api/beryl/)** ·
 **[beryl/channel](/reference/api/beryl-channel/)**
 
-This page provides a module map, broadcast cheatsheet, Phoenix wire protocol reference, and client compatibility notes.
+This page contains a module map, broadcast table, Phoenix wire protocol
+reference, and client compatibility notes.
 
 ---
 
@@ -52,16 +54,17 @@ This page provides a module map, broadcast cheatsheet, Phoenix wire protocol ref
 | Send a typed server-side message to one socket | `socket.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `socket.Info(message)` |
 | Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; ordinary socket/channel presence effects are applied asynchronously by the runtime |
 
-The channel layer exposes topic-scoped equivalents through
-ordered `channel.Action(Active)` lists: `push`, `broadcast`,
-`broadcast_from`, `reply_ok`, `reply_error`, and the presence actions. They
-lower onto the same core effects.
+The channel layer provides topic-scoped versions through ordered
+`channel.Action(Active)` lists. These actions include `push`, `broadcast`,
+`broadcast_from`, `reply_ok`, `reply_error`, and the presence actions. They use
+the same core effects.
 
 ---
 
 ## Phoenix wire protocol reference
 
-beryl speaks the same JSON array wire format as Phoenix channels. All frames are JSON arrays with five elements:
+beryl uses the Phoenix Channels JSON array format. Each frame has five
+elements:
 
 ```
 [join_ref, ref, topic, event, payload]
@@ -88,7 +91,8 @@ beryl speaks the same JSON array wire format as Phoenix channels. All frames are
 
 ### Reply shape (`phx_reply`)
 
-Sent in response to any client message. `socket.ReplyOk` and `socket.ReplyError` always serialize as `phx_reply` keyed by the original ref.
+The server sends this frame in response to a client message. `socket.ReplyOk`
+and `socket.ReplyError` use `phx_reply` with the original ref.
 
 ```json
 [join_ref, original_ref, "topic:name", "phx_reply", {"status": "ok", "response": <your_payload>}]
@@ -114,7 +118,9 @@ The client sends heartbeats on the `"phoenix"` topic; beryl replies immediately:
 
 ### Presence diff shape
 
-Follows the Phoenix presence diff format. Both `joins` and `leaves` are objects keyed by presence key (typically the user ID). Each value has a `metas` array:
+The payload uses the Phoenix presence diff format. The `joins` and `leaves`
+objects use the presence key, usually the user ID. Each value has a `metas`
+array:
 
 ```json
 {
@@ -133,7 +139,8 @@ Follows the Phoenix presence diff format. Both `joins` and `leaves` are objects 
 
 ## Client compatibility
 
-When started with `wire.phoenix_codec()`, beryl uses the standard Phoenix wire format, so any Phoenix-compatible WebSocket client works out of the box:
+With `wire.phoenix_codec()`, beryl uses the standard Phoenix wire format. You
+can use any compatible WebSocket client:
 
 | Client | Notes |
 |---|---|
@@ -142,7 +149,11 @@ When started with `wire.phoenix_codec()`, beryl uses the standard Phoenix wire f
 | Phoenix Swift / Kotlin clients | Community Phoenix clients; wire-compatible |
 | Plain WebSocket | Use the JSON array format directly; no reconnect logic |
 
-The WebSocket upgrade path is caller-provided — there is no default. Pass the path when constructing your transport config with `beryl/transport/server.default_config(path)`. The Phoenix JS client appends `/websocket` to the socket endpoint, so if you configure the client with `"/socket"`, mount your handler at `"/socket/websocket"`. See the [WebSocket Transport guide](/guides/websocket) for details.
+You must set the WebSocket upgrade path. Pass the path to
+`beryl/transport/server.default_config(path)`. The Phoenix JS client adds
+`/websocket` to the socket endpoint. If the client uses `"/socket"`, mount the
+handler at `"/socket/websocket"`. See the
+[WebSocket Transport guide](/guides/websocket).
 
 ---
 

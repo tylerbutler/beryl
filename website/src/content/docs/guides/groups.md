@@ -2,10 +2,13 @@
 title: Groups
 ---
 
-Groups are **server-side named collections of topics**. They let you broadcast a single event to many topics at once without tracking subscriptions yourself — similar to Socket.IO rooms or SignalR groups, but adapted to beryl's topic/channel model.
+Groups are **named topic collections on the server**. Use one group broadcast
+to send an event to many topics. You do not need to track subscriptions. Groups
+are similar to Socket.IO rooms and SignalR groups.
 
 :::note[Server-side only]
-Groups are a server concern. Clients join individual topics via `phx_join`; they have no concept of groups. Groups exist purely to make multi-topic server broadcasts convenient.
+Only the server uses groups. Clients join individual topics with `phx_join`.
+Clients do not receive group information.
 :::
 
 ## Starting the groups actor
@@ -21,8 +24,8 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-`group.child_spec()` returns the stable `Groups` handle immediately. Add its
-child specification to your application supervisor before using the handle.
+`group.child_spec()` returns a stable `Groups` handle. Add its child
+specification to the application supervisor before you use the handle.
 
 Synchronous group operations wait up to 5 seconds for the actor by default.
 Configure a different timeout when starting the actor:
@@ -68,7 +71,8 @@ case group.delete(groups, "team:gone") {
 
 ## Adding and removing topics
 
-Topics are plain strings that match existing channel topics. Groups do not validate that a topic has any subscribers — they are just sets of strings.
+Topics are strings that match channel topics. Groups do not check whether a
+topic has subscribers. They store sets of strings.
 
 ```gleam
 let assert Ok(Nil) = group.add(groups, "team:engineering", "room:frontend")
@@ -81,7 +85,7 @@ let assert Ok(Nil) = group.remove(groups, "team:engineering", "room:infra")
 // Both add and remove return Error(GroupNotFound) if the group doesn't exist
 ```
 
-Adding the same topic twice is a no-op (topics are stored in a set).
+Adding the same topic twice does nothing because the group stores a set.
 
 ## Inspecting groups
 
@@ -99,7 +103,10 @@ let names = group.list_groups(groups)  // ["team:engineering", "team:design"]
 
 ## Broadcasting to a group
 
-`group.broadcast` looks up the group's topics through the groups actor, then sends an event to every topic using `beryl.broadcast` in the caller's process. The lookup provides backpressure without making the actor perform fan-out. The return type is `Nil`, not `Result`. If the named group does not exist, the call silently does nothing.
+`group.broadcast` asks the groups actor for the topic set. The calling process
+then sends the event to each topic with `beryl.broadcast`. The lookup provides
+backpressure, but the actor does not perform fan-out. The function returns
+`Nil`, not `Result`. If the group does not exist, the function does nothing.
 
 ```gleam
 group.broadcast(
@@ -111,10 +118,13 @@ group.broadcast(
 )
 ```
 
-This is equivalent to calling `beryl.broadcast` on each topic in the group in sequence.
+This has the same effect as one `beryl.broadcast` call for each group topic.
 
 :::note[Missing group is a no-op]
-`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. Like other group operations, it panics if the groups actor is unavailable or does not reply within 5 seconds. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `GroupNotFound`.
+`group.broadcast` does not return an error. It does nothing if the group is
+missing or empty. It panics if the groups actor is unavailable or does not
+reply within 5 seconds. To check a group first, call `group.topics` and handle
+`GroupNotFound`.
 :::
 
 ## Error reference
@@ -160,10 +170,10 @@ let assert Ok(Nil) = group.delete(groups, "team:eng")
 
 ## Lifecycle
 
-The groups actor only starts through `group.child_spec`. Its handle is backed by
-a stable registered name and reaches the replacement actor after a supervised
-restart. Group definitions and topic memberships are in-memory state and reset
-when the actor restarts.
+Start the groups actor with `group.child_spec`. Its handle uses a stable
+registered name and reaches the replacement actor after a supervised restart.
+The actor keeps group definitions and topic memberships in memory. A restart
+clears them.
 
 The registered name is node-local. Keep a `Groups` handle on the node where its
 child specification runs. From another BEAM node, synchronous operations cannot

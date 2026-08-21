@@ -2,11 +2,15 @@
 title: Wire & Transport
 ---
 
-The wire and transport layer sits between raw WebSocket frames and the runtime. It is split into two concerns: a pluggable **codec** that translates bytes into structured messages, and the **Mist transport** that owns the socket lifecycle.
+The wire and transport layer connects raw WebSocket frames to the runtime. A
+pluggable **codec** converts bytes to structured messages. The **Mist
+transport** manages the socket lifecycle.
 
 ## Codec abstraction
 
-A `Codec` is opaque. Use the public factory and builder functions in `beryl/wire/codec`, or use the ready-made `wire.phoenix_codec()`. The runtime is framing-agnostic: it only ever sees `Inbound` values and emits `Frame` values; the codec performs every translation.
+A `Codec` is opaque. Use the public factory and builder functions in
+`beryl/wire/codec`, or use `wire.phoenix_codec()`. The runtime receives
+`Inbound` values and emits `Frame` values. The codec converts all frames.
 
 ```
 src/beryl/wire/codec.gleam
@@ -26,13 +30,14 @@ The public codec builders configure these behaviors:
 
 Build a custom text codec with `codec.new(...)`, then add optional behavior with builders such as `codec.with_binary_decoder`, `codec.with_close_encoder`, `codec.with_error_encoder`, and `codec.with_topicless_events`. The built-in `wire.phoenix_codec()` configures Phoenix text and V2 binary framing.
 
-Every Beryl `Config` requires a codec explicitly; there is no implicit default:
+Each Beryl `Config` requires a codec. There is no default:
 
 ```gleam
 beryl.config(wire.phoenix_codec())
 ```
 
-Pass a custom opaque `Codec` to `beryl.config(codec)` to use an alternative protocol without changing the runtime or app logic.
+Pass a custom `Codec` to `beryl.config(codec)` to use another protocol. You do
+not need to change the runtime or app logic.
 
 ## Frame shapes
 
@@ -42,32 +47,55 @@ Phoenix uses a JSON array for every message on the wire:
 [join_ref, ref, topic, event, payload]
 ```
 
-The `join_ref` and `ref` fields are nullable strings used for reply correlation. `topic` is the subscription key (e.g. `"room:lobby"`). `event` names the protocol action or user event.
+The `join_ref` and `ref` fields are nullable strings that link requests and
+replies. `topic` is the subscription key, such as `"room:lobby"`. `event` names
+the protocol action or user event.
 
 ### Key functions in `beryl/wire`
 
-**`decode_message(json_string)`**: parses a raw JSON string into an `Inbound`. Returns `InvalidJson` or `InvalidFormat` errors for malformed input.
+**`decode_message(json_string)`** parses a raw JSON string into an `Inbound`.
+It returns `InvalidJson` or `InvalidFormat` for malformed input.
 
-**`encode(msg)`**: round-trips an `Inbound` back to a Phoenix wire JSON string.
+**`encode(msg)`** converts an `Inbound` to a Phoenix wire JSON string.
 
-**`reply_json(join_ref, ref, topic, status, response)`**: produces a `phx_reply` frame. The `payload` field is `{"status": "ok"|"error", "response": <payload>}`.
+**`reply_json(join_ref, ref, topic, status, response)`** creates a `phx_reply`
+frame. The `payload` field is
+`{"status": "ok"|"error", "response": <payload>}`.
 
-**`push(topic, event, payload)`**: produces a server-initiated push. Server pushes carry `null` for both `join_ref` and `ref` because there is no client message to correlate against.
+**`push(topic, event, payload)`** creates a server push. Server pushes use
+`null` for `join_ref` and `ref` because they do not answer a client message.
 
-**`heartbeat_reply(ref)`**: produces the heartbeat acknowledgement. The topic is always `"phoenix"`, the event is `"phx_reply"`, and the status is `"ok"` with an empty response object. The client sends heartbeats with topic `"phoenix"` / event `"heartbeat"`.
+**`heartbeat_reply(ref)`** creates the heartbeat acknowledgment. It uses topic
+`"phoenix"`, event `"phx_reply"`, status `"ok"`, and an empty response object.
+The client sends heartbeats with topic `"phoenix"` and event `"heartbeat"`.
 
 ## Shared transport core
 
-`beryl/transport/server` owns the server-agnostic admission, connection, and
-frame pipeline. `beryl_mist` and `beryl_ewe` provide only their server-specific
-upgrade, frame-send, and peer-IP glue:
+`beryl/transport/server` manages admission, connections, and frames.
+`beryl_mist` and `beryl_ewe` provide the server-specific upgrade, frame-send,
+and peer-IP functions:
 
-1. **Generating a unique socket id**: the shared server uses `crypto.strong_random_bytes` to produce a 16-byte random id encoded as base16.
-2. **Admitting the socket atomically**: the shared server captures `transport.runtime_pid`, installs a monitor for that exact pid, then calls `transport.admit_socket` with the send functions, closer, codec, and `ConnectSeed`. A restart or registration failure closes the connection instead of registering it with a successor runtime.
-3. **Routing text frames**: `mist.Text` frames are decoded in the connection process with the codec from `transport.active_codec` and routed with `transport.route_decoded`.
-4. **Routing binary frames**: when the active codec supplies `decode_binary`, `mist.Binary` frames are decoded in the connection process and routed with `transport.route_decoded_binary`, producing normal `Join`/`Message` semantics while preserving binary telemetry classification; without a binary decoder, the transport uses `transport.route_binary` to deliver the raw `BitArray` to the app as a `Binary` event. Ewe follows the same routing contract.
-5. **Notifying on close**: each server adapter calls the shared close path, which releases the connection permit and invokes `transport.socket_disconnected`.
-6. **Rejecting disallowed origins**: when configured, `with_allowed_origins` checks the full `Origin` header before the WebSocket handshake and returns HTTP 403 for missing or non-matching origins.
+1. **Generate a unique socket ID:** The shared server uses
+   `crypto.strong_random_bytes` to create a 16-byte random ID in base16.
+2. **Admit the socket as one operation:** The server captures
+   `transport.runtime_pid` and monitors that PID. It then calls
+   `transport.admit_socket` with the send functions, closer, codec, and
+   `ConnectSeed`. A restart or registration failure closes the connection.
+3. **Route text frames:** The connection process decodes `mist.Text` frames
+   with `transport.active_codec`. It routes them with
+   `transport.route_decoded`.
+4. **Route binary frames:** If the codec provides `decode_binary`, the
+   connection process decodes `mist.Binary` frames. It routes them with
+   `transport.route_decoded_binary`. This keeps normal `Join` and `Message`
+   behavior and binary telemetry classification. Without a binary decoder,
+   `transport.route_binary` sends the raw `BitArray` to the app as `Binary`.
+   Ewe uses the same contract.
+5. **Notify on close:** Each server adapter calls the shared close path. This
+   path releases the connection permit and calls
+   `transport.socket_disconnected`.
+6. **Reject disallowed origins:** When configured, `with_allowed_origins`
+   checks the full `Origin` header before the handshake. It returns HTTP 403
+   for a missing or non-matching origin.
 
 ### Key functions
 

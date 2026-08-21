@@ -2,11 +2,12 @@
 title: WebSocket Transport
 ---
 
-beryl provides a WebSocket transport layer that integrates directly with [Mist](https://hexdocs.pm/mist/) for handling browser client connections.
+beryl provides a WebSocket transport for
+[Mist](https://hexdocs.pm/mist/) browser connections.
 
 ## Basic setup
 
-The simplest way to add WebSocket support is with `mist_transport.upgrade`:
+Use `mist_transport.upgrade` to add WebSocket support:
 
 ```gleam
 import beryl
@@ -37,14 +38,16 @@ fn handle_request(
 }
 ```
 
-The `upgrade` function checks if the request path matches, performs the WebSocket upgrade, and wires the connection to the beryl runtime.
+The `upgrade` function checks the request path. It upgrades a matching request
+and connects it to the beryl runtime.
 
 The transport is layer-agnostic. A handle from
 `channel.child_spec` is the same `beryl.Sockets` type as one from
 `beryl.child_spec`, so this wiring is identical for both.
 
 :::tip[Phoenix JS clients]
-The Phoenix JS client (`new Socket("/socket", ...)`) connects to `/socket/websocket` by default — it appends `/websocket` to the path you pass. Configure the transport path to match:
+The Phoenix JS client (`new Socket("/socket", ...)`) adds `/websocket` to the
+path. Configure the transport to use `/socket/websocket`:
 
 ```gleam
 // Matches Phoenix JS: new Socket("/socket", ...)
@@ -56,9 +59,9 @@ Raw WebSocket clients connect directly to the configured path with no suffix app
 
 ## Authentication
 
-Use `with_on_connect` to authenticate connections before upgrading. The hook is
-beryl's analogue of Phoenix's `UserSocket.connect/3`: it runs **once per socket**,
-before any channel join, and can reject the whole connection.
+Use `with_on_connect` to authenticate a connection before the upgrade. It is
+similar to Phoenix `UserSocket.connect/3`. The hook runs once for each socket
+before any channel join. It can reject the connection.
 
 ```gleam
 let config =
@@ -74,7 +77,12 @@ let config =
 use <- mist_transport.upgrade(req, channels, config)
 ```
 
-Returning `Error(server.ConnectRejected)` sends an HTTP 403 before the WebSocket upgrade. See [Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection) for the client-visible error shape and [Authentication failures](/troubleshooting#authentication-failures) for diagnosis steps.
+Return `Error(server.ConnectRejected)` to send HTTP 403 before the WebSocket
+upgrade. See
+[Connection-level authentication rejection](/guides/error-handling#connection-level-authentication-rejection)
+for the client error. See
+[Authentication failures](/troubleshooting#authentication-failures) for
+diagnostic steps.
 
 ### Origin validation and CSWSH
 
@@ -106,12 +114,10 @@ tokens before upgrading.
 
 ### Connect-time data and the ConnectSeed
 
-`on_connect` is a pure gate — it allows or rejects the upgrade. The request
-data itself (path, query parameters, headers) reaches your app separately:
-the transport assembles a `ConnectSeed` from the upgrade request and delivers
-it to your `init` as `ConnectInfo.seed`. Authenticate once in `on_connect`,
-then derive per-socket state from the seed in `init` — no re-auth in any
-join:
+`on_connect` accepts or rejects the upgrade. The transport puts the request
+path, query parameters, and headers in a `ConnectSeed`. Your `init` function
+receives it as `ConnectInfo.seed`. Authenticate in `on_connect`. Then use the
+seed to build per-socket state in `init`. Do not authenticate each join again:
 
 ```gleam
 let config =
@@ -156,7 +162,9 @@ Pass `wire.phoenix_codec()` to `beryl.config` to use the Phoenix JSON array form
 [join_ref, ref, topic, event, payload]
 ```
 
-Applications can pass a custom codec to `beryl.config(codec)` to use another text framing or a binary framing. Codec-produced outbound frames are sent as text or binary WebSocket frames according to the codec result.
+Applications can pass a custom codec to `beryl.config(codec)`. The codec can
+use another text framing or binary framing. The transport sends each outbound
+frame as the type that the codec returns.
 
 `wire.phoenix_codec()` uses Beryl's native Phoenix wire implementation, which has no extra dependencies. The public `beryl/wire/codec.Codec` API and wire format are stable, so applications can supply their own codec to `beryl.config` for alternative framings.
 
@@ -254,18 +262,16 @@ let config =
   |> beryl.with_max_connections_per_ip(max_connections: 5)
 ```
 
-When a peer exhausts either limit, the Mist transport rejects the new upgrade
-with `429 Too Many Requests` before the WebSocket handshake completes.
-Concurrent capacity is released automatically when a connection closes. Rate
-allowance is not: its per-IP bucket survives reconnects and app runtime restarts,
-preventing a client from reconnecting for a fresh frame/message burst.
+When a peer reaches either limit, Mist rejects the upgrade with
+`429 Too Many Requests` before the handshake. A closed connection releases its
+concurrent capacity. The per-IP rate bucket remains after reconnects and app
+runtime restarts. Thus, a reconnect does not provide a new rate allowance.
 
 ### Reverse proxies and `X-Forwarded-For`
 
-Both controls use the **real socket peer IP** — the address of the TCP connection
-Mist accepts. beryl deliberately does **not** trust or parse
-forwarded headers such as `X-Forwarded-For`, because any client can set them and
-would otherwise be able to spoof its address and bypass the limit.
+Both controls use the **socket peer IP**, which is the TCP address that Mist
+accepts. beryl does not trust forwarded headers such as `X-Forwarded-For`.
+Clients can forge these headers and bypass the limit.
 
 This has an important consequence when beryl runs **behind a reverse proxy or
 load balancer** (nginx, HAProxy, a cloud LB, etc.): every connection arrives

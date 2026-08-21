@@ -1,30 +1,29 @@
 ---
 title: Channels
-description: The beryl/channel layer — handler tables, per-channel private state, typed senders, ordered actions, and lifecycle from join to termination.
+description: Use beryl/channel handlers, private state, typed senders, ordered actions, and lifecycle callbacks.
 ---
 
 `beryl/channel` is the **recommended default** for applications that serve
-more than one topic namespace on a socket, and for anyone porting a
-Phoenix-shaped design. You register a list of channel handlers, and the
-layer routes every join, message, binary frame, typed server-side message,
-and close to the channel that owns the topic.
+more than one topic namespace on a socket. It is also the default for a Phoenix
+style design. Register a list of channel handlers. The layer routes each join,
+message, binary frame, server message, and close to the correct channel.
 
 If you are not sure which layer you want, read
 [Choose an API](/choosing-an-api/) first. If you want one topic family and
 complete control over routing, use [App-Side Dispatch](/guides/dispatch/)
-instead — it is the core the channel layer is built on.
+instead. It is the core API under the channel layer.
 
 :::note[One package]
-The channel layer is the `beryl/channel` module in the `beryl` package.
-Applications add only `beryl` plus a transport. See
+The `beryl` package includes the `beryl/channel` module. Applications need
+`beryl` and one transport. See
 [Installation](/installation/) for the dependency block.
 :::
 
 ## The shape
 
 A channel is a **topic pattern** plus a typed `join` callback. The `join`
-callback receives one context value and answers with a rejection or an
-accepted private state and callback set.
+callback receives one context value. It rejects the join or accepts it with
+private state and callbacks.
 
 ```gleam
 // src/my_app/room_channel.gleam
@@ -80,16 +79,17 @@ fn callbacks() -> channel.Callbacks(State, Note) {
 }
 ```
 
-Nothing about `State` or `Note` escapes: `channel.handler` returns a
-plain `channel.Handler`, not a generic one, so channels that agree on
-nothing compose in a single list.
+`State` and `Note` stay private. `channel.handler` returns a plain
+`channel.Handler`, not a generic value. Thus, unrelated channels can use one
+handler list.
 
 ## Starting a channel system
 
-`channel.child_spec` takes the same `beryl.Config` as
-`beryl.child_spec` — codec, rate limits, presence handle, PubSub, logging —
-plus the handler table. It returns the ordinary `beryl.Sockets` handle and a
-child specification for your application's supervision tree.
+`channel.child_spec` takes the same `beryl.Config` as `beryl.child_spec`. The
+config contains the codec, rate limits, presence handle, PubSub, and logging.
+`channel.child_spec` also takes the handler table. It returns a
+`beryl.Sockets` handle and a child specification for the application
+supervision tree.
 
 ```gleam
 // src/my_app.gleam
@@ -146,14 +146,14 @@ fn handle_http(
 }
 ```
 
-`handle_http` is the plain HTTP fallback: `mist_transport.handler` routes
-WebSocket upgrades on the configured path into beryl and hands every other
-request to it. The [Quick Start](/quick-start/#2-start-the-channel-system-and-wire-the-transport)
-serves real pages from the same function.
+`handle_http` is the HTTP fallback. `mist_transport.handler` routes WebSocket
+upgrades on the configured path to beryl. It sends all other requests to
+`handle_http`. The
+[Quick Start](/quick-start/#2-start-the-channel-system-and-wire-the-transport)
+shows how to serve pages from this function.
 
-Everything downstream of `child_spec` is unchanged from raw dispatch: the same
-runtime, the same wire codec, the same presence and abuse controls, the
-same transports. The layer only supplies the `init`/`update` pair.
+Both APIs use the same runtime, wire codec, presence, abuse controls, and
+transports. The channel layer supplies only the `init` and `update` pair.
 
 `child_spec` reports eager validation failures as
 `channel.ChildSpecError`:
@@ -166,9 +166,9 @@ same transports. The layer only supplies the `init`/`update` pair.
 
 ## Handler patterns and precedence
 
-Patterns use beryl's topic pattern syntax — `"room:lobby"`, `"room:*"`,
-`"document:*:ops"`, `"*"` — and are matched in **registration order**.
-The first pattern that matches a topic owns it.
+Patterns use beryl topic syntax, such as `"room:lobby"`, `"room:*"`,
+`"document:*:ops"`, and `"*"`. The layer checks patterns in
+**registration order**. The first match owns the topic.
 
 A bigger `handlers()` returns one entry per channel module:
 
@@ -182,14 +182,12 @@ A bigger `handlers()` returns one entry per channel module:
 ]
 ```
 
-Overlapping patterns are allowed and useful — `"room:lobby"` ahead of
-`"room:*"` is the normal way to give one topic its own channel — but more
-specific patterns must come first: a `"room:*"` registered ahead of
-`"room:lobby"` would make the lobby channel unreachable, a routing mistake
-the layer cannot detect for you. Two handlers with the same pattern string
-are rejected, since the second could never receive a join, and a join for a
-topic no handler matches is refused explicitly with
-`{"reason": "unmatched topic"}` rather than left unanswered.
+Patterns can overlap. Put `"room:lobby"` before `"room:*"` to give the lobby a
+separate channel. Put specific patterns first. If `"room:*"` comes first, the
+lobby handler cannot receive a join. The layer cannot detect this routing
+error. It rejects duplicate pattern strings because the second handler cannot
+receive a join. It also rejects unmatched topics with
+`{"reason": "unmatched topic"}`.
 
 `InvalidPattern` carries the core
 [`topic.TopicError`](/reference/api/beryl-topic/) itself rather than a
@@ -206,10 +204,9 @@ The same rule applies to
 `beryl.InvalidTopicPattern(pattern, reason)`, which nests the identical
 `topic.TopicError`.
 
-Validation is deterministic and two-phase: every pattern's syntax is
-checked in registration order first, then duplicate pattern strings are
-looked for in registration order. `child_spec` performs this check before
-building the supervised subtree.
+Validation has two phases. First, `child_spec` checks pattern syntax in
+registration order. Then it checks for duplicate strings in the same order. It
+does this before it builds the supervised subtree.
 
 ## Typed state instead of assigns
 
@@ -229,11 +226,10 @@ channel.accept(
 )
 ```
 
-`channel.accept` binds the state to the callbacks by capturing it in
-closures. Each `channel.next` result rebuilds the same closures over the
-next state. No value is ever erased to `Dynamic`, and no
-unchecked coercion is involved — which is why a `List(Handler)` can hold
-channels whose states have nothing in common.
+`channel.accept` captures the state in the callback closures. Each
+`channel.next` result rebuilds the closures with the next state. The layer does
+not erase the state to `Dynamic` or use unchecked coercion. Therefore, one
+`List(Handler)` can contain channels with unrelated state types.
 
 The layer keeps **one instance per joined topic**. A socket joined to
 `room:general` and `room:random` has two independent `State` values, and
@@ -253,12 +249,10 @@ The `join` callback receives a `channel.JoinContext(info)`:
 | `params` | `List(String)` | Wildcard captures in pattern order; exact patterns receive `[]` |
 | `payload` | `Dynamic` | Raw client join payload |
 
-`JoinContext` is a per-join view built by the layer, not beryl's core
-`socket.ConnectInfo`. The layer owns the socket-level model and the
-socket-level message type — that is what lets channels keep private state
-and private message types — so it hands each join the connection facts it
-needs plus a sender scoped to *this* join, rather
-than the core connect record.
+The layer builds one `JoinContext` for each join. It is not the core
+`socket.ConnectInfo`. The layer owns the socket model and message type. This
+lets channels keep private state and private message types. Each join receives
+the required connection data and a sender for that join.
 
 `channel.notify(sender, message)` delivers `message` to that channel's
 `on_info` callback with its type intact:
@@ -272,50 +266,44 @@ pub type Note {
 channel.notify(sender, Tick(1))
 ```
 
-The mechanism is cast-free. `notify` seals the typed value inside a
-closure and hands the layer an **envelope** stamped with this join's topic
-and generation — a counter the layer advances on every join attempt and
-never reuses. The envelope carries no readable payload; the router
-compares its stamp against the live instance and only then lets the
-owning join open it, in the same turn it is delivered. Nothing typed is
-ever parked in a shared mailbox between turns, and nothing is coerced on
-the way through.
+This mechanism does not use casts. `notify` seals the typed value in a closure.
+It creates an **envelope** with the join topic and generation. The layer
+increments the generation for each join attempt and does not reuse it. The
+envelope has no readable payload. The router compares the envelope with the
+live instance. Only the owning join can open it, during the delivery turn. The
+shared mailbox does not store the typed value between turns.
 
-Cast-free is not cost-free. Opening the envelope is a selective receive
-on the socket's runtime actor mailbox, performed in the same turn, so one
-delivery costs O(mailbox depth). At ordinary depths that is noise; on a
-socket running a deep backlog it is the thing to know before making
-`notify` a high-rate data path. See
+Opening the envelope uses a selective receive on the runtime actor mailbox.
+This occurs in the same turn, so one delivery costs O(mailbox depth). The cost
+is small for a short mailbox. A deep backlog makes `notify` unsuitable for a
+high-rate data path. See
 [Limitations](#limitations).
 
 ### Stale senders
 
-A sender is scoped to the join that produced it. Sending is asynchronous
-and never fails, so it cannot report that the channel is gone — liveness
-is decided where the message is delivered:
+A sender applies only to the join that produced it. Sending is asynchronous
+and does not report failure. The receiver determines whether the channel is
+live:
 
-- If the channel has **closed** normally — a client leave, a `close([])`
-  result, a socket teardown — the envelope is dropped, still sealed.
+- If the channel has **closed** after a client leave, `close([])`, or socket
+  teardown, the layer drops the sealed envelope.
 - If the same topic has since been **joined again**, the envelope's
   generation no longer matches the live instance, so it is dropped rather
   than handed to the new join.
 - A live match delivers exactly one `on_info` call. Sends are never
   coalesced, and they arrive in the order the owning socket receives them.
 
-So a sender kept by a long-lived process is always safe to use: it never
-reaches a *different* join, and the ordinary worst case is that the
-message goes nowhere.
+A long-lived process can keep a sender. It cannot send a message to a different
+join. If the target join is gone, the message is dropped.
 
-There is one exception, and it is the only one: a **panic inside
-`on_terminate`**. Core's policy for a crash while closing a topic is to
-log it and keep the model from before the close — which is the model that
-still lists that instance. The instance therefore outlives its own
-termination, and its own sender keeps delivering `on_info` to it until
-the topic is joined again or the socket ends. See
+A **panic inside `on_terminate`** is an exception. For a crash during topic
+close, the core logs the crash and keeps the model from before the close. That
+model still contains the channel instance. Its sender can deliver `on_info`
+until the topic joins again or the socket ends. See
 [Crash behavior](#crash-behavior).
 
-Use `notify` to schedule a **later** turn — including from another
-process. Work that has to be part of the join itself belongs in
+Use `notify` to schedule a **later** turn, including from another process. Put
+work that must occur during the join in
 [join actions](#join-actions).
 
 ## Action builders
@@ -344,10 +332,10 @@ warning, exactly as the equivalent core effects are.
 
 ### Order is wire order
 
-Channel actions are applied strictly in the order they were added. They lower
-one-to-one onto core `socket.Effect` values, which the runtime applies in
-list order. An asynchronous presence effect can park this socket while other
-sockets continue; the remaining actions resume only after it completes.
+The runtime applies channel actions in list order. Each action maps to one core
+`socket.Effect`. An asynchronous presence effect can pause this socket while
+other sockets continue. The remaining actions resume after the effect
+completes.
 
 The `encode` callbacks of `push_presence` and `broadcast_presence` run
 **when the action is applied**, so a snapshot already reflects any
@@ -388,9 +376,9 @@ Two consequences worth designing around:
 `with_actions` appends, so it composes with itself, and it returns
 `channel.reject` results unchanged: a refused join has no topic to act on.
 
-This is what to reach for instead of notifying yourself from `join`.
-`notify` schedules a later input; actions preserve their declared position
-immediately after the join acknowledgment.
+Use join actions instead of sending `notify` to the same channel from `join`.
+`notify` schedules a later input. Join actions stay directly after the join
+acknowledgment.
 
 ## Handling input
 
@@ -443,10 +431,10 @@ but each channel still runs its `on_terminate`.
 
 ## Termination
 
-`on_terminate` runs **exactly once per accepted join**, on every exit
-path: a client `phx_leave`, a `close([])` result, `stop_socket`, a socket
-disconnect, a heartbeat timeout, and `beryl.stop`. A join that was
-*rejected* never started an instance, so it never terminates.
+`on_terminate` runs once for each accepted join. It runs after `phx_leave`,
+`close([])`, `stop_socket`, socket disconnect, heartbeat timeout, and
+`beryl.stop`. A rejected join does not create an instance, so it does not run
+`on_terminate`.
 
 The actions it returns are lowered inside the turn that closes the topic,
 right after the instance has been removed. Closing-phase lists can contain
@@ -467,11 +455,10 @@ channel.on_terminate(fn(state: State, _reason) {
 })
 ```
 
-Ordering the explicit `presence_untrack` *before* the
-`broadcast_presence` is what makes the roster correct: the snapshot is
-encoded when the action is applied, after the untrack, so it cannot be
-stale. Presence entries are auto-untracked when the topic closes anyway, but the
-automatic untrack runs after `Closed`, not before your actions.
+Put `presence_untrack` before `broadcast_presence`. The runtime encodes the
+snapshot after it applies the untrack, so the roster is current. The runtime
+also removes presence entries when the topic closes. That removal occurs after
+`Closed`, not before your actions.
 
 ## Lifecycle at a glance
 
@@ -497,9 +484,8 @@ sequenceDiagram
 
 ## Crash behavior
 
-App code that panics never takes the runtime down. The core's crash
-policy is attributed by *where* the panic happened, and the layer does not
-blunt it:
+An app panic does not stop the runtime. The core limits the effect based on
+where the panic occurred:
 
 | Panic in | Effect |
 |---|---|
@@ -508,23 +494,19 @@ blunt it:
 | `on_info` | The whole socket is torn down |
 | `on_terminate` | Teardown still completes, and sibling channels still run their own termination actions |
 
-A panic inside `on_terminate` discards that channel's own `Closed` turn,
-so its termination actions are lost — and so is the model update that
-removed its instance from the layer's map. The instance is retained at
-its original generation. Core cannot reach it: the topic is closed, so no
-client message, binary frame, or second `Closed` can name it. But
-`on_info` is socket-scoped rather than topic-scoped, so a `Sender` created
-by that join still resolves to the retained instance and still delivers to
-it — until the topic is joined again (a rejoin overwrites the entry) or
-the socket ends.
+A panic inside `on_terminate` discards the channel's `Closed` turn. The
+termination actions and model update are lost. The instance stays at its
+original generation. The core cannot reach it through the closed topic.
+Client messages, binary frames, and another `Closed` cannot name it. However,
+`on_info` applies to the socket, not the topic. A `Sender` from that join can
+still deliver to the retained instance. A rejoin replaces the entry, and
+socket shutdown removes it.
 
-That is a deliberate trade, not an oversight. Undoing it is exactly the
-model update the panic threw away, and the alternatives — rescuing the
-callback inside the layer, or moving termination onto a second turn — hide
-a crash core is responsible for logging, or make a terminate panic
-socket-fatal. `crash_test` pins the behavior so it cannot drift quietly.
-Keep `on_terminate` free of code that can panic and the ordinary rule
-holds: a closed channel is gone, and its senders reach nothing.
+The panic discards the model update that would remove the instance. Catching
+the callback in the layer would hide a crash that the core must log. Moving
+termination to another turn would make a termination panic close the socket.
+`crash_test` fixes this behavior. Keep code that can panic out of
+`on_terminate`. Then a closed channel is removed and its senders reach nothing.
 
 Crash isolation stops at the socket, as it does with raw dispatch: a
 panic in `on_info` ends one socket, not the runtime. A crash of the
@@ -564,10 +546,10 @@ It reports the same eager validation failures as
 `channel.ChildSpecError` — see the table in
 [Starting a channel system](#starting-a-channel-system).
 
-The subtree, restart policy, and `beryl.stop` semantics are the core's,
-unchanged — see the [Supervision guide](/guides/supervision/). PubSub,
-presence, and group actors are still yours to start and supervise; pass
-their handles into `beryl.Config` as usual.
+The channel layer uses the core subtree, restart policy, and `beryl.stop`
+behavior. See the [Supervision guide](/guides/supervision/). The application
+must start and supervise PubSub, presence, and group actors. Pass their handles
+to `beryl.Config`.
 
 After a runtime crash the handle keeps working for new connections, but
 every live channel instance is gone: clients reconnect and rejoin, and
@@ -590,8 +572,7 @@ remaining old import or qualified error name.
 
 ## Limitations
 
-The layer is deliberately scoped to *one topic at a time*. These are the
-edges to know before you design around it:
+The layer handles one topic at a time. Note these limits:
 
 - **Each action is topic-scoped.** A `room:general` channel cannot broadcast
   on `lobby`. Cross-topic publishing goes through the external `Sockets`

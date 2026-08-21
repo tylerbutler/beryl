@@ -2,7 +2,8 @@
 title: PubSub
 ---
 
-beryl's PubSub layer provides distributed publish/subscribe messaging built on Erlang's `pg` (process groups) module.
+beryl's PubSub layer uses Erlang `pg` process groups for distributed publish
+and subscribe messaging.
 
 ## Starting PubSub
 
@@ -16,10 +17,9 @@ let ps = pubsub.start(pubsub.default_config())
 let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 ```
 
-The scope maps to a `pg` scope atom and identifies the PubSub instance at
-runtime. Different scopes are completely isolated and can safely use different
-payload types in the same process mailbox. Every handle using the same scope
-must use the same payload type.
+The scope maps to a `pg` scope atom and identifies the PubSub instance.
+Different scopes are isolated and can use different payload types in one
+process mailbox. All handles in one scope must use the same payload type.
 
 :::danger[The scope must be a static, bounded deployment value]
 The scope name is converted to an Erlang atom. Atoms are never
@@ -32,8 +32,8 @@ acceptable only when validated or selected from a fixed bounded set.
 
 ## Subscribing
 
-Create one typed subscriber in the process that owns the mailbox, join any
-topics it needs, and fold PubSub delivery into that process's selector:
+Create one typed subscriber in the process that owns the mailbox. Join the
+required topics. Add PubSub delivery to the process selector:
 
 ```gleam
 let sub = pubsub.subscriber(ps)
@@ -48,10 +48,9 @@ let selector =
 pubsub.leave(sub, "room:lobby")
 ```
 
-PubSub records arrive as raw BEAM messages, so `selecting` is the typed
-validation boundary. It matches the subscriber's scope, allowing one process
-to select subscribers with different payload types as long as their scopes
-differ.
+PubSub records arrive as raw BEAM messages. `selecting` validates their types
+and matches the subscriber scope. One process can select subscribers with
+different payload types if their scopes differ.
 
 ## Messages
 
@@ -81,7 +80,9 @@ interoperate, so upgrade the cluster together when adopting this version.
 Version changes to your own payload type explicitly when rolling upgrades must
 accept old and new nodes concurrently.
 
-`FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving runtimes use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
+`FromSocket` contains the sender PID and a socket ID to exclude. Receiving
+runtimes do not send the message to that socket. Thus,
+`beryl.broadcast_from` excludes the sender across cluster nodes.
 
 ## Broadcasting
 
@@ -114,7 +115,9 @@ pubsub.broadcast_from_socket(
 pubsub.local_broadcast(ps, "room:lobby", "new_message", json.string("hello"))
 ```
 
-Use `broadcast_from_socket` when you need to broadcast to all subscribers across a cluster while excluding one specific socket — even if that socket's runtime is on a different node. `beryl.broadcast_from` calls this internally.
+Use `broadcast_from_socket` to send to all cluster subscribers except one
+socket. The socket can be on another node. `beryl.broadcast_from` calls this
+function.
 
 ## Querying subscribers
 
@@ -128,7 +131,9 @@ let count = pubsub.subscriber_count(ps, "room:lobby")
 
 ## Distributed operation
 
-Because PubSub is built on `pg`, it automatically works across connected Erlang nodes. When nodes join a cluster, their process groups are merged and messages are delivered to subscribers on all nodes — no configuration required.
+Erlang `pg` works across connected nodes. When nodes join a cluster, `pg`
+merges their process groups. It then sends messages to subscribers on all
+nodes. PubSub needs no extra cluster configuration.
 
 ## Integration with beryl channels
 

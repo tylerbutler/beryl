@@ -3,34 +3,37 @@ title: What is beryl?
 ---
 
 :::note[Pre-1.0]
-beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
+beryl is not yet version 1.0. Minor releases can change the API. The library is
+not ready for production. Try it and report problems. Your feedback will help
+define version 1.0.
 :::
 
 beryl is a **type-safe real-time channels and presence library** for Gleam,
-targeting the Erlang (BEAM) runtime. It provides the building blocks for adding
-real-time features to your Gleam web applications.
+for the Erlang (BEAM) runtime. It helps you add real-time features to Gleam web
+applications.
 
 ## Why beryl?
 
-Building real-time features — like chat rooms, live cursors, collaborative
-editing, or presence indicators — requires coordinating state across many
-connected clients. beryl gives you:
+Real-time features must coordinate state across many connected clients. These
+features include chat rooms, live cursors, shared editing, and presence
+indicators. beryl provides:
 
-- **Channels** — Register one handler per topic pattern; each channel keeps private, typed state and its own server-side message type (`beryl/channel`)
-- **App-side dispatch** — Or route every socket event yourself in one typed `update` function, with pattern matching such as `"room:*"`
-- **Presence** — Distributed tracking of connected users backed by a conflict-free CRDT
-- **PubSub** — Distributed publish/subscribe built on Erlang's `pg` process groups
-- **Groups** — Named collections of topics for multi-topic broadcasting
-- **WebSocket transport** — Mist integration with JSON wire protocol (Phoenix-compatible)
+- **Channels:** Register one handler for each topic pattern. Each channel keeps
+  private, typed state and a server-side message type (`beryl/channel`).
+- **App-side dispatch:** Route all socket events in one typed `update` function.
+  Match topic patterns such as `"room:*"`.
+- **Presence:** Track connected users across nodes with a conflict-free CRDT.
+- **PubSub:** Publish and subscribe across nodes with Erlang `pg` process groups.
+- **Groups:** Put topics in named groups for multi-topic broadcasts.
+- **WebSocket transport:** Use Mist with the Phoenix-compatible JSON protocol.
 
 ## Two layers, one runtime
 
 beryl ships one runtime and two ways to program it.
 
-The **channel layer** (`beryl/channel`) is the recommended default. You
-register a list of channel handlers — a topic pattern plus a typed `join`
-callback — and the layer routes every join, message, binary frame, typed
-server-side message, and close to the channel that owns the topic:
+The **channel layer** (`beryl/channel`) is the recommended default. Register a
+list of channel handlers. Each handler has a topic pattern and a typed `join`
+callback. The layer routes each event to the channel that owns the topic:
 
 ```gleam
 let assert Ok(#(sockets, spec)) =
@@ -40,10 +43,9 @@ let assert Ok(#(sockets, spec)) =
   )
 ```
 
-**Raw app-side dispatch** (`beryl`) is the core underneath. You pass one
-`init`/`update` pair to `beryl.child_spec` and own the router yourself. It is
-the right choice for a single-topic system, or when you want complete control
-over routing and effect ordering:
+**Raw app-side dispatch** (`beryl`) is the core API. Pass one `init` and
+`update` pair to `beryl.child_spec`. Use this API for one topic family or for
+full control of routing and effect order:
 
 ```gleam
 let assert Ok(#(sockets, spec)) =
@@ -54,21 +56,21 @@ let assert Ok(#(sockets, spec)) =
   )
 ```
 
-Both lower to the same runtime, wire codec, presence, PubSub, and abuse
-controls — and both child specifications belong in your application's
-supervision tree. The channel layer is built entirely on beryl's public API. See
-[Choose an API](/choosing-an-api/) for the decision in one table.
+Both APIs use the same runtime, wire codec, presence, PubSub, and abuse
+controls. Add either child specification to your application's supervision
+tree. The channel layer uses only beryl's public API. See
+[Choose an API](/choosing-an-api/) for a comparison.
 
 ## Design principles
 
 ### Type safety first
 
-Nothing in beryl is erased to `Dynamic` and nothing is coerced. With the
-channel layer, each channel picks its own private state type and its own
-server-side message type, and both stay sealed inside that channel's closures —
-which is how channels that agree on nothing compose in one list. With raw
-dispatch, your socket app owns one `Model` type and one `update` function, and
-the Gleam compiler keeps every branch honest:
+beryl does not erase typed socket state to `Dynamic`. It does not use unchecked
+coercion. With the channel layer, each channel defines private state and
+server-side message types. The channel keeps these types inside its closures,
+so unrelated channels can use one handler list. With raw dispatch, your socket
+app defines one `Model` type and one `update` function. The Gleam compiler
+checks each branch:
 
 ```gleam
 import beryl/socket
@@ -100,32 +102,28 @@ fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model) {
 
 ### Built on OTP
 
-The runtime behind each `beryl.Sockets` handle is an OTP actor. Presence
-tracking is a separate OTP actor wrapping a CRDT, and PubSub uses Erlang's `pg`
-directly.
+An OTP actor runs each `beryl.Sockets` handle. A separate OTP actor manages the
+presence CRDT. PubSub uses Erlang `pg`.
 
 ### CRDT-backed presence
 
-Presence state uses an **add-wins observed-remove set** (AWORSet) with causal
-context — a conflict-free replicated data type that resolves concurrent joins
-and leaves automatically, even across distributed Erlang nodes.
+Presence uses an **add-wins observed-remove set** (AWORSet) with causal context.
+This CRDT resolves concurrent joins and leaves across Erlang nodes.
 
 ### Focused dependencies
 
 The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`,
-`gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres` — all standard
-BEAM ecosystem packages. A WebSocket transport such as `beryl_mist` adds `mist`
-and `gleam_http`. `beryl/channel` is part of the core package, so choosing the
-channel model adds no dependency. No external message broker or database is
-required.
+`gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres`. A WebSocket
+transport such as `beryl_mist` adds `mist` and `gleam_http`. The core package
+includes `beryl/channel`. beryl does not require an external message broker or
+database.
 
 ### Phoenix wire protocol compatibility
 
-beryl uses the same JSON array wire format as Phoenix channels
-(`[join_ref, ref, topic, event, payload]`), making it compatible with existing
-Phoenix client libraries. If you know Phoenix Channels, the
-[Coming from Phoenix](/guides/coming-from-phoenix/) guide maps channel
-modules, callbacks, and assigns onto both of beryl's layers.
+beryl uses the Phoenix Channels JSON array format:
+`[join_ref, ref, topic, event, payload]`. Existing Phoenix client libraries can
+use this format. The [Coming from Phoenix](/guides/coming-from-phoenix/) guide
+compares Phoenix modules, callbacks, and assigns with both beryl APIs.
 
 ## Next steps
 

@@ -2,11 +2,15 @@
 title: Presence
 ---
 
-beryl includes a presence system for tracking connected users and their metadata. It's backed by the `lattice_presence` CRDT (conflict-free replicated data type), which automatically resolves conflicts across distributed Erlang nodes.
+beryl can track connected users and their metadata. It uses the
+`lattice_presence` conflict-free replicated data type (CRDT). The CRDT resolves
+conflicts across Erlang nodes.
 
 ## How it works
 
-Presence tracking uses an **add-wins observed-remove set** (AWORSet) with causal context. When a user joins or leaves, the state is merged across all nodes without coordination — no leader election or consensus required.
+Presence uses an **add-wins observed-remove set** (AWORSet) with causal context.
+When a user joins or leaves, nodes merge their state without coordination. The
+system does not need a leader or consensus.
 
 The presence system has two layers:
 
@@ -76,13 +80,12 @@ let ref = presence.track(
 )
 ```
 
-The **key** groups multiple connections from the same user. The **session ID**
-uniquely identifies each connection (typically the socket ID).
+The **key** groups connections from one user. The **session ID** identifies one
+connection and is usually the socket ID.
 
 ## Updating metadata
 
-Replace one tracked presence's metadata without briefly removing its key from
-the roster:
+Replace one presence entry's metadata without removing its key from the roster:
 
 ```gleam
 let assert Ok(new_ref) =
@@ -108,11 +111,10 @@ presence.untrack(p, new_ref)
 presence.untrack_all(p, socket_id)
 ```
 
-`track` returns a server-generated ref that identifies exactly the presence it
-created. Hold onto that ref if you need to remove one specific presence later
-with `untrack`. To clear every presence for a disconnecting socket, use
-`untrack_all` with the session ID instead. The string `session_id` identifies
-the logical session; it is not a BEAM process identifier.
+`track` returns a ref for the new presence entry. Keep the ref if you must
+remove that entry with `untrack`. To clear all entries for a disconnected
+socket, call `untrack_all` with the session ID. The `session_id` string
+identifies the logical session, not a BEAM process.
 
 ## Listing presences
 
@@ -154,9 +156,15 @@ must re-track their presence.
 
 ## Diff callbacks
 
-Get notified immediately when presence state changes:
+Use `on_diff` to receive presence changes:
 
-The callback runs synchronously on the presence actor — for both local mutations and remote merges, identically — before the affected topics' read-model snapshots are (re)published and before the triggering call replies. So if the callback reads presence state through the same handle (`list`, `get_by_key`, `count`) for a topic the diff touches, it sees the *previous* snapshot, not the one this diff is about to produce; read what you need from the `Diff` argument itself (`diff_joins`/`diff_leaves`) rather than re-reading through the handle inside the callback. Keep the callback fast: it runs on the actor process, so a slow callback delays that topic's publish, the reply to the mutating call, and anything else queued behind it in the actor's mailbox.
+The presence actor calls the callback for local changes and remote merges. It
+calls the function before it publishes new read-model snapshots and before it
+replies to the source call. If the callback calls `list`, `get_by_key`, or
+`count` for an affected topic, it reads the previous snapshot. Read the change
+from the `Diff` argument with `diff_joins` and `diff_leaves`. Keep the callback
+short. A slow callback delays snapshot publication, the source call reply, and
+later actor messages.
 
 ```gleam
 let config =
@@ -174,11 +182,14 @@ let config =
   })
 ```
 
-The `on_diff` callback fires whenever local tracking changes or remote merges produce non-empty changes, ensuring no diffs are lost during rapid state changes.
+The actor calls `on_diff` after a local change or a remote merge produces a
+non-empty diff. It calls the function for each change, so rapid changes do not
+lose diffs.
 
 ## Broadcasting Phoenix-compatible diffs
 
-Use `beryl.broadcast_presence_diff` to send a `presence_diff` event to sockets subscribed to the changed topic:
+Use `beryl.broadcast_presence_diff` to send a `presence_diff` event to sockets
+on the changed topic:
 
 ```gleam
 import beryl
@@ -219,12 +230,12 @@ For lower-level integrations, `beryl/presence/wire.encode_diff(diff, topic)` ret
 
 ## Cross-node replication
 
-When PubSub is configured, the presence actor:
+When you configure PubSub, the presence actor:
 
-1. Periodically broadcasts its full CRDT state to the `beryl:presence:sync` topic
-2. Receives remote state from other nodes via PubSub
-3. Merges remote state using the AWORSet merge algorithm
-4. Fires `on_diff` for any changes from the merge
+1. Sends its full CRDT state to `beryl:presence:sync` at set intervals.
+2. Receives remote state from other nodes through PubSub.
+3. Merges remote state with the AWORSet merge algorithm.
+4. Calls `on_diff` for changes from the merge.
 
 Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process their own sync messages.
 

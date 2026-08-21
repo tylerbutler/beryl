@@ -3,16 +3,16 @@ title: Architecture Overview
 description: How beryl is organized, the major modules, and where to make changes.
 ---
 
-beryl layers a Phoenix-compatible socket runtime on top of OTP actors and Erlang `pg`, with a pluggable wire codec and WebSocket transport.
-An app can supply an `init`/`update` pair directly to `beryl.child_spec`, or
-use `channel.child_spec`, which builds that pair from a typed handler
-table. The runtime dispatches decoded wire messages and applies the effects
-either layer returns.
-Presence and groups are independent domain actors; PubSub is the only cross-node primitive; everything else is local to a node.
+beryl provides a Phoenix-compatible socket runtime on OTP actors and Erlang
+`pg`. It supports pluggable wire codecs and WebSocket transports. An app can
+pass an `init` and `update` pair to `beryl.child_spec`. It can also pass a typed
+handler table to `channel.child_spec`. The runtime dispatches decoded messages
+and applies the returned effects. Separate actors manage presence and groups.
+Only PubSub sends data across nodes.
 
 ## How to read these docs
 
-Each subsystem page covers one slice of the stack end-to-end and ends with a **"Where this lives"** pointer back to the relevant source files.
+Each page describes one subsystem and lists its source files.
 
 - [Message Lifecycle](/architecture/message-lifecycle): how a frame travels from WebSocket to your `update` function and back
 - [Runtime & Supervision](/architecture/runtime): the runtime actor, typed dispatch, and the built-in supervision
@@ -78,11 +78,14 @@ flowchart TB
   RT -. "group broadcasts" .-> GR
 ```
 
-The runtime supervises itself inside `child_spec`; presence and groups are plain actors the application starts and owns. See the [Supervision guide](/guides/supervision/).
+`child_spec` supervises the runtime. The application starts and owns the
+presence and group actors. See the [Supervision guide](/guides/supervision/).
 
 ## Where things live
 
-Core source files live under `packages/beryl/src/beryl/`; transports under `packages/beryl_mist/` and `packages/beryl_ewe/`.
-The runtime is the entry point for understanding behaviour. Start with [Runtime & Supervision](/architecture/runtime).
-For how a message actually moves through the system, see [Message Lifecycle](/architecture/message-lifecycle).
-For cross-node concerns, see [PubSub & Distribution](/architecture/pubsub-and-distribution).
+Core source files are under `packages/beryl/src/beryl/`. Transport source files
+are under `packages/beryl_mist/` and `packages/beryl_ewe/`. Start with
+[Runtime & Supervision](/architecture/runtime) to learn the runtime. See
+[Message Lifecycle](/architecture/message-lifecycle) for the message path. See
+[PubSub & Distribution](/architecture/pubsub-and-distribution) for cross-node
+behavior.
