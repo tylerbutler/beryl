@@ -36,11 +36,11 @@ pub type InboundKind {
   Event(String)
 }
 
-/// Normalised inbound message shape.
+/// A normalized inbound message.
 ///
 /// `Inbound` is opaque: construct it with `inbound` and read it with the
-/// `inbound_*` accessors. Keeping the record hidden lets Beryl add fields
-/// (which default sensibly) without breaking every custom codec.
+/// `inbound_*` accessors. The hidden record lets Beryl add fields with
+/// defaults without breaking custom codecs.
 pub opaque type Inbound {
   Inbound(
     join_ref: Option(String),
@@ -51,7 +51,7 @@ pub opaque type Inbound {
   )
 }
 
-/// Construct a normalised inbound message.
+/// Construct a normalized inbound message.
 ///
 /// - `join_ref`: optional client-side reference assigned at join time
 ///   (used by some Phoenix replies; codecs without this concept should
@@ -70,27 +70,27 @@ pub fn inbound(
   Inbound(join_ref:, ref:, topic:, kind:, payload:)
 }
 
-/// The inbound message's join-time client reference, if any.
+/// Return the inbound message's join-time client reference, if any.
 pub fn inbound_join_ref(inbound: Inbound) -> Option(String) {
   inbound.join_ref
 }
 
-/// The inbound message's per-message reference for reply correlation, if any.
+/// Return the inbound message's per-message reply reference, if any.
 pub fn inbound_ref(inbound: Inbound) -> Option(String) {
   inbound.ref
 }
 
-/// The inbound message's subscription topic.
+/// Return the inbound message's subscription topic.
 pub fn inbound_topic(inbound: Inbound) -> String {
   inbound.topic
 }
 
-/// The inbound message's structural kind.
+/// Return the inbound message's structural kind.
 pub fn inbound_kind(inbound: Inbound) -> InboundKind {
   inbound.kind
 }
 
-/// The inbound message's body, for the app to decode.
+/// Return the inbound message body for the app to decode.
 pub fn inbound_payload(inbound: Inbound) -> Dynamic {
   inbound.payload
 }
@@ -114,8 +114,9 @@ pub type ReplyStatus {
   StatusError
 }
 
-/// Format a `DecodeError` as a human-readable string. Used by the
-/// runtime's log messages and by `wire.format_decode_error`.
+/// Format a `DecodeError` as human-readable text.
+///
+/// The runtime log messages and `wire.format_decode_error` use this text.
 pub fn format_decode_error(error: DecodeError) -> String {
   case error {
     InvalidJson(reason) -> "Invalid JSON: " <> reason
@@ -126,9 +127,8 @@ pub fn format_decode_error(error: DecodeError) -> String {
 
 /// A wire codec.
 ///
-/// `Codec` is opaque; build one with `new` (and, for binary support,
-/// `with_binary_decoder`). The runtime reads the codec's behaviour
-/// through the `@internal` accessors below.
+/// `Codec` is opaque. Build one with `new`. For binary support, add
+/// `with_binary_decoder`.
 pub opaque type Codec {
   Codec(
     decode_text: fn(String) -> Result(Inbound, DecodeError),
@@ -150,7 +150,7 @@ pub opaque type Codec {
 
 /// Build a text-only wire codec.
 ///
-/// - `decode_text`: decode raw inbound text into a normalised `Inbound`.
+/// - `decode_text`: decode raw inbound text into a normalized `Inbound`.
 /// - `encode_reply`: encode a reply to a client message:
 ///   `(join_ref, ref, topic, status, response_payload)`.
 /// - `encode_push`: encode a server-initiated push: `(topic, event, payload)`.
@@ -183,11 +183,11 @@ pub fn new(
   )
 }
 
-/// Attach a binary decoder to a codec.
+/// Add a binary decoder to a codec.
 ///
-/// When set, binary WebSocket frames are decoded into a normalised `Inbound`
-/// via `decode_binary` instead of being delivered to the app's `update` as a
-/// raw `Binary` event.
+/// When set, the decoder converts binary WebSocket frames to a normalized
+/// `Inbound` via `decode_binary`. The app's `update` function does not receive
+/// a raw `Binary` event.
 pub fn with_binary_decoder(
   codec: Codec,
   decode_binary: fn(BitArray) -> Result(Inbound, DecodeError),
@@ -195,10 +195,10 @@ pub fn with_binary_decoder(
   Codec(..codec, decode_binary: Some(decode_binary))
 }
 
-/// Attach a topic-close encoder to a codec.
+/// Add a topic-close encoder to a codec.
 ///
-/// When set, the runtime emits this frame to a client whenever one of
-/// its topics terminates gracefully (leave, server shutdown, heartbeat
+/// When set, the runtime sends this frame when one of the client's topics
+/// terminates gracefully (leave, server shutdown, heartbeat
 /// eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
 /// leave the joined state instead of waiting out push timeouts.
 pub fn with_close_encoder(
@@ -208,10 +208,10 @@ pub fn with_close_encoder(
   Codec(..codec, encode_close: Some(encode_close))
 }
 
-/// Attach a topic-error encoder to a codec.
+/// Add a topic-error encoder to a codec.
 ///
-/// When set, the runtime emits this frame to a client whenever one of
-/// its topics terminates abnormally (crashed or stopped with an error):
+/// When set, the runtime sends this frame when one of the client's topics
+/// terminates abnormally (crashed or stopped with an error):
 /// `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
 /// automatic rejoin.
 pub fn with_error_encoder(
@@ -350,11 +350,12 @@ pub fn encode_close(
 
 /// Mark a codec's events as topicless.
 ///
-/// Some framings (e.g. Socket.IO-style protocols) do not carry a per-frame
+/// Some framings, such as Socket.IO-style protocols, do not carry a per-frame
 /// topic. When set, an inbound event whose topic is empty is routed to the
-/// socket's single joined topic; with zero or multiple joins it is dropped.
+/// socket's single joined topic. The runtime drops it when the socket has
+/// zero or multiple joins.
 /// Topic-carrying codecs (like the Phoenix codec) must leave this off so
-/// empty-topic frames are rejected instead of guessed at.
+/// the runtime rejects empty-topic frames instead of inferring a topic.
 pub fn with_topicless_events(codec: Codec) -> Codec {
   Codec(..codec, topicless_events: True)
 }

@@ -1,6 +1,6 @@
 ---
 title: "beryl/wire"
-description: "Phoenix Wire Protocol — encoding/decoding helpers and the canonical"
+description: "Phoenix Wire Protocol: encoding/decoding helpers and the canonical"
 ---
 
 <!--
@@ -9,7 +9,7 @@ description: "Phoenix Wire Protocol — encoding/decoding helpers and the canoni
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-Phoenix Wire Protocol — encoding/decoding helpers and the canonical
+Phoenix Wire Protocol: encoding/decoding helpers and the canonical
  `phoenix_codec()` for `beryl/wire/codec`.
 
  Phoenix uses a JSON array format: `[join_ref, ref, topic, event, payload]`.
@@ -28,8 +28,8 @@ Phoenix Wire Protocol — encoding/decoding helpers and the canonical
 
 Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 
- Errors when a metadata component exceeds the framing's 255-byte length
- limit.
+ Returns `Error(Nil)` when a metadata component exceeds the framing's
+ 255-byte limit.
 
 ```gleam
 pub fn binary_broadcast(
@@ -43,8 +43,8 @@ pub fn binary_broadcast(
 
 Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 
- Errors when a metadata component exceeds the framing's 255-byte length
- limit.
+ Returns `Error(Nil)` when a metadata component exceeds the framing's
+ 255-byte limit.
 
 ```gleam
 pub fn binary_push(
@@ -59,8 +59,8 @@ pub fn binary_push(
 
 Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
 
- Errors when a metadata component exceeds the framing's 255-byte length
- limit.
+ Returns `Error(Nil)` when a metadata component exceeds the framing's
+ 255-byte limit.
 
 ```gleam
 pub fn binary_reply(
@@ -74,8 +74,9 @@ pub fn binary_reply(
 
 ### `channel_close`
 
-Create a Phoenix `phx_close` frame, sent when a channel terminates
- gracefully. Phoenix mirrors the channel's `join_ref` into the `ref` slot.
+Create a Phoenix `phx_close` frame for a normal channel termination.
+
+ Phoenix copies the channel's `join_ref` to the `ref` slot.
 
 ```gleam
 pub fn channel_close(
@@ -86,8 +87,9 @@ pub fn channel_close(
 
 ### `channel_error`
 
-Create a Phoenix `phx_error` frame, sent when a channel terminates
- abnormally. Phoenix clients respond by scheduling an automatic rejoin.
+Create a Phoenix `phx_error` frame for an abnormal channel termination.
+
+ Phoenix clients respond by scheduling an automatic rejoin.
 
 ```gleam
 pub fn channel_error(
@@ -100,12 +102,12 @@ pub fn channel_error(
 
 Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
 
- The payload remains a `BitArray` wrapped in `Dynamic`, but the decoded
+ The payload remains a `BitArray` wrapped in `Dynamic`. The decoded
  frame follows normal event classification and reaches the app as a
  `Join` or `Message` event rather than `Binary`. Decode the payload with
- `gleam/dynamic/decode.bit_array` if needed. Zero-length join_ref/ref
- components decode as `None`. Reserved protocol events are classified the
- same way as on the text framing.
+ `gleam/dynamic/decode.bit_array` if needed. Zero-length `join_ref` and
+ `ref` components decode as `None`. Reserved protocol events use the same
+ classification as text frames.
 
 ```gleam
 pub fn decode_binary_message(BitArray) -> Result(codec.Inbound, codec.DecodeError)
@@ -116,7 +118,7 @@ pub fn decode_binary_message(BitArray) -> Result(codec.Inbound, codec.DecodeErro
 Parse a JSON string into an `Inbound`.
 
  Expected format: `[join_ref, ref, topic, event, payload]` where
- `join_ref` and `ref` may be `null`.
+ The `join_ref` and `ref` values can be `null`.
 
 ```gleam
 pub fn decode_message(String) -> Result(codec.Inbound, codec.DecodeError)
@@ -124,11 +126,10 @@ pub fn decode_message(String) -> Result(codec.Inbound, codec.DecodeError)
 
 ### `dynamic_to_json`
 
-Convert a `Dynamic` (decoded from JSON) back into `json.Json`.
+Convert a `Dynamic` value decoded from JSON back to `json.Json`.
 
- Returns `Error(Nil)` when the value nests deeper than the wire
- protocol's maximum JSON depth, or contains something JSON cannot
- represent.
+ Returns `Error(Nil)` when the value exceeds the wire protocol's maximum
+ JSON depth or contains a value that JSON cannot represent.
 
 ```gleam
 pub fn dynamic_to_json(dynamic.Dynamic) -> Result(json.Json, Nil)
@@ -160,9 +161,11 @@ pub fn heartbeat_reply(option.Option(String)) -> codec.Frame
 
 ### `phoenix_codec`
 
-The canonical Phoenix wire codec. Pass to `beryl.config`.
+Return the canonical Phoenix wire codec.
 
- Handles both the JSON array framing on text frames and the Phoenix V2
+ Pass this codec to `beryl.config`.
+
+ The codec handles JSON array framing on text frames and Phoenix V2
  binary framing on binary frames (see `decode_binary_message`). Decoded
  binary frames follow the normal inbound path, producing `Join` or
  `Message` events according to their event name. The app receives a

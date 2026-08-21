@@ -23,7 +23,7 @@ import gleam/http/response.{type Response}
 import gleam/option.{None}
 import gleam/result
 
-/// Upgrade a request to WebSocket if it matches the configured path
+/// Upgrade a request to WebSocket if it matches the configured path.
 ///
 /// Usage in your Ewe handler:
 /// ```gleam
@@ -39,8 +39,8 @@ import gleam/result
 ///
 /// Path matching, origin policy, `?vsn` version negotiation, connection
 /// limits (per-IP and node-wide, rejected with `429 Too Many Requests`), and
-/// the `on_connect` callback are handled by the shared admission pipeline —
-/// see `beryl/transport/server.upgrade` for the full contract. Enforcement
+/// the `on_connect` callback use the shared admission pipeline. See
+/// `beryl/transport/server.upgrade` for the full contract. Enforcement
 /// uses the real socket peer IP from the TCP connection; forwarded headers
 /// such as `X-Forwarded-For` are not trusted.
 pub fn upgrade(
@@ -77,14 +77,13 @@ fn request_ip(request: Request(Connection)) -> Result(String, Nil) {
 /// Build a combined request handler that serves both WebSocket upgrades and
 /// regular HTTP from a single Ewe listener.
 ///
-/// The returned function inspects each request and routes it:
-/// - WebSocket upgrade requests matching the configured socket path are handed
-///   to [`upgrade`](#upgrade) (which also runs any `on_connect` callback).
-/// - Everything else — non-upgrade requests, or upgrades to a different path —
-///   falls through to `http_fallback`.
+/// The returned function inspects and routes each request:
+/// - It passes WebSocket upgrade requests for the configured socket path to
+///   [`upgrade`](#upgrade), which also runs any `on_connect` callback.
+/// - It passes all other requests to `http_fallback`. This includes non-upgrade
+///   requests and upgrades for a different path.
 ///
-/// This removes the boilerplate upgrade guard integrators would otherwise write
-/// by hand:
+/// This removes the need to write an upgrade guard:
 ///
 /// ```gleam
 /// ewe_transport.handler(sockets, server.default_config("/socket"), http_handler)

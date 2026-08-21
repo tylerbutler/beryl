@@ -36,8 +36,8 @@ import gleam/string
 
 /// Configuration for a WebSocket transport.
 ///
-/// Generic over the server's request body type (`body`), so the same config
-/// value works with any transport built on `gleam/http` requests.
+/// The `body` parameter is the server's request body type. The same
+/// configuration works with any transport built on `gleam/http` requests.
 pub opaque type TransportConfig(body) {
   TransportConfig(
     /// URL path to match for WebSocket upgrade (e.g., "/socket")
@@ -70,14 +70,14 @@ pub type ConnectError {
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Create a default transport config with no connect hook.
 ///
-/// The resulting config seeds empty (`[]`) `ConnectSeed.metadata` and applies
+/// The resulting configuration sets `ConnectSeed.metadata` to `[]` and applies
 /// the `origin.SameOrigin` origin policy, which rejects cross-site WebSocket
-/// upgrades before the handshake (CSWSH protection). Same-origin upgrades and
+/// upgrades before the handshake as CSWSH protection. Same-origin upgrades and
 /// non-browser clients (no `Origin` header) are admitted without
 /// configuration.
 ///
 /// Add `with_on_connect` to authenticate connections and/or seed connect
-/// metadata. Use `with_allowed_origins` to pin an explicit allow-list, or
+/// metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
 /// `with_allow_all_origins` to opt out of origin checking entirely.
 pub fn default_config(path: String) -> TransportConfig(body) {
   TransportConfig(
@@ -99,15 +99,15 @@ fn normalize_path(path: String) -> String {
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Set a socket-level connect/authentication callback on the transport config.
 ///
-/// The callback receives the HTTP request before the WebSocket upgrade and
+/// The callback receives the HTTP request before the WebSocket upgrade. It
 /// runs once per socket. Return `Ok(metadata)` to allow the connection and
-/// seed `ConnectSeed.metadata` — an ordered list of string pairs delivered to
-/// the app's `init` via `ConnectInfo.seed` — or `Error(ConnectRejected)` to
-/// reject the connection with a 403 Forbidden response before any topic
-/// join occurs.
+/// set `ConnectSeed.metadata`. The metadata is an ordered list of string
+/// pairs delivered to the app's `init` through `ConnectInfo.seed`. Return
+/// `Error(ConnectRejected)` to reject the connection with a 403 Forbidden
+/// response before any topic join.
 ///
-/// Callback order and duplicate keys are preserved verbatim in
-/// `ConnectSeed.metadata`; transports never log metadata values.
+/// `ConnectSeed.metadata` preserves callback order and duplicate keys.
+/// Transports never log metadata values.
 pub fn with_on_connect(
   config: TransportConfig(body),
   callback: fn(Request(body)) -> Result(List(#(String, String)), ConnectError),
@@ -138,11 +138,11 @@ pub fn with_allowed_origins(
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Disable `Origin` checking, allowing WebSocket upgrades from any origin.
 ///
-/// This is an explicit opt-out of the default `origin.SameOrigin` CSWSH
-/// protection. Only use it for sockets that do not rely on ambient browser
-/// credentials (cookies, sessions) for authorization, or that authenticate
-/// every message independently. For cookie/session-authenticated apps, prefer
-/// the default `SameOrigin` policy or `with_allowed_origins`.
+/// This disables the default `origin.SameOrigin` CSWSH protection. Use it only
+/// for sockets that do not rely on ambient browser credentials (cookies,
+/// sessions) for authorization, or that authenticate every message
+/// independently. For cookie/session-authenticated apps, prefer the default
+/// `SameOrigin` policy or `with_allowed_origins`.
 pub fn with_allow_all_origins(
   config: TransportConfig(body),
 ) -> TransportConfig(body) {
@@ -154,9 +154,9 @@ pub fn with_allow_all_origins(
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Determine whether a request is a WebSocket upgrade request.
 ///
-/// Checks for the standard `Upgrade: websocket` header (case-insensitive).
-/// Use this to distinguish WebSocket handshakes from regular HTTP traffic on
-/// the same listener.
+/// This function checks for the standard `Upgrade: websocket` header without
+/// regard to case. Use it to distinguish WebSocket handshakes from regular
+/// HTTP traffic on the same listener.
 pub fn is_websocket_request(request: Request(body)) -> Bool {
   case request.get_header(request, "upgrade") {
     Ok(value) -> string.lowercase(value) == "websocket"
@@ -194,7 +194,7 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// headers such as `X-Forwarded-For` must
 /// **not** be trusted or parsed, because clients can set them and would
 /// otherwise spoof their address to bypass the limit. Behind a trusted
-/// reverse proxy, all connections share the proxy's IP — resolve the real
+/// reverse proxy, all connections share the proxy's IP. Resolve the real
 /// client IP at the proxy layer. See the WebSocket transport guide.
 ///
 /// `beryl.with_connection_rate_per_ip` independently caps connection attempts
@@ -209,7 +209,7 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// node-wide ceiling bounds total resource use when a per-IP limit alone
 /// cannot (many distributed source addresses / IPv6 rotation). It is enforced
 /// per BEAM node, so across a load-balanced cluster the effective ceiling
-/// scales with the node count — use the load balancer's own controls for a
+/// scales with the node count. Use the load balancer's controls for a
 /// cluster-wide cap.
 pub fn upgrade(
   request request: Request(body),
@@ -239,8 +239,10 @@ pub fn upgrade(
 }
 
 // nolint: unused_exports -- transport SPI, consumed by sibling transports
-/// Build a combined request handler that sends upgrade requests through a
-/// transport-specific `upgrade` function and everything else to HTTP.
+/// Build a request handler for WebSocket upgrades and other HTTP requests.
+///
+/// The handler sends upgrade requests to the transport-specific `upgrade`
+/// function. It sends all other requests to HTTP.
 pub fn handler(
   upgrade upgrade: fn(Request(body), fn() -> Response(resp)) -> Response(resp),
   http_fallback http_fallback: fn(Request(body)) -> Response(resp),
@@ -402,9 +404,10 @@ fn finish_upgrade(
 
 // --- Connection lifecycle ---
 
-/// Outbound requests the runtime sends to a connection process. Transports
-/// receive these as their custom/user WebSocket message and act on them:
-/// send the frame, or close the connection.
+/// Outbound requests from the runtime to a connection process.
+///
+/// Transports receive these as custom or user WebSocket messages. They send
+/// the frame or close the connection.
 pub type SendRequest {
   SendText(String)
   SendBinary(BitArray)
@@ -433,13 +436,15 @@ pub opaque type ConnectionState {
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Assemble the connection seed delivered to an app-dispatch system's
-/// `init` (`ConnectInfo.seed`). Systems that don't use connect metadata simply
-/// ignore it.
+/// Build the connection seed for an app-dispatch system's `init` function.
 ///
-/// `metadata` is the ordered list of string pairs returned by the
-/// configured `on_connect` callback (empty when none is configured or it
-/// returns no metadata); order and duplicate keys are preserved verbatim.
+/// The function receives the seed as `ConnectInfo.seed`. Systems that do not
+/// use connect metadata can ignore it.
+///
+/// `metadata` is the ordered list of string pairs from the configured
+/// `on_connect` callback. It is empty when no callback is configured or the
+/// callback returns no metadata. This function preserves order and duplicate
+/// keys.
 pub fn connect_seed(
   request: Request(body),
   metadata: List(#(String, String)),
@@ -452,15 +457,14 @@ pub fn connect_seed(
   )
 }
 
-/// Initialize a newly upgraded WebSocket connection in its connection
-/// process.
+/// Initialize a new WebSocket connection in its connection process.
 ///
-/// Binds the held connection slot to the calling process (so the slot is
-/// reclaimed even if the process dies without a clean close), monitors the
-/// exact owning runtime, then atomically registers the socket and its
-/// runtime-triggered closer against that owner. A concurrent restart cannot
-/// redirect admission into the successor runtime. When no runtime is
-/// available, or the captured owner changed, the connection closes.
+/// This function binds the held connection slot to the calling process. The
+/// limiter reclaims the slot if the process dies without a clean close. The
+/// function then monitors the owning runtime and atomically registers the
+/// socket and its runtime-triggered closer with that owner. A concurrent
+/// restart cannot redirect admission to the next runtime. The connection
+/// closes if no runtime is available or the captured owner changed.
 ///
 /// Returns the connection state and a selector (extending `base_selector`)
 /// that delivers `SendRequest` values from the runtime; the transport must
@@ -539,8 +543,9 @@ pub fn init_connection(
   #(state, selector)
 }
 
-/// Clean up when a connection closes: release the held connection slot and
-/// announce the disconnect to the runtime.
+/// Clean up a closed connection.
+///
+/// Release the held connection slot and report the disconnect to the runtime.
 pub fn close_connection(state: ConnectionState) -> Nil {
   transport.release_connection_slot(state.connection_permit)
   transport.socket_disconnected(state.sockets, state.socket_id)
@@ -548,8 +553,7 @@ pub fn close_connection(state: ConnectionState) -> Nil {
 
 // --- Inbound frame pipeline ---
 
-/// What a transport should do with its connection after handling an inbound
-/// frame.
+/// What a transport must do after it handles an inbound frame.
 pub type FrameDisposition {
   /// Keep the connection open with the updated state.
   Continue(ConnectionState)
@@ -561,8 +565,9 @@ pub type FrameDisposition {
 /// connection process, so parse cost stays there and only valid,
 /// rate-admitted messages reach the shared runtime.
 ///
-/// Oversized frames return `Stop` (close the connection); over-rate frames
-/// are shed silently; undecodable frames are logged and dropped.
+/// Oversized frames return `Stop` and close the connection. The function
+/// silently drops over-rate frames. It logs and drops frames that it cannot
+/// decode.
 pub fn handle_text_frame(
   state: ConnectionState,
   text: String,
@@ -604,9 +609,9 @@ pub fn handle_text_frame(
 }
 
 // nolint: unused_exports -- transport SPI, consumed by sibling transports
-/// Size-check, rate-check, and decode an inbound binary frame in the
-/// connection process. Codecs without a binary decoder keep the raw
-/// `transport.route_binary` fan-out, routed through the runtime.
+/// Check the size and rate of an inbound binary frame, then decode it in the
+/// connection process. A codec without a binary decoder keeps the raw
+/// `transport.route_binary` fan-out through the runtime.
 pub fn handle_binary_frame(
   state: ConnectionState,
   data: BitArray,

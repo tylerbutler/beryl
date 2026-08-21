@@ -1,4 +1,4 @@
-//// Transport SPI — the contract between beryl core and WebSocket transport
+//// Transport SPI: the contract between beryl core and WebSocket transport
 //// implementations such as the `beryl_mist` package.
 ////
 //// `beryl/transport/server` owns the shared admission, connection, rate,
@@ -17,23 +17,23 @@ import gleam/erlang/process
 import gleam/option.{type Option}
 import gleam/result
 
-/// Runtime handle accepted by transport implementations.
+/// A runtime handle for transport implementations.
 pub type Sockets =
   beryl.Sockets
 
 /// A held connection slot returned by `acquire_connection_slot`.
 ///
-/// Hold it for the lifetime of the connection and pass it to
+/// Hold it for the connection's lifetime. Pass it to
 /// `release_connection_slot` when the connection closes. When no connection
-/// limit is configured the permit is an admit-everything placeholder and
-/// releasing it is a no-op.
+/// limit is configured, the permit allows all connections. Releasing it does
+/// nothing.
 pub opaque type ConnectionPermit {
   ConnectionPermit(inner: Option(connection_limit.Permit))
 }
 
 /// Try to acquire a configured connection slot for a transport.
 ///
-/// Pass the real socket peer IP, never a client-supplied address such as
+/// Pass the real socket peer IP. Do not pass a client-supplied address such as
 /// `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
 /// node-wide limit is already reached.
 pub fn acquire_connection_slot(
@@ -49,8 +49,8 @@ pub fn acquire_connection_slot(
 
 /// Bind an acquired connection slot to the calling connection process.
 ///
-/// The limiter monitors the caller so the slot is reclaimed if the process
-/// dies without running its close path.
+/// The limiter monitors the caller. It reclaims the slot if the process dies
+/// without running its close path.
 pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
   connection_limit.bind_optional(permit.inner)
 }
@@ -97,8 +97,10 @@ pub type FrameOutcome {
   FrameDecodeFailed
 }
 
-/// Cheap transport telemetry context. When disabled, starting and stopping an
-/// operation avoid VM clock calls and event construction.
+/// A low-cost transport telemetry context.
+///
+/// When telemetry is disabled, operations avoid VM clock calls and event
+/// construction.
 pub opaque type Telemetry {
   Telemetry(enabled: Bool, transport: telemetry.Transport)
 }
@@ -117,7 +119,9 @@ pub fn telemetry(
   )
 }
 
-/// Start a timed transport operation. Returns a zero sentinel when disabled.
+/// Start a timed transport operation.
+///
+/// Returns zero when telemetry is disabled.
 pub fn telemetry_start(context: Telemetry) -> Int {
   use <- bool.guard(when: !context.enabled, return: 0)
   telemetry.start_time()
@@ -186,9 +190,10 @@ pub fn socket_disconnected(
 
 // --- Inbound routing ---
 
-/// Route a transport-decoded inbound message to the runtime. Decode in
-/// the connection process (see `active_codec`) so parse cost and malformed
-/// input never reach the shared runtime.
+/// Route a transport-decoded inbound message to the runtime.
+///
+/// Decode in the connection process (see `active_codec`). Parse cost and
+/// malformed input then never reach the shared runtime.
 ///
 /// Runtime message-rate limiting applies after routing. If it sheds a
 /// heartbeat, that heartbeat does not refresh the socket's deadline; sustained
@@ -205,8 +210,8 @@ pub fn route_decoded(
 /// Route a transport-decoded binary message while preserving its binary
 /// frame classification for runtime telemetry and rate accounting.
 ///
-/// This is additive to `route_decoded`, whose text semantics are retained for
-/// third-party transport compatibility.
+/// This function supplements `route_decoded`. The text semantics of
+/// `route_decoded` remain unchanged for third-party transport compatibility.
 pub fn route_decoded_binary(
   sockets sockets: Sockets,
   socket_id socket_id: String,
@@ -215,8 +220,9 @@ pub fn route_decoded_binary(
   beryl.app_dispatch(sockets).route_decoded_binary(socket_id, message)
 }
 
-/// Route a raw binary frame, for codecs without a binary decoder (fans out
-/// to the socket's joined topics as `Binary` events delivered to `update`).
+/// Route a raw binary frame for a codec without a binary decoder.
+///
+/// The runtime sends a `Binary` event to `update` for each joined topic.
 pub fn route_binary(
   sockets sockets: Sockets,
   socket_id socket_id: String,
@@ -227,8 +233,9 @@ pub fn route_binary(
 
 // --- Configuration ---
 
-/// The wire codec configured for these sockets. Transports decode inbound
-/// frames with it in the connection process.
+/// Return the wire codec configured for these sockets.
+///
+/// Transports use it to decode inbound frames in the connection process.
 pub fn active_codec(sockets: Sockets) -> codec.Codec {
   beryl.configured_codec(sockets)
 }
@@ -237,7 +244,7 @@ pub fn active_codec(sockets: Sockets) -> codec.Codec {
 
 /// Return the pid of the runtime that owns transport connections.
 ///
-/// On `Ok(pid)`, monitor that exact pid before admission and close the
+/// On `Ok(pid)`, monitor that exact PID before admission and close the
 /// connection on its `Down`. `Error(Nil)` means the runtime is unavailable
 /// (pre-start or a restart window), so the connection must be refused.
 pub fn runtime_pid(sockets: Sockets) -> Result(process.Pid, Nil) {
@@ -247,9 +254,9 @@ pub fn runtime_pid(sockets: Sockets) -> Result(process.Pid, Nil) {
 /// Register a socket and its closer against the captured connection owner.
 ///
 /// Install a monitor for `owner` before calling this function. Admission
-/// succeeds only if that exact runtime instance processes the registration; a
-/// restart cannot redirect it to the successor runtime. On `Error`, the
-/// connection is closed so its bound permit can be released.
+/// succeeds only if that runtime instance processes the registration. A
+/// restart cannot redirect it to the next runtime. On `Error`, this function
+/// closes the connection so its bound permit can be released.
 pub fn admit_socket(
   sockets sockets: Sockets,
   owner owner: process.Pid,

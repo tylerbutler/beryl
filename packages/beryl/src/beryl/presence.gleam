@@ -55,9 +55,9 @@ const sync_event = "presence_sync"
 
 /// A running Presence instance.
 ///
-/// This handle is intentionally opaque so callers cannot forge actor subjects
-/// or depend on the runtime representation. It carries the actor's stable
-/// registered subject and the name of its actor-owned ETS read model.
+/// This handle is opaque. Callers cannot forge actor subjects or depend on
+/// the runtime representation. It contains the actor's stable registered
+/// subject and the name of its actor-owned ETS read model.
 ///
 /// ## Node affinity
 ///
@@ -82,8 +82,8 @@ type State =
 
 /// An opaque diff representing presence joins and leaves grouped by topic.
 ///
-/// This is passed to `Config.on_diff` and accepted by
-/// `beryl.broadcast_presence_diff`.
+/// Beryl passes this value to `Config.on_diff`.
+/// `beryl.broadcast_presence_diff` also accepts it.
 pub opaque type Diff {
   Diff(
     joins: Dict(String, List(PresenceEntry)),
@@ -93,16 +93,16 @@ pub opaque type Diff {
 
 /// A presence entry returned from queries and diff accessors.
 ///
-/// This type is intentionally transparent so callers can inspect query results
-/// and construct entries for `diff`.
+/// This type is transparent. Callers can inspect query results and construct
+/// entries for `diff`.
 pub type PresenceEntry {
   PresenceEntry(session_id: String, key: String, meta: json.Json)
 }
 
 /// Build a presence diff from topic-grouped joins and leaves.
 ///
-/// Most applications receive diffs from `Config.on_diff`; this helper is for
-/// callers that need to construct a diff to pass to `beryl.broadcast_presence_diff`.
+/// Most applications receive diffs from `Config.on_diff`. Use this function
+/// to construct a diff for `beryl.broadcast_presence_diff`.
 pub fn diff(
   joins joins: List(#(String, List(PresenceEntry))),
   leaves leaves: List(#(String, List(PresenceEntry))),
@@ -116,13 +116,13 @@ pub fn diff_topics(diff: Diff) -> List(String) {
   |> unique_strings(set.new(), [])
 }
 
-/// Get presence joins for a topic in this diff.
+/// Return presence joins for a topic in this diff.
 pub fn diff_joins(diff: Diff, topic: String) -> List(PresenceEntry) {
   dict.get(diff.joins, topic)
   |> result.unwrap([])
 }
 
-/// Get presence leaves for a topic in this diff.
+/// Return presence leaves for a topic in this diff.
 pub fn diff_leaves(diff: Diff, topic: String) -> List(PresenceEntry) {
   dict.get(diff.leaves, topic)
   |> result.unwrap([])
@@ -182,8 +182,8 @@ pub type SyncPayload {
 
 /// Configuration for starting presence.
 ///
-/// Build configs with `default_config` and the `with_*` functions so beryl can
-/// add future options without exposing record fields as public API.
+/// Build configurations with `default_config` and the `with_*` functions.
+/// Beryl can then add options without exposing record fields as public API.
 pub opaque type Config {
   Config(
     /// PubSub instance for cross-node replication
@@ -207,13 +207,13 @@ pub opaque type Config {
   )
 }
 
-/// Errors from updating a tracked presence.
+/// Errors from an update to a tracked presence.
 pub type PresenceUpdateError {
   /// The ref is unknown, already removed, or was not returned by `track`.
   UnknownRef
 }
 
-/// Messages the presence actor handles
+/// Messages that the presence actor handles.
 pub opaque type Message {
   Track(
     topic: String,
@@ -432,10 +432,10 @@ type ActorState {
 
 /// Default configuration (no PubSub).
 ///
-/// The broadcast interval defaults to 1500 ms so that adding `with_pubsub`
-/// yields working two-way replication out of the box; without PubSub the
-/// interval is unused. Use `with_broadcast_interval(0)` to disable periodic
-/// broadcasts and control replication manually.
+/// The broadcast interval defaults to 1500 ms. Adding `with_pubsub` therefore
+/// enables two-way replication without more configuration. Without PubSub,
+/// the interval is unused. Use `with_broadcast_interval(0)` to disable
+/// periodic broadcasts and control replication manually.
 pub fn default_config(replica: String) -> Config {
   Config(
     pubsub: None,
@@ -460,38 +460,37 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 
 /// Set the timeout for synchronous presence mutations, in milliseconds.
 ///
-/// This applies to `track`, `untrack`, and `untrack_all`. These functions panic
-/// if the actor does not reply within this timeout. The default is 5000 ms.
+/// This timeout applies to `track`, `untrack`, and `untrack_all`. These
+/// functions panic if the actor does not reply before the timeout. The default
+/// is 5000 ms.
 pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
   Config(..config, call_timeout_ms: timeout_ms)
 }
 
-/// Set the callback invoked when local changes or remote merges produce a diff.
+/// Set the callback for diffs from local changes or remote merges.
 ///
 /// The callback runs synchronously on the presence actor, for both local
 /// mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
 /// mutations the runtime issues for presence effects) and remote merges,
 /// before the affected topics' read-model snapshots are (re)published and
 /// before the triggering call replies or the mutation is acknowledged.
-/// This ordering is identical for local and remote diffs -- there is no
-/// divergent local-vs-remote behavior.
+/// This ordering is the same for local and remote diffs.
 ///
-/// One consequence: if the callback reads presence state through the same
+/// If the callback reads presence state through the same
 /// `Presence` handle (`list`, `get_by_key`, `count`) for a topic this diff
-/// touches, it observes the *previous* snapshot -- the one from before this
-/// diff -- not the one the diff itself is about to produce. Read the
-/// entries and counts you need directly from the `Diff` argument (via
+/// changes, it observes the *previous* snapshot. It does not observe the
+/// snapshot that the diff will produce. Read the entries and counts you need
+/// directly from the `Diff` argument (via
 /// `diff_joins`/`diff_leaves`) instead of re-reading through `presence`
 /// inside the callback.
 ///
-/// Keep the callback fast and non-blocking: it runs on the actor process,
-/// so a slow or blocking callback delays that topic's read-model publish,
+/// Keep the callback fast and non-blocking. It runs on the actor process.
+/// A slow or blocking callback delays that topic's read-model publish,
 /// the reply to (or acknowledgement of) the mutating operation, and every
-/// other message queued behind it in the actor's mailbox (though concurrent
-/// `list`/`get_by_key`/`count` reads from other processes are unaffected,
-/// since those bypass the mailbox entirely). It no longer stalls a Beryl
-/// runtime wholesale: only the socket whose presence effect is in flight
-/// waits on it.
+/// other message behind it in the actor's mailbox. Concurrent
+/// `list`/`get_by_key`/`count` calls from other processes do not use the
+/// mailbox and are not delayed. Only the socket with an active presence
+/// effect waits for the callback.
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
@@ -504,9 +503,8 @@ pub fn subject(presence: Presence) -> Subject(Message) {
 /// Build the supervised presence actor.
 ///
 /// Add the returned child specification to your application's supervisor.
-/// The returned handle is name-backed and resumes working after a supervised
-/// restart. Presence entries and tracking refs are in-memory state and are
-/// reset by a restart.
+/// The returned handle is name-backed and works again after a supervised
+/// restart. A restart resets the in-memory presence entries and tracking refs.
 pub fn child_spec(
   config: Config,
 ) -> #(Presence, supervision.ChildSpecification(Subject(Message))) {
@@ -748,14 +746,14 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
 
 /// Track a presence in a topic.
 ///
-/// `session_id` identifies the session (e.g. socket) that owns this presence
-/// and is the value `untrack_all` matches on when the session disconnects.
+/// `session_id` identifies the session, such as a socket, that owns this
+/// presence. `untrack_all` matches this value when the session disconnects.
 ///
-/// Returns a server-generated tracking ref: an opaque, unique handle for this
-/// specific presence. Pass it to `untrack` to remove exactly this entry later.
-/// The ref is not the session id — it is minted by the presence actor and is
-/// only meaningful to that actor. The ref is also merged into object metas as
-/// `phx_ref` for Phoenix client compatibility.
+/// Returns a server-generated tracking ref. It is an opaque, unique handle for
+/// this presence. Pass it to `untrack` to remove this entry. The ref is not
+/// the session ID. The presence actor creates it, and it is meaningful only
+/// to that actor. The ref is also merged into object metas as `phx_ref` for
+/// Phoenix client compatibility.
 ///
 /// Panics if the presence actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
@@ -773,9 +771,9 @@ pub fn track(
 
 /// Replace the meta of a presence created by `track`.
 ///
-/// The old ref's leave and the new ref's join are emitted together in one
-/// diff, so subscribers never observe an intermediate state without the
-/// presence key. Other tracked refs for the same key are left unchanged.
+/// One diff contains the old ref's leave and the new ref's join. Subscribers
+/// do not observe an intermediate state without the presence key. Other
+/// tracked refs for the same key do not change.
 ///
 /// Returns the replacement ref, which must be used for subsequent `update`
 /// or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
@@ -802,7 +800,7 @@ pub fn untrack(presence: Presence, ref: String) -> Nil {
   })
 }
 
-/// Untrack all presences for a session (e.g., when a socket disconnects)
+/// Untrack all presences for a session, such as when a socket disconnects.
 ///
 /// Panics if the presence actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
@@ -898,12 +896,12 @@ pub fn is_running(presence: Presence) -> Bool {
 
 /// List all presences for a topic.
 ///
-/// Reads the actor-owned read model directly (an ETS snapshot materialized
-/// after each mutation, merge, or prune) rather than calling the actor, so
-/// this never waits on the actor mailbox.
+/// This function reads the actor-owned read model directly. The read model is
+/// an ETS snapshot created after each mutation, merge, or prune. This function
+/// does not wait on the actor mailbox.
 ///
-/// Returns `Error(Nil)` when the presence read model is unavailable --
-/// either the presence actor is not running, or this handle is being used
+/// Returns `Error(Nil)` when the presence read model is unavailable. This can
+/// occur when the presence actor is not running or when this handle is used
 /// from a process on another BEAM node than the one it was started on (see
 /// the node affinity note on `Presence`).
 pub fn list(
@@ -915,12 +913,12 @@ pub fn list(
 
 /// Get presences for a specific key within a topic.
 ///
-/// Reads the actor-owned read model directly (an ETS snapshot materialized
-/// after each mutation, merge, or prune) rather than calling the actor, so
-/// this never waits on the actor mailbox.
+/// This function reads the actor-owned read model directly. The read model is
+/// an ETS snapshot created after each mutation, merge, or prune. This function
+/// does not wait on the actor mailbox.
 ///
-/// Returns `Error(Nil)` when the presence read model is unavailable --
-/// either the presence actor is not running, or this handle is being used
+/// Returns `Error(Nil)` when the presence read model is unavailable. This can
+/// occur when the presence actor is not running or when this handle is used
 /// from a process on another BEAM node than the one it was started on (see
 /// the node affinity note on `Presence`).
 pub fn get_by_key(
@@ -938,17 +936,17 @@ pub fn get_by_key(
 
 /// Count presences in a topic.
 ///
-/// Equivalent to `list(presence, topic) |> list.length`, but O(1): it reads
-/// the materialized count directly from the read model via
+/// This is equivalent to `list(presence, topic) |> list.length`, but O(1). It
+/// reads the materialized count directly from the read model via
 /// `ets:lookup_element/4` instead of building (and copying) the entry list
 /// just to measure it.
 ///
-/// Reads the actor-owned read model directly (an ETS snapshot materialized
-/// after each mutation, merge, or prune) rather than calling the actor, so
-/// this never waits on the actor mailbox.
+/// This function reads the actor-owned read model directly. The read model is
+/// an ETS snapshot created after each mutation, merge, or prune. This function
+/// does not wait on the actor mailbox.
 ///
-/// Returns `Error(Nil)` when the presence read model is unavailable --
-/// either the presence actor is not running, or this handle is being used
+/// Returns `Error(Nil)` when the presence read model is unavailable. This can
+/// occur when the presence actor is not running or when this handle is used
 /// from a process on another BEAM node than the one it was started on (see
 /// the node affinity note on `Presence`).
 pub fn count(presence: Presence, topic: String) -> Result(Int, Nil) {
