@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Simplified the README and public API documentation."
