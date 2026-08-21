@@ -403,6 +403,31 @@ pub fn with_channel_rate_max_keys_per_socket(
 ) -> Config
 ```
 
+### `with_connection_rate_per_ip`
+
+Configure a per-IP connection-attempt rate limit.
+
+ Each WebSocket upgrade attempt that passes the concurrent connection
+ ceilings consumes one token before authentication and handshake setup. A
+ non-positive `per_second` disables the limit. A `burst` of 0 uses
+ `per_second` as the burst capacity.
+
+ Unlike per-connection frame and message buckets, this allowance is keyed by
+ the real socket peer IP and lives in Beryl's supervised connection limiter.
+ Disconnecting or restarting the app runtime therefore does not refresh it.
+ Idle IP buckets are removed once their allowance has fully refilled.
+
+ This uses the same peer IP and trusted-proxy caveats as
+ `with_max_connections_per_ip`.
+
+```gleam
+pub fn with_connection_rate_per_ip(
+  Config,
+  per_second: Int,
+  burst: Int
+) -> Config
+```
+
 ### `with_frame_rate`
 
 Configure per-connection frame-rate limiting at the transport edge.

@@ -242,26 +242,28 @@ let config =
 Frame and message buckets are independent. Malformed frames and joins consume
 frame tokens; joins do not consume message tokens.
 
-## Per-IP connection limits
+## Per-IP connection controls
 
-Cap the number of concurrent connections a single client IP may hold with
-`with_max_connections_per_ip`. A value of `0` (the default) means unlimited.
+Cap both the connection-attempt rate and the number of concurrent connections
+a single client IP may hold. Both controls default to unlimited.
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  |> beryl.with_connection_rate_per_ip(per_second: 2, burst: 5)
   |> beryl.with_max_connections_per_ip(max_connections: 5)
 ```
 
-When a peer is already at its limit, the Mist transport rejects the new upgrade
-with `429 Too Many Requests` before the WebSocket handshake completes. The slot
-is released automatically when a connection closes, so disconnecting frees
-capacity for that IP.
+When a peer exhausts either limit, the Mist transport rejects the new upgrade
+with `429 Too Many Requests` before the WebSocket handshake completes.
+Concurrent capacity is released automatically when a connection closes. Rate
+allowance is not: its per-IP bucket survives reconnects and app runtime restarts,
+preventing a client from reconnecting for a fresh frame/message burst.
 
 ### Reverse proxies and `X-Forwarded-For`
 
-The limit is enforced on the **real socket peer IP** — the address of the TCP
-connection Mist accepts. beryl deliberately does **not** trust or parse
+Both controls use the **real socket peer IP** — the address of the TCP connection
+Mist accepts. beryl deliberately does **not** trust or parse
 forwarded headers such as `X-Forwarded-For`, because any client can set them and
 would otherwise be able to spoof its address and bypass the limit.
 

@@ -1,3 +1,0 @@
-package = "beryl_mist"
-kind = "Fixed"
-body = "Route codec-decoded binary frames through beryl's binary-classified runtime path so telemetry distinguishes them from text frames."
