@@ -45,12 +45,13 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
         color: color.pastel_for(context.socket_id),
       )
 
-    session_presence.track(
-      ctx.presence,
-      context.topic,
-      context.socket_id,
-      meta(state),
-    )
+    let roster =
+      session_presence.track_snapshot(
+        ctx.presence,
+        context.topic,
+        context.socket_id,
+        meta(state),
+      )
 
     channel.accept(state, callbacks(ctx, context.topic))
     |> channel.with_reply(
@@ -60,6 +61,9 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
         #("color", json.string(state.color)),
       ]),
     )
+    |> channel.with_actions([
+      channel.broadcast("presence_list", roster),
+    ])
   })
 }
 

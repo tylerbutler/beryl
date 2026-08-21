@@ -59,9 +59,11 @@ pub fn join(
       #("username", json.string(username)),
       #("color", json.string(color)),
     ])
-  session_presence.track(ctx.presence, topic, socket_id, meta)
+  let roster =
+    session_presence.track_snapshot(ctx.presence, topic, socket_id, meta)
   #(Some(Model(username: username, color: color)), [
     socket.AcceptJoin(ref, Some(reply)),
+    socket.Broadcast(topic, "presence_list", roster),
   ])
 }
 

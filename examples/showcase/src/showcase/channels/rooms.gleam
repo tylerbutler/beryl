@@ -6,9 +6,8 @@
 //// that carry an error payload and the refless events that get no reply
 //// at all.
 ////
-//// The capacity check and the presence track that satisfies it are both
-//// part of accepting the join, so they share one update turn: a second
-//// join cannot slip between them and overshoot the cap.
+//// The capacity check and presence track are one serialized tracker
+//// operation, so concurrent socket actors cannot overshoot the cap.
 
 import beryl/channel
 import beryl/group.{type Groups}
@@ -20,7 +19,7 @@ import example_helpers/session_presence
 import gleam/dynamic.{type Dynamic}
 import gleam/int
 import gleam/json.{type Json}
-import gleam/option.{type Option}
+import gleam/option.{type Option, None, Some}
 import gleam/set
 import gleam/string
 
@@ -58,59 +57,62 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
     case room_exists(ctx, context.topic) {
       False -> channel.reject(error("Room not found: " <> room_name))
 
-      True ->
-        case room_is_full(ctx, context.topic) {
-          True ->
-            channel.reject(error_with_code(
-              403,
-              "Room is full (max " <> int.to_string(max_room_users) <> ")",
-            ))
-
-          False -> {
-            let state =
-              State(
-                topic: context.topic,
-                socket_id: context.socket_id,
-                username: payload.string_or(
-                  context.payload,
-                  "username",
-                  "Anonymous",
-                ),
-                color: color.pastel_for(context.socket_id),
-                room_name: room_name,
-              )
-
-            // The room list lives on another topic, so it is the one
-            // thing here that goes through the hub.
-            announce_rooms_changed(ctx, state.room_name)
-            session_presence.track(
-              ctx.presence,
-              context.topic,
-              state.socket_id,
-              presence_meta(state, typing: False),
-            )
-
-            channel.accept(state, callbacks(ctx))
-            |> channel.with_reply(
-              json.object([
-                #("socket_id", json.string(state.socket_id)),
-                #("username", json.string(state.username)),
-                #("color", json.string(state.color)),
-                #("room", json.string(state.room_name)),
-              ]),
-            )
-            // Applied right after the acknowledgment, in the same turn as
-            // the capacity check and session-presence mutation above.
-            |> channel.with_actions([
-              channel.broadcast(
-                "new_msg",
-                system_message(state.username <> " joined the room"),
-              ),
-            ])
-          }
-        }
+      True -> accept_room(ctx, context, room_name)
     }
   })
+}
+
+fn accept_room(
+  ctx: Ctx,
+  context: channel.JoinContext(Nil),
+  room_name: String,
+) -> channel.JoinResult(Nil) {
+  let state =
+    State(
+      topic: context.topic,
+      socket_id: context.socket_id,
+      username: payload.string_or(context.payload, "username", "Anonymous"),
+      color: color.pastel_for(context.socket_id),
+      room_name: room_name,
+    )
+
+  case
+    session_presence.track_snapshot_if_below(
+      ctx.presence,
+      context.topic,
+      state.socket_id,
+      presence_meta(state, typing: False),
+      max_room_users,
+    )
+  {
+    None ->
+      channel.reject(error_with_code(
+        403,
+        "Room is full (max " <> int.to_string(max_room_users) <> ")",
+      ))
+    Some(roster) -> {
+      // The room list lives on another topic, so it is the one thing here
+      // that goes through the hub.
+      announce_rooms_changed(ctx, state.room_name)
+
+      channel.accept(state, callbacks(ctx))
+      |> channel.with_reply(
+        json.object([
+          #("socket_id", json.string(state.socket_id)),
+          #("username", json.string(state.username)),
+          #("color", json.string(state.color)),
+          #("room", json.string(state.room_name)),
+        ]),
+      )
+      |> channel.with_actions([
+        channel.broadcast(
+          "new_msg",
+          system_message(state.username <> " joined the room"),
+        ),
+        channel.broadcast("presence_list", roster),
+      ])
+    }
+  }
 }
 
 fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
@@ -204,10 +206,6 @@ fn room_exists(ctx: Ctx, topic: String) -> Bool {
     Ok(topics) -> set.contains(topics, topic)
     Error(_) -> False
   }
-}
-
-fn room_is_full(ctx: Ctx, topic: String) -> Bool {
-  session_presence.count(ctx.presence, topic) >= max_room_users
 }
 
 fn room_name(topic: String) -> String {

@@ -20,6 +20,13 @@ pub opaque type Tracker {
 
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
+  TrackSnapshotIfBelow(
+    topic: String,
+    session_id: String,
+    meta: json.Json,
+    maximum: Int,
+    reply: Subject(Option(json.Json)),
+  )
   Publish(topic: String)
   Stop(reply: Subject(Nil))
 }
@@ -107,6 +114,36 @@ pub fn track(
   process.send(tracker.subject, Publish(topic))
 }
 
+/// Track a session and return the current roster without publishing it.
+///
+/// Join handlers can broadcast this snapshot in their ordered accept-time
+/// actions, after the runtime has indexed the joining socket.
+pub fn track_snapshot(
+  tracker: Tracker,
+  topic: String,
+  session_id: String,
+  meta: json.Json,
+) -> json.Json {
+  store_track(tracker.table, topic, session_id, meta)
+  json.object(store_snapshot(tracker.table, topic))
+}
+
+/// Atomically track a session when the topic is below `maximum`.
+///
+/// The tracker actor serializes the count and insert so concurrent socket
+/// joins cannot oversubscribe a bounded room.
+pub fn track_snapshot_if_below(
+  tracker: Tracker,
+  topic: String,
+  session_id: String,
+  meta: json.Json,
+  maximum: Int,
+) -> Option(json.Json) {
+  process.call(tracker.subject, call_timeout_ms, fn(reply) {
+    TrackSnapshotIfBelow(topic, session_id, meta, maximum, reply)
+  })
+}
+
 pub fn untrack(tracker: Tracker, topic: String, session_id: String) -> Nil {
   store_untrack(tracker.table, topic, session_id)
   process.send(tracker.subject, Publish(topic))
@@ -121,6 +158,17 @@ fn loop(selector: Selector(Event), table: Dynamic, state: State) -> Nil {
     Message(Configure(sockets, reply)) -> {
       process.send(reply, Nil)
       loop(selector, table, State(sockets: Some(sockets)))
+    }
+    Message(TrackSnapshotIfBelow(topic, session_id, meta, maximum, reply)) -> {
+      let result = case store_count(table, topic) < maximum {
+        True -> {
+          store_track(table, topic, session_id, meta)
+          Some(json.object(store_snapshot(table, topic)))
+        }
+        False -> None
+      }
+      process.send(reply, result)
+      loop(selector, table, state)
     }
     Message(Publish(topic)) -> {
       publish(state.sockets, topic, store_snapshot(table, topic))

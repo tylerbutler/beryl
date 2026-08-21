@@ -297,11 +297,9 @@ fn seats(count: Int) -> List(Int) {
 pub fn a_full_room_rejects_the_next_join_test() {
   let system = h.start("room-capacity")
 
-  // Twenty joins enqueued back to back, then the twenty-first — nothing
-  // is read in between, so every join turn runs before the next one is
-  // routed. The capacity check and the presence track that satisfies it
-  // are part of the same accept, so the cap holds without a settling
-  // delay.
+  // Twenty joins run concurrently across their socket actors. The tracker
+  // serializes each count-and-track reservation, so the cap holds without
+  // a settling delay.
   list.each(seats(20), fn(index) {
     let socket_id = "s" <> int.to_string(index)
     let _frames = h.connect(system, socket_id)
