@@ -3,13 +3,13 @@ title: Observability
 description: Telemetry events, runtime snapshots, and application-owned metrics export.
 ---
 
-Beryl provides two complementary signals:
+Beryl provides two types of data:
 
-- opt-in `:telemetry` events for rates, outcomes, and operation durations;
-- `beryl/stats.snapshot` for point-in-time local runtime state.
+- Optional `:telemetry` events report rates, outcomes, and operation durations.
+- `beryl/stats.snapshot` reports local runtime state at one time.
 
-Beryl deliberately does not depend on a Prometheus or OpenTelemetry exporter.
-Your application owns aggregation, labels, and export.
+Beryl does not include a Prometheus or OpenTelemetry exporter. Your application
+must aggregate, label, and export the data.
 
 ## Enable telemetry
 
@@ -70,8 +70,7 @@ remain bounded:
 | disconnect `reason` | `normal`, `heartbeat_timeout`, `shutdown`, `callback_error` |
 | broadcast `origin` | `local`, `remote` |
 
-Treat unknown future values as an `"unknown"` label rather than crashing a
-handler.
+Map future unknown values to an `"unknown"` label. Do not crash the handler.
 
 ## Export to Prometheus or Grafana
 
@@ -119,11 +118,11 @@ detach(Id) ->
     telemetry:detach(Id).
 ```
 
-The supervised aggregator can translate messages into your existing metrics
-library's API. Monitor its mailbox and use bounded aggregation/backpressure;
-moving work to another process prevents direct request latency but an
-unbounded mailbox merely relocates overload. Detach the handler during
-shutdown. No exporter dependency is required in Beryl itself.
+The supervised aggregator can convert messages for your metrics library.
+Monitor its mailbox and use bounded aggregation or backpressure. Another
+process prevents direct request latency, but an unbounded mailbox can still
+overload the system. Detach the handler during shutdown. Beryl does not need an
+exporter dependency.
 
 Useful derived signals include upgrade rejection rate by outcome, frame decode
 and rate-limit rates, join/message callback failures, connection lifetime,
@@ -154,19 +153,17 @@ case stats.snapshot(channels) {
 }
 ```
 
-The snapshot is local to one socket runtime on one BEAM node; it is not a
-transactional cluster view or an event stream. Aggregate gauges across nodes
-in the monitoring system. `joined_socket_topic_pairs` counts memberships, so
-one socket joined to two topics contributes two. Counts are captured as
-observed by the runtime process servicing the request and may lag in-flight
-connect/disconnect notifications.
+The snapshot describes one socket runtime on one BEAM node. It is not a cluster
+transaction or an event stream. Aggregate gauges across nodes in the monitoring
+system. `joined_socket_topic_pairs` counts memberships. One socket on two
+topics adds two. The runtime records counts when it handles the request, so
+in-flight connection changes can appear later.
 
-Poll no more frequently than roughly once per second. Polling itself sends a
-request through the runtime, and synchronized polling across many
-scrapers can add load. Prefer one application poller per node, cache the latest
-successful snapshot for the scrape endpoint, add jitter, and expose snapshot
-age. Do not turn a timeout into a zero-valued snapshot: it indicates restart
-or overload and should remain distinguishable from an idle system.
+Poll no more than once per second. Each poll sends a request through the
+runtime. Many synchronized scrapers can add load. Use one application poller
+per node. Cache the latest successful snapshot, add jitter, and expose the
+snapshot age. Do not convert a timeout to a zero-valued snapshot. A timeout can
+mean restart or overload, not an idle system.
 
 For a runnable JSON endpoint combining Beryl and BEAM runtime gauges, see the
 benchmark server's [`/stats` reference](https://github.com/tylerbutler/beryl/blob/main/examples/load_test/README.md#health-and-stats)

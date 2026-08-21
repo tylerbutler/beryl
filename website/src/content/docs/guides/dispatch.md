@@ -3,13 +3,15 @@ title: App-Side Dispatch
 description: Route joins, messages, binary frames, close events, and typed server messages in one update function.
 ---
 
-Raw **app-side dispatch** is beryl's core programming model: build one
-supervised runtime with `beryl.child_spec`, build a per-socket model in
-`init`, and route every socket event in one `update` function. For
-multi-channel or Phoenix-shaped apps, the recommended
-[`beryl/channel` layer](/guides/channels/) supplies this router for you.
+Raw **app-side dispatch** is beryl's core programming model. Build one
+supervised runtime with `beryl.child_spec`. Build a per-socket model in `init`.
+Route each socket event in one `update` function. For multi-channel or
+Phoenix-style apps, use the recommended
+[`beryl/channel` layer](/guides/channels/).
 
-There is no registry to populate and no per-topic module lifecycle to wire up. Your application owns routing by matching on `socket.Input` values and returning `socket.Next(model, effects)`.
+Your application routes `socket.Input` values and returns
+`socket.Next(model, effects)`. You do not need a registry or a per-topic module
+lifecycle.
 
 ## The app entry point
 
@@ -46,7 +48,8 @@ let assert Ok(_root) =
 
 ## Topics and patterns
 
-Topics are still colon-delimited strings, and `beryl/topic` is still the routing helper to reach for inside `update`.
+Topics are colon-delimited strings. Use `beryl/topic` to route them in
+`update`.
 
 ```gleam
 import beryl/topic
@@ -70,13 +73,15 @@ topic.extract_wildcards(
 // -> Ok(["tenant-a", "doc-42"])
 ```
 
-For one namespace, match directly inside `update`. When several namespaces
-share a socket, use [`beryl/channel`](/guides/channels/) instead — see
+For one namespace, match in `update`. When several namespaces share a socket,
+use [`beryl/channel`](/guides/channels/). See
 [Routing many topics from one app](#routing-many-topics-from-one-app).
 
 ## Single-topic example
 
-This example accepts `room:*` joins, replies to `ping`, broadcasts `typing` to everyone except the sender, tracks joined topics in the model, and reacts to typed server-side `Info` messages.
+This example accepts `room:*` joins and replies to `ping`. It broadcasts
+`typing` to all clients except the sender. The model tracks joined topics. The
+app also handles typed server-side `Info` messages.
 
 ```gleam
 import beryl/socket as socket
@@ -224,7 +229,9 @@ remaining `Match` and `Namespace` types that need direct topic values or
 
 ## Typed server-side messages
 
-`socket.ConnectInfo.self` gives each socket a typed `socket.Sender(msg)`. Any process can keep that sender and deliver `socket.Info(msg)` later with `socket.notify`.
+`socket.ConnectInfo.self` gives each socket a typed `socket.Sender(msg)`. A
+process can keep the sender. It can later call `socket.notify` to deliver
+`socket.Info(msg)`.
 
 ```gleam
 import beryl/socket
@@ -244,7 +251,7 @@ For long-lived external actors that should stream updates into a socket, see `be
 
 ## Effect order is observable order
 
-The runtime applies effects strictly in list order inside one actor turn. That means this is guaranteed:
+The runtime applies effects in list order during one actor turn. Therefore:
 
 ```gleam
 socket.Next(model, [

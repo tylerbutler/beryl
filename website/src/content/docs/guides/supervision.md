@@ -3,10 +3,10 @@ title: Supervision
 ---
 
 Beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
-handle and a child specification that you add to your application's OTP
-supervisor. Your `init`/`update` functions are captured in that specification.
-`channel.child_spec` returns the same handle/spec shape after compiling
-its handler table into the core `init`/`update` pair.
+handle and a child specification. Add the specification to your application's
+OTP supervisor. The specification contains your `init` and `update` functions.
+`channel.child_spec` returns the same handle and specification shape. It first
+converts the handler table to a core `init` and `update` pair.
 
 ## What child_spec supervises
 
@@ -15,14 +15,13 @@ beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
 `- runtime actor (Transient)
 ```
 
-- The **runtime actor** holds every socket's model and dispatches events to
-  your `update` function. If it crashes, the supervisor restarts it with
-  dispatch intact — the `init`/`update` closures live in the child
-  specification, so no re-registration step exists or is needed.
-- The runtime is registered under a stable name, so the `Sockets` handle
-  (and every transport connection holding it) keeps working across
-  restarts. Sends that race a restart window degrade to quiet no-ops
-  instead of crashes.
+- The **runtime actor** holds each socket model and sends events to your
+  `update` function. If the actor crashes, the supervisor restarts it. The
+  child specification still contains the `init` and `update` closures. You do
+  not need to register them again.
+- The runtime uses a stable registered name. The `Sockets` handle and transport
+  connections keep working after a restart. Sends during the restart window do
+  nothing.
 - The child is `Transient`: a graceful `beryl.stop` is final and is not
   resurrected.
 
@@ -35,9 +34,8 @@ A runtime restart drops **per-socket state**: models, joined topics, and
 pending joins. Transports monitor the runtime that accepted each connection,
 so those WebSockets close and clients reconnect and rejoin normally.
 
-Crashes inside `update` itself do **not** restart the runtime. Beryl
-rescues callback crashes and contains the blast radius to the socket that
-triggered them:
+Crashes inside `update` do **not** restart the runtime. Beryl catches callback
+crashes and limits their effect:
 
 | Crash site | Effect |
 |------------|--------|
@@ -47,13 +45,12 @@ triggered them:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
-This boundary is intentional: all app callbacks run inside the one runtime
-actor, so a supervisor restart for one callback would discard every socket's
-model and close every connection on that `Sockets` handle. The boundary is
-used only when Beryl can discard the failed callback result and reject or tear
-down the narrowest safe scope. Other runtime faults still escape to the
-supervisor. See [Runtime crash containment](/architecture/runtime/#crash-containment)
-for the design trade-off.
+All app callbacks run in one runtime actor. A supervisor restart for one
+callback would discard all socket models and close all connections on the
+`Sockets` handle. Beryl catches a callback crash only when it can discard the
+result and close the smallest safe scope. Other runtime faults reach the
+supervisor. See
+[Runtime crash containment](/architecture/runtime/#crash-containment).
 
 See the [Error Handling guide](/guides/error-handling/) for details.
 
@@ -97,11 +94,11 @@ pub fn main() {
 }
 ```
 
-Presence is a separate application-owned actor. Drive it from socket code with
-`socket.PresenceTrack` / `PresenceUntrack` effects or the equivalent channel
-actions. The runtime applies those mutations asynchronously and parks only the
-affected socket until completion. Do not call the synchronous public presence
-API directly from `init`, `update`, or a channel callback.
+Presence is a separate actor that the application owns. From socket code, use
+`socket.PresenceTrack` and `PresenceUntrack` effects or the channel actions.
+The runtime pauses only the affected socket until the mutation completes. Do
+not call the synchronous public presence API from `init`, `update`, or a
+channel callback.
 
 Both handles are name-backed and reach the replacement actor after a supervised
 restart. Presence entries and tracking refs, and group definitions and
@@ -129,11 +126,9 @@ case beryl.child_spec(config, init: init, update: update) {
 
 ## Stopping
 
-`beryl.stop(channels)` drains sockets gracefully: every joined topic
-receives a `Closed` event, transport connections are closed, and the
-runtime exits without being restarted. Calling `stop` again returns
-`Error(NotRunning)`. Other operations using the handle after `stop` are
-quiet no-ops.
+`beryl.stop(channels)` sends a `Closed` event to each joined topic. It closes
+transport connections and stops the runtime without a restart. A second call
+returns `Error(NotRunning)`. Other operations after `stop` do nothing.
 
 ## Production checklist
 

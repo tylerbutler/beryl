@@ -1,17 +1,16 @@
 ---
 title: Examples
-description: Four runnable beryl demos, including the composed channel showcase.
+description: Four runnable beryl examples, including the channel showcase.
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-beryl ships four fully runnable example applications in the
+beryl includes four runnable example applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
-directory. They use a Gleam/BEAM backend with browser frontends that exercise
-different realtime collaboration patterns.
+directory. Each example uses a Gleam/BEAM backend and a browser frontend. The
+examples show different real-time collaboration patterns.
 
-The examples live in the repository, not in the package you install as a
-dependency, so clone it first:
+The installed package does not include the examples. Clone the repository:
 
 ```bash
 git clone https://github.com/tylerbutler/beryl.git
@@ -19,17 +18,17 @@ cd beryl
 ```
 
 <Aside type="note" title="Pre-1.0">
-beryl is pre-1.0: the API can change between minor releases and it isn't production-hardened yet. Build with it and tell us what breaks; that feedback is shaping 1.0.
+beryl is not yet version 1.0. Minor releases can change the API. The library is not ready for production. Try it and report problems. Your feedback will help define version 1.0.
 </Aside>
 
 ## Showcase
 
 **Source**: [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
 
-One socket runtime and three topic families, composed with `beryl/channel`.
-The cursors, chatrooms, and collab-docs behaviors are each a channel handler
-registered on one supervised socket system — no socket-wide model and no
-hand-written router.
+This example uses one socket runtime and three topic families. The
+`beryl/channel` API combines cursor, chat room, and shared document handlers in
+one supervised socket system. It does not need a socket-wide model or a custom
+router.
 
 ```bash
 cd examples/showcase
@@ -67,8 +66,8 @@ Server (Gleam)
 
 **Source**: [`examples/cursors`](https://github.com/tylerbutler/beryl/tree/main/examples/cursors)
 
-Move your mouse and see everyone else's cursor in real time. Open the app in
-multiple browser tabs to try it.
+Move your mouse to send its position in real time. Open the app in multiple
+browser tabs to see other cursors.
 
 ```bash
 cd examples/cursors
@@ -117,8 +116,7 @@ gleam run
 
 ### What it demonstrates
 
-This demo is designed to complement the cursors example by covering a different
-slice of the beryl API:
+This example uses parts of the beryl API that the cursor example does not use:
 
 | beryl feature | How it's used |
 |---|---|
@@ -163,8 +161,8 @@ Server (Gleam)
 
 **Source**: [`examples/collab_docs`](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs)
 
-A collaborative document editor where clients merge block state locally with a
-CRDT and use beryl as an unordered realtime transport.
+This shared document editor merges block state in each client with a CRDT. It
+uses beryl as an unordered real-time transport.
 
 ```bash
 just deps

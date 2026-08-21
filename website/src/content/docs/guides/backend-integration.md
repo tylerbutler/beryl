@@ -3,14 +3,16 @@ title: Backend Integration
 description: Use Beryl alongside an existing backend that owns auth and persistence and publishes over an internal endpoint.
 ---
 
-Beryl does not have to own your whole application. A common setup keeps an existing backend — Phoenix, Rails, or another Gleam service — as the source of truth for **authentication and persistence**, and uses Beryl purely as the realtime fan-out layer.
+Beryl does not need to manage your full application. An existing Phoenix,
+Rails, or Gleam backend can manage **authentication and persistence**. Beryl can
+provide only real-time fan-out.
 
-This guide wires up that split:
+This guide uses this design:
 
-1. the existing backend authenticates users and issues a token,
-2. Beryl verifies that token at connect time,
-3. when domain data changes, the backend calls an internal publish endpoint,
-4. that endpoint forwards the change with `beryl.broadcast`.
+1. The backend authenticates users and issues a token.
+2. Beryl verifies the token when the socket connects.
+3. The backend calls an internal publish endpoint when domain data changes.
+4. The endpoint sends the change with `beryl.broadcast`.
 
 ```text
 Browser ──WebSocket──► beryl ◄──HTTP POST /internal/publish── Backend
@@ -18,13 +20,14 @@ Browser ──WebSocket──► beryl ◄──HTTP POST /internal/publish─�
                          └── broadcasts to topic subscribers     └── owns auth + DB
 ```
 
-The `beryl.Sockets` handle in this guide can come from either layer —
-`beryl.child_spec` and `channel.child_spec` return the same handle
-type, and `beryl.broadcast` behaves identically for both.
+Either API can provide the `beryl.Sockets` handle.
+`beryl.child_spec` and `channel.child_spec` return the same handle type.
+`beryl.broadcast` works the same with both APIs.
 
 ## The internal publish endpoint
 
-Run the endpoint on the same Mist listener as the WebSocket transport. Guard it with a shared secret so only your backend can publish.
+Run the endpoint on the Mist listener that serves the WebSocket transport.
+Protect it with a shared secret. Only the backend must be able to publish.
 
 ```gleam
 import beryl
@@ -121,7 +124,8 @@ fn authorized_internal(req: Request(mist.Connection)) -> Bool {
 }
 ```
 
-Keep this endpoint on a private network or behind trusted ingress. Browsers should never be able to hit it directly.
+Keep this endpoint on a private network or behind trusted ingress. Do not let
+browsers access it.
 
 ## Response helpers
 
@@ -148,14 +152,19 @@ fn not_found() -> Response(mist.ResponseData) {
 
 ## Socket-local integrations
 
-`beryl.broadcast` is the right tool when the backend wants to fan out JSON payloads by topic.
+Use `beryl.broadcast` when the backend sends JSON payloads by topic.
 
-If you instead need a long-lived domain actor to stream typed updates into one socket, pair the socket's `socket.Sender(msg)` with `beryl/bridge` and forward that actor's subject into `socket.Info(msg)`.
+For typed updates from a long-lived domain actor, use the socket's
+`socket.Sender(msg)` with `beryl/bridge`. The bridge forwards the actor's
+subject to `socket.Info(msg)`.
 
 ## Why this split works
 
-- **One source of truth.** Your backend keeps owning auth and the database; Beryl relays updates to connected clients.
-- **Push from anywhere.** Any trusted backend process can publish — an HTTP handler, a worker, or a webhook consumer.
-- **Distributed fan-out.** When Beryl is configured with PubSub, one `beryl.broadcast` reaches subscribers across the cluster.
+- **One source of truth:** Your backend manages authentication and the
+  database. Beryl sends updates to connected clients.
+- **Publish from trusted processes:** An HTTP handler, worker, or webhook
+  consumer can publish.
+- **Distributed fan-out:** With PubSub, one `beryl.broadcast` reaches
+  subscribers across the cluster.
 
 For connect-time verification of the tokens your backend issues, see [Authentication](/guides/authentication/).

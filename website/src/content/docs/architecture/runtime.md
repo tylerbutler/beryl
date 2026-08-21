@@ -2,11 +2,25 @@
 title: Runtime & Supervision
 ---
 
-The runtime is a pair of roles built from one OTP actor implementation: a **router** in front of **one actor per connected socket**. Transports send admitted, decoded frames to the router, which forwards each one to the owning socket's actor; your application's `init`/`update` functions run inside that socket's own actor. Presence and groups are independent application-owned supervised children; PubSub is an Erlang `pg` wrapper rather than a child of the runtime.
+The runtime uses one router actor and one actor for each connected socket.
+Transports send admitted, decoded frames to the router. The router sends each
+frame to the actor that owns the socket. Your application's `init` and `update`
+functions run in that socket actor. The application owns separate supervised
+children for presence and groups. PubSub wraps Erlang `pg` and is not a runtime
+child.
 
 ## Role
 
-Each socket actor is the single source of truth for its socket: the app model, the wire-send functions, its joined topics, and its heartbeat timestamp. It processes its mailbox sequentially, which serializes that socket's `update` calls and frame writes without locks — and because each socket has its own actor, one socket's slow callback never stalls another's. The router owns what is genuinely global: admission, the topic → subscriber index used for broadcast fan-out, the PubSub subscription, and stats. Its turn is a match-and-forward, never an app callback. Transport connection processes still own edge concerns such as WebSocket state, frame limits, decoding, and the local message-rate bucket; the model returned by `update` is the app state the next event sees.
+Each socket actor stores the app model, wire-send functions, joined topics, and
+heartbeat time for one socket. It processes mailbox messages in sequence. This
+serializes that socket's `update` calls and frame writes without locks. A slow
+callback for one socket does not stop other sockets.
+
+The router manages admission, the topic subscriber index, the PubSub
+subscription, and stats. It only matches and forwards messages. It does not run
+app callbacks. Transport connection processes manage WebSocket state, frame
+limits, decoding, and the local message-rate bucket. The next event uses the
+model returned by `update`.
 
 ## What it tracks
 
@@ -23,7 +37,12 @@ The router maintains:
 
 ## Typed dispatch without erasure
 
-The runtime actor is generic over the app's `model` and `msg` types. `beryl.child_spec` captures those types in a record of monomorphic closures at construction time, so the public `Sockets` handle — and the frame-level transport SPI behind it — stays unparameterized while the runtime holds fully typed state. This is plain closure capture by a generic function: there are no unchecked casts, `Dynamic` round-trips, or identity FFI in the socket-dispatch path. PubSub separately validates the frozen raw mailbox record before its package-internal payload coercion.
+The runtime actor is generic over the app's `model` and `msg` types.
+`beryl.child_spec` captures those types in monomorphic closures. The public
+`Sockets` handle and transport SPI do not need type parameters. The runtime
+still keeps typed state. This path uses no unchecked casts, `Dynamic`
+round-trips, or identity FFI. PubSub validates its raw mailbox record before
+its internal payload coercion.
 
 Server-side messages work the same way: `init` receives a typed `Sender(msg)` whose closure captures the message type, and `socket.notify` delivers messages that arrive in `update` as `Info(msg)` — an ordinary typed send.
 
@@ -47,13 +66,27 @@ Inbound WebSocket frames follow a two-step path:
 
 ## Effect ordering
 
-Effects are applied strictly in list order. Because the socket's own actor interprets the list and writes that socket's frames, list order is wire order; an `AcceptJoin` is guaranteed to reach the wire before a `Push` later in the same list. A `Broadcast` effect routes through the router (which resolves the subscriber set and hands each recipient's actor its own copy to encode), but the originating socket delivers its own copy inline first, so the broadcast still lands in effect-list order on its own wire.
+The runtime applies effects in list order. The same actor interprets the list
+and writes the frames. Thus, list order is wire order. An `AcceptJoin` reaches
+the wire before a later `Push`. A `Broadcast` goes through the router, which
+sends a copy to each recipient actor. The source socket writes its own copy
+first, so the broadcast keeps its effect-list position on that socket's wire.
 
-Most lists are applied in a single actor turn. `PresenceTrack` and `PresenceUntrack` are applied by the presence actor instead, so the socket actor holds the rest of that socket's list — and queues that socket's later inbound messages — until the mutation is acknowledged, then resumes exactly where it left off. Ordering for the socket is unchanged; what changes is that only that socket waits. Every other socket, broadcast, heartbeat check, and shutdown keeps being processed, which also means an unrelated broadcast can land between two of the waiting socket's effects.
+The socket actor applies most lists in one turn. The presence actor applies
+`PresenceTrack` and `PresenceUntrack`. The runtime pauses the rest of that
+socket's list until the presence actor responds. It also queues later input for
+that socket. Then it resumes at the next effect. The socket keeps its effect
+order. Other sockets, broadcasts, heartbeat checks, and shutdown work continue.
+An unrelated broadcast can occur between two effects from the paused socket.
 
 ## Crash containment
 
-Crashes in app callbacks are rescued rather than allowed to take down the socket's actor. The blast radius is scoped to what crashed: a crashing `Join` is rejected; a crashing topic-scoped `Message` or `Binary` closes only that topic; a crashing `Info` tears down the whole socket because it has no topic to attribute; a crashing `Closed` is logged while teardown continues; and a crashing `init` leaves the socket unregistered. Crash descriptions are depth-limited and truncated before logging. Other sockets remain isolated.
+The runtime catches crashes in app callbacks. A `Join` crash rejects that join.
+A topic `Message` or `Binary` crash closes only that topic. An `Info` crash
+closes the socket because the message has no topic. A `Closed` crash is logged,
+and teardown continues. An `init` crash prevents socket registration. The
+runtime limits and truncates crash descriptions before logging. Other sockets
+continue.
 
 This is a deliberate trade-off with OTP's usual "let it crash" model. Even
 with per-socket actors, letting an app callback crash reach the actor would
@@ -74,7 +107,13 @@ finishes closing the topic and continues closing sibling channels.
 
 ## Heartbeat enforcement
 
-Each socket actor schedules its own recurring self-check at `heartbeat_timeout_ms / 2` — there is no global sweep. On each check it compares the current monotonic time to its socket's `last_heartbeat` and evicts the socket if it is past the timeout. Eviction delivers `Closed(topic, HeartbeatTimeout)` for each joined topic, invokes the transport's registered closer so the underlying connection is actually shut, and removes the socket from all state. `child_spec` rejects timeouts below 2 loudly, because integer division would otherwise round the check interval to zero and silently disable eviction.
+Each socket actor checks its heartbeat every `heartbeat_timeout_ms / 2`. There
+is no global sweep. The actor compares the current monotonic time with its
+socket's `last_heartbeat`. It removes the socket when it exceeds the timeout.
+Removal sends
+`Closed(topic, HeartbeatTimeout)` for each joined topic. It also calls the
+transport closer and removes all socket state. `child_spec` rejects timeouts
+below 2 because integer division would set the check interval to zero.
 
 ## Supervision
 
@@ -89,12 +128,20 @@ flowchart TB
   RT <-. "monitor ×2" .-> SA1["socket actor (one per connection)<br/>model, heartbeat, frame writes"]
 ```
 
-- The `init`/`update` closures live in the child specification, so a restart resumes dispatch immediately — there is no registration step to replay.
-- The router is registered under a stable name; the `Sockets` handle keeps working across restarts, and sends during a restart window degrade to quiet no-ops.
-- Router death takes the socket population with it: every socket actor stops on the router's `Down`, and the transports — which monitor the same pid — close the connections. A restart therefore starts with no sockets; clients rejoin exactly as they would after any server restart.
-- The child is `Transient`, so a graceful `beryl.stop` is final. A stop drains socket actors in two phases (settle in-flight presence work while every watcher is still alive, then tear down), and kills any straggler stuck in an app callback rather than abandoning it.
+- The child specification contains the `init` and `update` closures. A restart
+  resumes dispatch without a registration step.
+- The router uses a stable registered name. The `Sockets` handle works after a
+  restart. Sends during the restart window do nothing.
+- Router death stops all socket actors. The transports also monitor the router
+  and close their connections. A restart starts with no sockets, so clients
+  must rejoin.
+- The child is `Transient`, so a graceful `beryl.stop` is final. A stop first
+  completes in-flight presence work, then stops the socket actors. It kills an
+  actor that remains blocked in an app callback.
 
-PubSub is **not** part of this tree; it is backed by Erlang's `pg` module, which manages its own lifecycle. Presence and groups expose their own child specifications for the application's supervision tree (see the [Supervision guide](/guides/supervision/)).
+PubSub is **not** part of this tree. Erlang `pg` manages its lifecycle.
+Presence and groups provide child specifications for the application
+supervision tree. See the [Supervision guide](/guides/supervision/).
 
 ## Where this lives
 

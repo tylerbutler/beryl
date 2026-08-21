@@ -4,22 +4,27 @@ title: Presence
 
 ## Model
 
-Beryl presence is an OTP actor that wraps [`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence) — an **add-wins, observed-remove CRDT**. Each node in a cluster holds its own replica of the CRDT state. Because the data structure is conflict-free, replicas merge in any order without coordination: concurrent joins and leaves from different nodes always converge to the same result.
+Beryl presence is an OTP actor that wraps
+[`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence).
+It uses an **add-wins, observed-remove CRDT**. Each cluster node keeps one CRDT
+replica. Replicas can merge in any order without coordination. Concurrent joins
+and leaves converge to the same result.
 
-Every tracked entry is stamped with a **replica name** (the `replica` argument to `default_config/1`). The replica name must be unique across the cluster; it is used as the CRDT replica identifier when merging remote state.
+Each tracked entry has a **replica name**, set by the `replica` argument to
+`default_config/1`. Use a unique name for each cluster node. The CRDT uses this
+name to identify remote state.
 
 ## How Beryl apps use it
 
-The presence actor is a standalone supervised child that the application
-builds with `presence.child_spec`, adds to its supervision tree, and supplies
-to `beryl.Config` with `with_presence_handle`.
+The application builds the presence actor with `presence.child_spec`. Add the
+child to the supervision tree. Then pass its handle to `beryl.Config` with
+`with_presence_handle`.
 
 App-side dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
-`BroadcastPresence` effects. Mutations are sent asynchronously to the presence
-actor and acknowledged only after both the CRDT and its ETS read model are
-updated. The runtime suspends the issuing socket's remaining effects and later
-inputs until that acknowledgement arrives; other sockets, broadcasts,
-heartbeats, and shutdown handling continue normally.
+`BroadcastPresence` effects. The runtime sends mutations to the presence actor. The actor acknowledges a
+mutation after it updates the CRDT and ETS read model. Until then, the runtime
+pauses later effects and inputs for that socket. Other sockets, broadcasts,
+heartbeats, and shutdown work continue.
 
 Snapshot effects read the actor-owned ETS model directly, so they do not wait
 on the actor mailbox. Re-tracking a runtime-owned key is one atomic
@@ -41,11 +46,10 @@ read-after-write behavior.
 |---|---|
 | `child_spec(config)` | Return a stable presence handle and its supervised child specification |
 
-On the node where the child specification runs, the handle keeps working across
-actor restarts because both the process and its ETS read model use the same
-stable name. The replacement actor starts with fresh in-memory CRDT state and
-tracking refs. The handle itself is node-affine; PubSub replicates presence
-state between nodes.
+The handle keeps working after an actor restart on the same node. The process
+and ETS read model use stable names. The replacement actor starts with empty
+in-memory CRDT state and tracking refs. The handle works only on its node.
+PubSub copies presence state between nodes.
 
 ### Configuration builders
 
@@ -84,13 +88,20 @@ state between nodes.
 
 ## Replication
 
-When `with_pubsub` and `with_broadcast_interval` are both configured, the presence actor runs a periodic broadcast loop:
+When you configure `with_pubsub` and `with_broadcast_interval`, the presence
+actor runs a broadcast loop:
 
-1. On each tick, if the local CRDT has changed since the last broadcast (`dirty = true`), the actor publishes a typed `SyncPayload(v, sender, state)` term to the well-known topic `"beryl:presence:sync"` using `broadcast_from` — which excludes self-delivery at the PubSub layer.
-2. Remote replicas on other nodes receive that typed payload through PubSub, merge the incoming state with `state.merge_with_diff`, and update their CRDT replica.
-3. If the merge changes membership (new joins or leaves relative to local state), `on_diff` fires immediately with the resulting `Diff`. This ensures no diff is silently dropped when multiple merges arrive in rapid succession.
+1. On each tick, the actor checks the `dirty` value. If local state changed,
+   it sends `SyncPayload(v, sender, state)` to `"beryl:presence:sync"`.
+   `broadcast_from` prevents self-delivery.
+2. Remote replicas receive the typed payload through PubSub. They merge it with
+   `state.merge_with_diff` and update their CRDT state.
+3. If the merge changes membership, the actor calls `on_diff` with the
+   resulting `Diff`. It calls the function for each merge, so rapid merges do
+   not lose diffs.
 
-Setting `broadcast_interval_ms` to `0` (the default in `default_config`) disables periodic broadcasts entirely, which is appropriate for single-node deployments.
+Set `broadcast_interval_ms` to `0` to disable periodic broadcasts. This is the
+default and is suitable for one-node deployments.
 
 ## Diagram
 

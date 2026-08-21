@@ -2,7 +2,8 @@
 title: Error Handling
 ---
 
-This guide covers how beryl surfaces errors to your app and to connected clients, and how to handle them defensively.
+This guide explains how beryl reports errors to your app and clients. It also
+shows how to handle them.
 
 ## Rejected joins
 
@@ -35,14 +36,18 @@ The client sees:
 ["1", "1", "room:lobby", "phx_reply", {"status": "error", "response": {"reason": "unauthorized"}}]
 ```
 
-On rejection the client remains connected but is not subscribed to the topic. If the reject payload carries a `reason` field, Phoenix-style clients surface it directly on the `.join().receive("error", ...)` callback.
+After rejection, the client stays connected but does not join the topic. If the
+payload has a `reason` field, Phoenix clients pass it to the
+`.join().receive("error", ...)` callback.
 
 With `beryl/channel`, return `channel.reject(reason)` from the handler's
 `join` callback. A topic no handler matches is rejected automatically with
 `{"reason": "unmatched topic"}`.
 
 :::note[Unanswered joins fail closed]
-Every `Join` must be answered with `AcceptJoin` or `RejectJoin` in the same update's effects. A join left unanswered is rejected automatically and logged — a forgotten match arm cannot silently admit a client.
+Answer each `Join` with `AcceptJoin` or `RejectJoin` in the same update. The
+runtime rejects and logs an unanswered join. A missing match branch cannot
+admit a client.
 :::
 
 ## Connection-level authentication rejection
@@ -66,7 +71,9 @@ The client never receives a WebSocket handshake and cannot send any messages.
 
 ## Malformed wire messages
 
-beryl parses incoming frames as Phoenix protocol arrays `[join_ref, ref, topic, event, payload]`. Frames that cannot be decoded are dropped silently — no error is sent to the client. This is intentional: malformed frames are treated as protocol violations and do not warrant a reply.
+beryl parses incoming Phoenix protocol arrays:
+`[join_ref, ref, topic, event, payload]`. It drops frames that it cannot decode
+and does not send an error. Malformed frames are protocol violations.
 
 If you need to surface decode errors in your own payload handling, decode the `Dynamic` payload with `gleam/dynamic/decode` and return an explicit `ReplyOk` or `ReplyError`:
 
@@ -89,12 +96,16 @@ socket.Message(_topic, "create_item", payload, option.Some(ref)) ->
 ```
 
 :::note[Refless messages cannot be answered]
-`ReplyOk`/`ReplyError` need the message's `ReplyRef`, which is `Some` only when the client expects a reply. A `Message` whose ref is `None` has nothing to correlate an answer with — the type system makes an unanswerable reply unrepresentable. Use `Push` for server-initiated messages with your own event name.
+`ReplyOk` and `ReplyError` need the message `ReplyRef`. It is `Some` only when
+the client expects a reply. A `Message` with `None` has no request reference.
+Use `Push` for a server message with its own event name.
 :::
 
 ## Unmatched topics
 
-If a client sends `phx_join` for a topic your `update` does not accept, reject it explicitly — typically with a catch-all `Join` arm returning `RejectJoin`. If your `update` simply ignores the join, beryl's fail-closed default rejects it for you.
+If `update` does not accept a `phx_join` topic, reject it with a catch-all
+`Join` branch that returns `RejectJoin`. If `update` ignores the join, beryl's
+fail-closed default rejects it.
 
 Messages pushed to a topic the socket never joined get an automatic error reply with `response: {"reason": "unmatched topic"}` when they carry a ref, matching Phoenix; refless pushes to unjoined topics are dropped.
 
@@ -156,7 +167,9 @@ non-panicking; see [Crash behavior](/guides/channels/#crash-behavior).
 
 ## Rate limiting
 
-When a client exceeds a configured rate limit, the offending frame or message is **dropped**. No error is sent to the client (joins are the exception: an over-rate join gets an error reply with `reason: "rate_limited"`).
+When a client exceeds a rate limit, beryl **drops** the frame or message. It
+does not send an error. An over-rate join is the exception. It receives an
+error reply with `reason: "rate_limited"`.
 
 | Limit | Scope | Enforced | Config function |
 |-------|-------|----------|-----------------|
@@ -180,9 +193,9 @@ let config =
   |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
 ```
 
-`with_topic_rate` overrides the global `channel_rate` for topics matching its
-pattern — use it to give a fast-streaming namespace (like live cursors) more
-headroom than chat. A non-positive `per_second` makes matching topics unlimited,
+`with_topic_rate` overrides the global `channel_rate` for matching topics. Use
+it to give a high-rate namespace, such as live cursors, more capacity than
+chat. A non-positive `per_second` makes matching topics unlimited,
 even when a global channel limit is configured, and allocates no per-topic
 bucket. If you need to inform the client that it has been rate-limited,
 implement application-level tracking in `update` and return an explicit
@@ -234,7 +247,8 @@ a specific variant differently.
 
 ## Sender delivery is best-effort
 
-`socket.notify` delivers a typed message to a socket's `update` as an `Info` event. If the socket has disconnected, the message is **silently dropped** — no error is returned:
+`socket.notify` sends a typed message to socket `update` as an `Info` event. If
+the socket disconnected, beryl drops the message and returns no error:
 
 ```gleam
 // This is always Nil — no error even if the socket is gone
@@ -262,7 +276,8 @@ beryl uses the Phoenix wire protocol. Error responses take these shapes:
 [null, null, "room:lobby", "phx_close", {}]
 ```
 
-Phoenix client libraries handle `phx_error` and `phx_close` automatically — the channel is marked as errored or closed, and the client may attempt to rejoin.
+Phoenix client libraries handle `phx_error` and `phx_close`. The client marks
+the channel as errored or closed and can try to rejoin.
 
 ## See also
 
