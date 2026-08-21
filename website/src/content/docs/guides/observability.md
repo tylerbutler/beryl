@@ -142,7 +142,6 @@ case stats.snapshot(channels) {
     let sockets = stats.connected_sockets(snapshot)
     let joined_pairs = stats.joined_socket_topic_pairs(snapshot)
     let topics = stats.active_topics(snapshot)
-    let mailbox = stats.runtime_mailbox_length(snapshot)
     // Publish these gauges through the application's metrics system.
   }
   Error(stats.RuntimeUnavailable) -> {
@@ -157,8 +156,9 @@ case stats.snapshot(channels) {
 The snapshot is local to one socket runtime on one BEAM node; it is not a
 transactional cluster view or an event stream. Aggregate gauges across nodes
 in the monitoring system. `joined_socket_topic_pairs` counts memberships, so
-one socket joined to two topics contributes two. The mailbox value is captured
-when the runtime services the request.
+one socket joined to two topics contributes two. Counts are captured as
+observed by the runtime process servicing the request and may lag in-flight
+connect/disconnect notifications.
 
 Poll no more frequently than roughly once per second. Polling itself sends a
 request through the runtime, and synchronized polling across many

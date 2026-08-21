@@ -39,10 +39,6 @@ pub fn stats(channels: beryl.Sockets) -> EndpointResult {
                     "active_topics",
                     json.int(stats.active_topics(beryl_snapshot)),
                   ),
-                  #(
-                    "runtime_mailbox_length",
-                    json.int(stats.runtime_mailbox_length(beryl_snapshot)),
-                  ),
                 ]),
               ),
               #(

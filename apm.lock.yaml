@@ -1,5 +1,5 @@
 lockfile_version: '1'
-generated_at: '2026-08-19T23:48:15.709394+00:00'
+generated_at: '2026-08-21T19:25:21.234647+00:00'
 apm_version: 0.28.0
 dependencies:
 - repo_url: dietrichgebert/ponytail
@@ -89,7 +89,7 @@ dependencies:
   materialization_repo_url: JuliusBrussee/caveman
   name: caveman-commit
   host: github.com
-  resolved_commit: 11ddc0c9813c8f75365cd5be2f753df08712f154
+  resolved_commit: 2f49f0e1a352aa810e70056b7930aeb0b3d219b4
   version: unknown
   virtual_path: skills/caveman-commit
   is_virtual: true
@@ -128,6 +128,9 @@ dependencies:
   - .claude/skills/gleam-reference-docs/SKILL.md
   - .claude/skills/gleam-reference-docs/assets/generate-reference.mjs
   - .claude/skills/gleam-reference-docs/evals/evals.json
+  - .claude/skills/gleam-review
+  - .claude/skills/gleam-review/SKILL.md
+  - .claude/skills/gleam-review/references/conventions.md
   deployed_file_hashes:
     .agents/skills/gleam-reference-docs/SKILL.md: sha256:7d3dd41722242d3cd627aae529ffd919391c8ff8a6be950c9ef61cd0b193c531
     .agents/skills/gleam-reference-docs/assets/generate-reference.mjs: sha256:a2581e009f9fe189a02681ad29d410a9e55a7c0a399de498bf5710ef539e6f43
@@ -137,27 +140,25 @@ dependencies:
     .claude/skills/gleam-reference-docs/SKILL.md: sha256:7d3dd41722242d3cd627aae529ffd919391c8ff8a6be950c9ef61cd0b193c531
     .claude/skills/gleam-reference-docs/assets/generate-reference.mjs: sha256:a2581e009f9fe189a02681ad29d410a9e55a7c0a399de498bf5710ef539e6f43
     .claude/skills/gleam-reference-docs/evals/evals.json: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
+    .claude/skills/gleam-review/SKILL.md: sha256:285a54a75346349ff12f6579c184847a6b35bbcecd2842b5065117a5d91ff071
+    .claude/skills/gleam-review/references/conventions.md: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
   content_hash: sha256:a05a8fc860c44cb33ab8f4a4a29556aa79ce92f3ae0dede093e0ab2de4c1e5a5
   is_dev: true
 - repo_url: tylerbutler/apm-base
   name: apm-base
   host: github.com
-  resolved_commit: 921147e7b5f10405ed7d73d2e5837bee1a17cb7c
-  version: 0.1.1
+  resolved_commit: 22b36b9ac4cb78993103de51fd7d003b8ec9609a
+  version: 0.2.0
   package_type: apm_package
   deployed_files:
   - .agents/skills/prose-banlist
   - .agents/skills/prose-banlist/SKILL.md
-  - .claude/rules/no-laziness.md
   - .claude/skills/prose-banlist
   - .claude/skills/prose-banlist/SKILL.md
-  - .github/instructions/no-laziness.instructions.md
   deployed_file_hashes:
-    .agents/skills/prose-banlist/SKILL.md: sha256:e612d1e957c8ff0553c148f87aed6fe8840665792e1a11aa4a527e1e9ff662cc
-    .claude/rules/no-laziness.md: sha256:7bfa0b61b27e7f8aa782881e243ff010a542615ce14f0ce917615b23dcea1cd4
-    .claude/skills/prose-banlist/SKILL.md: sha256:e612d1e957c8ff0553c148f87aed6fe8840665792e1a11aa4a527e1e9ff662cc
-    .github/instructions/no-laziness.instructions.md: sha256:d0f928dfdf98b1ddee5e676e212cff34c866c65cf839952c9d62c730068d7c1e
-  content_hash: sha256:4eda3353cbfdf040b6a9033f1e076c4fdba2ed2d0ab2a8c43bb94c98613e8540
+    .agents/skills/prose-banlist/SKILL.md: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
+    .claude/skills/prose-banlist/SKILL.md: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
+  content_hash: sha256:e03d1098569536149429efa6390166e999a0f875603588c9139cf15a84b4235e
   is_dev: true
 - repo_url: hardikpandya/stop-slop
   name: stop-slop
@@ -285,15 +286,6 @@ deployments:
   content_hash: sha256:7f6bee86702a488d29ef0dcaabf424bbe2aca345a6a642319d43a1fe0276792e
 - kind: project-relative
   target: claude
-  value: .claude/rules/no-laziness.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:7bfa0b61b27e7f8aa782881e243ff010a542615ce14f0ce917615b23dcea1cd4
-- kind: project-relative
-  target: claude
   value: .claude/skills/caveman-commit
   runtime: null
   scope: project
@@ -355,6 +347,33 @@ deployments:
   - tylerbutler/agent-marketplace/plugins/gleam
   active_owner: tylerbutler/agent-marketplace/plugins/gleam
   content_hash: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
+- kind: project-relative
+  target: claude
+  value: .claude/skills/gleam-review
+  runtime: null
+  scope: project
+  owners:
+  - tylerbutler/agent-marketplace/plugins/gleam
+  active_owner: tylerbutler/agent-marketplace/plugins/gleam
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/gleam-review/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - tylerbutler/agent-marketplace/plugins/gleam
+  active_owner: tylerbutler/agent-marketplace/plugins/gleam
+  content_hash: sha256:285a54a75346349ff12f6579c184847a6b35bbcecd2842b5065117a5d91ff071
+- kind: project-relative
+  target: claude
+  value: .claude/skills/gleam-review/references/conventions.md
+  runtime: null
+  scope: project
+  owners:
+  - tylerbutler/agent-marketplace/plugins/gleam
+  active_owner: tylerbutler/agent-marketplace/plugins/gleam
+  content_hash: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail
@@ -480,7 +499,7 @@ deployments:
   owners:
   - tylerbutler/apm-base
   active_owner: tylerbutler/apm-base
-  content_hash: sha256:e612d1e957c8ff0553c148f87aed6fe8840665792e1a11aa4a527e1e9ff662cc
+  content_hash: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
 - kind: project-relative
   target: claude
   value: .claude/skills/stop-slop
@@ -768,7 +787,7 @@ deployments:
   owners:
   - tylerbutler/apm-base
   active_owner: tylerbutler/apm-base
-  content_hash: sha256:e612d1e957c8ff0553c148f87aed6fe8840665792e1a11aa4a527e1e9ff662cc
+  content_hash: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
 - kind: project-relative
   target: copilot
   value: .agents/skills/stop-slop
@@ -922,15 +941,6 @@ deployments:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
   content_hash: sha256:7f6bee86702a488d29ef0dcaabf424bbe2aca345a6a642319d43a1fe0276792e
-- kind: project-relative
-  target: copilot
-  value: .github/instructions/no-laziness.instructions.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:d0f928dfdf98b1ddee5e676e212cff34c866c65cf839952c9d62c730068d7c1e
 lsp_servers:
 - gleam
 lsp_configs:

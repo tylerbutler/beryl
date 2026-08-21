@@ -128,7 +128,7 @@ pub fn stats_include_beryl_and_beam_snapshots_test() {
   endpoint.body |> string.contains("\"beryl\"") |> should.be_true
   endpoint.body |> string.contains("\"beam\"") |> should.be_true
   endpoint.body
-  |> string.contains("\"runtime_mailbox_length\"")
+  |> string.contains("\"connected_sockets\"")
   |> should.be_true
 }
 

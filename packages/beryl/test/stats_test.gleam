@@ -7,6 +7,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleam/option.{None}
 import gleeunit/should
+import test_helpers
 
 fn start_sockets() -> beryl.Sockets {
   let assert Ok(sockets) =
@@ -35,7 +36,6 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   stats.connected_sockets(initial) |> should.equal(0)
   stats.joined_socket_topic_pairs(initial) |> should.equal(0)
   stats.active_topics(initial) |> should.equal(0)
-  should.be_true(stats.runtime_mailbox_length(initial) >= 0)
 
   let first = h.connect(sockets, "socket-1")
   let second = h.connect(sockets, "socket-2")
@@ -52,6 +52,11 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   stats.active_topics(joined) |> should.equal(2)
 
   transport.socket_disconnected(sockets, "socket-2")
+  test_helpers.wait_until(
+    fn() { stats.connected_sockets(read_snapshot(sockets)) == 1 },
+    500,
+    10,
+  )
   let after_disconnect = read_snapshot(sockets)
   stats.connected_sockets(after_disconnect) |> should.equal(1)
   stats.joined_socket_topic_pairs(after_disconnect) |> should.equal(2)

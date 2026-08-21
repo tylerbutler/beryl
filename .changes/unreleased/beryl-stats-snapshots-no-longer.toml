@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Removed"
+body = "Stats snapshots no longer report `runtime_mailbox_length`, and `beryl/stats.runtime_mailbox_length` is removed. The metric assumed a single runtime mailbox, a pre-1.0 leak of the runtime process topology."

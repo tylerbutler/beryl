@@ -1,7 +1,6 @@
 ---
 name: gleam-review
-description: Review Gleam code against the official Gleam conventions, patterns, and anti-patterns guide. Identifies anti-patterns (check-then-assert, catch-all matches, panicking in libraries, abbreviations, fragmented modules), convention violations (unqualified imports, missing type annotations, fallible functions that don't return Result), and opportunities to apply recommended patterns (descriptive errors, invalid-states-impossible modelling, builder pattern). Manual invocation only — run via /gleam-review, optionally with files, directories, or package names as arguments.
-disable-model-invocation: true
+description: Review Gleam code against the official Gleam conventions, patterns, and anti-patterns guide. Identifies anti-patterns (check-then-assert, catch-all matches, panicking in libraries, abbreviations, fragmented modules), convention violations (unqualified imports, missing type annotations, fallible functions that don't return Result), and opportunities to apply recommended patterns (descriptive errors, invalid-states-impossible modelling, builder pattern). Invoke explicitly when the user requests a Gleam code review, optionally with files, directories, or package names as arguments.
 ---
 
 # Gleam Code Review
@@ -54,13 +53,44 @@ Judgment notes that prevent false positives:
   point) and at the top level of application code.
 - A catch-all `_` pattern over an open-ended type (`Int`, `String`, lists) is
   often unavoidable; the anti-pattern is catch-alls over custom types with a
-  small closed set of variants, where exhaustive matching was possible.
+  small closed set of variants, where exhaustive matching was possible. A
+  payload wildcard such as `Error(_)` still explicitly matches the `Error`
+  variant and is not this anti-pattern.
 - Short variable names are abbreviations only if they abbreviate something: a
   generic `a` in a generic function, or an idiomatic accumulator in a
   one-line fold, is not in the same class as `cnt`, `cfg`, or `proc_dat`.
+  Treat `id` and names ending in `_id` as conventional identifier names; the
+  guide itself uses them in good examples.
 - Before flagging fragmented modules or namespace issues, look at the actual
   package layout — module-boundary findings need the directory structure as
   evidence, not just one file's imports.
+- A small module or a root module delegating to a domain module is not enough
+  evidence of fragmentation. Require concrete API friction such as callers
+  importing several modules for one task, implementation details being exposed
+  across boundaries, or tightly coupled modules that cannot stand alone.
+  Distinct domain modules that own their own types and behavior are valid even
+  when one orchestration function imports more than one of them.
+- Modules nested under the package's own namespace satisfy the global namespace
+  convention. Do not turn a properly namespaced module layout into a
+  fragmentation finding without separate, concrete API-friction evidence.
+- For core-library findings, distinguish domain APIs built with core types from
+  general-purpose replacements for them. Flag custom collection, time, JSON,
+  HTTP, or process abstractions that recreate a core package's role; do not
+  flag domain-specific operations merely because they call a core function.
+  A type name such as `Json` alone is not evidence that the type recreates
+  `gleam_json`; require actual general-purpose parsing, encoding, or value
+  construction behavior across a library-like API. A small wrapper type and
+  constructor function are not enough, even when the wrapper stores a `String`;
+  leave them alone unless broader code demonstrates that they replace the core
+  JSON package. Using core functions such as `list.fold` to implement a domain
+  calculation is compliance with this convention, not a violation; do not
+  demand a different convenience function or flag a one-off expression as a
+  replacement library.
+- Do not infer domain invariants that the code does not state. For example, an
+  `Int` inventory field is not evidence that negative inventory is invalid.
+- The `try_` prefix is conventional when a fallible function is the
+  result-propagating counterpart of an existing function. Recognize such pairs
+  as correct rather than treating the prefix as abstract naming.
 
 When unsure whether something violates the guide, re-read the relevant
 section of `references/conventions.md` and quote it in the finding. If it is
@@ -103,5 +133,11 @@ important finding. Then:
 Order findings by importance, not file order. Name each finding after the
 guide section it comes from (e.g. **Check-then-assert**, **Match all
 variants**) so the user can look it up. Every finding needs a `file:line`
-reference. If the code is clean, say so plainly — do not manufacture findings
-to make the review look thorough.
+reference anchored to the exact offending syntax, not merely the surrounding
+function or case expression. Before writing the final review, verify every
+reported line against line-numbered file output; if a normal file reader is
+unavailable and you use a shell fallback, read with `nl -ba`, not plain `cat`.
+Use anti-pattern section names only for actual findings, not when praising
+clean code in **Notable**. If the code is clean, say so plainly and mention any
+central convention the code demonstrates in ordinary descriptive language —
+do not manufacture findings to make the review look thorough.

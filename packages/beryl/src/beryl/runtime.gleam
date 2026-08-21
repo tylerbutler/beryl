@@ -137,7 +137,6 @@ pub type StatsSnapshot {
     connected_sockets: Int,
     joined_socket_topic_pairs: Int,
     active_topics: Int,
-    runtime_mailbox_length: Int,
   )
 }
 
@@ -588,7 +587,6 @@ fn handle_message(
               total + set.size(socket.subscribed_topics)
             }),
           active_topics: dict.size(state.topics),
-          runtime_mailbox_length: telemetry.mailbox_length(),
         ),
       )
       actor.continue(state)
