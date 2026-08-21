@@ -1,3 +1,3 @@
 package = "beryl"
 kind = "Added"
-body = "Add the closure-sealed beryl/channel API with handler construction, supervised child_spec startup, ordered phase-typed actions, and generation-scoped typed sends."
+body = "Add `beryl/channel`, a supervised, typed API for routing topics to handlers and sending ordered effects and server messages."

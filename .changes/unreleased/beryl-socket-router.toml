@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Removed"
-body = "Remove the unreleased beryl/socket/router experiment before release. Raw single-topic apps match socket.Input directly with beryl/topic; multi-topic apps use beryl/channel."
