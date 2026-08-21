@@ -1,3 +1,0 @@
-package = "beryl_mist"
-kind = "Changed"
-body = "BREAKING: with_on_connect's callback now returns connect metadata (Result(List(#(String, String)), ConnectError)) merged into a monomorphic ConnectSeed, instead of seeding app-typed assigns; the seed's path, query, headers, and metadata are delivered to the app's init via ConnectInfo.seed."

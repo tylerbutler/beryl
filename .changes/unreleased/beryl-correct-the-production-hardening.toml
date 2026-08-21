@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Correct the production-hardening guide to explain that inbound frame-size enforcement occurs after transport buffering and requires an edge limit to bound memory."

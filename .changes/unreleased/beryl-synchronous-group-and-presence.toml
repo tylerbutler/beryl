@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Synchronous group and presence actor call timeouts are configurable. Group actors can use `group.child_spec_with_config`, and both group and presence configs provide `with_call_timeout`; the existing 5-second default is unchanged."

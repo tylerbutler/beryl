@@ -1,3 +1,0 @@
-package = "beryl_ewe"
-kind = "Changed"
-body = "BREAKING: with_on_connect now returns ordered connect metadata (Result(List(#(String, String)), ConnectError)) merged into ConnectSeed.metadata instead of acting as a Nil-only auth gate."

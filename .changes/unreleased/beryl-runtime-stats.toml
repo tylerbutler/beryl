@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: runtime stats now expose runtime_mailbox_length and RuntimeUnavailable, replacing coordinator_mailbox_length and CoordinatorUnavailable. The registered_channel_handlers gauge is removed along with the channel-module API it counted."

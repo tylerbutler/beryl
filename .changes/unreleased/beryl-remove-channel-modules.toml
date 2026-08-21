@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Removed"
-body = "BREAKING: remove the legacy pre-dispatch channel registry, coordinator, supervisor, RegisteredChannel, beryl.register, beryl.send_info, and the unsupervised beryl.start path. Applications use supervised beryl.child_spec for raw dispatch or the new closure-sealed beryl/channel layer; beryl.stop remains available for graceful shutdown."

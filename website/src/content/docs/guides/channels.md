@@ -182,15 +182,14 @@ A bigger `handlers()` returns one entry per channel module:
 ]
 ```
 
-- **Overlapping patterns are allowed and useful.** `"room:lobby"` ahead of
-  `"room:*"` is the normal way to give one topic its own channel.
-- **More specific patterns belong earlier.** A `"room:*"` registered ahead
-  of `"room:lobby"` would make the lobby channel unreachable — that is a
-  routing mistake the layer cannot detect for you.
-- **Two handlers with the same pattern string are rejected**, because the
-  second could never receive a join.
-- **A join for a topic no handler matches is refused explicitly** with
-  `{"reason": "unmatched topic"}` rather than left unanswered.
+Overlapping patterns are allowed and useful — `"room:lobby"` ahead of
+`"room:*"` is the normal way to give one topic its own channel — but more
+specific patterns must come first: a `"room:*"` registered ahead of
+`"room:lobby"` would make the lobby channel unreachable, a routing mistake
+the layer cannot detect for you. Two handlers with the same pattern string
+are rejected, since the second could never receive a join, and a join for a
+topic no handler matches is refused explicitly with
+`{"reason": "unmatched topic"}` rather than left unanswered.
 
 `InvalidPattern` carries the core
 [`topic.TopicError`](/reference/api/beryl-topic/) itself rather than a
@@ -561,14 +560,9 @@ pub fn start_supervised() -> beryl.Sockets {
 }
 ```
 
-It reports only what can be detected before the tree starts, as
-`channel.ChildSpecError`:
-
-| Variant | Meaning |
-|---|---|
-| `InvalidPattern(pattern, reason)` | A handler pattern is invalid |
-| `DuplicatePattern(pattern)` | The same pattern was registered twice |
-| `InvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
+It reports the same eager validation failures as
+`channel.ChildSpecError` — see the table in
+[Starting a channel system](#starting-a-channel-system).
 
 The subtree, restart policy, and `beryl.stop` semantics are the core's,
 unchanged — see the [Supervision guide](/guides/supervision/). PubSub,

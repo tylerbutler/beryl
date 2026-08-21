@@ -1,5 +1,16 @@
 # beryl_mist changelog
 
+## v0.3.0 - 2026-08-21
+
+### Changed
+
+- BREAKING: `with_on_connect` now returns connection metadata merged into `ConnectSeed.metadata` instead of app-typed assigns. The app receives the request path, query, headers, and metadata through `ConnectInfo.seed`.
+- BREAKING: Use `beryl/transport/server` and `beryl/transport/origin` for shared transport configuration. `upgrade_connection` is removed; use `upgrade` or `handler` so every connection runs origin, capacity, and authentication checks.
+
+### Dependencies
+
+- Updated beryl to 0.3.0
+
 ## v0.2.0 - 2026-08-07
 
 ### Changed

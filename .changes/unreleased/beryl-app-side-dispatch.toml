@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "App-side dispatch API: beryl.child_spec(config, init, update) returns a Sockets handle and an OTP child specification that route every socket event through one app-supplied update function via beryl/socket (Input/Next/Effect), with typed Sender/notify, per-topic-pattern rate limits, and the existing socket/channel/broadcast telemetry schema. Reply refs are single-use: a second outstanding request with the same topic/join_ref/msg_ref key is rejected, while reuse after completion is permitted."

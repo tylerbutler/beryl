@@ -124,6 +124,10 @@ pub opaque type Config {
     max_connections_per_ip: Int,
     /// Max concurrent connections node-wide across all IPs (0 = unlimited)
     max_connections: Int,
+    /// Per-IP connection attempt rate limit (connections/sec, 0 = unlimited)
+    connection_rate_per_ip: Int,
+    /// Per-IP connection attempt burst capacity (0 = defaults to rate)
+    connection_burst_per_ip: Int,
     /// Optional PubSub for distributed broadcasts across nodes
     pubsub: Option(PubSub(json.Json)),
     /// Per-connection inbound frame rate limit (frames/sec, 0 = unlimited).
@@ -205,6 +209,8 @@ pub fn config(codec: codec.Codec) -> Config {
     heartbeat_timeout_ms: 60_000,
     max_connections_per_ip: 0,
     max_connections: 0,
+    connection_rate_per_ip: 0,
+    connection_burst_per_ip: 0,
     pubsub: None,
     frame_rate: 0,
     frame_burst: 0,
@@ -316,6 +322,28 @@ pub fn with_max_connections_per_ip(
   max_connections max_connections: Int,
 ) -> Config {
   Config(..config, max_connections_per_ip: max_connections)
+}
+
+/// Configure a per-IP connection-attempt rate limit.
+///
+/// Each WebSocket upgrade attempt that passes the concurrent connection
+/// ceilings consumes one token before authentication and handshake setup. A
+/// non-positive `per_second` disables the limit. A `burst` of 0 uses
+/// `per_second` as the burst capacity.
+///
+/// Unlike per-connection frame and message buckets, this allowance is keyed by
+/// the real socket peer IP and lives in Beryl's supervised connection limiter.
+/// Disconnecting or restarting the app runtime therefore does not refresh it.
+/// Idle IP buckets are removed once their allowance has fully refilled.
+///
+/// This uses the same peer IP and trusted-proxy caveats as
+/// `with_max_connections_per_ip`.
+pub fn with_connection_rate_per_ip(
+  config: Config,
+  per_second rate: Int,
+  burst burst: Int,
+) -> Config {
+  Config(..config, connection_rate_per_ip: rate, connection_burst_per_ip: burst)
 }
 
 /// Configure the maximum number of concurrent connections allowed across the
@@ -503,6 +531,7 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
     config.max_connections_per_ip <= 0
     && config.max_connections <= 0
+    && config.connection_rate_per_ip <= 0
     && config.frame_rate <= 0
     && config.message_rate <= 0
     && config.join_rate <= 0
@@ -512,7 +541,7 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
   |> log.warn("No abuse controls configured", [
     #(
       "hint",
-      "rate and connection limits are all disabled; fine for development, but for production configure with_frame_rate, with_message_rate, with_join_rate, with_max_connections_per_ip, and with_max_connections (see the production hardening guide)",
+      "rate and connection limits are all disabled; fine for development, but for production configure with_frame_rate, with_message_rate, with_join_rate, with_connection_rate_per_ip, with_max_connections_per_ip, and with_max_connections (see the production hardening guide)",
     ),
   ])
 }
@@ -859,6 +888,7 @@ fn build_app_subtree(
     connection_limit.enabled(
       config.max_connections_per_ip,
       config.max_connections,
+      config.connection_rate_per_ip,
     )
   {
     True -> Some(process.new_name("beryl_connection_limiter"))
@@ -935,6 +965,8 @@ fn child_spec_supervisor(
           connection_limit.start_named(
             config.max_connections_per_ip,
             config.max_connections,
+            config.connection_rate_per_ip,
+            config.connection_burst_per_ip,
             name,
           )
         }),

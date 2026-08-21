@@ -197,6 +197,11 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// reverse proxy, all connections share the proxy's IP — resolve the real
 /// client IP at the proxy layer. See the WebSocket transport guide.
 ///
+/// `beryl.with_connection_rate_per_ip` independently caps connection attempts
+/// from each peer IP and also returns `reject(429)` when its token bucket is
+/// exhausted. Its state survives disconnects and app runtime restarts, so
+/// reconnecting does not refresh the configured burst.
+///
 /// When `beryl.with_max_connections` is configured, a node-wide ceiling on
 /// concurrent connections across all IPs is likewise enforced with
 /// `reject(429)` before allocating any long-lived socket/runtime state. The

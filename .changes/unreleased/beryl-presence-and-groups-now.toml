@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: Presence and groups now expose supervised child specifications with stable restart-safe, node-affine handles instead of unsupervised start functions. Use each handle only on the node where its child runs: remote presence mutations and synchronous group operations panic as unavailable, remote presence reads return Error(Nil), and remote group broadcasts are not delivered."
