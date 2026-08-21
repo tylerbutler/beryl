@@ -25,12 +25,12 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helpers
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 // ── Gate ────────────────────────────────────────────────────────────────────

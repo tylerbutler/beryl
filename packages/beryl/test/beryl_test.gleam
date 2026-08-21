@@ -10,8 +10,8 @@ import gleam/json
 import gleam/option
 import gleam/otp/actor
 import gleam/string
-import gleeunit
 import gleeunit/should
+import vouch
 
 fn text_frame(frame: codec.Frame) -> String {
   let assert codec.TextFrame(text) = frame
@@ -19,7 +19,7 @@ fn text_frame(frame: codec.Frame) -> String {
 }
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 // Topic pattern tests

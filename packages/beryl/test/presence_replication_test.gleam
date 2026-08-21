@@ -3,13 +3,13 @@ import beryl/pubsub
 import gleam/erlang/process
 import gleam/json
 import gleam/list
-import gleeunit
 import gleeunit/should
 import lattice_presence/presence_state
 import test_helpers
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 // ── Helper ──────────────────────────────────────────────────────────

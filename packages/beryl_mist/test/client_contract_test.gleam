@@ -17,10 +17,11 @@ import gleam/option.{Some}
 import gleam/otp/actor
 import gleam/otp/static_supervisor.{type Supervisor}
 import gleam/result
-import gleeunit
 import gleeunit/should
+import gluegun/connection
 import gluegun/websocket
 import mist
+import vouch
 
 const socket_path = "/socket/websocket"
 
@@ -43,7 +44,7 @@ type TestEvent {
 fn stop_supervisor(pid: process.Pid) -> Nil
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 pub fn start_test_server_uses_dynamic_port_test() {
@@ -258,7 +259,10 @@ pub fn gluegun_raw_malformed_frame_gets_error_reply_test() {
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
-      options: websocket.options(),
+      // Short frame timeout: this test waits out the full receive window, and
+      // gluegun's 5s default collides with vouch's 5s per-test timeout.
+      options: websocket.options()
+        |> websocket.with_timeout(connection.Milliseconds(receive_timeout_ms)),
       callback: fn(socket) {
         let assert Ok(Nil) = websocket.send_text(socket, "not json")
         websocket.receive_app_frame(socket)

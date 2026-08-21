@@ -6,11 +6,11 @@ import beryl
 import beryl/channel
 import beryl/topic
 import beryl/wire
-import gleeunit
 import gleeunit/should
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 fn stub(pattern: String) -> channel.Handler {

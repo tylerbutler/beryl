@@ -7,6 +7,7 @@
 # You should check this file into your source control repository.
 
 packages = [
+  { name = "argv", version = "1.1.0", build_tools = ["gleam"], requirements = [], otp_app = "argv", source = "hex", outer_checksum = "3277D100448BDB4A29B6D58C0F36F631CBC349E8BDD09766C6309DF202831140" },
   { name = "gleam_json", version = "3.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleam_json", source = "hex", outer_checksum = "44FDAA8847BE8FC48CA7A1C089706BD54BADCC4C45B237A992EDDF9F2CDB2836" },
   { name = "gleam_stdlib", version = "1.0.5", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "CEE5B6C076A85B45F60C585F4316C63EC8B7127C119D5738C3958A9C4D50404E" },
   { name = "gleeunit", version = "1.11.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "EC31ABA74256AEA531EDF8169931D775BBB384FED0A8A1BDC4DD9354E3E21826" },
@@ -15,6 +16,7 @@ packages = [
   { name = "lattice_maps", version = "1.1.2", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core", "lattice_counters", "lattice_registers", "lattice_sets"], otp_app = "lattice_maps", source = "hex", outer_checksum = "9CB3F090BEF40C96C5EEEE9CEE4FA9B16C600802A234B8F2AAF9C25B5B46667B" },
   { name = "lattice_registers", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_registers", source = "hex", outer_checksum = "4B85A3925CDC563DE102A5B59CDDCA68EBBB877C25602C4551B15C8DE3D8A295" },
   { name = "lattice_sets", version = "1.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lattice_core"], otp_app = "lattice_sets", source = "hex", outer_checksum = "BA81DF518B2A25D9E77012262D08D06B959BD7A6C22B98D4F82550823A1E98AF" },
+  { name = "vouch", version = "1.2.0", build_tools = ["gleam"], requirements = ["argv", "gleam_stdlib"], otp_app = "vouch", source = "hex", outer_checksum = "5DB5887CF32274B4783146C86CF61CE55A2C85ED6FE0E73F2D3777F46491209A" },
 ]
 
 [requirements]
@@ -24,3 +26,4 @@ gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 lattice_core = { version = ">= 1.0.0 and < 2.0.0" }
 lattice_maps = { version = ">= 1.0.0 and < 2.0.0" }
 lattice_registers = { version = ">= 1.0.0 and < 2.0.0" }
+vouch = { version = ">= 1.2.0 and < 2.0.0" }

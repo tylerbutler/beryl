@@ -1,9 +1,9 @@
 import collab_docs_client as client
-import gleeunit
 import gleeunit/should
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 pub fn independent_adds_converge_test() {

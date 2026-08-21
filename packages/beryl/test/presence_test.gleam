@@ -5,12 +5,12 @@ import gleam/list
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helpers
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 fn test_config(replica: String) -> presence.Config {

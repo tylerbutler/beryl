@@ -135,13 +135,16 @@ pub fn parse(input: String) -> Result(Value, ParseError)
 # Run all tests
 just test
 
-# Run with verbose output
-gleam test -- --verbose
+# Run a subset of tests by name
+gleam test -- --filter=presence
+
+# Rerun tests on file changes
+gleam run -m vouch -- watch
 ```
 
 ### Writing Tests
 
-Tests use the `gleeunit` framework:
+Tests run under the `vouch` runner with `gleeunit/should` assertions:
 
 ```gleam
 import gleeunit/should

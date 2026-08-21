@@ -21,6 +21,7 @@ gleam_otp = ">= 1.2.0 and < 2.0.0"
 aquamarine = { git = "https://github.com/tylerbutler/aquamarine.git", ref = "main" }
 gluegun = { git = "https://github.com/tylerbutler/gluegun.git", ref = "532af1ac0308ff93c8a957467dbb638859593c93" }
 glinter = ">= 2.19.0 and < 3.0.0"
+vouch = ">= 1.2.0 and < 2.0.0"
 
 [tools.licence_audit]
 allow = ["Apache-2.0", "MIT"]

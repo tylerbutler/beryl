@@ -11,19 +11,19 @@ import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/static_supervisor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import load_test/app as load_app
 import load_test/channel
 import load_test/ewe as ewe_http
 import load_test/http
 import load_test/mist as mist_http
+import vouch
 
 @external(erlang, "load_test_test_ffi", "run_after")
 fn run_after(run: fn() -> value, cleanup: fn() -> Nil) -> value
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 fn start_system() -> beryl.Sockets {

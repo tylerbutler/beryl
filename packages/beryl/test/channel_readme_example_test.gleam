@@ -11,11 +11,11 @@ import beryl/channel
 import beryl/wire
 import gleam/json
 import gleam/otp/static_supervisor
-import gleeunit
 import gleeunit/should
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 pub fn room() -> channel.Handler {

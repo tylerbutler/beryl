@@ -18,3 +18,4 @@ envoy = ">= 1.2.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
+vouch = ">= 1.2.0 and < 2.0.0"

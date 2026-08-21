@@ -14,12 +14,12 @@ import gleam/json.{type Json}
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import gleeunit
 import gleeunit/should
 import mist
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 type WebsocketClient

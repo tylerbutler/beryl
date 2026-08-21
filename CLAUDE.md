@@ -127,7 +127,9 @@ website/                           # Astro/Starlight docs site (not a member)
 - `gleam_stdlib`, `gleam_erlang`, `gleam_crypto`
 
 #### Development
-- `gleeunit` - Testing framework
+- `vouch` - Test runner (gleeunit-compatible; supports `--filter`, JUnit
+  output, watch mode)
+- `gleeunit` - Assertion library (`gleeunit/should`)
 - git-sourced test helpers: `phoenix_channel_fixtures` (beryl),
   `aquamarine`, `gluegun` (beryl_mist)
 

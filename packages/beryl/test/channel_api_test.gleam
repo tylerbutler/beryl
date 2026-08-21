@@ -14,11 +14,11 @@ import gleam/list
 import gleam/option
 import gleam/result
 import gleam/string
-import gleeunit
 import gleeunit/should
+import vouch
 
 pub fn main() {
-  gleeunit.main()
+  vouch.main()
 }
 
 /// A channel-local server-side message type, used to prove typed `info`
