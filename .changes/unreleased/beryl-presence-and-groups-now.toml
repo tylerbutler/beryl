@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: Start presence and groups with supervised child specifications. Handles are node-local: remote presence mutations and group calls panic, remote presence reads return `Error(Nil)`, and remote group broadcasts are not delivered. Configure synchronous call timeouts with `with_call_timeout`; the five-second default is unchanged."

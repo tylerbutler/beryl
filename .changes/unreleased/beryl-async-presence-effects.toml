@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Beryl now processes presence mutations asynchronously, so a busy presence service does not block unrelated sockets, broadcasts, heartbeats, or shutdown. Reads remain immediately consistent, and Beryl logs timed-out mutations before resuming the waiting socket."

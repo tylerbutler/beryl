@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: PubSub messages now include their scope, preventing subscribers from matching messages from another scope in the same mailbox. Nodes using the old and new message formats cannot exchange PubSub broadcasts during a rolling upgrade."

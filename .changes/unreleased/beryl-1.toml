@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Non-positive `with_topic_rate` overrides now disable rate limiting for matching topics without allocating limiter state. Positive overrides still take precedence over the global channel rate limit."

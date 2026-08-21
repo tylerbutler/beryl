@@ -1,3 +1,0 @@
-package = "beryl_mist"
-kind = "Changed"
-body = "BREAKING: Use `beryl/transport/server` and `beryl/transport/origin` for shared transport configuration. `upgrade_connection` is removed; use `upgrade` or `handler` so every connection runs origin, capacity, and authentication checks."

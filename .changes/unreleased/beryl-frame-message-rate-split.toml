@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "BREAKING: `with_frame_rate` limits every inbound frame before decoding, while `with_message_rate` limits successfully decoded non-join messages. The limits are independent; configure both to reject malformed-frame floods and cap decoded traffic. Rate-limited heartbeats do not extend socket deadlines."
