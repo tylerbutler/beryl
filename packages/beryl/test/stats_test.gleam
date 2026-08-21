@@ -74,7 +74,11 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
 
   transport.socket_disconnected(sockets, "socket-2")
   let after_disconnect =
-    read_until(sockets, fn(snap) { stats.connected_sockets(snap) == 1 }, 500)
+    read_until(
+      sockets,
+      fn(snapshot) { stats.connected_sockets(snapshot) == 1 },
+      500,
+    )
   stats.connected_sockets(after_disconnect) |> should.equal(1)
   stats.joined_socket_topic_pairs(after_disconnect) |> should.equal(2)
   stats.active_topics(after_disconnect) |> should.equal(2)
