@@ -39,6 +39,10 @@ type State {
   )
 }
 
+type Note {
+  PublishRoster
+}
+
 /// Build the standalone chat application's handler table.
 pub fn handlers(ctx: Ctx) -> List(channel.Handler) {
   [lobby(), room(ctx)]
@@ -66,9 +70,9 @@ fn room(ctx: Ctx) -> channel.Handler {
 
 fn accept_room(
   ctx: Ctx,
-  context: channel.JoinContext(Nil),
+  context: channel.JoinContext(Note),
   room_name: String,
-) -> channel.JoinResult(Nil) {
+) -> channel.JoinResult(Note) {
   let state =
     State(
       topic: context.topic,
@@ -79,7 +83,7 @@ fn accept_room(
     )
 
   case
-    session_presence.track_snapshot_if_below(
+    session_presence.track_if_below(
       ctx.presence,
       state.topic,
       state.socket_id,
@@ -92,8 +96,9 @@ fn accept_room(
         403,
         "Room is full (max " <> int.to_string(max_room_users) <> ")",
       ))
-    Ok(roster) -> {
+    Ok(Nil) -> {
       announce_rooms_changed(ctx, state.room_name)
+      channel.notify(context.self, PublishRoster)
 
       channel.accept(state, callbacks(ctx))
       |> channel.with_reply(
@@ -109,13 +114,12 @@ fn accept_room(
           "new_msg",
           system_message(state.username <> " joined the room"),
         ),
-        channel.broadcast("presence_list", roster),
       ])
     }
   }
 }
 
-fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Nil) {
+fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
   channel.callbacks()
   |> channel.on_message(fn(state, message) {
     case message.event {
@@ -125,6 +129,11 @@ fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Nil) {
       "stop_typing" -> channel.next(state, typing(ctx, state, typing: False))
       _ -> channel.next(state, [])
     }
+  })
+  |> channel.on_info(fn(state, note) {
+    let PublishRoster = note
+    session_presence.publish(ctx.presence, state.topic)
+    channel.next(state, [])
   })
   |> channel.on_terminate(fn(state, _reason) {
     session_presence.untrack(ctx.presence, state.topic, state.socket_id)

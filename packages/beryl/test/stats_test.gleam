@@ -1,10 +1,12 @@
 import app_test_helpers as h
 import beryl
+import beryl/presence
 import beryl/socket
 import beryl/stats
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
+import gleam/json
 import gleam/option.{None}
 import gleeunit/should
 import test_helpers
@@ -74,9 +76,13 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
 /// leak.
 pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
   let pids = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(presence_handle) =
+    presence.start(presence.default_config("stats-actor-crash"))
   let assert Ok(sockets) =
     h.start_app(
-      beryl.config(wire.phoenix_codec()),
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(presence_handle),
       init: fn(_info) {
         // `init` runs in the socket's own actor, so this is the actor pid.
         process.send(pids, process.self())
@@ -84,8 +90,11 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
       },
       update: fn(model, input) {
         case input {
-          socket.Join(_, _, ref) ->
-            socket.Next(model, [socket.AcceptJoin(ref, None)])
+          socket.Join(topic_name, _, ref) ->
+            socket.Next(model, [
+              socket.AcceptJoin(ref, None),
+              socket.PresenceTrack(topic_name, "tracked", json.object([])),
+            ])
           socket.Message(_, _, _, _)
           | socket.Binary(_, _)
           | socket.Closed(_, _)
@@ -93,7 +102,8 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
         }
       },
     )
-  let frames = h.connect(sockets, "doomed")
+  let frames =
+    h.connect_with_close(sockets, "doomed", fn() { process.send(closed, Nil) })
   h.join(sockets, "doomed", "room:x", "jr-1", "1")
   let assert Ok(_) = process.receive(frames, 500)
   let assert Ok(actor_pid) = process.receive(pids, 500)
@@ -105,9 +115,20 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
   )
   let joined = read_snapshot(sockets)
   stats.active_topics(joined) |> should.equal(1)
+  test_helpers.wait_until(
+    fn() {
+      case presence.list(presence_handle, "room:x") {
+        Ok([_]) -> True
+        Ok(_) | Error(Nil) -> False
+      }
+    },
+    500,
+    10,
+  )
 
   process.kill(actor_pid)
 
+  process.receive(closed, 500) |> should.equal(Ok(Nil))
   test_helpers.wait_until(
     fn() { stats.connected_sockets(read_snapshot(sockets)) == 0 },
     500,
@@ -116,6 +137,11 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
   let swept = read_snapshot(sockets)
   stats.joined_socket_topic_pairs(swept) |> should.equal(0)
   stats.active_topics(swept) |> should.equal(0)
+  test_helpers.wait_until(
+    fn() { presence.list(presence_handle, "room:x") == Ok([]) },
+    500,
+    10,
+  )
   let _ = beryl.stop(sockets)
 }
 

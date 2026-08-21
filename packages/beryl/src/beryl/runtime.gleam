@@ -135,7 +135,7 @@ pub type Msg(msg) {
   /// A presence mutation was not acknowledged in time. Ignored unless the
   /// socket is still waiting on exactly that operation.
   PresenceOpTimedOut(socket_id: String, op_id: Int)
-  Stop(reply: Subject(Nil))
+  Stop(reply: Subject(Bool))
   /// A socket actor joined a topic. The router owns the global index and
   /// the pg subscription.
   IndexJoin(socket_id: String, topic: String)
@@ -241,13 +241,14 @@ type SocketActorRef(msg) {
     subject: Subject(Msg(msg)),
     pid: process.Pid,
     monitor: process.Monitor,
+    close: fn() -> Nil,
   )
 }
 
 type RuntimeRole(msg) {
   RouterRole(
     socket_actors: Dict(String, SocketActorRef(msg)),
-    stop_reply: Option(Subject(Nil)),
+    stop_reply: Option(Subject(Bool)),
     stop_finalized: Int,
   )
   SocketActorRole(router: Subject(Msg(msg)))
@@ -823,7 +824,7 @@ fn handle_message(
           ])
           dict.values(socket_actors)
           |> list.each(fn(ref) { process.kill(ref.pid) })
-          process.send(reply, Nil)
+          process.send(reply, False)
           actor.stop()
         }
       }
@@ -868,11 +869,17 @@ fn handle_router_socket_actor_down(
           ref.pid == pid
         })
       {
-        Ok(#(socket_id, _)) -> {
+        Ok(#(socket_id, ref)) -> {
           state.logger
           |> log.warn("Socket actor exited without reporting; sweeping", [
             #("socket_id", socket_id),
           ])
+          let _closer = process.spawn_unlinked(ref.close)
+          case state.config.presence {
+            Some(handle) ->
+              presence.untrack_runtime_all_async(handle, socket_id)
+            None -> Nil
+          }
           remove_socket_actor(state, socket_id)
         }
         // Already removed via `SocketClosed`, or never admitted.
@@ -907,7 +914,7 @@ fn remove_router_socket_actor(
   state: State(model, msg),
   socket_id: String,
   socket_actors: Dict(String, SocketActorRef(msg)),
-  stop_reply: Option(Subject(Nil)),
+  stop_reply: Option(Subject(Bool)),
   stop_finalized: Int,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case dict.get(socket_actors, socket_id) {
@@ -938,7 +945,7 @@ fn remove_router_socket_actor(
     Some(reply) ->
       case dict.is_empty(socket_actors) {
         True -> {
-          process.send(reply, Nil)
+          process.send(reply, True)
           actor.stop()
         }
         False -> {
@@ -1177,7 +1184,7 @@ fn handle_admit_socket(
                 socket_actors: dict.insert(
                   socket_actors,
                   socket_id,
-                  SocketActorRef(actor_subject, actor_pid, monitor),
+                  SocketActorRef(actor_subject, actor_pid, monitor, close),
                 ),
                 stop_reply: stop_reply,
                 stop_finalized: stop_finalized,
@@ -1295,7 +1302,7 @@ const stop_drain_timeout_ms = 2000
 /// or kills the survivors at `stop_drain_timeout_ms`.
 fn begin_router_stop(
   state: State(model, msg),
-  reply: Subject(Nil),
+  reply: Subject(Bool),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case state.role {
     SocketActorRole(_) -> handle_stop(state, Some(reply))
@@ -1305,7 +1312,7 @@ fn begin_router_stop(
         #("socket_count", int.to_string(dict.size(socket_actors))),
       ])
       use <- bool.lazy_guard(when: dict.is_empty(socket_actors), return: fn() {
-        process.send(reply, Nil)
+        process.send(reply, True)
         actor.stop()
       })
       dict.values(socket_actors)
@@ -1333,7 +1340,7 @@ fn begin_router_stop(
 
 fn handle_stop(
   state: State(model, msg),
-  reply: Option(Subject(Nil)),
+  reply: Option(Subject(Bool)),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   state.logger
   |> log.info("Runtime stopping", [
@@ -1345,7 +1352,7 @@ fn handle_stop(
     run(st, socket_id, [StepTeardown(sock.Shutdown)])
   })
   case reply {
-    Some(reply) -> process.send(reply, Nil)
+    Some(reply) -> process.send(reply, True)
     None -> Nil
   }
   actor.stop()

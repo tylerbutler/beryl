@@ -2,7 +2,8 @@
 ////
 //// Mutations and counts use constant-time ETS operations, so app-side
 //// dispatch never waits on another actor. A small publisher process enqueues
-//// full snapshots through a normal Beryl broadcast after each mutation.
+//// current snapshots through normal Beryl broadcasts requested after each
+//// mutation.
 
 import beryl
 import gleam/erlang/process.{type Pid, type Selector, type Subject}
@@ -21,12 +22,12 @@ type Store
 
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
-  TrackSnapshotIfBelow(
+  TrackIfBelow(
     topic: String,
     session_id: String,
     meta: json.Json,
     maximum: Int,
-    reply: Subject(Result(json.Json, Nil)),
+    reply: Subject(Result(Nil, Nil)),
   )
   Publish(topic: String)
   Stop(reply: Subject(Nil))
@@ -112,42 +113,51 @@ pub fn track(
   meta: json.Json,
 ) -> Nil {
   store_track(tracker.table, topic, session_id, meta)
-  process.send(tracker.subject, Publish(topic))
+  publish(tracker, topic)
 }
 
-/// Track a session and return the current roster without publishing it.
+/// Track a session without publishing a roster.
 ///
-/// Join handlers can broadcast this snapshot in their ordered accept-time
-/// actions, after the runtime has indexed the joining socket.
-pub fn track_snapshot(
+/// Use [`publish`](#publish) from a later socket turn, after the join has
+/// committed, so concurrent joins cannot deliver captured snapshots out of
+/// order.
+pub fn track_without_publish(
   tracker: Tracker,
   topic: String,
   session_id: String,
   meta: json.Json,
-) -> json.Json {
+) -> Nil {
   store_track(tracker.table, topic, session_id, meta)
-  json.object(store_snapshot(tracker.table, topic))
 }
 
 /// Atomically track a session when the topic is below `maximum`.
 ///
 /// The tracker actor serializes the count and insert so concurrent socket
 /// joins cannot oversubscribe a bounded room.
-pub fn track_snapshot_if_below(
+pub fn track_if_below(
   tracker: Tracker,
   topic: String,
   session_id: String,
   meta: json.Json,
   maximum: Int,
-) -> Result(json.Json, Nil) {
+) -> Result(Nil, Nil) {
   process.call(tracker.subject, call_timeout_ms, fn(reply) {
-    TrackSnapshotIfBelow(topic, session_id, meta, maximum, reply)
+    TrackIfBelow(topic, session_id, meta, maximum, reply)
   })
+}
+
+/// Publish the topic's current roster through the tracker actor.
+///
+/// The snapshot is read when the actor handles this request, so cross-socket
+/// message ordering can produce duplicate current rosters but never a stale
+/// captured roster after a newer one.
+pub fn publish(tracker: Tracker, topic: String) -> Nil {
+  process.send(tracker.subject, Publish(topic))
 }
 
 pub fn untrack(tracker: Tracker, topic: String, session_id: String) -> Nil {
   store_untrack(tracker.table, topic, session_id)
-  process.send(tracker.subject, Publish(topic))
+  publish(tracker, topic)
 }
 
 pub fn count(tracker: Tracker, topic: String) -> Int {
@@ -160,11 +170,11 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
       process.send(reply, Nil)
       loop(selector, table, State(sockets: Some(sockets)))
     }
-    Message(TrackSnapshotIfBelow(topic, session_id, meta, maximum, reply)) -> {
+    Message(TrackIfBelow(topic, session_id, meta, maximum, reply)) -> {
       let result = case store_count(table, topic) < maximum {
         True -> {
           store_track(table, topic, session_id, meta)
-          Ok(json.object(store_snapshot(table, topic)))
+          Ok(Nil)
         }
         False -> Error(Nil)
       }
@@ -172,7 +182,7 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
       loop(selector, table, state)
     }
     Message(Publish(topic)) -> {
-      publish(state.sockets, topic, store_snapshot(table, topic))
+      broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
       loop(selector, table, state)
     }
     Message(Stop(reply)) -> {
@@ -184,7 +194,7 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
   }
 }
 
-fn publish(
+fn broadcast_snapshot(
   sockets: Option(beryl.Sockets),
   topic: String,
   sessions: List(#(String, json.Json)),

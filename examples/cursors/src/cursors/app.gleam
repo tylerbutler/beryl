@@ -35,6 +35,10 @@ pub type Ctx {
   Ctx(presence: session_presence.Tracker)
 }
 
+pub type Note {
+  PublishRoster(topic: String)
+}
+
 const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
 /// Handle a join for a `cursor:*` topic.
@@ -59,11 +63,9 @@ pub fn join(
       #("username", json.string(username)),
       #("color", json.string(color)),
     ])
-  let roster =
-    session_presence.track_snapshot(ctx.presence, topic, socket_id, meta)
+  session_presence.track_without_publish(ctx.presence, topic, socket_id, meta)
   #(Model(username: username, color: color), [
     socket.AcceptJoin(ref, Some(reply)),
-    socket.Broadcast(topic, "presence_list", roster),
   ])
 }
 
@@ -123,21 +125,28 @@ pub fn closed(
 /// Socket-wide model for the standalone cursors server: the socket id plus
 /// one per-topic `Model` per joined `cursor:*` topic.
 pub type CursorRooms {
-  CursorRooms(socket_id: String, topics: Dict(String, Model))
+  CursorRooms(
+    socket_id: String,
+    self: socket.Sender(Note),
+    topics: Dict(String, Model),
+  )
 }
 
 /// `init` for the `beryl.child_spec` runtime.
 pub fn cursor_rooms_init(
-  info: socket.ConnectInfo(Nil),
+  info: socket.ConnectInfo(Note),
 ) -> #(CursorRooms, List(Effect)) {
-  #(CursorRooms(socket_id: info.socket_id, topics: dict.new()), [])
+  #(
+    CursorRooms(socket_id: info.socket_id, self: info.self, topics: dict.new()),
+    [],
+  )
 }
 
 /// Build the raw socket update. A join's model is committed only when the
 /// join is accepted.
 pub fn cursor_rooms_update(
   ctx: Ctx,
-) -> fn(CursorRooms, socket.Input(Nil)) -> socket.Next(CursorRooms) {
+) -> fn(CursorRooms, socket.Input(Note)) -> socket.Next(CursorRooms) {
   let pattern = topic.parse_pattern("cursor:*")
   fn(state: CursorRooms, input) {
     case input {
@@ -150,6 +159,7 @@ pub fn cursor_rooms_update(
           True -> {
             let #(model, effects) =
               join(ctx, state.socket_id, topic_name, payload, ref)
+            socket.notify(state.self, PublishRoster(topic_name))
             socket.Next(
               CursorRooms(
                 ..state,
@@ -202,7 +212,12 @@ pub fn cursor_rooms_update(
           _, _ -> socket.Next(state, [])
         }
 
-      socket.Binary(_, _) | socket.Info(_) -> socket.Next(state, [])
+      socket.Binary(_, _) -> socket.Next(state, [])
+
+      socket.Info(PublishRoster(topic_name)) -> {
+        session_presence.publish(ctx.presence, topic_name)
+        socket.Next(state, [])
+      }
     }
   }
 }

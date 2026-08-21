@@ -23,8 +23,9 @@ type State {
 /// This channel schedules no server-side messages for itself, so its
 /// `info` type is `Nil`: joining, moving, and leaving are each handled in
 /// the turn that carries them.
-type Note =
-  Nil
+type Note {
+  PublishRoster
+}
 
 const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
@@ -44,13 +45,13 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
         color: color.pastel_for(context.socket_id),
       )
 
-    let roster =
-      session_presence.track_snapshot(
-        ctx.presence,
-        context.topic,
-        context.socket_id,
-        meta(state),
-      )
+    session_presence.track_without_publish(
+      ctx.presence,
+      context.topic,
+      context.socket_id,
+      meta(state),
+    )
+    channel.notify(context.self, PublishRoster)
 
     channel.accept(state, callbacks(ctx, context.topic))
     |> channel.with_reply(
@@ -60,9 +61,6 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
         #("color", json.string(state.color)),
       ]),
     )
-    |> channel.with_actions([
-      channel.broadcast("presence_list", roster),
-    ])
   })
 }
 
@@ -86,6 +84,11 @@ fn callbacks(ctx: Ctx, topic: String) -> channel.Callbacks(State, Note) {
 
       _ -> channel.next(state, [])
     }
+  })
+  |> channel.on_info(fn(state, note) {
+    let PublishRoster = note
+    session_presence.publish(ctx.presence, topic)
+    channel.next(state, [])
   })
   |> channel.on_terminate(fn(state: State, _reason) {
     session_presence.untrack(ctx.presence, topic, state.socket_id)

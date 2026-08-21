@@ -1128,7 +1128,7 @@ fn ensure_supervisor_running(
 
 fn stop_runtime(
   subject: Subject(runtime.Msg(msg)),
-  finished: Subject(Nil),
+  finished: Subject(Bool),
 ) -> Result(process.Monitor, Nil) {
   case process.subject_owner(subject) {
     Error(Nil) -> Error(Nil)
