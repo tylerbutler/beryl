@@ -140,16 +140,23 @@ pub fn limiter_survives_runtime_restart_test() {
   let assert Ok(sockets) =
     h.start_app(
       beryl.config(wire.phoenix_codec())
-        |> beryl.with_max_connections_per_ip(5),
+        |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 1),
       init: h.accepting_init,
       update: h.accepting_update,
     )
 
   let limiter = limiter_pid(sockets)
   let old_runtime = h.runtime_pid(sockets)
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.10")
+  transport.release_connection_slot(permit)
 
   // Crash the runtime abnormally; the transient significant child restarts.
   process.kill(old_runtime)
+
+  // The exhausted IP bucket remains live while dispatch restarts.
+  transport.acquire_connection_slot(sockets, "192.0.2.10")
+  |> should.be_error
 
   test_helpers.wait_until(
     fn() {
@@ -162,13 +169,57 @@ pub fn limiter_survives_runtime_restart_test() {
     10,
   )
 
-  // A runtime restart does not restart the limiter: same pid, still serving.
+  // A runtime restart does not restart the limiter: same pid and rate state.
   limiter_pid(sockets) |> should.equal(limiter)
   process.is_alive(limiter) |> should.be_true
 
   // Stopping the subtree still tears the (surviving) limiter down.
   beryl.stop(sockets) |> should.equal(Ok(Nil))
   process.is_alive(limiter) |> should.be_false
+}
+
+pub fn limiter_restart_preserves_connection_state_test() {
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1)
+        |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 2),
+      init: h.accepting_init,
+      update: h.accepting_update,
+    )
+
+  let rate_ip = "192.0.2.20"
+  let assert Ok(first) = transport.acquire_connection_slot(sockets, rate_ip)
+  transport.release_connection_slot(first)
+  let assert Ok(second) = transport.acquire_connection_slot(sockets, rate_ip)
+  transport.release_connection_slot(second)
+
+  let count_ip = "192.0.2.21"
+  let assert Ok(counted) = transport.acquire_connection_slot(sockets, count_ip)
+  transport.bind_connection_slot(counted)
+
+  let old_limiter = limiter_pid(sockets)
+  process.kill(old_limiter)
+  test_helpers.wait_until(
+    fn() {
+      case beryl.app_limiter_pid(sockets) {
+        Ok(pid) -> pid != old_limiter
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  // The exhausted bucket and bound live count both survive worker replacement.
+  transport.acquire_connection_slot(sockets, rate_ip) |> should.be_error
+  transport.acquire_connection_slot(sockets, count_ip) |> should.be_error
+
+  // The replacement remonitors holders and still handles explicit release.
+  transport.release_connection_slot(counted)
+  transport.acquire_connection_slot(sockets, count_ip) |> should.be_ok
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
 // ── a runtime crash while stopping does not poison later lifecycle events ──
