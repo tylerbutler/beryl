@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add presence.update to atomically replace one public presence meta in a single leave-plus-join diff without temporarily removing the key."
