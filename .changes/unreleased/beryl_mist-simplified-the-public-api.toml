@@ -1,3 +1,0 @@
-package = "beryl_mist"
-kind = "Fixed"
-body = "Simplified the public API documentation."
