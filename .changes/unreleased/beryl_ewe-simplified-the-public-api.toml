@@ -1,3 +1,0 @@
-package = "beryl_ewe"
-kind = "Fixed"
-body = "Simplified the public API documentation."
