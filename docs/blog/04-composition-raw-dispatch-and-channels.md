@@ -1,9 +1,9 @@
 # Composition: raw dispatch and `beryl/channel`
 
 Elm and Lustre applications compose child logic by making the parent own the
-combined model and message space. The parent stores child models, adds each
-child message type to a union, maps child messages into that union, and routes
-them back to the correct update function.
+combined model and message space. The parent stores the child models and adds
+each child message type to a union. It maps child messages into that union and
+routes them to the correct update function.
 
 Raw Beryl supports the same pattern. It is type-safe and gives one update
 complete control across every topic on a socket. Its cost grows with the
@@ -85,7 +85,7 @@ pub fn handlers(
 }
 ```
 
-One handler owns `poll:*`; the other owns `guide`. They use different state
+One handler owns `poll:*`. The other owns `guide`. They use different state
 and info types but still fit in `List(channel.Handler)`.
 
 ## A handler creates one channel instance
@@ -148,8 +148,8 @@ The concepts now have channel-specific names:
 
 The private state here is a `String` room name. The private info type is
 `PollInfo`, whose only variant is `ClosePoll`. Neither type joins a
-socket-wide union. `on_terminate` releases the room from the shared store;
-the store removes its poll after the last socket leaves.
+socket-wide union. `on_terminate` releases the room from the shared store.
+The store removes its poll after the last socket leaves.
 
 ## Closure sealing makes heterogeneous handlers possible
 
@@ -160,9 +160,9 @@ seals the next state into the same callback set.
 
 The layer does not coerce channel state or info messages through `Dynamic`.
 It uses closures to preserve each handler's concrete types. The socket-level
-router owns a sealed envelope for channel info delivery, stamps it with the
-topic and join generation, and checks that stamp before the owning closure
-opens the value.
+router owns a sealed envelope for channel info delivery. It adds the topic and
+join generation to the envelope. The router checks this information before the
+owning closure opens the value.
 
 This sealing is separate from the core runtime's generic dispatch. At the core
 level, `beryl.child_spec` captures the app's model and message types in
@@ -171,7 +171,7 @@ private state and info type. Client payloads remain `Dynamic` at the wire
 boundary in both APIs.
 
 The layer itself imports and calls Beryl's public core API. It supplies a raw
-`init` and `update` pair to `beryl.child_spec`; it does not bypass the runtime
+`init` and `update` pair to `beryl.child_spec`. It does not bypass the runtime
 or restore the superseded type-erased channel registry described in ADR 0001.
 
 ## The second handler proves heterogeneity
@@ -240,12 +240,12 @@ an application actor that owns the handle.
 Channel actions also carry a phase parameter. Active callbacks can reply,
 push, broadcast, track presence, or close. `on_terminate` returns closing
 actions, where replies, pushes, and presence tracking do not type-check.
-Broadcasts and presence cleanup remain available after the instance has been
-removed.
+Broadcasts and presence cleanup remain available after the runtime removes
+the instance.
 
 The example defines `on_terminate` to release its room from the shared store.
 Its timer-driven `on_info` and client-driven `on_message` return active
-actions; termination returns only the closing actions allowed in that phase.
+actions. Termination returns only the closing actions allowed in that phase.
 
 ## Ordered actions lower to ordered effects
 
@@ -269,7 +269,7 @@ own join acknowledgment.
 
 ## Pick one API per endpoint
 
-Raw dispatch remains the clearest teaching lens and the core programming
+Raw dispatch remains the clearest teaching example and the core programming
 model. Choose it for a single topic family, a compact protocol, or direct
 cross-topic coordination.
 
@@ -277,7 +277,7 @@ Choose `beryl/channel` by default when a socket serves several topic
 namespaces, when porting Phoenix Channels, or when handlers should keep
 private state and info types. The two APIs share the wire codec, runtime,
 presence, PubSub, abuse controls, and transport. Pick one programming model
-for a socket endpoint; do not embed hand-written raw update logic inside a
+for a socket endpoint. Do not embed hand-written raw update logic inside a
 channel system.
 
 The final post follows both APIs below their callbacks into the shared runtime
@@ -301,7 +301,7 @@ cd examples/blog_series && gleam run -m blog_series/step_04
 Open <http://localhost:8104> in two tabs, join `demo`, and vote. Replies and
 peer broadcasts behave as in step 03, but `beryl/channel` now owns routing and
 private channel state. Select **Close poll now** or wait 60 seconds. The
-browser also joins the heterogeneous `guide` handler; inspect the status
+browser also joins the heterogeneous `guide` handler. Inspect the status
 paragraph's `title` attribute to see its typed info message.
 
 Next: [Where the analogy ends](05-where-the-analogy-ends.md).

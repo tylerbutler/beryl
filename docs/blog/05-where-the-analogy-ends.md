@@ -62,7 +62,7 @@ If an external operation needs more time, run it under application
 supervision and send a typed result through `socket.Sender` or
 `channel.Sender`.
 
-## Callback crashes are rescued with a scope
+## Beryl rescues callback crashes with a scope
 
 "Let it crash" is incomplete advice for a shared runtime. Beryl rescues
 application callback crashes and applies behavior based on the input that
@@ -79,12 +79,12 @@ failed:
 Other sockets remain in the runtime. Beryl truncates and depth-limits crash
 descriptions before logging.
 
-The `on_terminate` case has a narrow channel-layer edge. A panic discards that
-callback's returned router update and actions, so the old sealed instance can
-remain reachable through its own generation-scoped sender until the topic is
-joined again or the socket ends. Client traffic cannot reach it because the
-topic has closed. Keep termination callbacks small and free of partial
-application work.
+The `on_terminate` case has a narrow channel-layer edge. A panic discards the
+router update and actions that the callback returns. Its generation-scoped
+sender can still reach the old sealed instance. This access ends when the
+client joins the topic again or the socket ends. Client traffic cannot reach
+the instance because the topic has closed. Keep termination callbacks small
+and free of partial application work.
 
 This policy contains app callback failures without pretending every failure
 has the same scope.
@@ -103,7 +103,7 @@ tree, restart windows, restart intensity, and graceful shutdown.
 ## Heartbeats test connection liveness
 
 Phoenix clients send heartbeat frames on the `phoenix` topic. Beryl handles
-them inside the runtime; the application update does not receive them. The
+them inside the runtime. The application update does not receive them. The
 runtime records a monotonic last-seen timestamp and periodically evicts stale
 sockets.
 
@@ -173,7 +173,7 @@ Use `beryl/channel` by default when:
 - each channel should own private state and a private info type;
 - handler values are the useful unit of composition.
 
-Raw dispatch remains the clearest teaching lens and Beryl's core.
+Raw dispatch remains the clearest teaching example and Beryl's core.
 `beryl/channel` is the recommended default for multi-channel and
 Phoenix-shaped applications. The layer narrows actions to the current topic
 and uses phase types during close. Raw effects can name any topic, so
@@ -190,7 +190,7 @@ the mismatches kept in view:
 - Client payload stays `Dynamic` until application decoding succeeds.
 - `JoinRef` and `ReplyRef` are protocol capabilities, not data to rebuild.
 - Effect list order is observable wire order.
-- Raw effects can coordinate across topics; channel actions are topic-scoped
+- Raw effects can coordinate across topics. Channel actions are topic-scoped
   and phase-typed.
 - Callback crashes are rescued with input-specific scope.
 - A supervised runtime restart restores dispatch but loses live socket state.
@@ -219,6 +219,6 @@ cd examples/blog_series && gleam run -m blog_series/step_05
 Open <http://localhost:8105>, join `demo`, vote from two tabs, and close the
 poll now or wait 60 seconds. The behavior matches step 04 while the runtime
 uses the heartbeat and abuse-control settings shown above. In another shell,
-run `curl http://localhost:8105/healthz`; the expected response is `ok`.
+run `curl http://localhost:8105/healthz`. The expected response is `ok`.
 
 Next: [Supervising Beryl](06-supervising-beryl.md).

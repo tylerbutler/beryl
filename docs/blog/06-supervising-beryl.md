@@ -29,8 +29,8 @@ let assert Ok(_root) =
 ```
 
 The first excerpt comes from
-[`step_05.gleam`](../../examples/blog_series/src/blog_series/step_05.gleam);
-the supervisor code comes from
+[`step_05.gleam`](../../examples/blog_series/src/blog_series/step_05.gleam).
+The supervisor code comes from
 [`server.gleam`](../../examples/blog_series/src/blog_series/server.gleam).
 The server then passes `sockets` to `mist_transport.upgrade`.
 
@@ -69,7 +69,7 @@ The `Transient` restart policy separates a crash from an intentional stop. An
 abnormal runtime exit triggers a restart. A successful `beryl.stop` ends the
 subtree without asking the parent supervisor to bring it back.
 
-## The handle survives; socket state does not
+## The handle survives, but socket state does not
 
 `beryl.Sockets` uses registered process names rather than storing one runtime
 pid. A restarted runtime registers the same name, so application code can keep
@@ -86,7 +86,7 @@ The new runtime does not recover the old runtime's memory. A restart discards:
 
 Transport connection processes monitor the runtime that admitted them. If
 that runtime dies, they close their WebSockets. Clients must reconnect and
-rejoin, which gives the replacement runtime fresh models and channel state.
+rejoin. This gives the replacement runtime fresh models and channel state.
 Phoenix clients already implement reconnect and rejoin behavior.
 
 Keep shared domain state outside the Beryl runtime when it must survive a
@@ -96,7 +96,7 @@ serve the same role.
 
 ## A restart window is an unavailable window
 
-The stable handle prevents stale-pid failures; it does not make a restart
+The stable handle prevents stale-pid failures. It does not make a restart
 atomic from the caller's perspective. During the interval between the old
 runtime exiting and its replacement registering:
 
@@ -153,10 +153,10 @@ case beryl.stop(sockets) {
 }
 ```
 
-The runtime delivers `Closed` to each joined raw topic, or calls each channel's
-`on_terminate`, before closing transport connections. `stop` waits for the
-runtime and optional limiter to terminate. It leaves the application
-supervisor and unrelated sibling children alone.
+Before it closes transport connections, the runtime delivers `Closed` to each
+joined raw topic or calls each channel's `on_terminate`. `stop` waits for the
+runtime and optional limiter to terminate. It does not stop the application
+supervisor or unrelated sibling children.
 
 `NotRunning` means the supervisor never started this handle, the system has
 already stopped, or the call raced a restart window. `StopTimeout` means the

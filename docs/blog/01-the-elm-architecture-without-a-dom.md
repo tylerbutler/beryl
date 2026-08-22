@@ -27,10 +27,10 @@ connection. In `poll:demo`, `poll` identifies the kind of subscription and
 `demo` identifies the room. One socket can join several topics, and Beryl uses
 the topic string to route messages and broadcasts.
 
-“Channel” may seem like the obvious name for that subscription. Beryl reserves
-that word for a separate API built on top of topics. A later article introduces
-it. For now, the browser joins a topic and the application routes its string
-address.
+Beryl does not use the word channel for this subscription. Beryl reserves
+that word for a separate API built on top of topics. A later article
+introduces that API. For now, the browser joins a topic, and the application
+routes its string address.
 
 A poll makes the architecture visible without much domain code. Each browser
 connection needs socket-local state, while every browser in the same room
@@ -109,11 +109,11 @@ into elements that can produce more messages.
 Some work cannot happen inside a state transition. A browser may need to make
 an HTTP request, start a timer, or interact with JavaScript. Lustre represents
 that work as an `Effect(Message)`. An update returns the next model and an
-effect value; the Lustre runtime performs the work and can feed its result back
-into `update` as another `Message`.
+effect value. The Lustre runtime performs the work and can feed its result
+back into `update` as another `Message`.
 
-An OTP actor keeps the state transition but changes what surrounds it. Instead
-of a browser event loop, the transition runs inside a concurrent process.
+An OTP actor keeps the same state transition. Instead of a browser event loop,
+the transition runs inside a concurrent process.
 
 ## The same loop inside an OTP actor
 
@@ -153,9 +153,9 @@ The common model becomes clearer side by side:
 
 A Lustre message usually represents a user-interface event or the result of an
 effect. An actor message represents communication between concurrent
-processes. Both feed a typed state transition. Lustre's runtime uses the result
-to update an interface; the actor runtime uses `actor.Next` to continue or
-stop the process.
+processes. Both feed a typed state transition. Lustre's runtime uses the
+result to update an interface. The actor runtime uses `actor.Next` to continue
+or stop the process.
 
 A `process.Subject(message)` is the typed address used to send these messages
 to the actor's mailbox.
@@ -171,14 +171,14 @@ app-side dispatch API gives every event for a socket to one application
 `update` function.
 
 "Raw dispatch" means the application owns that routing. Your code receives
-joins, client messages, binary frames, close events, and typed server messages
-as `socket.Input` values, then decides how each one changes the socket's
-model. Beryl still owns the WebSocket transport, wire decoding, protocol
-checks, and effect execution.
+joins, client messages, binary frames, close events, and typed server
+messages as `socket.Input` values. Your code then decides how each input
+changes the socket's model. Beryl still owns the WebSocket transport, wire
+decoding, protocol checks, and effect execution.
 
 We begin with raw dispatch because it exposes the complete state-transition
 loop. A later article moves the same poll to the recommended channel layer and
-shows which routing work the layer takes over.
+shows which routing work moves from the application into the layer.
 
 The three domains now line up:
 
@@ -247,9 +247,9 @@ The `update` function returns
 `fn(Model, socket.Input(Message)) -> socket.Next(Model)` and exhaustively matches
 the input inside that closure. Beryl uses `socket.Input(Message)` where Lustre
 uses `Message` and an actor uses its mailbox message type. Some input variants
-carry client data; `Info(Message)` carries the app's typed server-side data.
-`socket.Next(model, effects)` continues with the next model, while
-`socket.Stop(reason)` stops the whole socket.
+carry client data. `Info(Message)` carries the app's typed server-side data.
+`socket.Next(model, effects)` continues with the next model. `socket.Stop(reason)`
+stops the whole socket.
 
 ## There is no view
 
@@ -265,10 +265,10 @@ socket.Next(
 )
 ```
 
-This branch accepts a valid `poll:*` join after the complete example registers
-the room in its store, then records the topic in the socket's model. Other
-effects can reply to a client message, push to this socket, broadcast to
-subscribers, update presence, or close a topic.
+The complete example registers the room in its store. This branch then accepts
+a valid `poll:*` join and records the topic in the socket's model. Other effects
+can reply to a client message, push to this socket, broadcast to subscribers,
+update presence, or close a topic.
 
 The absence of `view` changes how you reason about output. A model change does
 not imply a wire frame. A wire frame appears only when an effect requests one.

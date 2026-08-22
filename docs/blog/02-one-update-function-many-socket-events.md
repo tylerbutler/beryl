@@ -35,8 +35,8 @@ Each variant marks a different boundary:
   `Sender`.
 
 A socket is the client connection. A topic is one subscription string inside
-that socket. Raw dispatch has no channel object; the application's `Model` and
-update function route topic strings themselves.
+that socket. Raw dispatch has no channel object. The application's `Model`
+and update function route topic strings themselves.
 
 ## A join ref is a capability
 
@@ -77,8 +77,8 @@ half-open subscription.
 ## Reply refs have a different lifetime
 
 `Message` carries `Option(socket.ReplyRef)`. A client frame may omit its
-message ref, in which case no correlated reply is expected. When a ref is
-present, the application can return `ReplyOk` or `ReplyError`.
+message ref. In that case, the client does not expect a correlated reply.
+When a ref is present, the application can return `ReplyOk` or `ReplyError`.
 
 `ReplyRef` differs from `JoinRef`:
 
@@ -139,13 +139,13 @@ pub fn command(event: String, payload: Dynamic) -> Command {
 
 After this function, `handle_command` matches `poll.GetState`,
 `poll.Vote(choice)`, `poll.Close`, or `poll.Unsupported`. Invalid JSON shapes
-do not leak into the store actor. The wire payload remains `Dynamic`; the
+do not leak into the store actor. The wire payload remains `Dynamic`. The
 domain command does not.
 
 This boundary does not imply that Beryl erases the application's model or
 typed server messages. The core runtime is generic over `model` and `message`.
 `beryl.child_spec` captures concrete typed closures while exposing a
-non-generic transport handle. `Dynamic` is limited to data that arrived from
+non-generic transport handle. Beryl limits `Dynamic` to data that arrived from
 the wire.
 
 ## Ordered effects produce ordered frames
@@ -169,19 +169,20 @@ interprets the list as:
 1. send `ReplyOk` to the browser that voted;
 2. broadcast `poll_state` to every other socket subscribed to the topic.
 
-Effects are applied strictly in list order. The runtime actor writes the
-frames, so list order is wire order for that socket. This is Beryl's contract;
-the comparison does not assume an ordering contract for Lustre effects.
+The runtime actor applies effects strictly in list order and writes the
+frames, so list order is wire order for that socket. This is Beryl's
+contract. The comparison does not assume an ordering contract for Lustre
+effects.
 
 Join acceptance uses the same rule. If one update returns
 `[AcceptJoin(ref, None), Push(topic, "ready", payload)]`, the acknowledgment
-reaches the wire before the push. A push to an unjoined topic would otherwise
-be dropped.
+reaches the wire before the push. The runtime would otherwise drop a push to
+an unjoined topic.
 
-The guarantee stays observable with presence effects, though the runtime may
-pause the rest of one socket's list while the separate presence actor applies
-a mutation. Other sockets continue. The waiting socket resumes its remaining
-effects in order.
+The guarantee also applies to presence effects. The runtime can pause the rest
+of one socket's list while the separate presence actor applies a mutation.
+Other sockets continue. The waiting socket resumes its remaining effects in
+order.
 
 ## `Binary`, `Closed`, and unmatched messages still need branches
 
@@ -203,11 +204,11 @@ socket.Binary(_, _) -> socket.Next(model, [])
 disconnect, server kick, heartbeat timeout, or shutdown. Raw applications
 must remove per-topic state there. The example's store reference-counts
 joined sockets and deletes an empty room, so client-chosen room names do not
-accumulate forever. Frames pushed to the closing topic from the `Closed` turn
-are dropped, while broadcasts can still reach other subscribers.
+accumulate forever. The runtime drops frames pushed to the closing topic from
+the `Closed` turn. Broadcasts can still reach other subscribers.
 
 Ignoring `Binary` is an explicit application choice. A codec with a binary
-decoder can classify binary protocol messages; otherwise Beryl can deliver
+decoder can classify binary protocol messages. Otherwise, Beryl can deliver
 raw binary data for joined topics. An exhaustive branch documents what this
 poll supports.
 
@@ -234,7 +235,7 @@ arrive through distinct Phoenix mechanisms.
 
 That split is useful when designing larger protocols. Replies complete a
 specific client request. Pushes are server-initiated frames to one socket.
-Broadcasts fan out by topic. A topic is the routing key; it is not a socket,
+Broadcasts fan out by topic. A topic is the routing key. It is not a socket,
 channel, `Subject`, or `Sender`.
 
 The next post adds `Info(message)`, the remaining input variant, and compares its
@@ -254,8 +255,8 @@ cd examples/blog_series && gleam run -m blog_series/step_02
 ```
 
 Open <http://localhost:8102> in two tabs. Join `demo` in both, then vote in
-one tab. The voting tab updates from its `ReplyOk`; the other tab updates from
-`BroadcastFrom`. Alternate votes between tabs and confirm both totals stay in
-sync. **Close poll now** remains unavailable in this checkpoint.
+one tab. The voting tab updates from its `ReplyOk`. The other tab updates
+from `BroadcastFrom`. Alternate votes between tabs and confirm both totals
+stay in sync. **Close poll now** remains unavailable in this checkpoint.
 
 Next: [Typed messages from the rest of your Gleam system](03-typed-messages-from-your-gleam-system.md).

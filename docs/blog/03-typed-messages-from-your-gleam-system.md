@@ -77,8 +77,8 @@ pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) 
 ```
 
 The application defines `Message` as its domain-specific vocabulary for
-server-side events that may enter the socket's update loop. In the poll, the
-only such event tells a socket that a timer has expired for one topic:
+server-side events in the socket's update loop. The poll defines one such
+event. It tells a socket that a timer has expired for one topic:
 
 ```gleam
 pub type Message {
@@ -92,8 +92,8 @@ contains a decoded client event. A chat application might instead define
 and workers.
 
 The example stores `info.self` in each socket's `Model`. Beryl constructs that
-sender when the socket connects. Internally, it wraps the runtime actor's
-subject and captures the socket id, so every notification can be routed back
+sender when the socket connects. The sender wraps the runtime actor's subject
+and captures the socket ID. The runtime uses this ID to route each notification
 to the correct socket model. The sender remains an opaque `socket.Sender`
 rather than exposing that subject.
 
@@ -137,7 +137,7 @@ The sender is narrower than a general `process.Subject`:
 - it only permits values of the raw app's `Message` type;
 - it only targets the socket update that created it;
 - the runtime wraps delivery as `socket.Info(Message)`;
-- if that socket has disconnected, delivery is ignored;
+- it ignores delivery if that socket has disconnected;
 - it does not expose mailbox selection or a general request/reply protocol.
 
 Use `Subject` when you are defining an actor protocol. Use `socket.Sender`
@@ -184,7 +184,7 @@ case stage {
 runs the callback, `socket.notify` sends `ClosePoll(topic)`, and Beryl invokes
 the socket update with `Info(ClosePoll(topic))`.
 
-The send is fire-and-forget. `socket.notify` returns `Nil`; it does not report
+The send is fire-and-forget. `socket.notify` returns `Nil`. It does not report
 whether the socket remains connected. If the browser closed during the
 minute, Beryl ignores the delivery. The timer actor does not need to monitor
 the socket or clean up a failed request.
@@ -206,9 +206,9 @@ That split gives each piece one job:
 and `close` without knowing that the current actor keeps a `Dict` in memory.
 The actor could keep serializing those operations while storing polls in
 [Stóráil](https://hexdocs.pm/storail/) or a database. These are separate
-decisions: the actor orders concurrent updates; the storage backend determines
-whether state survives an application restart. A production backend also
-needs an explicit policy for I/O latency and write failures.
+decisions. The actor orders concurrent updates. The storage backend
+determines whether state survives an application restart. A production
+backend also needs an explicit policy for I/O latency and write failures.
 
 Closing returns a descriptive result:
 
@@ -226,10 +226,10 @@ pub fn close(poll: Poll) -> CloseResult {
 }
 ```
 
-`ClosedNow` tells the caller to broadcast `poll_closed`; `AlreadyClosed`
-suppresses a duplicate. This matters because each accepted socket join
-schedules its own timer. Two tabs can schedule two close messages for the same
-room, but only the first one changes the store.
+`ClosedNow` tells the caller to broadcast `poll_closed`. `AlreadyClosed`
+suppresses a duplicate broadcast. Each accepted socket join schedules its own
+timer, so two tabs can schedule two close messages for the same room. Only
+the first close message changes the store.
 
 ## Close now uses the same state transition
 
@@ -269,12 +269,13 @@ sends share the same cross-abstraction ordering rules.
 the routing information it needs. The example defines
 `ClosePoll(topic: String)` because one raw socket may join several poll topics.
 
-That has a crash consequence. Beryl can attribute a crashing `Message` or
-`Binary` callback to a topic and close only that topic. A crashing `Info`
-callback has no protocol topic to attribute, so the runtime tears down that
-socket. The fifth post covers the complete scoped rescue behavior.
+This lack of topic scoping has a crash consequence. Beryl can attribute a
+crashing `Message` or `Binary` callback to a topic and close only that topic.
+A crashing `Info` callback has no protocol topic to attribute, so the runtime
+tears down that socket. The fifth post covers the complete scoped rescue
+behavior.
 
-It also explains a composition cost. If several raw topic families need
+This design also adds a composition cost. If several raw topic families need
 unrelated server message types, the app must put them in one socket-wide `Message`
 union and route each variant. `beryl/channel` removes that shared union by
 giving each accepted channel instance a private info type.
@@ -310,7 +311,7 @@ cd examples/blog_series && gleam run -m blog_series/step_03
 Open <http://localhost:8103>, join `demo`, and vote. Select **Close poll
 now** to close immediately, or leave the poll open for 60 seconds. In either
 case the client receives the closed state and voting becomes disabled. If you
-close the browser before the timer fires, its later `socket.notify` delivery
-is ignored.
+close the browser before the timer fires, Beryl ignores its later
+`socket.notify` delivery.
 
 Next: [Composition: raw dispatch and `beryl/channel`](04-composition-raw-dispatch-and-channels.md).

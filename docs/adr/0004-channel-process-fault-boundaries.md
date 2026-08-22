@@ -46,7 +46,7 @@ capabilities. Restarting it without a new client join could recreate state the
 client did not negotiate and repeat join-time work. A temporary child followed
 by client reconnect or rejoin may be safer than restarting that child.
 
-### How the question fell out of the ADR trail
+### Why earlier ADRs did not resolve this question
 
 The existing ADRs concentrated on type representation and dispatch ownership:
 
@@ -68,7 +68,7 @@ The issue tracker did raise the fault-boundary question:
   introduce process boundaries or to decide explicitly against them.
 - [#229](https://github.com/tylerbutler/beryl/issues/229) proposed one
   supervised process per joined channel if the old channel-module API
-  survived. It was closed when ADR 0002 removed that API and coordinator.
+  survived. The issue closed when ADR 0002 removed that API and coordinator.
 - [#334](https://github.com/tylerbutler/beryl/issues/334) now tracks a
   process-per-socket design that preserves a stable router and the current
   public API.
@@ -86,7 +86,8 @@ between these alternatives.
 
 ## Question
 
-Which process boundary should own application state and execute callbacks?
+This ADR must decide which process boundary owns application state and
+executes application callbacks.
 
 The answer must cover both public programming models:
 
@@ -136,10 +137,10 @@ model of actors such as `gen_server`.
 
 ### 2. Use one process per socket
 
-Each admitted WebSocket gets a temporary actor that owns the raw model,
-protocol capabilities, joined topics, and, for the channel layer, all channel
-instances on that socket. A smaller system process would retain global
-configuration, connection admission, PubSub integration, and external
+Each admitted WebSocket gets a temporary actor. This actor owns the raw model,
+protocol capabilities, and joined topics. For the channel layer, it also owns
+all channel instances on that socket. A smaller system process would retain
+global configuration, connection admission, PubSub integration, and external
 `Sockets` operations.
 
 An uncaught callback panic would terminate one socket actor. The transport
@@ -162,9 +163,9 @@ Costs:
 - connection shutdown must coordinate the transport and socket actor;
 - the process count grows with concurrent connections.
 
-This option is a natural fault boundary for raw dispatch but a coarser
-boundary than Phoenix Channels and Beryl's current topic-scoped rescue for
-message and binary callbacks.
+This option gives raw dispatch a natural fault boundary. The boundary is
+coarser than the Phoenix Channels boundary. It is also coarser than Beryl's
+current topic-scoped rescue for message and binary callbacks.
 
 ### 3. Use one process per socket and one process per channel
 
@@ -196,10 +197,10 @@ applying actions to protocol state.
 
 Handler registration could preserve heterogeneous state without coercion by
 producing a non-generic child-start closure. That closure would capture the
-concrete state and info types, start the typed worker, and return a sealed
-`ChannelRef` whose operations hide the worker's subject type. This extends ADR
-0003's closure-sealing technique across a process boundary rather than
-replacing it with `Dynamic`.
+concrete state and info types. It would start the typed worker and return a
+sealed `ChannelRef`. The operations of `ChannelRef` hide the worker's subject
+type. This design extends ADR 0003's closure-sealing technique across a process
+boundary. It does not replace the technique with `Dynamic`.
 
 The session would monitor each worker. An abnormal worker exit would invalidate
 its sender, close that topic, and tell the client to rejoin. A socket close
@@ -227,24 +228,27 @@ Costs:
   expensive;
 - creates different natural process models for raw dispatch and channels.
 
-This design cannot be implemented as a small change to callback error
+Implementing this design requires more than a small change to callback error
 handling. It changes the runtime's ownership and sequencing model.
 
-### Open sequencing questions
+### Sequencing decisions the prototype must make
 
-A process prototype must answer these questions before its behavior can be
-compared with the current runtime:
+A process prototype must decide the following points before comparing its
+behavior with the current runtime:
 
-- Does a socket session permit only one in-flight callback, preserving current
-  socket-wide sequencing but allowing one slow channel to delay its siblings?
-- Can channel workers run concurrently, and if so, which ordering guarantees
-  remain between actions from different topics on one WebSocket?
-- Does `join` run while the worker starts, or does the worker report its
-  decision through an asynchronous handshake?
-- How does the session apply backpressure when a worker mailbox or its own
-  pending action-batch queue grows?
-- Which process owns presence suspension state while one channel waits for an
-  asynchronous presence mutation?
+- State whether a socket session permits only one in-flight callback. This
+  choice preserves current socket-wide sequencing, and it allows one slow
+  channel to delay its siblings.
+- State whether channel workers can run concurrently. If so, state which
+  ordering guarantees remain between actions from different topics on one
+  WebSocket.
+- State whether `join` runs while the worker starts. As an alternative,
+  state whether the worker reports its decision through an asynchronous
+  handshake.
+- Define how the session applies backpressure when a worker mailbox grows or
+  its own pending action-batch queue grows.
+- Define which process owns presence suspension state while one channel
+  waits for an asynchronous presence mutation.
 
 The implementation must state these semantics explicitly. Process isolation
 alone does not preserve the ordering contract.
@@ -255,15 +259,15 @@ The runtime could keep state centrally and execute each callback in a short
 worker process.
 
 This option is not a candidate for adoption. It would copy state into another
-process for every event, require a result handshake, add timeout and
-cancellation semantics, and still leave the runtime responsible for deciding
-whether a late result is valid. Persistent socket or channel workers provide a
-clearer ownership boundary.
+process for each event and require a result handshake. It would also add
+timeout and cancellation semantics. The runtime would still decide whether a
+late result is valid. Persistent socket or channel workers provide a clearer
+ownership boundary.
 
 ## Restart policy and protocol recovery
 
-If option 2 or 3 is adopted, socket and channel workers should initially be
-prototyped as `Temporary` children.
+If the project adopts option 2 or option 3, prototype socket and channel
+workers initially as `Temporary` children.
 
 An automatic restart cannot recover the crashed process's heap. Running
 `init` or `join` again without a client request may:
@@ -277,7 +281,7 @@ An automatic restart cannot recover the crashed process's heap. Running
 The protocol already provides a reconstruction boundary. A socket reconnect
 runs raw `init` again. A topic rejoin runs channel `join` again with a new
 generation and new capabilities. Supervision should contain and observe the
-failed process; the client protocol should recreate ephemeral session state.
+failed process. The client protocol should recreate ephemeral session state.
 
 A future design could support automatic restart only for explicitly
 reconstructable workers with a documented state source and replay contract.
@@ -312,7 +316,7 @@ Build on a socket session actor and demonstrate:
 - ordered action batches returned to the session;
 - worker crash followed by topic close and client rejoin;
 - socket close terminating every owned worker;
-- stale results and stale senders being ignored before unsealing typed values.
+- ignoring stale results and stale senders before unsealing typed values.
 
 The prototypes may be throwaway branches. They must not add a second shipped
 runtime while the ADR remains proposed.
@@ -365,7 +369,7 @@ latency.
 
 ## Decision
 
-No process topology change is accepted yet.
+This ADR does not accept a process topology change yet.
 
 Prototype options 2 and 3, gather the required correctness and performance
 evidence, then amend this ADR with one of these outcomes:

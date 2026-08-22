@@ -62,7 +62,7 @@ applications. They select a configuration and assemble shared modules:
 - `test/blog_series_test.gleam` checks the poll domain and protocol decoder.
 
 Read the shared files with the step module. A step file shows which behavior is
-enabled; it does not duplicate the runtime, domain, or browser code.
+enabled. It does not duplicate the runtime, domain, or browser code.
 
 ## Terminology
 
@@ -79,12 +79,12 @@ The series keeps Beryl's terms distinct:
 - The **runtime** is Beryl's shared OTP actor. It stores the logical
   per-socket models and interprets effects.
 - A Gleam OTP `process.Subject` is a typed address for a process mailbox. A
-  Beryl `socket.Sender` is narrower: it can only deliver typed `Info` to its
-  owning socket update, and delivery after disconnect is ignored.
+  Beryl `socket.Sender` is narrower. It delivers typed `Info` only to its
+  owning socket update. The runtime ignores delivery after disconnect.
 Do not substitute `Subject`, `Sender`, `socket`, `topic`, `channel`, or
 `handler` for one another. They name different boundaries.
 
-Raw dispatch is the clearest teaching lens and Beryl's core. For
+Raw dispatch is the clearest teaching example and Beryl's core. For
 multi-channel and Phoenix-shaped applications, `beryl/channel` is the
 recommended default.
 
