@@ -39,6 +39,10 @@ type State {
   )
 }
 
+type Note {
+  PublishRoster
+}
+
 /// Build the standalone chat application's handler table.
 pub fn handlers(ctx: Ctx) -> List(channel.Handler) {
   [lobby(), room(ctx)]
@@ -59,26 +63,16 @@ fn room(ctx: Ctx) -> channel.Handler {
 
     case room_exists(ctx, context.topic) {
       False -> channel.reject(error("Room not found: " <> room_name))
-      True ->
-        case
-          session_presence.count(ctx.presence, context.topic) >= max_room_users
-        {
-          True ->
-            channel.reject(error_with_code(
-              403,
-              "Room is full (max " <> int.to_string(max_room_users) <> ")",
-            ))
-          False -> accept_room(ctx, context, room_name)
-        }
+      True -> accept_room(ctx, context, room_name)
     }
   })
 }
 
 fn accept_room(
   ctx: Ctx,
-  context: channel.JoinContext(Nil),
+  context: channel.JoinContext(Note),
   room_name: String,
-) -> channel.JoinResult(Nil) {
+) -> channel.JoinResult(Note) {
   let state =
     State(
       topic: context.topic,
@@ -88,32 +82,44 @@ fn accept_room(
       room_name: room_name,
     )
 
-  session_presence.track(
-    ctx.presence,
-    state.topic,
-    state.socket_id,
-    presence_meta(state, typing: False),
-  )
-  announce_rooms_changed(ctx, state.room_name)
+  case
+    session_presence.track_if_below(
+      ctx.presence,
+      state.topic,
+      state.socket_id,
+      presence_meta(state, typing: False),
+      max_room_users,
+    )
+  {
+    Error(Nil) ->
+      channel.reject(error_with_code(
+        403,
+        "Room is full (max " <> int.to_string(max_room_users) <> ")",
+      ))
+    Ok(Nil) -> {
+      announce_rooms_changed(ctx, state.room_name)
+      channel.notify(context.self, PublishRoster)
 
-  channel.accept(state, callbacks(ctx))
-  |> channel.with_reply(
-    json.object([
-      #("socket_id", json.string(state.socket_id)),
-      #("username", json.string(state.username)),
-      #("color", json.string(state.color)),
-      #("room", json.string(state.room_name)),
-    ]),
-  )
-  |> channel.with_actions([
-    channel.broadcast(
-      "new_msg",
-      system_message(state.username <> " joined the room"),
-    ),
-  ])
+      channel.accept(state, callbacks(ctx))
+      |> channel.with_reply(
+        json.object([
+          #("socket_id", json.string(state.socket_id)),
+          #("username", json.string(state.username)),
+          #("color", json.string(state.color)),
+          #("room", json.string(state.room_name)),
+        ]),
+      )
+      |> channel.with_actions([
+        channel.broadcast(
+          "new_msg",
+          system_message(state.username <> " joined the room"),
+        ),
+      ])
+    }
+  }
 }
 
-fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Nil) {
+fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
   channel.callbacks()
   |> channel.on_message(fn(state, message) {
     case message.event {
@@ -123,6 +129,11 @@ fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Nil) {
       "stop_typing" -> channel.next(state, typing(ctx, state, typing: False))
       _ -> channel.next(state, [])
     }
+  })
+  |> channel.on_info(fn(state, note) {
+    let PublishRoster = note
+    session_presence.publish(ctx.presence, state.topic)
+    channel.next(state, [])
   })
   |> channel.on_terminate(fn(state, _reason) {
     session_presence.untrack(ctx.presence, state.topic, state.socket_id)

@@ -21,11 +21,13 @@ let config =
   |> beryl.with_telemetry
 ```
 
-Attach handlers before traffic starts. Erlang `:telemetry` calls a handler in
-the process that emits the event. A slow handler adds latency to a WebSocket
-connection process or the shared runtime. Update bounded counters or
-histograms, or enqueue a small message. Do not make network calls, format logs,
-or convert expensive labels in the handler.
+Attach handlers before traffic begins. Erlang `:telemetry` invokes handlers
+**synchronously in the process emitting the event**. A slow handler therefore
+adds latency to a WebSocket connection process, a socket's runtime actor,
+or the runtime's router.
+Perform bounded counter/histogram updates or enqueue a small message and
+return immediately; never make network calls, format logs, or run expensive
+label conversion in the handler.
 
 Event names and their measurement/metadata keys form Beryl's stable,
 low-cardinality telemetry taxonomy:
@@ -38,7 +40,7 @@ low-cardinality telemetry taxonomy:
 | `[:beryl, :socket, :disconnected]` | `count`, `duration`, `joined_channels` | `reason` |
 | `[:beryl, :channel, :join, :stop]` | `count`, `duration` | `outcome` |
 | `[:beryl, :channel, :message, :stop]` | `count`, `duration` | `kind`, `outcome`, `callback_result` |
-| `[:beryl, :broadcast, :stop]` | `count`, `duration`, `recipients`, `send_failures` | `origin` |
+| `[:beryl, :broadcast, :stop]` | `count`, `duration`, `recipients` | `origin` |
 
 The `:channel` event-name segment is retained for telemetry compatibility
 even though app-side dispatch now owns routing. For an app `update`,
@@ -124,7 +126,7 @@ exporter dependency.
 
 Useful derived signals include upgrade rejection rate by outcome, frame decode
 and rate-limit rates, join/message callback failures, connection lifetime,
-broadcast send-failure ratio, and latency histograms. Alert on sustained rates
+broadcast recipient counts, and latency histograms. Alert on sustained rates
 and tail latency rather than individual events.
 
 ## Runtime snapshots

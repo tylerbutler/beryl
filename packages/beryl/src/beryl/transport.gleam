@@ -190,10 +190,9 @@ pub fn socket_disconnected(
 
 // --- Inbound routing ---
 
-/// Route a transport-decoded inbound message to the runtime.
-///
-/// Decode in the connection process (see `active_codec`). Parse cost and
-/// malformed input then never reach the shared runtime.
+/// Route a transport-decoded inbound message to the runtime. Decode in
+/// the connection process (see `active_codec`) so parse cost and malformed
+/// input never reach the runtime.
 ///
 /// Runtime message-rate limiting applies after routing. If it sheds a
 /// heartbeat, that heartbeat does not refresh the socket's deadline; sustained

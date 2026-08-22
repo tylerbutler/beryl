@@ -270,5 +270,5 @@ The same rule matters for replies:
 ## Next steps
 
 - [WebSocket Transport](/guides/websocket/) — connect browsers and seed `ConnectInfo.seed.metadata`
-- [Presence](/guides/presence/) — keep synchronous presence work outside the shared runtime
+- [Presence](/guides/presence/) — keep synchronous presence work outside the runtime's actors
 - [Runtime & Effect Interpreter](/architecture/runtime/) — runtime behavior, effect ordering, and teardown details

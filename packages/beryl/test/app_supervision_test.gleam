@@ -240,6 +240,32 @@ pub fn runtime_crash_during_stop_recovers_and_second_stop_succeeds_test() {
   beryl.app_runtime_pid(sockets) |> should.be_error
 }
 
+pub fn unresponsive_socket_stop_returns_timeout_test() {
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: h.accepting_init,
+      update: h.accepting_update,
+    )
+  let gate = new_gate()
+  let stop_entered = process.new_subject()
+  let stop_result = process.new_subject()
+
+  admit(sockets, h.runtime_pid(sockets), "stuck-stop", fn() {
+    process.send(stop_entered, Nil)
+    wait_for_gate(gate)
+  })
+  |> should.equal(Ok(Nil))
+
+  let _stopper =
+    process.spawn(fn() { process.send(stop_result, beryl.stop(sockets)) })
+
+  process.receive(stop_entered, 1000) |> should.equal(Ok(Nil))
+  process.receive(stop_result, 4000)
+  |> should.equal(Ok(Error(beryl.StopTimeout)))
+  release_gate(gate)
+}
+
 pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() {
   let assert Ok(#(sockets, beryl_spec)) =
     beryl.child_spec(

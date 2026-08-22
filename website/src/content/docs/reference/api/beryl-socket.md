@@ -20,9 +20,9 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
  ## Effect ordering guarantee
 
  Effects are applied strictly in list order, and every frame for a
- socket is written by the single runtime actor. List order is therefore
- wire order. An `AcceptJoin` followed by a `Push` in the same list is
- guaranteed to arrive as the join acknowledgment first and the push
+ socket is written by that socket's own runtime actor — so list order
+ is wire order. An `AcceptJoin` followed by a `Push` in the same list
+ is guaranteed to arrive as the join acknowledgment first and the push
  second.
 
  Most effects are applied in one actor turn. `PresenceTrack` and

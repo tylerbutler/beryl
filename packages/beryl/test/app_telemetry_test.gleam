@@ -2,8 +2,8 @@ import app_test_helpers as h
 import beryl
 import beryl/pubsub
 import beryl/socket.{
-  AcceptJoin, Binary, Info, Join, Message, Next, Push, RejectJoin, ReplyError,
-  ReplyOk,
+  AcceptJoin, Binary, Closed, Info, Join, Message, Next, Push, RejectJoin,
+  ReplyError, ReplyOk,
 }
 import beryl/transport
 import beryl/wire
@@ -49,7 +49,6 @@ fn expect_broadcast(
   handler_id: TelemetryHandle,
   origin: String,
   recipients: Int,
-  send_failures: Int,
 ) -> Bool
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_none")
@@ -64,7 +63,7 @@ fn telemetry_config() -> beryl.Config {
   |> beryl.with_telemetry
 }
 
-fn update(model: Nil, input: socket.Input(AppMessage)) {
+fn update(model: Nil, input: socket.Input(AppMessage)) -> socket.Next(Nil) {
   case input {
     Join("room:reject", _, ref) ->
       Next(model, [RejectJoin(ref, json.object([]))])
@@ -78,7 +77,7 @@ fn update(model: Nil, input: socket.Input(AppMessage)) {
       Next(model, [Push(topic, "pushed", json.object([]))])
     Message(_, "crash", _, _) -> panic as "expected message failure"
     Message(_, _, _, _) | Binary(_, _) | Info(_) -> Next(model, [])
-    _ -> Next(model, [])
+    Closed(_, _) -> Next(model, [])
   }
 }
 
@@ -284,11 +283,11 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() {
 
   beryl.broadcast(sockets, "room:lobby", "event", json.object([]))
   let _local = h.recv(frames)
-  expect_broadcast(handler, "local", 1, 0) |> should.be_true
+  expect_broadcast(handler, "local", 1) |> should.be_true
 
   pubsub.broadcast(ps, "room:lobby", "remote", json.object([]))
   let _remote = h.recv(frames)
-  expect_broadcast(handler, "remote", 1, 0) |> should.be_true
+  expect_broadcast(handler, "remote", 1) |> should.be_true
 
   expect_none(handler) |> should.be_true
   detach(handler)

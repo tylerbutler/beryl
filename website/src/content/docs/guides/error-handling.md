@@ -130,7 +130,7 @@ The client-visible effect is that the WebSocket connection is closed from the se
 
 ## Crashes in your update function
 
-Beryl rescues crashes in `init` and `update` rather than letting them take down the shared runtime. The blast radius depends on where the crash happens:
+Beryl rescues crashes in `init` and `update` rather than letting them take down the socket's runtime actor. The blast radius depends on where the crash happens:
 
 | Crash site | Effect |
 |------------|--------|

@@ -51,14 +51,13 @@ execute({channel_message_stop, Duration, Kind, Outcome, CallbackResult}) ->
         }
     ),
     nil;
-execute({broadcast_stop, Duration, Recipients, SendFailures, Origin}) ->
+execute({broadcast_stop, Duration, Recipients, Origin}) ->
     telemetry:execute(
         [beryl, broadcast, stop],
         #{
             count => 1,
             duration => Duration,
-            recipients => Recipients,
-            send_failures => SendFailures
+            recipients => Recipients
         },
         #{origin => broadcast_origin(Origin)}
     ),

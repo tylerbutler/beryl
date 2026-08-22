@@ -169,7 +169,7 @@ pub fn handle_binary_frame(
 
 Size-check, rate-check, and decode an inbound text frame in the
  connection process, so parse cost stays there and only valid,
- rate-admitted messages reach the shared runtime.
+ rate-admitted messages reach the runtime.
 
  Oversized frames return `Stop` and close the connection. The function
  silently drops over-rate frames. It logs and drops frames that it cannot
