@@ -17,13 +17,13 @@ Beryl - Type-safe real-time communication
 
  ## Features
 
- - **Sockets** — App-side dispatch: topic-based WebSocket messaging
+ - **Sockets**: App-side dispatch with topic-based WebSocket messaging
    routed by your `update` function (`beryl`, `beryl/socket`)
- - **PubSub** — Distributed publish/subscribe via Erlang `pg`
+ - **PubSub**: Distributed publish/subscribe via Erlang `pg`
    (`beryl/pubsub`)
- - **Presence** — Distributed presence tracking backed by a causal-context
+ - **Presence**: Distributed presence tracking backed by a causal-context
    CRDT (add-wins observed-remove set) (`beryl/presence`)
- - **Groups** — Named collections of topics for multi-topic broadcasting
+ - **Groups**: Named collections of topics for multi-topic broadcasting
    (`beryl/group`)
 
  ## Quick Start
@@ -73,9 +73,9 @@ Beryl - Type-safe real-time communication
 
 Configuration for an app-side socket runtime.
 
- This type is opaque: construct it with `config` and adjust it with the
- `with_*` builder functions. Keeping it opaque lets Beryl add configuration
- options in the future without a breaking change.
+ This type is opaque. Construct it with `config` and adjust it with the
+ `with_*` functions. Beryl can then add configuration options without a
+ breaking change.
 
 ```gleam
 pub type Config
@@ -85,9 +85,9 @@ pub type Config
 
 Why an eagerly validated `Config` was rejected before any process started.
 
- `child_spec` validates the configuration before allocating names or
- starting the runtime, so an invalid configuration fails fast instead of
- crashing a supervised child at init time.
+ `child_spec` validates the configuration before it allocates names or
+ starts the runtime. It returns an invalid configuration instead of
+ crashing a supervised child during initialization.
 
 ```gleam
 pub type ConfigError {
@@ -105,8 +105,8 @@ pub type ConfigError {
 
 `heartbeat_timeout_ms` was below the minimum. The server derives its
  staleness check interval as `heartbeat_timeout_ms / 2` (integer
- division), so a timeout of 1 would round down to a check interval of 0 —
- which disables heartbeat eviction entirely. The wrapped `Int` is the
+ division). A timeout of 1 would round down to a check interval of 0 and
+ disable heartbeat eviction. The wrapped `Int` is the
  smallest accepted timeout.
 
 ##### `InvalidTopicPattern(
@@ -129,8 +129,8 @@ A per-topic-pattern rate limit used a pattern string that is not a valid
 
 Logging configuration for Beryl diagnostics.
 
- This type is opaque: construct it with `logging_config` and adjust it with
- the `with_*` builder functions so Beryl can add logging options without a
+ This type is opaque. Construct it with `logging_config` and adjust it with
+ the `with_*` functions. Beryl can then add logging options without a
  breaking change.
 
 ```gleam
@@ -155,16 +155,15 @@ pub type LogLevel {
 
 ### `Sockets`
 
-Runtime system handle.
+A runtime system handle.
 
- This opaque handle is returned with the supervised subtree from
- `child_spec` and passed to broadcast, group, and transport functions. Its
- internals are intentionally hidden so Beryl can evolve them without
- breaking application code.
+ `child_spec` returns this opaque handle with the supervised subtree. Pass
+ it to broadcast, group, and transport functions. Beryl hides its internals
+ so they can change without breaking application code.
 
- The handle is deliberately non-generic: an app-side dispatch system is
+ The handle is non-generic. An app-side dispatch system is
  generic over the application's `model`/`msg`, but those types are sealed
- inside the monomorphic closures captured at construction time, so they
+ inside monomorphic closures at construction time. They
  never appear in this handle or in any transport signature.
 
 ```gleam
@@ -200,10 +199,10 @@ The runtime did not acknowledge the stop request within the shutdown
 
 ### `broadcast`
 
-Broadcast a message to all subscribers of a topic
+Broadcast a message to all subscribers of a topic.
 
- This sends the message to all sockets subscribed to the topic. When the
- system was started with PubSub, the broadcast is also distributed to
+ This function sends the message to all sockets subscribed to the topic.
+ When the system was started with PubSub, it also sends the broadcast to
  subscribers on other nodes.
 
  ## Example
@@ -228,7 +227,7 @@ pub fn broadcast(
 
 ### `broadcast_from`
 
-Broadcast a message to all subscribers except one socket
+Broadcast a message to all subscribers except one socket.
 
  Useful for broadcasting a message to everyone except the sender.
  When PubSub is configured, the excluded socket ID is preserved across
@@ -285,9 +284,10 @@ pub fn broadcast_presence_diff(
 
 Build the app-side dispatch supervision child specification.
 
- Add the returned specification to the application's own supervision tree.
- The configuration is validated eagerly, before the application's supervisor
- starts, rather than crashing a supervised child at init time.
+ Add the returned specification to the application's supervision tree.
+ This function validates the configuration before the application's
+ supervisor starts. It returns an error instead of crashing a supervised
+ child during initialization.
 
  The returned `Sockets` handle is name-backed and usable immediately, even
  before the supervision tree that owns the returned child specification is
@@ -321,7 +321,7 @@ pub fn child_spec(
 
 Build a configuration with sensible defaults.
 
- A `codec` is required — beryl no longer ships an implicit Phoenix
+ A `codec` is required. Beryl no longer provides an implicit Phoenix
  default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
  or your own `Codec` for a custom framing.
 
@@ -348,14 +348,15 @@ pub fn logging_config(
 
 Stop a Beryl system.
 
- This drains the supervised runtime and stops it, delivering `Closed` to
- every joined topic before closing each transport connection. Presence is
- application-owned and is not stopped by this function. The runtime is a
- `Transient` child, so it is not restarted after a graceful stop.
+ This function drains and stops the supervised runtime. It delivers
+ `Closed` to every joined topic before it closes each transport connection.
+ Presence is application-owned and is not stopped by this function. The
+ runtime is a `Transient` child, so it is not restarted after a graceful
+ stop.
 
- `stop` is safe to call more than once and on a handle whose system was
- never started: in those cases it returns `Error(NotRunning)` rather than
- crashing. It returns `Error(StopTimeout)` if the app runtime does not
+ You can call `stop` more than once or use a handle whose system never
+ started. In these cases, it returns `Error(NotRunning)` and does not crash.
+ It returns `Error(StopTimeout)` if the app runtime does not
  acknowledge the stop within the shutdown window. After a successful stop
  the handle should no longer be used.
 
@@ -365,7 +366,7 @@ pub fn stop(Sockets) -> Result(Nil, StopError)
 
 ### `validate_config`
 
-Eagerly validate a [`Config`](#config) without starting anything.
+Validate a [`Config`](#config) without starting any process.
 
  This checks that `heartbeat_timeout_ms` is at least 2 and that every
  per-topic rate-limit pattern is valid.
@@ -450,8 +451,8 @@ pub fn with_frame_rate(
 
 Configure the server-side heartbeat staleness window.
 
- A socket that sends no heartbeat within `timeout_ms` is evicted. The
- runtime checks at half this window, so values below 2 are rejected by
+ The runtime evicts a socket that sends no heartbeat within `timeout_ms`.
+ It checks at half this window, so values below 2 are rejected by
  `validate_config` with `HeartbeatTimeoutTooLow`. The default is 60000 ms.
 
 ```gleam
@@ -463,7 +464,7 @@ pub fn with_heartbeat(
 
 ### `with_join_rate`
 
-Configure per-socket join rate limiting
+Configure per-socket join rate limiting.
 
 ```gleam
 pub fn with_join_rate(
@@ -489,22 +490,23 @@ pub fn with_logging(
 Configure the maximum number of concurrent connections allowed across the
  whole node, regardless of source IP.
 
- A value of 0 (the default) means unlimited. When a limit is set, a transport
- admits a new connection only while the node is below the limit and rejects
- it (before allocating any long-lived per-socket runtime state) otherwise;
- the slot is freed when the connection closes, its process dies, or its
- handshake/setup fails. The check-and-increment is atomic inside the limiter
- actor, so a burst of concurrent opens cannot materially exceed the ceiling.
+ A value of 0, the default, means unlimited. When a limit is set, a
+ transport admits a connection only while the node is below the limit. It
+ rejects other connections before it allocates long-lived per-socket state.
+ The transport frees the slot when the connection closes, its process dies,
+ or its handshake or setup fails. The limiter actor performs the check and
+ increment atomically. Concurrent opens cannot materially exceed the
+ ceiling.
 
  ## Composition with per-IP limits
 
- This node-wide ceiling composes with `with_max_connections_per_ip`: when
- both are set a connection must be under *both* limits to be admitted. The
- per-IP limit throttles any single abusive peer, while this global ceiling
+ This node-wide ceiling works with `with_max_connections_per_ip`. When both
+ are set, a connection must be under *both* limits. The per-IP limit
+ throttles any single abusive peer, while this global ceiling
  bounds the node's total resource use so that many distinct source addresses
- (for example a botnet or IPv6 address rotation) still cannot exhaust the
- node's process, socket, and runtime budget — a case a per-IP limit alone
- cannot stop.
+ (for example, a botnet or IPv6 address rotation) cannot exhaust the node's
+ process, socket, and runtime budget. A per-IP limit alone cannot stop this
+ case.
 
  ## Composition with external load balancers
 
@@ -512,7 +514,7 @@ Configure the maximum number of concurrent connections allowed across the
  load balancer, each node enforces its own limit independently, so the
  cluster's effective ceiling is roughly `max_connections × node_count`
  (subject to how the balancer distributes connections). Size the per-node
- value against a single node's capacity, and use the load balancer's own
+ value against a single node's capacity. Use the load balancer's
  global connection/rate controls when you need a cluster-wide cap.
 
 ```gleam
@@ -527,17 +529,18 @@ pub fn with_max_connections(
 Configure the maximum number of concurrent connections allowed per client
  IP address.
 
- A value of 0 (the default) means unlimited. When a limit is set, a transport
- admits a new connection only while the peer is below the limit and rejects
- it otherwise; the slot is freed when the connection closes.
+ A value of 0, the default, means unlimited. When a limit is set, a
+ transport admits a new connection only while the peer is below the limit.
+ It rejects other connections. The transport frees the slot when the
+ connection closes.
 
  ## Which IP is used
 
  The limit is enforced on the **real socket peer IP** as reported by the
  transport (for the Mist transport, the address of the TCP connection).
- Beryl deliberately does **not** trust or parse forwarded headers such as
- `X-Forwarded-For`, because a client can set them freely and would otherwise
- be able to spoof its address and bypass this limit.
+ Beryl does **not** trust or parse forwarded headers such as
+ `X-Forwarded-For`. A client can set these headers and spoof its address to
+ bypass this limit.
 
  If Beryl runs behind a trusted reverse proxy or load balancer, every
  connection shares the proxy's address, so a per-IP limit throttles all
@@ -572,15 +575,15 @@ pub fn with_max_event_length(
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- The limit is enforced **post-assembly**: the transport (Mist/gramps)
- buffers and assembles a complete frame first, and only then does Beryl
- measure it and close the connection if it exceeds `max_bytes`. This bounds
+ Beryl enforces the limit **post-assembly**. The transport (Mist/gramps)
+ buffers and assembles a complete frame first. Beryl then measures it and
+ closes the connection if it exceeds `max_bytes`. This bounds
  per-message processing cost (decode, routing, rate-limit accounting), but
  it does **not** by itself bound transport memory. A hostile client can
  declare a huge payload and stream it slowly, or send many fragmented
  continuation frames, and the transport's receive buffer grows before this
- check ever runs — so this setting alone does not stop a single connection
- from exhausting node memory.
+ check runs. This setting alone does not stop one connection from exhausting
+ node memory.
 
  For a true transport memory bound you **must** place an edge proxy or load
  balancer in front of Beryl and configure a WebSocket frame-size limit
@@ -668,7 +671,7 @@ pub fn with_presence_handle(
 
 ### `with_pubsub`
 
-Add PubSub to a configuration for distributed broadcasts
+Add PubSub to a configuration for distributed broadcasts.
 
 ```gleam
 pub fn with_pubsub(
@@ -691,9 +694,9 @@ Configure a per-topic-pattern message rate limit for an app-dispatch
  runtime built with `child_spec`.
 
  Patterns use the same syntax as topic routing (`"room:*"`,
- `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
- added and the first matching pattern wins; topics matching no pattern
- fall back to the global `with_channel_rate` limit. The limiter applies
+ `"document:*:ops"`, `"*"`). The runtime checks limits in the order they
+ were added. The first matching pattern wins. Topics that match no pattern
+ use the global `with_channel_rate` limit. The limiter applies
  only after a socket has joined the topic. A non-positive `per_second`
  explicitly disables limiting for matching topics, including any global
  channel limit, and allocates no bucket.

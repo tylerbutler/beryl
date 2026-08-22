@@ -31,7 +31,7 @@ pub type Snapshot
 
 ### `SnapshotError`
 
-Errors returned while requesting a runtime snapshot.
+Errors from a runtime snapshot request.
 
 ```gleam
 pub type SnapshotError {
@@ -44,11 +44,11 @@ pub type SnapshotError {
 
 ##### `RuntimeUnavailable`
 
-The local socket runtime is not currently running.
+The local socket runtime is not running.
 
 ##### `RequestTimedOut`
 
-The runtime did not service the request within the bounded timeout.
+The runtime did not process the request before the timeout.
 
 ## Functions
 
@@ -80,11 +80,11 @@ pub fn joined_socket_topic_pairs(Snapshot) -> Int
 
 ### `snapshot`
 
-Request a point-in-time snapshot from the local runtime.
+Request a snapshot from the local runtime.
 
- The request waits for at most approximately one second. During a
- runtime restart this returns `RuntimeUnavailable` or
- `RequestTimedOut`; an overloaded runtime returns `RequestTimedOut`.
+ The request waits for about one second at most. During a runtime restart,
+ this function returns `RuntimeUnavailable` or `RequestTimedOut`. An
+ overloaded runtime returns `RequestTimedOut`.
  Neither condition panics. This API reports only the node represented by
  `sockets`; aggregate multi-node statistics outside Beryl.
 

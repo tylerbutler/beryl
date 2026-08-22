@@ -3,8 +3,8 @@
 //// With app-side dispatch the application owns routing: beryl delivers
 //// every wire event for a socket to one `update` function, and the
 //// function returns the next model plus a list of `Effect`s for beryl to
-//// apply. There are no channel modules, no registry, and no type erasure —
-//// each socket has a single `model` and a single `msg` type.
+//// apply. There are no channel modules, no registry, and no type erasure.
+//// Each socket has a single `model` and a single `msg` type.
 ////
 //// ## Effect ordering guarantee
 ////
@@ -16,14 +16,14 @@
 ////
 //// Most effects are applied in one actor turn. `PresenceTrack` and
 //// `PresenceUntrack` are the exception: they are applied by the presence
-//// actor, so beryl holds the rest of the list — and every later input for
-//// that socket — until the mutation has been applied, then continues
-//// exactly where it left off. The visible order is unchanged (a
+//// actor. Beryl holds the rest of the list and every later input for that
+//// socket until the mutation has been applied. It then continues exactly
+//// where it left off. The visible order is unchanged (a
 //// `PushPresence` after a `PresenceTrack` still sees the track), and the
 //// socket's own inputs still arrive in the order the client sent them.
-//// What it buys is that no other socket, broadcast, or heartbeat waits on
-//// that mutation — and, because those keep flowing, a broadcast from
-//// elsewhere may land between two of this socket's effects.
+//// No other socket, broadcast, or heartbeat waits on that mutation. Those
+//// continue, so a broadcast from elsewhere may arrive between two effects
+//// from this socket.
 
 import beryl/presence.{type PresenceEntry}
 import gleam/dynamic.{type Dynamic}
@@ -34,7 +34,7 @@ import gleam/option.{type Option, None, Some}
 /// A pending join correlation handle.
 ///
 /// Pass it back in `AcceptJoin` or `RejectJoin`. A join ref is valid only for
-/// its pending join and carries a unique runtime token, so a delayed completion
+/// its pending join. It carries a unique runtime token. A delayed completion
 /// for an older same-topic join cannot answer a replacement or retry.
 pub opaque type JoinRef {
   JoinRef(
@@ -47,10 +47,10 @@ pub opaque type JoinRef {
 
 /// A client message reply correlation handle.
 ///
-/// Pass it back in `ReplyOk` or `ReplyError`. Reply refs may be stored in the
-/// model and answered from a later `update` turn (for example, after an async
-/// lookup completes). They are single-use and remain valid only while the
-/// topic instance that received the message stays open.
+/// Pass it back in `ReplyOk` or `ReplyError`. You can store reply refs in the
+/// model and answer them in a later `update` turn, for example after an
+/// asynchronous lookup. They are single-use. They remain valid only while
+/// the topic instance that received the message stays open.
 pub opaque type ReplyRef {
   ReplyRef(topic: String, join_ref: Option(String), msg_ref: Option(String))
 }
@@ -105,8 +105,8 @@ pub fn reply_ref_msg_ref(ref: ReplyRef) -> Option(String) {
 
 /// Why a socket or topic is stopping.
 ///
-/// Delivered in `Closed` inputs and accepted by `Stop`. Match with a
-/// catch-all (`_`) arm: new stop reasons may be added in minor releases.
+/// The runtime delivers this reason in `Closed` inputs, and `Stop` accepts it.
+/// Match with a catch-all (`_`) arm. Minor releases can add stop reasons.
 pub type StopReason {
   /// Normal shutdown (client left or disconnected cleanly).
   Normal
@@ -114,17 +114,17 @@ pub type StopReason {
   Shutdown
   /// The client failed to send a heartbeat within the configured timeout.
   HeartbeatTimeout
-  /// Stopped because of an error (named `Errored` so importing it
-  /// unqualified does not shadow the prelude's `Result` `Error`
-  /// constructor).
+  /// An error stopped the socket or topic. The name `Errored` prevents an
+  /// unqualified import from shadowing the prelude's `Result` `Error`
+  /// constructor.
   Errored(String)
 }
 
 /// Everything the runtime delivers to the app's `update` function.
 pub type Input(msg) {
-  /// A client asked to join a topic. Answer with `AcceptJoin` or
-  /// `RejectJoin` in the returned effects; a `Join` left unanswered by the
-  /// end of the update turn is rejected automatically (fail closed).
+  /// A client asked to join a topic. Return an `AcceptJoin` or `RejectJoin`
+  /// effect. The runtime rejects a `Join` that is unanswered at the end of
+  /// the update turn.
   Join(topic: String, payload: Dynamic, ref: JoinRef)
   /// A client message on a joined topic. `ref` is present for messages
   /// that expect a reply.
@@ -132,9 +132,9 @@ pub type Input(msg) {
   /// A binary frame on a joined topic (codecs without a binary decoder
   /// deliver the raw frame once per joined topic).
   Binary(topic: String, data: BitArray)
-  /// A joined topic ended (client leave, kick, crash, or socket close).
-  /// Delivered on every exit path — use it to prune per-topic state from
-  /// the model. Frames pushed to the closing topic from this input are
+  /// A joined topic ended because of a client leave, kick, crash, or socket
+  /// close. The runtime sends this input on every exit path. Use it to remove
+  /// per-topic state from the model. Frames pushed to the closing topic are
   /// dropped; broadcasts still reach the topic's remaining subscribers.
   Closed(topic: String, reason: StopReason)
   /// A typed server-side message, sent via the socket's `Sender` (see
@@ -142,8 +142,10 @@ pub type Input(msg) {
   Info(msg)
 }
 
-/// The result of one `update` call: the next model plus effects to apply,
-/// or an instruction to stop the whole socket.
+/// The result of one `update` call.
+///
+/// It contains the next model and effects, or an instruction to stop the
+/// socket.
 pub type Next(model) {
   /// Continue with the given model, applying the effects in order.
   Next(model: model, effects: List(Effect))
@@ -155,9 +157,9 @@ pub type Next(model) {
 /// One update may return several effects, applied strictly in list order
 /// (see the module docs for the ordering guarantee).
 pub type Effect {
-  /// Accept a pending join. Subscribes the socket to the topic and sends
-  /// the join acknowledgment (with an optional reply payload). Only valid
-  /// while the `Join` input's ref is pending.
+  /// Accept a pending join. This subscribes the socket to the topic and sends
+  /// the join acknowledgment with an optional reply payload. The effect is
+  /// valid only while the `Join` input's ref is pending.
   AcceptJoin(ref: JoinRef, reply: Option(Json))
   /// Reject a pending join with an error payload.
   RejectJoin(ref: JoinRef, reason: Json)
@@ -166,8 +168,8 @@ pub type Effect {
   /// Reply with an error to a client message ref.
   ReplyError(ref: ReplyRef, payload: Json)
   /// Push a server-initiated message to this socket on a joined topic.
-  /// Pushes to topics this socket has not joined (yet) are dropped with a
-  /// warning — order a `Push` after its topic's `AcceptJoin`.
+  /// The runtime drops pushes to topics that this socket has not joined and
+  /// logs a warning. Put a `Push` after its topic's `AcceptJoin`.
   Push(topic: String, event: String, payload: Json)
   /// Broadcast to every subscriber of a topic (including this socket, when
   /// joined). Distributed via PubSub when configured.
@@ -175,32 +177,31 @@ pub type Effect {
   /// Broadcast to every subscriber of a topic except this socket.
   BroadcastFrom(topic: String, event: String, payload: Json)
   /// Track this socket's presence under a key in a topic and broadcast the
-  /// corresponding `presence_diff` join. Requires a presence handle on the
-  /// config (`beryl.with_presence_handle`); dropped with a warning
-  /// otherwise.
+  /// corresponding `presence_diff` join. This effect requires a presence
+  /// handle on the config (`beryl.with_presence_handle`). Without a handle,
+  /// the runtime drops the effect and logs a warning.
   ///
-  /// Tracking an already-tracked key replaces the previous entry
-  /// atomically: the key is never momentarily absent, and the replacement
-  /// is published as one `presence_diff` carrying both the leave and the
-  /// join. Effects after this one wait for the mutation (see the module
-  /// docs) but no other socket does.
+  /// Tracking an existing key replaces the previous entry atomically. The
+  /// key is never absent during the replacement. One `presence_diff` contains
+  /// both the leave and the join. Later effects wait for the mutation, as
+  /// described in the module documentation. Other sockets do not wait.
   PresenceTrack(topic: String, key: String, meta: Json)
   /// Untrack a presence previously tracked with `PresenceTrack` and
-  /// broadcast the corresponding `presence_diff` leave. Remaining tracked
-  /// keys are untracked automatically when their topic closes — as one
-  /// batch, producing a single aggregate leave diff. Effects after this
-  /// one wait for the mutation (see the module docs) but no other socket
-  /// does. Requires a presence handle (`beryl.with_presence_handle`);
-  /// dropped with a warning otherwise.
+  /// broadcast the corresponding `presence_diff` leave. When the topic
+  /// closes, the runtime removes the remaining tracked keys in one batch and
+  /// produces one aggregate leave diff. Later effects wait for the mutation,
+  /// as described in the module documentation. Other sockets do not wait.
+  /// This effect requires a presence handle (`beryl.with_presence_handle`).
+  /// Without a handle, the runtime drops the effect and logs a warning.
   PresenceUntrack(topic: String, key: String)
-  /// Push a presence snapshot for a topic to this socket. Unlike a payload
-  /// built inside `update` (which sees presence as it was *before* this
-  /// effects list), `encode` runs when the effect is applied — after any
-  /// earlier `PresenceTrack`/`PresenceUntrack` in the same list has
-  /// actually been applied — so the entries already reflect them.
-  /// Requires a presence handle (`beryl.with_presence_handle`); dropped
-  /// with a warning otherwise.
-  /// Like `Push`, dropped when the topic is not joined at that point.
+  /// Push a presence snapshot for a topic to this socket. A payload built
+  /// inside `update` sees presence from *before* this effects list. In
+  /// contrast, `encode` runs when the effect is applied. It runs after earlier
+  /// `PresenceTrack` and `PresenceUntrack` effects in the same list. The
+  /// entries therefore include those changes.
+  /// This effect requires a presence handle (`beryl.with_presence_handle`).
+  /// Without a handle, the runtime drops the effect and logs a warning.
+  /// Like `Push`, the runtime drops it if the topic is not joined.
   PushPresence(
     topic: String,
     event: String,
@@ -209,8 +210,9 @@ pub type Effect {
   /// Broadcast a presence snapshot for a topic to all its subscribers,
   /// with the same apply-time `encode` semantics as `PushPresence`.
   /// Order it after the `PresenceTrack`/`PresenceUntrack` it should
-  /// reflect. Requires a presence handle (`beryl.with_presence_handle`);
-  /// dropped with a warning otherwise.
+  /// reflect. This effect requires a presence handle
+  /// (`beryl.with_presence_handle`). Without a handle, the runtime drops the
+  /// effect and logs a warning.
   BroadcastPresence(
     topic: String,
     event: String,
@@ -222,11 +224,12 @@ pub type Effect {
 }
 
 // nolint: unused_exports -- public socket helper used by downstream applications
-/// A `ReplyOk` when the client supplied a ref; no effects otherwise.
+/// Return a `ReplyOk` effect when the client supplied a ref.
 ///
 /// `Message` inputs carry `Option(ReplyRef)` (refless messages expect no
 /// reply) while the `ReplyOk` effect demands a `ReplyRef`, so every handler
-/// that replies conditionally needs this gate.
+/// that replies conditionally needs this check. This function returns no
+/// effects when the client did not supply a ref.
 pub fn reply_ok(ref: Option(ReplyRef), payload: Json) -> List(Effect) {
   case ref {
     Some(r) -> [ReplyOk(r, payload)]
@@ -234,8 +237,10 @@ pub fn reply_ok(ref: Option(ReplyRef), payload: Json) -> List(Effect) {
   }
 }
 
-/// Connection metadata assembled by the transport before the WebSocket
-/// upgrade, delivered to the app's `init` via `ConnectInfo`.
+/// Connection metadata that the transport builds before the WebSocket
+/// upgrade.
+///
+/// The app's `init` function receives it through `ConnectInfo`.
 pub type ConnectSeed {
   ConnectSeed(
     /// Request path of the upgrade request (e.g. `"/socket"`).
@@ -250,16 +255,16 @@ pub type ConnectSeed {
   )
 }
 
-/// An empty connect seed, for tests and transports with no request data.
+/// Return an empty connect seed for tests and transports with no request data.
 pub fn empty_seed() -> ConnectSeed {
   ConnectSeed(path: "", query: [], headers: [], metadata: [])
 }
 
 /// A typed handle for sending server-side messages to one socket.
 ///
-/// Obtained from `ConnectInfo.self` in `init`. Any process may call
-/// `notify` with it; the message is delivered to the socket's `update` as
-/// an `Info` event. This is an ordinary typed send — no erasure involved.
+/// Get this handle from `ConnectInfo.self` in `init`. Any process can call
+/// `notify` with it. The socket's `update` function receives the message as
+/// an `Info` event. This typed send does not erase the message type.
 pub opaque type Sender(msg) {
   Sender(send: fn(msg) -> Nil)
 }
@@ -269,9 +274,10 @@ pub fn make_sender(send: fn(msg) -> Nil) -> Sender(msg) {
   Sender(send)
 }
 
-/// Send a typed server-side message to a socket. Delivered to the socket's
-/// `update` function as `Info(message)`. Ignored if the socket has since
-/// disconnected.
+/// Send a typed server-side message to a socket.
+///
+/// The socket's `update` function receives `Info(message)`. The runtime
+/// ignores the message if the socket has disconnected.
 pub fn notify(sender: Sender(msg), message: msg) -> Nil {
   sender.send(message)
 }

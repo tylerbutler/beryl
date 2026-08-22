@@ -54,10 +54,10 @@ The topic does not match the pattern.
 
 Errors returned when validating a topic or topic pattern.
 
- New variants may be added in a minor release as validation gets stricter,
- so this type is not treated as closed for exhaustive matching. Match exact
- variants only where you act on them differently, and otherwise keep a
- catch-all arm (`_ -> ...`) so future variants do not break your code.
+ A minor release can add variants as validation gets stricter. Do not treat
+ this type as closed for exhaustive matching. Match exact variants only
+ when you handle them differently. Otherwise, use a catch-all arm
+ (`_ -> ...`) so new variants do not break your code.
 
 ```gleam
 pub type TopicError {
@@ -79,7 +79,7 @@ The topic, pattern, or event was malformed; the wrapped `String`
 
 ### `TopicPattern`
 
-Topic pattern for routing
+A topic pattern for routing.
 
 ```gleam
 pub type TopicPattern {
@@ -93,22 +93,23 @@ pub type TopicPattern {
 
 ##### `Exact(String)`
 
-Exact match: "room:lobby" only matches "room:lobby"
+Exact match. `"room:lobby"` matches only `"room:lobby"`.
 
 ##### `Wildcard(prefix: String)`
 
-Wildcard suffix: "room:*" matches "room:lobby", "room:123", etc.
+Wildcard suffix. `"room:*"` matches `"room:lobby"`, `"room:123"`,
+ and other values with the same prefix.
 
 ##### `SegmentWildcard(segments: List(String))`
 
-Segment wildcard: "document:*:ops" matches the same number of ":"
- segments where "*" occupies one complete segment.
+Segment wildcard. `"document:*:ops"` matches topics with the same
+ number of `":"` segments. `"*"` occupies one complete segment.
 
 ## Functions
 
 ### `extract_id`
 
-Extract the wildcard portion from a topic
+Extract the wildcard part of a topic.
 
  ## Examples
 
@@ -130,8 +131,9 @@ pub fn extract_id(
 
 Extract values captured by wildcard segments.
 
- For legacy prefix wildcards, returns the suffix as a single value.
- For segment wildcards, returns each topic segment matched by "*".
+ For legacy prefix wildcards, this function returns the suffix as one
+ value. For segment wildcards, it returns each topic segment matched by
+ `"*"`.
 
  ## Examples
 
@@ -149,7 +151,7 @@ pub fn extract_wildcards(
 
 ### `from_segments`
 
-Build a topic from segments
+Build a topic from segments.
 
  ## Examples
 
@@ -164,7 +166,7 @@ pub fn from_segments(List(String)) -> String
 
 ### `matches`
 
-Check if a topic matches a pattern
+Return whether a topic matches a pattern.
 
  ## Examples
 
@@ -186,7 +188,7 @@ pub fn matches(
 
 ### `namespace`
 
-Get the first segment (namespace) of a topic
+Return the first segment (namespace) of a topic.
 
  ## Examples
 
@@ -201,7 +203,7 @@ pub fn namespace(String) -> Result(String, ExtractError)
 
 ### `parse_pattern`
 
-Parse a pattern string into TopicPattern
+Parse a pattern string into `TopicPattern`.
 
  ## Examples
 
@@ -219,7 +221,7 @@ pub fn parse_pattern(String) -> TopicPattern
 
 ### `segments`
 
-Parse a topic into segments by splitting on ":"
+Split a topic into segments at each `":"`.
 
  ## Examples
 
@@ -234,12 +236,12 @@ pub fn segments(String) -> List(String)
 
 ### `validate`
 
-Validate a topic string
+Validate a topic string.
 
- Topics must:
- - Not be empty
- - Not contain control characters (codepoints 0–31 or 127)
- - Not start or end with ":"
+ A topic must:
+ - not be empty;
+ - not contain control characters (codepoints 0–31 or 127); and
+ - not start or end with `":"`.
 
 ```gleam
 pub fn validate(String) -> Result(String, TopicError)
@@ -247,11 +249,11 @@ pub fn validate(String) -> Result(String, TopicError)
 
 ### `validate_event`
 
-Validate an event name string
+Validate an event name.
 
- Event names must:
- - Not be empty
- - Not contain control characters (codepoints 0–31 or 127)
+ An event name must:
+ - not be empty; and
+ - not contain control characters (codepoints 0–31 or 127).
 
 ```gleam
 pub fn validate_event(String) -> Result(String, TopicError)
@@ -259,11 +261,11 @@ pub fn validate_event(String) -> Result(String, TopicError)
 
 ### `validate_pattern`
 
-Validate a topic pattern string
+Validate a topic pattern string.
 
- Patterns must:
- - Not be empty
- - Not contain control characters (codepoints 0–31 or 127)
+ A pattern must:
+ - not be empty; and
+ - not contain control characters (codepoints 0–31 or 127).
 
  The bare pattern `"*"` is valid: it parses to a catch-all wildcard that
  matches every topic.

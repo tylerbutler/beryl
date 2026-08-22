@@ -1,6 +1,6 @@
 ---
 title: "beryl/transport"
-description: "Transport SPI — the contract between beryl core and WebSocket transport"
+description: "Transport SPI: the contract between beryl core and WebSocket transport"
 ---
 
 <!--
@@ -9,7 +9,7 @@ description: "Transport SPI — the contract between beryl core and WebSocket tr
   `just docs` (gleam docs build + pnpm -C website generate:reference).
 -->
 
-Transport SPI — the contract between beryl core and WebSocket transport
+Transport SPI: the contract between beryl core and WebSocket transport
  implementations such as the `beryl_mist` package.
 
  `beryl/transport/server` owns the shared admission, connection, rate,
@@ -24,10 +24,10 @@ Transport SPI — the contract between beryl core and WebSocket transport
 
 A held connection slot returned by `acquire_connection_slot`.
 
- Hold it for the lifetime of the connection and pass it to
+ Hold it for the connection's lifetime. Pass it to
  `release_connection_slot` when the connection closes. When no connection
- limit is configured the permit is an admit-everything placeholder and
- releasing it is a no-op.
+ limit is configured, the permit allows all connections. Releasing it does
+ nothing.
 
 ```gleam
 pub type ConnectionPermit
@@ -59,8 +59,10 @@ pub type FrameOutcome {
 
 ### `Telemetry`
 
-Cheap transport telemetry context. When disabled, starting and stopping an
- operation avoid VM clock calls and event construction.
+A low-cost transport telemetry context.
+
+ When telemetry is disabled, operations avoid VM clock calls and event
+ construction.
 
 ```gleam
 pub type Telemetry
@@ -96,7 +98,7 @@ pub type UpgradeOutcome {
 
 ### `Sockets`
 
-Runtime handle accepted by transport implementations.
+A runtime handle for transport implementations.
 
 ```gleam
 pub type Sockets = beryl.Sockets
@@ -108,7 +110,7 @@ pub type Sockets = beryl.Sockets
 
 Try to acquire a configured connection slot for a transport.
 
- Pass the real socket peer IP, never a client-supplied address such as
+ Pass the real socket peer IP. Do not pass a client-supplied address such as
  `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
  node-wide limit is already reached.
 
@@ -121,8 +123,9 @@ pub fn acquire_connection_slot(
 
 ### `active_codec`
 
-The wire codec configured for these sockets. Transports decode inbound
- frames with it in the connection process.
+Return the wire codec configured for these sockets.
+
+ Transports use it to decode inbound frames in the connection process.
 
 ```gleam
 pub fn active_codec(beryl.Sockets) -> codec.Codec
@@ -133,9 +136,9 @@ pub fn active_codec(beryl.Sockets) -> codec.Codec
 Register a socket and its closer against the captured connection owner.
 
  Install a monitor for `owner` before calling this function. Admission
- succeeds only if that exact runtime instance processes the registration; a
- restart cannot redirect it to the successor runtime. On `Error`, the
- connection is closed so its bound permit can be released.
+ succeeds only if that runtime instance processes the registration. A
+ restart cannot redirect it to the next runtime. On `Error`, this function
+ closes the connection so its bound permit can be released.
 
 ```gleam
 pub fn admit_socket(
@@ -154,8 +157,8 @@ pub fn admit_socket(
 
 Bind an acquired connection slot to the calling connection process.
 
- The limiter monitors the caller so the slot is reclaimed if the process
- dies without running its close path.
+ The limiter monitors the caller. It reclaims the slot if the process dies
+ without running its close path.
 
 ```gleam
 pub fn bind_connection_slot(ConnectionPermit) -> Nil
@@ -179,8 +182,9 @@ pub fn release_connection_slot(ConnectionPermit) -> Nil
 
 ### `route_binary`
 
-Route a raw binary frame, for codecs without a binary decoder (fans out
- to the socket's joined topics as `Binary` events delivered to `update`).
+Route a raw binary frame for a codec without a binary decoder.
+
+ The runtime sends a `Binary` event to `update` for each joined topic.
 
 ```gleam
 pub fn route_binary(
@@ -214,8 +218,8 @@ pub fn route_decoded(
 Route a transport-decoded binary message while preserving its binary
  frame classification for runtime telemetry and rate accounting.
 
- This is additive to `route_decoded`, whose text semantics are retained for
- third-party transport compatibility.
+ This function supplements `route_decoded`. The text semantics of
+ `route_decoded` remain unchanged for third-party transport compatibility.
 
 ```gleam
 pub fn route_decoded_binary(
@@ -229,7 +233,7 @@ pub fn route_decoded_binary(
 
 Return the pid of the runtime that owns transport connections.
 
- On `Ok(pid)`, monitor that exact pid before admission and close the
+ On `Ok(pid)`, monitor that exact PID before admission and close the
  connection on its `Down`. `Error(Nil)` means the runtime is unavailable
  (pre-start or a restart window), so the connection must be refused.
 
@@ -275,7 +279,9 @@ pub fn telemetry_frame_stop(
 
 ### `telemetry_start`
 
-Start a timed transport operation. Returns a zero sentinel when disabled.
+Start a timed transport operation.
+
+ Returns zero when telemetry is disabled.
 
 ```gleam
 pub fn telemetry_start(Telemetry) -> Int
