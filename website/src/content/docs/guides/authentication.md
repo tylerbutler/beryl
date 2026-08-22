@@ -28,11 +28,9 @@ then read them without another authentication check.
 
 ## 2. Read the token from the handshake
 
-Browsers cannot set custom headers on a WebSocket handshake. Browser clients
-usually send a token in a **query parameter**. Server clients can use the
-**`Authorization` header**. Support the methods that your clients need. The
-same helpers work with the transport request in `on_connect` and the
-`ConnectSeed` in `init`:
+Browsers cannot set custom headers on a WebSocket handshake, so browser
+clients usually send a token in a **query parameter**; server clients can use
+the **`Authorization` header**. Support the methods your clients need.
 
 ```gleam
 import beryl/socket
@@ -44,44 +42,26 @@ import mist
 
 /// Prefer the Authorization: Bearer header, fall back to a ?token= query param.
 fn extract_token(req: Request(mist.Connection)) -> Result(String, Nil) {
-  case bearer_header(req) {
-    Ok(token) -> Ok(token)
-    Error(_) -> query_param(req, "token")
-  }
-}
-
-fn bearer_header(req: Request(mist.Connection)) -> Result(String, Nil) {
-  use header <- result.try(request.get_header(req, "authorization"))
-  case string.split(header, " ") {
-    ["Bearer", token] -> Ok(token)
-    _ -> Error(Nil)
-  }
-}
-
-fn query_param(req: Request(mist.Connection), name: String) -> Result(String, Nil) {
-  use params <- result.try(request.get_query(req))
-  list.find(params, fn(pair) { pair.0 == name })
-  |> result.map(fn(pair) { pair.1 })
-}
-
-/// The same extraction against the ConnectSeed delivered to `init`.
-fn seed_token(seed: socket.ConnectSeed) -> Result(String, Nil) {
-  case seed_bearer(seed) {
+  case bearer_token(request.get_header(req, "authorization")) {
     Ok(token) -> Ok(token)
     Error(_) ->
-      list.find(seed.query, fn(pair) { pair.0 == "token" })
-      |> result.map(fn(pair) { pair.1 })
+      request.get_query(req)
+      |> result.try(list.key_find(_, "token"))
   }
 }
 
-fn seed_bearer(seed: socket.ConnectSeed) -> Result(String, Nil) {
-  use header <- result.try(list.key_find(seed.headers, "authorization"))
+fn bearer_token(header: Result(String, Nil)) -> Result(String, Nil) {
+  use header <- result.try(header)
   case string.split(header, " ") {
     ["Bearer", token] -> Ok(token)
     _ -> Error(Nil)
   }
 }
 ```
+
+The same shape applies to the `ConnectSeed` delivered to `init` — read
+`seed.headers` and `seed.query` (both `List(#(String, String))`) with
+`list.key_find` instead of `request.get_header`/`request.get_query`.
 
 ## 3. Verify the token in `on_connect`
 
@@ -133,7 +113,12 @@ pub type Model {
 beryl.child_spec(
   config,
   init: fn(info: socket.ConnectInfo(Msg)) {
-    let model = case seed_token(info.seed) {
+    let token =
+      case bearer_token(list.key_find(info.seed.headers, "authorization")) {
+        Ok(token) -> Ok(token)
+        Error(_) -> list.key_find(info.seed.query, "token")
+      }
+    let model = case token {
       Ok(token) ->
         case verify_token(token) {
           Ok(claims) -> Authenticated(claims)
