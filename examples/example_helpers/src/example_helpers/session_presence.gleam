@@ -2,10 +2,10 @@
 ////
 //// Mutations and counts use constant-time ETS operations, so app-side
 //// dispatch never waits on another actor. A small publisher process enqueues
-//// full snapshots through a normal Beryl broadcast after each mutation.
+//// current snapshots through normal Beryl broadcasts requested after each
+//// mutation.
 
 import beryl
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/process.{type Pid, type Selector, type Subject}
 import gleam/json
 import gleam/option.{type Option, None, Some}
@@ -15,11 +15,20 @@ const start_timeout_ms = 5000
 const call_timeout_ms = 1000
 
 pub opaque type Tracker {
-  Tracker(pid: Pid, subject: Subject(Command), table: Dynamic)
+  Tracker(pid: Pid, subject: Subject(Command), table: Store)
 }
+
+type Store
 
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
+  TrackIfBelow(
+    topic: String,
+    session_id: String,
+    meta: json.Json,
+    maximum: Int,
+    reply: Subject(Result(Nil, Nil)),
+  )
   Publish(topic: String)
   Stop(reply: Subject(Nil))
 }
@@ -34,24 +43,24 @@ type State {
 }
 
 @external(erlang, "example_session_presence_ffi", "new_store")
-fn new_store() -> Dynamic
+fn new_store() -> Store
 
 @external(erlang, "example_session_presence_ffi", "track")
 fn store_track(
-  table: Dynamic,
+  table: Store,
   topic: String,
   session_id: String,
   meta: json.Json,
 ) -> Nil
 
 @external(erlang, "example_session_presence_ffi", "untrack")
-fn store_untrack(table: Dynamic, topic: String, session_id: String) -> Nil
+fn store_untrack(table: Store, topic: String, session_id: String) -> Nil
 
 @external(erlang, "example_session_presence_ffi", "count")
-fn store_count(table: Dynamic, topic: String) -> Int
+fn store_count(table: Store, topic: String) -> Int
 
 @external(erlang, "example_session_presence_ffi", "snapshot")
-fn store_snapshot(table: Dynamic, topic: String) -> List(#(String, json.Json))
+fn store_snapshot(table: Store, topic: String) -> List(#(String, json.Json))
 
 pub fn start() -> Tracker {
   let table = new_store()
@@ -104,26 +113,76 @@ pub fn track(
   meta: json.Json,
 ) -> Nil {
   store_track(tracker.table, topic, session_id, meta)
+  publish(tracker, topic)
+}
+
+/// Track a session without publishing a roster.
+///
+/// Use [`publish`](#publish) from a later socket turn, after the join has
+/// committed, so concurrent joins cannot deliver captured snapshots out of
+/// order.
+pub fn track_without_publish(
+  tracker: Tracker,
+  topic: String,
+  session_id: String,
+  meta: json.Json,
+) -> Nil {
+  store_track(tracker.table, topic, session_id, meta)
+}
+
+/// Atomically track a session when the topic is below `maximum`.
+///
+/// The tracker actor serializes the count and insert so concurrent socket
+/// joins cannot oversubscribe a bounded room.
+pub fn track_if_below(
+  tracker: Tracker,
+  topic: String,
+  session_id: String,
+  meta: json.Json,
+  maximum: Int,
+) -> Result(Nil, Nil) {
+  process.call(tracker.subject, call_timeout_ms, fn(reply) {
+    TrackIfBelow(topic, session_id, meta, maximum, reply)
+  })
+}
+
+/// Publish the topic's current roster through the tracker actor.
+///
+/// The snapshot is read when the actor handles this request, so cross-socket
+/// message ordering can produce duplicate current rosters but never a stale
+/// captured roster after a newer one.
+pub fn publish(tracker: Tracker, topic: String) -> Nil {
   process.send(tracker.subject, Publish(topic))
 }
 
 pub fn untrack(tracker: Tracker, topic: String, session_id: String) -> Nil {
   store_untrack(tracker.table, topic, session_id)
-  process.send(tracker.subject, Publish(topic))
+  publish(tracker, topic)
 }
 
 pub fn count(tracker: Tracker, topic: String) -> Int {
   store_count(tracker.table, topic)
 }
 
-fn loop(selector: Selector(Event), table: Dynamic, state: State) -> Nil {
+fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
   case process.selector_receive_forever(selector) {
     Message(Configure(sockets, reply)) -> {
       process.send(reply, Nil)
       loop(selector, table, State(sockets: Some(sockets)))
     }
+    Message(TrackIfBelow(topic, session_id, meta, maximum, reply)) -> {
+      let result = case store_count(table, topic) < maximum {
+        True -> {
+          store_track(table, topic, session_id, meta)
+          Ok(Nil)
+        }
+        False -> Error(Nil)
+      }
+      process.send(reply, result)
+      loop(selector, table, state)
+    }
     Message(Publish(topic)) -> {
-      publish(state.sockets, topic, store_snapshot(table, topic))
+      broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
       loop(selector, table, state)
     }
     Message(Stop(reply)) -> {
@@ -135,7 +194,7 @@ fn loop(selector: Selector(Event), table: Dynamic, state: State) -> Nil {
   }
 }
 
-fn publish(
+fn broadcast_snapshot(
   sockets: Option(beryl.Sockets),
   topic: String,
   sessions: List(#(String, json.Json)),

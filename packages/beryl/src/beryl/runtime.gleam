@@ -108,6 +108,12 @@ pub type Msg(msg) {
     close: fn() -> Nil,
     admission: AdmissionToken,
     reply: Subject(Bool),
+    /// The socket's actor, started by the transport's connection process
+    /// so connection setup never serialises through the router. The router
+    /// admits it atomically (monitor, index, forward) and the actor runs
+    /// the app `init` and answers `reply` itself.
+    actor: Subject(Msg(msg)),
+    actor_pid: process.Pid,
   )
   SocketDisconnected(socket_id: String)
   RouteText(socket_id: String, raw_text: String)
@@ -129,7 +135,38 @@ pub type Msg(msg) {
   /// A presence mutation was not acknowledged in time. Ignored unless the
   /// socket is still waiting on exactly that operation.
   PresenceOpTimedOut(socket_id: String, op_id: Int)
-  Stop(reply: Subject(Nil))
+  Stop(reply: Subject(Bool))
+  /// A socket actor joined a topic. The router owns the global index and
+  /// the pg subscription.
+  IndexJoin(socket_id: String, topic: String)
+  /// A socket actor left a topic.
+  IndexLeave(socket_id: String, topic: String)
+  /// A socket actor finished its teardown and is about to stop; the
+  /// router drops it from the index and the actor table.
+  SocketClosed(socket_id: String)
+  /// The router died. Every socket actor monitors the router and stops on
+  /// its `Down`, so router death takes the whole socket population with it
+  /// (and the transports, which monitor the same pid, close the
+  /// connections).
+  RouterDown
+  /// A socket actor exited without reporting `SocketClosed` first — it
+  /// crashed, or was killed. The router sweeps its index and actor-table
+  /// entries so a crashed actor cannot leak a phantom subscription.
+  SocketActorDown(down: process.Down)
+  /// Shut one socket actor down. Unlike `Stop` there is no reply — the
+  /// router waits for `SocketClosed`, so a socket actor's teardown
+  /// broadcasts still reach the router on their way out.
+  StopSocketActor
+  /// A socket actor never reported back during shutdown (its teardown is
+  /// stuck in an app callback). The router kills the stragglers and stops.
+  StopTimedOut
+  /// Shutdown phase one. Finalize in-flight presence work while every
+  /// other socket actor is still alive to receive the leaves it publishes;
+  /// the shared runtime got this for free by doing it before its teardown
+  /// loop.
+  FinalizeForStop
+  /// A socket actor finished shutdown phase one.
+  StopPhaseDone
 }
 
 pub type StatsSnapshot {
@@ -188,7 +225,33 @@ type State(model, msg) {
     /// are then fire-and-forget: there is no longer a runtime to deliver
     /// the acknowledgement to.
     stopping: Bool,
+    /// The process's topology-specific state. A socket actor is this same
+    /// `State` with exactly one entry in `sockets`; router-only shutdown and
+    /// actor-index fields cannot be constructed for that role.
+    role: RuntimeRole(msg),
   )
+}
+
+/// The router's record of one admitted socket actor. The monitor is the
+/// crash side of the actor's lifecycle: a normal close reports
+/// `SocketClosed` and is demonitored, while a crash is swept via
+/// `SocketActorDown`.
+type SocketActorRef(msg) {
+  SocketActorRef(
+    subject: Subject(Msg(msg)),
+    pid: process.Pid,
+    monitor: process.Monitor,
+    close: fn() -> Nil,
+  )
+}
+
+type RuntimeRole(msg) {
+  RouterRole(
+    socket_actors: Dict(String, SocketActorRef(msg)),
+    stop_reply: Option(Subject(Bool)),
+    stop_finalized: Int,
+  )
+  SocketActorRole(router: Subject(Msg(msg)))
 }
 
 // ── Suspended per-socket work ───────────────────────────────────────────────
@@ -469,12 +532,24 @@ pub fn start_named(
         queued: dict.new(),
         unacked_tracks: dict.new(),
         stopping: False,
+        role: RouterRole(
+          socket_actors: dict.new(),
+          stop_reply: None,
+          stop_finalized: 0,
+        ),
       )
-    schedule_heartbeat_check(subject, config)
+    // Heartbeats are per-socket timers, so the router runs no sweep and
+    // schedules nothing.
+    //
+    // `select_monitors` claims every monitor `Down` this process receives,
+    // so the router turn must never create a monitor for anything but a
+    // socket actor — which the no-blocking-call rule (no `process.call`
+    // from the router) already guarantees.
     let selector =
       process.new_selector()
       |> process.select(subject)
       |> process.select_map(ack_subject, PresenceAcknowledged)
+      |> process.select_monitors(SocketActorDown)
     case pubsub_option {
       Some(pubsub_instance) -> {
         let subscriber = pubsub.subscriber(pubsub_instance)
@@ -497,6 +572,64 @@ pub fn start_named(
   })
   |> actor.on_message(handle_message)
   |> actor.named(name)
+  |> actor.start
+}
+
+/// Start one actor to own one socket.
+///
+/// It runs the same `handle_message` on the same `State` as the router —
+/// the socket actor is the router with `sockets` capped at one entry, no
+/// topic index beyond its own memberships, no PubSub subscriber, and
+/// `router` set. That is the whole lift of `dispatch_socket_msg`.
+///
+/// Called from the transport's connection process (via `beryl`'s admission
+/// closure), not from the router, so connection setup stays parallel and
+/// the router's admission turn stays O(1). The caller is expected to
+/// unlink the started actor and hand it to the router with `AdmitSocket`.
+pub fn start_socket_actor(
+  config config: Config,
+  init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
+  update update: fn(model, Input(msg)) -> Next(model),
+  router router: Subject(Msg(msg)),
+  router_pid router_pid: process.Pid,
+) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
+  actor.new_with_initialiser(5000, fn(subject) {
+    let ack_subject = process.new_subject()
+    let state =
+      State(
+        sockets: dict.new(),
+        topics: dict.new(),
+        config: config,
+        pubsub: None,
+        subscriber: None,
+        logger: internal.logger_with_config("beryl.runtime", config.logging),
+        self_subject: subject,
+        init: init,
+        update: update,
+        message_buckets: dict.new(),
+        join_buckets: dict.new(),
+        channel_buckets: dict.new(),
+        presence_ack: ack_subject,
+        next_op_id: 1,
+        suspended: dict.new(),
+        queued: dict.new(),
+        unacked_tracks: dict.new(),
+        stopping: False,
+        role: SocketActorRole(router),
+      )
+    // Router death must take its socket actors with it: each actor
+    // monitors the router and stops on its `Down`, while staying unlinked
+    // so a socket crash cannot travel the other way.
+    let monitor = process.monitor(router_pid)
+    schedule_heartbeat_check(subject, config)
+    process.new_selector()
+    |> process.select(subject)
+    |> process.select_map(ack_subject, PresenceAcknowledged)
+    |> process.select_specific_monitor(monitor, fn(_) { RouterDown })
+    |> actor.selecting(actor.returning(actor.initialised(state), subject), _)
+    |> Ok
+  })
+  |> actor.on_message(handle_message)
   |> actor.start
 }
 
@@ -527,8 +660,10 @@ fn handle_message(
       close,
       admission,
       reply,
+      actor_subject,
+      actor_pid,
     ) ->
-      actor.continue(handle_admit_socket(
+      handle_admit_socket(
         state,
         owner,
         socket_id,
@@ -539,7 +674,9 @@ fn handle_message(
         close,
         admission,
         reply,
-      ))
+        actor_subject,
+        actor_pid,
+      )
     // Socket-scoped work. A socket parked on a presence acknowledgement
     // queues its own messages instead of dispatching them, so its inbound
     // order survives the suspension; every other socket is unaffected.
@@ -549,12 +686,37 @@ fn handle_message(
     | RouteDecodedBinary(socket_id, _)
     | HandleBinary(socket_id, _)
     | AppInfo(socket_id, _) ->
-      case dict.has_key(state.suspended, socket_id) {
-        True -> actor.continue(enqueue_socket_msg(state, socket_id, message))
-        False -> actor.continue(dispatch_socket_msg(state, message))
+      case state.role {
+        // The router stays on the inbound path, one send per message: its
+        // turn is a match-and-forward, never an app callback.
+        RouterRole(socket_actors:, ..) -> {
+          case dict.get(socket_actors, socket_id) {
+            Ok(ref) -> process.send(ref.subject, message)
+            Error(Nil) -> Nil
+          }
+          actor.continue(state)
+        }
+        SocketActorRole(_) ->
+          case dict.has_key(state.suspended, socket_id) {
+            True ->
+              actor.continue(enqueue_socket_msg(state, socket_id, message))
+            False ->
+              after_socket_turn(state, dispatch_socket_msg(state, message))
+          }
       }
     Broadcast(topic_name, event_name, payload, except) -> {
-      broadcast_with_pubsub(state, topic_name, event_name, payload, except)
+      case state.role {
+        // In a socket actor this is a delivery, not an origination: the
+        // router already resolved the recipients (decision 1's hop) and
+        // this actor encodes and sends for its own socket.
+        SocketActorRole(_) -> {
+          let _recipient_count =
+            local_broadcast(state, topic_name, event_name, payload, except)
+          Nil
+        }
+        RouterRole(..) ->
+          broadcast_with_pubsub(state, topic_name, event_name, payload, except)
+      }
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_msg) ->
@@ -573,25 +735,237 @@ fn handle_message(
         }
       }
     CheckHeartbeats -> actor.continue(handle_check_heartbeats(state))
-    PresenceAcknowledged(ack) -> actor.continue(handle_presence_ack(state, ack))
+    PresenceAcknowledged(ack) ->
+      after_socket_turn(state, handle_presence_ack(state, ack))
     PresenceOpTimedOut(socket_id, op_id) ->
-      actor.continue(handle_presence_timeout(state, socket_id, op_id))
+      after_socket_turn(state, handle_presence_timeout(state, socket_id, op_id))
     GetStats(reply) -> {
+      // Answered entirely from the router's index; no socket actor is
+      // polled, so counts may lag in-flight socket lifecycle messages —
+      // the eventual consistency the stats API documents.
+      let connected_sockets = case state.role {
+        RouterRole(socket_actors:, ..) -> dict.size(socket_actors)
+        SocketActorRole(_) -> 0
+      }
       process.send(
         reply,
         StatsSnapshot(
-          connected_sockets: dict.size(state.sockets),
-          joined_socket_topic_pairs: state.sockets
+          connected_sockets: connected_sockets,
+          joined_socket_topic_pairs: state.topics
             |> dict.values
-            |> list.fold(0, fn(total, socket) {
-              total + set.size(socket.subscribed_topics)
-            }),
+            |> list.fold(0, fn(total, ids) { total + set.size(ids) }),
           active_topics: dict.size(state.topics),
         ),
       )
       actor.continue(state)
     }
-    Stop(reply) -> handle_stop(state, reply)
+    Stop(reply) ->
+      case state.role {
+        SocketActorRole(_) -> handle_stop(state, Some(reply))
+        RouterRole(..) -> begin_router_stop(state, reply)
+      }
+    FinalizeForStop -> {
+      let state = finalize_for_stop(state)
+      case state.role {
+        SocketActorRole(router) -> process.send(router, StopPhaseDone)
+        RouterRole(..) -> Nil
+      }
+      actor.continue(state)
+    }
+    StopPhaseDone ->
+      case state.role {
+        RouterRole(socket_actors:, stop_reply:, stop_finalized:) -> {
+          let state =
+            State(
+              ..state,
+              role: RouterRole(
+                socket_actors: socket_actors,
+                stop_reply: stop_reply,
+                stop_finalized: stop_finalized + 1,
+              ),
+            )
+          begin_stop_phase_two_if_ready(state)
+          actor.continue(state)
+        }
+        SocketActorRole(_) -> actor.continue(state)
+      }
+    StopSocketActor -> {
+      // The router is waiting on `SocketClosed`, not on a reply, so the
+      // teardown's own broadcasts reach it before the actor goes away.
+      let socket_ids = dict.keys(state.sockets)
+      let next = handle_stop(state, None)
+      case state.role, socket_ids {
+        SocketActorRole(router), [socket_id] ->
+          process.send(router, SocketClosed(socket_id))
+        _, _ -> Nil
+      }
+      next
+    }
+    StopTimedOut ->
+      case state.role {
+        RouterRole(stop_reply: None, ..) | SocketActorRole(_) ->
+          actor.continue(state)
+        RouterRole(socket_actors:, stop_reply: Some(reply), ..) -> {
+          // Escalate rather than abandon: a teardown stuck in a
+          // pathological app callback is killed so shutdown stays inside
+          // `beryl.stop`'s budget without leaking the process.
+          state.logger
+          |> log.warn("Runtime stop: killing unresponsive socket actors", [
+            #("socket_count", int.to_string(dict.size(socket_actors))),
+          ])
+          dict.values(socket_actors)
+          |> list.each(fn(ref) { process.kill(ref.pid) })
+          process.send(reply, False)
+          actor.stop()
+        }
+      }
+    IndexJoin(socket_id, topic_name) ->
+      // Only index sockets this router admitted: a cast from an actor that
+      // outlived a router restart must not plant a phantom entry. A
+      // legitimate join is always preceded by the router's own insert, so
+      // this never drops a real one.
+      case state.role {
+        RouterRole(socket_actors:, ..) ->
+          case dict.has_key(socket_actors, socket_id) {
+            True ->
+              actor.continue(add_topic_subscriber(state, socket_id, topic_name))
+            False -> actor.continue(state)
+          }
+        SocketActorRole(_) -> actor.continue(state)
+      }
+    IndexLeave(socket_id, topic_name) ->
+      actor.continue(remove_topic_subscriber(state, socket_id, topic_name))
+    SocketClosed(socket_id) -> remove_socket_actor(state, socket_id)
+    SocketActorDown(down) ->
+      case state.role {
+        SocketActorRole(_) -> actor.continue(state)
+        RouterRole(socket_actors:, ..) ->
+          handle_router_socket_actor_down(state, down, socket_actors)
+      }
+    RouterDown -> actor.stop()
+  }
+}
+
+fn handle_router_socket_actor_down(
+  state: State(model, msg),
+  down: process.Down,
+  socket_actors: Dict(String, SocketActorRef(msg)),
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case down {
+    process.ProcessDown(pid: pid, monitor: _, reason: _) ->
+      case
+        dict.to_list(socket_actors)
+        |> list.find(fn(entry) {
+          let #(_, ref) = entry
+          ref.pid == pid
+        })
+      {
+        Ok(#(socket_id, ref)) -> {
+          state.logger
+          |> log.warn("Socket actor exited without reporting; sweeping", [
+            #("socket_id", socket_id),
+          ])
+          let _closer = process.spawn_unlinked(ref.close)
+          case state.config.presence {
+            Some(handle) ->
+              presence.untrack_runtime_all_async(handle, socket_id)
+            None -> Nil
+          }
+          remove_socket_actor(state, socket_id)
+        }
+        // Already removed via `SocketClosed`, or never admitted.
+        Error(Nil) -> actor.continue(state)
+      }
+    process.PortDown(..) -> actor.continue(state)
+  }
+}
+
+/// Drop one socket actor from the router: demonitor, sweep any topic-index
+/// entries it left behind, and keep a stop drain moving if one is in
+/// progress. Shared by the normal close (`SocketClosed`) and the crash
+/// sweep (`SocketActorDown`).
+fn remove_socket_actor(
+  state: State(model, msg),
+  socket_id: String,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case state.role {
+    SocketActorRole(_) -> actor.continue(state)
+    RouterRole(socket_actors:, stop_reply:, stop_finalized:) -> {
+      case dict.get(socket_actors, socket_id) {
+        // Demonitoring flushes a `Down` already in the mailbox, so a normal
+        // close can never be swept a second time as a crash.
+        Ok(ref) -> process.demonitor_process(ref.monitor)
+        Error(Nil) -> Nil
+      }
+      // A teardown emits `IndexLeave` per joined topic, but sweeping is
+      // cheap and makes a dropped one impossible to leak.
+      let state =
+        dict.keys(state.topics)
+        |> list.fold(state, fn(st, topic_name) {
+          remove_topic_subscriber(st, socket_id, topic_name)
+        })
+      let socket_actors = dict.delete(socket_actors, socket_id)
+      let state =
+        State(
+          ..state,
+          role: RouterRole(
+            socket_actors: socket_actors,
+            stop_reply: stop_reply,
+            stop_finalized: stop_finalized,
+          ),
+        )
+      case stop_reply {
+        None -> actor.continue(state)
+        Some(reply) ->
+          case dict.is_empty(socket_actors) {
+            True -> {
+              process.send(reply, True)
+              actor.stop()
+            }
+            False -> {
+              // A crash during drain phase one would otherwise leave the
+              // router waiting on a `StopPhaseDone` that never arrives.
+              begin_stop_phase_two_if_ready(state)
+              actor.continue(state)
+            }
+          }
+      }
+    }
+  }
+}
+
+/// Start drain phase two once every surviving socket actor has finished
+/// phase one. Re-sending `StopSocketActor` to an actor that already got
+/// one is harmless: it stops on the first and never reads the second.
+fn begin_stop_phase_two_if_ready(state: State(model, msg)) -> Nil {
+  case state.role {
+    SocketActorRole(_) -> Nil
+    RouterRole(socket_actors:, stop_finalized:, ..) ->
+      case stop_finalized >= dict.size(socket_actors) {
+        True ->
+          dict.values(socket_actors)
+          |> list.each(fn(ref) { process.send(ref.subject, StopSocketActor) })
+        False -> Nil
+      }
+  }
+}
+
+/// A socket actor's turn is over. If the socket is gone the actor has
+/// nothing left to own, so it tells the router and stops.
+fn after_socket_turn(
+  before: State(model, msg),
+  after: State(model, msg),
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case dict.keys(before.sockets), after.role {
+    [socket_id], SocketActorRole(router) ->
+      case dict.has_key(after.sockets, socket_id) {
+        True -> actor.continue(after)
+        False -> {
+          process.send(router, SocketClosed(socket_id))
+          actor.stop()
+        }
+      }
+    _, _ -> actor.continue(after)
   }
 }
 
@@ -622,7 +996,16 @@ fn dispatch_socket_msg(
     | GetStats(..)
     | PresenceAcknowledged(..)
     | PresenceOpTimedOut(..)
-    | Stop(..) -> state
+    | Stop(..)
+    | StopSocketActor
+    | StopTimedOut
+    | FinalizeForStop
+    | StopPhaseDone
+    | IndexJoin(..)
+    | IndexLeave(..)
+    | SocketClosed(..)
+    | SocketActorDown(..)
+    | RouterDown -> state
   }
 }
 
@@ -704,13 +1087,14 @@ fn handle_admit_socket(
   close: fn() -> Nil,
   admission: AdmissionToken,
   reply: Subject(Bool),
-) -> State(model, msg) {
-  case process.self() == owner && admission_pending(admission) {
-    False -> {
-      process.send(reply, False)
-      state
-    }
-    True -> {
+  actor_subject: Subject(Msg(msg)),
+  actor_pid: process.Pid,
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case state.role {
+    // In a socket actor: the router has already admitted this socket
+    // atomically in its own turn; this actor runs the app `init` and
+    // answers the transport directly.
+    SocketActorRole(router) -> {
       let #(state, admitted) =
         register_socket(
           state,
@@ -723,8 +1107,68 @@ fn handle_admit_socket(
           Some(admission),
         )
       process.send(reply, admitted)
-      state
+      case admitted {
+        True -> actor.continue(state)
+        // Refused: the app `init` crashed, or the transport's wait timed
+        // out and cancelled the token. The router already indexed this
+        // actor, so unwind that entry on the way out.
+        False -> {
+          process.send(router, SocketClosed(socket_id))
+          actor.stop()
+        }
+      }
     }
+    // The router's whole admission turn: the checks that must be atomic
+    // with each other, one monitor-free insert, and a forward. It never
+    // waits on the socket actor — the actor answers the transport itself,
+    // so a slow or crashing `init` cannot block admission of other
+    // sockets (and the router must never block on a socket actor).
+    RouterRole(socket_actors:, stop_reply:, stop_finalized:) ->
+      case
+        !state.stopping
+        && process.self() == owner
+        && admission_pending(admission)
+      {
+        False -> {
+          process.send(reply, False)
+          actor.continue(state)
+        }
+        True -> {
+          // Monitor before forwarding: an actor that dies mid-registration
+          // is swept by `SocketActorDown` instead of leaking its entry.
+          let monitor = process.monitor(actor_pid)
+          process.send(
+            actor_subject,
+            AdmitSocket(
+              owner,
+              socket_id,
+              send,
+              send_binary,
+              socket_codec,
+              seed,
+              close,
+              admission,
+              reply,
+              actor_subject,
+              actor_pid,
+            ),
+          )
+          actor.continue(
+            State(
+              ..state,
+              role: RouterRole(
+                socket_actors: dict.insert(
+                  socket_actors,
+                  socket_id,
+                  SocketActorRef(actor_subject, actor_pid, monitor, close),
+                ),
+                stop_reply: stop_reply,
+                stop_finalized: stop_finalized,
+              ),
+            ),
+          )
+        }
+      }
   }
 }
 
@@ -820,14 +1264,84 @@ fn handle_socket_disconnected(
   run(state, socket_id, [StepTeardown(sock.Normal)])
 }
 
+/// How long the router waits for its socket actors to drain before it
+/// kills the stragglers, chosen to sit inside `beryl.stop`'s own 5s
+/// budget. Crashed actors report promptly through their monitors, so this
+/// only fires for a teardown genuinely stuck in an app callback.
+const stop_drain_timeout_ms = 2000
+
+/// Drain the socket actors, then stop.
+///
+/// The router casts `StopSocketActor` rather than calling, so a socket
+/// actor's teardown broadcasts and index updates still route through this
+/// mailbox. The router answers `reply` once the last `SocketClosed` lands,
+/// or kills the survivors at `stop_drain_timeout_ms`.
+fn begin_router_stop(
+  state: State(model, msg),
+  reply: Subject(Bool),
+) -> actor.Next(State(model, msg), Msg(msg)) {
+  case state.role {
+    SocketActorRole(_) -> handle_stop(state, Some(reply))
+    RouterRole(socket_actors:, stop_finalized:, ..) -> {
+      state.logger
+      |> log.info("Runtime stopping", [
+        #("socket_count", int.to_string(dict.size(socket_actors))),
+      ])
+      use <- bool.lazy_guard(when: dict.is_empty(socket_actors), return: fn() {
+        process.send(reply, True)
+        actor.stop()
+      })
+      dict.values(socket_actors)
+      |> list.each(fn(ref) { process.send(ref.subject, FinalizeForStop) })
+      let _timer =
+        process.send_after(
+          state.self_subject,
+          stop_drain_timeout_ms,
+          StopTimedOut,
+        )
+      actor.continue(
+        State(
+          ..state,
+          stopping: True,
+          role: RouterRole(
+            socket_actors: socket_actors,
+            stop_reply: Some(reply),
+            stop_finalized: stop_finalized,
+          ),
+        ),
+      )
+    }
+  }
+}
+
 fn handle_stop(
   state: State(model, msg),
-  reply: Subject(Nil),
+  reply: Option(Subject(Bool)),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   state.logger
   |> log.info("Runtime stopping", [
     #("socket_count", int.to_string(dict.size(state.sockets))),
   ])
+  let state = finalize_for_stop(state)
+  dict.keys(state.sockets)
+  |> list.fold(state, fn(st, socket_id) {
+    run(st, socket_id, [StepTeardown(sock.Shutdown)])
+  })
+  case reply {
+    Some(reply) -> process.send(reply, True)
+    None -> Nil
+  }
+  actor.stop()
+}
+
+/// The pre-teardown half of a shutdown: mark the actor stopping and settle
+/// every in-flight presence mutation it still owns.
+///
+/// The shared runtime ran this for all sockets before it tore any of them
+/// down. Per-socket actors have to be told to do it as a separate phase,
+/// or a socket's shutdown leaves can be fanned out to sockets that are
+/// already gone.
+fn finalize_for_stop(state: State(model, msg)) -> State(model, msg) {
   // From here on there is no runtime left to receive an acknowledgement,
   // so presence mutations are sent fire-and-forget and never suspend.
   let state = State(..state, stopping: True)
@@ -840,15 +1354,8 @@ fn handle_stop(
   // swept now, while there is still something to sweep them with. The sweep is
   // ordered behind the in-flight tracks themselves (same sender, same
   // mailbox), so it removes them rather than racing them.
-  let state =
-    dict.keys(state.unacked_tracks)
-    |> list.fold(state, sweep_unacked_track)
-  dict.keys(state.sockets)
-  |> list.fold(state, fn(st, socket_id) {
-    run(st, socket_id, [StepTeardown(sock.Shutdown)])
-  })
-  process.send(reply, Nil)
-  actor.stop()
+  dict.keys(state.unacked_tracks)
+  |> list.fold(state, sweep_unacked_track)
 }
 
 /// Finalize a socket's in-flight presence mutation during shutdown.
@@ -2422,6 +2929,11 @@ fn remove_topic_subscriber(
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
     |> set.delete(socket_id)
+  case state.role {
+    SocketActorRole(router) ->
+      process.send(router, IndexLeave(socket_id, topic_name))
+    RouterRole(..) -> Nil
+  }
   case set.is_empty(subscribers) {
     True -> {
       case state.subscriber {
@@ -2433,6 +2945,44 @@ fn remove_topic_subscriber(
     False ->
       State(..state, topics: dict.insert(state.topics, topic_name, subscribers))
   }
+}
+
+/// Add a socket to a topic's subscriber set, joining the pg group when the
+/// topic becomes locally active.
+///
+/// In a socket actor the set only ever holds that one socket, and the
+/// router is told so it can keep the global index and the pg
+/// subscription. That notification is a cast, not a call — neither side
+/// may ever block on the other. It is sent from `subscribe_socket`, before the join
+/// reply frame leaves this turn, so a client that acts on its own reply
+/// cannot beat its index entry to the router. A broadcast from a third
+/// process that races the cast still misses the socket: that is decision
+/// 2's cast option and its documented window.
+fn add_topic_subscriber(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+) -> State(model, msg) {
+  let existing =
+    dict.get(state.topics, topic_name)
+    |> result.unwrap(set.new())
+  case state.role {
+    SocketActorRole(router) ->
+      process.send(router, IndexJoin(socket_id, topic_name))
+    RouterRole(..) ->
+      case state.subscriber, set.is_empty(existing) {
+        Some(subscriber), True -> pubsub.join(subscriber, topic_name)
+        _, _ -> Nil
+      }
+  }
+  State(
+    ..state,
+    topics: dict.insert(
+      state.topics,
+      topic_name,
+      set.insert(existing, socket_id),
+    ),
+  )
 }
 
 /// Notify the client that its topic ended. Phoenix clients rely on
@@ -2820,22 +3370,8 @@ fn subscribe_socket(
             pending_join.join_ref,
           ),
         )
-      let state = store_socket(state, socket)
-      let existing =
-        dict.get(state.topics, pending_join.topic)
-        |> result.unwrap(set.new())
-      case state.subscriber, set.is_empty(existing) {
-        Some(subscriber), True -> pubsub.join(subscriber, pending_join.topic)
-        _, _ -> Nil
-      }
-      State(
-        ..state,
-        topics: dict.insert(
-          state.topics,
-          pending_join.topic,
-          set.insert(existing, socket_id),
-        ),
-      )
+      store_socket(state, socket)
+      |> add_topic_subscriber(socket_id, pending_join.topic)
     }
   }
 }
@@ -3731,7 +4267,7 @@ fn local_broadcast(
   event_name: String,
   payload: Json,
   except: Option(String),
-) -> #(Int, Int) {
+) -> Int {
   let subscribers =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
@@ -3747,24 +4283,40 @@ fn local_broadcast(
     #("recipient_count", int.to_string(list.length(recipients))),
     #("except", optional_string(except)),
   ])
-  list.fold(recipients, #(0, 0), fn(counts, socket_id) {
-    case dict.get(state.sockets, socket_id) {
-      Ok(socket) -> {
-        let frame =
-          codec.encode_push(socket.codec)(topic_name, event_name, payload)
-        let send_result = send_frame_logged(state, socket, topic_name, frame)
-        #(
-          counts.0 + 1,
-          counts.1
-            + case send_result {
-            Ok(Nil) -> 0
-            Error(Nil) -> 1
-          },
-        )
-      }
-      Error(Nil) -> counts
+  case state.role {
+    // Socket actor: it is the only possible recipient, so encode and send
+    // inline exactly as the shared runtime did. Send failures are logged
+    // by `send_frame_logged` in this, the only process that sees them.
+    SocketActorRole(_) ->
+      list.fold(recipients, 0, fn(count, socket_id) {
+        case dict.get(state.sockets, socket_id) {
+          Ok(socket) -> {
+            let frame =
+              codec.encode_push(socket.codec)(topic_name, event_name, payload)
+            let _send_result =
+              send_frame_logged(state, socket, topic_name, frame)
+            count + 1
+          }
+          Error(Nil) -> count
+        }
+      })
+    // Decision 1: the router resolves recipients and hands each one to its
+    // own actor, so encoding happens on N schedulers instead of in this
+    // turn, and only one process ever writes to a given transport.
+    RouterRole(socket_actors:, ..) -> {
+      list.each(recipients, fn(socket_id) {
+        case dict.get(socket_actors, socket_id) {
+          Ok(ref) ->
+            process.send(
+              ref.subject,
+              Broadcast(topic_name, event_name, payload, except),
+            )
+          Error(Nil) -> Nil
+        }
+      })
+      list.length(recipients)
     }
-  })
+  }
 }
 
 fn emit_broadcast(
@@ -3776,7 +4328,7 @@ fn emit_broadcast(
   origin: telemetry.BroadcastOrigin,
 ) -> Nil {
   let started_at = telemetry_start(state)
-  let #(recipients, send_failures) =
+  let recipients =
     local_broadcast(state, topic_name, event_name, payload, except)
   use <- bool.guard(when: !state.config.telemetry, return: Nil)
   telemetry.emit(
@@ -3784,7 +4336,6 @@ fn emit_broadcast(
     telemetry.BroadcastStop(
       duration: telemetry.duration_since(started_at),
       recipients: recipients,
-      send_failures: send_failures,
       origin: origin,
     ),
   )
@@ -3801,36 +4352,66 @@ fn broadcast_with_pubsub(
   payload: Json,
   except: Option(String),
 ) -> Nil {
-  emit_broadcast(
-    state,
-    topic_name,
-    event_name,
-    payload,
-    except,
-    telemetry.Local,
-  )
-  case state.pubsub {
-    Some(ps) ->
-      case except {
-        None ->
-          pubsub.broadcast_from(
-            ps,
-            process.self(),
-            topic_name,
-            event_name,
-            payload,
+  // A socket actor owns neither the topic index nor the PubSub handle, so
+  // everything it originates goes to the router, which fans out locally
+  // (one hop per recipient) and forwards to other nodes.
+  //
+  // This socket's own copy is sent inline first, so a broadcast to a topic
+  // it is joined to still lands in effect-list order instead of arriving a
+  // round trip later, behind the frames that followed it. The only
+  // `except` a socket actor ever originates is its own id (`BroadcastFrom`),
+  // so the exclusion handed to the router is always this socket.
+  case state.role {
+    SocketActorRole(router) -> {
+      case except, dict.keys(state.sockets) {
+        None, [socket_id] -> {
+          let _recipient_count =
+            local_broadcast(state, topic_name, event_name, payload, None)
+          process.send(
+            router,
+            Broadcast(topic_name, event_name, payload, Some(socket_id)),
           )
-        Some(socket_id) ->
-          pubsub.broadcast_from_socket(
-            ps,
-            process.self(),
-            socket_id,
-            topic_name,
-            event_name,
-            payload,
+        }
+        _, _ ->
+          process.send(
+            router,
+            Broadcast(topic_name, event_name, payload, except),
           )
       }
-    None -> Nil
+    }
+    RouterRole(..) -> {
+      emit_broadcast(
+        state,
+        topic_name,
+        event_name,
+        payload,
+        except,
+        telemetry.Local,
+      )
+      case state.pubsub {
+        Some(ps) ->
+          case except {
+            None ->
+              pubsub.broadcast_from(
+                ps,
+                process.self(),
+                topic_name,
+                event_name,
+                payload,
+              )
+            Some(socket_id) ->
+              pubsub.broadcast_from_socket(
+                ps,
+                process.self(),
+                socket_id,
+                topic_name,
+                event_name,
+                payload,
+              )
+          }
+        None -> Nil
+      }
+    }
   }
 }
 

@@ -1,10 +1,12 @@
 import app_test_helpers as h
 import beryl
+import beryl/presence
 import beryl/socket
 import beryl/stats
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
+import gleam/json
 import gleam/option.{None}
 import gleeunit/should
 import test_helpers
@@ -18,7 +20,10 @@ fn start_sockets() -> beryl.Sockets {
         case input {
           socket.Join(_, _, ref) ->
             socket.Next(model, [socket.AcceptJoin(ref, None)])
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )
@@ -65,6 +70,81 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   let _ = beryl.stop(sockets)
 }
 
+/// A socket actor that dies without reporting `SocketClosed` (killed, or
+/// crashed outside a rescue boundary) must be swept by the router's
+/// monitor: neither its connection count nor its topic-index entries may
+/// leak.
+pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
+  let pids = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(presence_handle) =
+    presence.start(presence.default_config("stats-actor-crash"))
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(presence_handle),
+      init: fn(_info) {
+        // `init` runs in the socket's own actor, so this is the actor pid.
+        process.send(pids, process.self())
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Join(topic_name, _, ref) ->
+            socket.Next(model, [
+              socket.AcceptJoin(ref, None),
+              socket.PresenceTrack(topic_name, "tracked", json.object([])),
+            ])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
+        }
+      },
+    )
+  let frames =
+    h.connect_with_close(sockets, "doomed", fn() { process.send(closed, Nil) })
+  h.join(sockets, "doomed", "room:x", "jr-1", "1")
+  let assert Ok(_) = process.receive(frames, 500)
+  let assert Ok(actor_pid) = process.receive(pids, 500)
+    as "init reported the socket actor's pid"
+  test_helpers.wait_until(
+    fn() { stats.connected_sockets(read_snapshot(sockets)) == 1 },
+    500,
+    10,
+  )
+  let joined = read_snapshot(sockets)
+  stats.active_topics(joined) |> should.equal(1)
+  test_helpers.wait_until(
+    fn() {
+      case presence.list(presence_handle, "room:x") {
+        Ok([_]) -> True
+        Ok(_) | Error(Nil) -> False
+      }
+    },
+    500,
+    10,
+  )
+
+  process.kill(actor_pid)
+
+  process.receive(closed, 500) |> should.equal(Ok(Nil))
+  test_helpers.wait_until(
+    fn() { stats.connected_sockets(read_snapshot(sockets)) == 0 },
+    500,
+    10,
+  )
+  let swept = read_snapshot(sockets)
+  stats.joined_socket_topic_pairs(swept) |> should.equal(0)
+  stats.active_topics(swept) |> should.equal(0)
+  test_helpers.wait_until(
+    fn() { presence.list(presence_handle, "room:x") == Ok([]) },
+    500,
+    10,
+  )
+  let _ = beryl.stop(sockets)
+}
+
 pub fn snapshot_returns_unavailable_after_stop_test() {
   let sockets = start_sockets()
   let assert Ok(Nil) = beryl.stop(sockets)
@@ -72,7 +152,12 @@ pub fn snapshot_returns_unavailable_after_stop_test() {
   |> should.equal(Error(stats.RuntimeUnavailable))
 }
 
-pub fn snapshot_times_out_while_runtime_is_busy_test() {
+/// The positive pin of #334's topology: an app callback blocks only its
+/// own socket's actor, so the router answers stats requests while a
+/// callback is mid-flight. (A flooded router can still return
+/// `RequestTimedOut`; `snapshot_returns_unavailable_after_stop_test`
+/// covers the unavailable path.)
+pub fn snapshot_succeeds_while_a_socket_callback_is_busy_test() {
   let entered = process.new_subject()
   let assert Ok(sockets) =
     h.start_app(
@@ -87,7 +172,10 @@ pub fn snapshot_times_out_while_runtime_is_busy_test() {
             process.sleep(1200)
             socket.Next(model, [])
           }
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )
@@ -97,7 +185,9 @@ pub fn snapshot_times_out_while_runtime_is_busy_test() {
   h.push(sockets, "slow", "room:slow", "block", "ref")
   let assert Ok(Nil) = process.receive(entered, 500)
 
-  stats.snapshot(sockets)
-  |> should.equal(Error(stats.RequestTimedOut))
+  let snapshot = read_snapshot(sockets)
+  stats.connected_sockets(snapshot) |> should.equal(1)
+  stats.joined_socket_topic_pairs(snapshot) |> should.equal(1)
+  stats.active_topics(snapshot) |> should.equal(1)
   let _ = beryl.stop(sockets)
 }

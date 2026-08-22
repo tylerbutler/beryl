@@ -14,7 +14,6 @@ import example_helpers/session_presence
 import gleam/dynamic.{type Dynamic}
 import gleam/json.{type Json}
 import gleam/list
-import gleam/option.{type Option, None, Some}
 
 /// Private state of one joined cursor room.
 type State {
@@ -24,8 +23,9 @@ type State {
 /// This channel schedules no server-side messages for itself, so its
 /// `info` type is `Nil`: joining, moving, and leaving are each handled in
 /// the turn that carries them.
-type Note =
-  Nil
+type Note {
+  PublishRoster
+}
 
 const supported_reactions = ["👍", "❤️", "😂", "🎉", "🔥"]
 
@@ -45,12 +45,13 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
         color: color.pastel_for(context.socket_id),
       )
 
-    session_presence.track(
+    session_presence.track_without_publish(
       ctx.presence,
       context.topic,
       context.socket_id,
       meta(state),
     )
+    channel.notify(context.self, PublishRoster)
 
     channel.accept(state, callbacks(ctx, context.topic))
     |> channel.with_reply(
@@ -74,15 +75,20 @@ fn callbacks(ctx: Ctx, topic: String) -> channel.Callbacks(State, Note) {
 
       "reaction" ->
         case decode_reaction(message.payload) {
-          Some(reaction) ->
+          Ok(reaction) ->
             channel.next(state, [
               channel.broadcast_from("reaction", reaction),
             ])
-          None -> channel.next(state, [])
+          Error(Nil) -> channel.next(state, [])
         }
 
       _ -> channel.next(state, [])
     }
+  })
+  |> channel.on_info(fn(state, note) {
+    let PublishRoster = note
+    session_presence.publish(ctx.presence, topic)
+    channel.next(state, [])
   })
   |> channel.on_terminate(fn(state: State, _reason) {
     session_presence.untrack(ctx.presence, topic, state.socket_id)
@@ -107,7 +113,7 @@ fn move(state: State, raw: Dynamic) -> Json {
   ])
 }
 
-fn decode_reaction(raw: Dynamic) -> Option(Json) {
+fn decode_reaction(raw: Dynamic) -> Result(Json, Nil) {
   case
     payload.string_field(raw, "reaction"),
     payload.float_field(raw, "x"),
@@ -120,16 +126,16 @@ fn decode_reaction(raw: Dynamic) -> Option(Json) {
         && in_range(y)
       {
         True ->
-          Some(
+          Ok(
             json.object([
               #("reaction", json.string(reaction)),
               #("x", json.float(x)),
               #("y", json.float(y)),
             ]),
           )
-        False -> None
+        False -> Error(Nil)
       }
-    _, _, _ -> None
+    _, _, _ -> Error(Nil)
   }
 }
 

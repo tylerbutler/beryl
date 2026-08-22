@@ -120,12 +120,7 @@ pub type Event {
     outcome: MessageOutcome,
     callback_result: CallbackResult,
   )
-  BroadcastStop(
-    duration: Int,
-    recipients: Int,
-    send_failures: Int,
-    origin: BroadcastOrigin,
-  )
+  BroadcastStop(duration: Int, recipients: Int, origin: BroadcastOrigin)
 }
 
 @external(erlang, "beryl_telemetry_ffi", "execute")

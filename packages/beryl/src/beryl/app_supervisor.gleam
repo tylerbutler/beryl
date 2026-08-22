@@ -11,7 +11,7 @@ import gleam/otp/static_supervisor
 
 pub type Message {
   StopRuntime(started: process.Subject(Bool), finished: process.Subject(Bool))
-  RuntimeStopped
+  RuntimeStopped(succeeded: Bool)
   RuntimeDown(process.Down)
   LinkedExit(process.ExitMessage)
 }
@@ -38,8 +38,8 @@ type State {
     parent: process.Pid,
     supervisor: process.Pid,
     stop_state: StopState,
-    runtime_stopped: process.Subject(Nil),
-    stop_runtime: fn(process.Subject(Nil)) -> Result(process.Monitor, Nil),
+    runtime_stopped: process.Subject(Bool),
+    stop_runtime: fn(process.Subject(Bool)) -> Result(process.Monitor, Nil),
   )
 }
 
@@ -47,7 +47,7 @@ type State {
 /// distinction between intentional shutdown and restart-intensity exhaustion.
 pub fn start(
   name: process.Name(Message),
-  stop_runtime: fn(process.Subject(Nil)) -> Result(process.Monitor, Nil),
+  stop_runtime: fn(process.Subject(Bool)) -> Result(process.Monitor, Nil),
   start_supervisor: fn() ->
     Result(actor.Started(static_supervisor.Supervisor), actor.StartError),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
@@ -62,7 +62,7 @@ pub fn start(
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> process.select_map(runtime_stopped, fn(_) { RuntimeStopped })
+          |> process.select_map(runtime_stopped, RuntimeStopped)
           |> process.select_monitors(RuntimeDown)
           |> process.select_trapped_exits(LinkedExit)
 
@@ -109,14 +109,14 @@ fn handle_message(
           )
         }
       }
-    RuntimeStopped ->
+    RuntimeStopped(succeeded) ->
       case state.stop_state {
         Stopping(_, finished, SupervisorExited) -> {
-          process.send(finished, True)
+          process.send(finished, succeeded)
           actor.stop()
         }
         Stopping(monitor, finished, AwaitingBoth) -> {
-          process.send(finished, True)
+          process.send(finished, succeeded)
           actor.continue(
             State(
               ..state,

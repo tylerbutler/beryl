@@ -905,6 +905,15 @@ fn build_app_subtree(
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
+        fn(runtime_pid) {
+          runtime.start_socket_actor(
+            config: to_runtime_config(config),
+            init: init,
+            update: update,
+            router: process.named_subject(runtime_name),
+            router_pid: runtime_pid,
+          )
+        },
       ),
     )
 
@@ -990,6 +999,8 @@ fn await_admission(
 fn app_handle(
   subject: Subject(runtime.Msg(msg)),
   supervisor: Subject(app_supervisor.Message),
+  start_socket_actor: fn(process.Pid) ->
+    Result(actor.Started(Subject(runtime.Msg(msg))), actor.StartError),
 ) -> AppHandle {
   AppHandle(
     admit_socket: fn(
@@ -1003,23 +1014,48 @@ fn app_handle(
     ) {
       case process.subject_owner(subject) {
         Ok(current_owner) if current_owner == owner -> {
-          let reply = process.new_subject()
-          let admission = runtime.new_admission_token()
-          process.send(
-            subject,
-            runtime.AdmitSocket(
-              owner,
-              socket_id,
-              send,
-              send_binary,
-              socket_codec,
-              seed,
-              close,
-              admission,
-              reply,
-            ),
-          )
-          await_admission(reply, admission)
+          // The socket's actor is started here, in the transport's
+          // connection process, so connection setup never serialises
+          // through the runtime; the runtime's admission turn is an O(1)
+          // atomic admit-and-forward, and the actor answers `reply`
+          // itself once the app `init` has run.
+          case start_socket_actor(owner) {
+            Error(_) -> False
+            Ok(started) -> {
+              // `actor.start` linked the actor to this transport process;
+              // its lifecycle belongs to the runtime instead.
+              process.unlink(started.pid)
+              let reply = process.new_subject()
+              let admission = runtime.new_admission_token()
+              process.send(
+                subject,
+                runtime.AdmitSocket(
+                  owner,
+                  socket_id,
+                  send,
+                  send_binary,
+                  socket_codec,
+                  seed,
+                  close,
+                  admission,
+                  reply,
+                  started.data,
+                  started.pid,
+                ),
+              )
+              case await_admission(reply, admission) {
+                True -> True
+                // Refused by the runtime, refused by the actor, or timed
+                // out. Stopping the actor is idempotent across all three:
+                // a never-registered actor just stops, and a dead one
+                // drops the message.
+                False -> {
+                  process.send(started.data, runtime.StopSocketActor)
+                  False
+                }
+              }
+            }
+          }
         }
         _ -> False
       }
@@ -1095,7 +1131,7 @@ fn ensure_supervisor_running(
 
 fn stop_runtime(
   subject: Subject(runtime.Msg(msg)),
-  finished: Subject(Nil),
+  finished: Subject(Bool),
 ) -> Result(process.Monitor, Nil) {
   case process.subject_owner(subject) {
     Error(Nil) -> Error(Nil)
