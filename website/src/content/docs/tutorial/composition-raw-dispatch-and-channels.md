@@ -1,4 +1,7 @@
-# Composition: raw dispatch and `beryl/channel`
+---
+title: "Composition: Raw Dispatch and beryl/channel"
+description: Refactor a socket-wide update function into heterogeneous channel handlers with private state and typed messages.
+---
 
 Elm and Lustre applications compose child logic by making the parent own the
 combined model and message space. The parent stores the child models and adds
@@ -46,7 +49,7 @@ pub type Model {
 ```
 
 This excerpt comes from
-[`raw.gleam`](../../examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
 Adding a second unrelated guide topic would widen `Message`, add state or routing
 metadata to `Model`, and add more branches to the same update.
 
@@ -68,7 +71,7 @@ let assert Ok(#(sockets, spec)) =
 ```
 
 This excerpt comes from
-[`step_04.gleam`](../../examples/blog_series/src/blog_series/step_04.gleam).
+[`step_04.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_04.gleam).
 `channel.child_spec` accepts the same core `beryl.Config` and returns the same
 kind of `beryl.Sockets` handle and supervised child specification as
 `beryl.child_spec`.
@@ -136,7 +139,7 @@ fn poll_channel(
 ```
 
 This exact excerpt comes from
-[`channels.gleam`](../../examples/blog_series/src/blog_series/channels.gleam).
+[`channels.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/channels.gleam).
 The concepts now have channel-specific names:
 
 - `channel.Handler` pairs a topic pattern with a join callback.
@@ -286,11 +289,11 @@ and explains where the Elm analogy stops helping.
 ## Sources and further reading
 
 - [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)
-- [`beryl/channel` source](../../packages/beryl/src/beryl/channel.gleam)
-- [Beryl channels guide](../../website/src/content/docs/guides/channels.md)
-- [Choose a Beryl API](../../website/src/content/docs/choosing-an-api.md)
-- [ADR 0002: app-side dispatch](../adr/0002-app-side-dispatch.md)
-- [ADR 0003: layered channel API](../adr/0003-layered-channel-api.md)
+- [`beryl/channel` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/channel.gleam)
+- [Beryl channels guide](/guides/channels/)
+- [Choose a Beryl API](/choosing-an-api/)
+- [ADR 0002: app-side dispatch](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0002-app-side-dispatch.md)
+- [ADR 0003: layered channel API](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0003-layered-channel-api.md)
 
 ## Runnable checkpoint: step 04
 
@@ -298,10 +301,10 @@ and explains where the Elm analogy stops helping.
 cd examples/blog_series && gleam run -m blog_series/step_04
 ```
 
-Open <http://localhost:8104> in two tabs, join `demo`, and vote. Replies and
+Open `http://localhost:8104` in two tabs, join `demo`, and vote. Replies and
 peer broadcasts behave as in step 03, but `beryl/channel` now owns routing and
 private channel state. Select **Close poll now** or wait 60 seconds. The
 browser also joins the heterogeneous `guide` handler. Inspect the status
 paragraph's `title` attribute to see its typed info message.
 
-Next: [Where the analogy ends](05-where-the-analogy-ends.md).
+Next: [Where the analogy ends](/tutorial/where-the-analogy-ends/).

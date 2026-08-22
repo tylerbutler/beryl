@@ -1,4 +1,7 @@
-# One update function, many socket events
+---
+title: One Update Function, Many Socket Events
+description: Handle joins, messages, binary frames, closes, replies, and ordered effects in one typed update function.
+---
 
 A WebSocket connection carries more than application commands. Clients join
 topics, send text events, send binary frames, leave, disconnect, and expect
@@ -24,7 +27,7 @@ pub type Input(message) {
 ```
 
 This excerpt comes from
-[`packages/beryl/src/beryl/socket.gleam`](../../packages/beryl/src/beryl/socket.gleam).
+[`packages/beryl/src/beryl/socket.gleam`](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam).
 Each variant marks a different boundary:
 
 - `Join` asks the application to accept or reject one topic subscription.
@@ -61,7 +64,7 @@ socket.Next(model, [
 ```
 
 See the complete branch in
-[`raw.gleam`](../../examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
 `room_name` accepts only a non-empty `poll:<room>` topic. The code does not
 reconstruct a ref from the topic or from Phoenix wire fields.
 
@@ -114,7 +117,7 @@ the remote client chooses the payload, so Gleam cannot assign it an
 application type before validation.
 
 The example decodes at the domain boundary in
-[`poll.gleam`](../../examples/blog_series/src/blog_series/poll.gleam):
+[`poll.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/poll.gleam):
 
 ```gleam
 pub fn command(event: String, payload: Dynamic) -> Command {
@@ -243,9 +246,9 @@ socket-scoped `Sender` with a general OTP `Subject`.
 
 ## Sources and further reading
 
-- [`beryl/socket` source](../../packages/beryl/src/beryl/socket.gleam)
-- [Beryl message lifecycle](../../website/src/content/docs/architecture/message-lifecycle.md)
-- [Beryl app-side dispatch guide](../../website/src/content/docs/guides/dispatch.md)
+- [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
+- [Beryl message lifecycle](/architecture/message-lifecycle/)
+- [Beryl app-side dispatch guide](/guides/dispatch/)
 - [Gleam dynamic decoding](https://hexdocs.pm/gleam_stdlib/gleam/dynamic/decode.html)
 
 ## Runnable checkpoint: step 02
@@ -254,9 +257,9 @@ socket-scoped `Sender` with a general OTP `Subject`.
 cd examples/blog_series && gleam run -m blog_series/step_02
 ```
 
-Open <http://localhost:8102> in two tabs. Join `demo` in both, then vote in
+Open `http://localhost:8102` in two tabs. Join `demo` in both, then vote in
 one tab. The voting tab updates from its `ReplyOk`. The other tab updates
 from `BroadcastFrom`. Alternate votes between tabs and confirm both totals
 stay in sync. **Close poll now** remains unavailable in this checkpoint.
 
-Next: [Typed messages from the rest of your Gleam system](03-typed-messages-from-your-gleam-system.md).
+Next: [Typed messages from the rest of your Gleam system](/tutorial/typed-messages-from-your-gleam-system/).

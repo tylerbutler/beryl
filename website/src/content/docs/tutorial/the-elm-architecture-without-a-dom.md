@@ -1,4 +1,7 @@
-# The Elm architecture, without a DOM
+---
+title: The Elm Architecture, Without a DOM
+description: Learn Beryl's model-update architecture by building the first read-only stage of a live poll.
+---
 
 Lustre and Gleam OTP actors apply the same programming model to different
 domains. Each starts with state, receives a typed message, and runs one
@@ -201,7 +204,7 @@ beryl.child_spec(
 ```
 
 That exact assembly appears in
-[`step_01.gleam`](../../examples/blog_series/src/blog_series/step_01.gleam).
+[`step_01.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_01.gleam).
 `beryl.child_spec` captures the app's concrete model and message types in
 typed closures and returns a non-generic `beryl.Sockets` handle plus a child
 specification. The shared runtime remains generic internally. It does not
@@ -224,7 +227,7 @@ pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) 
 ```
 
 This excerpt comes from
-[`raw.gleam`](../../examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
 The names carry specific meanings:
 
 - `Model` is application-defined state for one connected socket.
@@ -314,8 +317,8 @@ systems. Post 4 performs that refactor without changing the wire protocol.
 - [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)
 - [Gleam OTP actor module](https://gleam-otp.hexdocs.pm/gleam/otp/actor.html)
 - [Gleam Erlang process module](https://gleam-erlang.hexdocs.pm/gleam/erlang/process.html)
-- [`beryl/socket` source](../../packages/beryl/src/beryl/socket.gleam)
-- [Beryl app-side dispatch guide](../../website/src/content/docs/guides/dispatch.md)
+- [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
+- [Beryl app-side dispatch guide](/guides/dispatch/)
 
 ## Runnable checkpoint: step 01
 
@@ -323,9 +326,9 @@ systems. Post 4 performs that refactor without changing the wire protocol.
 cd examples/blog_series && gleam run -m blog_series/step_01
 ```
 
-Open <http://localhost:8101>, keep the room as `demo`, and select **Join
+Open `http://localhost:8101`, keep the room as `demo`, and select **Join
 poll**. The client joins `poll:demo`, requests `get_state`, and displays an
 open poll with zero votes. Voting and **Close poll now** are unavailable in
 this read-only checkpoint, so those pushes time out without changing state.
 
-Next: [One update function, many socket events](02-one-update-function-many-socket-events.md).
+Next: [One update function, many socket events](/tutorial/one-update-function-many-socket-events/).

@@ -1,4 +1,7 @@
-# Where the analogy ends
+---
+title: Where the Analogy Ends
+description: Follow a frame through Beryl and learn where frontend model-update ideas stop matching runtime behavior.
+---
 
 Model-update vocabulary helps organize Beryl application code, but it can
 mislead you about execution. Beryl creates one actor for each socket model,
@@ -132,7 +135,7 @@ beryl.config(wire.phoenix_codec())
 ```
 
 This exact excerpt comes from
-[`step_05.gleam`](../../examples/blog_series/src/blog_series/step_05.gleam).
+[`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_05.gleam).
 These values make the example production-shaped, not universally correct.
 Choose limits from expected traffic and deployment capacity.
 
@@ -210,12 +213,12 @@ ephemeral subscriptions by reconnecting.
 
 ## Sources and further reading
 
-- [Beryl runtime architecture](../../website/src/content/docs/architecture/runtime.md)
-- [Beryl message lifecycle](../../website/src/content/docs/architecture/message-lifecycle.md)
-- [Choose a Beryl API](../../website/src/content/docs/choosing-an-api.md)
-- [`beryl` source](../../packages/beryl/src/beryl.gleam)
-- [`beryl/socket` source](../../packages/beryl/src/beryl/socket.gleam)
-- [`beryl/channel` source](../../packages/beryl/src/beryl/channel.gleam)
+- [Beryl runtime architecture](/architecture/runtime/)
+- [Beryl message lifecycle](/architecture/message-lifecycle/)
+- [Choose a Beryl API](/choosing-an-api/)
+- [`beryl` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl.gleam)
+- [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
+- [`beryl/channel` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/channel.gleam)
 
 ## Runnable checkpoint: step 05
 
@@ -223,9 +226,9 @@ ephemeral subscriptions by reconnecting.
 cd examples/blog_series && gleam run -m blog_series/step_05
 ```
 
-Open <http://localhost:8105>, join `demo`, vote from two tabs, and close the
+Open `http://localhost:8105`, join `demo`, vote from two tabs, and close the
 poll now or wait 60 seconds. The behavior matches step 04 while the runtime
 uses the heartbeat and abuse-control settings shown above. In another shell,
 run `curl http://localhost:8105/healthz`. The expected response is `ok`.
 
-Next: [Supervising Beryl](06-supervising-beryl.md).
+Next: [Supervising Beryl](/tutorial/supervising-beryl/).

@@ -1,4 +1,7 @@
-# Typed messages from the rest of your Gleam system
+---
+title: Typed Messages From Your Gleam System
+description: Send typed server-side events from actors and timers into the socket update loop.
+---
 
 Client frames are only one source of socket work. A database worker may
 finish, a timer may expire, or an application actor may publish a domain
@@ -32,7 +35,7 @@ type Message {
 ```
 
 This excerpt comes from
-[`store.gleam`](../../examples/blog_series/src/blog_series/store.gleam).
+[`store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/store.gleam).
 The store's `Subject(Message)` addresses the actor's mailbox. `Join` and
 `Leave` track active sockets. Other messages carry reply subjects because
 `Get`, `Vote`, and `Close` are synchronous calls from the wrapper API.
@@ -128,7 +131,7 @@ socket.Info(ClosePoll(topic)) ->
 ```
 
 These excerpts come from
-[`raw.gleam`](../../examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
 `ClosePoll` stays typed from the call to `socket.notify` through the
 `Info(ClosePoll(topic))` match. It does not become `Dynamic`.
 
@@ -164,7 +167,7 @@ pub fn after(timer: Timer, milliseconds: Int, action: fn() -> Nil) -> Nil {
 ```
 
 This exact excerpt comes from
-[`timer.gleam`](../../examples/blog_series/src/blog_series/timer.gleam).
+[`timer.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/timer.gleam).
 The timer actor owns delayed callback execution. It does not block Beryl's
 socket actor for 60 seconds.
 
@@ -300,8 +303,8 @@ heterogeneous channel handlers with private state and private info types.
 
 - [Gleam OTP actor module](https://gleam-otp.hexdocs.pm/gleam/otp/actor.html)
 - [Gleam Erlang process module](https://gleam-erlang.hexdocs.pm/gleam/erlang/process.html)
-- [`beryl/socket` source](../../packages/beryl/src/beryl/socket.gleam)
-- [Beryl runtime architecture](../../website/src/content/docs/architecture/runtime.md)
+- [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
+- [Beryl runtime architecture](/architecture/runtime/)
 
 ## Runnable checkpoint: step 03
 
@@ -309,10 +312,10 @@ heterogeneous channel handlers with private state and private info types.
 cd examples/blog_series && gleam run -m blog_series/step_03
 ```
 
-Open <http://localhost:8103>, join `demo`, and vote. Select **Close poll
+Open `http://localhost:8103`, join `demo`, and vote. Select **Close poll
 now** to close immediately, or leave the poll open for 60 seconds. In either
 case the client receives the closed state and voting becomes disabled. If you
 close the browser before the timer fires, Beryl ignores its later
 `socket.notify` delivery.
 
-Next: [Composition: raw dispatch and `beryl/channel`](04-composition-raw-dispatch-and-channels.md).
+Next: [Composition: raw dispatch and `beryl/channel`](/tutorial/composition-raw-dispatch-and-channels/).

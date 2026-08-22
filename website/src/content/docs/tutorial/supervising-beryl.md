@@ -1,4 +1,7 @@
-# Supervising Beryl
+---
+title: Supervising Beryl
+description: Place Beryl in an OTP supervision tree and understand restart, shutdown, and ownership boundaries.
+---
 
 `beryl.child_spec` does not start a socket runtime. It returns a stable
 `beryl.Sockets` handle and a child specification for your application's OTP
@@ -29,9 +32,9 @@ let assert Ok(_root) =
 ```
 
 The first excerpt comes from
-[`step_05.gleam`](../../examples/blog_series/src/blog_series/step_05.gleam).
+[`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_05.gleam).
 The supervisor code comes from
-[`server.gleam`](../../examples/blog_series/src/blog_series/server.gleam).
+[`server.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/server.gleam).
 The server then passes `sockets` to `mist_transport.upgrade`.
 
 Starting the supervisor before the listener matters. You receive the
@@ -193,10 +196,10 @@ Graceful shutdown drains socket callbacks without stopping unrelated services.
 
 ## Sources and further reading
 
-- [Beryl supervision guide](../../website/src/content/docs/guides/supervision.md)
-- [`beryl.child_spec` and `beryl.stop`](../../packages/beryl/src/beryl.gleam)
-- [Beryl runtime architecture](../../website/src/content/docs/architecture/runtime.md)
-- [Error handling](../../website/src/content/docs/guides/error-handling.md)
+- [Beryl supervision guide](/guides/supervision/)
+- [`beryl.child_spec` and `beryl.stop`](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl.gleam)
+- [Beryl runtime architecture](/architecture/runtime/)
+- [Error handling](/guides/error-handling/)
 
 ## Runnable checkpoint: step 05
 
@@ -205,7 +208,7 @@ cd examples/blog_series && gleam run -m blog_series/step_05
 ```
 
 The checkpoint creates the `Sockets` handle and specification, starts the
-supervision tree, and then starts Mist on <http://localhost:8105>. Stop it with
+supervision tree, and then starts Mist on `http://localhost:8105`. Stop it with
 Ctrl-C to terminate the application process and its linked tree.
 
-Index: [Beryl introduction](README.md).
+Back to the [tutorial overview](/tutorial/).

@@ -1,28 +1,22 @@
-# Beryl introduction series
+---
+title: Build a Live Poll
+description: Learn Beryl by building a live poll from raw dispatch through channels, runtime boundaries, and supervision.
+---
 
-Status: draft
-
-Audience: Gleam developers who know basic OTP and have not used Beryl.
-
-Beryl version: `0.3.0` (pre-1.0)
-
-Source baseline: `cd4e941cb3bbe7ceb87769427d9a2e5853b76d1f`, plus the
-uncommitted example and drafts in this change
-
-These publication-neutral drafts introduce Beryl through one live-poll
-application. The prose and excerpts use the runnable example under
-[`examples/blog_series/`](../../examples/blog_series/) as the source of truth.
-Replace the source baseline with the final commit before publication. Beryl is
-pre-1.0, so treat the API as evolving rather than stable.
+This tutorial introduces Beryl through one live-poll application. The prose
+and excerpts use the runnable
+[`examples/blog_series/`](https://github.com/tylerbutler/beryl/tree/main/examples/blog_series)
+project as the source of truth. Beryl is pre-1.0, so treat the API as evolving
+rather than stable.
 
 ## Sequence
 
-1. [The Elm architecture, without a DOM](01-the-elm-architecture-without-a-dom.md)
-2. [One update function, many socket events](02-one-update-function-many-socket-events.md)
-3. [Typed messages from the rest of your Gleam system](03-typed-messages-from-your-gleam-system.md)
-4. [Composition: raw dispatch and `beryl/channel`](04-composition-raw-dispatch-and-channels.md)
-5. [Where the analogy ends](05-where-the-analogy-ends.md)
-6. [Supervising Beryl](06-supervising-beryl.md)
+1. [The Elm architecture, without a DOM](/tutorial/the-elm-architecture-without-a-dom/)
+2. [One update function, many socket events](/tutorial/one-update-function-many-socket-events/)
+3. [Typed messages from the rest of your Gleam system](/tutorial/typed-messages-from-your-gleam-system/)
+4. [Composition: raw dispatch and `beryl/channel`](/tutorial/composition-raw-dispatch-and-channels/)
+5. [Where the analogy ends](/tutorial/where-the-analogy-ends/)
+6. [Supervising Beryl](/tutorial/supervising-beryl/)
 
 Each post stands on its own, but the checkpoints build from read-only raw
 dispatch to a production-shaped channel system.
@@ -33,12 +27,12 @@ Run each command from the repository root:
 
 | Post | Command | URL |
 |---|---|---|
-| 1 | `cd examples/blog_series && gleam run -m blog_series/step_01` | <http://localhost:8101> |
-| 2 | `cd examples/blog_series && gleam run -m blog_series/step_02` | <http://localhost:8102> |
-| 3 | `cd examples/blog_series && gleam run -m blog_series/step_03` | <http://localhost:8103> |
-| 4 | `cd examples/blog_series && gleam run -m blog_series/step_04` | <http://localhost:8104> |
-| 5 | `cd examples/blog_series && gleam run -m blog_series/step_05` | <http://localhost:8105> |
-| 6 | `cd examples/blog_series && gleam run -m blog_series/step_05` | <http://localhost:8105> |
+| 1 | `cd examples/blog_series && gleam run -m blog_series/step_01` | `http://localhost:8101` |
+| 2 | `cd examples/blog_series && gleam run -m blog_series/step_02` | `http://localhost:8102` |
+| 3 | `cd examples/blog_series && gleam run -m blog_series/step_03` | `http://localhost:8103` |
+| 4 | `cd examples/blog_series && gleam run -m blog_series/step_04` | `http://localhost:8104` |
+| 5 | `cd examples/blog_series && gleam run -m blog_series/step_05` | `http://localhost:8105` |
+| 6 | `cd examples/blog_series && gleam run -m blog_series/step_05` | `http://localhost:8105` |
 
 Stop a checkpoint with Ctrl-C before starting the next one. The browser client
 loads Phoenix JavaScript 1.7.20 from unpkg, so the first page load needs
