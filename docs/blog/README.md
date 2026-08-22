@@ -4,9 +4,9 @@ Status: draft
 
 Audience: Gleam developers who know basic OTP and have not used Beryl.
 
-Beryl version: `0.2.0` (pre-1.0)
+Beryl version: `0.3.0` (pre-1.0)
 
-Source baseline: `ea5dc5391fa17c4d8107ce0cc482c3f1d295b40f`, plus the
+Source baseline: `cd4e941cb3bbe7ceb87769427d9a2e5853b76d1f`, plus the
 uncommitted example and drafts in this change
 
 These publication-neutral drafts introduce Beryl through one live-poll
@@ -76,8 +76,9 @@ The series keeps Beryl's terms distinct:
   `beryl/channel`. A **handler** matches a topic pattern and constructs that
   channel's private **state**, callbacks, and typed info path.
 - A channel callback returns ordered **actions** scoped to its own topic.
-- The **runtime** is Beryl's shared OTP actor. It stores the logical
-  per-socket models and interprets effects.
+- The **runtime** uses one router actor and one actor for each connected
+  socket. The socket actor stores its model and interprets effects. The router
+  maintains the socket index and handles broadcast fan-out.
 - A Gleam OTP `process.Subject` is a typed address for a process mailbox. A
   Beryl `socket.Sender` is narrower. It delivers typed `Info` only to its
   owning socket update. The runtime ignores delivery after disconnect.

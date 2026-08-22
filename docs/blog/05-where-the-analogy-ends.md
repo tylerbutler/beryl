@@ -1,10 +1,10 @@
 # Where the analogy ends
 
 Model-update vocabulary helps organize Beryl application code, but it can
-mislead you about execution. Beryl does not create an independent actor for
-each model, render output from state, or restart socket state after a runtime
-crash. One shared runtime actor stores many logical socket models, calls the
-application update, and interprets ordered effects.
+mislead you about execution. Beryl creates one actor for each socket model,
+but it does not render output from state or restart socket state after an
+actor crash. A router actor maintains the socket index and handles fan-out.
+Each socket actor calls the application update and interprets ordered effects.
 
 The production decisions start where the frontend analogy ends.
 
@@ -15,7 +15,8 @@ For a text frame, the path is:
 ```text
 transport connection
   -> configured wire codec
-  -> shared Beryl runtime actor
+  -> Beryl router actor
+  -> socket actor
   -> app update or channel callback
   -> effect/action interpreter
   -> encoded wire frame or broadcast fan-out
@@ -23,34 +24,35 @@ transport connection
 
 The transport owns the WebSocket connection and edge controls. It checks the
 frame size and frame-rate bucket, decodes the frame with the configured codec,
-and sends the decoded value to the runtime. Malformed input and decode cost
-stay out of the shared actor.
+and sends the decoded value to the router. Malformed input and decode cost
+stay in the connection process.
 
-The runtime validates protocol state and constructs a `socket.Input`. Raw
-dispatch receives that input directly. `beryl/channel` supplies the raw
-router, locates the live channel instance, calls its callback, and lowers
-channel actions to core effects.
+The router forwards the decoded value to the socket actor. That actor validates
+protocol state and constructs a `socket.Input`. Raw dispatch receives that
+input directly. `beryl/channel` supplies the app-side router, locates the live
+channel instance, calls its callback, and lowers channel actions to core
+effects.
 
-The runtime then interprets effects in list order. Replies and pushes become
-encoded frames. Broadcasts fan out to the topic's subscribers and can cross
-nodes through PubSub when configured.
+The socket actor then interprets effects in list order. Replies and pushes
+become encoded frames. It sends broadcasts to the router for local fan-out and
+optional PubSub delivery.
 
 This path contains one intentional `Dynamic` boundary: decoded client
 payloads. The core runtime's app model and message types stay captured in
 typed closures. The channel layer adds separate closure sealing for each
 handler's private state and info type.
 
-## Logical models share one physical actor
+## Each socket model has one actor
 
 Raw `init` runs once per socket and returns one app-defined `Model`. A channel
 router creates one private state value per accepted topic. Those values are
-logically separate, but they all reside in one Beryl runtime actor.
+logically separate, and one socket actor stores all values for its socket.
 
-The runtime processes its mailbox sequentially. That gives it a consistent
-view of socket ids, models, pending and joined topics, subscriber sets, and
-heartbeat timestamps without locks. It also means an update callback should
-finish promptly. Blocking I/O, sleeps, or expensive work delay other sockets
-on the same runtime.
+The socket actor processes its mailbox in sequence. This gives it a consistent
+view of its model, pending and joined topics, and heartbeat timestamp without
+locks. The router has a separate mailbox for the socket index and topic
+subscriber sets. A blocking update delays only its socket, but it also delays
+that socket's later messages, effects, and heartbeat checks.
 
 The live-poll example follows that rule:
 
@@ -64,9 +66,9 @@ supervision and send a typed result through `socket.Sender` or
 
 ## Beryl rescues callback crashes with a scope
 
-"Let it crash" is incomplete advice for a shared runtime. Beryl rescues
-application callback crashes and applies behavior based on the input that
-failed:
+"Let it crash" would make one callback fault close every topic on its socket.
+Beryl rescues application callback crashes and applies behavior based on the
+input that failed:
 
 | Callback or raw input | Runtime behavior |
 |---|---|
@@ -76,8 +78,10 @@ failed:
 | `Info`, or channel `on_info` | Tear down that socket |
 | `Closed`, or channel `on_terminate` | Log the crash and continue teardown |
 
-Other sockets remain in the runtime. Beryl truncates and depth-limits crash
-descriptions before logging.
+Other socket actors continue. A fault elsewhere in that socket actor stops
+only that actor. The router monitors it, closes the connection, and removes
+its index entries. Beryl truncates and depth-limits crash descriptions before
+logging.
 
 The `on_terminate` case has a narrow channel-layer edge. A panic discards the
 router update and actions that the callback returns. Its generation-scoped
@@ -92,9 +96,11 @@ has the same scope.
 ## Supervision restores dispatch, not sessions
 
 `beryl.child_spec` and `channel.child_spec` return a child specification for
-your application's supervisor. A runtime crash starts a fresh runtime under
-the same name-backed `beryl.Sockets` handle. Connected clients close, then
-reconnect and rejoin with new socket models and channel state.
+your application's supervisor. The supervisor restarts the router under the
+same name-backed `beryl.Sockets` handle. Router death stops all socket actors,
+so connected clients close, reconnect, and rejoin with new models and channel
+state. A socket actor crash closes only its connection and does not restart the
+router.
 
 Keep durable or reconstructable domain state in application-owned storage, as
 the example does with `store.Store`. The next post covers the supervision
@@ -103,9 +109,9 @@ tree, restart windows, restart intensity, and graceful shutdown.
 ## Heartbeats test connection liveness
 
 Phoenix clients send heartbeat frames on the `phoenix` topic. Beryl handles
-them inside the runtime. The application update does not receive them. The
-runtime records a monotonic last-seen timestamp and periodically evicts stale
-sockets.
+them inside each socket actor. The application update does not receive them.
+Each actor records a monotonic last-seen timestamp and runs its own recurring
+check. There is no global heartbeat sweep.
 
 Eviction closes the transport and delivers `Closed(topic,
 HeartbeatTimeout)` for every joined topic. Raw dispatch can prune its model.
@@ -134,8 +140,8 @@ Choose limits from expected traffic and deployment capacity.
 
 PubSub distributes broadcasts between BEAM nodes through Erlang `pg`. The
 remote payload and subscriber contract belong to distributed messaging, not
-to a local model-update-view loop. The runtime fans a received broadcast out
-to local subscribers.
+to a local model-update-view loop. The router fans a received broadcast out to
+local socket actors.
 
 Presence is an application-owned actor backed by a CRDT state. Presence
 effects can pause the remaining effects for one socket while the presence
@@ -186,7 +192,8 @@ the mismatches kept in view:
 
 - Beryl has no `view`.
 - Raw `init` runs once per socket.
-- One shared runtime actor stores many logical per-socket models.
+- One actor stores each socket model; a separate router indexes sockets and
+  subscribers.
 - Client payload stays `Dynamic` until application decoding succeeds.
 - `JoinRef` and `ReplyRef` are protocol capabilities, not data to rebuild.
 - Effect list order is observable wire order.

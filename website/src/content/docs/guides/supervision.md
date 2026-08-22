@@ -12,16 +12,22 @@ converts the handler table to a core `init` and `update` pair.
 
 ```text
 beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
-`- runtime actor (Transient)
+|- router actor (Transient)
+`- connection limiter (optional)
+
+transport connection
+`- socket actor (one per connection, monitored by the router)
 ```
 
-- The **runtime actor** holds each socket model and sends events to your
-  `update` function. If the actor crashes, the supervisor restarts it. The
-  child specification still contains the `init` and `update` closures. You do
-  not need to register them again.
-- The runtime uses a stable registered name. The `Sockets` handle and transport
-  connections keep working after a restart. Sends during the restart window do
-  nothing.
+- The **router actor** maintains the socket actor table and topic subscriber
+  index. If the router crashes, the supervisor restarts it. The child
+  specification still contains the `init` and `update` closures.
+- Each **socket actor** holds one model and sends events to your `update`
+  function. Socket actors are not supervisor children. The transport starts
+  them, and the router monitors them.
+- The router uses a stable registered name. The `Sockets` handle accepts new
+  work after a restart. Existing connections close. Sends during the restart
+  window do nothing.
 - The child is `Transient`: a graceful `beryl.stop` is final and is not
   resurrected.
 
@@ -45,11 +51,11 @@ crashes and limits their effect:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
-All app callbacks run in one runtime actor. A supervisor restart for one
-callback would discard all socket models and close all connections on the
-`Sockets` handle. Beryl catches a callback crash only when it can discard the
-result and close the smallest safe scope. Other runtime faults reach the
-supervisor. See
+Each socket's callbacks run in its socket actor. Letting a callback crash that
+actor would close every topic on that socket. Beryl catches a callback crash
+when it can discard the result and close a smaller safe scope. Other socket
+actor faults close only that socket, and the router removes its entries. A
+router fault reaches the supervisor and closes all connections. See
 [Runtime crash containment](/architecture/runtime/#crash-containment).
 
 See the [Error Handling guide](/guides/error-handling/) for details.

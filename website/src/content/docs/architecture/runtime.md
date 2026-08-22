@@ -37,7 +37,7 @@ The router maintains:
 
 ## Typed dispatch without erasure
 
-The runtime actor is generic over the app's `model` and `msg` types.
+The router and socket actors are generic over the app's `model` and `msg` types.
 `beryl.child_spec` captures those types in monomorphic closures. The public
 `Sockets` handle and transport SPI do not need type parameters. The runtime
 still keeps typed state. This path uses no unchecked casts, `Dynamic`

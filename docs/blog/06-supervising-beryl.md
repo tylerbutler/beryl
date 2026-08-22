@@ -51,43 +51,50 @@ The child specification adds a Beryl subtree to your application:
 ```text
 application supervisor
 └── Beryl subtree (Transient)
-    ├── runtime actor (Transient, significant)
+    ├── router actor (Transient, significant)
     └── connection limiter (optional)
+
+transport connection
+└── socket actor (one per connection, monitored by the router)
 ```
 
 The nested supervisor uses `OneForOne` with a tolerance of 3 restarts in 5
-seconds. The runtime actor stores socket models, channel instances, topic
-membership, and pending protocol capabilities. When connection limits are
-enabled, the limiter runs as a sibling in the same subtree.
+seconds. The router stores the socket actor index and topic subscriber sets.
+Each socket actor stores one model, its channel instances, topic membership,
+and pending protocol capabilities. Socket actors are not supervisor children.
+The transport connection starts each one, and the router monitors it. When
+connection limits are enabled, the limiter runs beside the router in the
+subtree.
 
-Marking the runtime as significant gives graceful shutdown a precise boundary.
-When the runtime stops normally, the nested supervisor shuts down the rest of
+Marking the router as significant gives graceful shutdown a precise boundary.
+When the router stops normally, the nested supervisor shuts down the rest of
 the Beryl subtree, including the limiter. The parent application's supervisor
 and sibling children keep running.
 
 The `Transient` restart policy separates a crash from an intentional stop. An
-abnormal runtime exit triggers a restart. A successful `beryl.stop` ends the
+abnormal router exit triggers a restart. A successful `beryl.stop` ends the
 subtree without asking the parent supervisor to bring it back.
 
 ## The handle survives, but socket state does not
 
-`beryl.Sockets` uses registered process names rather than storing one runtime
-pid. A restarted runtime registers the same name, so application code can keep
+`beryl.Sockets` uses registered process names rather than storing one router
+pid. A restarted router registers the same name, so application code can keep
 the original handle. The child specification still holds the typed `init` and
 `update` closures, or the channel router built from your handlers. The new
-runtime starts with the same dispatch code.
+router starts with the same dispatch code.
 
-The new runtime does not recover the old runtime's memory. A restart discards:
+The new router does not recover the old runtime state. A restart discards:
 
 - connected socket records and per-socket models;
 - channel instances and their private state;
 - joined topics, pending joins, and reply capabilities;
 - local subscriber maps and heartbeat timestamps.
 
-Transport connection processes monitor the runtime that admitted them. If
-that runtime dies, they close their WebSockets. Clients must reconnect and
-rejoin. This gives the replacement runtime fresh models and channel state.
-Phoenix clients already implement reconnect and rejoin behavior.
+Socket actors and transport connection processes monitor the router that
+admitted them. If that router dies, the actors stop and the transports close
+their WebSockets. Clients must reconnect and rejoin. This gives the replacement
+router fresh socket actors, models, and channel state. Phoenix clients already
+implement reconnect and rejoin behavior.
 
 Keep shared domain state outside the Beryl runtime when it must survive a
 runtime restart. The live poll stores room totals in `store.Store`, an
@@ -110,36 +117,36 @@ an event must survive a restart, store it in a durable queue or domain process
 and retry after the socket reconnects. A best-effort broadcast is not a
 durable message.
 
-With connection limits enabled, the limiter survives an ordinary runtime
-restart because `OneForOne` restarts only the failed runtime child. The
-replacement runtime continues to use the same limiter.
+With connection limits enabled, the limiter survives an ordinary router
+restart because `OneForOne` restarts only the failed router child. The
+replacement router continues to use the same limiter.
 
 ## Restart intensity escalates repeated failures
 
-The internal supervisor permits 3 runtime restarts within 5 seconds. A fourth
+The internal supervisor permits 3 router restarts within 5 seconds. A fourth
 failure in that window exhausts its restart budget. The Beryl subtree then
 exits abnormally, and your application supervisor decides whether to restart
 the whole subtree.
 
-If the parent restarts the subtree, both the runtime and optional limiter get
+If the parent restarts the subtree, both the router and optional limiter get
 new processes. The original `Sockets` handle remains valid because the subtree
 reuses its allocated names.
 
 This escalation prevents an internal supervisor from retrying a persistent
 fault forever without involving the application's supervision strategy. Logs
-from the first runtime failure remain the place to diagnose the cause.
+from the first router failure remain the place to diagnose the cause.
 
 ## Callback crashes usually do not invoke supervision
 
 Part 5 described Beryl's scoped callback rescue. A panic in raw `update` or a
 channel callback rejects a join or closes the affected topic or socket while
-the runtime continues. The supervisor only responds when the runtime process
-exits.
+the socket actor continues when the scope permits. A fault outside the rescue
+boundary stops that socket actor, and the router removes it. The supervisor
+only responds when the router exits.
 
-That separation avoids restarting every connection because one application's
-callback panicked. It also means repeated callback panics will not consume the
-runtime's restart budget. They appear as repeated scoped failures in logs and
-client behavior instead.
+That separation avoids restarting every connection because one callback
+panicked. Repeated callback panics do not consume the router's restart budget.
+They appear as repeated scoped failures in logs and client behavior.
 
 ## Graceful shutdown drains the runtime
 
@@ -153,14 +160,15 @@ case beryl.stop(sockets) {
 }
 ```
 
-Before it closes transport connections, the runtime delivers `Closed` to each
-joined raw topic or calls each channel's `on_terminate`. `stop` waits for the
-runtime and optional limiter to terminate. It does not stop the application
-supervisor or unrelated sibling children.
+Before it closes transport connections, the router asks each socket actor to
+deliver `Closed` to every joined raw topic or call each channel's
+`on_terminate`. `stop` waits for the socket actors, router, and optional
+limiter to terminate. It does not stop the application supervisor or unrelated
+sibling children.
 
 `NotRunning` means the supervisor never started this handle, the system has
 already stopped, or the call raced a restart window. `StopTimeout` means the
-runtime did not acknowledge the drain or the subtree did not terminate within
+router did not acknowledge the drain or the subtree did not terminate within
 the shutdown window.
 
 Beryl does not stop application-owned dependencies such as the poll store,
@@ -178,10 +186,10 @@ A production startup path needs four explicit ownership decisions:
 3. Add Beryl's specification to the application supervisor and start it.
 4. Start the HTTP/WebSocket listener with the running `Sockets` handle.
 
-The result has clear recovery boundaries. Beryl supervision restores dispatch.
-Clients restore ephemeral subscriptions by reconnecting. Application-owned
-processes or storage preserve domain state. Graceful shutdown drains socket
-callbacks without stopping unrelated services.
+The result has clear recovery boundaries. Beryl supervision restores the
+router. Clients restore socket actors and ephemeral subscriptions by
+reconnecting. Application-owned processes or storage preserve domain state.
+Graceful shutdown drains socket callbacks without stopping unrelated services.
 
 ## Sources and further reading
 

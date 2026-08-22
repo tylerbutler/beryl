@@ -31,7 +31,7 @@ atoms to untyped terms.
 
 beryl keeps the routing table but does not start one process for each topic.
 With the channel layer, define handlers, callbacks, and per-topic state. All
-channels on one socket run in sequence in the runtime actor. Each channel state
+channels on one socket run in sequence in that socket's actor. Each channel state
 is a **value of your type**, not an assigns map. Raw dispatch has no routing
 table. One `update` receives each socket event as `socket.Input(msg)`. One
 `model` stores the per-socket state.
@@ -52,7 +52,7 @@ Both APIs have these effects:
 | `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
 | `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)` — request data in `info.seed` |
 | `channel "room:*", RoomChannel` routing table | the handler list passed to `channel.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
-| One channel process per joined topic | one private state value per joined topic, in the socket's runtime actor | one `model` per socket, covering all its topics |
+| One channel process per joined topic | one private state value per joined topic, in the socket actor | one `model` per socket, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
 | `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
 | `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state, callbacks)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |

@@ -169,7 +169,7 @@ interprets the list as:
 1. send `ReplyOk` to the browser that voted;
 2. broadcast `poll_state` to every other socket subscribed to the topic.
 
-The runtime actor applies effects strictly in list order and writes the
+The socket actor applies effects strictly in list order and writes the
 frames, so list order is wire order for that socket. This is Beryl's
 contract. The comparison does not assume an ordering contract for Lustre
 effects.

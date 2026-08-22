@@ -197,10 +197,11 @@ for the full trust-boundary and distribution-hardening reference.
 
 ## Operational notes
 
-- The runtime is a single actor per channels system. The transport
-  sheds oversized frames and (when configured) rate-limited traffic before
-  it, but extreme fan-out workloads may want multiple channels systems
-  sharded by topic space.
+- The runtime uses one router actor per channels system and one actor per
+  connected socket. The transport sheds oversized frames and, when configured,
+  rate-limited traffic before routing. Extreme fan-out workloads may want
+  multiple channels systems sharded by topic space so one router does not
+  handle every subscriber.
 - The runtime always starts supervised (`child_spec` has no unsupervised
   mode); restarts are bounded at 3 per 5 seconds, after which the crash
   propagates to the process that called `child_spec`. See the

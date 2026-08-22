@@ -278,12 +278,11 @@ the set of topics joined by this socket.
 ## Initialization belongs to the socket
 
 Lustre initializes one application model. A typical OTP actor initializes one
-actor state value. Beryl calls raw `init` once for every admitted socket
-connection and stores the returned `Model` under that socket's id.
-
-That does not mean Beryl starts one OTP actor per socket. One shared runtime
-actor holds many logical per-socket models. The distinction becomes important
-for blocking work and crash behavior, which the fifth post covers.
+actor state value. Beryl calls raw `init` once for every admitted socket connection. One socket
+actor stores the returned `Model` and runs that socket's updates. A separate
+router actor maintains the socket index and routes frames and broadcasts. The
+distinction becomes important for blocking work and crash behavior, which the
+fifth post covers.
 
 The live poll now gives us a reason to add an application-owned actor. Every
 browser connected to a room must see the same totals, so those totals cannot
@@ -301,7 +300,7 @@ Beryl is not a frontend framework:
 - `init` runs once per socket;
 - client input arrives through `socket.Input`;
 - output is an explicit list of `socket.Effect` values;
-- one shared runtime actor stores many socket models.
+- one socket actor stores each socket model and runs its updates.
 
 Raw dispatch exposes these facts with little machinery. It is Beryl's core
 and the clearest place to learn joins, replies, close events, and effect order.

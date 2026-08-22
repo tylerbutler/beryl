@@ -92,10 +92,10 @@ contains a decoded client event. A chat application might instead define
 and workers.
 
 The example stores `info.self` in each socket's `Model`. Beryl constructs that
-sender when the socket connects. The sender wraps the runtime actor's subject
-and captures the socket ID. The runtime uses this ID to route each notification
-to the correct socket model. The sender remains an opaque `socket.Sender`
-rather than exposing that subject.
+sender when the socket connects. The sender wraps that socket actor's subject
+and captures the socket ID. The actor uses this ID to reject a notification
+after the socket has closed. The sender remains an opaque `socket.Sender`
+rather than exposing the subject.
 
 The same application-defined type appears throughout the path:
 
@@ -107,8 +107,8 @@ socket.Info(ClosePoll(topic))
 ```
 
 Calling `socket.notify(sender, ClosePoll(topic))` sends the typed value to the
-runtime actor. Beryl finds the target socket and passes it to that socket's
-update function as `Info(ClosePoll(topic))`.
+socket actor. Beryl passes it to that socket's update function as
+`Info(ClosePoll(topic))`.
 
 Its update handles the message with this exact excerpt:
 
@@ -166,7 +166,7 @@ pub fn after(timer: Timer, milliseconds: Int, action: fn() -> Nil) -> Nil {
 This exact excerpt comes from
 [`timer.gleam`](../../examples/blog_series/src/blog_series/timer.gleam).
 The timer actor owns delayed callback execution. It does not block Beryl's
-shared runtime actor for 60 seconds.
+socket actor for 60 seconds.
 
 When a timed raw socket accepts a poll topic, it schedules a callback:
 
@@ -284,9 +284,10 @@ giving each accepted channel instance a private info type.
 
 Keep slow or independently supervised work in your own processes. Send a
 small typed result into Beryl when the socket update needs to decide what
-state or effects come next. The shared runtime actor executes update callbacks
-sequentially, so sleeping, blocking I/O, or long computation inside `update`
-delays unrelated sockets on the same runtime.
+state or effects come next. Each socket actor executes its update callbacks in
+sequence, so sleeping, blocking I/O, or long computation inside `update`
+delays that socket's messages, effects, and heartbeat checks. Other sockets
+continue.
 
 `socket.Sender` provides the typed return path without turning Beryl into the
 owner of your job, store, or timer. The application still decides how to
