@@ -2,26 +2,29 @@
 
 [MARP](https://marp.app/) deck for interview/talk appearances about beryl.
 `beryl-theme.css` mirrors the website's visual system
-(`website/src/styles/custom.css` + `fonts.css`): dark emerald ground,
-emerald accent, morganite magenta pop, Unbounded/Hanken Grotesk/JetBrains Mono.
+(`website/src/styles/custom.css` + `fonts.css`). It uses a dark emerald
+background, an emerald accent, a morganite magenta accent, and the
+Unbounded, Hanken Grotesk, and JetBrains Mono fonts.
 
-Speaker notes are embedded as HTML comments on each slide — use presenter
-view (`p` in the bespoke HTML export, or the Marp VS Code preview).
+Each slide contains speaker notes in an HTML comment. Use presenter view
+(`p` in the bespoke HTML export) or the Marp VS Code preview.
 
 ## Presence state-sync demo
 
 `presence-demo.html` is a self-contained, theme-matched companion for the
-presence slides: two node panels, messages in flight between them, and a
-"reality" strip, stepped through three scripted scenarios:
+presence slides. It shows two node panels, messages in transit, and a
+"reality" strip. The demo contains three scripted scenarios:
 
-1. **Naive events** — a delayed `leave` reordered past a `join` ghosts a
+1. **Naive events**: a delayed `leave` that arrives after a `join` incorrectly removes a
    connected user
-2. **Node crash** — crashes never send leaves, so phantom users linger
-3. **Observed-remove CRDT** — the same broken message order, converging
+2. **Node crash**: a crash does not send a leave, so disconnected users remain
+3. **Observed-remove CRDT**: the same incorrect message order converges
 
-Open the file directly in a browser (no server needed). Keys: `←`/`→`
-step, `1`/`2`/`3` switch scenarios. Run scenarios 1–2 on the
-"Who's online?" slide; save scenario 3 for the CRDT slide.
+Open the file directly in a browser. You do not need a server. Press `←` or
+`→` to change the step. Press `1`, `2`, or `3` to select a scenario. Run
+scenarios 1 and 2 on the
+"Online presence is harder than it sounds" slide. Save scenario 3 for the
+CRDT slide.
 
 ## Present / export
 
@@ -39,7 +42,7 @@ npx @marp-team/marp-cli --theme-set beryl-theme.css --allow-local-files --pdf --
 `--allow-local-files` is required because the title slide references the logo
 at `website/src/assets/beryl.webp`.
 
-For the VS Code Marp extension, register the theme in settings:
+For the VS Code Marp extension, add the theme to the settings:
 
 ```json
 "markdown.marp.themes": ["./docs/talks/beryl-interview/beryl-theme.css"]

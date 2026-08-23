@@ -271,9 +271,9 @@ It creates an **envelope** with the join topic and generation. The layer
 increments the generation for each join attempt and does not reuse it. The
 envelope has no readable payload. The router compares the envelope with the
 live instance. Only the owning join can open it, during the delivery turn. The
-shared mailbox does not store the typed value between turns.
+socket actor's mailbox does not store the typed value between turns.
 
-Opening the envelope uses a selective receive on the runtime actor mailbox.
+Opening the envelope uses a selective receive on the socket actor's mailbox.
 This occurs in the same turn, so one delivery costs O(mailbox depth). The cost
 is small for a short mailbox. A deep backlog makes `notify` unsuitable for a
 high-rate data path. See
@@ -509,9 +509,10 @@ termination to another turn would make a termination panic close the socket.
 `on_terminate`. Then a closed channel is removed and its senders reach nothing.
 
 Crash isolation stops at the socket, as it does with raw dispatch: a
-panic in `on_info` ends one socket, not the runtime. A crash of the
-runtime actor itself still loses every socket on that `beryl.Sockets`
-handle. See [Runtime & Effect Interpreter](/architecture/runtime/).
+panic in `on_info` ends one socket, not the router. Another fault in that
+socket actor also loses only that socket. A router crash loses every socket on
+that `beryl.Sockets` handle. See
+[Runtime & Effect Interpreter](/architecture/runtime/).
 
 ## Supervision
 
@@ -602,12 +603,12 @@ The layer handles one topic at a time. Note these limits:
   `channel.notify(context.self, ..)` — the sealed sender is safe to hold and
   is dropped after the join ends.
 - **Nothing is per-topic-process.** Like raw dispatch, all of a socket's
-  channels run in the runtime actor, sequentially. Long or blocking work
+  channels run in its socket actor, sequentially. Long or blocking work
   belongs in your own process, which can hand results back through
   `channel.notify`.
 - **`notify` delivery costs O(mailbox depth).** Keeping the typed value
-  out of the shared mailbox costs a same-turn selective receive on the
-  runtime actor's mailbox, which scans it. Fine at ordinary depths; not a
+  out of the mailbox costs a same-turn selective receive on the socket
+  actor's mailbox, which scans it. Fine at ordinary depths; not a
   free high-rate data path on a socket with a deep backlog. Batch in your
   own process rather than sending per item.
 

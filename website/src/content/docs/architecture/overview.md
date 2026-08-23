@@ -15,7 +15,7 @@ Only PubSub sends data across nodes.
 Each page describes one subsystem and lists its source files.
 
 - [Message Lifecycle](/architecture/message-lifecycle): how a frame travels from WebSocket to your `update` function and back
-- [Runtime & Supervision](/architecture/runtime): the runtime actor, typed dispatch, and the built-in supervision
+- [Runtime & Supervision](/architecture/runtime): the router, per-socket actors, typed dispatch, and built-in supervision
 - [PubSub & Distribution](/architecture/pubsub-and-distribution): Erlang `pg` groups, broadcast semantics, and cross-node delivery
 - [Presence](/architecture/presence): CRDT-backed presence tracking, diffs, and replication
 - [Wire & Transport](/architecture/wire-and-transport): codec contract, Phoenix framing, and the Mist WebSocket adapter
@@ -26,7 +26,7 @@ Each page describes one subsystem and lists its source files.
 flowchart TB
   T["WebSocket Transport<br/>beryl_mist · beryl_ewe"]
   W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
-  RT["Runtime (OTP actor)<br/>beryl/runtime"]
+  RT["Runtime<br/>router + one actor per socket<br/>beryl/runtime"]
   subgraph App["Your app"]
     C["channel handlers<br/>beryl/channel"]
     U["init / update<br/>beryl/socket"]
@@ -49,7 +49,7 @@ flowchart TB
 | `beryl` | Public entry-point: `config/1`, `child_spec/3`, `broadcast/4`, `broadcast_from/5`, `stop/1` | — |
 | `beryl/channel` | Recommended channel layer: supervised startup, handler validation, typed per-topic state, lifecycle callbacks, senders, and ordered actions | [Channels](/guides/channels/) |
 | `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `JoinRef`/`ReplyRef`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
-| `beryl/runtime` | Central OTP actor: per-socket models, event dispatch, effect interpreter, heartbeat enforcement | [Runtime](/architecture/runtime) |
+| `beryl/runtime` | Router and socket actors: subscriber index, per-socket models, event dispatch, effect interpreter, heartbeat enforcement | [Runtime](/architecture/runtime) |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; subscribe, broadcast, and broadcast_from | [PubSub & Distribution](/architecture/pubsub-and-distribution) |
 | `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, cross-node diff broadcast, `on_diff` callbacks | [Presence](/architecture/presence) |
 | `beryl/presence/wire` | Phoenix-compatible JSON encoding for presence diffs (`joins`/`leaves` maps) | [Presence](/architecture/presence) |
@@ -69,17 +69,18 @@ flowchart TB
 ```mermaid
 flowchart TB
   S["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
-  S --> RT["runtime actor (Transient)"]
+  S --> RT["router actor (Transient)"]
+  RT <-. "monitor" .-> SA["socket actors<br/>one per connection"]
   PR["presence (app-started)"]
-  PW["app presence worker"]
   GR["groups (app-started)"]
-  RT -. "nonblocking command" .-> PW
-  PW --> PR
-  RT -. "group broadcasts" .-> GR
+  SA -. "async mutation" .-> PR
+  SA -. "group broadcasts" .-> GR
 ```
 
-`child_spec` supervises the runtime. The application starts and owns the
-presence and group actors. See the [Supervision guide](/guides/supervision/).
+`child_spec` supervises the router. Transport connections start the socket
+actors, which monitor the router and are monitored by it. The application
+starts and owns the presence and group actors. See the
+[Supervision guide](/guides/supervision/).
 
 ## Where things live
 

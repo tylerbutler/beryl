@@ -142,11 +142,12 @@ Beryl rescues crashes in `init` and `update` rather than letting them take down 
 
 Crash descriptions are depth-limited and truncated before logging so client-triggered crashes cannot bloat log metadata.
 
-This is not a generic catch-and-continue policy. Because every socket shares
-one runtime actor, letting one callback crash reach supervision would restart
-the actor and disconnect every socket. Beryl instead discards the failed
-callback result and closes the narrowest safe scope; faults outside these
-explicit boundaries still invoke supervision. See
+This is not a generic catch-and-continue policy. Letting a callback crash its
+socket actor would close every topic on that socket. Beryl instead discards
+the failed callback result and closes the narrowest safe scope. Faults outside
+these boundaries stop that socket actor; the router closes the connection and
+removes its entries. A router fault still invokes supervision and disconnects
+all sockets. See
 [Runtime crash containment](/architecture/runtime/#crash-containment) for the
 trade-off.
 

@@ -100,6 +100,39 @@ export default defineConfig({
 					],
 				},
 				{
+					label: "Tutorial",
+					items: [
+						{
+							label: "Build a Live Poll",
+							slug: "tutorial",
+						},
+						{
+							label: "1. Elm Architecture Without a DOM",
+							slug: "tutorial/the-elm-architecture-without-a-dom",
+						},
+						{
+							label: "2. One Update Function",
+							slug: "tutorial/one-update-function-many-socket-events",
+						},
+						{
+							label: "3. Typed System Messages",
+							slug: "tutorial/typed-messages-from-your-gleam-system",
+						},
+						{
+							label: "4. Raw Dispatch and Channels",
+							slug: "tutorial/composition-raw-dispatch-and-channels",
+						},
+						{
+							label: "5. Runtime Boundaries",
+							slug: "tutorial/where-the-analogy-ends",
+						},
+						{
+							label: "6. Supervision",
+							slug: "tutorial/supervising-beryl",
+						},
+					],
+				},
+				{
 					label: "Guides",
 					items: [
 						{
