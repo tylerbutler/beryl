@@ -1,5 +1,5 @@
 lockfile_version: '1'
-generated_at: '2026-08-21T20:04:08.022772+00:00'
+generated_at: '2026-08-23T05:02:17.777377+00:00'
 apm_version: 0.28.0
 dependencies:
 - repo_url: dietrichgebert/ponytail
@@ -147,8 +147,8 @@ dependencies:
 - repo_url: tylerbutler/apm-base
   name: apm-base
   host: github.com
-  resolved_commit: 6592417b524d462ebb058f129558ad319d5fdf7d
-  version: 0.2.1
+  resolved_commit: a810769689c28268488834cfacb0f704ecbc1f9d
+  version: 0.2.2
   package_type: apm_package
   deployed_files:
   - .agents/skills/prose-banlist
@@ -158,11 +158,11 @@ dependencies:
   - .claude/skills/prose-banlist/SKILL.md
   - .github/instructions/use-ste.instructions.md
   deployed_file_hashes:
-    .agents/skills/prose-banlist/SKILL.md: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
+    .agents/skills/prose-banlist/SKILL.md: sha256:48330781d0d69dc91cf4ef295fadc04d6d14f5a195d82b293d31677829e6f2b0
     .claude/rules/use-ste.md: sha256:6bfec65cbeaf6e78cf7885d6119fb868ad789db4a34a7dd28c2e71abfe69f803
-    .claude/skills/prose-banlist/SKILL.md: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
+    .claude/skills/prose-banlist/SKILL.md: sha256:48330781d0d69dc91cf4ef295fadc04d6d14f5a195d82b293d31677829e6f2b0
     .github/instructions/use-ste.instructions.md: sha256:c4512aac8ae85c13578effb80b704cc72a14a6a13a3c5f3db036ca2e899513de
-  content_hash: sha256:4e4c6dad97bf9cfb0f950027a4a979d80bd0883e1a06683dd0cab680964e40f6
+  content_hash: sha256:b10858094b9c569b54852cc3f84556cf28bc1662d9cf6d8316753e2018cf1791
   is_dev: true
 - repo_url: hardikpandya/stop-slop
   name: stop-slop
@@ -512,7 +512,7 @@ deployments:
   owners:
   - tylerbutler/apm-base
   active_owner: tylerbutler/apm-base
-  content_hash: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
+  content_hash: sha256:48330781d0d69dc91cf4ef295fadc04d6d14f5a195d82b293d31677829e6f2b0
 - kind: project-relative
   target: claude
   value: .claude/skills/stop-slop
@@ -800,7 +800,7 @@ deployments:
   owners:
   - tylerbutler/apm-base
   active_owner: tylerbutler/apm-base
-  content_hash: sha256:af6bfe1df1e6399041019eb74b24b301137dcaae65a6736e8c0149c9a996a8db
+  content_hash: sha256:48330781d0d69dc91cf4ef295fadc04d6d14f5a195d82b293d31677829e6f2b0
 - kind: project-relative
   target: copilot
   value: .agents/skills/stop-slop

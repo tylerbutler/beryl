@@ -12,5 +12,8 @@ Review prose in your writing and flag any instances of the following phrases or 
 - "fails loudly"
 - "load bearing"
 - "pinned by"
+- "X carries Y" when referring to an argument or fact
+- "seam"
+- "sharpen" especially when referring to argument
 
 Ask the user if they want to replace the flagged phrases with alternative wording. If they do, suggest more concise or creative alternatives that maintain the intended meaning.
