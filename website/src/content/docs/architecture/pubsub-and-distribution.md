@@ -63,7 +63,7 @@ process does not receive its broadcast. This prevents an echo to the source
 socket.
 
 - `broadcast_from(ps, from, ...)` skips delivery to the process whose `Pid` matches `from`.
-- `broadcast_from_socket(ps, from, except_socket_id, ...)` also skips delivery to `from`, and carries `FromSocket(from, except_socket_id)` in the message so that any remote runtime receiving it can optionally suppress re-delivery to a matching socket ID on their node.
+- `broadcast_from_socket(ps, from, except_socket_id, ...)` also skips delivery to `from`, and includes `FromSocket(from, except_socket_id)` in the message so that any remote runtime receiving it can optionally suppress re-delivery to a matching socket ID on their node.
 
 :::caution[Regression-prone contract]
 Channel behavior depends on sender exclusion. If code changes or skips the

@@ -205,7 +205,7 @@ That split gives each piece one job:
 - The timer actor schedules delayed work.
 - `socket.Sender` reconnects external work to one socket update.
 
-`store.Store` is also the persistence seam. Socket code calls `get`, `vote`,
+`store.Store` is also the persistence boundary. Socket code calls `get`, `vote`,
 and `close` without knowing that the current actor keeps a `Dict` in memory.
 The actor could keep serializing those operations while storing polls in
 [Stóráil](https://hexdocs.pm/storail/) or a database. These are separate

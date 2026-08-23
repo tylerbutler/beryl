@@ -250,7 +250,7 @@ The `update` function returns
 `fn(Model, socket.Input(Message)) -> socket.Next(Model)` and exhaustively matches
 the input inside that closure. Beryl uses `socket.Input(Message)` where Lustre
 uses `Message` and an actor uses its mailbox message type. Some input variants
-carry client data. `Info(Message)` carries the app's typed server-side data.
+carry client data. `Info(Message)` holds the app's typed server-side data.
 `socket.Next(model, effects)` continues with the next model. `socket.Stop(reason)`
 stops the whole socket.
 

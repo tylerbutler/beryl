@@ -227,7 +227,7 @@ Both beryl APIs differ from Phoenix in these ways:
 - **Server-side messages are typed.** Phoenix's `handle_info` receives any
   term. The channel layer's `on_info` receives *this channel's* own `info`
   type, delivered through the `channel.Sender(info)` in `JoinContext.self`; raw
-  dispatch's `Info(msg)` carries the socket's `msg` type. Nothing is coerced in
+  dispatch's `Info(msg)` wraps the socket's `msg` type. Nothing is coerced in
   either direction — the layer seals the typed value in a closure and stamps
   the envelope with the join it belongs to, so a send to a channel that has
   closed, or to a topic that has since been rejoined, is dropped rather than

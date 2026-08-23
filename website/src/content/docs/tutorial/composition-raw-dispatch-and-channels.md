@@ -143,7 +143,7 @@ This exact excerpt comes from
 The concepts now have channel-specific names:
 
 - `channel.Handler` pairs a topic pattern with a join callback.
-- `channel.JoinContext` carries the concrete topic, wildcard `params`, join
+- `channel.JoinContext` bundles the concrete topic, wildcard `params`, join
   payload, connection data, and this join's typed sender.
 - `channel.accept` supplies the channel's initial private state and callbacks.
 - `channel.Next` returns the next private state and ordered actions.
