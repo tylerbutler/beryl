@@ -1,11 +1,10 @@
 //// Tests for the public channel API: handler sealing, join accept/reject,
-//// typed callback dispatch, ordered actions, close/socket-stop results,
+//// typed callback dispatch, ordered actions, close results,
 //// and typed server-side sends through the layer-owned `Sender`.
 
 import beryl/channel
 import beryl/presence
 import beryl/socket
-import gleam/bit_array
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -50,12 +49,7 @@ fn quiet_context(topic: String) -> channel.RoutedJoinContext {
 }
 
 fn client_message(event: String) -> channel.Message {
-  channel.Message(
-    topic: "room:lobby",
-    event: event,
-    payload: dynamic.nil(),
-    reply: option.None,
-  )
+  channel.Message(event: event, payload: dynamic.nil(), reply: option.None)
 }
 
 fn describe(effect: socket.Effect) -> String {
@@ -94,7 +88,7 @@ fn accepted_channel(outcome: channel.JoinOutcome) -> channel.LiveChannel {
 }
 
 /// A minimal counting channel: every `"bump"` message adds one and pushes
-/// the running total; `"quit"` closes the channel; `"boom"` stops the socket.
+/// the running total; `"quit"` closes the channel.
 fn counter_handler(pattern: String) -> channel.Handler {
   channel.handler(pattern, fn(context) {
     channel.accept(0)
@@ -106,14 +100,8 @@ fn counter_handler(pattern: String) -> channel.Handler {
             channel.broadcast("bumped", json.string(context.topic)),
           ])
         "quit" -> channel.close([channel.push("bye", json.int(count))])
-        "boom" -> channel.stop_socket(socket.Errored("boom"))
         _ -> channel.stay(count)
       }
-    })
-    |> channel.on_binary(fn(count, data) {
-      channel.next(count, [
-        channel.push("bytes", json.int(bit_array.byte_size(data))),
-      ])
     })
     |> channel.on_info(fn(count, note) {
       case note {
@@ -125,14 +113,6 @@ fn counter_handler(pattern: String) -> channel.Handler {
       }
     })
   })
-}
-
-// --- handler registration --------------------------------------------------
-
-pub fn handler_exposes_its_pattern_test() {
-  counter_handler("room:*")
-  |> channel.pattern
-  |> should.equal("room:*")
 }
 
 // --- join results ----------------------------------------------------------
@@ -226,7 +206,7 @@ pub fn message_actions_keep_their_order_test() {
       actions
       |> rendered
       |> should.equal("push/total/1,broadcast/bumped/\"room:lobby\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -245,7 +225,7 @@ pub fn channel_state_is_threaded_across_messages_test() {
       actions
       |> rendered
       |> should.equal("push/total/3,broadcast/bumped/\"room:lobby\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -257,23 +237,11 @@ pub fn unhandled_events_continue_without_actions_test() {
 
   case live.on_message(client_message("anything")) {
     channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
-pub fn binary_frames_reach_the_binary_callback_test() {
-  let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
-    |> accepted_channel
-
-  case live.on_binary(<<1, 2, 3>>) {
-    channel.StepContinue(_next, actions) ->
-      actions |> rendered |> should.equal("push/bytes/3")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
-  }
-}
-
-// --- close and socket stop -------------------------------------------------
+// --- close -----------------------------------------------------------------
 
 pub fn close_carries_its_final_actions_test() {
   let live =
@@ -283,18 +251,7 @@ pub fn close_carries_its_final_actions_test() {
   case live.on_message(client_message("quit")) {
     channel.StepClose(actions) ->
       actions |> rendered |> should.equal("push/bye/0")
-    channel.StepContinue(..) | channel.StepStop(..) -> should.fail()
-  }
-}
-
-pub fn stop_socket_carries_only_a_reason_test() {
-  let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
-    |> accepted_channel
-
-  case live.on_message(client_message("boom")) {
-    channel.StepStop(reason) -> reason |> should.equal(socket.Errored("boom"))
-    channel.StepContinue(..) | channel.StepClose(..) -> should.fail()
+    channel.StepContinue(..) -> should.fail()
   }
 }
 
@@ -359,7 +316,7 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
   case next.on_mail(second) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"again\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -401,7 +358,7 @@ pub fn an_unrun_mail_delivers_nothing_test() {
   case live.on_mail(kept) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"kept\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -438,7 +395,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   // the mail sealed: the value is only ever readable by its own join.
   case second.on_mail(mail) {
     channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 
   // ...so it is still intact and still the first join's message when the
@@ -446,7 +403,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   case first.on_mail(mail) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"mine\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -479,7 +436,7 @@ pub fn info_can_close_the_channel_test() {
 
   case live.on_mail(mail) {
     channel.StepClose(actions) -> actions |> should.equal([])
-    channel.StepContinue(..) | channel.StepStop(..) -> should.fail()
+    channel.StepContinue(..) -> should.fail()
   }
 }
 

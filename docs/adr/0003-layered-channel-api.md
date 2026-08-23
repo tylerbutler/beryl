@@ -56,7 +56,7 @@ only on beryl's public core API. Keep its routing machinery private:
   sender, concrete topic, wildcard captures, and join payload, instead of
   the core `ConnectInfo` itself. It answers with a rejection or
   `channel.accept(state)` with callback builders, which lets `handler` seal
-  the typed state inside message, binary, info, and terminate closures. No
+  the typed state inside message, info, and terminate closures. No
   channel state value is erased. Closures encode all heterogeneity.
 - The router's model is the handler table plus one live sealed channel per
   joined topic; its `update` matches each `Input` by topic to the owning

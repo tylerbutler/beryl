@@ -7,7 +7,7 @@
 //// | Panic in | Effect |
 //// |---|---|
 //// | `join` | that join is rejected; the socket survives |
-//// | `on_message` / `on_binary` | that topic closes; other topics survive |
+//// | `on_message` | that topic closes; other topics survive |
 //// | `on_info` | the whole socket is torn down |
 //// | `on_terminate` | teardown still completes; sibling channels still run their termination actions |
 ////
@@ -43,9 +43,6 @@ fn ok_handler(trace: process.Subject(String)) -> channel.Handler {
     |> channel.on_message(fn(state, _message) {
       channel.next(state, [channel.push("pong", json.int(1))])
     })
-    |> channel.on_binary(fn(state, _data) {
-      channel.next(state, [channel.push("pong", json.int(2))])
-    })
     |> channel.on_terminate(fn(_state, reason) {
       process.send(
         trace,
@@ -64,12 +61,11 @@ fn join_panics() -> channel.Handler {
   channel.handler("crash_join:*", fn(_context) { panic as "join exploded" })
 }
 
-/// A channel whose `on_message` and `on_binary` callbacks panic.
+/// A channel whose `on_message` callback panics.
 fn callback_panics(trace: process.Subject(String)) -> channel.Handler {
   channel.handler("crash_msg:*", fn(context) {
     channel.accept(Nil)
     |> channel.on_message(fn(_state, _message) { panic as "message exploded" })
-    |> channel.on_binary(fn(_state, _data) { panic as "binary exploded" })
     |> channel.on_terminate(fn(_state, reason) {
       process.send(
         trace,
@@ -146,10 +142,6 @@ fn start(handlers: List(channel.Handler)) -> beryl.Sockets {
   helper.start(beryl.config(wire.phoenix_codec()), handlers: handlers)
 }
 
-fn start_text_only(handlers: List(channel.Handler)) -> beryl.Sockets {
-  helper.start(beryl.config(helper.text_only_codec()), handlers: handlers)
-}
-
 // --- join --------------------------------------------------------------
 
 pub fn a_panic_in_join_rejects_that_join_test() {
@@ -200,7 +192,7 @@ pub fn a_panic_in_join_leaves_the_socket_usable_test() {
   helper.recv(frames) |> string.contains("\"pong\"") |> should.be_true
 }
 
-// --- message and binary --------------------------------------------------
+// --- message ---------------------------------------------------------------
 
 pub fn a_panic_handling_a_message_closes_only_that_topic_test() {
   let trace = process.new_subject()
@@ -238,37 +230,6 @@ pub fn a_panic_handling_a_message_closes_only_that_topic_test() {
   |> string.contains("{\"reason\":\"unmatched topic\"}")
   |> should.be_true
   helper.no_trace(trace)
-}
-
-pub fn a_panic_handling_a_binary_frame_closes_only_that_topic_test() {
-  let trace = process.new_subject()
-  let channels = start_text_only([callback_panics(trace), ok_handler(trace)])
-  let frames = helper.connect(channels, "s1")
-  helper.join(channels, "s1", "crash_msg:a", "jr-1", "r-1")
-  let _join_a = helper.recv(frames)
-  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
-  let _join_b = helper.recv(frames)
-
-  // A binary frame fans out to every joined topic in sorted order, so the
-  // panicking topic is delivered to first.
-  helper.route_binary(channels, "s1", <<1, 2, 3>>)
-
-  let line = helper.next_trace(trace)
-  line
-  |> string.starts_with("terminate:crash_msg:a:errored:")
-  |> should.be_true
-  helper.no_trace(trace)
-
-  let close = helper.recv(frames)
-  close |> string.contains("phx_error") |> should.be_true
-  close |> string.contains("crash_msg:a") |> should.be_true
-
-  // The surviving topic received the very same frame and handled it.
-  helper.recv(frames) |> string.contains("\"pong\",2") |> should.be_true
-
-  // ...and still works afterwards.
-  helper.push(channels, "s1", "room:b", "ping", "r-3")
-  helper.recv(frames) |> string.contains("\"pong\",1") |> should.be_true
 }
 
 // --- info ------------------------------------------------------------------

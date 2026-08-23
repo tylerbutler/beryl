@@ -40,10 +40,10 @@ Both APIs have these effects:
 
 - **Run long or blocking work in another process.** A slow callback delays the
   socket. Return results with `channel.notify` or `socket.notify`.
-- **Crash scope depends on the callback.** A join panic rejects that join;
-  message/binary panics close that topic; an `on_info` panic ends the socket;
-  and a terminate panic loses that callback's actions while core teardown
-  continues. See [crash behavior](/guides/channels/#crash-behavior).
+- **Crash scope depends on the callback.** A join panic rejects that join; a
+  message panic closes that topic; an `on_info` panic ends the socket; and a
+  terminate panic loses that callback's actions while core teardown continues.
+  See [crash behavior](/guides/channels/#crash-behavior).
 
 ## Concept map
 
@@ -68,7 +68,7 @@ Both APIs have these effects:
 | `:after_join` self-send | `channel.with_actions` on the accepted join (ordered immediately after the ack) | order the effects after `AcceptJoin` in the same list |
 | `terminate/2` | `channel.on_terminate`, which returns actions | `socket.Closed(topic, reason)` event, delivered on every exit path |
 | `{:stop, reason, socket}` (ends one channel) | `channel.close(actions)` | `socket.KickTopic(topic)` |
-| ending the whole socket | `channel.stop_socket(reason)` | `socket.Stop(reason)` |
+| ending the whole socket | use raw dispatch | `socket.Stop(reason)` |
 | `MyAppWeb.Endpoint.broadcast/3` from anywhere | `beryl.broadcast(sockets, topic, event, payload)` | same |
 | `Phoenix.PubSub` | `beryl/pubsub`, also built on `pg` | same |
 | `Phoenix.Presence.track/3` / `untrack/3` | `channel.presence_track(key, meta)` / `channel.presence_untrack(key)` actions | `socket.PresenceTrack(topic, key, meta)` / `socket.PresenceUntrack(topic, key)` effects |

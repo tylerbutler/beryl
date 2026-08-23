@@ -6,7 +6,7 @@ description: Use beryl/channel handlers, private state, typed senders, ordered a
 `beryl/channel` is the **recommended default** for applications that serve
 more than one topic namespace on a socket. It is also the default for a Phoenix
 style design. Register a list of channel handlers. The layer routes each join,
-message, binary frame, server message, and close to the correct channel.
+message, server message, and close to the correct channel.
 
 If you are not sure which layer you want, read
 [Choose an API](/choosing-an-api/) first. If you want one topic family and
@@ -378,16 +378,16 @@ acknowledgment.
 | Callback | Runs on | Signature |
 |---|---|---|
 | `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
-| `on_binary` | A binary frame on this topic | `fn(state, BitArray) -> Next(state)` |
 | `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
 | `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
 
-`channel.accept(state)` ignores every input and stays joined until you add
-callbacks with the `on_*` builders.
+`channel.accept(state)` stays joined until you add callbacks with the `on_*`
+builders. Unhandled messages and server-side notifications have no effect.
+For raw binary frames, use [App-Side Dispatch](/guides/dispatch/).
 
-A `channel.Message` has `topic`, `event`, the raw `payload` as
-`Dynamic`, and `reply: Option(socket.ReplyRef)` — present only when the client
-asked for a reply:
+A `channel.Message` has `event`, the raw `payload` as `Dynamic`, and
+`reply: Option(socket.ReplyRef)` — present only when the client asked for a
+reply. Store `context.topic` in channel state when a callback needs it:
 
 ```gleam
 channel.on_message(fn(state: State, message: channel.Message) {
@@ -415,20 +415,15 @@ Every callback answers with a `channel.Next(state)`:
 | `next(state, actions)` | Stay joined, applying the active-phase actions in order |
 | `stay(state)` | Stay joined with no actions |
 | `close(actions)` | Apply active-phase actions, then leave this channel |
-| `stop_socket(reason)` | Tear down the whole socket |
 
 `close` applies its actions first and then closes the topic, so a
 farewell broadcast still reaches the topic's subscribers.
-`stop_socket` deliberately takes no actions: the socket and every
-channel on it are going away, so there is nothing left to apply them to —
-but each channel still runs its `on_terminate`.
 
 ## Termination
 
 `on_terminate` runs once for each accepted join. It runs after `phx_leave`,
-`close([])`, `stop_socket`, socket disconnect, heartbeat timeout, and
-`beryl.stop`. A rejected join does not create an instance, so it does not run
-`on_terminate`.
+`close([])`, socket disconnect, heartbeat timeout, and `beryl.stop`. A rejected
+join does not create an instance, so it does not run `on_terminate`.
 
 The actions it returns are lowered inside the turn that closes the topic,
 right after the instance has been removed. Closing-phase lists can contain
@@ -484,17 +479,16 @@ where the panic occurred:
 | Panic in | Effect |
 |---|---|
 | `join` | That join is rejected; the socket survives |
-| `on_message` / `on_binary` | That topic closes; the socket's other topics survive |
+| `on_message` | That topic closes; the socket's other topics survive |
 | `on_info` | The whole socket is torn down |
 | `on_terminate` | Teardown still completes, and sibling channels still run their own termination actions |
 
 A panic inside `on_terminate` discards the channel's `Closed` turn. The
 termination actions and model update are lost. The instance stays at its
-original generation. The core cannot reach it through the closed topic.
-Client messages, binary frames, and another `Closed` cannot name it. However,
-`on_info` applies to the socket, not the topic. A `Sender` from that join can
-still deliver to the retained instance. A rejoin replaces the entry, and
-socket shutdown removes it.
+original generation. The core cannot reach it through the closed topic. Client messages and another
+`Closed` cannot name it. However, `on_info` applies to the socket, not the
+topic. A `Sender` from that join can still deliver to the retained instance. A
+rejoin replaces the entry, and socket shutdown removes it.
 
 The panic discards the model update that would remove the instance. Catching
 the callback in the layer would hide a crash that the core must log. Moving
@@ -588,8 +582,8 @@ The layer handles one topic at a time. Note these limits:
 - **The layer owns the socket-level model and message type.** Pick raw
   dispatch or the channel layer per socket endpoint; mixing hand-written
   `update` logic into a channel system is not a supported surface.
-- **`stop_socket` takes no actions.** The socket and all its channels are
-  going away.
+- **Raw binary frames require raw dispatch.** Binary frames decoded by the
+  configured codec into normal events still reach `on_message`.
 - **`beryl/bridge` targets the core sender, not a channel's.**
   `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
   channel never sees. To adapt an existing actor's messages into

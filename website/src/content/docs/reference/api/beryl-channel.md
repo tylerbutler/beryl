@@ -202,7 +202,6 @@ A client message delivered to a joined channel's `on_message` callback.
 ```gleam
 pub type Message {
   Message(
-    topic: String,
     event: String,
     payload: dynamic.Dynamic,
     reply: option.Option(socket.ReplyRef)
@@ -214,9 +213,8 @@ pub type Message {
 
 What a channel callback decided to do next.
 
- Build one with [`next`](#next), [`close`](#close), or
- [`stop_socket`](#stop_socket). Use [`stay`](#stay) when the state does not
- change and there are no actions.
+ Build one with [`next`](#next) or [`close`](#close). Use [`stay`](#stay)
+ when the state does not change and there are no actions.
 
 ```gleam
 pub type Next(a)
@@ -265,8 +263,8 @@ pub type Sender(a)
 
 Accept the join with an empty acknowledgment.
 
- Pipe the result through `on_message`, `on_binary`, `on_info`, and
- `on_terminate` to register the callbacks that the channel needs.
+ Pipe the result through `on_message`, `on_info`, and `on_terminate` to
+ register the callbacks that the channel needs.
 
 ```gleam
 pub fn accept(a) -> JoinResult(a, b)
@@ -401,17 +399,6 @@ pub fn notify(
 ) -> Nil
 ```
 
-### `on_binary`
-
-Handle binary frames on this channel's topic.
-
-```gleam
-pub fn on_binary(
-  JoinResult(a, b),
-  fn(a, BitArray) -> Next(a)
-) -> JoinResult(a, b)
-```
-
 ### `on_info`
 
 Handle typed server-side messages sent through this channel's
@@ -455,14 +442,6 @@ pub fn on_terminate(
   JoinResult(a, b),
   fn(a, socket.StopReason) -> List(Action(Closing))
 ) -> JoinResult(a, b)
-```
-
-### `pattern`
-
-The topic pattern a handler was registered with.
-
-```gleam
-pub fn pattern(Handler) -> String
 ```
 
 ### `presence_track`
@@ -557,17 +536,6 @@ Stay joined with the given state and no actions.
 
 ```gleam
 pub fn stay(a) -> Next(a)
-```
-
-### `stop_socket`
-
-Tear down the whole socket, not just this channel.
-
- This result carries no actions. The socket and all its channels are
- stopping, so no target remains for the actions.
-
-```gleam
-pub fn stop_socket(socket.StopReason) -> Next(a)
 ```
 
 ### `with_actions`

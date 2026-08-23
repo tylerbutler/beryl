@@ -154,7 +154,7 @@ The store removes its poll after the last socket leaves.
 
 `channel.Handler` is opaque and non-generic. Internally, `channel.handler`
 captures the typed join callback. `channel.handler` seals the state into the
-typed message, binary, info, and terminate callbacks. Each `channel.next`
+typed message, info, and terminate callbacks. Each `channel.next`
 seals the next state into the same callback set.
 
 The layer does not coerce channel state or info messages through `Dynamic`.

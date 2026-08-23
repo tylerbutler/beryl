@@ -117,9 +117,9 @@ presence tracking are rejected by the type checker.
 
 ### One channel crash closes more than expected
 
-Crash scope follows the callback: `join` rejects one join,
-`on_message`/`on_binary` closes one topic, and `on_info` tears down the whole
-socket. See [Crash behavior](/guides/channels/#crash-behavior).
+Crash scope follows the callback: `join` rejects one join, `on_message` closes
+one topic, and `on_info` tears down the whole socket. See
+[Crash behavior](/guides/channels/#crash-behavior).
 
 ---
 

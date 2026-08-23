@@ -273,20 +273,6 @@ pub fn a_codec_decoded_binary_frame_is_handled_identically_test() {
   pushed.payload |> should.equal("{\"bytes\":5,\"kind\":\"decoded\"}")
 }
 
-pub fn an_undecoded_binary_frame_is_handled_identically_test() {
-  let pushed =
-    matrix.compare_with(config: matrix.text_only_config, scenario: fn(system) {
-      let #(client, _join) = join(system)
-      matrix.send_binary(client, <<9, 9, 9>>)
-      let assert [pushed] = matrix.take_exactly(client, 1)
-      matrix.close(client)
-      pushed
-    })
-
-  pushed.event |> should.equal("binary_in")
-  pushed.payload |> should.equal("{\"bytes\":3,\"kind\":\"raw\"}")
-}
-
 // === Presence ==============================================================
 
 pub fn presence_tracking_produces_the_same_frames_test() {

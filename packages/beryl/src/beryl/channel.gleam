@@ -142,7 +142,7 @@ pub fn child_spec(
 fn compile(
   handlers: List(Handler),
 ) -> Result(List(Registered), ChildSpecError) {
-  let patterns = list.map(handlers, pattern)
+  let patterns = list.map(handlers, fn(handler) { handler.pattern })
   use _ <- result.try(list.try_each(patterns, validate_pattern))
   use _ <- result.try(check_duplicates(patterns, set.new()))
   Ok(table(handlers))
@@ -259,8 +259,6 @@ pub type JoinContext(info) {
 /// [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
 pub type Message {
   Message(
-    /// The topic this channel is joined to.
-    topic: String,
     /// The client-supplied event name.
     event: String,
     /// The raw client payload, to decode with `gleam/dynamic/decode`.
@@ -397,13 +395,11 @@ pub fn broadcast_presence(
 
 /// What a channel callback decided to do next.
 ///
-/// Build one with [`next`](#next), [`close`](#close), or
-/// [`stop_socket`](#stop_socket). Use [`stay`](#stay) when the state does not
-/// change and there are no actions.
+/// Build one with [`next`](#next) or [`close`](#close). Use [`stay`](#stay)
+/// when the state does not change and there are no actions.
 pub opaque type Next(state) {
   NextContinue(state: state, actions: List(Action(Active)))
   NextClose(actions: List(Action(Active)))
-  NextStop(reason: socket.StopReason)
 }
 
 /// Stay joined with the given state, applying `actions` in order.
@@ -424,14 +420,6 @@ pub fn close(actions: List(Action(Active))) -> Next(state) {
   NextClose(actions: actions)
 }
 
-/// Tear down the whole socket, not just this channel.
-///
-/// This result carries no actions. The socket and all its channels are
-/// stopping, so no target remains for the actions.
-pub fn stop_socket(reason: socket.StopReason) -> Next(state) {
-  NextStop(reason: reason)
-}
-
 // ---------------------------------------------------------------------------
 // Joined channels
 // ---------------------------------------------------------------------------
@@ -439,7 +427,6 @@ pub fn stop_socket(reason: socket.StopReason) -> Next(state) {
 type Callbacks(state, info) {
   Callbacks(
     message: fn(state, Message) -> Next(state),
-    binary: fn(state, BitArray) -> Next(state),
     info: fn(state, info) -> Next(state),
     terminate: fn(state, socket.StopReason) -> List(Action(Closing)),
   )
@@ -448,7 +435,6 @@ type Callbacks(state, info) {
 fn callbacks() -> Callbacks(state, info) {
   Callbacks(
     message: fn(state, _message) { stay(state) },
-    binary: fn(state, _data) { stay(state) },
     info: fn(state, _message) { stay(state) },
     terminate: fn(_state, _reason) { no_closing_actions() },
   )
@@ -463,7 +449,6 @@ fn no_closing_actions() -> List(Action(Closing)) {
 type SealedChannel(info) {
   SealedChannel(
     on_message: fn(Message) -> Continuation(info),
-    on_binary: fn(BitArray) -> Continuation(info),
     on_info: fn(info) -> Continuation(info),
     on_terminate: fn(socket.StopReason) -> List(Action(Closing)),
   )
@@ -472,7 +457,6 @@ type SealedChannel(info) {
 type Continuation(info) {
   ContinueWith(next: SealedChannel(info), actions: List(Action(Active)))
   CloseWith(actions: List(Action(Active)))
-  StopSocketWith(reason: socket.StopReason)
 }
 
 /// Bind private state to callbacks without erasing or coercing it.
@@ -483,9 +467,6 @@ fn seal(
   SealedChannel(
     on_message: fn(message) {
       continuation(callbacks, callbacks.message(state, message))
-    },
-    on_binary: fn(data) {
-      continuation(callbacks, callbacks.binary(state, data))
     },
     on_info: fn(message) {
       continuation(callbacks, callbacks.info(state, message))
@@ -502,7 +483,6 @@ fn continuation(
     NextContinue(state, actions) ->
       ContinueWith(next: seal(state, callbacks), actions: actions)
     NextClose(actions) -> CloseWith(actions: actions)
-    NextStop(reason) -> StopSocketWith(reason: reason)
   }
 }
 
@@ -528,8 +508,8 @@ pub opaque type JoinResult(state, info) {
 
 /// Accept the join with an empty acknowledgment.
 ///
-/// Pipe the result through `on_message`, `on_binary`, `on_info`, and
-/// `on_terminate` to register the callbacks that the channel needs.
+/// Pipe the result through `on_message`, `on_info`, and `on_terminate` to
+/// register the callbacks that the channel needs.
 pub fn accept(state: state) -> JoinResult(state, info) {
   JoinAccepted(
     state: state,
@@ -548,18 +528,6 @@ pub fn on_message(
     JoinRejected(_) -> result
     JoinAccepted(callbacks: callbacks, ..) ->
       JoinAccepted(..result, callbacks: Callbacks(..callbacks, message: handle))
-  }
-}
-
-/// Handle binary frames on this channel's topic.
-pub fn on_binary(
-  result: JoinResult(state, info),
-  handle: fn(state, BitArray) -> Next(state),
-) -> JoinResult(state, info) {
-  case result {
-    JoinRejected(_) -> result
-    JoinAccepted(callbacks: callbacks, ..) ->
-      JoinAccepted(..result, callbacks: Callbacks(..callbacks, binary: handle))
   }
 }
 
@@ -730,11 +698,6 @@ pub fn handler(
   })
 }
 
-/// The topic pattern a handler was registered with.
-pub fn pattern(handler: Handler) -> String {
-  handler.pattern
-}
-
 // ---------------------------------------------------------------------------
 // Router seam
 //
@@ -748,7 +711,6 @@ pub fn pattern(handler: Handler) -> String {
 pub type LiveChannel {
   LiveChannel(
     on_message: fn(Message) -> Step,
-    on_binary: fn(BitArray) -> Step,
     /// Deliver one enqueued server-side message to this channel's
     /// `on_info` callback.
     ///
@@ -789,7 +751,6 @@ pub opaque type Mail {
 pub type Step {
   StepContinue(next: LiveChannel, actions: List(Action(Active)))
   StepClose(actions: List(Action(Active)))
-  StepStop(reason: socket.StopReason)
 }
 
 /// Everything the router supplies for one join attempt.
@@ -850,7 +811,6 @@ fn live(
     on_message: fn(message) {
       step(channel.on_message(message), handoff, join_id)
     },
-    on_binary: fn(data) { step(channel.on_binary(data), handoff, join_id) },
     on_mail: fn(mail: Mail) {
       case mail.join == join_id {
         // Someone else's mail: leave it sealed, so its value stays where
@@ -883,7 +843,6 @@ fn step(
     ContinueWith(next, actions) ->
       StepContinue(next: live(next, handoff, join_id), actions: actions)
     CloseWith(actions) -> StepClose(actions: actions)
-    StopSocketWith(reason) -> StepStop(reason: reason)
   }
 }
 
@@ -973,7 +932,7 @@ type Router {
 /// routing takes the first match, so order is the routing rule.
 fn table(handlers: List(Handler)) -> List(Registered) {
   list.map(handlers, fn(handler) {
-    Registered(pattern: topic.parse_pattern(pattern(handler)), handler: handler)
+    Registered(pattern: topic.parse_pattern(handler.pattern), handler: handler)
   })
 }
 
@@ -1006,15 +965,13 @@ fn update(
     socket.Message(topic: name, event: event, payload: payload, ref: ref) ->
       on_live(router, name, fn(instance) {
         instance.channel.on_message(Message(
-          topic: name,
           event: event,
           payload: payload,
           reply: ref,
         ))
       })
 
-    socket.Binary(topic: name, data: data) ->
-      on_live(router, name, fn(instance) { instance.channel.on_binary(data) })
+    socket.Binary(..) -> socket.Next(router, [])
 
     socket.Closed(topic: name, reason: reason) -> closed(router, name, reason)
 
@@ -1187,10 +1144,6 @@ fn advance(
         router,
         list.append(effects(name, actions), [socket.KickTopic(name)]),
       )
-
-    // Stopping the socket carries no actions: every channel on it is
-    // going away, and each still receives `Closed`.
-    StepStop(reason: reason) -> socket.Stop(reason)
   }
 }
 
@@ -1216,7 +1169,7 @@ fn advance(
 /// panics, core logs the crash and keeps the model from before this turn,
 /// which is the one that still holds this instance at this generation. It
 /// is not reachable from core's side — the topic is closed, so no client
-/// message, binary frame, or `Closed` can name it again — but `Info` is
+/// message or `Closed` can name it again — but `Info` is
 /// socket-scoped rather than topic-scoped, so a `Sender` created by this
 /// join still finds it in `live` and still delivers `on_info` to it. The
 /// entry goes away when the topic is joined again (`open` overwrites it)

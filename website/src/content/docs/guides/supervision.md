@@ -60,9 +60,9 @@ router fault reaches the supervisor and closes all connections. See
 
 See the [Error Handling guide](/guides/error-handling/) for details.
 
-For channel callbacks, those rows map to `join`, `on_message`/`on_binary`,
-`on_info`, and `on_terminate`. A terminate panic loses that callback's actions
-but does not stop sibling-channel teardown; see
+For channel callbacks, those rows map to `join`, `on_message`, `on_info`, and
+`on_terminate`. A terminate panic loses that callback's actions but does not
+stop sibling-channel teardown; see
 [Crash behavior](/guides/channels/#crash-behavior).
 
 ## Presence and groups

@@ -156,7 +156,7 @@ The channel layer maps those scopes to callbacks:
 | Channel callback | Effect |
 |---|---|
 | `join` | Rejects only that join |
-| `on_message` / `on_binary` | Closes only that topic |
+| `on_message` | Closes only that topic |
 | `on_info` | Tears down that socket |
 | `on_terminate` | Logs the panic and continues core teardown; the callback's actions are lost |
 

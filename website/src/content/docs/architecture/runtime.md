@@ -100,7 +100,7 @@ monitor sweeps, closing only that socket — and faults in the router itself
 invoke supervision.
 
 For the channel layer, those scopes map to `join`, `on_message` /
-`on_binary`, `on_info`, and `on_terminate`. A terminate panic discards that
+`on_info`, and `on_terminate`. A terminate panic discards that
 router update, so its actions are lost and the old instance remains reachable
 only through its own typed sender until rejoin or socket teardown. Core still
 finishes closing the topic and continues closing sibling channels.

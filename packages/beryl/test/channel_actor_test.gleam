@@ -193,7 +193,6 @@ fn handle_envelope(
           )
         channel.StepClose(actions) ->
           actor.continue(Router(..state, applied: record(state, actions)))
-        channel.StepStop(_reason) -> actor.stop()
       }
   }
 }
