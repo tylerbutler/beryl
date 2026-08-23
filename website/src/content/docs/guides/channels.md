@@ -189,7 +189,7 @@ error. It rejects duplicate pattern strings because the second handler cannot
 receive a join. It also rejects unmatched topics with
 `{"reason": "unmatched topic"}`.
 
-`InvalidPattern` carries the core
+`InvalidPattern` contains the core
 [`topic.TopicError`](/reference/api/beryl-topic/) itself rather than a
 flattened string, so the reason stays matchable. New variants may be added
 in a minor release, so use a catch-all when the exact reason does not
@@ -392,7 +392,7 @@ acknowledgment.
 `channel.callbacks()` starts from callbacks that ignore every input and
 stay joined; override only what the channel cares about.
 
-A `channel.Message` carries `topic`, `event`, the raw `payload` as
+A `channel.Message` has `topic`, `event`, the raw `payload` as
 `Dynamic`, and `reply: Option(socket.ReplyRef)` — present only when the client
 asked for a reply:
 
@@ -425,7 +425,7 @@ Every callback answers with a `channel.Next(state)`:
 
 `close` applies its actions first and then closes the topic, so a
 farewell broadcast still reaches the topic's subscribers.
-`stop_socket` deliberately carries no actions: the socket and every
+`stop_socket` deliberately takes no actions: the socket and every
 channel on it are going away, so there is nothing left to apply them to —
 but each channel still runs its `on_terminate`.
 
@@ -594,7 +594,7 @@ The layer handles one topic at a time. Note these limits:
 - **The layer owns the socket-level model and message type.** Pick raw
   dispatch or the channel layer per socket endpoint; mixing hand-written
   `update` logic into a channel system is not a supported surface.
-- **`stop_socket` carries no actions.** The socket and all its channels are
+- **`stop_socket` takes no actions.** The socket and all its channels are
   going away.
 - **`beryl/bridge` targets the core sender, not a channel's.**
   `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a

@@ -3,7 +3,7 @@ title: One Update Function, Many Socket Events
 description: Handle joins, messages, binary frames, closes, replies, and ordered effects in one typed update function.
 ---
 
-A WebSocket connection carries more than application commands. Clients join
+A WebSocket connection handles more than application commands. Clients join
 topics, send text events, send binary frames, leave, disconnect, and expect
 replies correlated to earlier frames. Server processes also need a typed path
 back into the same socket logic. Raw Beryl puts all of those cases in one
@@ -31,10 +31,10 @@ This excerpt comes from
 Each variant marks a different boundary:
 
 - `Join` asks the application to accept or reject one topic subscription.
-- `Message` carries a client event on a topic the socket has joined.
-- `Binary` carries binary data associated with a joined topic.
+- `Message` delivers a client event on a topic the socket has joined.
+- `Binary` holds binary data associated with a joined topic.
 - `Closed` reports that a joined topic ended.
-- `Info` carries the app-defined typed `message` sent through this socket's
+- `Info` wraps the app-defined typed `message` sent through this socket's
   `Sender`.
 
 A socket is the client connection. A topic is one subscription string inside
@@ -68,7 +68,7 @@ See the complete branch in
 `room_name` accepts only a non-empty `poll:<room>` topic. The code does not
 reconstruct a ref from the topic or from Phoenix wire fields.
 
-That restriction is part of the contract. A `JoinRef` carries unique runtime
+That restriction is part of the contract. A `JoinRef` encodes unique runtime
 identity and is valid only for its pending join. A delayed answer for an older
 attempt cannot accept a replacement join on the same topic.
 
@@ -79,7 +79,7 @@ half-open subscription.
 
 ## Reply refs have a different lifetime
 
-`Message` carries `Option(socket.ReplyRef)`. A client frame may omit its
+`Message` includes `Option(socket.ReplyRef)`. A client frame may omit its
 message ref. In that case, the client does not expect a correlated reply.
 When a ref is present, the application can return `ReplyOk` or `ReplyError`.
 
