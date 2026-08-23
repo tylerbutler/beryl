@@ -35,7 +35,7 @@ type Message {
 ```
 
 This excerpt comes from
-[`store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/store.gleam).
+[`store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/store.gleam).
 The store's `Subject(Message)` addresses the actor's mailbox. `Join` and
 `Leave` track active sockets. Other messages carry reply subjects because
 `Get`, `Vote`, and `Close` are synchronous calls from the wrapper API.
@@ -131,7 +131,7 @@ socket.Info(ClosePoll(topic)) ->
 ```
 
 These excerpts come from
-[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
 `ClosePoll` stays typed from the call to `socket.notify` through the
 `Info(ClosePoll(topic))` match. It does not become `Dynamic`.
 
@@ -167,7 +167,7 @@ pub fn after(timer: Timer, milliseconds: Int, action: fn() -> Nil) -> Nil {
 ```
 
 This exact excerpt comes from
-[`timer.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/timer.gleam).
+[`timer.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/timer.gleam).
 The timer actor owns delayed callback execution. It does not block Beryl's
 socket actor for 60 seconds.
 
@@ -275,7 +275,7 @@ the routing information it needs. The example defines
 This lack of topic scoping has a crash consequence. Beryl can attribute a
 crashing `Message` or `Binary` callback to a topic and close only that topic.
 A crashing `Info` callback has no protocol topic to attribute, so the runtime
-tears down that socket. The fifth post covers the complete scoped rescue
+tears down that socket. Chapter 5 covers the complete scoped rescue
 behavior.
 
 This design also adds a composition cost. If several raw topic families need
@@ -296,7 +296,7 @@ continue.
 owner of your job, store, or timer. The application still decides how to
 supervise those processes.
 
-The next post moves from one socket-wide model and message union to
+The next chapter moves from one socket-wide model and message union to
 heterogeneous channel handlers with private state and private info types.
 
 ## Sources and further reading
@@ -309,7 +309,7 @@ heterogeneous channel handlers with private state and private info types.
 ## Runnable checkpoint: step 03
 
 ```sh
-cd examples/blog_series && gleam run -m blog_series/step_03
+cd examples/live_poll && gleam run -m live_poll/step_03
 ```
 
 Open `http://localhost:8103`, join `demo`, and vote. Select **Close poll

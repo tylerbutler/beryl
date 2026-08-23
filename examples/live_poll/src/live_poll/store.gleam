@@ -1,8 +1,8 @@
-import blog_series/poll
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/otp/actor
 import gleam/result
+import live_poll/poll
 
 pub opaque type Store {
   Store(subject: Subject(Message))

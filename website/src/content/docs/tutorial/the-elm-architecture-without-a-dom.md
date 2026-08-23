@@ -204,7 +204,7 @@ beryl.child_spec(
 ```
 
 That exact assembly appears in
-[`step_01.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_01.gleam).
+[`step_01.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_01.gleam).
 `beryl.child_spec` captures the app's concrete model and message types in
 typed closures and returns a non-generic `beryl.Sockets` handle plus a child
 specification. The shared runtime remains generic internally. It does not
@@ -227,7 +227,7 @@ pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) 
 ```
 
 This excerpt comes from
-[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
 The names carry specific meanings:
 
 - `Model` is application-defined state for one connected socket.
@@ -285,7 +285,7 @@ actor state value. Beryl calls raw `init` once for every admitted socket connect
 actor stores the returned `Model` and runs that socket's updates. A separate
 router actor maintains the socket index and routes frames and broadcasts. The
 distinction becomes important for blocking work and crash behavior, which the
-fifth post covers.
+fifth chapter covers.
 
 The live poll now gives us a reason to add an application-owned actor. Every
 browser connected to a room must see the same totals, so those totals cannot
@@ -309,7 +309,7 @@ Raw dispatch exposes these facts with little machinery. It is Beryl's core
 and the clearest place to learn joins, replies, close events, and effect order.
 For an application with several channel families, you will usually move to
 `beryl/channel`, the recommended default for multi-channel and Phoenix-shaped
-systems. Post 4 performs that refactor without changing the wire protocol.
+systems. Chapter 4 performs that refactor without changing the wire protocol.
 
 ## Sources and further reading
 
@@ -323,7 +323,7 @@ systems. Post 4 performs that refactor without changing the wire protocol.
 ## Runnable checkpoint: step 01
 
 ```sh
-cd examples/blog_series && gleam run -m blog_series/step_01
+cd examples/live_poll && gleam run -m live_poll/step_01
 ```
 
 Open `http://localhost:8101`, keep the room as `demo`, and select **Join

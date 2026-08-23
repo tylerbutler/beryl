@@ -32,9 +32,9 @@ let assert Ok(_root) =
 ```
 
 The first excerpt comes from
-[`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_05.gleam).
+[`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_05.gleam).
 The supervisor code comes from
-[`server.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/server.gleam).
+[`server.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/server.gleam).
 The server then passes `sockets` to `mist_transport.upgrade`.
 
 Starting the supervisor before the listener matters. You receive the
@@ -204,7 +204,7 @@ Graceful shutdown drains socket callbacks without stopping unrelated services.
 ## Runnable checkpoint: step 05
 
 ```sh
-cd examples/blog_series && gleam run -m blog_series/step_05
+cd examples/live_poll && gleam run -m live_poll/step_05
 ```
 
 The checkpoint creates the `Sockets` handle and specification, starts the

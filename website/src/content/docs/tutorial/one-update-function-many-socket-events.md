@@ -64,7 +64,7 @@ socket.Next(model, [
 ```
 
 See the complete branch in
-[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
 `room_name` accepts only a non-empty `poll:<room>` topic. The code does not
 reconstruct a ref from the topic or from Phoenix wire fields.
 
@@ -117,7 +117,7 @@ the remote client chooses the payload, so Gleam cannot assign it an
 application type before validation.
 
 The example decodes at the domain boundary in
-[`poll.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/poll.gleam):
+[`poll.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/poll.gleam):
 
 ```gleam
 pub fn command(event: String, payload: Dynamic) -> Command {
@@ -241,7 +241,7 @@ specific client request. Pushes are server-initiated frames to one socket.
 Broadcasts fan out by topic. A topic is the routing key. It is not a socket,
 channel, `Subject`, or `Sender`.
 
-The next post adds `Info(message)`, the remaining input variant, and compares its
+The next chapter adds `Info(message)`, the remaining input variant, and compares its
 socket-scoped `Sender` with a general OTP `Subject`.
 
 ## Sources and further reading
@@ -254,7 +254,7 @@ socket-scoped `Sender` with a general OTP `Subject`.
 ## Runnable checkpoint: step 02
 
 ```sh
-cd examples/blog_series && gleam run -m blog_series/step_02
+cd examples/live_poll && gleam run -m live_poll/step_02
 ```
 
 Open `http://localhost:8102` in two tabs. Join `demo` in both, then vote in

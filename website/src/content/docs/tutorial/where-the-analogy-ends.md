@@ -106,7 +106,7 @@ state. A socket actor crash closes only its connection and does not restart the
 router.
 
 Keep durable or reconstructable domain state in application-owned storage, as
-the example does with `store.Store`. The next post covers the supervision
+the example does with `store.Store`. The next chapter covers the supervision
 tree, restart windows, restart intensity, and graceful shutdown.
 
 ## Heartbeats test connection liveness
@@ -135,7 +135,7 @@ beryl.config(wire.phoenix_codec())
 ```
 
 This exact excerpt comes from
-[`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_05.gleam).
+[`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_05.gleam).
 These values make the example production-shaped, not universally correct.
 Choose limits from expected traffic and deployment capacity.
 
@@ -190,7 +190,7 @@ cross-topic coordination stays ordinary app code.
 
 ## The boundaries to remember
 
-The preceding posts began with a familiar update loop. The production model needs
+The preceding chapters began with a familiar update loop. The production model needs
 the mismatches kept in view:
 
 - Beryl has no `view`.
@@ -223,7 +223,7 @@ ephemeral subscriptions by reconnecting.
 ## Runnable checkpoint: step 05
 
 ```sh
-cd examples/blog_series && gleam run -m blog_series/step_05
+cd examples/live_poll && gleam run -m live_poll/step_05
 ```
 
 Open `http://localhost:8105`, join `demo`, vote from two tabs, and close the

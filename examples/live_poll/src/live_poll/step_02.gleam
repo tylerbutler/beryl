@@ -1,9 +1,9 @@
 import beryl
 import beryl/wire
-import blog_series/raw
-import blog_series/server
-import blog_series/store
-import blog_series/timer
+import live_poll/raw
+import live_poll/server
+import live_poll/store
+import live_poll/timer
 
 pub fn main() {
   let assert Ok(polls) = store.start()

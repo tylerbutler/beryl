@@ -1,8 +1,8 @@
-import blog_series/poll
-import blog_series/store
 import gleam/dynamic
 import gleeunit
 import gleeunit/should
+import live_poll/poll
+import live_poll/store
 
 pub fn main() {
   gleeunit.main()
