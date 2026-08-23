@@ -1,4 +1,4 @@
-import blog_series/poll
+import live_poll/poll
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/otp/actor

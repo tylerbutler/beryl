@@ -1,7 +1,7 @@
 import beryl/socket
-import blog_series/poll
-import blog_series/store
-import blog_series/timer
+import live_poll/poll
+import live_poll/store
+import live_poll/timer
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}

@@ -49,7 +49,7 @@ pub type Model {
 ```
 
 This excerpt comes from
-[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/raw.gleam).
+[`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
 Adding a second unrelated guide topic would widen `Message`, add state or routing
 metadata to `Model`, and add more branches to the same update.
 
@@ -71,7 +71,7 @@ let assert Ok(#(sockets, spec)) =
 ```
 
 This excerpt comes from
-[`step_04.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/step_04.gleam).
+[`step_04.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_04.gleam).
 `channel.child_spec` accepts the same core `beryl.Config` and returns the same
 kind of `beryl.Sockets` handle and supervised child specification as
 `beryl.child_spec`.
@@ -139,7 +139,7 @@ fn poll_channel(
 ```
 
 This exact excerpt comes from
-[`channels.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/blog_series/src/blog_series/channels.gleam).
+[`channels.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/channels.gleam).
 The concepts now have channel-specific names:
 
 - `channel.Handler` pairs a topic pattern with a join callback.
@@ -283,7 +283,7 @@ presence, PubSub, abuse controls, and transport. Pick one programming model
 for a socket endpoint. Do not embed hand-written raw update logic inside a
 channel system.
 
-The final post follows both APIs below their callbacks into the shared runtime
+The final chapter follows both APIs below their callbacks into the shared runtime
 and explains where the Elm analogy stops helping.
 
 ## Sources and further reading
@@ -298,7 +298,7 @@ and explains where the Elm analogy stops helping.
 ## Runnable checkpoint: step 04
 
 ```sh
-cd examples/blog_series && gleam run -m blog_series/step_04
+cd examples/live_poll && gleam run -m live_poll/step_04
 ```
 
 Open `http://localhost:8104` in two tabs, join `demo`, and vote. Replies and

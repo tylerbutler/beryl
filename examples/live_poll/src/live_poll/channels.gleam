@@ -1,7 +1,7 @@
 import beryl/channel
-import blog_series/poll
-import blog_series/store
-import blog_series/timer
+import live_poll/poll
+import live_poll/store
+import live_poll/timer
 import gleam/json
 
 pub type PollInfo {

@@ -1,5 +1,5 @@
-import blog_series/poll
-import blog_series/store
+import live_poll/poll
+import live_poll/store
 import gleam/dynamic
 import gleeunit
 import gleeunit/should

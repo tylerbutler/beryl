@@ -3,9 +3,10 @@ title: Build a Live Poll
 description: Learn Beryl by building a live poll from raw dispatch through channels, runtime boundaries, and supervision.
 ---
 
-This tutorial introduces Beryl through one live-poll application. The prose
+This tutorial introduces Beryl through one live-poll application. If you want
+the short version first, start with the [Quick Start](/quick-start/). The prose
 and excerpts use the runnable
-[`examples/blog_series/`](https://github.com/tylerbutler/beryl/tree/main/examples/blog_series)
+[`examples/live_poll/`](https://github.com/tylerbutler/beryl/tree/main/examples/live_poll)
 project as the source of truth. Beryl is pre-1.0, so treat the API as evolving
 rather than stable.
 
@@ -18,21 +19,21 @@ rather than stable.
 5. [Where the analogy ends](/tutorial/where-the-analogy-ends/)
 6. [Supervising Beryl](/tutorial/supervising-beryl/)
 
-Each post stands on its own, but the checkpoints build from read-only raw
+Each chapter stands on its own, but the checkpoints build from read-only raw
 dispatch to a production-shaped channel system.
 
 ## Runnable checkpoints
 
 Run each command from the repository root:
 
-| Post | Command | URL |
+| Chapter | Command | URL |
 |---|---|---|
-| 1 | `cd examples/blog_series && gleam run -m blog_series/step_01` | `http://localhost:8101` |
-| 2 | `cd examples/blog_series && gleam run -m blog_series/step_02` | `http://localhost:8102` |
-| 3 | `cd examples/blog_series && gleam run -m blog_series/step_03` | `http://localhost:8103` |
-| 4 | `cd examples/blog_series && gleam run -m blog_series/step_04` | `http://localhost:8104` |
-| 5 | `cd examples/blog_series && gleam run -m blog_series/step_05` | `http://localhost:8105` |
-| 6 | `cd examples/blog_series && gleam run -m blog_series/step_05` | `http://localhost:8105` |
+| 1 | `cd examples/live_poll && gleam run -m live_poll/step_01` | `http://localhost:8101` |
+| 2 | `cd examples/live_poll && gleam run -m live_poll/step_02` | `http://localhost:8102` |
+| 3 | `cd examples/live_poll && gleam run -m live_poll/step_03` | `http://localhost:8103` |
+| 4 | `cd examples/live_poll && gleam run -m live_poll/step_04` | `http://localhost:8104` |
+| 5 | `cd examples/live_poll && gleam run -m live_poll/step_05` | `http://localhost:8105` |
+| 6 | `cd examples/live_poll && gleam run -m live_poll/step_05` | `http://localhost:8105` |
 
 Stop a checkpoint with Ctrl-C before starting the next one. The browser client
 loads Phoenix JavaScript 1.7.20 from unpkg, so the first page load needs
@@ -53,14 +54,14 @@ applications. They select a configuration and assemble shared modules:
 - `timer.gleam` runs delayed callbacks from its own actor.
 - `server.gleam` starts the Beryl child specification and Mist transport,
   serves the browser client, and optionally serves `/healthz`.
-- `test/blog_series_test.gleam` checks the poll domain and protocol decoder.
+- `test/live_poll_test.gleam` checks the poll domain and protocol decoder.
 
 Read the shared files with the step module. A step file shows which behavior is
 enabled. It does not duplicate the runtime, domain, or browser code.
 
 ## Terminology
 
-The series keeps Beryl's terms distinct:
+The tutorial keeps Beryl's terms distinct:
 
 - A **socket** is one client connection known to the Beryl runtime.
 - A **topic** is a string subscription within a socket, such as `poll:demo`.

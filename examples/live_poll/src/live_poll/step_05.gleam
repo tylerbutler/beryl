@@ -1,10 +1,10 @@
 import beryl
 import beryl/channel
 import beryl/wire
-import blog_series/channels
-import blog_series/server
-import blog_series/store
-import blog_series/timer
+import live_poll/channels
+import live_poll/server
+import live_poll/store
+import live_poll/timer
 
 pub fn main() {
   let assert Ok(polls) = store.start()
