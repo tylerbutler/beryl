@@ -1,8 +1,8 @@
 import beryl/channel
+import gleam/json
 import live_poll/poll
 import live_poll/store
 import live_poll/timer
-import gleam/json
 
 pub type PollInfo {
   ClosePoll

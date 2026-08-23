@@ -1,12 +1,12 @@
 import beryl/socket
-import live_poll/poll
-import live_poll/store
-import live_poll/timer
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/set.{type Set}
 import gleam/string
+import live_poll/poll
+import live_poll/store
+import live_poll/timer
 
 pub type Stage {
   ReadOnly
