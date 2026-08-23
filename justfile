@@ -68,7 +68,7 @@ gleam-docs:
 
 # Build documentation: Gleam docs + regenerated website reference pages
 docs: gleam-docs
-    pnpm -C website generate:reference
+    cd website && pnpm run generate:reference
 
 # Render the architecture deck to HTML
 deck:

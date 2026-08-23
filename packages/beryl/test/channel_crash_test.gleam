@@ -39,24 +39,22 @@ pub type Poke {
 /// A channel that works: it answers `"ping"` and traces its termination.
 fn ok_handler(trace: process.Subject(String)) -> channel.Handler {
   channel.handler("room:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(state, _message) {
-        channel.next(state, [channel.push("pong", json.int(1))])
-      })
-      |> channel.on_binary(fn(state, _data) {
-        channel.next(state, [channel.push("pong", json.int(2))])
-      })
-      |> channel.on_terminate(fn(_state, reason) {
-        process.send(
-          trace,
-          "terminate:" <> context.topic <> ":" <> helper.reason_name(reason),
-        )
-        // Termination actions of a channel that does *not* panic must
-        // survive a sibling channel's panic in the same teardown.
-        [channel.broadcast("farewell", json.string(context.topic))]
-      })
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_message(fn(state, _message) {
+      channel.next(state, [channel.push("pong", json.int(1))])
+    })
+    |> channel.on_binary(fn(state, _data) {
+      channel.next(state, [channel.push("pong", json.int(2))])
+    })
+    |> channel.on_terminate(fn(_state, reason) {
+      process.send(
+        trace,
+        "terminate:" <> context.topic <> ":" <> helper.reason_name(reason),
+      )
+      // Termination actions of a channel that does *not* panic must
+      // survive a sibling channel's panic in the same teardown.
+      [channel.broadcast("farewell", json.string(context.topic))]
+    })
     |> channel.with_reply(json.object([#("handler", json.string("room"))]))
   })
 }
@@ -69,18 +67,16 @@ fn join_panics() -> channel.Handler {
 /// A channel whose `on_message` and `on_binary` callbacks panic.
 fn callback_panics(trace: process.Subject(String)) -> channel.Handler {
   channel.handler("crash_msg:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(_state, _message) { panic as "message exploded" })
-      |> channel.on_binary(fn(_state, _data) { panic as "binary exploded" })
-      |> channel.on_terminate(fn(_state, reason) {
-        process.send(
-          trace,
-          "terminate:" <> context.topic <> ":" <> helper.reason_name(reason),
-        )
-        []
-      })
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_message(fn(_state, _message) { panic as "message exploded" })
+    |> channel.on_binary(fn(_state, _data) { panic as "binary exploded" })
+    |> channel.on_terminate(fn(_state, reason) {
+      process.send(
+        trace,
+        "terminate:" <> context.topic <> ":" <> helper.reason_name(reason),
+      )
+      []
+    })
   })
 }
 
@@ -91,33 +87,29 @@ fn info_panics(
 ) -> channel.Handler {
   channel.handler("crash_info:*", fn(context) {
     process.send(senders, context.self)
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_info(fn(_state, _note) { panic as "info exploded" })
-      |> channel.on_terminate(fn(_state, reason) {
-        process.send(
-          trace,
-          "terminate:" <> context.topic <> ":" <> helper.reason_name(reason),
-        )
-        []
-      })
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_info(fn(_state, _note) { panic as "info exploded" })
+    |> channel.on_terminate(fn(_state, reason) {
+      process.send(
+        trace,
+        "terminate:" <> context.topic <> ":" <> helper.reason_name(reason),
+      )
+      []
+    })
   })
 }
 
 /// A channel that closes itself and then panics while terminating.
 fn terminate_panics(trace: process.Subject(String)) -> channel.Handler {
   channel.handler("crash_term:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(_state, _message) {
-        channel.close([channel.push("bye", json.int(0))])
-      })
-      |> channel.on_terminate(fn(_state, _reason) {
-        process.send(trace, "terminating:" <> context.topic)
-        panic as "terminate exploded"
-      })
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_message(fn(_state, _message) {
+      channel.close([channel.push("bye", json.int(0))])
+    })
+    |> channel.on_terminate(fn(_state, _reason) {
+      process.send(trace, "terminating:" <> context.topic)
+      panic as "terminate exploded"
+    })
   })
 }
 
@@ -133,20 +125,18 @@ fn terminate_panics_with_sender(
 ) -> channel.Handler {
   channel.handler("crash_term:*", fn(context) {
     process.send(senders, context.self)
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(_state, _message) { channel.close([]) })
-      |> channel.on_info(fn(state, _note) {
-        process.send(trace, "info:" <> context.topic)
-        channel.next(state, [
-          channel.broadcast("late", json.string(context.topic)),
-        ])
-      })
-      |> channel.on_terminate(fn(_state, _reason) {
-        process.send(trace, "terminating:" <> context.topic)
-        panic as "terminate exploded"
-      })
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_message(fn(_state, _message) { channel.close([]) })
+    |> channel.on_info(fn(state, _note) {
+      process.send(trace, "info:" <> context.topic)
+      channel.next(state, [
+        channel.broadcast("late", json.string(context.topic)),
+      ])
+    })
+    |> channel.on_terminate(fn(_state, _reason) {
+      process.send(trace, "terminating:" <> context.topic)
+      panic as "terminate exploded"
+    })
   })
 }
 

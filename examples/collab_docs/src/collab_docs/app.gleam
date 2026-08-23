@@ -38,7 +38,16 @@ pub fn handler(ctx: Ctx) -> channel.Handler {
     case authorize_join(ctx, context.params, context.payload) {
       Error(reason) -> channel.reject(reason)
       Ok(#(model, reply)) ->
-        channel.accept(model, callbacks(ctx))
+        channel.accept(model)
+        |> channel.on_message(fn(model, message) {
+          case message.event {
+            "sync_state" -> sync_state(ctx, model, message)
+            _ ->
+              channel.next(model, [
+                channel.reply_ok(message.reply, error_payload("unknown_event")),
+              ])
+          }
+        })
         |> channel.with_reply(reply)
     }
   })
@@ -87,19 +96,6 @@ fn authorize_tenant(
       #("state", stored_state(ctx, document_key)),
     ]),
   ))
-}
-
-fn callbacks(ctx: Ctx) -> channel.Callbacks(Model, Nil) {
-  channel.callbacks()
-  |> channel.on_message(fn(model, message) {
-    case message.event {
-      "sync_state" -> sync_state(ctx, model, message)
-      _ ->
-        channel.next(model, [
-          channel.reply_ok(message.reply, error_payload("unknown_event")),
-        ])
-    }
-  })
 }
 
 fn sync_state(

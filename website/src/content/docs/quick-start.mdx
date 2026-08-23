@@ -51,7 +51,36 @@ pub fn channel() -> channel.Handler {
   channel.handler("room:*", fn(context: channel.JoinContext(Note)) {
     let state = State(room_id: context.topic, sent: 0)
 
-    channel.accept(state, callbacks())
+    channel.accept(state)
+    |> channel.on_message(fn(state: State, message: channel.Message) {
+      case message.event {
+        "new_msg" ->
+          channel.next(
+            State(..state, sent: state.sent + 1),
+            [
+              channel.broadcast(
+                "new_msg",
+                wire.dynamic_to_json(message.payload),
+              ),
+              channel.reply_ok(
+                message.reply,
+                json.object([#("sent", json.int(state.sent + 1))]),
+              ),
+            ],
+          )
+
+        _ ->
+          channel.next(state, [
+            channel.reply_error(
+              message.reply,
+              json.object([#("error", json.string("unknown_event"))]),
+            ),
+          ])
+      }
+    })
+    |> channel.on_terminate(fn(state: State, _reason) {
+      [channel.broadcast("left", json.string(state.room_id))]
+    })
     |> channel.with_reply(
       json.object([
         #("room", json.string(context.topic)),
@@ -64,44 +93,6 @@ pub fn channel() -> channel.Handler {
     ])
   })
 }
-
-fn callbacks() -> channel.Callbacks(State, Note) {
-  channel.callbacks()
-  |> channel.on_message(fn(state: State, message: channel.Message) {
-    case message.event {
-      // Broadcast the message, then acknowledge the client's push.
-      "new_msg" ->
-        channel.next(
-          State(..state, sent: state.sent + 1),
-          [
-            channel.broadcast(
-              "new_msg",
-              wire.dynamic_to_json(message.payload),
-            ),
-            channel.reply_ok(
-              message.reply,
-              json.object([#("sent", json.int(state.sent + 1))]),
-            ),
-          ],
-        )
-
-      // Refless events lower the optional reply action to no effect.
-      _ ->
-        channel.next(
-          state,
-          [
-            channel.reply_error(
-              message.reply,
-              json.object([#("error", json.string("unknown_event"))]),
-            ),
-          ],
-        )
-    }
-  })
-  |> channel.on_terminate(fn(state: State, _reason) {
-    [channel.broadcast("left", json.string(state.room_id))]
-  })
-}
 ```
 
 <Aside type="note" title="Reply vs Push vs Broadcast">
@@ -110,7 +101,7 @@ Each action applies to the channel's topic. The runtime applies actions in list 
 - **`channel.push`:** Send a named event only to this socket.
 - **`channel.broadcast`:** Send a named event to all sockets on this topic, including the sender.
 - **`channel.broadcast_from`:** Send a named event to all other sockets on this topic.
-- **`channel.next(state, [])`:** Continue with no outgoing frames.
+- **`channel.stay(state)`:** Continue with no outgoing frames.
 </Aside>
 
 ## 2. Start the channel system and wire the transport
@@ -254,7 +245,7 @@ channel.handler("room:*", fn(context) {
       channel.reject(json.object([#("reason", json.string("room_not_found"))]))
 
     True ->
-      channel.accept(State(room_id: context.topic, sent: 0), callbacks())
+      channel.accept(State(room_id: context.topic, sent: 0))
   }
 })
 ```

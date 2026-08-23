@@ -14,9 +14,7 @@ pub fn main() {
 }
 
 fn stub(pattern: String) -> channel.Handler {
-  channel.handler(pattern, fn(_context) {
-    channel.accept(Nil, channel.callbacks())
-  })
+  channel.handler(pattern, fn(_context) { channel.accept(Nil) })
 }
 
 fn validate(

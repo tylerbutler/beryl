@@ -21,8 +21,8 @@ fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
 /// both in a single action list, and neither naming a topic.
 fn presence_handler() -> channel.Handler {
   channel.handler("room:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
+    let result =
+      channel.accept(Nil)
       |> channel.on_info(fn(state, _message) {
         channel.next(state, [
           channel.presence_track(
@@ -40,7 +40,7 @@ fn presence_handler() -> channel.Handler {
       })
 
     channel.notify(context.self, Nil)
-    channel.accept(Nil, callbacks)
+    result
   })
 }
 

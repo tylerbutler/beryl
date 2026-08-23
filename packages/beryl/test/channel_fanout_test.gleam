@@ -18,16 +18,14 @@ import gleeunit/should
 /// A channel that fans one message out through all three send scopes.
 fn fanout_handler() -> channel.Handler {
   channel.handler("room:*", fn(_context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(state, _message) {
-        channel.next(state, [
-          channel.push("mine", json.int(1)),
-          channel.broadcast_from("others", json.int(2)),
-          channel.broadcast("everyone", json.int(3)),
-        ])
-      })
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_message(fn(state, _message) {
+      channel.next(state, [
+        channel.push("mine", json.int(1)),
+        channel.broadcast_from("others", json.int(2)),
+        channel.broadcast("everyone", json.int(3)),
+      ])
+    })
   })
 }
 

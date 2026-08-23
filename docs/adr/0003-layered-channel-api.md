@@ -55,9 +55,9 @@ only on beryl's public core API. Keep its routing machinery private:
   `channel.JoinContext(info)`: socket id, transport seed, a scoped typed
   sender, concrete topic, wildcard captures, and join payload, instead of
   the core `ConnectInfo` itself. It answers with a rejection or
-  `channel.accept(state, callbacks)`, which seals the typed state inside
-  message, binary, info, and terminate closures. No channel state value is
-  erased. Closures encode all heterogeneity.
+  `channel.accept(state)` with callback builders, which lets `handler` seal
+  the typed state inside message, binary, info, and terminate closures. No
+  channel state value is erased. Closures encode all heterogeneity.
 - The router's model is the handler table plus one live sealed channel per
   joined topic; its `update` matches each `Input` by topic to the owning
   instance. The parsed matching pattern is reused to compute wildcard
@@ -141,7 +141,7 @@ their reasons:
   channel can use: connection data, the concrete topic, wildcard captures, the
   join payload, and this join's typed `Sender`. The soundness claim is
   unaffected: there is still no pre-join erased seed, because a channel's
-  state is created inside `join` and sealed by `channel.accept`.
+  state is created inside `join` and sealed by `channel.handler`.
 - **No erase/restore pair returns.** The proposal budgeted for one sound
   erase-at-send/restore-at-receive pair per handler registration. It was
   not needed. `channel.notify` seals the typed value in a closure that

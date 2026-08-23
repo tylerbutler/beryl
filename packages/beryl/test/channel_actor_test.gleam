@@ -56,8 +56,8 @@ fn note_handler(
   replies: process.Subject(channel.Sender(Note)),
 ) -> channel.Handler {
   channel.handler("room:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
+    let result =
+      channel.accept(0)
       |> channel.on_info(fn(count, note) {
         case note {
           Note(text) ->
@@ -71,7 +71,7 @@ fn note_handler(
         }
       })
     process.send(replies, context.self)
-    channel.accept(0, callbacks)
+    result
   })
 }
 
@@ -81,8 +81,8 @@ fn greeting_handler(
   replies: process.Subject(channel.Sender(Note)),
 ) -> channel.Handler {
   channel.handler("room:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
+    let result =
+      channel.accept(0)
       |> channel.on_info(fn(count, note) {
         case note {
           Note(text) ->
@@ -94,7 +94,7 @@ fn greeting_handler(
       })
     process.send(replies, context.self)
     channel.notify(context.self, Note("welcome to " <> context.topic))
-    channel.accept(0, callbacks)
+    result
   })
 }
 

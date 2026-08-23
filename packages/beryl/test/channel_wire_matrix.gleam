@@ -133,15 +133,15 @@ pub fn handlers() -> List(channel.Handler) {
       case denied(context.payload) {
         True -> channel.reject(denied_payload())
         False ->
-          channel.accept(Nil, contract_callbacks())
+          contract_channel(Nil)
           |> channel.with_reply(join_reply(context.topic))
       }
     }),
   ]
 }
 
-fn contract_callbacks() -> channel.Callbacks(Nil, Nil) {
-  channel.callbacks()
+fn contract_channel(state: Nil) -> channel.JoinResult(Nil, Nil) {
+  channel.accept(state)
   |> channel.on_message(fn(state, message) {
     channel.next(state, message_actions(message))
   })

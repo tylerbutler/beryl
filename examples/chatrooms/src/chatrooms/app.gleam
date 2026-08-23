@@ -49,9 +49,7 @@ pub fn handlers(ctx: Ctx) -> List(channel.Handler) {
 }
 
 fn lobby() -> channel.Handler {
-  channel.handler("lobby", fn(_context) {
-    channel.accept(Nil, channel.callbacks())
-  })
+  channel.handler("lobby", fn(_context) { channel.accept(Nil) })
 }
 
 fn room(ctx: Ctx) -> channel.Handler {
@@ -72,7 +70,7 @@ fn accept_room(
   ctx: Ctx,
   context: channel.JoinContext(Note),
   room_name: String,
-) -> channel.JoinResult(Note) {
+) -> channel.JoinResult(State, Note) {
   let state =
     State(
       topic: context.topic,
@@ -100,7 +98,35 @@ fn accept_room(
       announce_rooms_changed(ctx, state.room_name)
       channel.notify(context.self, PublishRoster)
 
-      channel.accept(state, callbacks(ctx))
+      channel.accept(state)
+      |> channel.on_message(fn(state, message) {
+        case message.event {
+          "new_msg" ->
+            channel.next(
+              state,
+              new_message(state, message.payload, message.reply),
+            )
+          "typing" -> channel.next(state, typing(ctx, state, typing: True))
+          "stop_typing" ->
+            channel.next(state, typing(ctx, state, typing: False))
+          _ -> channel.stay(state)
+        }
+      })
+      |> channel.on_info(fn(state, note) {
+        let PublishRoster = note
+        session_presence.publish(ctx.presence, state.topic)
+        channel.stay(state)
+      })
+      |> channel.on_terminate(fn(state, _reason) {
+        session_presence.untrack(ctx.presence, state.topic, state.socket_id)
+        announce_rooms_changed(ctx, state.room_name)
+        [
+          channel.broadcast(
+            "new_msg",
+            system_message(state.username <> " left the room"),
+          ),
+        ]
+      })
       |> channel.with_reply(
         json.object([
           #("socket_id", json.string(state.socket_id)),
@@ -117,34 +143,6 @@ fn accept_room(
       ])
     }
   }
-}
-
-fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Note) {
-  channel.callbacks()
-  |> channel.on_message(fn(state, message) {
-    case message.event {
-      "new_msg" ->
-        channel.next(state, new_message(state, message.payload, message.reply))
-      "typing" -> channel.next(state, typing(ctx, state, typing: True))
-      "stop_typing" -> channel.next(state, typing(ctx, state, typing: False))
-      _ -> channel.next(state, [])
-    }
-  })
-  |> channel.on_info(fn(state, note) {
-    let PublishRoster = note
-    session_presence.publish(ctx.presence, state.topic)
-    channel.next(state, [])
-  })
-  |> channel.on_terminate(fn(state, _reason) {
-    session_presence.untrack(ctx.presence, state.topic, state.socket_id)
-    announce_rooms_changed(ctx, state.room_name)
-    [
-      channel.broadcast(
-        "new_msg",
-        system_message(state.username <> " left the room"),
-      ),
-    ]
-  })
 }
 
 fn new_message(

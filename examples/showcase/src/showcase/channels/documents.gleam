@@ -69,23 +69,14 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
   })
 }
 
-fn open(ctx: Ctx, tenant: String, document: String) -> channel.JoinResult(Nil) {
+fn open(
+  ctx: Ctx,
+  tenant: String,
+  document: String,
+) -> channel.JoinResult(State, Nil) {
   let document_key = docs_app.build_document_key(tenant, document)
 
-  channel.accept(State(document_key: document_key), callbacks(ctx))
-  |> channel.with_reply(
-    json.object([
-      #("tenant", json.string(tenant)),
-      #("document", json.string(document)),
-      #("state", stored_state(ctx, document_key)),
-    ]),
-  )
-}
-
-/// This channel sends itself no server-side messages, so its `info` type
-/// is `Nil`.
-fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Nil) {
-  channel.callbacks()
+  channel.accept(State(document_key: document_key))
   |> channel.on_message(fn(state: State, message: channel.Message) {
     case message.event {
       "sync_state" ->
@@ -120,6 +111,13 @@ fn callbacks(ctx: Ctx) -> channel.Callbacks(State, Nil) {
         ])
     }
   })
+  |> channel.with_reply(
+    json.object([
+      #("tenant", json.string(tenant)),
+      #("document", json.string(document)),
+      #("state", stored_state(ctx, document_key)),
+    ]),
+  )
 }
 
 fn stored_state(ctx: Ctx, document_key: String) -> Json {

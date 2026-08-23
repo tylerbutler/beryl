@@ -112,28 +112,24 @@ fn poll_channel(
       channel.notify(context.self, ClosePoll)
     })
 
-    channel.accept(
-      room,
-      channel.callbacks()
-        |> channel.on_message(fn(room, message) {
-          handle_message(polls, room, message)
-        })
-        |> channel.on_info(fn(room, message) {
-          let ClosePoll = message
-          case store.close(polls, room) {
-            store.ClosedNow(state) ->
-              channel.next(room, [
-                channel.broadcast("poll_closed", poll.json(state)),
-              ])
-            store.AlreadyClosed(_) | store.RoomNotFound ->
-              channel.next(room, [])
-          }
-        })
-        |> channel.on_terminate(fn(room, _reason) {
-          store.leave(polls, room)
-          []
-        }),
-    )
+    channel.accept(room)
+    |> channel.on_message(fn(room, message) {
+      handle_message(polls, room, message)
+    })
+    |> channel.on_info(fn(room, message) {
+      let ClosePoll = message
+      case store.close(polls, room) {
+        store.ClosedNow(state) ->
+          channel.next(room, [
+            channel.broadcast("poll_closed", poll.json(state)),
+          ])
+        store.AlreadyClosed(_) | store.RoomNotFound -> channel.stay(room)
+      }
+    })
+    |> channel.on_terminate(fn(room, _reason) {
+      store.leave(polls, room)
+      []
+    })
   })
 }
 ```
@@ -145,7 +141,7 @@ The concepts now have channel-specific names:
 - `channel.Handler` pairs a topic pattern with a join callback.
 - `channel.JoinContext` bundles the concrete topic, wildcard `params`, join
   payload, connection data, and this join's typed sender.
-- `channel.accept` supplies the channel's initial private state and callbacks.
+- `channel.accept` supplies the channel's initial private state.
 - `channel.Next` returns the next private state and ordered actions.
 - `channel.Action` describes work on this channel's own topic.
 
@@ -157,7 +153,7 @@ The store removes its poll after the last socket leaves.
 ## Closure sealing makes heterogeneous handlers possible
 
 `channel.Handler` is opaque and non-generic. Internally, `channel.handler`
-captures the typed join callback. `channel.accept` seals the state into the
+captures the typed join callback. `channel.handler` seals the state into the
 typed message, binary, info, and terminate callbacks. Each `channel.next`
 seals the next state into the same callback set.
 
@@ -189,22 +185,19 @@ type GuideInfo {
 fn guide_channel() -> channel.Handler {
   channel.handler("guide", fn(context) {
     timer_message(context.self)
-    channel.accept(
-      0,
-      channel.callbacks()
-        |> channel.on_info(fn(count, message) {
-          let Ready(text) = message
-          channel.next(count + 1, [
-            channel.push(
-              "tip",
-              json.object([
-                #("text", json.string(text)),
-                #("delivery", json.int(count + 1)),
-              ]),
-            ),
-          ])
-        }),
-    )
+    channel.accept(0)
+    |> channel.on_info(fn(count, message) {
+      let Ready(text) = message
+      channel.next(count + 1, [
+        channel.push(
+          "tip",
+          json.object([
+            #("text", json.string(text)),
+            #("delivery", json.int(count + 1)),
+          ]),
+        ),
+      ])
+    })
   })
 }
 ```

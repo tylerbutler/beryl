@@ -74,9 +74,7 @@ pub fn handlers(deps: Deps) -> List(channel.Handler) {
 }
 
 fn lobby() -> channel.Handler {
-  channel.handler("lobby", fn(_context) {
-    channel.accept(Nil, channel.callbacks())
-  })
+  channel.handler("lobby", fn(_context) { channel.accept(Nil) })
 }
 
 pub fn main() {

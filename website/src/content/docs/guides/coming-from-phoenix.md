@@ -55,11 +55,11 @@ Both APIs have these effects:
 | One channel process per joined topic | one private state value per joined topic, in the socket actor | one `model` per socket, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
 | `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
-| `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state, callbacks)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |
+| `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |
 | `{:error, %{reason: ...}}` | `channel.reject(reason)` | `socket.RejectJoin(ref, reason)` |
 | `handle_in/3` | `channel.on_message` | `socket.Message(topic, event, payload, ref)` |
 | `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(message.reply, payload)` / `channel.reply_error(message.reply, payload)` action | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
-| `{:noreply, socket}` | `channel.next(state, [])` | `socket.Next(model, [])` |
+| `{:noreply, socket}` | `channel.stay(state)` | `socket.Next(model, [])` |
 | `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep `Option(ReplyRef)` in the channel's state and call `reply_ok` from a later active callback | store the `ReplyRef` in your model, `socket.ReplyOk` from a later `update` turn |
 | `push(socket, event, payload)` | `channel.push(event, payload)` action | `socket.Push(topic, event, payload)` effect |
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
@@ -122,38 +122,34 @@ pub type Note {
 
 pub fn room() -> channel.Handler {
   channel.handler("room:*", fn(context: channel.JoinContext(Note)) {
-    channel.accept(State(room_id: context.topic), callbacks())
+    channel.accept(State(room_id: context.topic))
+    |> channel.on_message(fn(state: State, message: channel.Message) {
+      case message.event {
+        "ping" ->
+          channel.next(state, [
+            channel.reply_ok(
+              message.reply,
+              json.object([#("status", json.string("ok"))]),
+            ),
+          ])
+
+        "typing" ->
+          channel.next(state, [
+            channel.broadcast_from("typing", json.object([])),
+          ])
+
+        _ -> channel.stay(state)
+      }
+    })
+    |> channel.on_info(fn(state: State, note: Note) {
+      let Tick(at) = note
+      channel.next(state, [
+        channel.push("tick", json.object([#("at", json.int(at))])),
+      ])
+    })
     |> channel.with_reply(
       json.object([#("room_id", json.string(context.topic))]),
     )
-  })
-}
-
-fn callbacks() -> channel.Callbacks(State, Note) {
-  channel.callbacks()
-  |> channel.on_message(fn(state: State, message: channel.Message) {
-    case message.event {
-      "ping" ->
-        channel.next(state, [
-          channel.reply_ok(
-              message.reply,
-              json.object([#("status", json.string("ok"))]),
-          ),
-        ])
-
-      "typing" ->
-        channel.next(state, [
-          channel.broadcast_from("typing", json.object([])),
-        ])
-
-      _ -> channel.next(state, [])
-    }
-  })
-  |> channel.on_info(fn(state: State, note: Note) {
-    let Tick(at) = note
-    channel.next(state, [
-      channel.push("tick", json.object([#("at", json.int(at))])),
-    ])
   })
 }
 ```
@@ -267,7 +263,7 @@ accepted join. The runtime applies them after the acknowledgment, when the
 socket has joined the topic:
 
 ```gleam
-channel.accept(state, callbacks())
+channel.accept(state)
 |> channel.with_actions([
   channel.presence_track(
     "user:" <> state.user_id,

@@ -49,32 +49,28 @@ pub fn room() -> channel.Handler {
         sent: 0,
       )
 
-    channel.accept(state, callbacks())
+    channel.accept(state)
+    |> channel.on_message(fn(state: State, message: channel.Message) {
+      channel.next(
+        State(..state, sent: state.sent + 1),
+        [
+          channel.broadcast_from(message.event, json.int(state.sent + 1)),
+        ],
+      )
+    })
+    |> channel.on_info(fn(state: State, note: Note) {
+      let Tick(at) = note
+      channel.next(state, [channel.push("tick", json.int(at))])
+    })
+    |> channel.on_terminate(fn(state: State, _reason) {
+      [channel.broadcast("left", json.string(state.username))]
+    })
     |> channel.with_reply(
       json.object([#("room", json.string(context.topic))]),
     )
     |> channel.with_actions([
       channel.broadcast("joined", json.string(state.username)),
     ])
-  })
-}
-
-fn callbacks() -> channel.Callbacks(State, Note) {
-  channel.callbacks()
-  |> channel.on_message(fn(state: State, message: channel.Message) {
-    channel.next(
-      State(..state, sent: state.sent + 1),
-      [
-        channel.broadcast_from(message.event, json.int(state.sent + 1)),
-      ],
-    )
-  })
-  |> channel.on_info(fn(state: State, note: Note) {
-    let Tick(at) = note
-    channel.next(state, [channel.push("tick", json.int(at))])
-  })
-  |> channel.on_terminate(fn(state: State, _reason) {
-    [channel.broadcast("left", json.string(state.username))]
   })
 }
 ```
@@ -220,13 +216,10 @@ type State {
 }
 
 // Inside the `join` callback:
-channel.accept(
-  State(room_id: context.topic, username: name, sent: 0),
-  callbacks(),
-)
+channel.accept(State(room_id: context.topic, username: name, sent: 0))
 ```
 
-`channel.accept` captures the state in the callback closures. Each
+`channel.handler` captures the state in the callback closures. Each
 `channel.next` result rebuilds the closures with the next state. The layer does
 not erase the state to `Dynamic` or use unchecked coercion. Therefore, one
 `List(Handler)` can contain channels with unrelated state types.
@@ -354,7 +347,7 @@ The `encode` callbacks of `push_presence` and `broadcast_presence` run
 are emitted with the acknowledgment and applied strictly after it:
 
 ```gleam
-channel.accept(state, callbacks())
+channel.accept(state)
 |> channel.with_reply(reply)
 |> channel.with_actions([
   channel.presence_track(state.username, meta(state)),
@@ -389,8 +382,8 @@ acknowledgment.
 | `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
 | `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
 
-`channel.callbacks()` starts from callbacks that ignore every input and
-stay joined; override only what the channel cares about.
+`channel.accept(state)` ignores every input and stays joined until you add
+callbacks with the `on_*` builders.
 
 A `channel.Message` has `topic`, `event`, the raw `payload` as
 `Dynamic`, and `reply: Option(socket.ReplyRef)` — present only when the client
@@ -410,7 +403,7 @@ channel.on_message(fn(state: State, message: channel.Message) {
         channel.broadcast_from("typing", json.object([])),
       ])
 
-    _ -> channel.next(state, [])
+    _ -> channel.stay(state)
   }
 })
 ```
@@ -420,6 +413,7 @@ Every callback answers with a `channel.Next(state)`:
 | Result | Meaning |
 |---|---|
 | `next(state, actions)` | Stay joined, applying the active-phase actions in order |
+| `stay(state)` | Stay joined with no actions |
 | `close(actions)` | Apply active-phase actions, then leave this channel |
 | `stop_socket(reason)` | Tear down the whole socket |
 
@@ -470,7 +464,7 @@ sequenceDiagram
   Client->>Router: phx_join "room:lobby"
   Router->>Router: first matching pattern wins
   Router->>Ch: join(JoinContext)
-  Ch-->>Router: accept(state, callbacks) |> with_reply(reply) |> with_actions(..)
+  Ch-->>Router: accept(state) |> on_message(..) |> with_reply(reply)
   Router-->>Client: phx_reply ok, then the join's actions
   Client->>Router: event on "room:lobby"
   Router->>Ch: on_message(state, Message)

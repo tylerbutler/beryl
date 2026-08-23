@@ -54,14 +54,14 @@ pub fn new_wiring() -> Wiring {
 /// A channel that reports which handler owns the topic and nothing else.
 fn labelled_handler(pattern: String, label: String) -> channel.Handler {
   channel.handler(pattern, fn(_context) {
-    channel.accept(Nil, channel.callbacks())
+    channel.accept(Nil)
     |> channel.with_reply(json.object([#("handler", json.string(label))]))
   })
 }
 
 fn params_handler(pattern: String) -> channel.Handler {
   channel.handler(pattern, fn(context) {
-    channel.accept(Nil, channel.callbacks())
+    channel.accept(Nil)
     |> channel.with_reply(
       json.object([
         #("params", json.array(context.params, json.string)),
@@ -72,15 +72,13 @@ fn params_handler(pattern: String) -> channel.Handler {
 
 fn optional_reply_handler() -> channel.Handler {
   channel.handler("reply:*", fn(_context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(state, message) {
-        channel.next(state, [
-          channel.reply_ok(message.reply, json.object([])),
-          channel.push("after", json.object([])),
-        ])
-      })
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_message(fn(state, message) {
+      channel.next(state, [
+        channel.reply_ok(message.reply, json.object([])),
+        channel.push("after", json.object([])),
+      ])
+    })
   })
 }
 
@@ -91,16 +89,17 @@ fn room_handler(wiring: Wiring) -> channel.Handler {
     process.send(wiring.senders, context.self)
     process.send(wiring.pids, process.self())
 
-    channel.accept(0, room_callbacks(wiring, context.topic))
+    room_channel(0, wiring, context.topic)
     |> channel.with_reply(json.object([#("handler", json.string("room"))]))
   })
 }
 
-fn room_callbacks(
+fn room_channel(
+  state: Int,
   wiring: Wiring,
   topic: String,
-) -> channel.Callbacks(Int, Note) {
-  channel.callbacks()
+) -> channel.JoinResult(Int, Note) {
+  channel.accept(state)
   |> channel.on_message(on_message)
   |> channel.on_binary(fn(count, data) {
     channel.next(count + 1, [
@@ -145,7 +144,7 @@ fn on_message(count: Int, message: channel.Message) -> channel.Next(Int) {
       ])
     "leave", _ -> channel.close([channel.push("bye", json.int(count))])
     "halt", _ -> channel.stop_socket(socket.Normal)
-    _, _ -> channel.next(count, [])
+    _, _ -> channel.stay(count)
   }
 }
 
@@ -162,7 +161,7 @@ fn on_info(count: Int, note: Note) -> channel.Next(Int) {
     Halt -> channel.stop_socket(socket.Normal)
     WhereAmI(reply) -> {
       process.send(reply, process.self())
-      channel.next(count, [])
+      channel.stay(count)
     }
   }
 }
@@ -302,9 +301,7 @@ pub fn join_context_contains_wildcard_captures_in_pattern_order_test() {
 pub fn a_join_can_be_accepted_without_a_reply_payload_test() {
   let channels =
     start([
-      channel.handler("room:*", fn(_context) {
-        channel.accept(Nil, channel.callbacks())
-      }),
+      channel.handler("room:*", fn(_context) { channel.accept(Nil) }),
     ])
   let frames = helper.connect(channels, "s1")
 
@@ -650,16 +647,13 @@ pub fn a_rejected_joins_sender_cannot_reach_a_later_accepted_join_test() {
         process.send(senders, context.self)
         case decode.run(context.payload, decode.at(["admit"], decode.bool)) {
           Ok(True) ->
-            channel.accept(
-              0,
-              channel.callbacks()
-                |> channel.on_info(fn(count, note) {
-                  let assert Announce(text) = note as "only announcements"
-                  channel.next(count + 1, [
-                    channel.push("note", json.string(text)),
-                  ])
-                }),
-            )
+            channel.accept(0)
+            |> channel.on_info(fn(count, note) {
+              let assert Announce(text) = note as "only announcements"
+              channel.next(count + 1, [
+                channel.push("note", json.string(text)),
+              ])
+            })
           _ -> channel.reject(json.object([#("reason", json.string("no"))]))
         }
       }),
