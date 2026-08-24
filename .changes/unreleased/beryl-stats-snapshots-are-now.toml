@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Stats snapshots are now documented as eventually consistent: counts are point-in-time values as observed by the runtime process servicing the request and may lag in-flight connect/disconnect notifications."

@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Stats snapshots succeed while an app callback is mid-flight, and socket counts are eventually consistent as documented: disconnects are reflected once the router processes the socket actor's teardown notification."

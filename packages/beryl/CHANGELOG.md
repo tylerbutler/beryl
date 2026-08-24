@@ -1,5 +1,23 @@
 # beryl changelog
 
+## v0.4.0 - 2026-08-24
+
+### Changed
+
+- **Channel callback registration now starts from `channel.accept(state)`.** Pipe accepted joins through `channel.on_message`, `channel.on_binary`, `channel.on_info`, and `channel.on_terminate`; replace `channel.next(state, [])` with `channel.stay(state)`.
+- Stats snapshots are now documented as eventually consistent: counts are point-in-time values as observed by the runtime process servicing the request and may lag in-flight connect/disconnect notifications.
+- Stats snapshots succeed while an app callback is mid-flight, and socket counts are eventually consistent as documented: disconnects are reflected once the router processes the socket actor's teardown notification.
+- The runtime now runs one actor per connected socket behind a lightweight router: app init/update callbacks run in the socket's own process, so one socket's slow callback no longer stalls others, and broadcast fan-out encodes per recipient on separate schedulers (benchmarked ~7x faster delivery under fan-out load at 10ms callback cost, with no regression on point-to-point traffic). Public API and wire behavior are unchanged.
+
+### Fixed
+
+- Socket actor crashes now close their transport and sweep runtime-owned presence, and forced shutdowns return StopTimeout.
+
+### Removed
+
+- Broadcast telemetry no longer reports a send_failures measurement: the broadcast origin hands each recipient's frame to that socket's own actor and cannot observe the sends. Per-socket send failures remain visible in logs.
+- Stats snapshots no longer report `runtime_mailbox_length`, and `beryl/stats.runtime_mailbox_length` is removed. The metric assumed a single runtime mailbox, a pre-1.0 leak of the runtime process topology.
+
 ## v0.3.0 - 2026-08-21
 
 ### Added

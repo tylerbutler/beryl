@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Socket actor crashes now close their transport and sweep runtime-owned presence, and forced shutdowns return StopTimeout."

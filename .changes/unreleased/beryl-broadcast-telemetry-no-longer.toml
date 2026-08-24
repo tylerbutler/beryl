@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Removed"
-body = "Broadcast telemetry no longer reports a send_failures measurement: the broadcast origin hands each recipient's frame to that socket's own actor and cannot observe the sends. Per-socket send failures remain visible in logs."

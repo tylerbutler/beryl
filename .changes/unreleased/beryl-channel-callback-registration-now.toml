@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "**Channel callback registration now starts from `channel.accept(state)`.** Pipe accepted joins through `channel.on_message`, `channel.on_binary`, `channel.on_info`, and `channel.on_terminate`; replace `channel.next(state, [])` with `channel.stay(state)`."
