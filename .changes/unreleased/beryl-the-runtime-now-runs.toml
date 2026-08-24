@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "The runtime now runs one actor per connected socket behind a lightweight router: app init/update callbacks run in the socket's own process, so one socket's slow callback no longer stalls others, and broadcast fan-out encodes per recipient on separate schedulers (benchmarked ~7x faster delivery under fan-out load at 10ms callback cost, with no regression on point-to-point traffic). Public API and wire behavior are unchanged."
