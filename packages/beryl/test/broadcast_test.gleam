@@ -13,6 +13,7 @@ import gleam/json
 import gleam/option
 import gleam/string
 import gleeunit/should
+import test_helpers
 
 /// Start an app system that accepts every join.
 fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
@@ -106,6 +107,11 @@ pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_runtime_test() {
   join_topic(remote_channels, "other-socket", "room:lobby", remote_other)
   drain(remote_sender)
   drain(remote_other)
+  test_helpers.wait_until(
+    fn() { pubsub.subscriber_count(ps, "room:lobby") == 1 },
+    1000,
+    10,
+  )
 
   beryl.broadcast_from(
     origin_channels,
@@ -196,6 +202,11 @@ pub fn broadcast_presence_diff_with_pubsub_delivers_to_remote_runtime_test() {
   let remote_socket = h.connect(remote_channels, "socket-1")
   join_topic(remote_channels, "socket-1", "room:lobby", remote_socket)
   drain(remote_socket)
+  test_helpers.wait_until(
+    fn() { pubsub.subscriber_count(ps, "room:lobby") == 1 },
+    1000,
+    10,
+  )
 
   beryl.broadcast_presence_diff(origin_channels, "room:lobby", presence_diff())
 
