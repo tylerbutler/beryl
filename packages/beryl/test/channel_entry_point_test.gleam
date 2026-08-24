@@ -15,7 +15,7 @@ import gleeunit/should
 
 fn ok_handler(pattern: String) -> channel.Handler {
   channel.handler(pattern, fn(_context) {
-    channel.accept(Nil, channel.callbacks())
+    channel.accept(Nil)
     |> channel.with_reply(json.object([#("handler", json.string(pattern))]))
   })
 }
@@ -119,8 +119,8 @@ fn drive_lifecycle(channels: beryl.Sockets) -> List(String) {
 /// A channel that traces its whole lifecycle.
 fn lifecycle_handler(trace: process.Subject(String)) -> channel.Handler {
   channel.handler("room:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
+    let result =
+      channel.accept(Nil)
       |> channel.on_message(fn(state, message) {
         process.send(trace, "message:" <> message.event)
         channel.next(state, [channel.push("pong", json.int(1))])
@@ -130,7 +130,7 @@ fn lifecycle_handler(trace: process.Subject(String)) -> channel.Handler {
         []
       })
     process.send(trace, "join:" <> context.topic)
-    channel.accept(Nil, callbacks)
+    result
     |> channel.with_reply(json.object([#("handler", json.string("room:*"))]))
   })
 }

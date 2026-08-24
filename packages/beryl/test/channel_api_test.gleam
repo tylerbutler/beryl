@@ -1,11 +1,10 @@
 //// Tests for the public channel API: handler sealing, join accept/reject,
-//// typed callback dispatch, ordered actions, close/socket-stop results,
+//// typed callback dispatch, ordered actions, close results,
 //// and typed server-side sends through the layer-owned `Sender`.
 
 import beryl/channel
 import beryl/presence
 import beryl/socket
-import gleam/bit_array
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -50,12 +49,7 @@ fn quiet_context(topic: String) -> channel.RoutedJoinContext {
 }
 
 fn client_message(event: String) -> channel.Message {
-  channel.Message(
-    topic: "room:lobby",
-    event: event,
-    payload: dynamic.nil(),
-    reply: option.None,
-  )
+  channel.Message(event: event, payload: dynamic.nil(), reply: option.None)
 }
 
 fn describe(effect: socket.Effect) -> String {
@@ -94,51 +88,31 @@ fn accepted_channel(outcome: channel.JoinOutcome) -> channel.LiveChannel {
 }
 
 /// A minimal counting channel: every `"bump"` message adds one and pushes
-/// the running total; `"quit"` closes the channel; `"boom"` stops the socket.
+/// the running total; `"quit"` closes the channel.
 fn counter_handler(pattern: String) -> channel.Handler {
   channel.handler(pattern, fn(context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(count, message) {
-        case message.event {
-          "bump" ->
-            channel.next(count + 1, [
-              channel.push("total", json.int(count + 1)),
-              channel.broadcast("bumped", json.string(context.topic)),
-            ])
-          "quit" -> channel.close([channel.push("bye", json.int(count))])
-          "boom" -> channel.stop_socket(socket.Errored("boom"))
-          _ -> channel.next(count, [])
-        }
-      })
-      |> channel.on_binary(fn(count, data) {
-        channel.next(count, [
-          channel.push("bytes", json.int(bit_array.byte_size(data))),
-        ])
-      })
-      |> channel.on_info(fn(count, note) {
-        case note {
-          Note(text) ->
-            channel.next(count, [
-              channel.push(
-                "note",
-                json.string(context.socket_id <> ":" <> text),
-              ),
-            ])
-          Bye -> channel.close([])
-        }
-      })
-
-    channel.accept(0, callbacks)
+    channel.accept(0)
+    |> channel.on_message(fn(count, message) {
+      case message.event {
+        "bump" ->
+          channel.next(count + 1, [
+            channel.push("total", json.int(count + 1)),
+            channel.broadcast("bumped", json.string(context.topic)),
+          ])
+        "quit" -> channel.close([channel.push("bye", json.int(count))])
+        _ -> channel.stay(count)
+      }
+    })
+    |> channel.on_info(fn(count, note) {
+      case note {
+        Note(text) ->
+          channel.next(count, [
+            channel.push("note", json.string(context.socket_id <> ":" <> text)),
+          ])
+        Bye -> channel.close([])
+      }
+    })
   })
-}
-
-// --- handler registration --------------------------------------------------
-
-pub fn handler_exposes_its_pattern_test() {
-  counter_handler("room:*")
-  |> channel.pattern
-  |> should.equal("room:*")
 }
 
 // --- join results ----------------------------------------------------------
@@ -153,7 +127,7 @@ pub fn join_accepts_without_a_reply_test() {
 pub fn join_accepts_with_a_reply_payload_test() {
   let handler =
     channel.handler("room:*", fn(_context) {
-      channel.accept(Nil, channel.callbacks())
+      channel.accept(Nil)
       |> channel.with_reply(json.object([#("ok", json.bool(True))]))
     })
 
@@ -188,7 +162,7 @@ pub fn join_receives_the_topic_and_payload_test() {
       let decoded =
         decode.run(context.payload, decode.string)
         |> result.unwrap("<undecodable>")
-      channel.accept(Nil, channel.callbacks())
+      channel.accept(Nil)
       |> channel.with_reply(
         json.object([
           #("socket", json.string(context.socket_id)),
@@ -232,7 +206,7 @@ pub fn message_actions_keep_their_order_test() {
       actions
       |> rendered
       |> should.equal("push/total/1,broadcast/bumped/\"room:lobby\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -251,38 +225,23 @@ pub fn channel_state_is_threaded_across_messages_test() {
       actions
       |> rendered
       |> should.equal("push/total/3,broadcast/bumped/\"room:lobby\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
 pub fn unhandled_events_continue_without_actions_test() {
-  let handler =
-    channel.handler("room:*", fn(_context) {
-      channel.accept(Nil, channel.callbacks())
-    })
+  let handler = channel.handler("room:*", fn(_context) { channel.accept(Nil) })
 
   let live =
     channel.open(handler, quiet_context("room:lobby")) |> accepted_channel
 
   case live.on_message(client_message("anything")) {
     channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
-pub fn binary_frames_reach_the_binary_callback_test() {
-  let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
-    |> accepted_channel
-
-  case live.on_binary(<<1, 2, 3>>) {
-    channel.StepContinue(_next, actions) ->
-      actions |> rendered |> should.equal("push/bytes/3")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
-  }
-}
-
-// --- close and socket stop -------------------------------------------------
+// --- close -----------------------------------------------------------------
 
 pub fn close_carries_its_final_actions_test() {
   let live =
@@ -292,18 +251,7 @@ pub fn close_carries_its_final_actions_test() {
   case live.on_message(client_message("quit")) {
     channel.StepClose(actions) ->
       actions |> rendered |> should.equal("push/bye/0")
-    channel.StepContinue(..) | channel.StepStop(..) -> should.fail()
-  }
-}
-
-pub fn stop_socket_carries_only_a_reason_test() {
-  let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
-    |> accepted_channel
-
-  case live.on_message(client_message("boom")) {
-    channel.StepStop(reason) -> reason |> should.equal(socket.Errored("boom"))
-    channel.StepContinue(..) | channel.StepClose(..) -> should.fail()
+    channel.StepContinue(..) -> should.fail()
   }
 }
 
@@ -311,13 +259,11 @@ pub fn terminate_runs_the_terminate_callback_test() {
   let observed = process.new_subject()
   let handler =
     channel.handler("room:*", fn(_context) {
-      let callbacks =
-        channel.callbacks()
-        |> channel.on_terminate(fn(_state, reason) {
-          process.send(observed, reason)
-          []
-        })
-      channel.accept(Nil, callbacks)
+      channel.accept(Nil)
+      |> channel.on_terminate(fn(_state, reason) {
+        process.send(observed, reason)
+        []
+      })
     })
 
   let live =
@@ -336,16 +282,14 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
   let handler =
     channel.handler("room:*", fn(context) {
       process.send(senders, context.self)
-      let callbacks =
-        channel.callbacks()
-        |> channel.on_info(fn(_state, note) {
-          case note {
-            Note(text) ->
-              channel.next(Nil, [channel.push("note", json.string(text))])
-            Bye -> channel.close([])
-          }
-        })
-      channel.accept(Nil, callbacks)
+      channel.accept(Nil)
+      |> channel.on_info(fn(_state, note) {
+        case note {
+          Note(text) ->
+            channel.next(Nil, [channel.push("note", json.string(text))])
+          Bye -> channel.close([])
+        }
+      })
     })
 
   let live =
@@ -372,7 +316,7 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
   case next.on_mail(second) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"again\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -383,15 +327,13 @@ pub fn an_unrun_mail_delivers_nothing_test() {
   let handler =
     channel.handler("room:*", fn(context) {
       process.send(senders, context.self)
-      let callbacks =
-        channel.callbacks()
-        |> channel.on_info(fn(count, note) {
-          let assert Note(text) = note as "only Note values are sent here"
-          channel.next(count + 1, [
-            channel.push("note", json.string(text)),
-          ])
-        })
-      channel.accept(0, callbacks)
+      channel.accept(0)
+      |> channel.on_info(fn(count, note) {
+        let assert Note(text) = note as "only Note values are sent here"
+        channel.next(count + 1, [
+          channel.push("note", json.string(text)),
+        ])
+      })
     })
 
   let live =
@@ -416,7 +358,7 @@ pub fn an_unrun_mail_delivers_nothing_test() {
   case live.on_mail(kept) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"kept\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -427,16 +369,14 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   let handler =
     channel.handler("room:*", fn(context) {
       process.send(senders, context.self)
-      let callbacks =
-        channel.callbacks()
-        |> channel.on_info(fn(_state, note) {
-          case note {
-            Note(text) ->
-              channel.next(Nil, [channel.push("note", json.string(text))])
-            Bye -> channel.close([])
-          }
-        })
-      channel.accept(Nil, callbacks)
+      channel.accept(Nil)
+      |> channel.on_info(fn(_state, note) {
+        case note {
+          Note(text) ->
+            channel.next(Nil, [channel.push("note", json.string(text))])
+          Bye -> channel.close([])
+        }
+      })
     })
 
   let join_context =
@@ -455,7 +395,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   // the mail sealed: the value is only ever readable by its own join.
   case second.on_mail(mail) {
     channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 
   // ...so it is still intact and still the first join's message when the
@@ -463,7 +403,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   case first.on_mail(mail) {
     channel.StepContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"mine\"")
-    channel.StepClose(..) | channel.StepStop(..) -> should.fail()
+    channel.StepClose(..) -> should.fail()
   }
 }
 
@@ -473,15 +413,13 @@ pub fn info_can_close_the_channel_test() {
   let handler =
     channel.handler("room:*", fn(context) {
       process.send(senders, context.self)
-      let callbacks =
-        channel.callbacks()
-        |> channel.on_info(fn(_state, note) {
-          case note {
-            Bye -> channel.close([])
-            Note(_) -> channel.next(Nil, [])
-          }
-        })
-      channel.accept(Nil, callbacks)
+      channel.accept(Nil)
+      |> channel.on_info(fn(_state, note) {
+        case note {
+          Bye -> channel.close([])
+          Note(_) -> channel.stay(Nil)
+        }
+      })
     })
 
   let live =
@@ -498,7 +436,7 @@ pub fn info_can_close_the_channel_test() {
 
   case live.on_mail(mail) {
     channel.StepClose(actions) -> actions |> should.equal([])
-    channel.StepContinue(..) | channel.StepStop(..) -> should.fail()
+    channel.StepContinue(..) -> should.fail()
   }
 }
 
@@ -589,7 +527,7 @@ pub fn optional_reply_with_a_ref_lowers_in_order_test() {
 pub fn repeated_join_action_lists_append_left_to_right_test() {
   let handler =
     channel.handler("room:*", fn(_context) {
-      channel.accept(Nil, channel.callbacks())
+      channel.accept(Nil)
       |> channel.with_actions([channel.push("first", json.int(1))])
       |> channel.with_actions([channel.push("second", json.int(2))])
     })

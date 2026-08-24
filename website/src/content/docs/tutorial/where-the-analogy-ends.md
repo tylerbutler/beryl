@@ -77,7 +77,7 @@ input that failed:
 |---|---|
 | raw `init` | Leave the socket unregistered |
 | `Join`, or a channel `join` | Reject that join |
-| topic-scoped `Message` / `Binary`, or `on_message` / `on_binary` | Close that topic |
+| topic-scoped `Message`, or `on_message` | Close that topic |
 | `Info`, or channel `on_info` | Tear down that socket |
 | `Closed`, or channel `on_terminate` | Log the crash and continue teardown |
 

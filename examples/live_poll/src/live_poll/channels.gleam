@@ -35,28 +35,24 @@ fn poll_channel(
       channel.notify(context.self, ClosePoll)
     })
 
-    channel.accept(
-      room,
-      channel.callbacks()
-        |> channel.on_message(fn(room, message) {
-          handle_message(polls, room, message)
-        })
-        |> channel.on_info(fn(room, message) {
-          let ClosePoll = message
-          case store.close(polls, room) {
-            store.ClosedNow(state) ->
-              channel.next(room, [
-                channel.broadcast("poll_closed", poll.json(state)),
-              ])
-            store.AlreadyClosed(_) | store.RoomNotFound ->
-              channel.next(room, [])
-          }
-        })
-        |> channel.on_terminate(fn(room, _reason) {
-          store.leave(polls, room)
-          []
-        }),
-    )
+    channel.accept(room)
+    |> channel.on_message(fn(room, message) {
+      handle_message(polls, room, message)
+    })
+    |> channel.on_info(fn(room, message) {
+      let ClosePoll = message
+      case store.close(polls, room) {
+        store.ClosedNow(state) ->
+          channel.next(room, [
+            channel.broadcast("poll_closed", poll.json(state)),
+          ])
+        store.AlreadyClosed(_) | store.RoomNotFound -> channel.stay(room)
+      }
+    })
+    |> channel.on_terminate(fn(room, _reason) {
+      store.leave(polls, room)
+      []
+    })
   })
 }
 
@@ -95,29 +91,26 @@ fn handle_message(
       }
       channel.next(room, actions)
     }
-    poll.Unsupported -> channel.next(room, [])
+    poll.Unsupported -> channel.stay(room)
   }
 }
 
 fn guide_channel() -> channel.Handler {
   channel.handler("guide", fn(context) {
     timer_message(context.self)
-    channel.accept(
-      0,
-      channel.callbacks()
-        |> channel.on_info(fn(count, message) {
-          let Ready(text) = message
-          channel.next(count + 1, [
-            channel.push(
-              "tip",
-              json.object([
-                #("text", json.string(text)),
-                #("delivery", json.int(count + 1)),
-              ]),
-            ),
-          ])
-        }),
-    )
+    channel.accept(0)
+    |> channel.on_info(fn(count, message) {
+      let Ready(text) = message
+      channel.next(count + 1, [
+        channel.push(
+          "tip",
+          json.object([
+            #("text", json.string(text)),
+            #("delivery", json.int(count + 1)),
+          ]),
+        ),
+      ])
+    })
   })
 }
 

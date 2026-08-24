@@ -20,15 +20,12 @@ pub fn main() {
 
 pub fn room() -> channel.Handler {
   channel.handler("room:*", fn(_context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_message(fn(count, message) {
-        channel.next(count + 1, [
-          channel.broadcast(message.event, json.int(count + 1)),
-        ])
-      })
-
-    channel.accept(0, callbacks)
+    channel.accept(0)
+    |> channel.on_message(fn(count, message) {
+      channel.next(count + 1, [
+        channel.broadcast(message.event, json.int(count + 1)),
+      ])
+    })
   })
 }
 

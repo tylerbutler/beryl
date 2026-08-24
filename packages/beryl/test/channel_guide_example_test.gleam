@@ -40,27 +40,23 @@ pub fn room() -> channel.Handler {
     let state =
       State(room_id: context.topic, username: context.socket_id, sent: 0)
 
-    channel.accept(state, callbacks())
+    channel.accept(state)
+    |> channel.on_message(fn(state: State, message: channel.Message) {
+      channel.next(State(..state, sent: state.sent + 1), [
+        channel.broadcast_from(message.event, json.int(state.sent + 1)),
+      ])
+    })
+    |> channel.on_info(fn(state: State, note: Note) {
+      let Tick(at) = note
+      channel.next(state, [channel.push("tick", json.int(at))])
+    })
+    |> channel.on_terminate(fn(state: State, _reason) {
+      [channel.broadcast("left", json.string(state.username))]
+    })
     |> channel.with_reply(json.object([#("room", json.string(context.topic))]))
     |> channel.with_actions([
       channel.broadcast("joined", json.string(state.username)),
     ])
-  })
-}
-
-fn callbacks() -> channel.Callbacks(State, Note) {
-  channel.callbacks()
-  |> channel.on_message(fn(state: State, message: channel.Message) {
-    channel.next(State(..state, sent: state.sent + 1), [
-      channel.broadcast_from(message.event, json.int(state.sent + 1)),
-    ])
-  })
-  |> channel.on_info(fn(state: State, note: Note) {
-    let Tick(at) = note
-    channel.next(state, [channel.push("tick", json.int(at))])
-  })
-  |> channel.on_terminate(fn(state: State, _reason) {
-    [channel.broadcast("left", json.string(state.username))]
   })
 }
 

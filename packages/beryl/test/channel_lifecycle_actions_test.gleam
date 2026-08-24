@@ -53,7 +53,7 @@ fn start_presence(replica: String) -> presence.Presence {
 /// The push is only deliverable if the accept was lowered first.
 fn welcoming_handler() -> channel.Handler {
   channel.handler("room:*", fn(context) {
-    channel.accept(Nil, channel.callbacks())
+    channel.accept(Nil)
     |> channel.with_reply(
       json.object([#("joined", json.string(context.topic))]),
     )
@@ -93,7 +93,7 @@ fn capacity_handler(handle: presence.Presence) -> channel.Handler {
     case list.length(entries) >= 1 {
       True -> channel.reject(json.object([#("reason", json.string("full"))]))
       False ->
-        channel.accept(Nil, channel.callbacks())
+        channel.accept(Nil)
         |> channel.with_actions([
           channel.presence_track(
             context.socket_id,
@@ -152,19 +152,16 @@ pub fn a_capacity_check_observes_a_completed_join_time_track_test() {
 /// order and a presence untrack followed by an apply-time roster snapshot.
 fn departing_handler(trace: process.Subject(String)) -> channel.Handler {
   channel.handler("room:*", fn(context) {
-    let callbacks =
-      channel.callbacks()
-      |> channel.on_terminate(fn(_state, reason) {
-        process.send(trace, "terminate:" <> helper.reason_name(reason))
-        [
-          channel.broadcast("bye_first", json.string(context.socket_id)),
-          channel.broadcast("bye_second", json.string(context.socket_id)),
-          channel.presence_untrack(context.socket_id),
-          channel.broadcast_presence("presence_list", encode_users),
-        ]
-      })
-
-    channel.accept(Nil, callbacks)
+    channel.accept(Nil)
+    |> channel.on_terminate(fn(_state, reason) {
+      process.send(trace, "terminate:" <> helper.reason_name(reason))
+      [
+        channel.broadcast("bye_first", json.string(context.socket_id)),
+        channel.broadcast("bye_second", json.string(context.socket_id)),
+        channel.presence_untrack(context.socket_id),
+        channel.broadcast_presence("presence_list", encode_users),
+      ]
+    })
     |> channel.with_actions([
       channel.presence_track(context.socket_id, json.object([])),
       channel.push_presence("presence_list", encode_users),

@@ -57,7 +57,6 @@ pub const room_pattern = "room:*"
 //   "shout"         broadcast_from `shouted`, echoing the client payload
 //   "track"         presence-track "alice", then broadcast a snapshot
 //   "blob"          a codec-decoded binary payload: push its byte size
-//   raw binary      an undecoded binary frame: push its byte size
 // ---------------------------------------------------------------------------
 
 /// The hand-written `update` half of the matrix.
@@ -91,13 +90,6 @@ fn raw_effects(
     ]
     socket.Message(name, "blob", payload, _ref) -> [
       socket.Push(name, binary_event, binary_payload("decoded", payload)),
-    ]
-    socket.Binary(name, data) -> [
-      socket.Push(
-        name,
-        binary_event,
-        binary_size_payload("raw", bit_array.byte_size(data)),
-      ),
     ]
     _ -> []
   }
@@ -133,25 +125,17 @@ pub fn handlers() -> List(channel.Handler) {
       case denied(context.payload) {
         True -> channel.reject(denied_payload())
         False ->
-          channel.accept(Nil, contract_callbacks())
+          contract_channel(Nil)
           |> channel.with_reply(join_reply(context.topic))
       }
     }),
   ]
 }
 
-fn contract_callbacks() -> channel.Callbacks(Nil, Nil) {
-  channel.callbacks()
+fn contract_channel(state: Nil) -> channel.JoinResult(Nil, Nil) {
+  channel.accept(state)
   |> channel.on_message(fn(state, message) {
     channel.next(state, message_actions(message))
-  })
-  |> channel.on_binary(fn(state, data) {
-    channel.next(state, [
-      channel.push(
-        binary_event,
-        binary_size_payload("raw", bit_array.byte_size(data)),
-      ),
-    ])
   })
 }
 
@@ -313,21 +297,6 @@ pub fn variants() -> List(Variant) {
 /// decodes binary frames into ordinary events.
 pub fn default_config() -> beryl.Config {
   beryl.config(wire.phoenix_codec())
-}
-
-/// The Phoenix framing *without* its binary decoder, so raw binary frames
-/// reach the app undecoded instead of arriving as events.
-pub fn text_only_config() -> beryl.Config {
-  beryl.config(
-    codec.new(
-      decode_text: wire.decode_message,
-      encode_reply: wire.reply_json,
-      encode_push: wire.push,
-      encode_heartbeat_reply: wire.heartbeat_reply,
-    )
-    |> codec.with_close_encoder(wire.channel_close)
-    |> codec.with_error_encoder(wire.channel_error),
-  )
 }
 
 /// Run one scenario against both variants and require them to observe the

@@ -53,7 +53,35 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
     )
     channel.notify(context.self, PublishRoster)
 
-    channel.accept(state, callbacks(ctx, context.topic))
+    channel.accept(state)
+    |> channel.on_message(fn(state: State, message: channel.Message) {
+      case message.event {
+        "cursor_move" ->
+          channel.next(state, [
+            channel.broadcast_from("cursor_move", move(state, message.payload)),
+          ])
+
+        "reaction" ->
+          case decode_reaction(message.payload) {
+            Ok(reaction) ->
+              channel.next(state, [
+                channel.broadcast_from("reaction", reaction),
+              ])
+            Error(Nil) -> channel.stay(state)
+          }
+
+        _ -> channel.stay(state)
+      }
+    })
+    |> channel.on_info(fn(state, note) {
+      let PublishRoster = note
+      session_presence.publish(ctx.presence, context.topic)
+      channel.stay(state)
+    })
+    |> channel.on_terminate(fn(state: State, _reason) {
+      session_presence.untrack(ctx.presence, context.topic, state.socket_id)
+      []
+    })
     |> channel.with_reply(
       json.object([
         #("socket_id", json.string(state.socket_id)),
@@ -61,38 +89,6 @@ pub fn channel(ctx: Ctx) -> channel.Handler {
         #("color", json.string(state.color)),
       ]),
     )
-  })
-}
-
-fn callbacks(ctx: Ctx, topic: String) -> channel.Callbacks(State, Note) {
-  channel.callbacks()
-  |> channel.on_message(fn(state: State, message: channel.Message) {
-    case message.event {
-      "cursor_move" ->
-        channel.next(state, [
-          channel.broadcast_from("cursor_move", move(state, message.payload)),
-        ])
-
-      "reaction" ->
-        case decode_reaction(message.payload) {
-          Ok(reaction) ->
-            channel.next(state, [
-              channel.broadcast_from("reaction", reaction),
-            ])
-          Error(Nil) -> channel.next(state, [])
-        }
-
-      _ -> channel.next(state, [])
-    }
-  })
-  |> channel.on_info(fn(state, note) {
-    let PublishRoster = note
-    session_presence.publish(ctx.presence, topic)
-    channel.next(state, [])
-  })
-  |> channel.on_terminate(fn(state: State, _reason) {
-    session_presence.untrack(ctx.presence, topic, state.socket_id)
-    []
   })
 }
 
