@@ -64,22 +64,25 @@ const [displayFont, bodyFont, monoFont] = await Promise.all([
 
 const code = [
 	[
-		{ text: "pub fn ", className: "kw" },
-		{ text: "join", className: "fn" },
-		{ text: "(socket, topic) {", className: "plain" },
-	],
-	[
-		{ text: "  case ", className: "kw" },
-		{ text: "matches", className: "fn" },
-		{ text: "(topic, ", className: "plain" },
+		{ text: "channel.", className: "plain" },
+		{ text: "handler", className: "fn" },
+		{ text: "(", className: "plain" },
 		{ text: '"room:*"', className: "str" },
-		{ text: ") {", className: "plain" },
+		{ text: ", ", className: "plain" },
+		{ text: "fn", className: "kw" },
+		{ text: "(ctx) {", className: "plain" },
 	],
 	[
-		{ text: "    Ok", className: "type" },
-		{ text: "(_) -> ", className: "plain" },
+		{ text: "  channel.", className: "plain" },
 		{ text: "accept", className: "fn" },
-		{ text: "(socket)", className: "plain" },
+		{ text: "(", className: "plain" },
+		{ text: "State", className: "type" },
+		{ text: "(0))", className: "plain" },
+	],
+	[
+		{ text: "  |> channel.", className: "plain" },
+		{ text: "on_message", className: "fn" },
+		{ text: "(update)", className: "plain" },
 	],
 ];
 
@@ -152,7 +155,7 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 			.body { font-family: "Hanken Grotesk Variable", system-ui, sans-serif; font-weight: 540; }
 			.pill { font-family: "Hanken Grotesk Variable", system-ui, sans-serif; font-weight: 760; letter-spacing: 0.2px; }
 			.mono { font-family: "JetBrains Mono Variable", ui-monospace, monospace; font-weight: 540; }
-			.code-line { fill: #d6f7df; font-size: 23px; }
+			.code-line { fill: #d6f7df; font-size: 21px; }
 			.kw { fill: #ff9bc8; }
 			.fn { fill: #90efb8; }
 			.type { fill: #f2fff5; }

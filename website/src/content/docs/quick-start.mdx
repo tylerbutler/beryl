@@ -36,6 +36,7 @@ the join or accepts it with private state and callback functions.
 import beryl/wire
 import beryl/channel
 import gleam/json
+import gleam/result
 
 /// This channel's private state — one value per joined topic.
 type State {
@@ -60,7 +61,12 @@ pub fn channel() -> channel.Handler {
             [
               channel.broadcast(
                 "new_msg",
-                wire.dynamic_to_json(message.payload),
+                // `dynamic_to_json` fails on a payload that is too deeply
+                // nested to re-encode. Send `null` rather than drop the frame.
+                result.unwrap(
+                  wire.dynamic_to_json(message.payload),
+                  json.null(),
+                ),
               ),
               channel.reply_ok(
                 message.reply,
@@ -265,6 +271,7 @@ import beryl/socket
 import beryl/wire
 import gleam/json
 import gleam/option.{None, Some}
+import gleam/result
 
 pub type Msg {
   NoOp
@@ -283,7 +290,10 @@ pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
     socket.Join("room:" <> _, payload, ref) ->
       socket.Next(
         model,
-        [socket.AcceptJoin(ref, Some(wire.dynamic_to_json(payload)))],
+        [socket.AcceptJoin(
+          ref,
+          Some(result.unwrap(wire.dynamic_to_json(payload), json.null())),
+        )],
       )
 
     // Every join must be answered, or it fails closed.
@@ -299,7 +309,11 @@ pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
     socket.Message(topic, "new_msg", payload, _ref) ->
       socket.Next(
         model,
-        [socket.Broadcast(topic, "new_msg", wire.dynamic_to_json(payload))],
+        [socket.Broadcast(
+          topic,
+          "new_msg",
+          result.unwrap(wire.dynamic_to_json(payload), json.null()),
+        )],
       )
 
     socket.Message(_, _, _, Some(ref)) ->
