@@ -19,8 +19,9 @@ callback for one socket does not stop other sockets.
 The router manages admission, the topic subscriber index, the PubSub
 subscription, and stats. It only matches and forwards messages. It does not run
 app callbacks. Transport connection processes manage WebSocket state, frame
-limits, decoding, and the local message-rate bucket. The next event uses the
-model returned by `update`.
+limits, and decoding. Each socket actor owns its decoded-message, join, and
+per-channel rate-limit buckets. The next event uses the model returned by
+`update`.
 
 ## What it tracks
 

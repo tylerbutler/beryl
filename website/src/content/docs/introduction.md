@@ -102,8 +102,10 @@ fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model) {
 
 ### Built on OTP
 
-An OTP actor runs each `beryl.Sockets` handle. A separate OTP actor manages the
-presence CRDT. PubSub uses Erlang `pg`.
+Each `beryl.Sockets` handle identifies one router actor and one actor for each
+connected socket. The socket actor owns that socket's model and runs its
+callbacks, while the router maintains the socket and topic indexes. A separate
+OTP actor manages the presence CRDT. PubSub uses Erlang `pg`.
 
 ### CRDT-backed presence
 

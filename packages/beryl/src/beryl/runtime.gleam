@@ -1,18 +1,19 @@
-//// Runtime actor for supervised app-side dispatch systems.
+//// Runtime actors for supervised app-side dispatch systems.
 ////
-//// One runtime actor serves every socket started through
-//// `beryl.child_spec`. It is generic over the app's `model` and `msg`
-//// types: per-socket models live in the actor state, typed `Info`
-//// messages arrive through the actor's own mailbox, and no value is ever
-//// type-erased. Transports reach the runtime through monomorphic closures
-//// captured by `beryl.child_spec`, so the frame-level transport SPI stays
-//// unparameterized.
+//// One router actor indexes every socket started through `beryl.child_spec`,
+//// and one socket actor owns each connected socket. Both roles are generic
+//// over the app's `model` and `msg` types: each model lives in its socket
+//// actor, typed `Info` messages arrive through that actor's mailbox, and no
+//// value is ever type-erased. Transports reach the actors through monomorphic
+//// closures captured by `beryl.child_spec`, so the frame-level transport SPI
+//// stays unparameterized.
 ////
-//// The runtime owns inbound decoding and validation, rate limiting,
-//// heartbeat eviction, topic subscriptions, and broadcast fan-out. It
-//// also interprets effects: each `update` returns a list of `Effect`s that
-//// are applied strictly in order within a single actor turn, so effect
-//// list order is wire order.
+//// Transports decode inbound frames before the router forwards them. Socket
+//// actors own protocol validation, rate limiting, heartbeat eviction, topic
+//// membership, and effect interpretation. The router owns the global topic
+//// index and broadcast fan-out. Each `update` returns a list of `Effect`s that
+//// its socket actor applies strictly in order, so effect list order is wire
+//// order.
 
 import beryl/internal
 import beryl/log.{type Logger}

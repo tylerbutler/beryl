@@ -487,7 +487,7 @@ pub fn with_max_event_length(
 // nolint: unused_exports -- enforced in sibling transport handler tests
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
-/// Beryl enforces the limit **post-assembly**. The transport (Mist/gramps)
+/// Beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
 /// buffers and assembles a complete frame first. Beryl then measures it and
 /// closes the connection if it exceeds `max_bytes`. This bounds
 /// per-message processing cost (decode, routing, rate-limit accounting), but
