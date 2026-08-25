@@ -1,5 +1,5 @@
 name = "beryl"
-version = "0.4.0"
+version = "0.4.1"
 description = "Type-safe real-time channels, raw sockets, and presence for Gleam"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl" }
