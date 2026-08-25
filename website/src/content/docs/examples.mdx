@@ -5,10 +5,11 @@ description: Four runnable beryl examples, including the channel showcase.
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-beryl includes four runnable example applications in the
+This page highlights four runnable applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
-directory. Each example uses a Gleam/BEAM backend and a browser frontend. The
-examples show different real-time collaboration patterns.
+directory. The repository also contains the live-poll tutorial, load-test
+server, and shared example helpers. Each featured application uses a
+Gleam/BEAM backend and a browser frontend.
 
 The installed package does not include the examples. Clone the repository:
 
@@ -42,8 +43,8 @@ gleam run
 |---|---|
 | **Channel composition** | One `channel.child_spec` handler table owns `cursor:*`, `room:*`, and the `document:` prefix |
 | **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
-| **Lifecycle actions** | Join and termination callbacks lower ordered actions without leaving the runtime turn |
-| **Per-pattern rate limits** | `with_topic_rate` gives cursors, chat, and docs different limits |
+| **Lifecycle actions** | Join and termination callbacks return ordered action lists for the runtime to apply |
+| **Per-pattern rate limits** | `with_topic_rate` gives cursor traffic a higher limit than chat and document traffic |
 | **Shared presence** | One ETS-backed session-presence tracker serves cursors and chat, publishing snapshots asynchronously |
 | **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
 
@@ -174,7 +175,7 @@ cd examples/collab_docs && gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **Segment-shaped topics** | `document:*:*` topics isolate each tenant/document pair; the app validates the shape on join |
+| **Segment-shaped topics** | The `document:*` handler claims the prefix, then validates each `document:<tenant>:<document>` topic on join |
 | **Client-side CRDT merge** | Browser state uses `lattice_core`, `lattice_maps`, and `lattice_registers` with `ORMap(MVRegister(String))` document blocks |
 | **Unordered realtime transport** | Beryl broadcasts document updates while the CRDT handles merge convergence |
 | **Late joiner cache** | Server returns cached merged state in the join reply for new clients |

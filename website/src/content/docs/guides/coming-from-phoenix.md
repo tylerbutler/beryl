@@ -3,10 +3,11 @@ title: Coming from Phoenix
 description: Compare Phoenix Channels modules, callbacks, assigns, and Presence with both beryl APIs.
 ---
 
-beryl speaks the same wire protocol as Phoenix Channels (`phx_join`, refs,
-heartbeats, `presence_state`/`presence_diff`), so Phoenix client libraries
-work without changes. The server programming model is different. This page
-compares the two systems.
+When configured with `wire.phoenix_codec()`, beryl speaks the same wire
+protocol as Phoenix Channels (`phx_join`, refs, heartbeats,
+`presence_state`/`presence_diff`), so Phoenix client libraries work without
+changes. The server programming model is different. This page compares the
+two systems.
 
 beryl gives you two layers, and Phoenix maps onto both:
 
@@ -19,7 +20,8 @@ beryl gives you two layers, and Phoenix maps onto both:
 
 [Choose an API](/choosing-an-api/) compares both APIs. Both support
 colon-delimited topics, wildcard patterns, CRDT presence, `pg` PubSub,
-heartbeats, and the Phoenix JSON array format.
+and heartbeats. Both use the Phoenix JSON array format when configured with
+`wire.phoenix_codec()`.
 
 ## The core difference: processes and state
 

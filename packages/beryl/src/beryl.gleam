@@ -52,7 +52,7 @@
 ////     |> static_supervisor.start()
 ////
 ////   // Broadcast to all subscribers of a topic
-////   beryl.broadcast(sockets, "room:lobby", "announce", payload)
+////   beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
 //// }
 //// ```
 

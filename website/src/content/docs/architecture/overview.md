@@ -3,12 +3,12 @@ title: Architecture Overview
 description: How beryl is organized, the major modules, and where to make changes.
 ---
 
-beryl provides a Phoenix-compatible socket runtime on OTP actors and Erlang
-`pg`. It supports pluggable wire codecs and WebSocket transports. An app can
-pass an `init` and `update` pair to `beryl.child_spec`. It can also pass a typed
-handler table to `channel.child_spec`. The runtime dispatches decoded messages
-and applies the returned effects. Separate actors manage presence and groups.
-Only PubSub sends data across nodes.
+beryl provides a socket runtime on OTP actors and Erlang `pg`, with a built-in
+Phoenix-compatible codec. It supports pluggable wire codecs and WebSocket
+transports. An app can pass an `init` and `update` pair to `beryl.child_spec`.
+It can also pass a typed handler table to `channel.child_spec`. The runtime
+dispatches decoded messages and applies the returned effects. Separate actors
+manage presence and groups. Only PubSub sends data across nodes.
 
 ## How to read these docs
 
@@ -74,7 +74,6 @@ flowchart TB
   PR["presence (app-started)"]
   GR["groups (app-started)"]
   SA -. "async mutation" .-> PR
-  SA -. "group broadcasts" .-> GR
 ```
 
 `child_spec` supervises the router. Transport connections start the socket

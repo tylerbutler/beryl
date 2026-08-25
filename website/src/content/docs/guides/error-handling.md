@@ -71,9 +71,10 @@ The client never receives a WebSocket handshake and cannot send any messages.
 
 ## Malformed wire messages
 
-beryl parses incoming Phoenix protocol arrays:
-`[join_ref, ref, topic, event, payload]`. It drops frames that it cannot decode
-and does not send an error. Malformed frames are protocol violations.
+When configured with `wire.phoenix_codec()`, beryl parses Phoenix protocol
+arrays: `[join_ref, ref, topic, event, payload]`. With any codec, it drops
+frames that the active codec cannot decode and does not send an error.
+Malformed frames are protocol violations.
 
 If you need to surface decode errors in your own payload handling, decode the `Dynamic` payload with `gleam/dynamic/decode` and return an explicit `ReplyOk` or `ReplyError`:
 
@@ -260,25 +261,26 @@ If delivery confirmation is important, have the `Info` arm of `update` acknowled
 
 ## Client-visible error shapes
 
-beryl uses the Phoenix wire protocol. Error responses take these shapes:
+With `wire.phoenix_codec()`, error responses take these shapes:
 
 **Join rejected:**
 ```json
 ["1", "1", "room:lobby", "phx_reply", {"status": "error", "response": {}}]
 ```
 
-**Channel error push (server-initiated):**
+**Channel error:**
 ```json
-[null, null, "room:lobby", "phx_error", {}]
+["1", "1", "room:lobby", "phx_error", {}]
 ```
 
 **Channel closed:**
 ```json
-[null, null, "room:lobby", "phx_close", {}]
+["1", "1", "room:lobby", "phx_close", {}]
 ```
 
-Phoenix client libraries handle `phx_error` and `phx_close`. The client marks
-the channel as errored or closed and can try to rejoin.
+Terminal events repeat the topic's join ref in both reference slots. Phoenix
+client libraries handle `phx_error` and `phx_close`. The client marks the
+channel as errored or closed and can try to rejoin.
 
 ## See also
 

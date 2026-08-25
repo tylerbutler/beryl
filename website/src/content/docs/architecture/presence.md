@@ -55,7 +55,7 @@ PubSub copies presence state between nodes.
 
 | Function | Description |
 |---|---|
-| `default_config(replica)` | Create a minimal config with no PubSub and no periodic broadcast |
+| `default_config(replica)` | Create a config with no PubSub and a 1500 ms interval that remains unused until PubSub is attached |
 | `with_pubsub(config, ps)` | Attach a PubSub instance for cross-node state replication |
 | `with_broadcast_interval(config, ms)` | Set how often (in ms) the actor broadcasts its CRDT state; `0` disables |
 | `with_on_diff(config, callback)` | Register a callback invoked whenever a local change or merge produces a non-empty diff |
@@ -88,8 +88,8 @@ PubSub copies presence state between nodes.
 
 ## Replication
 
-When you configure `with_pubsub` and `with_broadcast_interval`, the presence
-actor runs a broadcast loop:
+When you configure `with_pubsub`, the presence actor runs a broadcast loop at
+the configured interval, which defaults to 1500 ms:
 
 1. On each tick, the actor checks the `dirty` value. If local state changed,
    it sends `SyncPayload(v, sender, state)` to `"beryl:presence:sync"`.
@@ -100,8 +100,8 @@ actor runs a broadcast loop:
    resulting `Diff`. It calls the function for each merge, so rapid merges do
    not lose diffs.
 
-Set `broadcast_interval_ms` to `0` to disable periodic broadcasts. This is the
-default and is suitable for one-node deployments.
+Use `with_broadcast_interval(0)` to disable periodic broadcasts. Without
+PubSub, the configured interval is unused.
 
 ## Diagram
 

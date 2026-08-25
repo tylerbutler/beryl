@@ -9,12 +9,13 @@ beryl has one runtime and two ways to program it.
   pattern. Each channel keeps private state and a server-side message type. The
   layer routes each event to the correct channel. **Use this API by default.**
 - **Raw app-side dispatch** (`beryl`): Define one `init` and `update` pair for
-  each socket. Match `socket.Input` values and return ordered effects. The
-  channel layer uses this public core API.
+  the socket system. Beryl runs them separately for each connected socket.
+  Match `socket.Input` values and return ordered effects. The channel layer
+  uses this public core API.
 
 Both APIs use the same runtime, wire codec, presence, PubSub, and abuse
-controls. They have the same wire-level features and performance. The main
-difference is who writes the router.
+controls. They have the same wire-level features. The main difference is who
+writes topic dispatch.
 
 ## Pick in one line
 

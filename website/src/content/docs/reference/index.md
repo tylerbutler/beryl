@@ -31,10 +31,15 @@ reference, and client compatibility notes.
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
 | `beryl/pubsub` | Distributed PubSub backed by Erlang `pg`, with typed subscribers and topic joins/leaves | Multi-node fan-out, cluster broadcasts, custom background consumers |
 | `beryl/presence` | OTP actor wrapping the presence CRDT, plus opaque `Diff` accessors | Tracking who is online |
+| `beryl/presence/wire` | Phoenix-compatible presence state and diff encoders | Sending presence payloads to Phoenix clients |
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
+| `beryl/error` | Shared opaque error helpers | Handling Beryl-owned startup errors |
+| `beryl/stats` | Local runtime snapshots | Reporting connected sockets, memberships, and active topics |
 | `beryl/wire` | Phoenix-compatible codec and Dynamic→JSON helpers | Phoenix clients, payload relays, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
 | `beryl/transport` | Transport SPI: socket lifecycle, inbound routing, and edge rate limiting | Writing a custom transport package |
+| `beryl/transport/origin` | Origin and Phoenix version checks | Validating WebSocket upgrades |
+| `beryl/transport/server` | Server-agnostic connection and frame pipeline | Implementing a WebSocket transport |
 | `beryl_mist` | Mist WebSocket upgrade and request handler integration (separate `beryl_mist` package) | Wiring beryl to a Mist HTTP server |
 | `beryl_ewe` | Ewe WebSocket transport integration (separate `beryl_ewe` package) | Wiring beryl to an Ewe HTTP server |
 
@@ -63,8 +68,8 @@ the same core effects.
 
 ## Phoenix wire protocol reference
 
-beryl uses the Phoenix Channels JSON array format. Each frame has five
-elements:
+With `wire.phoenix_codec()`, beryl uses the Phoenix Channels JSON array format.
+Each frame has five elements:
 
 ```
 [join_ref, ref, topic, event, payload]
@@ -165,6 +170,9 @@ beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**.
 - **Patch version bumps** (`0.x.y → 0.x.y+1`) fix bugs without intentional breakage.
 - Public API is defined as the exports of the modules listed in the module map
   above, including `beryl/channel`.
-- The internal modules `beryl/connection_limit`, `beryl/internal`, `beryl/log`, `beryl/rate_limit`, and `beryl/runtime` are intentionally hidden from downstream packages. Transports integrate through the public `beryl/transport` SPI; `beryl_mist` is the supported Mist WebSocket transport.
+- The internal modules `beryl/app_supervisor`, `beryl/connection_limit`,
+  `beryl/internal`, `beryl/log`, `beryl/rate_limit`, `beryl/runtime`, and
+  `beryl/telemetry` are intentionally hidden from downstream packages.
+  Transports integrate through the public `beryl/transport` SPI.
 
 Check [GitHub releases](https://github.com/tylerbutler/beryl/releases) before upgrading to a new minor version.
