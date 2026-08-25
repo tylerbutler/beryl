@@ -14,7 +14,8 @@ beryl gives you two layers, and Phoenix maps onto both:
   recommended default for a Phoenix style app. Register one handler for each
   topic pattern. Each channel has callbacks and private state.
 - **`beryl`, raw app-side dispatch:** This is the core API. Define one `init`
-  and `update` pair for each socket. Your code owns the router.
+  and `update` pair for the socket system. Beryl runs them separately for each
+  connected socket. Your `update` function owns topic dispatch.
 
 [Choose an API](/choosing-an-api/) compares both APIs. Both support
 colon-delimited topics, wildcard patterns, CRDT presence, `pg` PubSub,
@@ -29,14 +30,15 @@ joined topic**. It calls `join`, `handle_in`, `handle_info`, and `terminate`.
 Each callback receives channel state in `socket.assigns`, which is a map of
 atoms to untyped terms.
 
-beryl keeps the routing table but does not start one process for each topic.
-With the channel layer, define handlers, callbacks, and per-topic state. All
-channels on one socket run in sequence in that socket's actor. Each channel state
-is a **value of your type**, not an assigns map. Raw dispatch has no routing
-table. One `update` receives each socket event as `socket.Input(msg)`. One
-`model` stores the per-socket state.
+beryl starts **one socket actor for each connected socket**, not one process
+for each joined topic. A separate router actor maintains the socket and topic
+indexes. With the channel layer, all channels on one socket run in sequence in
+that socket's actor. Each channel has a private state value of your type. Raw
+dispatch has no handler table: one `update` receives every event for the socket
+as `socket.Input(msg)`, and one `model` stores its state. Different socket
+actors run concurrently.
 
-Both APIs have these effects:
+For both beryl APIs:
 
 - **Run long or blocking work in another process.** A slow callback delays the
   socket. Return results with `channel.notify` or `socket.notify`.
@@ -52,7 +54,7 @@ Both APIs have these effects:
 | `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
 | `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)` — request data in `info.seed` |
 | `channel "room:*", RoomChannel` routing table | the handler list passed to `channel.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
-| One channel process per joined topic | one private state value per joined topic, in the socket actor | one `model` per socket, covering all its topics |
+| One channel process per joined topic | one socket actor per connection, with one private state value per joined topic | one socket actor and one `model` per connection, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
 | `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
 | `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |
