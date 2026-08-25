@@ -109,9 +109,11 @@ Return `Error(server.ConnectRejected)` to send HTTP 403 before the upgrade.
 The app does not receive an unauthenticated connection.
 
 `Ok(metadata)` accepts the connection and hands that list to the app. This is
-how the verified identity crosses the handshake boundary: `on_connect` is the
-only place that sees the token, and everything downstream sees claims. Return
-`Ok([])` to accept a connection with no metadata.
+how the verified identity crosses the handshake boundary. Verify the token in
+`on_connect`, then use claims metadata downstream. `init` still receives the
+original request headers and query through `ConnectInfo.seed`, so do not assume
+the raw token was removed. Return `Ok([])` to accept a connection with no
+metadata.
 
 ## 4. Decode claims into the model in `init`
 
@@ -154,10 +156,10 @@ fn decode_roles(metadata: List(#(String, String))) -> List(String) {
 ```
 
 Signature and expiry checks stay in `on_connect`, where they run once per
-socket. `init` only reads pairs beryl already delivered, so a wrong or expired
-token can never reach it. The `Anonymous` branch covers a socket that connected
-without `on_connect` configured; correct wiring makes it unreachable, and it
-rejects every join.
+socket. This `init` reads only verified metadata, so a wrong or expired token
+cannot produce an authenticated model. The `Anonymous` branch covers a socket
+that connected without `on_connect` configured; correct wiring makes it
+unreachable, and it rejects every join.
 
 The seed's `headers` and `query` remain available to `init`, for request data
 that authentication does not produce — a locale, a client version, a room

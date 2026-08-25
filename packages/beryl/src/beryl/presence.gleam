@@ -2,12 +2,26 @@
 ////
 //// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
 //// - Handles track/update/untrack calls
+//// - Publishes an actor-owned ETS read model
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state from PubSub and merges it internally
 //// - Invokes `on_diff` callback when merges produce non-empty diffs
 ////
 //// Presence is independent of the Beryl runtime and runs under your
 //// application's supervision tree.
+////
+//// ## Read consistency
+////
+//// The presence actor is the only writer to a protected ETS read model.
+//// It atomically replaces each topic's snapshot after completing a mutation,
+//// merge, or prune. Synchronous mutations publish before replying, and
+//// runtime mutations acknowledge only after publishing, so a later read
+//// observes the completed mutation without waiting on the actor mailbox.
+////
+//// A read concurrent with a queued or in-progress mutation can observe the
+//// previous or new complete snapshot. Reads of separate topics do not form
+//// one atomic view. If the actor stops, it also destroys the table, and reads
+//// return `Error(Nil)` instead of stale data.
 ////
 //// ## Example
 ////
@@ -460,7 +474,7 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 
 /// Set the timeout for synchronous presence mutations, in milliseconds.
 ///
-/// This timeout applies to `track`, `untrack`, and `untrack_all`. These
+/// This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
 /// functions panic if the actor does not reply before the timeout. The default
 /// is 5000 ms.
 pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
@@ -779,13 +793,16 @@ pub fn track(
 /// or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
 /// unknown, already removed, or belongs to the internal runtime.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn update(
   presence: Presence,
   ref: String,
   meta: json.Json,
 ) -> Result(String, PresenceUpdateError) {
-  process.call(presence.subject, 5000, fn(reply) { Update(ref, meta, reply) })
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
+    Update(ref, meta, reply)
+  })
 }
 
 /// Untrack a specific presence using the ref returned by `track`.
@@ -898,7 +915,8 @@ pub fn is_running(presence: Presence) -> Bool {
 ///
 /// This function reads the actor-owned read model directly. The read model is
 /// an ETS snapshot created after each mutation, merge, or prune. This function
-/// does not wait on the actor mailbox.
+/// does not wait on the actor mailbox. See the module's **Read consistency**
+/// section for ordering guarantees.
 ///
 /// Returns `Error(Nil)` when the presence read model is unavailable. This can
 /// occur when the presence actor is not running or when this handle is used
@@ -915,7 +933,8 @@ pub fn list(
 ///
 /// This function reads the actor-owned read model directly. The read model is
 /// an ETS snapshot created after each mutation, merge, or prune. This function
-/// does not wait on the actor mailbox.
+/// does not wait on the actor mailbox. See the module's **Read consistency**
+/// section for ordering guarantees.
 ///
 /// Returns `Error(Nil)` when the presence read model is unavailable. This can
 /// occur when the presence actor is not running or when this handle is used
@@ -943,7 +962,8 @@ pub fn get_by_key(
 ///
 /// This function reads the actor-owned read model directly. The read model is
 /// an ETS snapshot created after each mutation, merge, or prune. This function
-/// does not wait on the actor mailbox.
+/// does not wait on the actor mailbox. See the module's **Read consistency**
+/// section for ordering guarantees.
 ///
 /// Returns `Error(Nil)` when the presence read model is unavailable. This can
 /// occur when the presence actor is not running or when this handle is used

@@ -25,7 +25,7 @@ indicators. beryl provides:
 - **Presence:** Track connected users across nodes with a conflict-free CRDT.
 - **PubSub:** Publish and subscribe across nodes with Erlang `pg` process groups.
 - **Groups:** Put topics in named groups for multi-topic broadcasts.
-- **WebSocket transport:** Use Mist with the Phoenix-compatible JSON protocol.
+- **WebSocket transport:** Use Mist or Ewe with a pluggable wire codec.
 
 ## Two layers, one runtime
 
@@ -102,8 +102,10 @@ fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model) {
 
 ### Built on OTP
 
-An OTP actor runs each `beryl.Sockets` handle. A separate OTP actor manages the
-presence CRDT. PubSub uses Erlang `pg`.
+Each `beryl.Sockets` handle identifies one router actor and one actor for each
+connected socket. The socket actor owns that socket's model and runs its
+callbacks, while the router maintains the socket and topic indexes. A separate
+OTP actor manages the presence CRDT. PubSub uses Erlang `pg`.
 
 ### CRDT-backed presence
 
@@ -120,10 +122,11 @@ database.
 
 ### Phoenix wire protocol compatibility
 
-beryl uses the Phoenix Channels JSON array format:
-`[join_ref, ref, topic, event, payload]`. Existing Phoenix client libraries can
-use this format. The [Coming from Phoenix](/guides/coming-from-phoenix/) guide
-compares Phoenix modules, callbacks, and assigns with both beryl APIs.
+The built-in `wire.phoenix_codec()` uses the Phoenix Channels JSON array
+format: `[join_ref, ref, topic, event, payload]`. Existing Phoenix client
+libraries can use this format. The
+[Coming from Phoenix](/guides/coming-from-phoenix/) guide compares Phoenix
+modules, callbacks, and assigns with both beryl APIs.
 
 ## Next steps
 

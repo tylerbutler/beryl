@@ -1,5 +1,5 @@
 //// Transport SPI: the contract between beryl core and WebSocket transport
-//// implementations such as the `beryl_mist` package.
+//// implementations such as the `beryl_mist` and `beryl_ewe` packages.
 ////
 //// `beryl/transport/server` owns the shared admission, connection, rate,
 //// decode, and telemetry pipeline. This low-level SPI keeps only the hooks a

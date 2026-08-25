@@ -42,8 +42,8 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-Synchronous presence mutations wait up to 5 seconds for the actor by default.
-Use `with_call_timeout` to configure the timeout:
+Presence mutations wait up to 5 seconds for the actor by default. Use
+`with_call_timeout` to configure their timeout:
 
 ```gleam
 let config =
@@ -56,9 +56,9 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-`track`, `untrack`, and `untrack_all` panic if the actor is unavailable or does
-not reply within this timeout. Presence reads bypass the actor mailbox and do
-not use it.
+`track`, `update`, `untrack`, and `untrack_all` panic if the actor is
+unavailable or does not reply within this timeout. Presence reads bypass the
+actor mailbox and do not use it.
 
 ## Tracking presences
 
@@ -120,15 +120,16 @@ identifies the logical session, not a BEAM process.
 
 ```gleam
 // Get all presences in a topic
-let entries = presence.list(p, "room:lobby")
+let assert Ok(entries) = presence.list(p, "room:lobby")
 // Returns: [PresenceEntry(session_id: "socket_1", key: "user:alice", meta: ...)]
 
 // Get presences for a specific key
-let alice_sessions = presence.get_by_key(p, "room:lobby", "user:alice")
+let assert Ok(alice_sessions) =
+  presence.get_by_key(p, "room:lobby", "user:alice")
 // Returns: [#("socket_1", meta), #("socket_2", meta)]
 
 // Count without materializing the entry list
-let online_count = presence.count(p, "room:lobby")
+let assert Ok(online_count) = presence.count(p, "room:lobby")
 ```
 
 `list`, `get_by_key`, and `count` read an actor-owned ETS snapshot rather than

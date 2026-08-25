@@ -12,9 +12,8 @@ message arrives.
 
 **Checks:**
 
-1. **Check that Mist is listening.** Confirm that the HTTP server started
-   without an error. `mist.serve` and `mist.serve_ssl` return a `Result`.
-   Handle the `Error` case.
+1. **Check that Mist is listening.** Confirm that `mist.start` returned
+   `Ok(_)`. Handle the `Error` case.
 
 2. **Path mismatch.** The Phoenix JS client appends `/websocket` to the socket path you pass:
    ```js
@@ -155,7 +154,7 @@ receive the event.
 **Checks:**
 
 1. **Check the exact topic string.**
-   `beryl.broadcast("room:lobby", ...)` sends only to sockets on
+   `beryl.broadcast(sockets, "room:lobby", ...)` sends only to sockets on
    `"room:lobby"`. Wildcard patterns route incoming messages. They do not
    select broadcast targets.
 
@@ -189,11 +188,11 @@ recent joins or leaves.
    The runtime applies presence effects asynchronously. Do not call the
    synchronous public presence API inside `init` or `update`.
 
-2. **Cross-node sync.** If running multiple nodes, each node must be configured with the same PubSub instance and each presence actor needs a unique replica ID. The CRDT merges state over PubSub; without PubSub, nodes have independent state.
+2. **Cross-node sync.** If running multiple nodes, each node must use the same
+   PubSub scope and each presence actor needs a unique replica ID. The CRDT
+   merges state over PubSub; without PubSub, nodes have independent state.
 
 3. **`on_diff` not broadcasting.** If clients rely on receiving `presence_diff` events, confirm `on_diff` is configured and calls `beryl.broadcast_presence_diff`. See the [Presence guide](/guides/presence).
-
-4. **CRDT compaction.** The CRDT can accumulate causal history. Call `presence.compact` (on the state layer) if memory usage grows unexpectedly over a long uptime.
 
 ---
 
@@ -220,7 +219,10 @@ recent joins or leaves.
 
 **Checks:**
 
-1. **Client heartbeat interval vs. server timeout.** The Phoenix JS client sends heartbeats every 30 s by default. The beryl default server timeout is 60 s, which gives a safe margin. If you've lowered `heartbeat_timeout_ms`, ensure the client interval is at least half the server timeout.
+1. **Client heartbeat interval vs. server timeout.** The Phoenix JS client
+   sends heartbeats every 30 s by default. The beryl default server timeout is
+   60 s, which gives a safe margin. If you lower `heartbeat_timeout_ms`, keep
+   the client interval at or below half the server timeout.
 
 2. **Load balancer idle timeout.** Some load balancers (AWS ALB, nginx) have their own WebSocket idle timeouts. Set the load balancer timeout to be longer than the client heartbeat interval, or configure load-balancer-level keepalives.
 
@@ -235,7 +237,9 @@ between nodes.
 
 **Checks:**
 
-1. **Nodes are clustered.** beryl PubSub uses Erlang `pg`, which requires Erlang distribution. Confirm nodes can reach each other: `Node.list()` in the Erlang shell should return connected nodes.
+1. **Nodes are clustered.** beryl PubSub uses Erlang `pg`, which requires
+   Erlang distribution. Confirm nodes can reach each other: `nodes().` in the
+   Erlang shell should return connected nodes.
 
 2. **Same pg scope.** All nodes must use the same `pg` scope name. `pubsub.default_config()` uses the default scope. If you customized it, make sure all nodes use the same value.
 
@@ -292,11 +296,11 @@ This prevents proxy idle disconnects.
    After 3 restarts in 5 seconds, the supervisor stops and sends the failure to
    the process that called `child_spec`. Check the logs for the first crash.
 
-2. **Check for an app panic.** The runtime catches crashes in `init` and
-   `update` and limits them to one socket or topic. They do not stop the
-   runtime. A runtime stop indicates a crash outside those paths. Check
-   indirect callbacks, such as presence `on_diff`, for `let assert`.
+2. **Check the failure scope.** Beryl catches crashes in `init` and `update`
+   and limits them to one socket or topic. A fault elsewhere in a socket actor
+   closes only that socket. If every connection closes, inspect the router and
+   supervisor logs for the first fault.
 
 3. **Rejoin after a restart.** A restarted runtime has no socket state.
-   Connected clients see their topics close or stop receiving replies. The
-   Phoenix JS client reconnects and rejoins.
+   Transports close their connections when the router dies. The Phoenix JS
+   client reconnects and rejoins after the replacement router starts.

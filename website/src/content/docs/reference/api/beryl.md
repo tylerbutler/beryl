@@ -63,7 +63,7 @@ Beryl - Type-safe real-time communication
      |> static_supervisor.start()
 
    // Broadcast to all subscribers of a topic
-   beryl.broadcast(sockets, "room:lobby", "announce", payload)
+   beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
  }
  ```
 
@@ -575,7 +575,7 @@ pub fn with_max_event_length(
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- Beryl enforces the limit **post-assembly**. The transport (Mist/gramps)
+ Beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
  buffers and assembles a complete frame first. Beryl then measures it and
  closes the connection if it exceeds `max_bytes`. This bounds
  per-message processing cost (decode, routing, rate-limit accounting), but

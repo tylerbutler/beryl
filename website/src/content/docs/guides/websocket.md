@@ -221,7 +221,9 @@ Server replies:
 
 1. Client connects via WebSocket to the configured path
 2. `on_connect` callback runs (if configured) — reject returns 403
-3. Transport generates a unique socket ID, builds the `ConnectSeed`, and announces the socket to the runtime, which calls your `init`
+3. The transport connection process builds the `ConnectSeed`, generates a
+   unique socket ID, and starts a socket actor. The router admits and monitors
+   that actor, which runs your `init`.
 4. Client sends `phx_join` messages to subscribe to topics — each arrives at `update` as a `Join` event
 5. Messages are routed through the runtime to `update` as `Message` events
 6. On disconnect, `update` receives a `Closed` event for every joined topic

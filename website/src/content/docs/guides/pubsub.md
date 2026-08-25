@@ -131,9 +131,15 @@ let count = pubsub.subscriber_count(ps, "room:lobby")
 
 ## Distributed operation
 
-Erlang `pg` works across connected nodes. When nodes join a cluster, `pg`
-merges their process groups. It then sends messages to subscribers on all
-nodes. PubSub needs no extra cluster configuration.
+Erlang `pg` works across connected nodes. After your application establishes
+Erlang distribution between the nodes, `pg` merges their process groups and
+sends messages to subscribers across the cluster. Beryl PubSub needs no
+additional configuration, but it does not connect the nodes for you.
+
+Automated tests currently exercise distributed behavior with multiple actors
+on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
+tracks integration coverage across separate distributed Erlang nodes for
+PubSub delivery and presence convergence.
 
 ## Integration with beryl channels
 
