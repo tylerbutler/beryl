@@ -390,7 +390,7 @@ A `channel.Message` has `event`, the raw `payload` as `Dynamic`, and
 reply. Store `context.topic` in channel state when a callback needs it:
 
 ```gleam
-channel.on_message(fn(state: State, message: channel.Message) {
+|> channel.on_message(fn(state: State, message: channel.Message) {
   case message.event {
     "new_msg" ->
       channel.next(state, [
@@ -435,7 +435,7 @@ This is why a leave announcement and a post-leave roster belong here
 rather than in an out-of-band broadcast:
 
 ```gleam
-channel.on_terminate(fn(state: State, _reason) {
+|> channel.on_terminate(fn(state: State, _reason) {
   [
     channel.broadcast("new_msg", departure(state)),
     channel.presence_untrack(state.username),
