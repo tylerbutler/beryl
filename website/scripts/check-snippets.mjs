@@ -73,6 +73,26 @@ async function walk(dir, skipDirs = new Set()) {
 	return found;
 }
 
+// Dependency-cache extraction can recreate removed package directories. Only
+// directories with a package manifest are workspace packages.
+async function packageDirectories() {
+	const entries = await readdir(packagesRoot, { withFileTypes: true });
+	const directories = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+	return (
+		await Promise.all(
+			directories.map(async (name) => {
+				try {
+					await readFile(path.join(packagesRoot, name, "gleam.toml"), "utf8");
+					return name;
+				} catch (error) {
+					if (error?.code === "ENOENT") return null;
+					throw error;
+				}
+			}),
+		)
+	).filter((name) => name !== null);
+}
+
 // Returns [{ line, code }] for every ```gleam fence, where `line` is the
 // 1-based line of the fence itself in `text`.
 function fencedGleamBlocks(text) {
@@ -135,9 +155,7 @@ function docCommentBlocks(text) {
 // written — resolves instead of silently becoming a placeholder.
 async function publicNames() {
 	const byModule = new Map();
-	const packageDirs = (await readdir(packagesRoot, { withFileTypes: true }))
-		.filter((entry) => entry.isDirectory())
-		.map((entry) => entry.name);
+	const packageDirs = await packageDirectories();
 	for (const name of packageDirs) {
 		const file = path.join(
 			packagesRoot,
@@ -187,9 +205,9 @@ async function collectSources() {
 		if (blocks.length > 0) sources.push({ file, blocks });
 	}
 
-	const packageDirs = (await readdir(packagesRoot, { withFileTypes: true }))
-		.filter((entry) => entry.isDirectory())
-		.map((entry) => path.join(packagesRoot, entry.name, "src"));
+	const packageDirs = (await packageDirectories()).map((name) =>
+		path.join(packagesRoot, name, "src"),
+	);
 	for (const dir of packageDirs) {
 		const gleamFiles = (await walk(dir, new Set(["build"])))
 			.filter((file) => file.endsWith(".gleam"))
