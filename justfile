@@ -105,6 +105,10 @@ site-reference: docs
 site-reference-test:
     pnpm -C website test:reference
 
+# Type-check every Gleam snippet in the docs against the real packages
+site-snippets: gleam-docs
+    pnpm -C website check:snippets
+
 # Build website
 site-build: site-reference
     pnpm -C website build:site
@@ -167,7 +171,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check check docs test build-strict examples-test
+ci: format-check check docs site-snippets test build-strict examples-test
 
 # Alias for PR checks
 alias pr := ci

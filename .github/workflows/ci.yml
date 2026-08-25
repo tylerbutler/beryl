@@ -114,6 +114,9 @@ jobs:
       - name: Test reference docs generator
         run: just site-reference-test
 
+      - name: Type-check documentation snippets
+        run: pnpm -C website check:snippets
+
       - name: Validate reference docs are up to date
         run: |
           just site-reference
