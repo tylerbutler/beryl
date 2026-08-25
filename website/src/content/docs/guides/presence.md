@@ -42,8 +42,8 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-`track`, `untrack`, and `untrack_all` wait up to 5 seconds for the actor by
-default. Use `with_call_timeout` to configure their timeout:
+Presence mutations wait up to 5 seconds for the actor by default. Use
+`with_call_timeout` to configure their timeout:
 
 ```gleam
 let config =
@@ -56,10 +56,9 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-`track`, `untrack`, and `untrack_all` panic if the actor is unavailable or does
-not reply within this timeout. Presence reads bypass the actor mailbox and do
-not use it. `update` is also synchronous, but it always uses a fixed 5-second
-timeout.
+`track`, `update`, `untrack`, and `untrack_all` panic if the actor is
+unavailable or does not reply within this timeout. Presence reads bypass the
+actor mailbox and do not use it.
 
 ## Tracking presences
 

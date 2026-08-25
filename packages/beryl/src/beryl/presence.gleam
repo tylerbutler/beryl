@@ -460,7 +460,7 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 
 /// Set the timeout for synchronous presence mutations, in milliseconds.
 ///
-/// This timeout applies to `track`, `untrack`, and `untrack_all`. These
+/// This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
 /// functions panic if the actor does not reply before the timeout. The default
 /// is 5000 ms.
 pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
@@ -779,13 +779,16 @@ pub fn track(
 /// or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
 /// unknown, already removed, or belongs to the internal runtime.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn update(
   presence: Presence,
   ref: String,
   meta: json.Json,
 ) -> Result(String, PresenceUpdateError) {
-  process.call(presence.subject, 5000, fn(reply) { Update(ref, meta, reply) })
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
+    Update(ref, meta, reply)
+  })
 }
 
 /// Untrack a specific presence using the ref returned by `track`.

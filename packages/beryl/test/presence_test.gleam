@@ -639,6 +639,10 @@ pub fn configured_call_timeout_is_used_test() {
     let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
     Nil
   })
+  assert_crashes(fn() {
+    let _ = presence.update(p, "missing", json.null())
+    Nil
+  })
 }
 
 // ── multiple presence actors: independent, unnamed read tables ─────────────

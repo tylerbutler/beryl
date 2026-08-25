@@ -330,7 +330,8 @@ Replace the meta of a presence created by `track`.
  or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
  unknown, already removed, or belongs to the internal runtime.
 
- Panics if the presence actor is unavailable or does not reply within 5 seconds.
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn update(
@@ -357,7 +358,7 @@ pub fn with_broadcast_interval(
 
 Set the timeout for synchronous presence mutations, in milliseconds.
 
- This timeout applies to `track`, `untrack`, and `untrack_all`. These
+ This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
  functions panic if the actor does not reply before the timeout. The default
  is 5000 ms.
 
