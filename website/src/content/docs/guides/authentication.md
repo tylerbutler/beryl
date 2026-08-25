@@ -87,22 +87,37 @@ let ws_config =
     case extract_token(req) {
       Ok(token) ->
         case verify_token(token) {
-          Ok(_claims) -> Ok(Nil)
+          Ok(claims) -> Ok(claims_metadata(claims))
           Error(_) -> Error(server.ConnectRejected)
         }
       Error(_) -> Error(server.ConnectRejected)
     }
   })
+
+/// `ConnectSeed.metadata` holds string pairs, so a list of roles becomes
+/// one comma-joined value.
+fn claims_metadata(claims: Claims) -> List(#(String, String)) {
+  [
+    #("user_id", claims.user_id),
+    #("username", claims.username),
+    #("roles", string.join(claims.roles, ",")),
+  ]
+}
 ```
 
 Return `Error(server.ConnectRejected)` to send HTTP 403 before the upgrade.
 The app does not receive an unauthenticated connection.
 
+`Ok(metadata)` accepts the connection and hands that list to the app. This is
+how the verified identity crosses the handshake boundary: `on_connect` is the
+only place that sees the token, and everything downstream sees claims. Return
+`Ok([])` to accept a connection with no metadata.
+
 ## 4. Decode claims into the model in `init`
 
 `on_connect` accepts or rejects the connection. `init` builds the socket state.
-The same request data reaches `init` as `ConnectInfo.seed`. Decode the verified
-token into claims and store them in the model:
+The claims `on_connect` verified reach `init` as `ConnectInfo.seed.metadata`,
+so rebuild the record from those pairs instead of checking the token again:
 
 ```gleam
 pub type Model {
@@ -113,28 +128,40 @@ pub type Model {
 beryl.child_spec(
   config,
   init: fn(info: socket.ConnectInfo(Msg)) {
-    let token =
-      case bearer_token(list.key_find(info.seed.headers, "authorization")) {
-        Ok(token) -> Ok(token)
-        Error(_) -> list.key_find(info.seed.query, "token")
-      }
-    let model = case token {
-      Ok(token) ->
-        case verify_token(token) {
-          Ok(claims) -> Authenticated(claims)
-          Error(_) -> Anonymous
-        }
-      Error(_) -> Anonymous
-    }
-    #(model, [])
+    #(model_from_metadata(info.seed.metadata), [])
   },
   update: update,
 )
+
+fn model_from_metadata(metadata: List(#(String, String))) -> Model {
+  case list.key_find(metadata, "user_id"), list.key_find(metadata, "username") {
+    Ok(user_id), Ok(username) ->
+      Authenticated(Claims(
+        user_id: user_id,
+        username: username,
+        roles: decode_roles(metadata),
+      ))
+    _, _ -> Anonymous
+  }
+}
+
+fn decode_roles(metadata: List(#(String, String))) -> List(String) {
+  case list.key_find(metadata, "roles") {
+    Ok("") | Error(_) -> []
+    Ok(roles) -> string.split(roles, ",")
+  }
+}
 ```
 
-`verify_token` is a pure check, so this example calls it in both places. The
-`Anonymous` branch provides a second check. Correct `on_connect` logic makes
-that branch unreachable, and it rejects all joins.
+Signature and expiry checks stay in `on_connect`, where they run once per
+socket. `init` only reads pairs beryl already delivered, so a wrong or expired
+token can never reach it. The `Anonymous` branch covers a socket that connected
+without `on_connect` configured; correct wiring makes it unreachable, and it
+rejects every join.
+
+The seed's `headers` and `query` remain available to `init`, for request data
+that authentication does not produce — a locale, a client version, a room
+preselected in the URL.
 
 ## 5. Authorize the topic at join
 
@@ -178,20 +205,21 @@ fn forbidden() -> json.Json {
 
 Transport authentication is the same for the channel layer.
 `with_on_connect` validates the handshake before the upgrade. A channel system
-has no app-level `init`. Each handler receives the request `ConnectSeed` as
-`channel.JoinContext.seed`. Decode the verified identity from `seed.query` or
-`seed.headers`. Apply topic authorization and store the typed claims with
-`channel.accept`.
+has no app-level `init`. Each handler receives the same `ConnectSeed` as
+`channel.JoinContext.seed`, so read the verified identity from
+`seed.metadata` with the same `model_from_metadata` shape. Apply topic
+authorization and store the typed claims with `channel.accept`.
 
 Put signature and expiry checks in `with_on_connect`. In each join callback,
-only decode request data and apply authorization rules.
+only read the metadata and apply authorization rules.
 See [JoinContext and the typed sender](/guides/channels/#joincontext-and-the-typed-sender).
 
 ## Notes
 
 - **Verify once, trust everywhere.** Do the expensive signature/expiry check at
-  connect time; the `Join` arms of `update` should only apply cheap
-  authorization rules against the already-decoded claims in the model.
+  connect time and return the result as `on_connect` metadata; the `Join` arms
+  of `update` should only apply cheap authorization rules against the
+  already-decoded claims in the model.
 - **Cookie sessions need origin checks.** If you authenticate from a cookie
   instead of a token, always pair it with `with_allowed_origins` to prevent
   Cross-Site WebSocket Hijacking. See

@@ -64,17 +64,17 @@ similar to Phoenix `UserSocket.connect/3`. The hook runs once for each socket
 before any channel join. It can reject the connection.
 
 ```gleam
-let config =
+let ws_config =
   server.default_config("/socket/websocket")
   |> server.with_on_connect(fn(req: Request(mist.Connection)) {
     // Check auth token, session, etc.
     case validate_token(req) {
-      Ok(_user) -> Ok(Nil)                              // Allow connection
+      Ok(_user) -> Ok([])                        // Allow; no connect metadata
       Error(_) -> Error(server.ConnectRejected)  // Reject with 403
     }
   })
 
-use <- mist_transport.upgrade(req, channels, config)
+use <- mist_transport.upgrade(req, channels, ws_config)
 ```
 
 Return `Error(server.ConnectRejected)` to send HTTP 403 before the WebSocket
@@ -95,7 +95,7 @@ Use `with_allowed_origins` to allow only your application origins. Values match
 the full `Origin` header exactly: scheme, host, and port when present.
 
 ```gleam
-let config =
+let ws_config =
   server.default_config("/socket/websocket")
   |> server.with_allowed_origins(["https://app.example.com"])
   |> server.with_on_connect(fn(req: Request(mist.Connection)) {
@@ -115,30 +115,40 @@ tokens before upgrading.
 ### Connect-time data and the ConnectSeed
 
 `on_connect` accepts or rejects the upgrade. The transport puts the request
-path, query parameters, and headers in a `ConnectSeed`. Your `init` function
-receives it as `ConnectInfo.seed`. Authenticate in `on_connect`. Then use the
-seed to build per-socket state in `init`. Do not authenticate each join again:
+path, query parameters, and headers in a `ConnectSeed`, and your `init`
+function receives it as `ConnectInfo.seed`:
+
+| Field | Type | Contents |
+| --- | --- | --- |
+| `path` | `String` | The request path the client connected to. |
+| `query` | `List(#(String, String))` | Parsed query parameters. |
+| `headers` | `List(#(String, String))` | Request headers. |
+| `metadata` | `List(#(String, String))` | Whatever `on_connect` returned. |
+
+`on_connect` does not return a bare `Ok(Nil)` — it returns `Ok(metadata)`, a
+list of string pairs that reaches `init` as `seed.metadata`. Resolve the
+identity once during the handshake, hand the result forward, and `init` reads
+it instead of decoding the request a second time:
 
 ```gleam
-let config =
+let ws_config =
   server.default_config("/socket/websocket")
   |> server.with_on_connect(fn(req: Request(mist.Connection)) {
     // Validate once; reject the whole connection on failure.
     case validate_token(req) {
-      Ok(_) -> Ok(Nil)
+      Ok(user_id) -> Ok([#("user_id", user_id)])
       Error(_) -> Error(server.ConnectRejected) // Reject with 403
     }
   })
 ```
 
 ```gleam
-// init derives the user from the same request data — no re-auth needed.
+// init reads what on_connect already resolved — no second decode.
 beryl.child_spec(
   config,
   init: fn(info: socket.ConnectInfo(Msg)) {
     let user_id =
-      list.key_find(info.seed.query, "token")
-      |> result.map(decode_user_id)
+      list.key_find(info.seed.metadata, "user_id")
       |> result.unwrap("anonymous")
     #(Model(user_id: user_id), [])
   },
@@ -146,9 +156,17 @@ beryl.child_spec(
 )
 ```
 
-With the channel layer, the same request-derived seed arrives in every
-handler's `join` callback as `channel.JoinContext.seed`; there is no app-level
-`init`. See [Authentication with the channel layer](/guides/authentication/#with-the-channel-layer).
+Return `Ok([])` when there is nothing to pass on. The list keeps the order
+`on_connect` produced and keeps duplicate keys, so `list.key_find` returns the
+first pair for a key. Values are strings only: encode anything richer, such as
+a list of roles, into one. Transports never log metadata values, but the seed
+reaches every join callback on that socket, so put an identity there rather
+than a secret.
+
+With the channel layer, the same seed arrives in every handler's `join`
+callback as `channel.JoinContext.seed`, metadata included; there is no
+app-level `init`. See
+[Authentication with the channel layer](/guides/authentication/#with-the-channel-layer).
 
 :::tip[Troubleshooting connections]
 If clients cannot connect, see [Clients cannot connect at all](/troubleshooting#clients-cannot-connect-at-all) for path mismatch, reverse proxy, and upgrade header checks.
