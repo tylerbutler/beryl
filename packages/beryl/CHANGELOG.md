@@ -1,5 +1,11 @@
 # beryl changelog
 
+## v0.4.1 - 2026-08-25
+
+### Fixed
+
+- Make presence.update honor the configured call timeout.
+
 ## v0.4.0 - 2026-08-24
 
 ### Changed

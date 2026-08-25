@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Make presence.update honor the configured call timeout."
