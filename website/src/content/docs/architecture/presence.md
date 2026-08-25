@@ -103,6 +103,10 @@ the configured interval, which defaults to 1500 ms:
 Use `with_broadcast_interval(0)` to disable periodic broadcasts. Without
 PubSub, the configured interval is unused.
 
+Automated tests currently exercise replication with multiple presence actors
+on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
+tracks integration coverage across separate distributed Erlang nodes.
+
 ## Diagram
 
 ```mermaid
