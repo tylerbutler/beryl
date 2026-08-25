@@ -125,8 +125,8 @@ case beryl.child_spec(config, init: init, update: update) {
   Error(beryl.HeartbeatTimeoutTooLow(2)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
-  Error(beryl.InvalidTopicPattern(pattern, reason)) ->
-    panic as pattern <> ": " <> reason
+  Error(beryl.InvalidTopicPattern(pattern, _reason)) ->
+    panic as "invalid topic pattern: " <> pattern
 }
 ```
 

@@ -17,7 +17,7 @@ lifecycle.
 
 ```gleam
 import beryl
-import beryl/socket as socket
+import beryl/socket
 import beryl/wire
 import gleam/otp/static_supervisor
 
@@ -84,7 +84,7 @@ This example accepts `room:*` joins and replies to `ping`. It broadcasts
 app also handles typed server-side `Info` messages.
 
 ```gleam
-import beryl/socket as socket
+import beryl/socket
 import beryl/topic
 import gleam/json
 import gleam/list

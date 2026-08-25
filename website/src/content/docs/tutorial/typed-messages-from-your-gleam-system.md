@@ -102,6 +102,7 @@ rather than exposing the subject.
 
 The same application-defined type appears throughout the path:
 
+<!-- snippet-check: skip -->
 ```gleam
 socket.ConnectInfo(Message)
 socket.Sender(Message)

@@ -109,7 +109,7 @@ fn poll_channel(
     }
     store.join(polls, room)
     timer.after(clock, duration_ms, fn() {
-      channel.notify(context.self, ClosePoll)
+      channel.notify(context.self, ClosePoll(room))
     })
 
     channel.accept(room)
@@ -117,7 +117,7 @@ fn poll_channel(
       handle_message(polls, room, message)
     })
     |> channel.on_info(fn(room, message) {
-      let ClosePoll = message
+      let ClosePoll(_topic) = message
       case store.close(polls, room) {
         store.ClosedNow(state) ->
           channel.next(room, [

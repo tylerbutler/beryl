@@ -61,7 +61,7 @@ let config =
   server.default_config("/socket/websocket")
   |> server.with_on_connect(fn(req) {
     case extract_token(req) {
-      Ok(_) -> Ok(Nil)
+      Ok(_) -> Ok([])  // Allow; no connect metadata
       Error(_) -> Error(server.ConnectRejected)  // → HTTP 403, connection refused
     }
   })

@@ -29,9 +29,6 @@ jobs:
           erlang-version: ${{ matrix.erlang }}
           run-deps: false
 
-      - name: Install rebar3
-        uses: ./.github/actions/install-rebar3
-
       - name: Setup mise tools
         uses: ./.github/actions/mise
 
@@ -114,6 +111,9 @@ jobs:
       - name: Test reference docs generator
         run: just site-reference-test
 
+      - name: Type-check documentation snippets
+        run: pnpm -C website check:snippets
+
       - name: Validate reference docs are up to date
         run: |
           just site-reference
@@ -140,9 +140,6 @@ jobs:
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           run-deps: false
-
-      - name: Install rebar3
-        uses: ./.github/actions/install-rebar3
 
       - name: Setup mise tools
         uses: ./.github/actions/mise
@@ -200,9 +197,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
         with:
           node-version: 22
-
-      - name: Install rebar3
-        uses: ./.github/actions/install-rebar3
 
       - name: Setup mise tools
         uses: ./.github/actions/mise

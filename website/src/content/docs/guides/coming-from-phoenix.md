@@ -266,7 +266,7 @@ socket has joined the topic:
 channel.accept(state)
 |> channel.with_actions([
   channel.presence_track(
-    "user:" <> state.user_id,
+    "user:" <> state.username,
     json.object([#("status", json.string("online"))]),
   ),
   channel.push_presence("presence_state", presence_wire.encode_state),
@@ -284,9 +284,9 @@ returns actions of its own, so a leave announcement and a post-leave roster
 stay inside the channel:
 
 ```gleam
-channel.on_terminate(fn(state: State, _reason) {
+|> channel.on_terminate(fn(state: State, _reason) {
   [
-    channel.presence_untrack("user:" <> state.user_id),
+    channel.presence_untrack("user:" <> state.username),
     channel.broadcast_presence("presence_state", presence_wire.encode_state),
   ]
 })

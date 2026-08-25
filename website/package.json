@@ -19,6 +19,7 @@
 		"astro": "astro",
 		"build:site": "astro build",
 		"check:astro": "astro check",
+		"check:snippets": "node scripts/check-snippets.mjs",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
 		"dev": "astro dev",
 		"generate:og": "node scripts/generate-og-image.mjs",
