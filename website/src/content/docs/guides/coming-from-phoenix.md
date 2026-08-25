@@ -38,14 +38,22 @@ dispatch has no handler table: one `update` receives every event for the socket
 as `socket.Input(msg)`, and one `model` stores its state. Different socket
 actors run concurrently.
 
-For both beryl APIs:
+This gives beryl a coarser isolation boundary than Phoenix. Different sockets
+have separate actors, but channels on one socket share an actor mailbox,
+execution context, and lifecycle. A slow callback delays every topic on that
+socket. A fault in the socket actor closes all its topics.
 
-- **Run long or blocking work in another process.** A slow callback delays the
-  socket. Return results with `channel.notify` or `socket.notify`.
-- **Crash scope depends on the callback.** A join panic rejects that join; a
-  message panic closes that topic; an `on_info` panic ends the socket; and a
-  terminate panic loses that callback's actions while core teardown continues.
-  See [crash behavior](/guides/channels/#crash-behavior).
+Beryl rescues expected callback crashes with narrower behavior: a join panic
+rejects that join, a message panic closes that topic, an `on_info` panic ends
+the socket, and a terminate panic loses that callback's actions while teardown
+continues. These rescue boundaries limit known callback failures, but they do
+not provide Phoenix's process isolation between joined topics. See
+[crash behavior](/guides/channels/#crash-behavior). Run long or blocking work
+in another process and return results with `channel.notify` or
+`socket.notify`.
+
+[Issue #337](https://github.com/tylerbutler/beryl/issues/337) tracks a
+Phoenix-style process-per-channel prototype.
 
 ## Concept map
 
