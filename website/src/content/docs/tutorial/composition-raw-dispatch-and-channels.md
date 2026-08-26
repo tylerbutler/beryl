@@ -281,8 +281,6 @@ the Elm analogy stops.
 - [`beryl/channel` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/channel.gleam)
 - [beryl channels guide](/guides/channels/)
 - [Choose a beryl API](/choosing-an-api/)
-- [ADR 0002: app-side dispatch](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0002-app-side-dispatch.md)
-- [ADR 0003: layered channel API](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0003-layered-channel-api.md)
 
 ## Runnable checkpoint: step 04
 
