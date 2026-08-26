@@ -1,6 +1,6 @@
 ---
 title: Quick start
-description: Build a beryl socket app with a channel handler, WebSocket transport, and Phoenix JS client.
+description: Build a beryl socket app with a channel handler, WebSocket server, and Phoenix JavaScript client.
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -10,26 +10,31 @@ beryl is not yet version 1.0. Minor releases can change the API. The library is 
 </Aside>
 
 This guide shows how to build a real-time app. You will create a Gleam server
-with the **channel layer** and connect a Phoenix JS browser client.
+and connect it to a browser with the Phoenix JavaScript client. One browser
+connection is a **socket**.
 
-Use the channel layer by default. For one topic family and full routing control,
-use [raw dispatch](#use-raw-dispatch-instead). The
-[Dispatch guide](/guides/dispatch/) has more information. See
-[Choose an API](/choosing-an-api/) for a comparison.
+The guide starts with beryl's recommended **channel API**. A channel handler
+matches subscription names such as `room:lobby`, decides whether a client can
+join, and handles messages after the join.
 
-The snippets omit some application code. See the [examples](/examples/) for
-runnable applications with HTML, static assets, and end-to-end tests.
+beryl also has a lower-level API called
+[raw dispatch](#use-raw-dispatch-instead). It sends every event for one socket
+to an `update` function that you write. See [Choose an API](/choosing-an-api/)
+for help selecting between them.
+
+These snippets leave out some files, including the browser HTML. See the
+[examples](/examples/) for complete applications that you can run.
 
 ## Prerequisites
 
 This is a code-first guide. It assumes that you can read Gleam custom types,
-pattern matching, pipelines, and `Result` values. Familiarity with OTP
-supervision and WebSocket client-server concepts will also help. You do not
-need prior Phoenix Channels experience.
+pattern matching, pipelines, and `Result` values. It also helps to know how a
+browser and server exchange WebSocket messages and how an OTP supervisor starts
+child processes. You do not need prior Phoenix Channels experience.
 
-If beryl's model of state, inputs, and effects is new to you, start with the
-[Build a live poll tutorial](/tutorial/). It explains the core model step by
-step, then shows how the channel layer builds on it.
+If beryl's model of state, inputs, and effects is new to you, read
+[beryl's model in one minute](/introduction/#beryls-model-in-one-minute). For
+a complete walkthrough, use the [Build a live poll tutorial](/tutorial/).
 
 - Gleam >= 1.18 project targeting **Erlang** (`gleam new my_app`)
 - The Git dependencies from the [Installation guide](/installation/) added to
@@ -37,8 +42,11 @@ step, then shows how the channel layer builds on it.
 
 ## 1. Write a channel
 
-A channel has a topic pattern and a typed `join` callback. The callback rejects
-the join or accepts it with private state and callback functions.
+A channel handler watches for topic names that match a pattern. In this
+example, `room:*` matches `room:lobby`, `room:123`, and other names that start
+with `room:`. When a client asks to join a matching topic, beryl calls the
+handler's `join` function. The function rejects the join or accepts it with
+state and functions that handle later events.
 
 ```gleam
 // src/my_app/room_channel.gleam
@@ -47,13 +55,13 @@ import beryl/channel
 import gleam/json
 import gleam/result
 
-/// This channel's private state — one value per joined topic.
+/// This channel's private state. Each joined topic has one value.
 type State {
   State(room_id: String, sent: Int)
 }
 
-/// This channel's server-side message type. It sends itself nothing, so
-/// `Nil` is enough.
+/// Messages that other Gleam processes can send to this channel. This channel
+/// does not receive any, so `Nil` is enough.
 type Note =
   Nil
 
@@ -70,8 +78,8 @@ pub fn channel() -> channel.Handler {
             [
               channel.broadcast(
                 "new_msg",
-                // `dynamic_to_json` fails on a payload that is too deeply
-                // nested to re-encode. Send `null` rather than drop the frame.
+                // `dynamic_to_json` cannot convert deeply nested data.
+                // Send `null` instead.
                 result.unwrap(
                   wire.dynamic_to_json(message.payload),
                   json.null(),
@@ -102,7 +110,7 @@ pub fn channel() -> channel.Handler {
         #("socket_id", json.string(context.socket_id)),
       ]),
     )
-    // Applied in order immediately after the acknowledgment.
+    // beryl sends these in order after the join response.
     |> channel.with_actions([
       channel.broadcast("joined", json.string(context.socket_id)),
     ])
@@ -110,19 +118,20 @@ pub fn channel() -> channel.Handler {
 }
 ```
 
-<Aside type="note" title="Reply vs. push vs. broadcast">
-Each action applies to the channel's topic. The runtime applies actions in list order.
-- **`channel.reply_ok` / `channel.reply_error`:** Send `phx_reply` to the calling client. The reply uses the ref from `message.reply`.
-- **`channel.push`:** Send a named event only to this socket.
-- **`channel.broadcast`:** Send a named event to all sockets on this topic, including the sender.
-- **`channel.broadcast_from`:** Send a named event to all other sockets on this topic.
-- **`channel.stay(state)`:** Continue with no outgoing frames.
+<Aside type="note" title="Send data to clients">
+Each action applies to the current channel's topic. beryl applies actions in list order.
+- **`channel.reply_ok` / `channel.reply_error`:** Answer the client message that contains `message.reply`.
+- **`channel.push`:** Send a named event only to this client connection.
+- **`channel.broadcast`:** Send a named event to every client on this topic, including the sender.
+- **`channel.broadcast_from`:** Send a named event to every other client on this topic.
+- **`channel.stay(state)`:** Keep the current connection open without sending anything.
 </Aside>
 
 ## 2. Start beryl and Mist
 
-Register the handler table. Pass the returned `beryl.Sockets` handle to the
-Mist transport. `beryl.child_spec` returns the same core handle type.
+Give the handlers to beryl. `channel.child_spec` returns a `beryl.Sockets`
+handle for the Mist WebSocket server. It also returns a child specification
+that tells the OTP supervisor how to start and restart beryl.
 
 ```gleam
 // src/my_app.gleam
@@ -186,20 +195,22 @@ fn handle_http(
 }
 ```
 
-The layer checks handlers in registration order. The first matching pattern
-owns the topic. Put specific patterns before general patterns. The layer
-rejects an unmatched topic with `{"reason": "unmatched topic"}`.
+beryl checks handlers in the order you provide them. The first matching
+handler receives the topic. Put specific patterns before general patterns.
+beryl rejects a topic when no handler matches it and returns
+`{"reason": "unmatched topic"}`.
 
-<Aside type="tip" title="Transport path">
-`server.default_config("/socket/websocket")` tells beryl to intercept
-requests on `/socket/websocket`. When you create a Phoenix JS socket with
-`new Socket("/socket")`, the client adds `/websocket`. The paths then match.
+<Aside type="tip" title="WebSocket address">
+`server.default_config("/socket/websocket")` tells beryl to accept WebSocket
+requests at `/socket/websocket`. When you create a Phoenix JavaScript socket
+with `new Socket("/socket")`, the client adds `/websocket`, so it connects to
+the same address.
 </Aside>
 
 ## 3. Connect from the browser
 
-beryl uses the Phoenix Channels wire format. You can use the official
-`phoenix` npm package or CDN build.
+beryl uses the network message format from Phoenix Channels. You can connect
+with the official `phoenix` npm package or its CDN build.
 
 <Tabs>
   <TabItem label="Install (npm)">
@@ -217,7 +228,7 @@ npm install phoenix
 ```js
 import { Socket } from "phoenix";
 
-// "/socket" → client appends "/websocket" → hits "/socket/websocket" on the server.
+// The client adds "/websocket", so this connects to "/socket/websocket".
 const socket = new Socket("/socket");
 socket.connect();
 
@@ -227,7 +238,7 @@ const channel = socket.channel("room:lobby", { username: "alice" });
 channel
   .join()
   .receive("ok", (resp) => {
-    // resp is the JSON payload you attached with `channel.with_reply`.
+    // resp is the JSON data you attached with `channel.with_reply`.
     console.log("Joined room", resp.room);
   })
   .receive("error", (resp) => {
@@ -239,11 +250,11 @@ channel.on("new_msg", (payload) => {
   console.log("Message:", payload);
 });
 
-// Send a message. The channel's `reply_ok` action answers this push's ref.
+// Send a message. The channel's `reply_ok` action answers this push.
 channel
   .push("new_msg", { text: "Hello, world!" })
   .receive("ok", (resp) => {
-    // resp is the payload from `channel.reply_ok` — { sent: 1 }
+    // resp is the data from `channel.reply_ok`: { sent: 1 }
     console.log("Delivered", resp);
   });
 ```
@@ -251,7 +262,7 @@ channel
 ## 4. Reject a join
 
 Return `channel.reject` when a client cannot join a topic. Put join
-authentication, capacity checks, and payload validation in the `join` callback:
+authentication, capacity checks, and message data checks in the `join` function:
 
 ```gleam
 channel.handler("room:*", fn(context) {
@@ -265,14 +276,14 @@ channel.handler("room:*", fn(context) {
 })
 ```
 
-A rejected join does not create a channel instance and does not run
-`on_terminate`. The layer also rejects topics that have no handler. Thus, joins
-fail closed by default.
+A rejected join does not create channel state and does not run `on_terminate`.
+beryl also rejects topics that have no matching handler.
 
 ## Use raw dispatch instead
 
-The raw dispatch version passes one `init` and `update` pair to
-`beryl.child_spec`. Your code routes each event.
+Raw dispatch sends every event for one socket to your application. You provide
+one `init` function, one `update` function, and the code that decides how to
+handle each event.
 
 ```gleam
 // src/my_app/room_app.gleam
@@ -305,7 +316,7 @@ pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
         )],
       )
 
-    // Every join must be answered, or it fails closed.
+    // Reject every join that the application does not support.
     socket.Join(_topic, _payload, ref) ->
       socket.Next(
         model,
@@ -343,25 +354,25 @@ pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
 }
 ```
 
-Build it with
+Start it with
 `beryl.child_spec(config, init: room_app.init, update: room_app.update)`
 instead of `channel.child_spec`. Add the returned child specification to the
-same supervisor. Both versions use the same transport wiring, client code, and
-wire format. The runtime rejects each unanswered `Join`, so raw dispatch also
-fails closed.
+same supervisor. Both versions use the same WebSocket setup, client code, and
+network message format. If `update` does not accept or reject a `Join`, beryl
+rejects it.
 
-The [Dispatch guide](/guides/dispatch/) covers this model in full, including
-routing several topic families from one `update`.
+The [Dispatch guide](/guides/dispatch/) explains how to handle several groups
+of topics from one `update` function.
 
 ## Next steps
 
-- Read [Choose an API](/choosing-an-api/) if you are still deciding between the two layers
+- Read [Choose an API](/choosing-an-api/) if you are still deciding between the two APIs
 - Explore the full [examples](/examples/)
-- Learn the layer in depth in the [Channels guide](/guides/channels/)
-- Learn app-side routing in the [Dispatch guide](/guides/dispatch/)
+- Learn the channel API in depth in the [Channels guide](/guides/channels/)
+- Learn raw dispatch in the [Dispatch guide](/guides/dispatch/)
 - Add [Presence tracking](/guides/presence/) to see who's online
 - Set up [PubSub](/guides/pubsub/) for distributed messaging
-- Configure [WebSocket transport](/guides/websocket/) options including `on_connect` auth
+- Configure [WebSocket](/guides/websocket/) options, including `on_connect` authentication
 
 If a channel does not connect, start with the
 [Troubleshooting guide](/troubleshooting/).
