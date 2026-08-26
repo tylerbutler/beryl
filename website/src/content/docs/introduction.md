@@ -12,6 +12,33 @@ beryl is a **type-safe real-time channels and presence library** for Gleam,
 for the Erlang (BEAM) runtime. It helps you add real-time features to Gleam web
 applications.
 
+## beryl's model in one minute
+
+Each client connection is a **socket**. beryl starts one actor for that socket
+and processes its inputs one at a time. The actor owns the socket's state, so a
+slow callback delays only that socket.
+
+The core raw-dispatch loop uses per-socket state, inputs, and effects:
+
+1. A client joins a **topic** or sends a message.
+2. beryl delivers that input to your code.
+3. Your code returns the next state and effects such as accepting the join,
+   replying, pushing an event, or broadcasting.
+4. beryl applies those effects in list order.
+
+The **channel layer** organizes this loop by topic. A handler matches a topic
+pattern and creates one channel with private state and callbacks for each
+accepted join. Each callback returns the next state and ordered actions scoped
+to that channel. The layer routes those actions through the same socket
+runtime.
+
+With **raw dispatch**, you own the loop directly. One `init` function creates
+the state for each socket. One `update` function receives every socket input
+and returns the next model and effects. Keep shared application state, such as
+room data or document contents, in your own actors or services.
+
+The [tutorial](/tutorial/) develops this model step by step with a live poll.
+
 ## Realtime features beryl handles
 
 Real-time features must coordinate state across many connected clients. These
