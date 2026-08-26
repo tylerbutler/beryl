@@ -3,18 +3,20 @@ title: Typed Messages From Your Gleam System
 description: Send typed server-side events from actors and timers into the socket update loop.
 ---
 
-Client frames are only one source of socket work. A database worker may
-finish, a timer may expire, or an application actor may publish a domain
-event. Beryl routes those server-side events through `socket.Sender(Message)`
-and delivers them to the owning update function as `socket.Info(Message)`.
+Client frames are not the only source of socket work. A database worker can
+finish. A timer can expire. An actor in your app can publish an event. Beryl
+calls these server-side events. It routes them through a
+`socket.Sender(Message)`. The socket's update function receives them as
+`socket.Info(Message)`.
 
-The design resembles a typed OTP send, but a Beryl sender has a narrower
-contract than `process.Subject`.
+This looks like a typed OTP send. But a Beryl sender can do less than a
+`process.Subject`. This chapter shows the difference.
 
 ## The OTP baseline
 
-A Gleam OTP actor receives typed messages through a `process.Subject`. The
-example's store wraps its subject in an opaque handle:
+A Gleam OTP actor is a process with a mailbox. It receives typed messages
+through a `process.Subject`. The example's store keeps its subject inside an
+opaque type, so callers cannot use the subject directly:
 
 ```gleam
 pub opaque type Store {
@@ -36,12 +38,12 @@ type Message {
 
 This excerpt comes from
 [`store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/store.gleam).
-The store's `Subject(Message)` addresses the actor's mailbox. `Join` and
-`Leave` track active sockets. Other messages carry reply subjects because
-`Get`, `Vote`, and `Close` are synchronous calls from the wrapper API.
+The `Subject(Message)` is the address of the actor's mailbox. `Join` and
+`Leave` count the active sockets in a room. `Get`, `Vote`, and `Close` carry a
+`reply` subject. The caller waits for an answer on that subject.
 
-The actor handler receives its current `Dict` state and one `Message`, then
-returns `actor.Next`:
+The actor's handler receives its current state and one `Message`. It returns
+`actor.Next`:
 
 ```gleam
 Vote(room, choice, reply) -> {
@@ -61,13 +63,13 @@ Vote(room, choice, reply) -> {
 }
 ```
 
-The subject can carry any protocol the actor accepts. It does not carry
-Beryl's socket lifecycle rules.
+A subject can carry any message type the actor accepts. It knows nothing about
+Beryl sockets or when they close.
 
 ## A socket sender has one destination
 
-Raw Beryl `init` receives `socket.ConnectInfo(Message)`. Its `self` field is a
-`socket.Sender(Message)`:
+When a socket connects, Beryl calls your raw `init` with a
+`socket.ConnectInfo(Message)`. Its `self` field is a `socket.Sender(Message)`:
 
 ```gleam
 pub type Model {
@@ -79,9 +81,9 @@ pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) 
 }
 ```
 
-The application defines `Message` as its domain-specific vocabulary for
-server-side events in the socket's update loop. The poll defines one such
-event. It tells a socket that a timer has expired for one topic:
+You define `Message`. It is the set of server-side events your update function
+can receive. The poll defines one event. It tells a socket that the timer for
+one topic has expired:
 
 ```gleam
 pub type Message {
@@ -89,18 +91,17 @@ pub type Message {
 }
 ```
 
-This `Message` is distinct from the `socket.Message` input variant, which
-contains a decoded client event. A chat application might instead define
-`NewChatMessage`, `UserBanned`, or other variants produced by its own actors
-and workers.
+Do not confuse this `Message` with `socket.Message`. `socket.Message` is an
+input variant that holds a decoded client event. Your own `Message` holds
+events from your actors and workers. A chat app might define `NewChatMessage`
+or `UserBanned` here.
 
-The example stores `info.self` in each socket's `Model`. Beryl constructs that
-sender when the socket connects. The sender wraps that socket actor's subject
-and captures the socket ID. The actor uses this ID to reject a notification
-after the socket has closed. The sender remains an opaque `socket.Sender`
-rather than exposing the subject.
+The example stores `info.self` in the socket's `Model`. Beryl makes the sender
+when the socket connects. It knows which socket actor it belongs to. If that
+socket has closed, the sender drops the message. You never see the subject
+inside it.
 
-The same application-defined type appears throughout the path:
+Your `Message` type appears at each step of the path:
 
 <!-- snippet-check: skip -->
 ```gleam
@@ -110,11 +111,10 @@ socket.Input(Message)
 socket.Info(ClosePoll(topic))
 ```
 
-Calling `socket.notify(sender, ClosePoll(topic))` sends the typed value to the
-socket actor. Beryl passes it to that socket's update function as
-`Info(ClosePoll(topic))`.
+To send an event, call `socket.notify(sender, ClosePoll(topic))`. Beryl
+delivers it to the socket's update function as `Info(ClosePoll(topic))`.
 
-Its update handles the message with this exact excerpt:
+The update function handles it like this:
 
 ```gleam
 socket.Info(ClosePoll(topic)) ->
@@ -133,20 +133,19 @@ socket.Info(ClosePoll(topic)) ->
 
 These excerpts come from
 [`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
-`ClosePoll` stays typed from the call to `socket.notify` through the
-`Info(ClosePoll(topic))` match. It does not become `Dynamic`.
+`ClosePoll` keeps its type from `socket.notify` to the `Info` match. It never
+becomes `Dynamic`.
 
-The sender is narrower than a general `process.Subject`:
+A sender can do less than a `process.Subject`:
 
-- it only permits values of the raw app's `Message` type;
-- it only targets the socket update that created it;
-- the runtime wraps delivery as `socket.Info(Message)`;
-- it ignores delivery if that socket has disconnected;
-- it does not expose mailbox selection or a general request/reply protocol.
+- It accepts only values of your `Message` type.
+- It sends only to the socket that made it.
+- Beryl wraps each value as `socket.Info(Message)`.
+- It drops the value if the socket has disconnected.
+- It has no request/reply protocol and no mailbox selection.
 
-Use `Subject` when you are defining an actor protocol. Use `socket.Sender`
-when another process needs to feed typed information into one socket's update
-loop.
+Use a `Subject` when you define an actor's protocol. Use a `socket.Sender`
+when another process must send a typed event into one socket.
 
 ## The timer stays outside the runtime
 
@@ -169,10 +168,10 @@ pub fn after(timer: Timer, milliseconds: Int, action: fn() -> Nil) -> Nil {
 
 This exact excerpt comes from
 [`timer.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/timer.gleam).
-The timer actor owns delayed callback execution. It does not block Beryl's
-socket actor for 60 seconds.
+The timer actor runs the callback after the delay. The socket actor does not
+wait 60 seconds. It stays free to handle other work.
 
-When a timed raw socket accepts a poll topic, it schedules a callback:
+When a timed socket accepts a poll topic, it schedules a callback:
 
 ```gleam
 case stage {
@@ -184,37 +183,36 @@ case stage {
 }
 ```
 
-`step_03` passes `60_000` as `duration_ms`. After 60 seconds the timer actor
-runs the callback, `socket.notify` sends `ClosePoll(topic)`, and Beryl invokes
-the socket update with `Info(ClosePoll(topic))`.
+`step_03` sets `duration_ms` to `60_000`. After 60 seconds, the timer actor
+runs the callback. The callback calls `socket.notify`. Beryl then calls the
+socket's update function with `Info(ClosePoll(topic))`.
 
-The send is fire-and-forget. `socket.notify` returns `Nil`. It does not report
-whether the socket remains connected. If the browser closed during the
-minute, Beryl ignores the delivery. The timer actor does not need to monitor
-the socket or clean up a failed request.
+`socket.notify` is fire-and-forget. It returns `Nil`. It does not tell you if
+the socket is still connected. If the browser closed during that minute, Beryl
+drops the message. The timer actor does not need to watch the socket or clean
+up after it.
 
-## Domain state remains in the store actor
+## Domain state stays in the store actor
 
-The raw `Model` tracks the socket's sender and joined topics. It does not own
-poll totals. Both client `Message` inputs and timer-driven `Info` inputs call
-the shared `store.Store`.
+The raw `Model` holds the sender and the set of joined topics. It does not hold
+vote counts. Both client events and timer events call the shared
+`store.Store`.
 
-That split gives each piece one job:
+Each part has one job:
 
-- Beryl's logical per-socket `Model` tracks connection-local facts.
-- The store actor serializes shared poll mutations by room.
-- The timer actor schedules delayed work.
-- `socket.Sender` reconnects external work to one socket update.
+- The socket `Model` holds facts about one connection.
+- The store actor applies poll changes one at a time for each room.
+- The timer actor runs delayed work.
+- The `socket.Sender` sends the result back into one socket.
 
-`store.Store` is also the persistence boundary. Socket code calls `get`, `vote`,
-and `close` without knowing that the current actor keeps a `Dict` in memory.
-The actor could keep serializing those operations while storing polls in
-[Stóráil](https://hexdocs.pm/storail/) or a database. These are separate
-decisions. The actor orders concurrent updates. The storage backend
-determines whether state survives an application restart. A production
-backend also needs an explicit policy for I/O latency and write failures.
+`store.Store` also hides where the data lives. Socket code calls `get`, `vote`,
+and `close`. It does not know that the actor keeps a `Dict` in memory. The
+actor could keep polls in [Stóráil](https://hexdocs.pm/storail/) or a database
+instead. The actor still puts the updates in order. The storage decides if
+the data survives a restart. A real backend also needs a plan for slow I/O and
+failed writes.
 
-Closing returns a descriptive result:
+The close operation returns a result that says what happened:
 
 ```gleam
 pub type CloseResult {
@@ -230,15 +228,15 @@ pub fn close(poll: Poll) -> CloseResult {
 }
 ```
 
-`ClosedNow` tells the caller to broadcast `poll_closed`. `AlreadyClosed`
-suppresses a duplicate broadcast. Each accepted socket join schedules its own
-timer, so two tabs can schedule two close messages for the same room. Only
-the first close message changes the store.
+`ClosedNow` tells the caller to broadcast `poll_closed`. `AlreadyClosed` tells
+the caller not to broadcast again. Each socket join sets its own timer. Two
+tabs on the same room set two timers. Only the first `ClosePoll` changes the
+store.
 
-## Close now uses the same state transition
+## Close now uses the same state change
 
-In the timed stage, the client can send `close_poll`. The raw handler calls
-the same `store.close` function and returns ordered effects:
+In the timed stage, a client can send `close_poll`. The raw handler calls the
+same `store.close` function. It returns effects in order:
 
 ```gleam
 Timed -> {
@@ -258,47 +256,44 @@ Timed -> {
 }
 ```
 
-The reply to the requesting client precedes the broadcast in the effect list.
-Beryl applies effects strictly in list order, and the runtime's writes preserve
-that wire order. The delayed timer may later deliver another typed `Info`, but
-the idempotent store prevents a second close broadcast.
+The reply comes before the broadcast in the list. Beryl runs effects in list
+order. The wire sees them in that order too. The timer can still send a later
+`Info`. But `store.close` is safe to call twice, so there is no second
+broadcast.
 
-This ordering guarantee belongs to Beryl's `socket.Effect` interpreter. The
-comparison with Lustre and OTP does not imply that their effects or process
-sends share the same cross-abstraction ordering rules.
+This order guarantee is a Beryl rule. Lustre effects and OTP sends have their
+own rules. Do not assume they order work the same way.
 
-## `Info` has socket-wide scope
+## `Info` is not scoped to a topic
 
-`Info(Message)` does not carry a topic automatically. The app message must include
-the routing information it needs. The example defines
-`ClosePoll(topic: String)` because one raw socket may join several poll topics.
+An `Info(Message)` does not carry a topic. Your message must carry the routing
+data it needs. The example defines `ClosePoll(topic: String)` because one raw
+socket can join several poll topics.
 
-This lack of topic scoping has a crash consequence. Beryl can attribute a
-crashing `Message` or `Binary` callback to a topic and close only that topic.
-A crashing `Info` callback has no protocol topic to attribute, so the runtime
-tears down that socket. Chapter 5 covers the complete scoped rescue
-behavior.
+This has one effect on crashes. When a `Message` or `Binary` callback crashes,
+Beryl knows the topic. It closes only that topic. When an `Info` callback
+crashes, Beryl has no topic. It closes the whole socket. Chapter 5 explains the
+full crash behavior.
 
-This design also adds a composition cost. If several raw topic families need
-unrelated server message types, the app must put them in one socket-wide `Message`
-union and route each variant. `beryl/channel` removes that shared union by
-giving each accepted channel instance a private info type.
+It also has a cost when you compose. If several topic families need different
+server-side events, you must put them all in one `Message` type. Your update
+function must route each variant. `beryl/channel` removes this shared type.
+Each channel gets its own private info type.
 
-## Choosing the boundary
+## Choose the boundary
 
-Keep slow or independently supervised work in your own processes. Send a
-small typed result into Beryl when the socket update needs to decide what
-state or effects come next. Each socket actor executes its update callbacks in
-sequence, so sleeping, blocking I/O, or long computation inside `update`
-delays that socket's messages, effects, and heartbeat checks. Other sockets
-continue.
+Keep slow work in your own processes. Keep work that needs its own supervisor
+there too. Send a small typed result into Beryl when the socket must decide on
+new state or effects. Each socket actor runs its update callbacks one at a
+time. If `update` sleeps, blocks on I/O, or does long work, that socket's
+messages, effects, and heartbeat checks wait. Other sockets are not affected.
 
-`socket.Sender` provides the typed return path without turning Beryl into the
-owner of your job, store, or timer. The application still decides how to
+`socket.Sender` gives you a typed way back into the socket. Beryl does not
+become the owner of your job, store, or timer. Your app still decides how to
 supervise those processes.
 
-The next chapter moves from one socket-wide model and message union to
-heterogeneous channel handlers with private state and private info types.
+The next chapter moves from one socket-wide `Model` and `Message` to channel
+handlers. Each handler keeps its own state and info types.
 
 ## Sources and further reading
 
@@ -313,10 +308,9 @@ heterogeneous channel handlers with private state and private info types.
 cd examples/live_poll && gleam run -m live_poll/step_03
 ```
 
-Open `http://localhost:8103`, join `demo`, and vote. Select **Close poll
-now** to close immediately, or leave the poll open for 60 seconds. In either
-case the client receives the closed state and voting becomes disabled. If you
-close the browser before the timer fires, Beryl ignores its later
-`socket.notify` delivery.
+Open `http://localhost:8103`, join `demo`, and vote. Select **Close poll now**
+to close the poll at once, or wait 60 seconds. In both cases, the client
+receives the closed state and voting stops. If you close the browser before
+the timer fires, Beryl drops the later `socket.notify` message.
 
 Next: [Composition: raw dispatch and `beryl/channel`](/tutorial/composition-raw-dispatch-and-channels/).

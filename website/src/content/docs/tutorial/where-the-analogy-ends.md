@@ -3,17 +3,19 @@ title: Where the Analogy Ends
 description: Follow a frame through Beryl and learn where frontend model-update ideas stop matching runtime behavior.
 ---
 
-Model-update vocabulary helps organize Beryl application code, but it can
-mislead you about execution. Beryl creates one actor for each socket model,
-but it does not render output from state or restart socket state after an
-actor crash. A router actor maintains the socket index and handles fan-out.
-Each socket actor calls the application update and interprets ordered effects.
+The model-update words from the last chapters help you organize your code.
+But they can give you the wrong idea about how Beryl runs that code. Beryl
+gives each socket its own actor. An actor is a process with a mailbox that
+handles one message at a time. But Beryl does not draw a view from your model.
+It does not bring your socket state back after a crash. One router actor keeps
+the list of sockets and sends broadcasts to them. Each socket actor calls your
+update function and runs the effects it returns, in order.
 
 The production decisions start where the frontend analogy ends.
 
 ## Follow one frame
 
-For a text frame, the path is:
+A frame is one WebSocket message. For a text frame, the path is:
 
 ```text
 transport connection
@@ -25,53 +27,53 @@ transport connection
   -> encoded wire frame or broadcast fan-out
 ```
 
-The transport owns the WebSocket connection and edge controls. It checks the
-frame size and frame-rate bucket, decodes the frame with the configured codec,
-and sends the decoded value to the router. Malformed input and decode cost
-stay in the connection process.
+The transport owns the WebSocket connection. It does the first checks: is the
+frame too large, and is the client sending too many frames? Then it decodes the
+frame with your wire codec and sends the result to the router. Bad input and
+decode work stay in the connection process. They do not reach your code.
 
-The router forwards the decoded value to the socket actor. That actor validates
-protocol state and constructs a `socket.Input`. Raw dispatch receives that
-input directly. `beryl/channel` supplies the app-side router, locates the live
-channel instance, calls its callback, and lowers channel actions to core
+The router sends the decoded value to the socket actor. That actor checks the
+protocol state and builds a `socket.Input`. With raw dispatch, your update
+function receives that input. With `beryl/channel`, the channel layer finds the
+live channel for that topic, calls its callback, and turns the actions into core
 effects.
 
-The socket actor then interprets effects in list order. Replies and pushes
-become encoded frames. It sends broadcasts to the router for local fan-out and
-optional PubSub delivery.
+The socket actor then runs the effects in list order. A reply or push becomes an
+encoded frame. A broadcast goes to the router. The router sends it to the local
+sockets, and to PubSub if you configured it.
 
-This path contains one intentional `Dynamic` boundary: decoded client
-payloads. The core runtime's app model and message types stay captured in
-typed closures. The channel layer adds separate closure sealing for each
-handler's private state and info type.
+The client payload is the only `Dynamic` value on this path. Your model and
+message types stay inside typed closures. The channel layer does the same for
+each handler's state and info type.
 
 ## Each socket model has one actor
 
-Raw `init` runs once per socket and returns one app-defined `Model`. A channel
-router creates one private state value per accepted topic. Those values are
-logically separate, and one socket actor stores all values for its socket.
+Raw `init` runs once for each socket. It returns one `Model`. With channels,
+each accepted topic gets its own state value. Those values are separate from
+each other, but one socket actor stores all of them for its socket.
 
-The socket actor processes its mailbox in sequence. This gives it a consistent
-view of its model, pending and joined topics, and heartbeat timestamp without
-locks. The router has a separate mailbox for the socket index and topic
-subscriber sets. A blocking update delays only its socket, but it also delays
-that socket's later messages, effects, and heartbeat checks.
+The socket actor handles its mailbox one message at a time. So it always has a
+consistent view of its model, its topics, and its heartbeat time. It needs no
+locks. The router has its own mailbox for the socket list and topic subscriber
+sets. If your update function blocks, only that socket waits. But that socket's
+later messages, effects, and heartbeat checks also wait.
 
 The live-poll example follows that rule:
 
-- `store.Store` serializes shared poll state in its own actor;
+- `store.Store` keeps the shared poll state in its own actor;
 - `timer.Timer` waits and runs delayed callbacks in its own actor;
-- Beryl callbacks make short calls, choose the next state, and return effects.
+- Beryl callbacks make short calls, pick the next state, and return effects.
 
-If an external operation needs more time, run it under application
-supervision and send a typed result through `socket.Sender` or
+If some work takes a long time, do not run it in a callback. Run it under your
+own supervision. Then send a typed result back through `socket.Sender` or
 `channel.Sender`.
 
-## Beryl rescues callback crashes with a scope
+## Beryl catches callback crashes, and the effect depends on the input
 
-"Let it crash" would make one callback fault close every topic on its socket.
-Beryl rescues application callback crashes and applies behavior based on the
-input that failed:
+In Erlang, "let it crash" means: let a process die and let its supervisor
+restart it. If Beryl did that here, one bad callback would close every topic on
+its socket. Instead, Beryl catches the crash. What happens next depends on
+which input failed:
 
 | Callback or raw input | Runtime behavior |
 |---|---|
@@ -81,44 +83,45 @@ input that failed:
 | `Info`, or channel `on_info` | Tear down that socket |
 | `Closed`, or channel `on_terminate` | Log the crash and continue teardown |
 
-Other socket actors continue. A fault elsewhere in that socket actor stops
-only that actor. The router monitors it, closes the connection, and removes
-its index entries. Beryl truncates and depth-limits crash descriptions before
-logging.
+Other socket actors keep running. If a socket actor crashes somewhere else,
+only that actor stops. The router sees this, closes the connection, and removes
+the socket from its list. Beryl cuts long crash descriptions before it logs
+them.
 
-The `on_terminate` case has a narrow channel-layer edge. A panic discards the
-router update and actions that the callback returns. Its generation-scoped
-sender can still reach the old sealed instance. This access ends when the
-client joins the topic again or the socket ends. Client traffic cannot reach
-the instance because the topic has closed. Keep termination callbacks small
-and free of partial application work.
+The `on_terminate` case has one small edge in the channel layer. If the
+callback panics, Beryl drops the router update and the actions it returned.
+The channel's sender can still reach the old channel until the client joins the
+topic again or the socket ends. Client traffic cannot reach it, because the
+topic is closed. Keep `on_terminate` small. Do not do half-finished work there.
 
-This policy contains app callback failures without pretending every failure
-has the same scope.
+This policy contains crashes in your callbacks. It does not pretend that every
+crash has the same size.
 
 ## Supervision restores dispatch, not sessions
 
-`beryl.child_spec` and `channel.child_spec` return a child specification for
-your application's supervisor. The supervisor restarts the router under the
-same name-backed `beryl.Sockets` handle. Router death stops all socket actors,
-so connected clients close, reconnect, and rejoin with new models and channel
-state. A socket actor crash closes only its connection and does not restart the
-router.
+`beryl.child_spec` and `channel.child_spec` return a child specification. You
+put it in your application's supervisor. If the router dies, the supervisor
+restarts it under the same `beryl.Sockets` handle. When the router dies, all
+socket actors stop too. Connected clients see the connection close. They
+reconnect and join again with new models and new channel state. If one socket
+actor crashes, only its connection closes. The router does not restart.
 
-Keep durable or reconstructable domain state in application-owned storage, as
-the example does with `store.Store`. The next chapter covers the supervision
-tree, restart windows, restart intensity, and graceful shutdown.
+Keep domain state that must survive in storage that your app owns. The example
+does this with `store.Store`. The next chapter covers the supervision tree,
+restart windows, restart intensity, and graceful shutdown.
 
-## Heartbeats test connection liveness
+## Heartbeats test that a connection is alive
 
-Phoenix clients send heartbeat frames on the `phoenix` topic. Beryl handles
-them inside each socket actor. The application update does not receive them.
-Each actor records a monotonic last-seen timestamp and runs its own recurring
-check. There is no global heartbeat sweep.
+Phoenix clients send a heartbeat frame on the `phoenix` topic at a regular
+interval. Beryl handles heartbeats inside each socket actor. Your update
+function does not see them. Each actor records the time of the last heartbeat
+and runs its own timer to check it. There is no global check across all
+sockets.
 
-Eviction closes the transport and delivers `Closed(topic,
-HeartbeatTimeout)` for every joined topic. Raw dispatch can prune its model.
-The channel layer invokes `on_terminate` for each accepted instance.
+If a socket misses its heartbeat, Beryl closes the transport. It then delivers
+`Closed(topic, HeartbeatTimeout)` for every joined topic. Raw dispatch can
+remove the topic from its model. The channel layer calls `on_terminate` for
+each channel.
 
 The final checkpoint sets:
 
@@ -136,80 +139,83 @@ beryl.config(wire.phoenix_codec())
 
 This exact excerpt comes from
 [`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_05.gleam).
-These values make the example production-shaped, not universally correct.
-Choose limits from expected traffic and deployment capacity.
+These values make the example look like a production app. They are not correct
+for every app. Choose your limits from the traffic you expect and the capacity
+you have.
 
 ## PubSub and presence sit outside the MVU analogy
 
-PubSub distributes broadcasts between BEAM nodes through Erlang `pg`. The
-remote payload and subscriber contract belong to distributed messaging, not
-to a local model-update-view loop. The router fans a received broadcast out to
-local socket actors.
+PubSub sends broadcasts between BEAM nodes. It uses Erlang `pg`, the built-in
+process group library. A remote payload and its subscribers are a distributed
+messaging problem, not part of a local model-update-view loop. When the router
+receives a broadcast, it sends it to the local socket actors.
 
-Presence is an application-owned actor backed by a CRDT state. Presence
-effects can pause the remaining effects for one socket while the presence
-actor applies a mutation. Other sockets, heartbeats, broadcasts, and shutdown
-work continue. When the mutation completes, the waiting socket resumes its
-list in the original order.
+Presence tracks which clients are on a topic. It is an actor that your app
+owns. It stores a CRDT, which is a data structure that many nodes can change
+and still agree on. A presence effect can pause the rest of the effect list
+for one socket while the presence actor applies the change. Other sockets,
+heartbeats, broadcasts, and shutdown keep going. When the change is done, the
+socket runs the rest of its list in the original order.
 
-Neither PubSub nor presence is a hidden field in the socket `Model`. Their
-lifecycle and distributed semantics need separate design:
+PubSub and presence are not hidden fields in your socket `Model`. Each one has
+its own lifecycle and its own distributed rules. Design them on their own:
 
 - configure PubSub when broadcasts must cross nodes;
-- start and supervise presence when clients need replicated membership;
-- keep synchronous capacity or authorization state in an application-owned
-  process when a check and mutation must be atomic.
+- start and supervise presence when clients need a shared member list;
+- keep capacity or authorization state in a process your app owns when a check
+  and a change must happen together.
 
-The Elm analogy explains state transitions. It does not explain cluster
-membership, CRDT convergence, or supervision.
+The Elm analogy explains state changes. It does not explain cluster membership,
+CRDT agreement, or supervision.
 
 ## Raw dispatch or channels
 
 Both APIs use the same transport, runtime, codec, presence, PubSub, and abuse
-controls. Choose based on where you want routing and composition to live.
+controls. Choose based on where you want the routing to live.
 
 Use raw dispatch when:
 
 - the endpoint serves one topic family;
 - one socket-wide model is natural;
-- callbacks need direct cross-topic effects in one ordered list;
-- explicit routing is worth the control.
+- callbacks need effects on several topics in one ordered list;
+- you want to write the routing yourself.
 
-Use `beryl/channel` by default when:
+Use `beryl/channel` when:
 
 - the endpoint serves several topic namespaces;
 - the design follows Phoenix Channels;
-- each channel should own private state and a private info type;
-- handler values are the useful unit of composition.
+- each channel should own its own state and info type;
+- you want to compose handlers as values.
 
-Raw dispatch remains the clearest teaching example and Beryl's core.
-`beryl/channel` is the recommended default for multi-channel and
-Phoenix-shaped applications. The layer narrows actions to the current topic
-and uses phase types during close. Raw effects can name any topic, so
-cross-topic coordination stays ordinary app code.
+Raw dispatch is the core programming model and the clearest one to learn from.
+For apps with many channels, or apps shaped like Phoenix, use `beryl/channel`.
+Channel actions apply only to the current topic, and only some actions are
+allowed during close. Raw effects can name any topic, so work across topics is
+normal app code.
 
 ## The boundaries to remember
 
-The preceding chapters began with a familiar update loop. The production model needs
-the mismatches kept in view:
+The earlier chapters started with a familiar update loop. In production, keep
+these differences in view:
 
 - Beryl has no `view`.
 - Raw `init` runs once per socket.
-- One actor stores each socket model; a separate router indexes sockets and
-  subscribers.
-- Client payload stays `Dynamic` until application decoding succeeds.
-- `JoinRef` and `ReplyRef` are protocol capabilities, not data to rebuild.
-- Effect list order is observable wire order.
-- Raw effects can coordinate across topics. Channel actions are topic-scoped
-  and phase-typed.
-- Callback crashes are rescued with input-specific scope.
-- A supervised runtime restart restores dispatch but loses live socket state.
+- One actor stores each socket model. A separate router stores the socket list
+  and the subscribers.
+- Client payload stays `Dynamic` until your code decodes it.
+- `JoinRef` and `ReplyRef` are protocol tokens. Do not try to rebuild them.
+- The order of your effect list is the order on the wire.
+- Raw effects can work across topics. Channel actions apply to one topic, and
+  the close phase allows fewer of them.
+- Beryl catches callback crashes. The size of the cleanup depends on the input.
+- A supervisor restart brings dispatch back. It does not bring live socket
+  state back.
 
-Those constraints tell you where to put state and work. Keep connection-local
-facts in raw models or channel state. Keep shared domain state in
-application-owned processes. Decode at the wire boundary. Return short,
-ordered effect lists. Let supervision restore services while clients restore
-ephemeral subscriptions by reconnecting.
+These rules tell you where to put state and work. Keep facts about one
+connection in raw models or channel state. Keep shared domain state in
+processes your app owns. Decode at the wire boundary. Return short, ordered
+effect lists. Let supervision restore services. Let clients restore their
+subscriptions when they reconnect.
 
 ## Sources and further reading
 
@@ -227,7 +233,7 @@ cd examples/live_poll && gleam run -m live_poll/step_05
 ```
 
 Open `http://localhost:8105`, join `demo`, vote from two tabs, and close the
-poll now or wait 60 seconds. The behavior matches step 04 while the runtime
+poll now or wait 60 seconds. The behavior matches step 04, but the runtime now
 uses the heartbeat and abuse-control settings shown above. In another shell,
 run `curl http://localhost:8105/healthz`. The expected response is `ok`.
 

@@ -3,66 +3,64 @@ title: The Elm Architecture, Without a DOM
 description: Learn Beryl's model-update architecture by building the first read-only stage of a live poll.
 ---
 
-Lustre and Gleam OTP actors apply the same programming model to different
-domains. Each starts with state, receives a typed message, and runs one
-function that decides the next state and any work to perform. Lustre uses that
-model to manage a user interface. An OTP actor uses it to manage a concurrent
-process. Beryl applies it to realtime socket traffic.
+Lustre and Gleam OTP actors use the same programming model. Each one starts
+with some state. Each one receives a typed message. Each one runs one function
+that returns the next state and any work to do. Lustre uses this model to run
+a user interface. An OTP actor uses it to run a concurrent process. Beryl uses
+it to handle realtime socket traffic.
 
-The domain determines the last step. Lustre renders a view. An actor continues
-with its next state or stops. Beryl returns protocol effects such as accepting
-a join, replying, or broadcasting. Beryl also initializes state once for each
-connected socket rather than once for a browser application or actor process.
+The last step is different in each case. Lustre renders a view. An actor keeps
+its next state or stops. Beryl returns protocol effects. An effect can accept a
+join, send a reply, or broadcast a message. Beryl also creates state once for
+each connected socket, not once for the whole application.
 
-We will start with Beryl's core API so that state, inputs, and effects stay
-visible. After comparing the Lustre and OTP forms, we will define that API and
-map its terms onto the same model.
+We start with Beryl's core API. It keeps state, inputs, and effects in plain
+view. First we compare the Lustre and OTP forms. Then we show the Beryl API
+and map its terms onto the same model.
 
 ## What we are building
 
-We will build a room-scoped live poll. A browser joins a topic such as
-`poll:demo`, reads the current totals, votes for Gleam or Erlang, and sees
-votes from other tabs. Later articles add automatic closing and a second kind
+We will build a live poll with rooms. A browser joins a topic such as
+`poll:demo`. It reads the current totals, votes for Gleam or Erlang, and sees
+votes from other tabs. Later chapters add automatic closing and a second kind
 of subscription.
 
-A **topic** is the string address of one subscription inside a WebSocket
-connection. In `poll:demo`, `poll` identifies the kind of subscription and
-`demo` identifies the room. One socket can join several topics, and Beryl uses
-the topic string to route messages and broadcasts.
+A **topic** is a string. It names one subscription inside a WebSocket
+connection. In `poll:demo`, `poll` is the kind of subscription and `demo` is
+the room. One socket can join many topics. Beryl uses the topic string to route
+messages and broadcasts.
 
-Beryl does not use the word channel for this subscription. Beryl reserves
-that word for a separate API built on top of topics. A later article
-introduces that API. For now, the browser joins a topic, and the application
-routes its string address.
+Beryl does not call this subscription a channel. In Beryl, a **channel** is a
+separate API built on top of topics. A later chapter introduces that API. For
+now, the browser joins a topic, and your application routes it by its string.
 
-A poll makes the architecture visible without much domain code. Each browser
-connection needs socket-local state, while every browser in the same room
-shares one poll. A vote also produces two different kinds of output: a reply
-to the browser that voted and a broadcast to the other subscribers. Those
-requirements give us concrete reasons to use models, typed messages, topic
-routing, effects, and an application-owned OTP actor.
+A poll is a good example because it needs little domain code. Each browser
+connection needs its own state. All browsers in the same room share one poll.
+A vote also produces two kinds of output: a reply to the voter and a broadcast
+to everyone else. These needs give us real reasons to use models, typed
+messages, topic routing, effects, and an OTP actor that your application owns.
 
-This article ends with the smallest useful checkpoint. The server accepts a
+This chapter ends with the smallest useful checkpoint. The server accepts a
 `poll:*` join and returns the current poll state. Voting, broadcasts, timers,
-and channel composition come later, after the core state-transition model is
-clear.
+and channels come later, after the core loop is clear.
 
 ## One model, different domains
 
 The shared model has four parts:
 
-1. initialize some state;
-2. define the messages or inputs that can arrive;
+1. create some state;
+2. define the messages, or inputs, that can arrive;
 3. handle one input against the current state;
-4. return the next state and describe what happens next.
+4. return the next state and say what happens next.
 
-Lustre, OTP actors, and Beryl assign different names and runtime behavior to
-the fourth part. The state transition stays recognizable across all three.
+Lustre, OTP actors, and Beryl use different names for the fourth part. They
+also do different things with it. Parts one to three look the same in all
+three.
 
 ## Start with the familiar Lustre loop
 
-The canonical Lustre example has four application pieces. Here is the
-overview's counter with full function annotations:
+The standard Lustre example has four pieces. Here is the counter from the
+Lustre overview, with full type annotations:
 
 ```gleam
 fn init(_flags: Nil) -> Int {
@@ -84,14 +82,14 @@ fn update(model: Int, message: Message) -> Int {
 ```
 
 The [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)
-guide makes the model type explicit:
+guide names the model type:
 
 ```gleam
 type Model =
   Int
 ```
 
-The view uses qualified module calls:
+The view calls each module by name:
 
 ```gleam
 fn view(model: Int) -> element.Element(Message) {
@@ -105,24 +103,24 @@ fn view(model: Int) -> element.Element(Message) {
 }
 ```
 
-`init` creates the first model. `Message` lists everything that can drive
-application state. `update` computes the next model. `view` turns that model
-into elements that can produce more messages.
+`init` creates the first model. `Message` lists every event that can change
+the state. `update` computes the next model. `view` turns the model into
+elements. Those elements can send more messages.
 
-Some work cannot happen inside a state transition. A browser may need to make
-an HTTP request, start a timer, or interact with JavaScript. Lustre represents
-that work as an `Effect(Message)`. An update returns the next model and an
-effect value. The Lustre runtime performs the work and can feed its result
-back into `update` as another `Message`.
+Some work cannot happen inside `update`. A browser may need to send an HTTP
+request, start a timer, or call JavaScript. Lustre calls this work an
+`Effect(Message)`. An update returns the next model and an effect. The Lustre
+runtime does the work. It can then send the result back to `update` as a new
+`Message`.
 
-An OTP actor keeps the same state transition. Instead of a browser event loop,
-the transition runs inside a concurrent process.
+An OTP actor uses the same loop. The loop runs inside a concurrent process
+instead of a browser.
 
 ## The same loop inside an OTP actor
 
-A Gleam OTP actor applies the same state transition to a process mailbox. It
-owns state and processes messages sequentially. Keeping the counter from the
-Lustre example makes the change of runtime easier to see:
+A Gleam OTP actor is a process with a mailbox. It owns some state. It handles
+one message at a time, in order. We keep the same counter so the only change is
+the runtime:
 
 ```gleam
 type Message {
@@ -138,13 +136,13 @@ fn on_message(count: Int, message: Message) -> actor.Next(Int, Message) {
 }
 ```
 
-The model is still an `Int`, and the messages are still `Incr` and `Decr`.
-The difference is where they come from and what happens to the result. A
-Lustre runtime receives interface messages and passes the next model to
-`view`. An actor receives messages from its mailbox and uses `actor.continue`
-to replace its process state.
+The model is still an `Int`. The messages are still `Incr` and `Decr`. Two
+things change: where messages come from, and what happens to the result. Lustre
+gets messages from the interface and passes the next model to `view`. An actor
+gets messages from its mailbox and calls `actor.continue` to store the next
+state.
 
-The common model becomes clearer side by side:
+Here are the two side by side:
 
 | Lustre | Gleam OTP actor |
 |---|---|
@@ -154,34 +152,33 @@ The common model becomes clearer side by side:
 | next model and effects | `actor.Next` plus sends performed by the handler |
 | `view` | no equivalent |
 
-A Lustre message usually represents a user-interface event or the result of an
-effect. An actor message represents communication between concurrent
-processes. Both feed a typed state transition. Lustre's runtime uses the
-result to update an interface. The actor runtime uses `actor.Next` to continue
-or stop the process.
+A Lustre message is usually an interface event or the result of an effect. An
+actor message comes from another process. Both go through the same kind of
+typed transition. Lustre uses the result to update the screen. The actor
+runtime uses `actor.Next` to continue or stop the process.
 
-A `process.Subject(message)` is the typed address used to send these messages
-to the actor's mailbox.
+To send a message to an actor, you use a `process.Subject(message)`. A subject
+is a typed address for the actor's mailbox.
 
-We can now carry the same model into Beryl and give each role a
-socket-specific meaning.
+Now we can carry the same model into Beryl and give each part a socket
+meaning.
 
 ## Beryl applies the loop to sockets
 
-Beryl offers two ways to program a socket endpoint. The recommended channel
-layer routes events to handlers selected by topic. Underneath it, the raw
-app-side dispatch API gives every event for a socket to one application
-`update` function.
+Beryl gives you two ways to program a socket endpoint. The channel layer is
+the recommended one. It routes each event to a handler based on the topic.
+Under it sits the raw app-side dispatch API. Raw dispatch gives every event on
+a socket to one `update` function that you write.
 
-"Raw dispatch" means the application owns that routing. Your code receives
-joins, client messages, binary frames, close events, and typed server
-messages as `socket.Input` values. Your code then decides how each input
+"Raw dispatch" means your application does the routing. Your code receives
+joins, client messages, binary frames, close events, and typed server messages.
+Each one arrives as a `socket.Input` value. Your code decides how each input
 changes the socket's model. Beryl still owns the WebSocket transport, wire
 decoding, protocol checks, and effect execution.
 
-We begin with raw dispatch because it exposes the complete state-transition
-loop. A later article moves the same poll to the recommended channel layer and
-shows which routing work moves from the application into the layer.
+We start with raw dispatch because it shows the full loop. A later chapter
+moves the same poll to the channel layer. That chapter shows which routing work
+moves out of your code.
 
 The three domains now line up:
 
@@ -192,7 +189,7 @@ The three domains now line up:
 | transition | `update` | `on_message` handler | `update` |
 | next step | model and optional effect | `actor.Next` | `socket.Next(model, effects)` |
 
-Beryl asks the application for `init` and `update`. This exact excerpt comes
+Beryl asks your application for `init` and `update`. This exact excerpt comes
 from `step_01.gleam`:
 
 ```gleam
@@ -203,14 +200,14 @@ beryl.child_spec(
 )
 ```
 
-That exact assembly appears in
+You can see it in
 [`step_01.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_01.gleam).
-`beryl.child_spec` captures the app's concrete model and message types in
-typed closures and returns a non-generic `beryl.Sockets` handle plus a child
-specification. The shared runtime remains generic internally. It does not
-round-trip the app model or app message through `Dynamic`.
+`beryl.child_spec` returns two values. The first is a `beryl.Sockets` handle.
+The second is a child specification for your supervisor. Your model and message
+types stay inside the closures you pass in. Beryl never converts them to
+`Dynamic`.
 
-The live-poll example's raw types are:
+The live-poll example defines these raw types:
 
 ```gleam
 pub type Message {
@@ -228,38 +225,36 @@ pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) 
 
 This excerpt comes from
 [`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
-The names carry specific meanings:
+Each name has one meaning:
 
-- `Model` is application-defined state for one connected socket.
-- `Message` is the application's domain-specific type for server-side events.
-  The poll defines `ClosePoll` because a timer needs to tell a socket that one
-  of its polls has expired. Another application would define variants from its
-  own domain.
-- `socket.Effect` describes work for Beryl to interpret after `init` or
-  `update`.
-- `socket.ConnectInfo.self` is the socket-scoped sender. It is not a general
-  process `Subject`.
+- `Model` is the state your application keeps for one connected socket.
+- `Message` is your own type for server-side events. The poll defines
+  `ClosePoll` because a timer must tell a socket that one of its polls has
+  ended. Another application would define its own variants.
+- `socket.Effect` describes work for Beryl to do after `init` or `update`.
+- `socket.ConnectInfo.self` is a sender for this socket only. It is not a
+  general process `Subject`.
 
-The type parameter connects the server-message path:
-`ConnectInfo(Message)` supplies a `Sender(Message)`, and Beryl delivers values
-sent through that sender as `Info(Message)`. Client frames follow a separate
-path through the `Join`, `Message`, and `Binary` variants of `socket.Input`.
-The app-defined `Message` type never represents decoded client data.
+The type parameter links the server-message path together.
+`ConnectInfo(Message)` gives you a `Sender(Message)`. When you send a value
+through that sender, Beryl delivers it to `update` as `Info(Message)`. Client
+frames take a different path. They arrive as the `Join`, `Message`, and
+`Binary` variants of `socket.Input`. Your `Message` type never holds decoded
+client data.
 
-The `update` function returns
-`fn(Model, socket.Input(Message)) -> socket.Next(Model)` and exhaustively matches
-the input inside that closure. Beryl uses `socket.Input(Message)` where Lustre
-uses `Message` and an actor uses its mailbox message type. Some input variants
-carry client data. `Info(Message)` holds the app's typed server-side data.
-`socket.Next(model, effects)` continues with the next model. `socket.Stop(reason)`
-stops the whole socket.
+The `update` function has the type
+`fn(Model, socket.Input(Message)) -> socket.Next(Model)`. It matches every
+input variant. Beryl uses `socket.Input(Message)` where Lustre uses `Message`
+and an actor uses its mailbox message. Some input variants carry client data.
+`Info(Message)` carries your typed server-side data. `socket.Next(model,
+effects)` continues with the next model. `socket.Stop(reason)` stops the whole
+socket.
 
 ## There is no view
 
-With the state and input terms mapped, the final difference is output. Beryl
-does not derive output from the model by rendering it. The application returns
-an ordered list of `socket.Effect` values. This exact excerpt comes from
-`raw.gleam`:
+We have mapped state and input. The last difference is output. Beryl does not
+render the model. Instead, your application returns an ordered list of
+`socket.Effect` values. This exact excerpt comes from `raw.gleam`:
 
 ```gleam
 socket.Next(
@@ -268,48 +263,48 @@ socket.Next(
 )
 ```
 
-The complete example registers the room in its store. This branch then accepts
-a valid `poll:*` join and records the topic in the socket's model. Other effects
-can reply to a client message, push to this socket, broadcast to subscribers,
-update presence, or close a topic.
+Before this line, the full example registers the room in its store. This branch
+then accepts a valid `poll:*` join and adds the topic to the socket's model.
+Other effects can reply to a client message, push to this socket, broadcast to
+subscribers, update presence, or close a topic.
 
-The absence of `view` changes how you reason about output. A model change does
-not imply a wire frame. A wire frame appears only when an effect requests one.
-The model can also track facts that never need to leave the server, such as
-the set of topics joined by this socket.
+Without `view`, you think about output in a new way. A change to the model
+does not send a wire frame. A wire frame goes out only when an effect asks for
+one. The model can also hold facts that never leave the server. The set of
+topics this socket has joined is one example.
 
 ## Initialization belongs to the socket
 
-Lustre initializes one application model. A typical OTP actor initializes one
-actor state value. Beryl calls raw `init` once for every admitted socket connection. One socket
-actor stores the returned `Model` and runs that socket's updates. A separate
-router actor maintains the socket index and routes frames and broadcasts. The
-distinction becomes important for blocking work and crash behavior, which the
-fifth chapter covers.
+Lustre creates one application model. An OTP actor usually creates one state
+value. Beryl calls raw `init` once for every socket that connects. One socket
+actor stores that socket's `Model` and runs its updates. A separate router
+actor keeps the list of sockets and routes frames and broadcasts. This split
+matters for blocking work and crashes. Chapter 5 covers both.
 
-The live poll now gives us a reason to add an application-owned actor. Every
-browser connected to a room must see the same totals, so those totals cannot
-belong to one socket's `Model`. The example captures a shared `store.Store`
-actor in the update closure. Every browser socket gets its own raw `Model`,
-while all sockets send poll operations to the same store. Per-socket state and
-shared domain state remain separate.
+The live poll now needs an actor that your application owns. Every browser in
+a room must see the same totals. So the totals cannot live in one socket's
+`Model`. The example puts them in a shared `store.Store` actor and captures it
+in the update closure. Each browser socket gets its own raw `Model`. All
+sockets send poll operations to the same store. Per-socket state and shared
+domain state stay apart.
 
 ## The first mismatch is useful
 
-The Elm architecture supplies a vocabulary for pure state transitions, but
-Beryl is not a frontend framework:
+The Elm architecture gives us words for pure state transitions. But Beryl is
+not a frontend framework:
 
-- no `view` function exists;
+- there is no `view` function;
 - `init` runs once per socket;
-- client input arrives through `socket.Input`;
+- client input arrives as `socket.Input`;
 - output is an explicit list of `socket.Effect` values;
-- one socket actor stores each socket model and runs its updates.
+- one socket actor stores each socket's model and runs its updates.
 
-Raw dispatch exposes these facts with little machinery. It is Beryl's core
-and the clearest place to learn joins, replies, close events, and effect order.
-For an application with several channel families, you will usually move to
-`beryl/channel`, the recommended default for multi-channel and Phoenix-shaped
-systems. Chapter 4 performs that refactor without changing the wire protocol.
+Raw dispatch shows these facts with little extra code. It is Beryl's core. It
+is the clearest place to learn joins, replies, close events, and effect order.
+When an application has several channel families, you will usually move to
+`beryl/channel`. That is the recommended default for multi-channel and
+Phoenix-shaped systems. Chapter 4 makes that move without changing the wire
+protocol.
 
 ## Sources and further reading
 
@@ -327,8 +322,8 @@ cd examples/live_poll && gleam run -m live_poll/step_01
 ```
 
 Open `http://localhost:8101`, keep the room as `demo`, and select **Join
-poll**. The client joins `poll:demo`, requests `get_state`, and displays an
-open poll with zero votes. Voting and **Close poll now** are unavailable in
-this read-only checkpoint, so those pushes time out without changing state.
+poll**. The client joins `poll:demo`, requests `get_state`, and shows an open
+poll with zero votes. Voting and **Close poll now** do not work yet in this
+read-only checkpoint. Those pushes time out and do not change state.
 
 Next: [One update function, many socket events](/tutorial/one-update-function-many-socket-events/).
