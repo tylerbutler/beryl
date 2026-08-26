@@ -15,11 +15,11 @@ This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, and `beryl_mis
 The generator creates pages under `/reference/api/` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
 :::
 
-## `beryl` `0.4.0`
+## `beryl` `0.4.1`
 
 | Module | Description |
 |---|---|
-| [`beryl`](/reference/api/beryl/) | Beryl - Type-safe real-time communication |
+| [`beryl`](/reference/api/beryl/) | beryl - Type-safe real-time communication |
 | [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket via |
 | [`beryl/channel`](/reference/api/beryl-channel/) | The channel composition surface: a channel is a topic pattern paired |
 | [`beryl/error`](/reference/api/beryl-error/) | Shared beryl-owned error helpers. |
@@ -36,13 +36,13 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol: encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
 
-## `beryl_ewe` `0.2.1`
+## `beryl_ewe` `0.2.2`
 
 | Module | Description |
 |---|---|
 | [`beryl_ewe`](/reference/api/beryl_ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
 
-## `beryl_mist` `0.3.1`
+## `beryl_mist` `0.3.2`
 
 | Module | Description |
 |---|---|

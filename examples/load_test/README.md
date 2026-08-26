@@ -1,4 +1,4 @@
-# Beryl benchmark server
+# beryl benchmark server
 
 This headless application is the target for the repository's Phoenix V2
 [k6 load suite](../../load/README.md). It exposes the same channel contract
@@ -33,7 +33,7 @@ Both servers bind to `127.0.0.1:8000` by default. They provide:
 | Route | Behavior |
 |---|---|
 | `/health` | `200`, `content-type: application/json`, `{"status":"ok"}` |
-| `/stats` | Local Beryl socket runtime and BEAM runtime JSON described below |
+| `/stats` | Local beryl socket runtime and BEAM runtime JSON described below |
 | WebSocket `/socket` | Phoenix V2 benchmark channels |
 | Any other route | `404` with an empty body |
 
@@ -51,7 +51,7 @@ Unknown inbound events return `{"reason":"unknown_event"}`.
 
 Missing integer variables and values that `gleam/int.parse` cannot parse use
 the listed default. The application does not otherwise range-check them before
-passing them to Beryl; invalid heartbeat values can prevent the supervised
+passing them to beryl; invalid heartbeat values can prevent the supervised
 server from starting. Rate and connection values at or below zero disable
 their limit. All heartbeat durations are milliseconds, all rates are events
 per second, and string limits are bytes.
@@ -83,7 +83,7 @@ rate is non-positive, the limit is disabled regardless of its burst value.
 | `BERYL_MAX_EVENT_LENGTH` | `64` | Maximum client event-name length in bytes |
 | `BERYL_MAX_INBOUND_FRAME_BYTES` | `1048576` | Maximum assembled inbound frame size in bytes (1 MiB) |
 | `BERYL_MAX_JOINED_TOPICS_PER_SOCKET` | `1000` | Maximum simultaneous joined topics per socket |
-| `BERYL_TELEMETRY` | `false` | Enables Beryl telemetry for `1`, `true`, `yes`, or `on`, case-insensitively |
+| `BERYL_TELEMETRY` | `false` | Enables beryl telemetry for `1`, `true`, `yes`, or `on`, case-insensitively |
 
 If `BERYL_TELEMETRY` is missing it is false; any value not in the four-value
 true set is also false. Enabling it only emits events. This fixture does not
@@ -123,7 +123,7 @@ The numbers above illustrate the JSON shape, not expected values.
 | Status | Body | Cause |
 |---:|---|---|
 | `200` | Object shown above | Both snapshots succeeded |
-| `503` | `{"error":"runtime_unavailable"}` | Beryl socket runtime unavailable |
+| `503` | `{"error":"runtime_unavailable"}` | beryl socket runtime unavailable |
 | `503` | `{"error":"runtime_stats_unavailable"}` | BEAM snapshot FFI failed |
 | `504` | `{"error":"runtime_timeout"}` | Socket runtime snapshot request timed out |
 

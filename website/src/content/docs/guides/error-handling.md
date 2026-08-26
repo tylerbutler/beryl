@@ -135,7 +135,7 @@ The client-visible effect is that the WebSocket connection is closed from the se
 
 ## When `init` or `update` panics
 
-Beryl catches panics in `init` and `update` instead of stopping the socket's
+beryl catches panics in `init` and `update` instead of stopping the socket's
 runtime actor. The result depends on where the panic occurs:
 
 | Crash site | Effect |
@@ -149,7 +149,7 @@ runtime actor. The result depends on where the panic occurs:
 Crash descriptions are depth-limited and truncated before logging so client-triggered crashes cannot bloat log metadata.
 
 This behavior applies only to the listed callbacks. A callback panic in the
-socket actor would close every topic on that socket. Beryl discards the failed
+socket actor would close every topic on that socket. beryl discards the failed
 callback result and closes only the affected join, topic, or socket when safe.
 Other faults stop that socket actor; the router closes the connection and
 removes its entries. A router fault invokes supervision and disconnects all

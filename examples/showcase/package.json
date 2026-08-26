@@ -2,7 +2,7 @@
   "name": "showcase",
   "version": "1.0.0",
   "private": true,
-  "description": "All Beryl example channels composed on one socket with app-side dispatch.",
+  "description": "All beryl example channels composed on one socket with app-side dispatch.",
   "scripts": {
     "test": "npx playwright test"
   },

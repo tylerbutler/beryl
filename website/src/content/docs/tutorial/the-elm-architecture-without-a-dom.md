@@ -1,21 +1,21 @@
 ---
 title: The Elm Architecture, without a DOM
-description: Learn Beryl's model-update architecture by building the first read-only stage of a live poll.
+description: Learn beryl's model-update architecture by building the first read-only stage of a live poll.
 ---
 
 Lustre and Gleam OTP actors use the same programming model. Each one starts
 with some state. Each one receives a typed message. Each one runs one function
 that returns the next state and any work to do. Lustre uses this model to run
-a user interface. An OTP actor uses it to run a concurrent process. Beryl uses
+a user interface. An OTP actor uses it to run a concurrent process. beryl uses
 it to handle realtime socket traffic.
 
 The last step is different in each case. Lustre renders a view. An actor keeps
-its next state or stops. Beryl returns protocol effects. An effect can accept a
-join, send a reply, or broadcast a message. Beryl also creates state once for
+its next state or stops. beryl returns protocol effects. An effect can accept a
+join, send a reply, or broadcast a message. beryl also creates state once for
 each connected socket, not once for the whole application.
 
-We start with Beryl's core API. It keeps state, inputs, and effects in plain
-view. First we compare the Lustre and OTP forms. Then we show the Beryl API
+We start with beryl's core API. It keeps state, inputs, and effects in plain
+view. First we compare the Lustre and OTP forms. Then we show the beryl API
 and map its terms onto the same model.
 
 ## Build a live poll
@@ -27,10 +27,10 @@ of subscription.
 
 A **topic** is a string. It names one subscription inside a WebSocket
 connection. In `poll:demo`, `poll` is the kind of subscription and `demo` is
-the room. One socket can join many topics. Beryl uses the topic string to route
+the room. One socket can join many topics. beryl uses the topic string to route
 messages and broadcasts.
 
-Beryl does not call this subscription a channel. In Beryl, a **channel** is a
+beryl does not call this subscription a channel. In beryl, a **channel** is a
 separate API built on top of topics. A later chapter introduces that API. For
 now, the browser joins a topic, and your application routes it by its string.
 
@@ -53,7 +53,7 @@ The shared model has four parts:
 3. handle one input against the current state;
 4. return the next state and say what happens next.
 
-Lustre, OTP actors, and Beryl use different names for the fourth part. They
+Lustre, OTP actors, and beryl use different names for the fourth part. They
 also do different things with it. Parts one to three look the same in all
 three.
 
@@ -160,12 +160,12 @@ runtime uses `actor.Next` to continue or stop the process.
 To send a message to an actor, you use a `process.Subject(message)`. A subject
 is a typed address for the actor's mailbox.
 
-Now we can carry the same model into Beryl and give each part a socket
+Now we can carry the same model into beryl and give each part a socket
 meaning.
 
 ## Apply the loop to sockets
 
-Beryl gives you two ways to program a socket endpoint. The channel layer is
+beryl gives you two ways to program a socket endpoint. The channel layer is
 the recommended one. It routes each event to a handler based on the topic.
 Under it sits the raw dispatch API. Raw dispatch gives every event on
 a socket to one `update` function that you write.
@@ -173,7 +173,7 @@ a socket to one `update` function that you write.
 "Raw dispatch" means your application does the routing. Your code receives
 joins, client messages, binary frames, close events, and typed server messages.
 Each one arrives as a `socket.Input` value. Your code decides how each input
-changes the socket's model. Beryl still owns the WebSocket transport, wire
+changes the socket's model. beryl still owns the WebSocket transport, wire
 decoding, protocol checks, and effect execution.
 
 We start with raw dispatch because it shows the full loop. A later chapter
@@ -182,14 +182,14 @@ moves out of your code.
 
 The three domains now line up:
 
-| Role | Lustre | Gleam OTP actor | Beryl raw dispatch |
+| Role | Lustre | Gleam OTP actor | beryl raw dispatch |
 |---|---|---|---|
 | state | application model | actor state | one app-defined `Model` per socket |
 | input | `Message` | actor message | `socket.Input(Message)` |
 | transition | `update` | `on_message` handler | `update` |
 | next step | model and optional effect | `actor.Next` | `socket.Next(model, effects)` |
 
-Beryl asks your application for `init` and `update`. This exact excerpt comes
+beryl asks your application for `init` and `update`. This exact excerpt comes
 from `step_01.gleam`:
 
 ```gleam
@@ -204,7 +204,7 @@ You can see it in
 [`step_01.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_01.gleam).
 `beryl.child_spec` returns two values. The first is a `beryl.Sockets` handle.
 The second is a child specification for your supervisor. Your model and message
-types stay inside the closures you pass in. Beryl never converts them to
+types stay inside the closures you pass in. beryl never converts them to
 `Dynamic`.
 
 The live-poll example defines these raw types:
@@ -231,20 +231,20 @@ Each name has one meaning:
 - `Message` is your own type for server-side events. The poll defines
   `ClosePoll` because a timer must tell a socket that one of its polls has
   ended. Another application would define its own variants.
-- `socket.Effect` describes work for Beryl to do after `init` or `update`.
+- `socket.Effect` describes work for beryl to do after `init` or `update`.
 - `socket.ConnectInfo.self` is a sender for this socket only. It is not a
   general process `Subject`.
 
 The type parameter links the server-message path together.
 `ConnectInfo(Message)` gives you a `Sender(Message)`. When you send a value
-through that sender, Beryl delivers it to `update` as `Info(Message)`. Client
+through that sender, beryl delivers it to `update` as `Info(Message)`. Client
 frames take a different path. They arrive as the `Join`, `Message`, and
 `Binary` variants of `socket.Input`. Your `Message` type never holds decoded
 client data.
 
 The `update` function has the type
 `fn(Model, socket.Input(Message)) -> socket.Next(Model)`. It matches every
-input variant. Beryl uses `socket.Input(Message)` where Lustre uses `Message`
+input variant. beryl uses `socket.Input(Message)` where Lustre uses `Message`
 and an actor uses its mailbox message. Some input variants carry client data.
 `Info(Message)` carries your typed server-side data. `socket.Next(model,
 effects)` continues with the next model. `socket.Stop(reason)` stops the whole
@@ -252,7 +252,7 @@ socket.
 
 ## There is no view
 
-We have mapped state and input. The last difference is output. Beryl does not
+We have mapped state and input. The last difference is output. beryl does not
 render the model. Instead, your application returns an ordered list of
 `socket.Effect` values. This exact excerpt comes from `raw.gleam`:
 
@@ -276,7 +276,7 @@ topics this socket has joined is one example.
 ## Initialization belongs to the socket
 
 Lustre creates one application model. An OTP actor usually creates one state
-value. Beryl calls raw `init` once for every socket that connects. One socket
+value. beryl calls raw `init` once for every socket that connects. One socket
 actor stores that socket's `Model` and runs its updates. A separate router
 actor keeps the list of sockets and routes frames and broadcasts. This split
 matters for blocking work and crashes. Chapter 5 covers both.
@@ -290,7 +290,7 @@ domain state stay apart.
 
 ## Where beryl differs from a frontend
 
-The Elm architecture gives us words for pure state transitions. But Beryl is
+The Elm architecture gives us words for pure state transitions. But beryl is
 not a frontend framework:
 
 - there is no `view` function;
@@ -299,7 +299,7 @@ not a frontend framework:
 - output is an explicit list of `socket.Effect` values;
 - one socket actor stores each socket's model and runs its updates.
 
-Raw dispatch shows these facts with little extra code. It is Beryl's core. It
+Raw dispatch shows these facts with little extra code. It is beryl's core. It
 is the clearest place to learn joins, replies, close events, and effect order.
 When an application has several channel families, you will usually move to
 `beryl/channel`. That is the recommended default for multi-channel and
@@ -313,7 +313,7 @@ protocol.
 - [Gleam OTP actor module](https://gleam-otp.hexdocs.pm/gleam/otp/actor.html)
 - [Gleam Erlang process module](https://gleam-erlang.hexdocs.pm/gleam/erlang/process.html)
 - [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
-- [Beryl raw dispatch guide](/guides/dispatch/)
+- [beryl raw dispatch guide](/guides/dispatch/)
 
 ## Runnable checkpoint: step 01
 

@@ -2,7 +2,7 @@
 ////
 //// Mutations and counts use constant-time ETS operations, so app-side
 //// dispatch never waits on another actor. A small publisher process enqueues
-//// current snapshots through normal Beryl broadcasts requested after each
+//// current snapshots through normal beryl broadcasts requested after each
 //// mutation.
 
 import beryl

@@ -10,7 +10,7 @@ real-time sockets.
 
 ## Installation
 
-Beryl packages are currently distributed from GitHub, not Hex:
+beryl packages are currently distributed from GitHub, not Hex:
 
 ```toml
 [dependencies]

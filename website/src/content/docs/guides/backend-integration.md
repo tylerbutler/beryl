@@ -1,16 +1,16 @@
 ---
 title: Connect beryl to an existing backend
-description: Keep authentication and database writes in your backend, then send real-time updates through Beryl.
+description: Keep authentication and database writes in your backend, then send real-time updates through beryl.
 ---
 
-Beryl does not need to manage your full application. An existing Phoenix,
+beryl does not need to manage your full application. An existing Phoenix,
 Rails, or Gleam backend can manage **authentication and database writes**.
-Beryl can send real-time updates to connected clients.
+beryl can send real-time updates to connected clients.
 
 This guide uses this design:
 
 1. The backend authenticates users and issues a token.
-2. Beryl verifies the token when the socket connects.
+2. beryl verifies the token when the socket connects.
 3. The backend calls an internal publish endpoint when application data changes.
 4. The endpoint sends the change with `beryl.broadcast`.
 
@@ -161,7 +161,7 @@ actor to `socket.Info(msg)`.
 ## Benefits
 
 - **One source of truth:** Your backend manages authentication and the
-  database. Beryl sends updates to connected clients.
+  database. beryl sends updates to connected clients.
 - **Publish from trusted processes:** An HTTP handler, worker, or webhook
   consumer can publish.
 - **Cluster-wide delivery:** With PubSub, one `beryl.broadcast` reaches

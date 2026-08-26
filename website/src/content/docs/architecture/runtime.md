@@ -91,7 +91,7 @@ continue.
 
 This differs from OTP's usual "let it crash" model. If a callback crash stopped
 the socket actor, one topic error would close every topic on that socket.
-Beryl instead discards the callback result and closes only the affected join,
+beryl instead discards the callback result and closes only the affected join,
 topic, or socket. It never continues with a partial result. Other faults can
 still stop the socket actor, which closes that socket. A router fault invokes
 supervision.

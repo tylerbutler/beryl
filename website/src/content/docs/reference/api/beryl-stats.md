@@ -86,7 +86,7 @@ Request a snapshot from the local runtime.
  this function returns `RuntimeUnavailable` or `RequestTimedOut`. An
  overloaded runtime returns `RequestTimedOut`.
  Neither condition panics. This API reports only the node represented by
- `sockets`; aggregate multi-node statistics outside Beryl.
+ `sockets`; aggregate multi-node statistics outside beryl.
 
  Poll no more frequently than roughly once per second.
 

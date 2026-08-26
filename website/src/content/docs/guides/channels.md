@@ -496,7 +496,7 @@ rejoin replaces the entry, and socket shutdown removes it.
 
 The panic discards the model update that would remove the instance. The core
 must log this panic, so the channel layer does not hide it. Keep code that can
-panic out of `on_terminate`. Then Beryl removes the closed channel and drops
+panic out of `on_terminate`. Then beryl removes the closed channel and drops
 messages from its senders.
 
 Crash isolation stops at the socket, as it does with raw dispatch: a

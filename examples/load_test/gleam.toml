@@ -1,6 +1,6 @@
 name = "load_test"
 version = "0.1.0"
-description = "Headless benchmark target for Beryl's k6 workloads"
+description = "Headless benchmark target for beryl's k6 workloads"
 gleam = ">= 1.7.0"
 target = "erlang"
 

@@ -18,7 +18,7 @@ Presence - Distributed presence tracking backed by a CRDT
  - Receives remote state from PubSub and merges it internally
  - Invokes `on_diff` callback when merges produce non-empty diffs
 
- Presence is independent of the Beryl runtime and runs under your
+ Presence is independent of the beryl runtime and runs under your
  application's supervision tree.
 
  ## Read consistency
@@ -58,7 +58,7 @@ Presence - Distributed presence tracking backed by a CRDT
 Configuration for starting presence.
 
  Build configurations with `default_config` and the `with_*` functions.
- Beryl can then add options without exposing record fields as public API.
+ beryl can then add options without exposing record fields as public API.
 
 ```gleam
 pub type Config
@@ -68,7 +68,7 @@ pub type Config
 
 An opaque diff representing presence joins and leaves grouped by topic.
 
- Beryl passes this value to `Config.on_diff`.
+ beryl passes this value to `Config.on_diff`.
  `beryl.broadcast_presence_diff` also accepts it.
 
 ```gleam

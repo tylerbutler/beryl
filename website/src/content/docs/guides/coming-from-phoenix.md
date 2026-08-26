@@ -1,6 +1,6 @@
 ---
 title: Coming from Phoenix
-description: Map Phoenix Channels processes, callbacks, assigns, and Presence to both Beryl APIs.
+description: Map Phoenix Channels processes, callbacks, assigns, and Presence to both beryl APIs.
 ---
 
 When configured with `wire.phoenix_codec()`, beryl speaks the same wire
@@ -15,7 +15,7 @@ beryl gives you two layers, and Phoenix maps onto both:
   recommended default for a Phoenix style app. Register one handler for each
   topic pattern. Each channel has callbacks and private state.
 - **`beryl`, raw dispatch:** This is the core API. Define one `init`
-  and `update` pair for the socket system. Beryl runs them separately for each
+  and `update` pair for the socket system. beryl runs them separately for each
   connected socket. Your `update` function owns topic dispatch.
 
 [Choose an API](/choosing-an-api/) compares both APIs. Both support
@@ -40,12 +40,12 @@ dispatch has no handler table: one `update` receives every event for the socket
 as `socket.Input(msg)`, and one `model` stores its state. Different socket
 actors run concurrently.
 
-Beryl provides less fault isolation between joined topics than Phoenix.
+beryl provides less fault isolation between joined topics than Phoenix.
 Different sockets have separate actors, but channels on one socket share an
 actor mailbox, execution time, and lifecycle. A slow callback delays every
 topic on that socket. A fault in the socket actor closes all its topics.
 
-Beryl catches expected callback panics with narrower behavior: a join panic
+beryl catches expected callback panics with narrower behavior: a join panic
 rejects that join, a message panic closes that topic, an `on_info` panic ends
 the socket, and a terminate panic loses that callback's actions while teardown
 continues. These rules limit known callback failures, but they do
@@ -235,9 +235,9 @@ Both beryl APIs differ from Phoenix in these ways:
 - **Server-side messages are typed.** Phoenix's `handle_info` receives any
   term. The channel layer's `on_info` receives *this channel's* own `info`
   type, delivered through the `channel.Sender(info)` in `JoinContext.self`.
-  Raw dispatch's `Info(msg)` wraps the socket's `msg` type. Beryl keeps the
+  Raw dispatch's `Info(msg)` wraps the socket's `msg` type. beryl keeps the
   value typed and records which join owns it. If that join closes or the topic
-  joins again, Beryl drops the message instead of delivering it to the wrong
+  joins again, beryl drops the message instead of delivering it to the wrong
   join.
 
 ## Assigns become a typed state value
@@ -342,6 +342,6 @@ message arrives as a typed `on_info` call. With raw dispatch, keep the
 - [Channels](/guides/channels/): build handlers with private state and callbacks
 - [Raw Dispatch](/guides/dispatch/): route socket events and order effects
 - [Choose an API](/choosing-an-api/): compare channels and raw dispatch
-- [WebSocket Transport](/guides/websocket/): connect Beryl to Mist
+- [WebSocket Transport](/guides/websocket/): connect beryl to Mist
 - [Presence](/guides/presence/): track users and synchronize nodes
 - [PubSub](/guides/pubsub/): publish to subscribers through Erlang `pg`

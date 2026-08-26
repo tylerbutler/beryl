@@ -1,9 +1,9 @@
 ---
 title: Supervision
-description: Add Beryl processes to an OTP supervisor and understand restart and shutdown behavior.
+description: Add beryl processes to an OTP supervisor and understand restart and shutdown behavior.
 ---
 
-Beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
+beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
 handle and a child specification. Add the specification to your application's
 OTP supervisor. The specification contains your `init` and `update` functions.
 `channel.child_spec` returns the same handle and specification shape. It first
@@ -41,7 +41,7 @@ A runtime restart drops **per-socket state**: models, joined topics, and
 pending joins. Transports monitor the runtime that accepted each connection,
 so those WebSockets close and clients reconnect and rejoin normally.
 
-Crashes inside `update` do **not** restart the runtime. Beryl catches callback
+Crashes inside `update` do **not** restart the runtime. beryl catches callback
 crashes and limits their effect:
 
 | Crash site | Effect |
@@ -53,7 +53,7 @@ crashes and limits their effect:
 | `update` on `Closed` | Logged; the close completes anyway |
 
 Each socket's callbacks run in its socket actor. A callback crash in that actor
-would close every topic on the socket. Beryl catches a callback crash when it
+would close every topic on the socket. beryl catches a callback crash when it
 can discard the result and close only the affected topic or socket. Other socket
 actor faults close only that socket, and the router removes its entries. A
 router fault reaches the supervisor and closes all connections. See
@@ -141,7 +141,7 @@ returns `Error(NotRunning)`. Other operations after `stop` do nothing.
 
 - Add the returned specification to your long-lived application supervisor.
 - Add application-owned presence and group child specifications alongside the
-  Beryl child.
+  beryl child.
 - Configure PubSub when running more than one BEAM node.
 - Configure rate limits to protect against faulty or hostile clients. See
   [Production Hardening](/guides/production-hardening/).

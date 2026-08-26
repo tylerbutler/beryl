@@ -1,7 +1,7 @@
 //// Nested-subtree lifecycle semantics for app-side dispatch systems
-//// (ADR 0002 phase 2, task 2): the Beryl runtime is a significant transient
+//// (ADR 0002 phase 2, task 2): the beryl runtime is a significant transient
 //// child under a one-for-one subtree with `auto_shutdown`, so a graceful
-//// `beryl.stop` tears down only Beryl's subtree (runtime + optional limiter)
+//// `beryl.stop` tears down only beryl's subtree (runtime + optional limiter)
 //// without restarting under, or disturbing, an embedding application's parent
 //// and sibling children. A runtime crash restarts dispatch under the same
 //// handle while the limiter survives, and connection owners that monitor the
@@ -67,7 +67,7 @@ fn admit(
   )
 }
 
-// ── stop targets only the Beryl subtree ─────────────────────────────────────
+// ── stop targets only the beryl subtree ─────────────────────────────────────
 
 pub fn stop_shuts_down_only_beryl_subtree_test() {
   let sibling_name = process.new_name("sibling_worker")
@@ -98,10 +98,10 @@ pub fn stop_shuts_down_only_beryl_subtree_test() {
   let assert Ok(_) = beryl.app_limiter_pid(sockets)
   process.is_alive(h.runtime_pid(sockets)) |> should.be_true
 
-  // Stop only the Beryl subtree.
+  // Stop only the beryl subtree.
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 
-  // Beryl's runtime and limiter are gone and stay gone (the parent must not
+  // beryl's runtime and limiter are gone and stay gone (the parent must not
   // restart the transient subtree after a graceful stop).
   beryl.app_runtime_pid(sockets) |> should.be_error
   beryl.app_limiter_pid(sockets) |> should.be_error
@@ -289,7 +289,7 @@ pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() {
 
   // The crash during stop counts as the first failure in the nested
   // supervisor's restart window. Three more rapid crashes must therefore
-  // exhaust it and restart the whole Beryl subtree under the application root.
+  // exhaust it and restart the whole beryl subtree under the application root.
   process.kill(runtime2)
   let runtime3 = wait_for_new_runtime(sockets, runtime2)
   process.kill(runtime3)
@@ -691,7 +691,7 @@ pub fn application_root_shutdown_tears_down_beryl_subtree_test() {
   let runtime = h.runtime_pid(sockets)
   let limiter = limiter_pid(sockets)
 
-  // The application root goes down; the embedded Beryl subtree, linked under
+  // The application root goes down; the embedded beryl subtree, linked under
   // it, is torn down with it (unlink first so the test process survives).
   process.unlink(root.pid)
   process.kill(root.pid)
@@ -702,7 +702,7 @@ pub fn application_root_shutdown_tears_down_beryl_subtree_test() {
   beryl.app_runtime_pid(sockets) |> should.be_error
 }
 
-// ── a partial startup failure leaks no Beryl processes ──────────────────────
+// ── a partial startup failure leaks no beryl processes ──────────────────────
 
 pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
   let assert Ok(#(sockets, beryl_spec)) =
@@ -714,7 +714,7 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
     )
 
   // A sibling that always fails to start. The supervisor tears down the
-  // already-started Beryl subtree and exits, so the doomed startup is run in
+  // already-started beryl subtree and exits, so the doomed startup is run in
   // an unlinked child process to keep its failure signal off the test.
   let failing =
     supervision.worker(fn() -> Result(
@@ -733,7 +733,7 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() {
     Nil
   })
 
-  // Whether or not the doomed supervisor reported an error, no Beryl runtime
+  // Whether or not the doomed supervisor reported an error, no beryl runtime
   // or limiter is left running.
   test_helpers.wait_until(
     fn() { beryl.app_runtime_pid(sockets) |> result.is_error },

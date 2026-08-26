@@ -125,7 +125,7 @@ one topic, and `on_info` tears down the whole socket. See
 
 ## Turn on debug logs
 
-Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*`
+beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*`
 namespaces. Enable debug logs when you diagnose integration problems:
 
 ```gleam
@@ -297,7 +297,7 @@ This prevents proxy idle disconnects.
    After 3 restarts in 5 seconds, the supervisor stops and sends the failure to
    the process that called `child_spec`. Check the logs for the first crash.
 
-2. **Check the failure scope.** Beryl catches crashes in `init` and `update`
+2. **Check the failure scope.** beryl catches crashes in `init` and `update`
    and limits them to one socket or topic. A fault elsewhere in a socket actor
    closes only that socket. If every connection closes, inspect the router and
    supervisor logs for the first fault.

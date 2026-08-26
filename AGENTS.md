@@ -1,8 +1,8 @@
-# AGENTS.md — Working in the Beryl Codebase
+# AGENTS.md — Working in the beryl codebase
 
 ## Project Summary
 
-Beryl is a Gleam library for type-safe real-time channels and presence on the
+beryl is a Gleam library for type-safe real-time channels and presence on the
 Erlang/BEAM runtime. It's a trellis-managed monorepo with three packages — two
 of them currently publishable, since `beryl_ewe` is release-excluded — plus
 runnable examples and an Astro/Starlight documentation website.
@@ -146,6 +146,9 @@ not available in pure Gleam.
 - **Exhaustive pattern matching** — Gleam enforces this; handle all cases
 - **Sentence-case website headings** — use sentence case for page titles,
   section headings, callout titles, and sidebar labels
+- **Lowercase product name** — write the product name as `beryl` in prose,
+  including at sentence starts and in headings; preserve exact code identifiers
+  and quoted text
 - **`///` doc comments** on all public functions
 - **`@internal` annotation** — hides functions from public docs while keeping
   them accessible to sibling modules within the same package

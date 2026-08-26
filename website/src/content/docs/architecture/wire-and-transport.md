@@ -30,7 +30,7 @@ The public codec builders configure these behaviors:
 
 Build a custom text codec with `codec.new(...)`, then add optional behavior with builders such as `codec.with_binary_decoder`, `codec.with_close_encoder`, `codec.with_error_encoder`, and `codec.with_topicless_events`. The built-in `wire.phoenix_codec()` configures Phoenix text and V2 binary framing.
 
-Each Beryl `Config` requires a codec. There is no default:
+Each beryl `Config` requires a codec. There is no default:
 
 ```gleam
 beryl.config(wire.phoenix_codec())

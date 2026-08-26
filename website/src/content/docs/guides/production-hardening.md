@@ -3,10 +3,10 @@ title: Prepare beryl for production
 description: Configure traffic limits, authentication, and Erlang distribution security.
 ---
 
-Beryl disables rate and connection limits by default because each deployment
+beryl disables rate and connection limits by default because each deployment
 needs different values. These defaults are suitable for development. In
 production, one hostile or faulty client can degrade a server that has no
-traffic controls. Beryl logs a startup warning when all controls are off. This
+traffic controls. beryl logs a startup warning when all controls are off. This
 guide explains which controls to configure.
 
 ## Controls enabled by default
@@ -14,7 +14,7 @@ guide explains which controls to configure.
 Even with no configuration, beryl enforces:
 
 - **Post-receipt frame size**: once the transport has assembled a complete
-  inbound WebSocket frame, Beryl closes the connection if it exceeds 1 MiB
+  inbound WebSocket frame, beryl closes the connection if it exceeds 1 MiB
   (`with_max_inbound_frame_bytes` to adjust).
 - **Topic and event lengths**: topics over 256 bytes and event names over 64
   bytes are rejected before reaching your app
@@ -27,9 +27,9 @@ Even with no configuration, beryl enforces:
   and their connections closed (60 s window by default, `with_heartbeat`).
 
 The frame-size check limits decoding and routing work. It does **not** limit
-transport memory because buffering and reassembly occur before Beryl receives
+transport memory because buffering and reassembly occur before beryl receives
 the frame. In production, set a WebSocket frame or message limit in the reverse
-proxy or load balancer. Set it at or below Beryl's limit. Also set a matching
+proxy or load balancer. Set it at or below beryl's limit. Also set a matching
 HTTP request or body limit for the upgrade.
 
 ## Configure production limits
@@ -132,7 +132,7 @@ addresses.
 
 ## Secure the Erlang cluster
 
-Beryl PubSub and presence replication use Erlang distribution. Trust every
+beryl PubSub and presence replication use Erlang distribution. Trust every
 connected peer. Erlang peers can run arbitrary code on connected nodes. A
 hostile peer can compromise the full cluster. Topic access, broadcasts,
 internal traffic, and presence state are only part of that access. Channel
@@ -147,7 +147,7 @@ They protect only WebSocket clients.
 | Erlang distribution peers | Fully trusted | Network isolation + mutually verified TLS distribution (cookies prevent accidental cross-cluster connections only) |
 
 All distributed BEAM applications need network isolation and secure
-distribution. Beryl assumes that you enforce this trust boundary.
+distribution. beryl assumes that you enforce this trust boundary.
 
 ### The Erlang cookie does not secure distribution
 

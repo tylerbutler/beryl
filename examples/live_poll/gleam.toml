@@ -1,6 +1,6 @@
 name = "live_poll"
 version = "0.1.0"
-description = "Runnable checkpoints for the Beryl live-poll tutorial"
+description = "Runnable checkpoints for the beryl live-poll tutorial"
 gleam = ">= 1.13.0"
 target = "erlang"
 

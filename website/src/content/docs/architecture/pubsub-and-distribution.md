@@ -4,7 +4,7 @@ title: Broadcasts across Erlang nodes
 
 ## How distribution works
 
-Beryl's PubSub layer uses Erlang's
+beryl's PubSub layer uses Erlang's
 [`pg`](https://www.erlang.org/doc/man/pg.html) process groups. A subscriber
 joins a named `pg` group in the PubSub scope. For each broadcast, beryl finds
 the group members and sends the message to them.

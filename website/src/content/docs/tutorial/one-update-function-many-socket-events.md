@@ -6,7 +6,7 @@ description: Handle joins, messages, binary frames, closes, replies, and ordered
 A WebSocket connection does more than carry app commands. A client joins
 topics. It sends text events and binary frames. It leaves, or it disconnects.
 It expects a reply to some of the frames it sent. Your server processes also
-need a typed way to send messages into the same socket logic. Raw Beryl puts
+need a typed way to send messages into the same socket logic. Raw beryl puts
 all of these cases in one `socket.Input` type. Your update function matches
 every variant.
 
@@ -77,7 +77,7 @@ It is valid only for the one join that is waiting for an answer. Suppose a
 client joins a topic, then joins the same topic again. A late answer for the
 first join cannot accept the second one.
 
-Beryl also protects you when you forget a case. If your update turn does not
+beryl also protects you when you forget a case. If your update turn does not
 return `AcceptJoin(ref, ...)` or `RejectJoin(ref, ...)` for the waiting ref,
 the runtime rejects the join. A missing branch cannot leave a join half open.
 
@@ -110,7 +110,7 @@ example has a small local helper. It returns `ReplyError` only when the ref is
 `Some(ref)`.
 
 Treat both ref types as tokens. Do not compare them. Do not build them from
-Phoenix fields. Pass the value back to Beryl while it is still valid.
+Phoenix fields. Pass the value back to beryl while it is still valid.
 
 ## Decode client data before using it
 
@@ -147,7 +147,7 @@ After this function, `handle_command` matches on `poll.GetState`,
 reaches the store actor. The wire payload is `Dynamic`. The domain command is
 not.
 
-This does not mean Beryl loses your types. The core runtime is generic over
+This does not mean beryl loses your types. The core runtime is generic over
 your `model` and `message` types. `beryl.child_spec` keeps your typed
 functions inside closures. The transport handle it returns has no type
 parameters. Only data from the wire is `Dynamic`.
@@ -167,14 +167,14 @@ Ok(state) ->
   )
 ```
 
-This exact excerpt comes from `raw.gleam`. When `reply` is present, Beryl
+This exact excerpt comes from `raw.gleam`. When `reply` is present, beryl
 runs the list as:
 
 1. send `ReplyOk` to the browser that voted;
 2. broadcast `poll_state` to every other socket on the topic.
 
 The socket actor runs the effects in list order and writes the frames in the
-same order. For one socket, list order is wire order. This is a Beryl
+same order. For one socket, list order is wire order. This is a beryl
 guarantee. Lustre makes no such promise for its effects.
 
 The same rule applies to a join. If one update returns
@@ -213,7 +213,7 @@ up forever. In the `Closed` turn, the runtime drops pushes to the closing
 topic. Broadcasts still reach the other subscribers.
 
 The example ignores `Binary` on purpose. A codec with a binary decoder can
-turn binary frames into protocol messages. Without one, Beryl delivers the raw
+turn binary frames into protocol messages. Without one, beryl delivers the raw
 bytes for joined topics. The empty branch documents what this poll supports.
 
 The `Message` branch also checks that the model knows the topic:
@@ -249,7 +249,7 @@ socket-scoped `Sender` with a general OTP `Subject`.
 
 - [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
 - [How beryl handles a message](/architecture/message-lifecycle/)
-- [Beryl raw dispatch guide](/guides/dispatch/)
+- [beryl raw dispatch guide](/guides/dispatch/)
 - [Gleam dynamic decoding](https://hexdocs.pm/gleam_stdlib/gleam/dynamic/decode.html)
 
 ## Runnable checkpoint: step 02

@@ -42,7 +42,7 @@ fn handle_request(
 The `upgrade` function checks the request path. It upgrades a matching request
 and connects it to the beryl runtime.
 
-The transport works with both Beryl APIs. A handle from
+The transport works with both beryl APIs. A handle from
 `channel.child_spec` is the same `beryl.Sockets` type as one from
 `beryl.child_spec`, so the setup is identical for both.
 
@@ -184,7 +184,7 @@ Applications can pass a custom codec to `beryl.config(codec)`. The codec can
 use another text or binary message format. The transport sends each outbound
 frame as the type that the codec returns.
 
-`wire.phoenix_codec()` uses Beryl's Phoenix wire implementation and adds no
+`wire.phoenix_codec()` uses beryl's Phoenix wire implementation and adds no
 dependencies. The public `beryl/wire/codec.Codec` API and wire format are
 stable, so applications can supply a codec for another message format.
 
@@ -305,7 +305,7 @@ throttles them together. In that setup:
 - Terminate connections directly (no intermediary) if you want beryl's built-in
   per-IP limit to apply to individual clients.
 
-Beryl does not have a trusted-proxy option that reads a client IP from a
+beryl does not have a trusted-proxy option that reads a client IP from a
 forwarded header only when the immediate peer is trusted. Treat
 `X-Forwarded-For` as untrusted input.
 

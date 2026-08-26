@@ -4,12 +4,12 @@
 </tr></table>
 
 > [!IMPORTANT]
-> Beryl is not yet 1.0. Minor releases can change the API or remove features.
-> Treat Beryl as experimental. Try it and send feedback.
+> beryl is not yet 1.0. Minor releases can change the API or remove features.
+> Treat beryl as experimental. Try it and send feedback.
 
 ## Install
 
-GitHub hosts the current Beryl packages. Hex does not. Add these dependencies
+GitHub hosts the current beryl packages. Hex does not. Add these dependencies
 to `gleam.toml`:
 
 ```toml
@@ -27,7 +27,7 @@ layer. `beryl_mist` provides the [Mist](https://hex.pm/packages/mist)
 WebSocket transport. `beryl_ewe` provides an
 [Ewe](https://hex.pm/packages/ewe) transport with the same API.
 
-Beryl supports only the **Erlang/BEAM** runtime. It does not support
+beryl supports only the **Erlang/BEAM** runtime. It does not support
 JavaScript.
 
 ## Quick start
@@ -87,7 +87,7 @@ pub fn main() {
 
 `mist_transport.handler` combines the WebSocket upgrade and your HTTP handler
 in one Mist request handler. It sends WebSocket upgrades on the configured
-path to Beryl. It sends all other requests to the HTTP fallback. To control
+path to beryl. It sends all other requests to the HTTP fallback. To control
 the upgrade decision, use `mist_transport.upgrade` and
 `beryl/transport/server.is_websocket_request`.
 
@@ -102,9 +102,9 @@ For a full example with Phoenix JS client code, see the
 
 ## Ecosystem
 
-Beryl is a server runtime for real-time applications. It manages socket
+beryl is a server runtime for real-time applications. It manages socket
 registration, broadcasts, presence, groups, PubSub, and transport integration.
-Beryl has a pluggable wire codec. Shared conformance fixtures keep its Phoenix
+beryl has a pluggable wire codec. Shared conformance fixtures keep its Phoenix
 codec compatible with Roost and Aquamarine.
 
 ```mermaid
@@ -228,20 +228,20 @@ notes. Releases use
 
 ## Security
 
-Beryl uses **Erlang distribution** for PubSub and presence replication. You
+beryl uses **Erlang distribution** for PubSub and presence replication. You
 must trust **every node in the cluster**. Application and channel authorization
 protect against untrusted WebSocket clients. They do **not** protect against a
-hostile Erlang distribution peer. Such a peer can inject internal Beryl
+hostile Erlang distribution peer. Such a peer can inject internal beryl
 traffic and presence state.
 
-Read **[SECURITY.md](SECURITY.md)** before you run Beryl in production. It
+Read **[SECURITY.md](SECURITY.md)** before you run beryl in production. It
 explains:
 
 - The Erlang distribution **trust boundary** and the effect of a compromised
   peer.
 - Distribution security: a strong protected cookie, TLS distribution,
   EPMD and port firewall rules, and closed cluster membership.
-- Why Beryl trusts internal PubSub and presence messages but validates and
+- Why beryl trusts internal PubSub and presence messages but validates and
   rate-limits client WebSocket messages.
 - The atom-table limit for `pubsub.config_with_scope`. Do not pass values from
   users to this function.
@@ -252,9 +252,9 @@ origin checks, see the
 
 ### Required: an edge proxy frame-size limit
 
-Beryl applies the `with_max_inbound_frame_bytes` limit **after frame
+beryl applies the `with_max_inbound_frame_bytes` limit **after frame
 assembly**. The WebSocket transport (Mist/gramps) buffers and assembles a full
-frame before Beryl measures it. Beryl then rejects an oversized frame. This
+frame before beryl measures it. beryl then rejects an oversized frame. This
 limit controls the processing cost of one message. It does **not** limit
 transport memory.
 
@@ -265,15 +265,15 @@ A hostile client can exhaust node memory through one connection in two ways:
 - It can send many fragmented continuation frames that the transport puts in
   one buffer.
 
-In both cases, the transport receive buffer has no size limit before Beryl
-checks the frame size. **Beryl's per-IP connection limit
+In both cases, the transport receive buffer has no size limit before beryl
+checks the frame size. **beryl's per-IP connection limit
 (`with_max_connections_per_ip`), per-connection frame-rate limit
 (`with_frame_rate`), and per-socket message-rate limit (`with_message_rate`)
 do not prevent this attack**. These limits run after frame assembly. The
 buffer can grow in one accepted connection before dispatch.
 
 To limit transport memory in production, you **must** put an edge proxy or load
-balancer in front of Beryl. You can use nginx, HAProxy, Envoy, or a cloud load
+balancer in front of beryl. You can use nginx, HAProxy, Envoy, or a cloud load
 balancer. Configure:
 
 - A **maximum WebSocket frame or message size** that is not greater than the
@@ -281,7 +281,7 @@ balancer. Configure:
 - A matching **request or body size limit** for the first HTTP upgrade request.
 
 Set the proxy to reject oversized frames before the BEAM node buffers them.
-Use Beryl's in-process limit as a second control for message processing cost.
+Use beryl's in-process limit as a second control for message processing cost.
 Do not use it as a memory limit.
 
 ## Development

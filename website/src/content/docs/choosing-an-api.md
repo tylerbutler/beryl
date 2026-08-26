@@ -9,7 +9,7 @@ beryl has one runtime and two ways to program it.
   pattern. Each channel keeps private state and a server-side message type. The
   layer routes each event to the correct channel. **Use this API by default.**
 - **Raw dispatch** (`beryl`): Define one `init` and `update` pair for
-  the socket system. Beryl runs them separately for each connected socket.
+  the socket system. beryl runs them separately for each connected socket.
   Match `socket.Input` values and return ordered effects. The channel layer
   uses this public core API.
 

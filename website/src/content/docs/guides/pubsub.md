@@ -134,7 +134,7 @@ let count = pubsub.subscriber_count(ps, "room:lobby")
 
 Erlang `pg` works across connected nodes. After your application establishes
 Erlang distribution between the nodes, `pg` merges their process groups and
-sends messages to subscribers across the cluster. Beryl PubSub needs no
+sends messages to subscribers across the cluster. beryl PubSub needs no
 additional configuration, but it does not connect the nodes for you.
 
 Automated tests currently exercise distributed behavior with multiple actors
@@ -163,5 +163,5 @@ beryl.broadcast(channels, "room:lobby", "event", payload)
 ## Next steps
 
 - [Supervision guide](/guides/supervision/): supervised startup and multi-node deployment
-- [Architecture overview](/architecture/overview/): PubSub's place in Beryl
+- [Architecture overview](/architecture/overview/): PubSub's place in beryl
 - [Troubleshooting](/troubleshooting/#broadcasts-fail-across-erlang-nodes): diagnose cluster broadcast failures and different presence state across nodes

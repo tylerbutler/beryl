@@ -8,7 +8,7 @@ stores each child model. The parent message type has one variant for each child
 message type. The parent update function looks at the message and sends it to
 the correct child.
 
-Raw Beryl works the same way. One update function sees every topic on a socket.
+Raw beryl works the same way. One update function sees every topic on a socket.
 This is type-safe, and it gives you full control. But the work grows with each
 new topic family you add. `beryl/channel` does that routing for you. It runs on
 the same core runtime.
@@ -94,7 +94,7 @@ different state type and a different info type. Both still fit in one
 ## A handler creates one channel for each join
 
 A handler has two parts: a topic pattern and a join function. When a client
-joins a topic that matches the pattern, Beryl calls the join function with a
+joins a topic that matches the pattern, beryl calls the join function with a
 `channel.JoinContext`. The join function returns the new channel.
 
 ```gleam
@@ -169,7 +169,7 @@ store the state and callbacks inside more closures. Each `channel.next` does
 the same with the new state. The types stay concrete inside those closures.
 From the outside, every handler has the same type.
 
-Beryl does not turn your state or info messages into `Dynamic`. Only the
+beryl does not turn your state or info messages into `Dynamic`. Only the
 client payload is `Dynamic`, because it comes from the wire. That is true for
 both APIs.
 
@@ -257,7 +257,7 @@ The channel layer turns each action into one core `socket.Effect`. It keeps the
 order. The same runtime runs them, so the reply goes out before the broadcast.
 
 A join can also return actions. Use `channel.with_actions` on an accepted join.
-Beryl sends the join acknowledgment first, then those actions. A push can never
+beryl sends the join acknowledgment first, then those actions. A push can never
 arrive before its own join acknowledgment.
 
 ## Pick one API for each endpoint
@@ -279,8 +279,8 @@ the Elm analogy stops.
 
 - [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)
 - [`beryl/channel` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/channel.gleam)
-- [Beryl channels guide](/guides/channels/)
-- [Choose a Beryl API](/choosing-an-api/)
+- [beryl channels guide](/guides/channels/)
+- [Choose a beryl API](/choosing-an-api/)
 - [ADR 0002: app-side dispatch](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0002-app-side-dispatch.md)
 - [ADR 0003: layered channel API](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0003-layered-channel-api.md)
 

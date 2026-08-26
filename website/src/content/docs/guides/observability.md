@@ -3,12 +3,12 @@ title: Monitor beryl
 description: Collect telemetry events, read runtime counts, and export application metrics.
 ---
 
-Beryl provides two sources of monitoring data:
+beryl provides two sources of monitoring data:
 
 - Optional `:telemetry` events report rates, outcomes, and operation durations.
 - `beryl/stats.snapshot` reports local runtime state at one time.
 
-Beryl does not include a Prometheus or OpenTelemetry exporter. Your application
+beryl does not include a Prometheus or OpenTelemetry exporter. Your application
 must aggregate, label, and export the data.
 
 ## Enable telemetry events
@@ -119,7 +119,7 @@ detach(Id) ->
 The supervised metrics actor can convert messages for your metrics library.
 Monitor its mailbox and limit queued work. Another process avoids adding work
 to the request, but an unlimited mailbox can still overload the system. Detach
-the handler during shutdown. Beryl does not need an exporter dependency.
+the handler during shutdown. beryl does not need an exporter dependency.
 
 Useful derived signals include upgrade rejection rate by outcome, frame decode
 and rate-limit rates, join/message callback failures, connection lifetime,
@@ -162,7 +162,7 @@ per node. Cache the latest successful snapshot, add jitter, and expose the
 snapshot age. Do not convert a timeout to a zero-valued snapshot. A timeout can
 mean restart or overload, not an idle system.
 
-For a runnable JSON endpoint combining Beryl and BEAM runtime gauges, see the
+For a runnable JSON endpoint combining beryl and BEAM runtime gauges, see the
 benchmark server's [`/stats` reference](https://github.com/tylerbutler/beryl/blob/main/examples/load_test/README.md#health-and-stats)
 and
 [`http.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/load_test/src/load_test/http.gleam).

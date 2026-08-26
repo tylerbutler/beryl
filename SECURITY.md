@@ -19,7 +19,7 @@ coordinate a fix and disclosure timeline with you.
 
 ## Trust boundary
 
-Beryl runs on the Erlang/BEAM runtime and uses **Erlang distribution** for its
+beryl runs on the Erlang/BEAM runtime and uses **Erlang distribution** for its
 distributed features:
 
 - **PubSub** (`beryl/pubsub`) is backed by Erlang's `pg` process groups.

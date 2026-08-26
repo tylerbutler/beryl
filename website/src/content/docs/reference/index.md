@@ -33,7 +33,7 @@ frames, or select a compatible client.
 | `beryl/presence` | OTP actor wrapping the presence CRDT, plus opaque `Diff` accessors | Tracking who is online |
 | `beryl/presence/wire` | Phoenix-compatible presence state and diff encoders | Sending presence payloads to Phoenix clients |
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
-| `beryl/error` | Shared opaque error helpers | Handling Beryl-owned startup errors |
+| `beryl/error` | Shared opaque error helpers | Handling beryl-owned startup errors |
 | `beryl/stats` | Local runtime snapshots | Reporting connected sockets, memberships, and active topics |
 | `beryl/wire` | Phoenix-compatible codec and Dynamic→JSON helpers | Phoenix clients, payload relays, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
