@@ -22,6 +22,15 @@ runnable applications with HTML, static assets, and end-to-end tests.
 
 ## Prerequisites
 
+This is a code-first guide. It assumes that you can read Gleam custom types,
+pattern matching, pipelines, and `Result` values. Familiarity with OTP
+supervision and WebSocket client-server concepts will also help. You do not
+need prior Phoenix Channels experience.
+
+If beryl's model of state, inputs, and effects is new to you, start with the
+[Build a live poll tutorial](/tutorial/). It explains the core model step by
+step, then shows how the channel layer builds on it.
+
 - Gleam >= 1.18 project targeting **Erlang** (`gleam new my_app`)
 - The Git dependencies from the [Installation guide](/installation/) added to
   `gleam.toml` (`beryl` and `beryl_mist`)
