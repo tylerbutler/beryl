@@ -1,5 +1,5 @@
 ---
-title: Typed Messages From Your Gleam System
+title: Typed messages from your Gleam system
 description: Send typed server-side events from actors and timers into the socket update loop.
 ---
 

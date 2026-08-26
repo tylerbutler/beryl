@@ -1,5 +1,5 @@
 ---
-title: "Move From Raw Dispatch to Channel Handlers"
+title: "Move from raw dispatch to channel handlers"
 description: Move from one socket-wide update function to channel handlers that each keep their own state and message type.
 ---
 
@@ -241,7 +241,7 @@ can reply, push, broadcast, track presence, or close. In `on_terminate`, the
 channel is closing. A reply, push, or presence track makes no sense there, and
 the compiler rejects them. Broadcast and presence cleanup still work.
 
-## Beryl runs actions in list order
+## beryl runs actions in list order
 
 The vote branch returns:
 

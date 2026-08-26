@@ -1,5 +1,5 @@
 ---
-title: Authenticate WebSocket Connections
+title: Authenticate WebSocket connections
 description: Verify tokens in on_connect, store verified identity data, and authorize topic joins.
 ---
 

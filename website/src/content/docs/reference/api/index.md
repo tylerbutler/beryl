@@ -1,5 +1,5 @@
 ---
-title: API Reference
+title: API reference
 description: API reference generated from Gleam docs metadata.
 ---
 
@@ -15,7 +15,7 @@ This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, and `beryl_mis
 The generator creates pages under `/reference/api/` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
 :::
 
-## `beryl` `0.4.1`
+## `beryl` `0.4.0`
 
 | Module | Description |
 |---|---|
@@ -36,13 +36,13 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 | [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol: encoding/decoding helpers and the canonical |
 | [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
 
-## `beryl_ewe` `0.2.2`
+## `beryl_ewe` `0.2.1`
 
 | Module | Description |
 |---|---|
 | [`beryl_ewe`](/reference/api/beryl_ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
 
-## `beryl_mist` `0.3.2`
+## `beryl_mist` `0.3.1`
 
 | Module | Description |
 |---|---|

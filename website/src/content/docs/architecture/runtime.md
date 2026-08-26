@@ -1,5 +1,5 @@
 ---
-title: Socket Processes & Restarts
+title: Socket processes & restarts
 ---
 
 The runtime uses one router actor and one actor for each connected socket.

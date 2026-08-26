@@ -75,7 +75,7 @@ export default defineConfig({
 			],
 			sidebar: [
 				{
-					label: "Start Here",
+					label: "Start here",
 					items: [
 						{
 							label: "What is beryl?",
@@ -90,7 +90,7 @@ export default defineConfig({
 							slug: "choosing-an-api",
 						},
 						{
-							label: "Quick Start",
+							label: "Quick start",
 							slug: "quick-start",
 						},
 						{
@@ -103,27 +103,27 @@ export default defineConfig({
 					label: "Tutorial",
 					items: [
 						{
-							label: "Build a Live Poll",
+							label: "Build a live poll",
 							slug: "tutorial",
 						},
 						{
-							label: "1. Elm Architecture Without a DOM",
+							label: "1. Elm Architecture without a DOM",
 							slug: "tutorial/the-elm-architecture-without-a-dom",
 						},
 						{
-							label: "2. One Update Function",
+							label: "2. One update function",
 							slug: "tutorial/one-update-function-many-socket-events",
 						},
 						{
-							label: "3. Typed System Messages",
+							label: "3. Typed system messages",
 							slug: "tutorial/typed-messages-from-your-gleam-system",
 						},
 						{
-							label: "4. Raw Dispatch and Channels",
+							label: "4. Raw dispatch and channels",
 							slug: "tutorial/composition-raw-dispatch-and-channels",
 						},
 						{
-							label: "5. Runtime Boundaries",
+							label: "5. Runtime boundaries",
 							slug: "tutorial/where-the-analogy-ends",
 						},
 						{
@@ -136,14 +136,14 @@ export default defineConfig({
 					label: "Guides",
 					items: [
 						{
-							label: "Core Concepts",
+							label: "Core concepts",
 							items: [
 								{
-									label: "Raw Dispatch",
+									label: "Raw dispatch",
 									slug: "guides/dispatch",
 								},
 								{
-									label: "Channel Handlers",
+									label: "Channel handlers",
 									slug: "guides/channels",
 								},
 								{
@@ -165,7 +165,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{
-									label: "WebSocket Transport",
+									label: "WebSocket transport",
 									slug: "guides/websocket",
 								},
 								{
@@ -173,7 +173,7 @@ export default defineConfig({
 									slug: "guides/authentication",
 								},
 								{
-									label: "Backend Integration",
+									label: "Backend integration",
 									slug: "guides/backend-integration",
 								},
 								{
@@ -183,7 +183,7 @@ export default defineConfig({
 							],
 						},
 						{
-							label: "Running in Production",
+							label: "Running in production",
 							collapsed: true,
 							items: [
 								{
@@ -191,7 +191,7 @@ export default defineConfig({
 									slug: "guides/supervision",
 								},
 								{
-									label: "Error Handling",
+									label: "Error handling",
 									slug: "guides/error-handling",
 								},
 								{
@@ -199,7 +199,7 @@ export default defineConfig({
 									slug: "guides/observability",
 								},
 								{
-									label: "Production Hardening",
+									label: "Production hardening",
 									slug: "guides/production-hardening",
 								},
 							],
@@ -210,7 +210,7 @@ export default defineConfig({
 					label: "Reference",
 					items: [
 						{
-							label: "API Overview",
+							label: "API overview",
 							slug: "reference",
 						},
 						{
@@ -245,11 +245,11 @@ export default defineConfig({
 							slug: "architecture/message-lifecycle",
 						},
 						{
-							label: "Socket Processes & Restarts",
+							label: "Socket processes & restarts",
 							slug: "architecture/runtime",
 						},
 						{
-							label: "Broadcasts Across Nodes",
+							label: "Broadcasts across nodes",
 							slug: "architecture/pubsub-and-distribution",
 						},
 						{
@@ -257,7 +257,7 @@ export default defineConfig({
 							slug: "architecture/presence",
 						},
 						{
-							label: "WebSocket Frames & Transports",
+							label: "WebSocket frames & transports",
 							slug: "architecture/wire-and-transport",
 						},
 					],

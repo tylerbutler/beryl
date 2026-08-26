@@ -1,5 +1,5 @@
 ---
-title: Quick Start
+title: Quick start
 description: Build a beryl socket app with a channel handler, WebSocket transport, and Phoenix JS client.
 ---
 
@@ -101,7 +101,7 @@ pub fn channel() -> channel.Handler {
 }
 ```
 
-<Aside type="note" title="Reply vs Push vs Broadcast">
+<Aside type="note" title="Reply vs. push vs. broadcast">
 Each action applies to the channel's topic. The runtime applies actions in list order.
 - **`channel.reply_ok` / `channel.reply_error`:** Send `phx_reply` to the calling client. The reply uses the ref from `message.reply`.
 - **`channel.push`:** Send a named event only to this socket.

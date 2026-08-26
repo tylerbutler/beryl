@@ -1,5 +1,5 @@
 ---
-title: Handle Errors
+title: Handle errors
 description: Reject invalid requests, understand callback panics, and return Phoenix-compatible errors.
 ---
 

@@ -144,6 +144,8 @@ not available in pure Gleam.
 
 - **Result types over exceptions** — all fallible APIs return `Result`
 - **Exhaustive pattern matching** — Gleam enforces this; handle all cases
+- **Sentence-case website headings** — use sentence case for page titles,
+  section headings, callout titles, and sidebar labels
 - **`///` doc comments** on all public functions
 - **`@internal` annotation** — hides functions from public docs while keeping
   them accessible to sibling modules within the same package

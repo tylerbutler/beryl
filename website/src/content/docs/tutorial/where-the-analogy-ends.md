@@ -1,5 +1,5 @@
 ---
-title: Where the Analogy Ends
+title: Where the analogy ends
 description: Follow a frame through Beryl and learn where frontend model-update ideas stop matching runtime behavior.
 ---
 

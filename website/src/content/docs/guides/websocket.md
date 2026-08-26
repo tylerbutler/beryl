@@ -1,5 +1,5 @@
 ---
-title: Use the Mist WebSocket Transport
+title: Use the Mist WebSocket transport
 description: Upgrade Mist requests to WebSockets, authenticate connections, and use the Phoenix wire protocol.
 ---
 
@@ -85,7 +85,7 @@ for the client error. See
 [Authentication failures](/troubleshooting#authentication-failures) for
 diagnostic steps.
 
-### Block Cross-Site WebSocket Hijacking (CSWSH)
+### Block cross-site WebSocket hijacking (CSWSH)
 
 Browsers include cookies on WebSocket handshakes. If your socket authentication
 uses cookies, a malicious site can open a WebSocket to your application from a

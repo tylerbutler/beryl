@@ -1,5 +1,5 @@
 ---
-title: Monitor Beryl
+title: Monitor beryl
 description: Collect telemetry events, read runtime counts, and export application metrics.
 ---
 

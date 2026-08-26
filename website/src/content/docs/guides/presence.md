@@ -7,7 +7,7 @@ beryl can track connected users and their metadata. It uses a
 `lattice_presence` conflict-free replicated data type (CRDT), which merges
 concurrent changes from Erlang nodes without a central coordinator.
 
-## How Beryl tracks presence
+## How beryl tracks presence
 
 Presence uses an **add-wins observed-remove set** (AWORSet) with causal context.
 When a user joins or leaves, nodes merge their state without coordination. The

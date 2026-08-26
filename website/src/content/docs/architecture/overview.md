@@ -1,5 +1,5 @@
 ---
-title: How beryl Works
+title: How beryl works
 description: Follow data through beryl, find each process, and locate its source module.
 ---
 

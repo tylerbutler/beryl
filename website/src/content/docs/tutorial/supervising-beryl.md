@@ -1,5 +1,5 @@
 ---
-title: Supervising Beryl
+title: Supervising beryl
 description: Start Beryl under an OTP supervisor and control restarts, shutdown, and process ownership.
 ---
 

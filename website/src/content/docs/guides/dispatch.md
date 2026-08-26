@@ -1,5 +1,5 @@
 ---
-title: Route Socket Events in One Update Function
+title: Route socket events in one update function
 description: Handle joins, messages, binary frames, closed topics, and typed server messages in one update function.
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: Build a Live Poll
+title: Build a live poll
 description: Build a live poll with raw dispatch, channel handlers, typed messages, and supervised processes.
 ---
 

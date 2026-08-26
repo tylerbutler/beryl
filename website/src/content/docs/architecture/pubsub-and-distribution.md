@@ -1,5 +1,5 @@
 ---
-title: Broadcasts Across Erlang Nodes
+title: Broadcasts across Erlang nodes
 ---
 
 ## How distribution works

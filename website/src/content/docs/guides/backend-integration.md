@@ -1,5 +1,5 @@
 ---
-title: Connect Beryl to an Existing Backend
+title: Connect beryl to an existing backend
 description: Keep authentication and database writes in your backend, then send real-time updates through Beryl.
 ---
 

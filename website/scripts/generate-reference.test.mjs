@@ -128,7 +128,7 @@ test("generates an index and one page per module", async () => {
 		assert.equal(result.pageCount, 3);
 
 		const index = await readFile(path.join(outputDir, "index.md"), "utf8");
-		assert.match(index, /title: API Reference/);
+		assert.match(index, /title: API reference/);
 		assert.match(index, /`beryl` `9\.9\.9`/);
 		// Modules are sorted alphabetically: beryl before beryl/channel.
 		assert.ok(index.indexOf("/reference/api/beryl/") < index.indexOf("/reference/api/beryl-channel/"));

@@ -142,7 +142,7 @@ on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
 tracks integration coverage across separate distributed Erlang nodes for
 PubSub delivery and presence convergence.
 
-## Use PubSub with Beryl
+## Use PubSub with beryl
 
 The channel system uses PubSub internally for distributed broadcasts when configured:
 

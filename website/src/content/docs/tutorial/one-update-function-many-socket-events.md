@@ -1,5 +1,5 @@
 ---
-title: One Update Function, Many Socket Events
+title: One update function, many socket events
 description: Handle joins, messages, binary frames, closes, replies, and ordered effects in one typed update function.
 ---
 

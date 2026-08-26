@@ -343,7 +343,7 @@ ${moduleRows}`;
 	);
 
 	return `---
-title: API Reference
+title: API reference
 description: API reference generated from Gleam docs metadata.
 ---
 

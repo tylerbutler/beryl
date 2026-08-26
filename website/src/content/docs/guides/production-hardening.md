@@ -1,5 +1,5 @@
 ---
-title: Prepare Beryl for Production
+title: Prepare beryl for production
 description: Configure traffic limits, authentication, and Erlang distribution security.
 ---
 

@@ -57,7 +57,7 @@ in another process and return results with `channel.notify` or
 [Issue #337](https://github.com/tylerbutler/beryl/issues/337) tracks a
 Phoenix-style process-per-channel prototype.
 
-## Phoenix-to-Beryl comparison
+## Phoenix-to-beryl comparison
 
 | Phoenix | beryl channel layer (`beryl/channel`) | beryl raw dispatch (`beryl`) |
 | --- | --- | --- |

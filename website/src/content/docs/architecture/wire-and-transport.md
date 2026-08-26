@@ -1,5 +1,5 @@
 ---
-title: WebSocket Frames & Transports
+title: WebSocket frames & transports
 ---
 
 This part of beryl converts raw WebSocket frames into app messages. A
