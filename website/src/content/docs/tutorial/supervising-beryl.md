@@ -1,6 +1,6 @@
 ---
 title: Supervising Beryl
-description: Place Beryl in an OTP supervision tree and understand restart, shutdown, and ownership boundaries.
+description: Start Beryl under an OTP supervisor and control restarts, shutdown, and process ownership.
 ---
 
 `beryl.child_spec` does not start anything. It returns two values. The first is
@@ -9,7 +9,7 @@ specification tells an OTP supervisor how to start and restart a process. Your
 application adds it to its own supervisor. `channel.child_spec` returns the same
 two values. It builds the raw router from your handlers first.
 
-This split decides three things: what starts first, what happens after a crash,
+This split controls three things: what starts first, what happens after a crash,
 and what happens at shutdown. The handle names one socket system. It stays valid
 when the runtime restarts. The child specification holds the code and
 configuration the supervisor needs to build that system again.
@@ -46,7 +46,7 @@ broadcast, do nothing. They do not crash because the process is missing.
 `child_spec` checks the configuration and the handler list before it returns
 `spec`. If it returns an error, there is nothing to add to the supervisor.
 
-## Beryl owns a small tree of its own
+## Processes started by beryl
 
 The child specification adds a Beryl subtree to your application:
 
@@ -68,7 +68,7 @@ capabilities. Socket actors are not children of the supervisor. The transport
 connection starts each one, and the router monitors it. If you enable
 connection limits, the limiter runs next to the router.
 
-The router is marked as *significant*. This gives shutdown a clear edge. When
+The router is marked as *significant*. When
 the router stops normally, the Beryl supervisor stops the rest of the subtree,
 including the limiter. Your application supervisor and its other children keep
 running.
@@ -101,7 +101,7 @@ If state must survive a restart, keep it outside the Beryl runtime. The live
 poll keeps room totals in `store.Store`, an actor your application owns. A
 database or another supervised process works the same way.
 
-## A restart window is an unavailable window
+## Calls can fail while the router restarts
 
 The stable handle means you never hold a dead process id. It does not make a
 restart invisible. Between the old runtime exiting and the new one registering:
@@ -119,7 +119,7 @@ broadcast is not a durable message.
 If you enable connection limits, the limiter survives a normal router restart.
 `OneForOne` restarts only the router. The new router uses the same limiter.
 
-## Repeated failures move up the tree
+## Repeated router failures stop the beryl subtree
 
 The Beryl supervisor allows 3 router restarts in 5 seconds. A fourth failure in
 that window uses up the budget. The whole Beryl subtree then exits with an
@@ -174,7 +174,7 @@ the presence actor, and the group actor all belong to the process or supervisor
 that started them. When your root supervisor shuts down, it stops Beryl with the
 rest of the tree.
 
-## Decide who owns what before you open the listener
+## Start processes before the WebSocket listener
 
 A production startup path makes four decisions, in this order:
 

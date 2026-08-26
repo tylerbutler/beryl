@@ -1,12 +1,12 @@
 ---
-title: Wire & Transport
+title: WebSocket Frames & Transports
 ---
 
-The wire and transport layer connects raw WebSocket frames to the runtime. A
-pluggable **codec** converts bytes to structured messages. The **Mist
-transport** manages the socket lifecycle.
+This part of beryl converts raw WebSocket frames into app messages. A
+**codec** defines how to decode and encode messages. A **transport** connects
+beryl to a WebSocket server such as Mist or Ewe.
 
-## Codec abstraction
+## Choose or build a codec
 
 A `Codec` is opaque. Use the public factory and builder functions in
 `beryl/wire/codec`, or use `wire.phoenix_codec()`. The runtime receives
@@ -39,7 +39,7 @@ beryl.config(wire.phoenix_codec())
 Pass a custom `Codec` to `beryl.config(codec)` to use another protocol. You do
 not need to change the runtime or app logic.
 
-## Frame shapes
+## Phoenix frame format
 
 Phoenix uses a JSON array for every message on the wire:
 
@@ -51,7 +51,7 @@ The `join_ref` and `ref` fields are nullable strings that link requests and
 replies. `topic` is the subscription key, such as `"room:lobby"`. `event` names
 the protocol action or user event.
 
-### Key functions in `beryl/wire`
+### Decode and encode frames
 
 **`decode_message(json_string)`** parses a raw JSON string into an `Inbound`.
 It returns `InvalidJson` or `InvalidFormat` for malformed input.
@@ -69,7 +69,7 @@ frame. The `payload` field is
 `"phoenix"`, event `"phx_reply"`, status `"ok"`, and an empty response object.
 The client sends heartbeats with topic `"phoenix"` and event `"heartbeat"`.
 
-## Shared transport core
+## How transports handle a connection
 
 `beryl/transport/server` manages admission, connections, and frames.
 `beryl_mist` and `beryl_ewe` provide the server-specific upgrade, frame-send,
@@ -97,7 +97,7 @@ and peer-IP functions:
    checks the full `Origin` header before the handshake. It returns HTTP 403
    for a missing or non-matching origin.
 
-### Key functions
+### Configure the server transport
 
 **`server.default_config(path)`**: creates a `TransportConfig` with no connect hook and the default same-origin policy.
 
@@ -111,7 +111,7 @@ and peer-IP functions:
 
 **`handler(channels, config, http_fallback)`**: returns a combined request handler that routes WebSocket upgrade requests to `upgrade` and everything else to `http_fallback`. Removes boilerplate from application code.
 
-## Diagram
+## Frame path
 
 ```mermaid
 flowchart LR
@@ -124,13 +124,13 @@ flowchart LR
   RT --> EN["encode reply/push"] --> CORE --> ADAPTER --> CL["client"]
 ```
 
-## Where this lives
+## Source files
 
 | Module | Path |
 |---|---|
-| Codec abstraction | `src/beryl/wire/codec.gleam` |
+| Codec configuration | `src/beryl/wire/codec.gleam` |
 | Phoenix wire helpers | `src/beryl/wire.gleam` |
-| Shared server pipeline | `src/beryl/transport/server.gleam` |
+| Shared server connection handling | `src/beryl/transport/server.gleam` |
 | Origin policy | `src/beryl/transport/origin.gleam` |
 | Mist transport | `packages/beryl_mist/src/beryl_mist.gleam` |
 | Ewe transport | `packages/beryl_ewe/src/beryl_ewe.gleam` |

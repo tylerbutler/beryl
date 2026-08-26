@@ -88,7 +88,7 @@ receive a reply or push.
 
 ---
 
-## Channel-layer symptoms
+## Channel handler problems
 
 ### `child_spec` returns a handler error
 
@@ -100,9 +100,10 @@ receive a reply or push.
 
 ### `channel.notify` never reaches `on_info`
 
-The sender is generation-scoped. Mail for a closed or rejoined channel is
-dropped still sealed, and `notify` never reports liveness. Capture
-`context.self` from each new join and install `channel.on_info`.
+The sender belongs to one accepted channel join. Messages for a channel that
+closed or joined again are dropped, and `notify` does not report whether the
+channel is still open. Capture `context.self` from each new join and install
+`channel.on_info`.
 
 ### A termination action does not compile
 
@@ -122,7 +123,7 @@ one topic, and `on_info` tears down the whole socket. See
 
 ---
 
-## Enable Beryl debug diagnostics
+## Turn on debug logs
 
 Beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*`
 namespaces. Enable debug logs when you diagnose integration problems:
@@ -230,7 +231,7 @@ recent joins or leaves.
 
 ---
 
-## PubSub cluster issues
+## Broadcasts fail across Erlang nodes
 
 **Symptoms:** Broadcasts do not reach other Erlang nodes. Presence state differs
 between nodes.
@@ -286,7 +287,7 @@ This prevents proxy idle disconnects.
 
 ---
 
-## Runtime crash / no messages processed
+## All socket messages stop
 
 **Symptoms:** All WebSocket operations stop. The runtime does not respond.
 

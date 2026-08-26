@@ -1,8 +1,8 @@
 ---
-title: PubSub & Distribution
+title: Broadcasts Across Erlang Nodes
 ---
 
-## Foundation
+## How distribution works
 
 Beryl's PubSub layer uses Erlang's
 [`pg`](https://www.erlang.org/doc/man/pg.html) process groups. A subscriber
@@ -18,13 +18,13 @@ isolated namespaces. Different scopes can safely carry different payload types
 into one process mailbox; all handles for one scope must use the same payload
 type.
 
-## The FFI Boundary
+## How Gleam calls Erlang `pg`
 
-The Gleam module `beryl/pubsub` sends low-level `pg` operations to
-`src/beryl_pubsub_ffi.erl` through `@external` declarations. The FFI file maps
-Gleam calls to `pg` BIFs.
+The Gleam module `beryl/pubsub` calls
+`src/beryl_pubsub_ffi.erl` through `@external` declarations. This small Erlang
+module translates Gleam calls into built-in `pg` functions.
 
-**Public surface of `beryl/pubsub`:**
+**PubSub functions:**
 
 | Function | Description |
 |---|---|
@@ -42,9 +42,10 @@ Gleam calls to `pg` BIFs.
 
 `pg` sends each broadcast as the scope atom followed by the four
 `Message(payload)` fields (`topic`, `event`, `payload`, `from`). This
-five-element tuple is a frozen wire contract. The scoped and previously
-unscoped shapes cannot communicate during a rolling upgrade. Applications must
-also version payload changes that cross nodes.
+five-element tuple is a fixed message format between nodes. Nodes that use the
+old four-element format cannot communicate with nodes that use the current
+format during an upgrade. Applications must also version payload changes that
+cross nodes.
 
 The `PubSubFrom` type tags each message with its origin so downstream receivers can inspect whether a message came from the system, a specific process, or a process with an associated socket:
 
@@ -56,7 +57,7 @@ pub type PubSubFrom {
 }
 ```
 
-## Exclusion Semantics
+## Exclude the sender
 
 `broadcast_from` and `broadcast_from_socket` exclude the sender. The source
 process does not receive its broadcast. This prevents an echo to the source
@@ -65,13 +66,13 @@ socket.
 - `broadcast_from(ps, from, ...)` skips delivery to the process whose `Pid` matches `from`.
 - `broadcast_from_socket(ps, from, except_socket_id, ...)` also skips delivery to `from`, and includes `FromSocket(from, except_socket_id)` in the message so that any remote runtime receiving it can optionally suppress re-delivery to a matching socket ID on their node.
 
-:::caution[Regression-prone contract]
+:::caution[Keep sender-exclusion tests]
 Channel behavior depends on sender exclusion. If code changes or skips the
 `pid == from` comparison, senders receive their own messages. Keep the
 `broadcast_from` exclusion tests when you change PubSub code.
 :::
 
-## Distribution Diagram
+## Cross-node example
 
 ```mermaid
 flowchart LR
@@ -90,7 +91,7 @@ When socket A sends a message on Node 1, its runtime calls `broadcast_from`.
 The function iterates through the `pg` group members. Erlang distribution sends
 the message to members on Node 2. You do not need another message bus.
 
-## Trust Model
+## Secure cluster connections
 
 Treat all Erlang distribution traffic as **trusted cluster input**. A peer can
 run arbitrary code on connected nodes. The beryl capabilities below are only
@@ -115,7 +116,7 @@ Refer to the [Production Hardening guide](/guides/production-hardening/#erlang-c
 for the full cluster security requirements (network isolation, mutually
 verified TLS distribution, EPMD port restrictions, and cookie handling).
 
-## Where this lives
+## Source files
 
 | File | Role |
 |---|---|

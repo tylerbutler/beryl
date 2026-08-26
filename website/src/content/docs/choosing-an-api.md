@@ -1,6 +1,6 @@
 ---
 title: Choose an API
-description: Compare beryl's channel layer and raw app-side dispatch APIs.
+description: Compare beryl's channel handlers and raw dispatch API.
 ---
 
 beryl has one runtime and two ways to program it.
@@ -8,16 +8,16 @@ beryl has one runtime and two ways to program it.
 - **The channel layer** (`beryl/channel`): Register one handler for each topic
   pattern. Each channel keeps private state and a server-side message type. The
   layer routes each event to the correct channel. **Use this API by default.**
-- **Raw app-side dispatch** (`beryl`): Define one `init` and `update` pair for
+- **Raw dispatch** (`beryl`): Define one `init` and `update` pair for
   the socket system. Beryl runs them separately for each connected socket.
   Match `socket.Input` values and return ordered effects. The channel layer
   uses this public core API.
 
-Both APIs use the same runtime, wire codec, presence, PubSub, and abuse
-controls. They have the same wire-level features. The main difference is who
-writes topic dispatch.
+Both APIs use the same socket processes, message format, presence, PubSub,
+connection limits, and rate limits. They support the same client features.
+The main difference is who routes topics.
 
-## Pick in one line
+## Choose by app structure
 
 | If your app… | Use |
 |---|---|
@@ -29,7 +29,7 @@ writes topic dispatch.
 | needs total control over routing and effect order | [Raw dispatch](/guides/dispatch/) |
 | wants one model that spans every topic on a socket | [Raw dispatch](/guides/dispatch/) |
 
-## Side by side
+## Compare the APIs
 
 |  | Channel layer | Raw dispatch |
 |---|---|---|
@@ -43,7 +43,7 @@ writes topic dispatch.
 | Cross-topic effects | External `Sockets` APIs only | Direct, in any effect list |
 | Routing code as channels grow | Handler list stays the same shape | More topic families require more branches |
 
-## What the layer buys you
+## Use channel handlers for separate topic features
 
 To add a topic family to raw dispatch, extend the socket model and message
 union. Then add router branches. With the channel layer, add one handler to the
@@ -53,16 +53,16 @@ The layer gives each channel a private state type and server-side message type.
 Unrelated channels do not need a shared `Model` or `Msg`. A library can publish
 a channel value for direct use.
 
-## What raw dispatch buys you
+## Use raw dispatch for socket-wide control
 
 One `update` sees all events for a socket. An event on one topic can broadcast
 on another topic in the same ordered effect list. Channel actions apply only to
 their own topic. Use the `Sockets` handle for cross-topic publishing.
 
-Raw dispatch is the smaller API surface: no handler table and no routing
-rules other than the ones you write.
+Raw dispatch has fewer concepts: no handler table and no routing rules other
+than the ones you write.
 
-## Mixing them
+## Use one API for each socket endpoint
 
 Select one API for each socket endpoint. The channel layer owns the
 socket-level model and message type. This design lets each channel keep private
@@ -75,6 +75,6 @@ format, join rules, presence payloads, and client code.
 ## Next steps
 
 - [Channels](/guides/channels/) — the full channel-layer guide
-- [App-Side Dispatch](/guides/dispatch/) — the full raw-dispatch guide
+- [Raw Dispatch](/guides/dispatch/) — route socket events in one update function
 - [Quick Start](/quick-start/) — a working server on either layer
 - [Coming from Phoenix](/guides/coming-from-phoenix/) — the concept map for both

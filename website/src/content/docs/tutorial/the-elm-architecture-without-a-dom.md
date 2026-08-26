@@ -18,7 +18,7 @@ We start with Beryl's core API. It keeps state, inputs, and effects in plain
 view. First we compare the Lustre and OTP forms. Then we show the Beryl API
 and map its terms onto the same model.
 
-## What we are building
+## Build a live poll
 
 We will build a live poll with rooms. A browser joins a topic such as
 `poll:demo`. It reads the current totals, votes for Gleam or Erlang, and sees
@@ -44,7 +44,7 @@ This chapter ends with the smallest useful checkpoint. The server accepts a
 `poll:*` join and returns the current poll state. Voting, broadcasts, timers,
 and channels come later, after the core loop is clear.
 
-## One model, different domains
+## The shared model-update pattern
 
 The shared model has four parts:
 
@@ -163,11 +163,11 @@ is a typed address for the actor's mailbox.
 Now we can carry the same model into Beryl and give each part a socket
 meaning.
 
-## Beryl applies the loop to sockets
+## Apply the loop to sockets
 
 Beryl gives you two ways to program a socket endpoint. The channel layer is
 the recommended one. It routes each event to a handler based on the topic.
-Under it sits the raw app-side dispatch API. Raw dispatch gives every event on
+Under it sits the raw dispatch API. Raw dispatch gives every event on
 a socket to one `update` function that you write.
 
 "Raw dispatch" means your application does the routing. Your code receives
@@ -288,7 +288,7 @@ in the update closure. Each browser socket gets its own raw `Model`. All
 sockets send poll operations to the same store. Per-socket state and shared
 domain state stay apart.
 
-## The first mismatch is useful
+## Where beryl differs from a frontend
 
 The Elm architecture gives us words for pure state transitions. But Beryl is
 not a frontend framework:
@@ -313,7 +313,7 @@ protocol.
 - [Gleam OTP actor module](https://gleam-otp.hexdocs.pm/gleam/otp/actor.html)
 - [Gleam Erlang process module](https://gleam-erlang.hexdocs.pm/gleam/erlang/process.html)
 - [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
-- [Beryl app-side dispatch guide](/guides/dispatch/)
+- [Beryl raw dispatch guide](/guides/dispatch/)
 
 ## Runnable checkpoint: step 01
 

@@ -1,9 +1,10 @@
 ---
 title: PubSub
+description: Publish typed messages to topic subscribers on one or more connected Erlang nodes.
 ---
 
-beryl's PubSub layer uses Erlang `pg` process groups for distributed publish
-and subscribe messaging.
+beryl's PubSub API uses Erlang `pg` process groups. Publishers send messages
+to a topic, and each process subscribed to that topic receives them.
 
 ## Starting PubSub
 
@@ -21,13 +22,13 @@ The scope maps to a `pg` scope atom and identifies the PubSub instance.
 Different scopes are isolated and can use different payload types in one
 process mailbox. All handles in one scope must use the same payload type.
 
-:::danger[The scope must be a static, bounded deployment value]
+:::danger[Use a fixed scope name]
 The scope name is converted to an Erlang atom. Atoms are never
 garbage-collected; exhausting the BEAM atom table crashes the VM. The scope
-must be a static, bounded deployment or configuration value — never raw
-user-derived, per-request, per-tenant, database-derived, or otherwise
-unbounded high-cardinality runtime input. A deployment-controlled value is
-acceptable only when validated or selected from a fixed bounded set.
+must be a fixed deployment or configuration value. Never use a value from a
+request, tenant, database row, or any other source that can create unlimited
+names. A deployment-controlled value is safe only when you validate it or
+select it from a fixed set.
 :::
 
 ## Subscribing
@@ -52,9 +53,9 @@ PubSub records arrive as raw BEAM messages. `selecting` validates their types
 and matches the subscriber scope. One process can select subscribers with
 different payload types if their scopes differ.
 
-## Messages
+## Message format
 
-Subscribers receive transparent `Message(payload)` records:
+Subscribers receive typed `Message(payload)` records:
 
 ```gleam
 pub type Message(payload) {
@@ -84,7 +85,7 @@ accept old and new nodes concurrently.
 runtimes do not send the message to that socket. Thus,
 `beryl.broadcast_from` excludes the sender across cluster nodes.
 
-## Broadcasting
+## Send broadcasts
 
 ```gleam
 import gleam/json
@@ -119,7 +120,7 @@ Use `broadcast_from_socket` to send to all cluster subscribers except one
 socket. The socket can be on another node. `beryl.broadcast_from` calls this
 function.
 
-## Querying subscribers
+## List subscribers
 
 ```gleam
 // All subscribers across all nodes
@@ -129,7 +130,7 @@ let pids = pubsub.subscribers(ps, "room:lobby")
 let count = pubsub.subscriber_count(ps, "room:lobby")
 ```
 
-## Distributed operation
+## Use PubSub across Erlang nodes
 
 Erlang `pg` works across connected nodes. After your application establishes
 Erlang distribution between the nodes, `pg` merges their process groups and
@@ -141,7 +142,7 @@ on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
 tracks integration coverage across separate distributed Erlang nodes for
 PubSub delivery and presence convergence.
 
-## Integration with beryl channels
+## Use PubSub with Beryl
 
 The channel system uses PubSub internally for distributed broadcasts when configured:
 
@@ -161,6 +162,6 @@ beryl.broadcast(channels, "room:lobby", "event", payload)
 
 ## Next steps
 
-- [Supervision guide](/guides/supervision/) — supervised startup and multi-node deployment checklist
-- [Architecture overview](/architecture/overview/) — how PubSub fits into the beryl layer diagram
-- [Troubleshooting](/troubleshooting/#pubsub-cluster-issues) — diagnosing cluster broadcast failures and diverging presence state
+- [Supervision guide](/guides/supervision/): supervised startup and multi-node deployment
+- [Architecture overview](/architecture/overview/): PubSub's place in Beryl
+- [Troubleshooting](/troubleshooting/#broadcasts-fail-across-erlang-nodes): diagnose cluster broadcast failures and different presence state across nodes

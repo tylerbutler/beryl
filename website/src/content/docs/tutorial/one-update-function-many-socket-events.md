@@ -43,7 +43,7 @@ A socket is one client connection. A topic is one subscription string inside
 that socket, such as `poll:demo`. Raw dispatch has no channel object. Your
 `Model` and update function route topic strings themselves.
 
-## A join ref is a one-time token
+## Answer each join with its one-time reference
 
 `Join(topic, payload, ref)` gives you a `socket.JoinRef`. You cannot make one
 yourself, and you cannot read its contents. You can only pass it back. Return
@@ -81,7 +81,7 @@ Beryl also protects you when you forget a case. If your update turn does not
 return `AcceptJoin(ref, ...)` or `RejectJoin(ref, ...)` for the waiting ref,
 the runtime rejects the join. A missing branch cannot leave a join half open.
 
-## Reply refs live longer
+## Reply references can outlive one update
 
 `Message` includes `Option(socket.ReplyRef)`. A client can send a frame with no
 message ref. Then the client does not expect a reply. When the ref is present,
@@ -112,7 +112,7 @@ example has a small local helper. It returns `ReplyError` only when the ref is
 Treat both ref types as tokens. Do not compare them. Do not build them from
 Phoenix fields. Pass the value back to Beryl while it is still valid.
 
-## `Dynamic` stops at the wire
+## Decode client data before using it
 
 Client JSON arrives in `Join` and `Message` as `Dynamic`. `Dynamic` is Gleam's
 type for data of unknown shape. This is on purpose. The remote client chooses
@@ -187,7 +187,7 @@ presence changes. The runtime can pause the rest of one socket's list while
 that actor works. Other sockets keep going. When the presence actor is done,
 the paused socket runs its remaining effects in order.
 
-## `Binary`, `Closed`, and unknown messages still need a branch
+## Handle binary data, closed topics, and unknown messages
 
 The example does not use binary frames. Its update function still matches
 every variant. The `Closed` branch also releases the shared poll after the last
@@ -230,7 +230,7 @@ The runtime already sends client messages only for joined topics. The model
 check makes the app's own routing state visible. It also shows why `Closed`
 must clean up.
 
-## Two tabs show the difference
+## Compare replies and broadcasts with two tabs
 
 With one tab, a reply and a broadcast look the same. With two tabs in the same
 room, they do not. The tab that voted gets its reply. The other tab gets
@@ -248,8 +248,8 @@ socket-scoped `Sender` with a general OTP `Subject`.
 ## Sources and further reading
 
 - [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
-- [Beryl message lifecycle](/architecture/message-lifecycle/)
-- [Beryl app-side dispatch guide](/guides/dispatch/)
+- [How beryl handles a message](/architecture/message-lifecycle/)
+- [Beryl raw dispatch guide](/guides/dispatch/)
 - [Gleam dynamic decoding](https://hexdocs.pm/gleam_stdlib/gleam/dynamic/decode.html)
 
 ## Runnable checkpoint: step 02

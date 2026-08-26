@@ -12,7 +12,7 @@ calls these server-side events. It routes them through a
 This looks like a typed OTP send. But a Beryl sender can do less than a
 `process.Subject`. This chapter shows the difference.
 
-## The OTP baseline
+## Start with an OTP actor
 
 A Gleam OTP actor is a process with a mailbox. It receives typed messages
 through a `process.Subject`. The example's store keeps its subject inside an
@@ -192,7 +192,7 @@ the socket is still connected. If the browser closed during that minute, Beryl
 drops the message. The timer actor does not need to watch the socket or clean
 up after it.
 
-## Domain state stays in the store actor
+## Keep shared poll state in the store actor
 
 The raw `Model` holds the sender and the set of joined topics. It does not hold
 vote counts. Both client events and timer events call the shared
@@ -233,7 +233,7 @@ the caller not to broadcast again. Each socket join sets its own timer. Two
 tabs on the same room set two timers. Only the first `ClosePoll` changes the
 store.
 
-## Close now uses the same state change
+## Reuse the same close operation
 
 In the timed stage, a client can send `close_poll`. The raw handler calls the
 same `store.close` function. It returns effects in order:
@@ -264,7 +264,7 @@ broadcast.
 This order guarantee is a Beryl rule. Lustre effects and OTP sends have their
 own rules. Do not assume they order work the same way.
 
-## `Info` is not scoped to a topic
+## Include the topic in each `Info` message
 
 An `Info(Message)` does not carry a topic. Your message must carry the routing
 data it needs. The example defines `ClosePoll(topic: String)` because one raw
@@ -280,7 +280,7 @@ server-side events, you must put them all in one `Message` type. Your update
 function must route each variant. `beryl/channel` removes this shared type.
 Each channel gets its own private info type.
 
-## Choose the boundary
+## Keep slow work outside socket callbacks
 
 Keep slow work in your own processes. Keep work that needs its own supervisor
 there too. Send a small typed result into Beryl when the socket must decide on

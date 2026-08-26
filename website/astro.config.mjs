@@ -139,11 +139,11 @@ export default defineConfig({
 							label: "Core Concepts",
 							items: [
 								{
-									label: "App-Side Dispatch",
+									label: "Raw Dispatch",
 									slug: "guides/dispatch",
 								},
 								{
-									label: "Sockets and Topics",
+									label: "Channel Handlers",
 									slug: "guides/channels",
 								},
 								{
@@ -241,15 +241,15 @@ export default defineConfig({
 							slug: "architecture/overview",
 						},
 						{
-							label: "Message Lifecycle",
+							label: "How beryl handles a message",
 							slug: "architecture/message-lifecycle",
 						},
 						{
-							label: "Runtime & Supervision",
+							label: "Socket Processes & Restarts",
 							slug: "architecture/runtime",
 						},
 						{
-							label: "PubSub & Distribution",
+							label: "Broadcasts Across Nodes",
 							slug: "architecture/pubsub-and-distribution",
 						},
 						{
@@ -257,7 +257,7 @@ export default defineConfig({
 							slug: "architecture/presence",
 						},
 						{
-							label: "Wire & Transport",
+							label: "WebSocket Frames & Transports",
 							slug: "architecture/wire-and-transport",
 						},
 					],

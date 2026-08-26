@@ -1,5 +1,6 @@
 ---
 title: Supervision
+description: Add Beryl processes to an OTP supervisor and understand restart and shutdown behavior.
 ---
 
 Beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
@@ -8,7 +9,7 @@ OTP supervisor. The specification contains your `init` and `update` functions.
 `channel.child_spec` returns the same handle and specification shape. It first
 converts the handler table to a core `init` and `update` pair.
 
-## What child_spec supervises
+## Processes in the child specification
 
 ```text
 beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
@@ -21,7 +22,7 @@ transport connection
 
 - The **router actor** maintains the socket actor table and topic subscriber
   index. If the router crashes, the supervisor restarts it. The child
-  specification still contains the `init` and `update` closures.
+  specification still contains the `init` and `update` functions.
 - Each **socket actor** holds one model and sends events to your `update`
   function. Socket actors are not supervisor children. The transport starts
   them, and the router monitors them.
@@ -34,7 +35,7 @@ transport connection
 After **3 restarts in 5 seconds** the internal supervisor gives up and the
 failure propagates through your application's supervision tree.
 
-## What a restart means for your app
+## Runtime restarts close connections
 
 A runtime restart drops **per-socket state**: models, joined topics, and
 pending joins. Transports monitor the runtime that accepted each connection,
@@ -51,24 +52,24 @@ crashes and limits their effect:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
-Each socket's callbacks run in its socket actor. Letting a callback crash that
-actor would close every topic on that socket. Beryl catches a callback crash
-when it can discard the result and close a smaller safe scope. Other socket
+Each socket's callbacks run in its socket actor. A callback crash in that actor
+would close every topic on the socket. Beryl catches a callback crash when it
+can discard the result and close only the affected topic or socket. Other socket
 actor faults close only that socket, and the router removes its entries. A
 router fault reaches the supervisor and closes all connections. See
-[Runtime crash containment](/architecture/runtime/#crash-containment).
+[What closes after a callback panic](/architecture/runtime/#what-closes-after-a-callback-crash).
 
 See the [Error Handling guide](/guides/error-handling/) for details.
 
 For channel callbacks, those rows map to `join`, `on_message`, `on_info`, and
 `on_terminate`. A terminate panic loses that callback's actions but does not
 stop sibling-channel teardown; see
-[Crash behavior](/guides/channels/#crash-behavior).
+[When callbacks panic](/guides/channels/#when-callbacks-panic).
 
-## Presence and groups
+## Supervise presence and groups
 
 `presence.child_spec` and `group.child_spec` return stable handles and child
-specifications, just like the socket runtime. Add all three specifications to
+specifications, as the socket runtime does. Add all three specifications to
 your application supervisor:
 
 ```gleam
@@ -111,8 +112,8 @@ restart. Presence entries and tracking refs, and group definitions and
 memberships, are in-memory state and reset when their actor restarts.
 
 :::note[PubSub is not supervised]
-`beryl/pubsub` is backed by Erlang's `pg` module, whose lifecycle is
-managed by the BEAM runtime. Configure it with `beryl.with_pubsub`.
+`beryl/pubsub` uses Erlang's `pg` module, which the BEAM runtime manages.
+Configure it with `beryl.with_pubsub`.
 :::
 
 ## Startup errors
@@ -130,7 +131,7 @@ case beryl.child_spec(config, init: init, update: update) {
 }
 ```
 
-## Stopping
+## Stop the runtime
 
 `beryl.stop(channels)` sends a `Closed` event to each joined topic. It closes
 transport connections and stops the runtime without a restart. A second call
@@ -142,5 +143,5 @@ returns `Error(NotRunning)`. Other operations after `stop` do nothing.
 - Add application-owned presence and group child specifications alongside the
   Beryl child.
 - Configure PubSub when running more than one BEAM node.
-- Configure rate limits to protect against runaway clients — see
+- Configure rate limits to protect against faulty or hostile clients. See
   [Production Hardening](/guides/production-hardening/).

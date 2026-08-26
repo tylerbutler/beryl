@@ -13,7 +13,7 @@ This guide shows how to build a real-time app. You will create a Gleam server
 with the **channel layer** and connect a Phoenix JS browser client.
 
 Use the channel layer by default. For one topic family and full routing control,
-use [raw app-side dispatch](#alternative-raw-app-side-dispatch). The
+use [raw dispatch](#use-raw-dispatch-instead). The
 [Dispatch guide](/guides/dispatch/) has more information. See
 [Choose an API](/choosing-an-api/) for a comparison.
 
@@ -110,7 +110,7 @@ Each action applies to the channel's topic. The runtime applies actions in list 
 - **`channel.stay(state)`:** Continue with no outgoing frames.
 </Aside>
 
-## 2. Start the channel system and wire the transport
+## 2. Start beryl and Mist
 
 Register the handler table. Pass the returned `beryl.Sockets` handle to the
 Mist transport. `beryl.child_spec` returns the same core handle type.
@@ -239,7 +239,7 @@ channel
   });
 ```
 
-## 4. Rejecting a join
+## 4. Reject a join
 
 Return `channel.reject` when a client cannot join a topic. Put join
 authentication, capacity checks, and payload validation in the `join` callback:
@@ -260,7 +260,7 @@ A rejected join does not create a channel instance and does not run
 `on_terminate`. The layer also rejects topics that have no handler. Thus, joins
 fail closed by default.
 
-## Alternative: raw app-side dispatch
+## Use raw dispatch instead
 
 The raw dispatch version passes one `init` and `update` pair to
 `beryl.child_spec`. Your code routes each event.

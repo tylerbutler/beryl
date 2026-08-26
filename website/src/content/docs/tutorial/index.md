@@ -1,6 +1,6 @@
 ---
 title: Build a Live Poll
-description: Learn Beryl by building a live poll from raw dispatch through channels, runtime boundaries, and supervision.
+description: Build a live poll with raw dispatch, channel handlers, typed messages, and supervised processes.
 ---
 
 This tutorial teaches Beryl by building one app: a live poll. If you want a
@@ -9,7 +9,7 @@ excerpts come from the runnable
 [`examples/live_poll/`](https://github.com/tylerbutler/beryl/tree/main/examples/live_poll)
 project. Beryl is pre-1.0. Expect the API to change.
 
-## Sequence
+## Chapters
 
 1. [The Elm architecture, without a DOM](/tutorial/the-elm-architecture-without-a-dom/)
 2. [One update function, many socket events](/tutorial/one-update-function-many-socket-events/)
@@ -38,7 +38,7 @@ Stop a checkpoint with Ctrl-C before you start the next one. The browser client
 loads Phoenix JavaScript 1.7.20 from unpkg, so the first page load needs
 internet access. The Gleam server and the Beryl runtime run on your machine.
 
-## Example layout
+## Files used by every chapter
 
 The five `step_0N.gleam` files are short entry modules. Each one picks a
 configuration and starts the shared modules:
@@ -57,7 +57,7 @@ configuration and starts the shared modules:
 Read each step module together with the shared files. A step file shows which
 behavior is on. It does not repeat the runtime, poll, or browser code.
 
-## Terminology
+## Terms used in this tutorial
 
 The tutorial uses these terms, and keeps them separate:
 
@@ -74,19 +74,19 @@ The tutorial uses these terms, and keeps them separate:
   callback's own topic.
 - The **runtime** has one router actor and one actor for each connected socket.
   The socket actor holds the model and runs effects. The router keeps the
-  socket index and fans out broadcasts.
+  socket index and sends broadcasts to subscribers.
 - A Gleam OTP `process.Subject` is a typed address for a process mailbox. A
   Beryl `socket.Sender` is narrower. It delivers typed `Info` only to the
   socket that owns it. After the socket disconnects, the runtime drops the
   message.
 
 Do not use `Subject`, `Sender`, `socket`, `topic`, `channel`, or `handler` in
-place of one another. Each one names a different boundary.
+place of one another. Each term names a different part of the system.
 
 Raw dispatch is Beryl's core, and the clearest way to learn it. For apps with
 many channels, or apps shaped like Phoenix, use `beryl/channel`.
 
-## Official comparison material
+## Related Gleam concepts
 
 - [Lustre](https://lustre.hexdocs.pm/index.html)
 - [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)
