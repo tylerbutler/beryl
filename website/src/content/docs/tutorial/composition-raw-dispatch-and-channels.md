@@ -1,36 +1,35 @@
 ---
 title: "Composition: Raw Dispatch and beryl/channel"
-description: Refactor a socket-wide update function into heterogeneous channel handlers with private state and typed messages.
+description: Move from one socket-wide update function to channel handlers that each keep their own state and message type.
 ---
 
-Elm and Lustre applications compose child logic by making the parent own the
-combined model and message space. The parent stores the child models and adds
-each child message type to a union. It maps child messages into that union and
-routes them to the correct update function.
+In Elm and Lustre, a parent component owns its children. The parent model
+stores each child model. The parent message type has one variant for each child
+message type. The parent update function looks at the message and sends it to
+the correct child.
 
-Raw Beryl supports the same pattern. It is type-safe and gives one update
-complete control across every topic on a socket. Its cost grows with the
-number of unrelated topic families. `beryl/channel` moves that recurring
-router into a public layer while keeping the same core runtime.
+Raw Beryl works the same way. One update function sees every topic on a socket.
+This is type-safe, and it gives you full control. But the work grows with each
+new topic family you add. `beryl/channel` does that routing for you. It runs on
+the same core runtime.
 
-## Raw composition is a parent router
+## Raw dispatch: your update function is the router
 
-Imagine a socket serving polls, document cursors, and account alerts. In raw
-dispatch, the app-defined `Model` must represent all three concerns. The
-app-defined `Message` must include each server-side message. The update function
-then routes:
+Imagine one socket that serves polls, document cursors, and account alerts. In
+raw dispatch, your `Model` must hold state for all three. Your `Message` type
+must include every server-side message for all three. Your update function must
+then route each input:
 
 - `Join` by topic pattern;
-- `Message` and `Binary` by topic and event;
-- `Closed` to the correct cleanup branch;
-- `Info` by the app's message union.
+- `Message` and `Binary` by topic and event name;
+- `Closed` to the correct cleanup code;
+- `Info` by your own message type.
 
-This is the server-side equivalent of a Lustre parent model and parent
-`Message` union. The application performs the mapping rather than a DOM event
-constructor. It works well when one topic family dominates or when behavior
-must coordinate across topics in one ordered effect list.
+This is the same job a Lustre parent does. Here, your code does the mapping
+instead of a DOM event. This works well when one topic family does most of the
+work. It also works well when one effect list must coordinate several topics.
 
-The live-poll example already shows the beginnings of that cost:
+The live-poll example already shows the start of this cost:
 
 ```gleam
 pub type Stage {
@@ -50,17 +49,17 @@ pub type Model {
 
 This excerpt comes from
 [`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
-Adding a second unrelated guide topic would widen `Message`, add state or routing
-metadata to `Model`, and add more branches to the same update.
+Add a second, unrelated `guide` topic and three things grow. `Message` gets
+more variants. `Model` gets more fields. The update function gets more
+branches.
 
-That is not a type-safety defect. It is the explicit price of making the app
-own the complete socket router.
+This is not a type-safety problem. It is the price you pay when your app owns
+the full socket router.
 
-## The channel layer supplies the router
+## The channel layer is the router
 
-`beryl/channel` is the recommended default for multi-channel and
-Phoenix-shaped applications. The example's fourth checkpoint starts it
-with:
+For apps with many topic families, or apps shaped like Phoenix Channels, use
+`beryl/channel`. Step 4 of the example starts it like this:
 
 ```gleam
 let assert Ok(#(sockets, spec)) =
@@ -72,11 +71,11 @@ let assert Ok(#(sockets, spec)) =
 
 This excerpt comes from
 [`step_04.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_04.gleam).
-`channel.child_spec` accepts the same core `beryl.Config` and returns the same
-kind of `beryl.Sockets` handle and supervised child specification as
-`beryl.child_spec`.
+`channel.child_spec` takes the same `beryl.Config` as `beryl.child_spec`. It
+returns the same two values: a `beryl.Sockets` handle and a child specification
+for your supervisor.
 
-The handler table contains two values:
+You give it a list of handlers. The example has two:
 
 ```gleam
 pub fn handlers(
@@ -88,13 +87,15 @@ pub fn handlers(
 }
 ```
 
-One handler owns `poll:*`. The other owns `guide`. They use different state
-and info types but still fit in `List(channel.Handler)`.
+One handler owns the `poll:*` topics. The other owns `guide`. Each one uses a
+different state type and a different info type. Both still fit in one
+`List(channel.Handler)`. The next sections show how.
 
-## A handler creates one channel instance
+## A handler makes one channel for each join
 
-The poll handler matches a topic pattern and receives a
-`channel.JoinContext`:
+A handler has two parts: a topic pattern and a join function. When a client
+joins a topic that matches the pattern, Beryl calls the join function with a
+`channel.JoinContext`. The join function returns the new channel.
 
 ```gleam
 pub type PollInfo {
@@ -140,46 +141,44 @@ fn poll_channel(
 
 This exact excerpt comes from
 [`channels.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/channels.gleam).
-The concepts now have channel-specific names:
+Read it from the top:
 
-- `channel.Handler` pairs a topic pattern with a join callback.
-- `channel.JoinContext` bundles the concrete topic, wildcard `params`, join
-  payload, connection data, and this join's typed sender.
-- `channel.accept` supplies the channel's initial private state.
-- `channel.Next` returns the next private state and ordered actions.
-- `channel.Action` describes work on this channel's own topic.
+- `channel.handler` pairs the pattern `poll:*` with the join function.
+- `context.params` holds the part of the topic that matched `*`. For
+  `poll:demo`, that is `["demo"]`.
+- `context.self` is a typed sender for this channel. The timer uses it to send
+  `ClosePoll` later.
+- `channel.accept(room)` accepts the join. The argument is the channel's
+  starting state. Here, the state is the room name.
+- Each `on_*` call adds a callback. A callback receives the current state and
+  returns the next state plus a list of actions.
+- `on_terminate` runs when the channel closes. Here, it tells the store that
+  this socket has left the room.
 
-The private state here is a `String` room name. The private info type is
-`PollInfo`, whose only variant is `ClosePoll`. Neither type joins a
-socket-wide union. `on_terminate` releases the room from the shared store.
-The store removes its poll after the last socket leaves.
+The state type is `String`. The info type is `PollInfo`. Neither type appears
+in a socket-wide `Model` or `Message`. They belong to this handler only.
 
-## Closure sealing makes heterogeneous handlers possible
+## How different handlers fit in one list
 
-`channel.Handler` is opaque and non-generic. Internally, `channel.handler`
-captures the typed join callback. `channel.handler` seals the state into the
-typed message, info, and terminate callbacks. Each `channel.next`
-seals the next state into the same callback set.
+`channel.Handler` has no type parameters. This is what lets the poll handler
+and the guide handler share one list.
 
-The layer does not coerce channel state or info messages through `Dynamic`.
-It uses closures to preserve each handler's concrete types. The socket-level
-router owns a sealed envelope for channel info delivery. It adds the topic and
-join generation to the envelope. The router checks this information before the
-owning closure opens the value.
+Here is how it works. `channel.handler` stores your join function inside a
+closure. When the join function runs, `channel.accept` and each `on_*` call
+store the state and callbacks inside more closures. Each `channel.next` does
+the same with the new state. The types stay concrete inside those closures.
+From the outside, every handler has the same type.
 
-This sealing is separate from the core runtime's generic dispatch. At the core
-level, `beryl.child_spec` captures the app's model and message types in
-monomorphic closures. At the channel layer, each handler separately seals its
-private state and info type. Client payloads remain `Dynamic` at the wire
-boundary in both APIs.
+Beryl does not turn your state or info messages into `Dynamic`. Only the
+client payload is `Dynamic`, because it comes from the wire. That is true for
+both APIs.
 
-The layer itself imports and calls Beryl's public core API. It supplies a raw
-`init` and `update` pair to `beryl.child_spec`. It does not bypass the runtime
-or restore the superseded type-erased channel registry described in ADR 0001.
+The channel layer is built on the public core API. It gives `beryl.child_spec`
+its own raw `init` and `update` pair. It does not go around the runtime.
 
-## The second handler proves heterogeneity
+## The second handler
 
-The guide handler does not share the poll handler's state or info type:
+The guide handler uses different types from the poll handler:
 
 ```gleam
 type GuideInfo {
@@ -206,18 +205,18 @@ fn guide_channel() -> channel.Handler {
 }
 ```
 
-This exact excerpt also comes from `channels.gleam`. The guide channel uses
-`Int` state and `GuideInfo`. The poll channel uses `String` state and
-`PollInfo`. The application composes both as handler values without defining
-`Model(PollState, GuideState)` or `Message(PollMessage | GuideMessage)`.
+This exact excerpt also comes from `channels.gleam`. The guide channel uses an
+`Int` for state and `GuideInfo` for info. The poll channel uses a `String` and
+`PollInfo`. You do not write `Model(PollState, GuideState)` or
+`Message(PollMessage | GuideMessage)`. You put the two handlers in a list.
 
-The browser joins `guide` after joining its poll topic. The guide's typed
-message produces a `tip` push, which the client stores as the status
-element's title.
+The browser joins `guide` after it joins its poll topic. The `Ready` message
+becomes a `tip` push. The client stores the tip as the `title` of its status
+element.
 
-## Actions are scoped and phase-typed
+## Actions belong to one channel
 
-Raw `socket.Effect` values name a topic:
+A raw effect names its topic:
 
 ```gleam
 socket.BroadcastFrom(topic, "poll_state", poll.json(state))
@@ -229,27 +228,22 @@ A channel action does not:
 channel.broadcast_from("poll_state", poll.json(state))
 ```
 
-The current channel supplies the topic. That makes most callback code shorter
-and prevents an action from accidentally targeting another topic.
+The channel already knows its topic. Your callback code is shorter, and an
+action cannot go to the wrong topic by mistake.
 
-The restriction is deliberate. Raw dispatch can coordinate across topics in
-one observable effect list. Channel callbacks return actions scoped to their
-own channel. Cross-topic publishing uses the external `beryl.Sockets` APIs or
-an application actor that owns the handle.
+This is a real limit. A raw update function can act on several topics in one
+effect list. A channel callback can act only on its own channel. To publish
+across topics, use the `beryl.Sockets` handle from outside the channel, or from
+an actor that owns the handle.
 
-Channel actions also carry a phase parameter. Active callbacks can reply,
-push, broadcast, track presence, or close. `on_terminate` returns closing
-actions, where replies, pushes, and presence tracking do not type-check.
-Broadcasts and presence cleanup remain available after the runtime removes
-the instance.
+Actions also depend on when they run. In `on_message` and `on_info`, a callback
+can reply, push, broadcast, track presence, or close. In `on_terminate`, the
+channel is closing. A reply, push, or presence track makes no sense there, and
+the compiler rejects them. Broadcast and presence cleanup still work.
 
-The example defines `on_terminate` to release its room from the shared store.
-Its timer-driven `on_info` and client-driven `on_message` return active
-actions. Termination returns only the closing actions allowed in that phase.
+## Actions become effects, in order
 
-## Ordered actions lower to ordered effects
-
-The voting branch returns:
+The vote branch returns:
 
 ```gleam
 Ok(state) ->
@@ -259,29 +253,27 @@ Ok(state) ->
   ])
 ```
 
-The layer lowers these actions one-to-one into core `socket.Effect` values in
-the same order. The same runtime interprets them, so the reply still precedes
-the broadcast.
+The channel layer turns each action into one core `socket.Effect`. It keeps the
+order. The same runtime runs them, so the reply goes out before the broadcast.
 
-Accepted joins can attach actions with `channel.with_actions`. The layer emits
-the join acknowledgment first, then those actions. A push cannot overtake its
-own join acknowledgment.
+A join can also return actions. Use `channel.with_actions` on an accepted join.
+Beryl sends the join acknowledgment first, then those actions. A push can never
+arrive before its own join acknowledgment.
 
-## Pick one API per endpoint
+## Pick one API for each endpoint
 
-Raw dispatch remains the clearest teaching example and the core programming
-model. Choose it for a single topic family, a compact protocol, or direct
-cross-topic coordination.
+Raw dispatch is the core programming model and the clearest one to learn from.
+Choose it when you have one topic family, a small protocol, or work that spans
+topics.
 
-Choose `beryl/channel` by default when a socket serves several topic
-namespaces, when porting Phoenix Channels, or when handlers should keep
-private state and info types. The two APIs share the wire codec, runtime,
-presence, PubSub, abuse controls, and transport. Pick one programming model
-for a socket endpoint. Do not embed hand-written raw update logic inside a
-channel system.
+Choose `beryl/channel` when a socket serves several topic namespaces, when you
+port Phoenix Channels, or when each handler should keep its own state and info
+types. Both APIs share the wire codec, runtime, presence, PubSub, abuse
+controls, and transport. Use one API for each socket endpoint. Do not mix raw
+update logic into a channel system.
 
-The final chapter follows both APIs below their callbacks into the shared runtime
-and explains where the Elm analogy stops helping.
+The next chapter follows both APIs down into the shared runtime. It shows where
+the Elm analogy stops.
 
 ## Sources and further reading
 
@@ -299,9 +291,9 @@ cd examples/live_poll && gleam run -m live_poll/step_04
 ```
 
 Open `http://localhost:8104` in two tabs, join `demo`, and vote. Replies and
-peer broadcasts behave as in step 03, but `beryl/channel` now owns routing and
-private channel state. Select **Close poll now** or wait 60 seconds. The
-browser also joins the heterogeneous `guide` handler. Inspect the status
-paragraph's `title` attribute to see its typed info message.
+peer broadcasts work as in step 03. Now `beryl/channel` owns the routing and
+the channel state. Select **Close poll now** or wait 60 seconds. The browser
+also joins the `guide` channel. Inspect the `title` attribute of the status
+paragraph to see its typed info message.
 
 Next: [Where the analogy ends](/tutorial/where-the-analogy-ends/).

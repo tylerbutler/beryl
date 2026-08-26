@@ -3,12 +3,11 @@ title: Build a Live Poll
 description: Learn Beryl by building a live poll from raw dispatch through channels, runtime boundaries, and supervision.
 ---
 
-This tutorial introduces Beryl through one live-poll application. If you want
-the short version first, start with the [Quick Start](/quick-start/). The prose
-and excerpts use the runnable
+This tutorial teaches Beryl by building one app: a live poll. If you want a
+shorter path, start with the [Quick Start](/quick-start/). All prose and code
+excerpts come from the runnable
 [`examples/live_poll/`](https://github.com/tylerbutler/beryl/tree/main/examples/live_poll)
-project as the source of truth. Beryl is pre-1.0, so treat the API as evolving
-rather than stable.
+project. Beryl is pre-1.0. Expect the API to change.
 
 ## Sequence
 
@@ -19,8 +18,8 @@ rather than stable.
 5. [Where the analogy ends](/tutorial/where-the-analogy-ends/)
 6. [Supervising Beryl](/tutorial/supervising-beryl/)
 
-Each chapter stands on its own, but the checkpoints build from read-only raw
-dispatch to a production-shaped channel system.
+You can read each chapter on its own. The checkpoints build on each other. They
+start with a read-only poll and end with a supervised channel system.
 
 ## Runnable checkpoints
 
@@ -35,54 +34,57 @@ Run each command from the repository root:
 | 5 | `cd examples/live_poll && gleam run -m live_poll/step_05` | `http://localhost:8105` |
 | 6 | `cd examples/live_poll && gleam run -m live_poll/step_05` | `http://localhost:8105` |
 
-Stop a checkpoint with Ctrl-C before starting the next one. The browser client
+Stop a checkpoint with Ctrl-C before you start the next one. The browser client
 loads Phoenix JavaScript 1.7.20 from unpkg, so the first page load needs
-internet access. The Gleam server and Beryl runtime stay local.
+internet access. The Gleam server and the Beryl runtime run on your machine.
 
 ## Example layout
 
-The five `step_0N.gleam` files are short entry modules, not complete
-applications. They select a configuration and assemble shared modules:
+The five `step_0N.gleam` files are short entry modules. Each one picks a
+configuration and starts the shared modules:
 
-- `raw.gleam` contains the raw `init`, `Model`, `Message`, `socket.Input` router,
-  and ordered `socket.Effect` lists used by steps 1 through 3.
-- `channels.gleam` contains the two heterogeneous `channel.Handler` values
-  used by steps 4 and 5.
-- `poll.gleam` defines the typed poll domain and decodes client `Dynamic`
-  payloads into domain commands.
-- `store.gleam` owns poll state in a Gleam OTP actor.
+- `raw.gleam` has the raw `init`, `Model`, `Message`, and `update` function
+  used by steps 1 through 3.
+- `channels.gleam` has the two `channel.Handler` values used by steps 4 and 5.
+- `poll.gleam` defines the poll types and turns client `Dynamic` payloads into
+  poll commands.
+- `store.gleam` keeps poll state in a Gleam OTP actor.
 - `timer.gleam` runs delayed callbacks from its own actor.
-- `server.gleam` starts the Beryl child specification and Mist transport,
-  serves the browser client, and optionally serves `/healthz`.
-- `test/live_poll_test.gleam` checks the poll domain and protocol decoder.
+- `server.gleam` starts the Beryl child specification and the Mist transport,
+  serves the browser client, and can serve `/healthz`.
+- `test/live_poll_test.gleam` tests the poll types and the protocol decoder.
 
-Read the shared files with the step module. A step file shows which behavior is
-enabled. It does not duplicate the runtime, domain, or browser code.
+Read each step module together with the shared files. A step file shows which
+behavior is on. It does not repeat the runtime, poll, or browser code.
 
 ## Terminology
 
-The tutorial keeps Beryl's terms distinct:
+The tutorial uses these terms, and keeps them separate:
 
-- A **socket** is one client connection known to the Beryl runtime.
-- A **topic** is a string subscription within a socket, such as `poll:demo`.
-- Raw dispatch uses an app-defined **Model**, `socket.Input`, `socket.Next`,
-  `socket.Effect`, and a socket-scoped `socket.Sender`.
-- A **channel** is one accepted topic instance managed by
-  `beryl/channel`. A **handler** matches a topic pattern and constructs that
-  channel's private **state**, callbacks, and typed info path.
-- A channel callback returns ordered **actions** scoped to its own topic.
-- The **runtime** uses one router actor and one actor for each connected
-  socket. The socket actor stores its model and interprets effects. The router
-  maintains the socket index and handles broadcast fan-out.
+- A **socket** is one client connection that the Beryl runtime knows about.
+- A **topic** is a string that a socket subscribes to, such as `poll:demo`.
+- **Raw dispatch** is the core API. Your app defines a **Model** and an update
+  function. The update function receives a `socket.Input`, and returns a
+  `socket.Next` with a list of `socket.Effect` values. A `socket.Sender` lets
+  other code send typed messages to one socket.
+- A **channel** is one accepted topic on one socket, managed by
+  `beryl/channel`. A **handler** matches a topic pattern and builds that
+  channel: its private **state**, its callbacks, and its typed info messages.
+- A channel callback returns a list of **actions**. Each action applies to the
+  callback's own topic.
+- The **runtime** has one router actor and one actor for each connected socket.
+  The socket actor holds the model and runs effects. The router keeps the
+  socket index and fans out broadcasts.
 - A Gleam OTP `process.Subject` is a typed address for a process mailbox. A
-  Beryl `socket.Sender` is narrower. It delivers typed `Info` only to its
-  owning socket update. The runtime ignores delivery after disconnect.
-Do not substitute `Subject`, `Sender`, `socket`, `topic`, `channel`, or
-`handler` for one another. They name different boundaries.
+  Beryl `socket.Sender` is narrower. It delivers typed `Info` only to the
+  socket that owns it. After the socket disconnects, the runtime drops the
+  message.
 
-Raw dispatch is the clearest teaching example and Beryl's core. For
-multi-channel and Phoenix-shaped applications, `beryl/channel` is the
-recommended default.
+Do not use `Subject`, `Sender`, `socket`, `topic`, `channel`, or `handler` in
+place of one another. Each one names a different boundary.
+
+Raw dispatch is Beryl's core, and the clearest way to learn it. For apps with
+many channels, or apps shaped like Phoenix, use `beryl/channel`.
 
 ## Official comparison material
 

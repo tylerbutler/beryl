@@ -3,14 +3,16 @@ title: One Update Function, Many Socket Events
 description: Handle joins, messages, binary frames, closes, replies, and ordered effects in one typed update function.
 ---
 
-A WebSocket connection handles more than application commands. Clients join
-topics, send text events, send binary frames, leave, disconnect, and expect
-replies correlated to earlier frames. Server processes also need a typed path
-back into the same socket logic. Raw Beryl puts all of those cases in one
-exhaustive `socket.Input` match.
+A WebSocket connection does more than carry app commands. A client joins
+topics. It sends text events and binary frames. It leaves, or it disconnects.
+It expects a reply to some of the frames it sent. Your server processes also
+need a typed way to send messages into the same socket logic. Raw Beryl puts
+all of these cases in one `socket.Input` type. Your update function matches
+every variant.
 
-The result resembles an Elm or OTP update loop, but the inputs include
-protocol capabilities and an intentionally untyped wire boundary.
+The result looks like an Elm or OTP update loop. The difference is in the
+inputs. They include protocol features, and the client payload arrives with
+no type.
 
 ## The five inputs
 
@@ -28,23 +30,24 @@ pub type Input(message) {
 
 This excerpt comes from
 [`packages/beryl/src/beryl/socket.gleam`](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam).
-Each variant marks a different boundary:
+Each variant comes from a different place:
 
-- `Join` asks the application to accept or reject one topic subscription.
+- `Join` asks your app to accept or reject one topic subscription.
 - `Message` delivers a client event on a topic the socket has joined.
-- `Binary` holds binary data associated with a joined topic.
-- `Closed` reports that a joined topic ended.
-- `Info` wraps the app-defined typed `message` sent through this socket's
+- `Binary` delivers binary data for a topic the socket has joined.
+- `Closed` tells you that a joined topic has ended.
+- `Info` wraps your own typed `message`. It arrives through this socket's
   `Sender`.
 
-A socket is the client connection. A topic is one subscription string inside
-that socket. Raw dispatch has no channel object. The application's `Model`
-and update function route topic strings themselves.
+A socket is one client connection. A topic is one subscription string inside
+that socket, such as `poll:demo`. Raw dispatch has no channel object. Your
+`Model` and update function route topic strings themselves.
 
-## A join ref is a capability
+## A join ref is a one-time token
 
-The `ref` in `Join(topic, payload, ref)` is an opaque `socket.JoinRef`. Return
-that exact value in `socket.AcceptJoin` or `socket.RejectJoin`. These exact
+`Join(topic, payload, ref)` gives you a `socket.JoinRef`. You cannot make one
+yourself, and you cannot read its contents. You can only pass it back. Return
+the same value in `socket.AcceptJoin` or `socket.RejectJoin`. These exact
 excerpts come from the join branch in `raw.gleam`:
 
 ```gleam
@@ -65,34 +68,34 @@ socket.Next(model, [
 
 See the complete branch in
 [`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
-`room_name` accepts only a non-empty `poll:<room>` topic. The code does not
-reconstruct a ref from the topic or from Phoenix wire fields.
+`room_name` accepts a topic only when it has the form `poll:<room>` and the
+room is not empty. The code never builds a ref from the topic string or from
+Phoenix wire fields.
 
-That restriction is part of the contract. A `JoinRef` encodes unique runtime
-identity and is valid only for its pending join. A delayed answer for an older
-attempt cannot accept a replacement join on the same topic.
+This limit is part of the contract. A `JoinRef` holds a unique runtime token.
+It is valid only for the one join that is waiting for an answer. Suppose a
+client joins a topic, then joins the same topic again. A late answer for the
+first join cannot accept the second one.
 
-Beryl join handling is fail-closed. If the update turn does not return either
-`AcceptJoin(ref, ...)` or `RejectJoin(ref, ...)` for the pending ref, the
-runtime rejects the join automatically. Forgetting a branch cannot leave a
-half-open subscription.
+Beryl also protects you when you forget a case. If your update turn does not
+return `AcceptJoin(ref, ...)` or `RejectJoin(ref, ...)` for the waiting ref,
+the runtime rejects the join. A missing branch cannot leave a join half open.
 
-## Reply refs have a different lifetime
+## Reply refs live longer
 
-`Message` includes `Option(socket.ReplyRef)`. A client frame may omit its
-message ref. In that case, the client does not expect a correlated reply.
-When a ref is present, the application can return `ReplyOk` or `ReplyError`.
+`Message` includes `Option(socket.ReplyRef)`. A client can send a frame with no
+message ref. Then the client does not expect a reply. When the ref is present,
+your app can return `ReplyOk` or `ReplyError`.
 
-`ReplyRef` differs from `JoinRef`:
+A `ReplyRef` is not the same as a `JoinRef`:
 
-- it correlates a client message rather than deciding a join;
-- it may be stored and answered in a later update turn;
-- it is single-use;
-- it stays valid only while the topic instance that received the message
-  remains open.
+- it matches a reply to a client message; it does not decide a join;
+- you can store it in your model and answer it in a later update turn;
+- you can use it only one time;
+- it stays valid only while the topic that received the message stays open.
 
-The example uses `socket.reply_ok`, which turns `None` into an empty effect
-list:
+The example uses `socket.reply_ok`. When the ref is `None`, this helper returns
+an empty effect list:
 
 ```gleam
 poll.GetState ->
@@ -102,21 +105,20 @@ poll.GetState ->
   )
 ```
 
-That excerpt comes from `handle_command` in `raw.gleam`. For error replies,
-the example uses a small local helper that emits `ReplyError` only for
+This excerpt comes from `handle_command` in `raw.gleam`. For error replies, the
+example has a small local helper. It returns `ReplyError` only when the ref is
 `Some(ref)`.
 
-Treat both ref types as protocol capabilities. Do not compare or synthesize
-their underlying Phoenix fields. Pass the opaque value back to Beryl while
-its operation remains valid.
+Treat both ref types as tokens. Do not compare them. Do not build them from
+Phoenix fields. Pass the value back to Beryl while it is still valid.
 
-## `Dynamic` stops at the wire boundary
+## `Dynamic` stops at the wire
 
-Client JSON enters `Join` and `Message` as `Dynamic`. That is intentional:
-the remote client chooses the payload, so Gleam cannot assign it an
-application type before validation.
+Client JSON arrives in `Join` and `Message` as `Dynamic`. `Dynamic` is Gleam's
+type for data of unknown shape. This is on purpose. The remote client chooses
+the payload, so Gleam cannot give it an app type before your code checks it.
 
-The example decodes at the domain boundary in
+The example decodes the payload in
 [`poll.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/poll.gleam):
 
 ```gleam
@@ -140,20 +142,19 @@ pub fn command(event: String, payload: Dynamic) -> Command {
 }
 ```
 
-After this function, `handle_command` matches `poll.GetState`,
-`poll.Vote(choice)`, `poll.Close`, or `poll.Unsupported`. Invalid JSON shapes
-do not leak into the store actor. The wire payload remains `Dynamic`. The
-domain command does not.
+After this function, `handle_command` matches on `poll.GetState`,
+`poll.Vote(choice)`, `poll.Close`, or `poll.Unsupported`. Bad JSON never
+reaches the store actor. The wire payload is `Dynamic`. The domain command is
+not.
 
-This boundary does not imply that Beryl erases the application's model or
-typed server messages. The core runtime is generic over `model` and `message`.
-`beryl.child_spec` captures concrete typed closures while exposing a
-non-generic transport handle. Beryl limits `Dynamic` to data that arrived from
-the wire.
+This does not mean Beryl loses your types. The core runtime is generic over
+your `model` and `message` types. `beryl.child_spec` keeps your typed
+functions inside closures. The transport handle it returns has no type
+parameters. Only data from the wire is `Dynamic`.
 
-## Ordered effects produce ordered frames
+## Effects run in list order
 
-The voting branch shows why an update returns a list:
+The vote branch shows why an update returns a list:
 
 ```gleam
 Ok(state) ->
@@ -166,31 +167,31 @@ Ok(state) ->
   )
 ```
 
-This exact excerpt appears in `raw.gleam`. When `reply` is present, Beryl
-interprets the list as:
+This exact excerpt comes from `raw.gleam`. When `reply` is present, Beryl
+runs the list as:
 
 1. send `ReplyOk` to the browser that voted;
-2. broadcast `poll_state` to every other socket subscribed to the topic.
+2. broadcast `poll_state` to every other socket on the topic.
 
-The socket actor applies effects strictly in list order and writes the
-frames, so list order is wire order for that socket. This is Beryl's
-contract. The comparison does not assume an ordering contract for Lustre
-effects.
+The socket actor runs the effects in list order and writes the frames in the
+same order. For one socket, list order is wire order. This is a Beryl
+guarantee. Lustre makes no such promise for its effects.
 
-Join acceptance uses the same rule. If one update returns
-`[AcceptJoin(ref, None), Push(topic, "ready", payload)]`, the acknowledgment
-reaches the wire before the push. The runtime would otherwise drop a push to
-an unjoined topic.
+The same rule applies to a join. If one update returns
+`[AcceptJoin(ref, None), Push(topic, "ready", payload)]`, the join
+acknowledgment reaches the wire before the push. This matters. The runtime
+drops a push to a topic that is not joined yet.
 
-The guarantee also applies to presence effects. The runtime can pause the rest
-of one socket's list while the separate presence actor applies a mutation.
-Other sockets continue. The waiting socket resumes its remaining effects in
-order.
+The rule also applies to presence effects. A separate presence actor applies
+presence changes. The runtime can pause the rest of one socket's list while
+that actor works. Other sockets keep going. When the presence actor is done,
+the paused socket runs its remaining effects in order.
 
-## `Binary`, `Closed`, and unmatched messages still need branches
+## `Binary`, `Closed`, and unknown messages still need a branch
 
-The example does not use binary frames, but its update remains exhaustive.
-This excerpt also releases the shared poll after the room's last socket leaves:
+The example does not use binary frames. Its update function still matches
+every variant. The `Closed` branch also releases the shared poll after the last
+socket leaves the room:
 
 ```gleam
 socket.Closed(topic, _reason) -> {
@@ -203,19 +204,19 @@ socket.Closed(topic, _reason) -> {
 socket.Binary(_, _) -> socket.Next(model, [])
 ```
 
-`Closed` runs on every topic exit path, including a client leave, socket
-disconnect, server kick, heartbeat timeout, or shutdown. Raw applications
-must remove per-topic state there. The example's store reference-counts
-joined sockets and deletes an empty room, so client-chosen room names do not
-accumulate forever. The runtime drops frames pushed to the closing topic from
-the `Closed` turn. Broadcasts can still reach other subscribers.
+`Closed` runs each time a topic ends, for any reason. The client can leave.
+The socket can disconnect. The server can kick the client. A heartbeat can
+time out. The server can shut down. In raw dispatch, this is where you remove
+per-topic state. The example's store counts the sockets in each room. When the
+count reaches zero, it deletes the room. Client-chosen room names do not pile
+up forever. In the `Closed` turn, the runtime drops pushes to the closing
+topic. Broadcasts still reach the other subscribers.
 
-Ignoring `Binary` is an explicit application choice. A codec with a binary
-decoder can classify binary protocol messages. Otherwise, Beryl can deliver
-raw binary data for joined topics. An exhaustive branch documents what this
-poll supports.
+The example ignores `Binary` on purpose. A codec with a binary decoder can
+turn binary frames into protocol messages. Without one, Beryl delivers the raw
+bytes for joined topics. The empty branch documents what this poll supports.
 
-The `Message` branch also checks that the model recorded the topic:
+The `Message` branch also checks that the model knows the topic:
 
 ```gleam
 case set.contains(model.topics, topic), room_name(topic) {
@@ -225,23 +226,23 @@ case set.contains(model.topics, topic), room_name(topic) {
 }
 ```
 
-The runtime already routes client messages only to joined topics. The model
-check keeps the application's own routing state explicit and makes cleanup in
-`Closed` visible.
+The runtime already sends client messages only for joined topics. The model
+check makes the app's own routing state visible. It also shows why `Closed`
+must clean up.
 
-## Two tabs expose the semantics
+## Two tabs show the difference
 
-One tab can hide the difference between reply and broadcast. With two tabs in
-the same room, the origin receives its correlated reply while the peer
-receives `BroadcastFrom`. Both render the same updated poll state, but they
-arrive through distinct Phoenix mechanisms.
+With one tab, a reply and a broadcast look the same. With two tabs in the same
+room, they do not. The tab that voted gets its reply. The other tab gets
+`BroadcastFrom`. Both tabs show the same new poll state. They receive it
+through two different Phoenix paths.
 
-That split is useful when designing larger protocols. Replies complete a
-specific client request. Pushes are server-initiated frames to one socket.
-Broadcasts fan out by topic. A topic is the routing key. It is not a socket,
-channel, `Subject`, or `Sender`.
+This split helps when you design a larger protocol. A reply answers one client
+request. A push is a server-sent frame to one socket. A broadcast goes to every
+socket on a topic. The topic is the routing key. It is not a socket, a
+channel, a `Subject`, or a `Sender`.
 
-The next chapter adds `Info(message)`, the remaining input variant, and compares its
+The next chapter adds `Info(message)`, the last input variant. It compares the
 socket-scoped `Sender` with a general OTP `Subject`.
 
 ## Sources and further reading
@@ -259,7 +260,7 @@ cd examples/live_poll && gleam run -m live_poll/step_02
 
 Open `http://localhost:8102` in two tabs. Join `demo` in both, then vote in
 one tab. The voting tab updates from its `ReplyOk`. The other tab updates
-from `BroadcastFrom`. Alternate votes between tabs and confirm both totals
-stay in sync. **Close poll now** remains unavailable in this checkpoint.
+from `BroadcastFrom`. Vote in each tab in turn and confirm both totals stay
+the same. **Close poll now** is not available in this checkpoint.
 
 Next: [Typed messages from the rest of your Gleam system](/tutorial/typed-messages-from-your-gleam-system/).
