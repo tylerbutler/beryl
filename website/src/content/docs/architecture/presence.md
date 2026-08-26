@@ -2,25 +2,25 @@
 title: Presence
 ---
 
-## Model
+## How presence stores changes
 
-Beryl presence is an OTP actor that wraps
+beryl presence uses an OTP actor and
 [`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence).
-It uses an **add-wins, observed-remove CRDT**. Each cluster node keeps one CRDT
-replica. Replicas can merge in any order without coordination. Concurrent joins
-and leaves converge to the same result.
+an **add-wins, observed-remove conflict-free replicated data type (CRDT)**.
+Each cluster node keeps one copy. Nodes can merge their copies in any order.
+Joins and leaves that happen at the same time produce the same final result.
 
 Each tracked entry has a **replica name**, set by the `replica` argument to
 `default_config/1`. Use a unique name for each cluster node. The CRDT uses this
 name to identify remote state.
 
-## How Beryl apps use it
+## Add presence to an app
 
 The application builds the presence actor with `presence.child_spec`. Add the
 child to the supervision tree. Then pass its handle to `beryl.Config` with
 `with_presence_handle`.
 
-App-side dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
+Raw dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
 `BroadcastPresence` effects. The runtime sends mutations to the presence actor. The actor acknowledges a
 mutation after it updates the CRDT and ETS read model. Until then, the runtime
 pauses later effects and inputs for that socket. Other sockets, broadcasts,
@@ -38,7 +38,7 @@ application actors and other out-of-band workflows. Public `list`,
 `get_by_key`, and `count` calls read ETS directly and retain immediate
 read-after-write behavior.
 
-## API surface
+## Presence functions
 
 ### Starting presence
 
@@ -86,7 +86,7 @@ PubSub copies presence state between nodes.
 | `diff_joins(diff, topic)` | Get joined entries for a topic |
 | `diff_leaves(diff, topic)` | Get departed entries for a topic |
 
-## Replication
+## Sync between nodes
 
 When you configure `with_pubsub`, the presence actor runs a broadcast loop at
 the configured interval, which defaults to 1500 ms:
@@ -107,7 +107,7 @@ Automated tests currently exercise replication with multiple presence actors
 on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
 tracks integration coverage across separate distributed Erlang nodes.
 
-## Diagram
+## Request and sync flow
 
 ```mermaid
 sequenceDiagram
@@ -131,7 +131,7 @@ sequenceDiagram
   Pres-->>App: on_diff(diff)
 ```
 
-## Where this lives
+## Source files
 
 | File | Role |
 |---|---|

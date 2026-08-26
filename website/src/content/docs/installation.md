@@ -85,7 +85,7 @@ data did not match any variant of untagged enum Requirement
 If you see `data did not match any variant of untagged enum Requirement`,
 upgrade Gleam.
 
-## Choosing a ref
+## Pin a Git ref
 
 The example uses `main`, which matches these docs. The branch can change without
 warning. Check [GitHub Releases](https://github.com/tylerbutler/beryl/releases).
@@ -94,7 +94,7 @@ When one tag contains all required packages, replace `main` with that tag.
 Gleam resolves Git dependencies at the specified ref. Use the same ref for
 `beryl` and its transport package. Do not mix versions.
 
-## Dependencies
+## Packages installed with beryl
 
 beryl brings in these Gleam packages automatically:
 

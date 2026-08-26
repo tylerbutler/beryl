@@ -1,6 +1,6 @@
 ---
 title: "beryl"
-description: "Beryl - Type-safe real-time communication"
+description: "beryl - Type-safe real-time communication"
 ---
 
 <!--
@@ -9,7 +9,7 @@ description: "Beryl - Type-safe real-time communication"
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
-Beryl - Type-safe real-time communication
+beryl - Type-safe real-time communication
 
  A standalone Gleam library for building real-time applications on the BEAM.
  Provides app-side WebSocket dispatch, distributed presence tracking,
@@ -74,7 +74,7 @@ Beryl - Type-safe real-time communication
 Configuration for an app-side socket runtime.
 
  This type is opaque. Construct it with `config` and adjust it with the
- `with_*` functions. Beryl can then add configuration options without a
+ `with_*` functions. beryl can then add configuration options without a
  breaking change.
 
 ```gleam
@@ -127,10 +127,10 @@ A per-topic-pattern rate limit used a pattern string that is not a valid
 
 ### `LoggingConfig`
 
-Logging configuration for Beryl diagnostics.
+Logging configuration for beryl diagnostics.
 
  This type is opaque. Construct it with `logging_config` and adjust it with
- the `with_*` functions. Beryl can then add logging options without a
+ the `with_*` functions. beryl can then add logging options without a
  breaking change.
 
 ```gleam
@@ -139,7 +139,7 @@ pub type LoggingConfig
 
 ### `LogLevel`
 
-Logging verbosity for Beryl's internal loggers.
+Logging verbosity for beryl's internal loggers.
 
  The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
  prelude's `Result` `Error` constructor when imported unqualified.
@@ -158,7 +158,7 @@ pub type LogLevel {
 A runtime system handle.
 
  `child_spec` returns this opaque handle with the supervised subtree. Pass
- it to broadcast, group, and transport functions. Beryl hides its internals
+ it to broadcast, group, and transport functions. beryl hides its internals
  so they can change without breaking application code.
 
  The handle is non-generic. An app-side dispatch system is
@@ -172,7 +172,7 @@ pub type Sockets
 
 ### `StopError`
 
-Errors when stopping a Beryl system with [`stop`](#stop).
+Errors when stopping a beryl system with [`stop`](#stop).
 
 ```gleam
 pub type StopError {
@@ -321,7 +321,7 @@ pub fn child_spec(
 
 Build a configuration with sensible defaults.
 
- A `codec` is required. Beryl no longer provides an implicit Phoenix
+ A `codec` is required. beryl no longer provides an implicit Phoenix
  default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
  or your own `Codec` for a custom framing.
 
@@ -346,7 +346,7 @@ pub fn logging_config(
 
 ### `stop`
 
-Stop a Beryl system.
+Stop a beryl system.
 
  This function drains and stops the supervised runtime. It delivers
  `Closed` to every joined topic before it closes each transport connection.
@@ -414,7 +414,7 @@ Configure a per-IP connection-attempt rate limit.
  `per_second` as the burst capacity.
 
  Unlike per-connection frame and message buckets, this allowance is keyed by
- the real socket peer IP and lives in Beryl's supervised connection limiter.
+ the real socket peer IP and lives in beryl's supervised connection limiter.
  Disconnecting or restarting the app runtime therefore does not refresh it.
  Idle IP buckets are removed once their allowance has fully refilled.
 
@@ -476,7 +476,7 @@ pub fn with_join_rate(
 
 ### `with_logging`
 
-Configure Beryl's internal logging.
+Configure beryl's internal logging.
 
 ```gleam
 pub fn with_logging(
@@ -538,11 +538,11 @@ Configure the maximum number of concurrent connections allowed per client
 
  The limit is enforced on the **real socket peer IP** as reported by the
  transport (for the Mist transport, the address of the TCP connection).
- Beryl does **not** trust or parse forwarded headers such as
+ beryl does **not** trust or parse forwarded headers such as
  `X-Forwarded-For`. A client can set these headers and spoof its address to
  bypass this limit.
 
- If Beryl runs behind a trusted reverse proxy or load balancer, every
+ If beryl runs behind a trusted reverse proxy or load balancer, every
  connection shares the proxy's address, so a per-IP limit throttles all
  clients as a single IP. In that topology you must resolve the real client
  IP yourself at the proxy layer (for example, by enforcing limits there). A
@@ -575,8 +575,8 @@ pub fn with_max_event_length(
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- Beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
- buffers and assembles a complete frame first. Beryl then measures it and
+ beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
+ buffers and assembles a complete frame first. beryl then measures it and
  closes the connection if it exceeds `max_bytes`. This bounds
  per-message processing cost (decode, routing, rate-limit accounting), but
  it does **not** by itself bound transport memory. A hostile client can
@@ -586,8 +586,8 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
  node memory.
 
  For a true transport memory bound you **must** place an edge proxy or load
- balancer in front of Beryl and configure a WebSocket frame-size limit
- there (and a matching request/body size limit). Beryl's connection,
+ balancer in front of beryl and configure a WebSocket frame-size limit
+ there (and a matching request/body size limit). beryl's connection,
  frame-rate, and message-rate limits all run after frame assembly and do not
  mitigate this vector. See the README's "Security" section.
 

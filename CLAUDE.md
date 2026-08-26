@@ -181,6 +181,10 @@ installed in CI via `.github/actions/mise`.
 - Follow `gleam format` output
 - Keep public API minimal
 - Document public functions with `///` comments
+- Write the product name as `beryl` in prose, including at sentence starts and
+  in headings; preserve exact code identifiers and quoted text
+- Use sentence case for website page titles, section headings, callout titles,
+  and sidebar labels
 - beryl's internal modules (`connection_limit`, `internal`, `log`,
   `rate_limit`, `runtime`, `telemetry`) must not be imported by other
   packages; transports use the `beryl/transport` SPI

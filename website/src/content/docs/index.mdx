@@ -23,7 +23,7 @@ hero:
 
 import { Aside } from '@astrojs/starlight/components';
 
-## Get started
+## Build your first beryl app
 
 <style lang="css">{`
   /* Contained surface module so the ordered path reads as a distinct block,
@@ -109,7 +109,7 @@ import { Aside } from '@astrojs/starlight/components';
 	</ol>
 </div>
 
-## Features
+## What beryl provides
 
 <style lang="css">{`
   /* Deliberately splash-only: this block ships inline with this page, so the
@@ -225,23 +225,23 @@ import { Aside } from '@astrojs/starlight/components';
 
 <div class="beryl-features">
 	<article class="beryl-feature beryl-feature--lead">
-		<h3>Channels, or your own router</h3>
+		<h3>Choose handlers or one update function</h3>
 		<p>Register one handler for each topic pattern. <code>beryl/channel</code> routes each event to the correct channel. Each channel keeps private, typed state. You can also route all events in one typed <code>update</code> function.</p>
 		<a class="beryl-feature__link" href="/choosing-an-api/">Choose an API →</a>
 	</article>
 	<article class="beryl-feature">
-		<h3>Presence tracking</h3>
-		<p>Track connected users with a CRDT. The add-wins observed-remove set resolves concurrent joins and leaves across nodes.</p>
+		<h3>Track who is connected</h3>
+		<p>Track connected users across Erlang nodes. A conflict-free replicated data type (CRDT) resolves joins and leaves that happen at the same time.</p>
 		<a class="beryl-feature__link" href="/guides/presence/">Presence guide →</a>
 	</article>
 	<article class="beryl-feature">
-		<h3>PubSub on OTP</h3>
-		<p>Erlang <code>pg</code> process groups provide distributed publish and subscribe. Connected cluster nodes need no extra message broker.</p>
+		<h3>Broadcast across Erlang nodes</h3>
+		<p>Send events between connected Erlang nodes through <code>pg</code> process groups. You do not need a separate message broker.</p>
 		<a class="beryl-feature__link" href="/guides/pubsub/">PubSub guide →</a>
 	</article>
 	<article class="beryl-feature">
-		<h3>Phoenix-compatible wire</h3>
-		<p>Configure beryl's Phoenix codec to use Phoenix client libraries and JSON array framing. Mist and Ewe provide WebSocket transports. Phoenix users can <a href="/guides/coming-from-phoenix/">compare the concepts</a>.</p>
+		<h3>Use Phoenix clients</h3>
+		<p>Use beryl's Phoenix codec with Phoenix client libraries. Mist and Ewe connect beryl to a WebSocket server. Phoenix users can <a href="/guides/coming-from-phoenix/">compare the concepts</a>.</p>
 		<a class="beryl-feature__link" href="/guides/websocket/">WebSocket guide →</a>
 	</article>
 </div>

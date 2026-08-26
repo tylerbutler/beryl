@@ -1,12 +1,12 @@
 ---
 title: Reference
-description: Module map, wire protocol, broadcast cheatsheet, and client compatibility for beryl.
+description: Find beryl modules, message-sending APIs, Phoenix frame formats, and compatible clients.
 ---
 
 :::note[Pre-1.0]
 beryl is not yet version 1.0. Minor releases can change the API. The library is
 not ready for production. See the
-[stability policy](#pre-10-stability-policy).
+[stability policy](#versioning-before-10).
 :::
 
 The site generates the function-level API reference from Gleam docs metadata.
@@ -15,8 +15,8 @@ Install beryl packages from GitHub. They are not on Hex:
 **[beryl](/reference/api/beryl/)** ·
 **[beryl/channel](/reference/api/beryl-channel/)**
 
-This page contains a module map, broadcast table, Phoenix wire protocol
-reference, and client compatibility notes.
+Use this page to find a module, choose how to send a message, inspect Phoenix
+frames, or select a compatible client.
 
 ---
 
@@ -24,28 +24,28 @@ reference, and client compatibility notes.
 
 | Module | What it does | When to use it |
 |---|---|---|
-| `beryl` | Top-level app-side dispatch lifecycle, config builders, and broadcast helpers | Building/stopping a Beryl socket system |
-| `beryl/channel` | Handler validation, supervised startup, typed handlers, callbacks, senders, actions, and lifecycle results | Recommended programming layer for multi-channel apps |
+| `beryl` | Start and stop raw-dispatch socket systems, configure them, and broadcast events | Building or stopping a beryl socket system |
+| `beryl/channel` | Validate handlers, start them under a supervisor, and define typed callbacks, senders, and actions | Recommended programming model for apps with several topic features |
 | `beryl/socket` | `Input`, `Next`, `Effect`, `ConnectInfo`, and `Sender` types | Writing your app's `init` and `update` functions |
 | `beryl/bridge` | Forward an external OTP actor's message stream into `socket.Info(...)` | Bridging domain actors to one socket without hand-rolled forwarders |
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
-| `beryl/pubsub` | Distributed PubSub backed by Erlang `pg`, with typed subscribers and topic joins/leaves | Multi-node fan-out, cluster broadcasts, custom background consumers |
+| `beryl/pubsub` | Distributed PubSub backed by Erlang `pg`, with typed subscribers and topic joins/leaves | Broadcasts across nodes and custom background subscribers |
 | `beryl/presence` | OTP actor wrapping the presence CRDT, plus opaque `Diff` accessors | Tracking who is online |
 | `beryl/presence/wire` | Phoenix-compatible presence state and diff encoders | Sending presence payloads to Phoenix clients |
 | `beryl/group` | Named sets of topics for bulk broadcast | Rooms with multiple sub-topics |
-| `beryl/error` | Shared opaque error helpers | Handling Beryl-owned startup errors |
+| `beryl/error` | Shared opaque error helpers | Handling beryl-owned startup errors |
 | `beryl/stats` | Local runtime snapshots | Reporting connected sockets, memberships, and active topics |
 | `beryl/wire` | Phoenix-compatible codec and Dynamic→JSON helpers | Phoenix clients, payload relays, protocol debugging |
 | `beryl/wire/codec` | Pluggable codec contract for text and binary frames | Custom wire formats |
-| `beryl/transport` | Transport SPI: socket lifecycle, inbound routing, and edge rate limiting | Writing a custom transport package |
+| `beryl/transport` | Public interface for socket setup, incoming messages, and rate limiting | Writing a custom transport package |
 | `beryl/transport/origin` | Origin and Phoenix version checks | Validating WebSocket upgrades |
-| `beryl/transport/server` | Server-agnostic connection and frame pipeline | Implementing a WebSocket transport |
+| `beryl/transport/server` | Shared connection and frame handling for any WebSocket server | Implementing a WebSocket transport |
 | `beryl_mist` | Mist WebSocket upgrade and request handler integration (separate `beryl_mist` package) | Wiring beryl to a Mist HTTP server |
 | `beryl_ewe` | Ewe WebSocket transport integration (separate `beryl_ewe` package) | Wiring beryl to an Ewe HTTP server |
 
 ---
 
-## Broadcast / push / send cheatsheet
+## Choose how to send a message
 
 | Goal | API | Notes |
 |---|---|---|
@@ -66,7 +66,7 @@ the same core effects.
 
 ---
 
-## Phoenix wire protocol reference
+## Phoenix frame format
 
 With `wire.phoenix_codec()`, beryl uses the Phoenix Channels JSON array format.
 Each frame has five elements:
@@ -94,7 +94,7 @@ Each frame has five elements:
 | `phx_close` | server → client | Channel closed by server |
 | `heartbeat` | client → server | Keep-alive ping (topic `"phoenix"`) |
 
-### Reply shape (`phx_reply`)
+### Reply frame (`phx_reply`)
 
 The server sends this frame in response to a client message. `socket.ReplyOk`
 and `socket.ReplyError` use `phx_reply` with the original ref.
@@ -109,7 +109,7 @@ A join reply uses the `join_ref` as both `join_ref` and `ref`:
 ["1", "1", "room:lobby", "phx_reply", {"status": "ok", "response": {}}]
 ```
 
-### Heartbeat shape
+### Heartbeat frames
 
 The client sends heartbeats on the `"phoenix"` topic; beryl replies immediately:
 
@@ -121,7 +121,7 @@ The client sends heartbeats on the `"phoenix"` topic; beryl replies immediately:
 [null, "ref", "phoenix", "phx_reply", {"status": "ok", "response": {}}]
 ```
 
-### Presence diff shape
+### Presence update
 
 The payload uses the Phoenix presence diff format. The `joins` and `leaves`
 objects use the presence key, usually the user ID. Each value has a `metas`
@@ -162,7 +162,7 @@ handler at `"/socket/websocket"`. See the
 
 ---
 
-## Pre-1.0 stability policy
+## Versioning before 1.0
 
 beryl follows [Semantic Versioning](https://semver.org/) but is **not yet 1.0**. Until the 1.0 release:
 

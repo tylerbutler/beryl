@@ -1,22 +1,22 @@
 ---
-title: Build a Live Poll
-description: Learn Beryl by building a live poll from raw dispatch through channels, runtime boundaries, and supervision.
+title: Build a live poll
+description: Build a live poll with raw dispatch, channel handlers, typed messages, and supervised processes.
 ---
 
-This tutorial teaches Beryl by building one app: a live poll. If you want a
+This tutorial teaches beryl by building one app: a live poll. If you want a
 shorter path, start with the [Quick Start](/quick-start/). All prose and code
 excerpts come from the runnable
 [`examples/live_poll/`](https://github.com/tylerbutler/beryl/tree/main/examples/live_poll)
-project. Beryl is pre-1.0. Expect the API to change.
+project. beryl is pre-1.0. Expect the API to change.
 
-## Sequence
+## Chapters
 
 1. [The Elm architecture, without a DOM](/tutorial/the-elm-architecture-without-a-dom/)
 2. [One update function, many socket events](/tutorial/one-update-function-many-socket-events/)
 3. [Typed messages from the rest of your Gleam system](/tutorial/typed-messages-from-your-gleam-system/)
 4. [Composition: raw dispatch and `beryl/channel`](/tutorial/composition-raw-dispatch-and-channels/)
 5. [Where the analogy ends](/tutorial/where-the-analogy-ends/)
-6. [Supervising Beryl](/tutorial/supervising-beryl/)
+6. [Supervising beryl](/tutorial/supervising-beryl/)
 
 You can read each chapter on its own. The checkpoints build on each other. They
 start with a read-only poll and end with a supervised channel system.
@@ -36,9 +36,9 @@ Run each command from the repository root:
 
 Stop a checkpoint with Ctrl-C before you start the next one. The browser client
 loads Phoenix JavaScript 1.7.20 from unpkg, so the first page load needs
-internet access. The Gleam server and the Beryl runtime run on your machine.
+internet access. The Gleam server and the beryl runtime run on your machine.
 
-## Example layout
+## Files used by every chapter
 
 The five `step_0N.gleam` files are short entry modules. Each one picks a
 configuration and starts the shared modules:
@@ -50,18 +50,18 @@ configuration and starts the shared modules:
   poll commands.
 - `store.gleam` keeps poll state in a Gleam OTP actor.
 - `timer.gleam` runs delayed callbacks from its own actor.
-- `server.gleam` starts the Beryl child specification and the Mist transport,
+- `server.gleam` starts the beryl child specification and the Mist transport,
   serves the browser client, and can serve `/healthz`.
 - `test/live_poll_test.gleam` tests the poll types and the protocol decoder.
 
 Read each step module together with the shared files. A step file shows which
 behavior is on. It does not repeat the runtime, poll, or browser code.
 
-## Terminology
+## Terms used in this tutorial
 
 The tutorial uses these terms, and keeps them separate:
 
-- A **socket** is one client connection that the Beryl runtime knows about.
+- A **socket** is one client connection that the beryl runtime knows about.
 - A **topic** is a string that a socket subscribes to, such as `poll:demo`.
 - **Raw dispatch** is the core API. Your app defines a **Model** and an update
   function. The update function receives a `socket.Input`, and returns a
@@ -74,19 +74,19 @@ The tutorial uses these terms, and keeps them separate:
   callback's own topic.
 - The **runtime** has one router actor and one actor for each connected socket.
   The socket actor holds the model and runs effects. The router keeps the
-  socket index and fans out broadcasts.
+  socket index and sends broadcasts to subscribers.
 - A Gleam OTP `process.Subject` is a typed address for a process mailbox. A
-  Beryl `socket.Sender` is narrower. It delivers typed `Info` only to the
+  beryl `socket.Sender` is narrower. It delivers typed `Info` only to the
   socket that owns it. After the socket disconnects, the runtime drops the
   message.
 
 Do not use `Subject`, `Sender`, `socket`, `topic`, `channel`, or `handler` in
-place of one another. Each one names a different boundary.
+place of one another. Each term names a different part of the system.
 
-Raw dispatch is Beryl's core, and the clearest way to learn it. For apps with
+Raw dispatch is beryl's core, and the clearest way to learn it. For apps with
 many channels, or apps shaped like Phoenix, use `beryl/channel`.
 
-## Official comparison material
+## Related Gleam concepts
 
 - [Lustre](https://lustre.hexdocs.pm/index.html)
 - [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)

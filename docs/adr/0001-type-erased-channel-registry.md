@@ -5,11 +5,11 @@
 Superseded (2026-07-21) by [ADR 0002](0002-app-side-dispatch.md). ADR 0002
 replaced the channel-module registry with app-side dispatch. We retain this
 document to explain why we chose type erasure at the time. It does not describe
-Beryl's current public API.
+beryl's current public API.
 
 ## Context
 
-Beryl uses the registered channel module as its unit of composition. The
+beryl uses the registered channel module as its unit of composition. The
 library dispatches events, as Phoenix does. Applications register channels
 with distinct `assigns` and `info` types. The following problem results from
 that design.
@@ -34,7 +34,7 @@ heterogeneity because it has no existential types or type classes.
    and crosses component boundaries with `Dynamic` plus decoders
    ([`on_attribute_change`](https://github.com/lustre-labs/lustre/blob/v5.7.1/src/lustre/component.gleam#L118-L138)).
 
-2. **App-side dispatch (fully Elm/Lustre).** Beryl delivers wire events to
+2. **App-side dispatch (fully Elm/Lustre).** beryl delivers wire events to
    one app-written update function. That function routes topics. This option
    is fully type-safe, but it moves the per-channel lifecycle, authorization,
    rate limiting, and presence into application code.
@@ -46,8 +46,8 @@ heterogeneity because it has no existential types or type classes.
 
 ## Decision
 
-Keep design 3. Beryl compiles before the application's channel types exist,
-so Beryl cannot define their union. Only the application can define it, which
+Keep design 3. beryl compiles before the application's channel types exist,
+so beryl cannot define their union. Only the application can define it, which
 creates the cost in design 1. Gleam and BEAM libraries use erased internals
 behind typed facades. See [`gleam_otp`'s actor
 `erase`](https://github.com/gleam-lang/otp/blob/v1.2.0/src/gleam/otp/actor.gleam#L518-L519),

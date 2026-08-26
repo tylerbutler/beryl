@@ -194,14 +194,14 @@ PubSub                Erlang pg lifecycle
 
 Explain the actual tree:
 - `beryl.child_spec(config, init:, update:)` returns a stable `Sockets`
-  handle plus the Beryl subtree's child specification.
+  handle plus the beryl subtree's child specification.
 - The runtime is the significant transient child. A genuine runtime crash is
   restarted under the same registered name; the optional limiter is its
   sibling.
 - Transports monitor the exact runtime pid. If it dies, existing WebSockets
   close instead of becoming zombies attached to a successor.
 - `beryl.stop` drains only this subtree. Presence and groups are borrowed,
-  application-owned actors, and PubSub is backed by `pg`; Beryl does not stop
+  application-owned actors, and PubSub is backed by `pg`; beryl does not stop
   any of them.
 
 LIKELY QUESTION: "What happens to in-flight state after a restart?" Explain
@@ -457,7 +457,7 @@ Demo script, about two minutes:
 1. Open two browser windows side by side, join the same room. Move the
    mouse. The cursor appears in the other window. Pause before you explain it.
 2. "Each tab is one WebSocket whose connection process handles edge work,
-   while Beryl's shared runtime holds a separate typed model for each socket."
+   while beryl's shared runtime holds a separate typed model for each socket."
    (Refer to the processes slide without claiming an app actor for each socket.)
 3. Point at the code. `broadcast_from` sends to everyone except the sender,
    so the sender does not receive its own cursor event.
@@ -634,7 +634,7 @@ Erlang distribution trusts every cluster node; keep the cluster closed
 
 <!--
 Introduce the slide with this security boundary: "Each real-time endpoint is
-an open TCP connection. Beryl supplies abuse controls and documents their
+an open TCP connection. beryl supplies abuse controls and documents their
 limits."
 
 BUILT IN (config on the transport, name the real APIs):
@@ -652,7 +652,7 @@ STILL ON YOU. State two boundaries:
    a complete frame before beryl measures it. A hostile client can
    declare a huge frame, or stream endless fragments, and increase the
    buffer BEFORE the check runs. In production, you MUST cap frame
-   size at an edge proxy (nginx/HAProxy/Envoy). Beryl's limit is
+   size at an edge proxy (nginx/HAProxy/Envoy). beryl's limit is
    defense-in-depth for processing cost, not a memory bound. The
    upstream fix (cap-before-buffer in mist/gramps) is tracked publicly.
 2. Erlang distribution, which provides the clustering from the pg slide,

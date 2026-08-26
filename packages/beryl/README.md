@@ -14,7 +14,7 @@ CRDT-backed presence, pg-based PubSub, and built-in abuse controls.
 
 To serve sockets over WebSockets, pair it with a transport package such as
 [`beryl_mist`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_mist).
-Beryl packages are currently distributed from GitHub, not Hex:
+beryl packages are currently distributed from GitHub, not Hex:
 
 ```toml
 [dependencies]

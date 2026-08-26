@@ -151,7 +151,7 @@ The mixed profile uses k6's built-in `http_req_duration` and
 as time values, so k6 reports their usual time statistics and percentiles.
 
 Client results show symptoms, not necessarily server saturation. Correlate
-them with the benchmark server's `/stats`, Beryl telemetry, host CPU/network
+them with the benchmark server's `/stats`, beryl telemetry, host CPU/network
 data, file descriptors, ports, proxy/NAT utilization, and generator health.
 
 Interpret the summary in this order:
@@ -236,10 +236,10 @@ Treat these as checks, not universal tuning values:
   caps ports, and `+K true` requests kernel polling. Do not size them from
   connection count alone or assume kernel polling helps every platform.
 - Monitor NAT/proxy connection tables. `SOURCE_IP` is metadata; it does not
-  change network identity. Beryl's per-IP limit sees the TCP peer, so all
+  change network identity. beryl's per-IP limit sees the TCP peer, so all
   clients behind one proxy share a bucket.
 - Set an edge WebSocket frame/message limit at or below
-  `BERYL_MAX_INBOUND_FRAME_BYTES`, plus a matching upgrade/body limit. Beryl
+  `BERYL_MAX_INBOUND_FRAME_BYTES`, plus a matching upgrade/body limit. beryl
   measures after frame assembly and does not bound transport/proxy buffering.
 
 Do not copy `sysctl`, `+P`, or `+Q` values blindly. Increase a limit only after
@@ -317,7 +317,7 @@ has an explicit rationale. Never derive a gate from one favorable run.
 | Broadcast delivery failures | Use a group size of at least 2, keep expected recipients between 1 and group size minus 1, ensure complete generator-local groups/divisible VUs, and allow enough warmup and delivery time |
 | Join rejection in normal profiles | Confirm the topic, target `BERYL_*` guardrails, proxy peer-IP behavior, and server logs |
 | Server exits or never becomes healthy | Inspect startup logs for bind/port conflicts, invalid heartbeat configuration, missing dependencies, or the wrong transport entry point; `/health` proves only that HTTP can answer |
-| WebSocket failures or dropped iterations at high rate | Check generator VUs/CPU, ephemeral ports, FDs, NAT/proxy tables, listener backlogs, and target `/stats` before attributing failure to Beryl |
+| WebSocket failures or dropped iterations at high rate | Check generator VUs/CPU, ephemeral ports, FDs, NAT/proxy tables, listener backlogs, and target `/stats` before attributing failure to beryl |
 | `/stats` returns `503` or `504` | Preserve it as unavailable/overloaded telemetry; do not convert it to zeros |
 | Summary file missing or owned unexpectedly | `load-run` mounts the repository and runs k6 as the current UID/GID; ensure the parent of `SUMMARY_PATH` exists and is writable, use a path under the mounted repository, and give every host/run a unique path |
 

@@ -6,11 +6,11 @@ This document tracks the upstream part of GitHub issue #198,
 ## Summary of the gap
 
 `beryl.with_max_inbound_frame_bytes` is enforced **post-assembly**: it runs in
-Beryl's transport callback only after Mist/gramps has buffered and
+beryl's transport callback only after Mist/gramps has buffered and
 reassembled a complete `Text`/`Binary` frame. The transport buffers
 incomplete, slowly streamed, or fragmented (continuation) payloads without a
 **configurable pre-buffer size cap**. Therefore, one connection can increase
-the BEAM receive buffer without triggering Beryl's frame-size or message-rate
+the BEAM receive buffer without triggering beryl's frame-size or message-rate
 checks. One connection can exhaust the node's memory.
 
 Mist's only size limit, `max_body_limit`, applies to HTTP request bodies
@@ -18,7 +18,7 @@ Mist's only size limit, `max_body_limit`, applies to HTTP request bodies
 
 ## Code locations
 
-### Beryl (the limit is enforced too late)
+### beryl (the limit is enforced too late)
 
 - `src/beryl/transport/mist.gleam:445-463`: `on_message` measures
   `string.byte_size(text)` / `bit_array.byte_size(data)` and calls
@@ -29,7 +29,7 @@ Mist's only size limit, `max_body_limit`, applies to HTTP request bodies
 - `src/beryl.gleam`: `with_max_inbound_frame_bytes` doc comment (now corrected
   to state the post-assembly semantics and the edge-proxy requirement).
 
-### mist 6.0.3 (buffers before Beryl ever sees a frame)
+### mist 6.0.3 (buffers before beryl ever sees a frame)
 
 - `build/packages/mist/src/mist/internal/websocket.gleam:43`: `WebsocketState`
   carries a `buffer: BitArray` field.
@@ -68,7 +68,7 @@ Mist's only size limit, `max_body_limit`, applies to HTTP request bodies
      declarations.
    - Add a cumulative cap in `aggregate_frames` / the mist buffering loop so
      fragmented continuation frames cannot exceed the same limit in aggregate.
-   - Thread the limit through `mist`'s WebSocket handler config so Beryl can
+   - Thread the limit through `mist`'s WebSocket handler config so beryl can
      set it from `with_max_inbound_frame_bytes`.
    - This is the only option that gives an in-process memory limit. It
      requires PRs to gramps and mist and a released version update.

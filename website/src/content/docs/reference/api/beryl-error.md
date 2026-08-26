@@ -36,7 +36,7 @@ pub fn describe_start_failure(StartFailure) -> String
 
 ### `from_actor_start_error`
 
-Convert a `gleam/otp/actor.StartError` to Beryl's `StartFailure`.
+Convert a `gleam/otp/actor.StartError` to beryl's `StartFailure`.
 
 ```gleam
 pub fn from_actor_start_error(actor.StartError) -> StartFailure

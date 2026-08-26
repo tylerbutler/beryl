@@ -1,18 +1,18 @@
 ---
-title: Typed Messages From Your Gleam System
+title: Typed messages from your Gleam system
 description: Send typed server-side events from actors and timers into the socket update loop.
 ---
 
 Client frames are not the only source of socket work. A database worker can
-finish. A timer can expire. An actor in your app can publish an event. Beryl
+finish. A timer can expire. An actor in your app can publish an event. beryl
 calls these server-side events. It routes them through a
 `socket.Sender(Message)`. The socket's update function receives them as
 `socket.Info(Message)`.
 
-This looks like a typed OTP send. But a Beryl sender can do less than a
+This looks like a typed OTP send. But a beryl sender can do less than a
 `process.Subject`. This chapter shows the difference.
 
-## The OTP baseline
+## Start with an OTP actor
 
 A Gleam OTP actor is a process with a mailbox. It receives typed messages
 through a `process.Subject`. The example's store keeps its subject inside an
@@ -64,11 +64,11 @@ Vote(room, choice, reply) -> {
 ```
 
 A subject can carry any message type the actor accepts. It knows nothing about
-Beryl sockets or when they close.
+beryl sockets or when they close.
 
 ## A socket sender has one destination
 
-When a socket connects, Beryl calls your raw `init` with a
+When a socket connects, beryl calls your raw `init` with a
 `socket.ConnectInfo(Message)`. Its `self` field is a `socket.Sender(Message)`:
 
 ```gleam
@@ -96,7 +96,7 @@ input variant that holds a decoded client event. Your own `Message` holds
 events from your actors and workers. A chat app might define `NewChatMessage`
 or `UserBanned` here.
 
-The example stores `info.self` in the socket's `Model`. Beryl makes the sender
+The example stores `info.self` in the socket's `Model`. beryl makes the sender
 when the socket connects. It knows which socket actor it belongs to. If that
 socket has closed, the sender drops the message. You never see the subject
 inside it.
@@ -111,7 +111,7 @@ socket.Input(Message)
 socket.Info(ClosePoll(topic))
 ```
 
-To send an event, call `socket.notify(sender, ClosePoll(topic))`. Beryl
+To send an event, call `socket.notify(sender, ClosePoll(topic))`. beryl
 delivers it to the socket's update function as `Info(ClosePoll(topic))`.
 
 The update function handles it like this:
@@ -140,7 +140,7 @@ A sender can do less than a `process.Subject`:
 
 - It accepts only values of your `Message` type.
 - It sends only to the socket that made it.
-- Beryl wraps each value as `socket.Info(Message)`.
+- beryl wraps each value as `socket.Info(Message)`.
 - It drops the value if the socket has disconnected.
 - It has no request/reply protocol and no mailbox selection.
 
@@ -184,15 +184,15 @@ case stage {
 ```
 
 `step_03` sets `duration_ms` to `60_000`. After 60 seconds, the timer actor
-runs the callback. The callback calls `socket.notify`. Beryl then calls the
+runs the callback. The callback calls `socket.notify`. beryl then calls the
 socket's update function with `Info(ClosePoll(topic))`.
 
 `socket.notify` is fire-and-forget. It returns `Nil`. It does not tell you if
-the socket is still connected. If the browser closed during that minute, Beryl
+the socket is still connected. If the browser closed during that minute, beryl
 drops the message. The timer actor does not need to watch the socket or clean
 up after it.
 
-## Domain state stays in the store actor
+## Keep shared poll state in the store actor
 
 The raw `Model` holds the sender and the set of joined topics. It does not hold
 vote counts. Both client events and timer events call the shared
@@ -233,7 +233,7 @@ the caller not to broadcast again. Each socket join sets its own timer. Two
 tabs on the same room set two timers. Only the first `ClosePoll` changes the
 store.
 
-## Close now uses the same state change
+## Reuse the same close operation
 
 In the timed stage, a client can send `close_poll`. The raw handler calls the
 same `store.close` function. It returns effects in order:
@@ -256,23 +256,23 @@ Timed -> {
 }
 ```
 
-The reply comes before the broadcast in the list. Beryl runs effects in list
+The reply comes before the broadcast in the list. beryl runs effects in list
 order. The wire sees them in that order too. The timer can still send a later
 `Info`. But `store.close` is safe to call twice, so there is no second
 broadcast.
 
-This order guarantee is a Beryl rule. Lustre effects and OTP sends have their
+This order guarantee is a beryl rule. Lustre effects and OTP sends have their
 own rules. Do not assume they order work the same way.
 
-## `Info` is not scoped to a topic
+## Include the topic in each `Info` message
 
 An `Info(Message)` does not carry a topic. Your message must carry the routing
 data it needs. The example defines `ClosePoll(topic: String)` because one raw
 socket can join several poll topics.
 
 This has one effect on crashes. When a `Message` or `Binary` callback crashes,
-Beryl knows the topic. It closes only that topic. When an `Info` callback
-crashes, Beryl has no topic. It closes the whole socket. Chapter 5 explains the
+beryl knows the topic. It closes only that topic. When an `Info` callback
+crashes, beryl has no topic. It closes the whole socket. Chapter 5 explains the
 full crash behavior.
 
 It also has a cost when you compose. If several topic families need different
@@ -280,15 +280,15 @@ server-side events, you must put them all in one `Message` type. Your update
 function must route each variant. `beryl/channel` removes this shared type.
 Each channel gets its own private info type.
 
-## Choose the boundary
+## Keep slow work outside socket callbacks
 
 Keep slow work in your own processes. Keep work that needs its own supervisor
-there too. Send a small typed result into Beryl when the socket must decide on
+there too. Send a small typed result into beryl when the socket must decide on
 new state or effects. Each socket actor runs its update callbacks one at a
 time. If `update` sleeps, blocks on I/O, or does long work, that socket's
 messages, effects, and heartbeat checks wait. Other sockets are not affected.
 
-`socket.Sender` gives you a typed way back into the socket. Beryl does not
+`socket.Sender` gives you a typed way back into the socket. beryl does not
 become the owner of your job, store, or timer. Your app still decides how to
 supervise those processes.
 
@@ -300,7 +300,7 @@ handlers. Each handler keeps its own state and info types.
 - [Gleam OTP actor module](https://gleam-otp.hexdocs.pm/gleam/otp/actor.html)
 - [Gleam Erlang process module](https://gleam-erlang.hexdocs.pm/gleam/erlang/process.html)
 - [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
-- [Beryl runtime architecture](/architecture/runtime/)
+- [beryl runtime architecture](/architecture/runtime/)
 
 ## Runnable checkpoint: step 03
 
@@ -311,6 +311,6 @@ cd examples/live_poll && gleam run -m live_poll/step_03
 Open `http://localhost:8103`, join `demo`, and vote. Select **Close poll now**
 to close the poll at once, or wait 60 seconds. In both cases, the client
 receives the closed state and voting stops. If you close the browser before
-the timer fires, Beryl drops the later `socket.notify` message.
+the timer fires, beryl drops the later `socket.notify` message.
 
 Next: [Composition: raw dispatch and `beryl/channel`](/tutorial/composition-raw-dispatch-and-channels/).

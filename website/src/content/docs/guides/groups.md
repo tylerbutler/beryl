@@ -1,8 +1,9 @@
 ---
 title: Groups
+description: Name sets of topics and send one event to every topic in a set.
 ---
 
-Groups are **named topic collections on the server**. Use one group broadcast
+Groups are **named sets of topics on the server**. Use one group broadcast
 to send an event to many topics. You do not need to track subscriptions. Groups
 are similar to Socket.IO rooms and SignalR groups.
 
@@ -11,7 +12,7 @@ Only the server uses groups. Clients join individual topics with `phx_join`.
 Clients do not receive group information.
 :::
 
-## Starting the groups actor
+## Start the groups actor
 
 ```gleam
 import beryl/group
@@ -88,7 +89,7 @@ let assert Ok(Nil) = group.remove(groups, "team:engineering", "room:infra")
 
 Adding the same topic twice does nothing because the group stores a set.
 
-## Inspecting groups
+## Read groups
 
 ```gleam
 // List all topics in a group
@@ -102,12 +103,13 @@ case group.topics(groups, "team:engineering") {
 let names = group.list_groups(groups)  // ["team:engineering", "team:design"]
 ```
 
-## Broadcasting to a group
+## Send an event to every topic in a group
 
 `group.broadcast` asks the groups actor for the topic set. The calling process
-then sends the event to each topic with `beryl.broadcast`. The lookup provides
-backpressure, but the actor does not perform fan-out. The function returns
-`Nil`, not `Result`. If the group does not exist, the function does nothing.
+waits for that lookup, then sends the event to each topic with
+`beryl.broadcast`. The actor does not send the broadcasts itself. The function
+returns `Nil`, not `Result`. If the group does not exist, the function does
+nothing.
 
 ```gleam
 group.broadcast(
@@ -121,21 +123,21 @@ group.broadcast(
 
 This has the same effect as one `beryl.broadcast` call for each group topic.
 
-:::note[Missing group is a no-op]
+:::note[Missing groups do nothing]
 `group.broadcast` does not return an error. It does nothing if the group is
 missing or empty. It panics if the groups actor is unavailable or does not
 reply within 5 seconds. To check a group first, call `group.topics` and handle
 `GroupNotFound`.
 :::
 
-## Error reference
+## Group errors
 
 | Error | When |
 |-------|------|
 | `GroupAlreadyExists` | `create` called for a name already in use |
 | `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
 
-## Full example: team rooms
+## Complete example: team rooms
 
 ```gleam
 import beryl
@@ -169,7 +171,7 @@ group.broadcast(
 let assert Ok(Nil) = group.delete(groups, "team:eng")
 ```
 
-## Lifecycle
+## Restarts and node limits
 
 Start the groups actor with `group.child_spec`. Its handle uses a stable
 registered name and reaches the replacement actor after a supervised restart.

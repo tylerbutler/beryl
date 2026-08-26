@@ -1,11 +1,11 @@
 ---
-title: Message Lifecycle
+title: How beryl handles a message
 ---
 
 This page follows a message from the WebSocket connection to the client. Each
 diagram shows one phase of beryl's message processing.
 
-## Connect and init
+## Connect and initialize a socket
 
 When a client requests a WebSocket upgrade, Mist creates a unique socket ID. It
 builds a `ConnectSeed` from the path, query, and headers. Mist then sends the
@@ -56,9 +56,9 @@ sequenceDiagram
   Socket-->>Client: phx_reply (ok/error)
 ```
 
-The runtime rejects a `Join` that has no answer. Thus, beryl fails closed.
+The runtime automatically rejects a `Join` that has no answer.
 
-## Handle an inbound event
+## Handle a client event
 
 After a successful join, `update` receives each later topic frame as a
 `Message` event. The effects list can send a reply, push, broadcast, or presence
@@ -77,7 +77,7 @@ sequenceDiagram
   Socket-->>Client: apply effects in order (ReplyOk, Push, ...)
 ```
 
-## Broadcast fan-out
+## Send one event to many sockets
 
 A broadcast sends a message to each socket on a topic. `Broadcast` and
 `beryl.broadcast` include the source socket. `BroadcastFrom` and
@@ -94,12 +94,12 @@ sequenceDiagram
   participant Subs as subscriber socket actors
   Origin->>Socket: Broadcast(topic, event, payload)
   Socket->>Router: broadcast
-  Router-->>Subs: fan out
-  Router->>PS: broadcast_from (cluster fan-out)
+  Router-->>Subs: send to local subscribers
+  Router->>PS: broadcast_from (send to other nodes)
   PS-->>Router: deliver to each remote router
 ```
 
-## Heartbeat and eviction
+## Detect an inactive connection
 
 Clients send a `heartbeat` frame on the `"phoenix"` topic at set intervals. The
 socket actor replies and records the time. Each socket actor has a timer that
@@ -115,7 +115,7 @@ sequenceDiagram
   Socket->>Socket: close after deadline (Closed(HeartbeatTimeout) to app)
 ```
 
-## Disconnect and close
+## Disconnect a socket
 
 When a client closes the WebSocket, Mist notifies the router. The router
 forwards the close to the socket actor. The actor sends `Closed(topic, reason)`
@@ -139,7 +139,7 @@ sequenceDiagram
 The same `Closed` path is used for client leaves, heartbeat timeouts,
 `KickTopic`, and graceful `beryl.stop` shutdown.
 
-## Where the channel layer fits
+## How channel handlers use this path
 
 `beryl/channel` supplies the `init` and `update` pair in these diagrams. Its
 `init` builds one channel model for each socket. Its `update` maps each input
@@ -149,10 +149,10 @@ to the live channel instance for that topic.
 |---|---|
 | `Join(topic, payload, ref)` | First matching handler wins; its join result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` |
 | `Message(topic, ..)` / `Binary(topic, ..)` | Delivered to the live instance for that topic |
-| `Info(envelope)` | Topic and join generation are checked before the sealed typed value is opened; stale mail is dropped |
+| `Info(envelope)` | The runtime checks the topic and join generation, then drops messages sent to an older join |
 | `Closed(topic, reason)` | Calls `on_terminate` and lowers its actions after the topic is already unsubscribed |
 
-Termination has one edge case. The router removes the instance in the model
+Termination has one special case. The router removes the instance in the model
 returned by the `Closed` turn. If `on_terminate` panics, the core discards that
 model and keeps the old model. The retained instance can receive its own
 generation-scoped `channel.notify` mail. Client messages cannot reach the
@@ -164,15 +164,14 @@ Each channel action maps to one core effect. The runtime preserves their order.
 An asynchronous presence effect can pause one socket while other sockets
 continue.
 
-## Concurrency note
+## Message order
 
 Each socket actor processes its mailbox in sequence. The router processes
-index updates and broadcasts in its own mailbox. Tests must select the exact
-message shape and drain queued messages.
+index updates and broadcasts in its own mailbox. Tests must select the exact message and clear any queued test messages.
 
-## Where this lives
+## Source files
 
-- `packages/beryl_mist/src/beryl_mist.gleam`: connect/close, edge decoding, frame routing
+- `packages/beryl_mist/src/beryl_mist.gleam`: connect, close, decode, and route frames
 - `src/beryl/runtime.gleam`: event dispatch, effect application, heartbeat timer
 - `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam`: decode/encode frames
-- `src/beryl/pubsub.gleam`: fan-out
+- `src/beryl/pubsub.gleam`: send broadcasts to subscribers

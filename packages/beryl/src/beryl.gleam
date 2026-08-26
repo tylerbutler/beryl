@@ -1,4 +1,4 @@
-//// Beryl - Type-safe real-time communication
+//// beryl - Type-safe real-time communication
 ////
 //// A standalone Gleam library for building real-time applications on the BEAM.
 //// Provides app-side WebSocket dispatch, distributed presence tracking,
@@ -79,7 +79,7 @@ import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
 
-/// Logging verbosity for Beryl's internal loggers.
+/// Logging verbosity for beryl's internal loggers.
 ///
 /// The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
 /// prelude's `Result` `Error` constructor when imported unqualified.
@@ -90,14 +90,14 @@ pub type LogLevel {
   ErrorLevel
 }
 
-/// Logging configuration for Beryl diagnostics.
+/// Logging configuration for beryl diagnostics.
 ///
 /// This type is opaque. Construct it with `logging_config` and adjust it with
-/// the `with_*` functions. Beryl can then add logging options without a
+/// the `with_*` functions. beryl can then add logging options without a
 /// breaking change.
 pub opaque type LoggingConfig {
   LoggingConfig(
-    /// Minimum level emitted by Beryl's namespaced loggers.
+    /// Minimum level emitted by beryl's namespaced loggers.
     level: LogLevel,
     /// Whether debug diagnostics may include bounded payload/frame previews.
     include_payloads: Bool,
@@ -109,7 +109,7 @@ pub opaque type LoggingConfig {
 /// Configuration for an app-side socket runtime.
 ///
 /// This type is opaque. Construct it with `config` and adjust it with the
-/// `with_*` functions. Beryl can then add configuration options without a
+/// `with_*` functions. beryl can then add configuration options without a
 /// breaking change.
 pub opaque type Config {
   Config(
@@ -168,7 +168,7 @@ pub opaque type Config {
     max_joined_topics_per_socket: Int,
     /// Whether beryl emits `:telemetry` events (default: false).
     telemetry: Bool,
-    /// Logging configuration for Beryl diagnostics
+    /// Logging configuration for beryl diagnostics
     logging: LoggingConfig,
     /// Per-topic-pattern message rate limits (app-dispatch systems only).
     /// Ordered; the first matching pattern wins. `None` is an explicit
@@ -200,7 +200,7 @@ pub fn logging_config(
 
 /// Build a configuration with sensible defaults.
 ///
-/// A `codec` is required. Beryl no longer provides an implicit Phoenix
+/// A `codec` is required. beryl no longer provides an implicit Phoenix
 /// default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
 /// or your own `Codec` for a custom framing.
 pub fn config(codec: codec.Codec) -> Config {
@@ -308,11 +308,11 @@ pub fn with_heartbeat(config: Config, timeout_ms timeout_ms: Int) -> Config {
 ///
 /// The limit is enforced on the **real socket peer IP** as reported by the
 /// transport (for the Mist transport, the address of the TCP connection).
-/// Beryl does **not** trust or parse forwarded headers such as
+/// beryl does **not** trust or parse forwarded headers such as
 /// `X-Forwarded-For`. A client can set these headers and spoof its address to
 /// bypass this limit.
 ///
-/// If Beryl runs behind a trusted reverse proxy or load balancer, every
+/// If beryl runs behind a trusted reverse proxy or load balancer, every
 /// connection shares the proxy's address, so a per-IP limit throttles all
 /// clients as a single IP. In that topology you must resolve the real client
 /// IP yourself at the proxy layer (for example, by enforcing limits there). A
@@ -333,7 +333,7 @@ pub fn with_max_connections_per_ip(
 /// `per_second` as the burst capacity.
 ///
 /// Unlike per-connection frame and message buckets, this allowance is keyed by
-/// the real socket peer IP and lives in Beryl's supervised connection limiter.
+/// the real socket peer IP and lives in beryl's supervised connection limiter.
 /// Disconnecting or restarting the app runtime therefore does not refresh it.
 /// Idle IP buckets are removed once their allowance has fully refilled.
 ///
@@ -383,7 +383,7 @@ pub fn with_max_connections(
   Config(..config, max_connections: max_connections)
 }
 
-/// Configure Beryl's internal logging.
+/// Configure beryl's internal logging.
 pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
   Config(..config, logging: logging)
 }
@@ -487,8 +487,8 @@ pub fn with_max_event_length(
 // nolint: unused_exports -- enforced in sibling transport handler tests
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
-/// Beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
-/// buffers and assembles a complete frame first. Beryl then measures it and
+/// beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
+/// buffers and assembles a complete frame first. beryl then measures it and
 /// closes the connection if it exceeds `max_bytes`. This bounds
 /// per-message processing cost (decode, routing, rate-limit accounting), but
 /// it does **not** by itself bound transport memory. A hostile client can
@@ -498,8 +498,8 @@ pub fn with_max_event_length(
 /// node memory.
 ///
 /// For a true transport memory bound you **must** place an edge proxy or load
-/// balancer in front of Beryl and configure a WebSocket frame-size limit
-/// there (and a matching request/body size limit). Beryl's connection,
+/// balancer in front of beryl and configure a WebSocket frame-size limit
+/// there (and a matching request/body size limit). beryl's connection,
 /// frame-rate, and message-rate limits all run after frame assembly and do not
 /// mitigate this vector. See the README's "Security" section.
 ///
@@ -524,7 +524,7 @@ pub fn with_max_joined_topics_per_socket(
 /// Warn when an app-side socket runtime starts with every abuse control
 /// disabled.
 ///
-/// Beryl ships with rate and connection limits off (like Phoenix) because
+/// beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
 /// should be a visible one. Called while building the `child_spec` subtree.
@@ -568,7 +568,7 @@ pub fn frame_limits(channels: Sockets) -> Option(rate_limit.RateLimitConfig) {
 /// A runtime system handle.
 ///
 /// `child_spec` returns this opaque handle with the supervised subtree. Pass
-/// it to broadcast, group, and transport functions. Beryl hides its internals
+/// it to broadcast, group, and transport functions. beryl hides its internals
 /// so they can change without breaking application code.
 ///
 /// The handle is non-generic. An app-side dispatch system is
@@ -667,7 +667,7 @@ pub type ConfigError {
   InvalidTopicPattern(pattern: String, reason: topic.TopicError)
 }
 
-/// Errors when stopping a Beryl system with [`stop`](#stop).
+/// Errors when stopping a beryl system with [`stop`](#stop).
 pub type StopError {
   /// The handle referred to a system that was not running: it was never
   /// started (for example, a `child_spec` handle whose supervisor was never
@@ -695,7 +695,7 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   })
 }
 
-/// Stop a Beryl system.
+/// Stop a beryl system.
 ///
 /// This function drains and stops the supervised runtime. It delivers
 /// `Closed` to every joined topic before it closes each transport connection.
@@ -709,17 +709,17 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
 /// acknowledge the stop within the shutdown window. After a successful stop
 /// the handle should no longer be used.
 pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
-  // The app-side dispatch limiter is supervised inside the Beryl subtree,
+  // The app-side dispatch limiter is supervised inside the beryl subtree,
   // so it is not stopped directly here; it is torn down with the subtree.
   stop_app_subtree(sockets.app, sockets.connection_limiter)
 }
 
-/// Gracefully stop only the nested Beryl subtree and wait for it to
+/// Gracefully stop only the nested beryl subtree and wait for it to
 /// terminate.
 ///
 /// The runtime is the subtree's significant transient child, so draining and
 /// stopping it (normal termination) auto-shuts down the subtree supervisor and
-/// its sibling limiter. To honour "wait for only the Beryl subtree to
+/// its sibling limiter. To honour "wait for only the beryl subtree to
 /// terminate", the runtime and the optional limiter processes are monitored
 /// before the drain and their `Down` messages are awaited afterwards; the
 /// application's parent supervisor and sibling children are never touched.
@@ -841,7 +841,7 @@ pub fn child_spec(
   // The subtree is a `Transient` child of the application's supervisor: a
   // graceful `beryl.stop` auto-shuts the subtree down with reason `shutdown`,
   // which a transient child treats as normal, so the parent does not restart
-  // Beryl. A genuine crash (subtree restart intensity exceeded) still gets
+  // beryl. A genuine crash (subtree restart intensity exceeded) still gets
   // restarted by the parent.
   #(
     subtree.handle,
@@ -854,7 +854,7 @@ pub fn child_spec(
 /// started yet.
 ///
 /// `handle` is the stable, non-generic `Sockets` returned to callers before
-/// startup. `start_supervisor` starts the nested Beryl subtree; the generic
+/// startup. `start_supervisor` starts the nested beryl subtree; the generic
 /// `init`/`update` closures are captured inside it, so `AppSubtree` itself
 /// stays non-generic.
 type AppSubtree {
@@ -872,7 +872,7 @@ type AppSubtree {
 /// the subtree starts: the runtime is reached through its registered name and
 /// the limiter through `connection_limit.from_name`, so the handle keeps
 /// working across supervised runtime restarts. There is no unsupervised app
-/// runtime — the runtime always runs under the nested Beryl supervisor, with
+/// runtime — the runtime always runs under the nested beryl supervisor, with
 /// the `init`/`update` closures captured in the child specification. A runtime
 /// crash therefore restarts dispatch automatically (per-socket state is
 /// dropped). The runtime child is `Transient` so a graceful `stop` is not
@@ -928,7 +928,7 @@ fn build_app_subtree(
   })
 }
 
-/// Start the nested Beryl subtree: a one-for-one supervisor owning the runtime
+/// Start the nested beryl subtree: a one-for-one supervisor owning the runtime
 /// as a transient child, with the optional connection limiter as a sibling.
 fn child_spec_supervisor(
   config: Config,
@@ -949,7 +949,7 @@ fn child_spec_supervisor(
     })
     |> supervision.restart(supervision.Transient)
     // The runtime is the subtree's significant child: a graceful stop (normal
-    // termination) auto-shuts down the whole Beryl subtree — including the
+    // termination) auto-shuts down the whole beryl subtree — including the
     // sibling limiter — while an abnormal crash is restarted in place under
     // the same name (dispatch resumes with fresh per-socket state).
     |> supervision.significant(True)

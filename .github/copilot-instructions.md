@@ -1,8 +1,8 @@
-# Copilot instructions for Beryl
+# Copilot instructions for beryl
 
 ## Project shape
 
-Beryl is a Gleam library for type-safe realtime channels and presence on the Erlang/BEAM target.
+beryl is a Gleam library for type-safe realtime channels and presence on the Erlang/BEAM target.
 
 - `packages/beryl/src/beryl.gleam` is the main public API for configuring a supervised app-dispatch system with `child_spec`, stopping it, and broadcasting.
 - `packages/beryl/src/beryl/event.gleam` defines typed app events/effects; `packages/beryl/src/beryl/runtime.gleam` owns socket/topic lifecycle and dispatches every event through the app's `update`.
@@ -57,4 +57,8 @@ Example Playwright runs can create untracked test artifacts; clean those before 
 
 - Keep the public API small and document public functions with `///` comments.
 - Use `Result` for fallible APIs and preserve exhaustive pattern matching.
+- Write the product name as `beryl` in prose, including at sentence starts and
+  in headings; preserve exact code identifiers and quoted text.
+- Use sentence case for website page titles, section headings, callout titles,
+  and sidebar labels.
 - Follow existing event/effect handling patterns in `event` and `runtime` when adding app-dispatch behavior.

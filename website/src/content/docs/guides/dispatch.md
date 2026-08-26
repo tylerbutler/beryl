@@ -1,19 +1,19 @@
 ---
-title: App-Side Dispatch
-description: Route joins, messages, binary frames, close events, and typed server messages in one update function.
+title: Route socket events in one update function
+description: Handle joins, messages, binary frames, closed topics, and typed server messages in one update function.
 ---
 
-Raw **app-side dispatch** is beryl's core programming model. Build one
+**Raw dispatch** is beryl's core programming model. Build one
 supervised runtime with `beryl.child_spec`. Build a per-socket model in `init`.
 Route each socket event in one `update` function. For multi-channel or
 Phoenix-style apps, use the recommended
 [`beryl/channel` layer](/guides/channels/).
 
-Your application routes `socket.Input` values and returns
-`socket.Next(model, effects)`. You do not need a registry or a per-topic module
-lifecycle.
+Your application handles `socket.Input` values and returns
+`socket.Next(model, effects)`. You do not need a registry or one module for
+each topic.
 
-## The app entry point
+## Start the runtime
 
 ```gleam
 import beryl
@@ -38,7 +38,7 @@ let assert Ok(_root) =
   - `socket.Next(model, effects)` to continue, or
   - `socket.Stop(reason)` to close the whole socket.
 
-`socket.Input(msg)` is the whole contract:
+`socket.Input(msg)` has these variants:
 
 - `socket.Join(topic, payload, ref)`
 - `socket.Message(topic, event, payload, ref)`
@@ -75,7 +75,7 @@ topic.extract_wildcards(
 
 For one namespace, match in `update`. When several namespaces share a socket,
 use [`beryl/channel`](/guides/channels/). See
-[Routing many topics from one app](#routing-many-topics-from-one-app).
+[Use channels for several topic groups](#use-channels-for-several-topic-groups).
 
 ## Single-topic example
 
@@ -197,9 +197,9 @@ A few important details:
 - Joins are explicit: return `socket.AcceptJoin(ref, reply)` or `socket.RejectJoin(ref, reason)`.
 - Message replies are explicit too: use `socket.ReplyOk` / `socket.ReplyError` when a client ref is present.
 - `socket.Closed(topic, reason)` replaces per-topic cleanup hooks. Prune topic-local state there.
-- `socket.Info(msg)` is just a typed message from your own server code.
+- `socket.Info(msg)` is a typed message from your own server code.
 
-## Routing many topics from one app
+## Use channels for several topic groups
 
 Use [`beryl/channel`](/guides/channels/). Register a list of channel handlers
 and the layer routes every socket event to the channel that owns its topic.
@@ -213,7 +213,7 @@ The `cursors` example stays on raw dispatch and matches its single
 
 ### Migrating from `beryl/socket/router`
 
-There is no replacement router API. Let the compiler expose every old import
+There is no replacement router API. Let the compiler find every old import
 and choose one of the two models:
 
 - For one topic family, match `socket.Input` directly and use
@@ -223,7 +223,7 @@ and choose one of the two models:
   with `channel.child_spec`.
 
 Delete calls to `namespace`, `accept_only`, `unknown_topic`, and `route`; do
-not rebuild the same abstraction locally. `gleam check` then points to the
+do not rebuild similar routing code. `gleam check` then points to the
 remaining `Match` and `Namespace` types that need direct topic values or
 `JoinContext.params`.
 
@@ -247,9 +247,10 @@ fn notify_socket(sender: socket.Sender(Msg), job_id: String) -> Nil {
 
 If the socket has already disconnected, `socket.notify` is ignored.
 
-For long-lived external actors that should stream updates into a socket, see `beryl/bridge`.
+For long-lived external actors that send updates to a socket, see
+`beryl/bridge`.
 
-## Effect order is observable order
+## Effects run in list order
 
 The runtime applies effects in list order during one actor turn. Therefore:
 
@@ -269,6 +270,6 @@ The same rule matters for replies:
 
 ## Next steps
 
-- [WebSocket Transport](/guides/websocket/) — connect browsers and seed `ConnectInfo.seed.metadata`
-- [Presence](/guides/presence/) — keep synchronous presence work outside the runtime's actors
-- [Runtime & Effect Interpreter](/architecture/runtime/) — runtime behavior, effect ordering, and teardown details
+- [WebSocket Transport](/guides/websocket/): connect browsers and set `ConnectInfo.seed.metadata`
+- [Presence](/guides/presence/): keep synchronous presence work outside runtime actors
+- [Socket Processes & Restarts](/architecture/runtime/): socket behavior, effect order, and shutdown details

@@ -4,7 +4,7 @@
 //// Useful for scenarios like broadcasting to all channels in a "team" or
 //// sending a system-wide notification.
 ////
-//// Groups are independent of the Beryl runtime and run under your
+//// Groups are independent of the beryl runtime and run under your
 //// application's supervision tree.
 ////
 //// ## Example

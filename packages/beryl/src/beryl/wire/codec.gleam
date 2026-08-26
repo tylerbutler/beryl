@@ -39,7 +39,7 @@ pub type InboundKind {
 /// A normalized inbound message.
 ///
 /// `Inbound` is opaque: construct it with `inbound` and read it with the
-/// `inbound_*` accessors. The hidden record lets Beryl add fields with
+/// `inbound_*` accessors. The hidden record lets beryl add fields with
 /// defaults without breaking custom codecs.
 pub opaque type Inbound {
   Inbound(

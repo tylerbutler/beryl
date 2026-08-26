@@ -1,5 +1,5 @@
 ---
-title: API Reference
+title: API reference
 description: API reference generated from Gleam docs metadata.
 ---
 
@@ -19,7 +19,7 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 
 | Module | Description |
 |---|---|
-| [`beryl`](/reference/api/beryl/) | Beryl - Type-safe real-time communication |
+| [`beryl`](/reference/api/beryl/) | beryl - Type-safe real-time communication |
 | [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket via |
 | [`beryl/channel`](/reference/api/beryl-channel/) | The channel composition surface: a channel is a topic pattern paired |
 | [`beryl/error`](/reference/api/beryl-error/) | Shared beryl-owned error helpers. |

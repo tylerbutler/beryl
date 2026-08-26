@@ -71,7 +71,7 @@ fn client_html(guide: Bool) -> String {
 <head>
   <meta charset=\"utf-8\">
   <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-  <title>Beryl live poll</title>
+  <title>beryl live poll</title>
   <style>
     body{font:16px system-ui;max-width:42rem;margin:3rem auto;padding:0 1rem}
     fieldset{display:grid;gap:.75rem;border:1px solid #bbb;border-radius:.5rem;padding:1rem}

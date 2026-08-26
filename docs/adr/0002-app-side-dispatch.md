@@ -95,10 +95,10 @@ the generated [API reference](https://beryl.tylerbutler.com/reference/api/);
   stays outside the shared runtime. The indivisible asynchronous read-model
   and effect bundle remains deferred to a later change.
 - Supervision is explicit through the sole runtime entry point:
-  `child_spec` returns the Beryl subtree (runtime plus an optional
-  connection limiter) for the caller's own supervisor. Beryl owns only
-  that subtree. Beryl borrows supplied presence and PubSub handles and
-  separately started groups. `stop` drains and terminates only the Beryl
+  `child_spec` returns the beryl subtree (runtime plus an optional
+  connection limiter) for the caller's own supervisor. beryl owns only
+  that subtree. beryl borrows supplied presence and PubSub handles and
+  separately started groups. `stop` drains and terminates only the beryl
   subtree. It does not terminate the application's root or sibling processes.
   See
   [Supervision](/guides/supervision/) for the full contract, including what

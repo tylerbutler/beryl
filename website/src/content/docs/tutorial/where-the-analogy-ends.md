@@ -1,12 +1,12 @@
 ---
-title: Where the Analogy Ends
-description: Follow a frame through Beryl and learn where frontend model-update ideas stop matching runtime behavior.
+title: Where the analogy ends
+description: Follow a frame through beryl and learn where frontend model-update ideas stop matching runtime behavior.
 ---
 
 The model-update words from the last chapters help you organize your code.
-But they can give you the wrong idea about how Beryl runs that code. Beryl
+But they can give you the wrong idea about how beryl runs that code. beryl
 gives each socket its own actor. An actor is a process with a mailbox that
-handles one message at a time. But Beryl does not draw a view from your model.
+handles one message at a time. But beryl does not draw a view from your model.
 It does not bring your socket state back after a crash. One router actor keeps
 the list of sockets and sends broadcasts to them. Each socket actor calls your
 update function and runs the effects it returns, in order.
@@ -20,11 +20,11 @@ A frame is one WebSocket message. For a text frame, the path is:
 ```text
 transport connection
   -> configured wire codec
-  -> Beryl router actor
+  -> beryl router actor
   -> socket actor
   -> app update or channel callback
-  -> effect/action interpreter
-  -> encoded wire frame or broadcast fan-out
+  -> returned effects or actions
+  -> encoded WebSocket frame or broadcast to subscribers
 ```
 
 The transport owns the WebSocket connection. It does the first checks: is the
@@ -62,17 +62,17 @@ The live-poll example follows that rule:
 
 - `store.Store` keeps the shared poll state in its own actor;
 - `timer.Timer` waits and runs delayed callbacks in its own actor;
-- Beryl callbacks make short calls, pick the next state, and return effects.
+- beryl callbacks make short calls, pick the next state, and return effects.
 
 If some work takes a long time, do not run it in a callback. Run it under your
 own supervision. Then send a typed result back through `socket.Sender` or
 `channel.Sender`.
 
-## Beryl catches callback crashes, and the effect depends on the input
+## A callback crash closes the smallest affected part
 
 In Erlang, "let it crash" means: let a process die and let its supervisor
-restart it. If Beryl did that here, one bad callback would close every topic on
-its socket. Instead, Beryl catches the crash. What happens next depends on
+restart it. If beryl did that here, one bad callback would close every topic on
+its socket. Instead, beryl catches the crash. What happens next depends on
 which input failed:
 
 | Callback or raw input | Runtime behavior |
@@ -85,11 +85,11 @@ which input failed:
 
 Other socket actors keep running. If a socket actor crashes somewhere else,
 only that actor stops. The router sees this, closes the connection, and removes
-the socket from its list. Beryl cuts long crash descriptions before it logs
+the socket from its list. beryl cuts long crash descriptions before it logs
 them.
 
-The `on_terminate` case has one small edge in the channel layer. If the
-callback panics, Beryl drops the router update and the actions it returned.
+The `on_terminate` case has one special behavior in the channel layer. If the
+callback panics, beryl drops the router update and the actions it returned.
 The channel's sender can still reach the old channel until the client joins the
 topic again or the socket ends. Client traffic cannot reach it, because the
 topic is closed. Keep `on_terminate` small. Do not do half-finished work there.
@@ -97,7 +97,7 @@ topic is closed. Keep `on_terminate` small. Do not do half-finished work there.
 This policy contains crashes in your callbacks. It does not pretend that every
 crash has the same size.
 
-## Supervision restores dispatch, not sessions
+## A restart restores the service, not socket state
 
 `beryl.child_spec` and `channel.child_spec` return a child specification. You
 put it in your application's supervisor. If the router dies, the supervisor
@@ -113,12 +113,12 @@ restart windows, restart intensity, and graceful shutdown.
 ## Heartbeats test that a connection is alive
 
 Phoenix clients send a heartbeat frame on the `phoenix` topic at a regular
-interval. Beryl handles heartbeats inside each socket actor. Your update
+interval. beryl handles heartbeats inside each socket actor. Your update
 function does not see them. Each actor records the time of the last heartbeat
 and runs its own timer to check it. There is no global check across all
 sockets.
 
-If a socket misses its heartbeat, Beryl closes the transport. It then delivers
+If a socket misses its heartbeat, beryl closes the transport. It then delivers
 `Closed(topic, HeartbeatTimeout)` for every joined topic. Raw dispatch can
 remove the topic from its model. The channel layer calls `on_terminate` for
 each channel.
@@ -143,7 +143,7 @@ These values make the example look like a production app. They are not correct
 for every app. Choose your limits from the traffic you expect and the capacity
 you have.
 
-## PubSub and presence sit outside the MVU analogy
+## PubSub and presence follow different rules
 
 PubSub sends broadcasts between BEAM nodes. It uses Erlang `pg`, the built-in
 process group library. A remote payload and its subscribers are a distributed
@@ -157,8 +157,7 @@ for one socket while the presence actor applies the change. Other sockets,
 heartbeats, broadcasts, and shutdown keep going. When the change is done, the
 socket runs the rest of its list in the original order.
 
-PubSub and presence are not hidden fields in your socket `Model`. Each one has
-its own lifecycle and its own distributed rules. Design them on their own:
+PubSub and presence are not hidden fields in your socket `Model`. Each one starts, stops, and communicates across nodes in its own way:
 
 - configure PubSub when broadcasts must cross nodes;
 - start and supervise presence when clients need a shared member list;
@@ -193,12 +192,12 @@ Channel actions apply only to the current topic, and only some actions are
 allowed during close. Raw effects can name any topic, so work across topics is
 normal app code.
 
-## The boundaries to remember
+## Rules to remember
 
 The earlier chapters started with a familiar update loop. In production, keep
 these differences in view:
 
-- Beryl has no `view`.
+- beryl has no `view`.
 - Raw `init` runs once per socket.
 - One actor stores each socket model. A separate router stores the socket list
   and the subscribers.
@@ -207,21 +206,21 @@ these differences in view:
 - The order of your effect list is the order on the wire.
 - Raw effects can work across topics. Channel actions apply to one topic, and
   the close phase allows fewer of them.
-- Beryl catches callback crashes. The size of the cleanup depends on the input.
+- beryl catches callback crashes. The size of the cleanup depends on the input.
 - A supervisor restart brings dispatch back. It does not bring live socket
   state back.
 
 These rules tell you where to put state and work. Keep facts about one
-connection in raw models or channel state. Keep shared domain state in
-processes your app owns. Decode at the wire boundary. Return short, ordered
+connection in raw models or channel state. Keep shared app state in
+processes your app owns. Decode client data after beryl reads the frame. Return short, ordered
 effect lists. Let supervision restore services. Let clients restore their
 subscriptions when they reconnect.
 
 ## Sources and further reading
 
-- [Beryl runtime architecture](/architecture/runtime/)
-- [Beryl message lifecycle](/architecture/message-lifecycle/)
-- [Choose a Beryl API](/choosing-an-api/)
+- [beryl runtime architecture](/architecture/runtime/)
+- [How beryl handles a message](/architecture/message-lifecycle/)
+- [Choose a beryl API](/choosing-an-api/)
 - [`beryl` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl.gleam)
 - [`beryl/socket` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/socket.gleam)
 - [`beryl/channel` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/channel.gleam)
@@ -237,4 +236,4 @@ poll now or wait 60 seconds. The behavior matches step 04, but the runtime now
 uses the heartbeat and abuse-control settings shown above. In another shell,
 run `curl http://localhost:8105/healthz`. The expected response is `ok`.
 
-Next: [Supervising Beryl](/tutorial/supervising-beryl/).
+Next: [Supervising beryl](/tutorial/supervising-beryl/).

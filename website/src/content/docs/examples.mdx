@@ -37,18 +37,18 @@ gleam run
 # Open http://localhost:8000
 ```
 
-### What it demonstrates
+### Features used
 
 | beryl feature | How it's used |
 |---|---|
 | **Channel composition** | One `channel.child_spec` handler table owns `cursor:*`, `room:*`, and the `document:` prefix |
 | **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
-| **Lifecycle actions** | Join and termination callbacks return ordered action lists for the runtime to apply |
+| **Join and close actions** | Join and termination callbacks return actions that beryl runs in list order |
 | **Per-pattern rate limits** | `with_topic_rate` gives cursor traffic a higher limit than chat and document traffic |
 | **Shared presence** | One ETS-backed session-presence tracker serves cursors and chat, publishing snapshots asynchronously |
 | **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
 
-### Architecture
+### How it fits together
 
 ```text
 Browser (Phoenix JS clients across /cursors, /chat, /docs)
@@ -63,7 +63,7 @@ Server (Gleam)
 
 ---
 
-## Collaborative Cursors
+## Collaborative cursors
 
 **Source**: [`examples/cursors`](https://github.com/tylerbutler/beryl/tree/main/examples/cursors)
 
@@ -76,19 +76,19 @@ gleam run
 # Open http://localhost:8000 in multiple browser tabs
 ```
 
-### What it demonstrates
+### Features used
 
 | beryl feature | How it's used |
 |---|---|
 | **Raw dispatch** | One socket-wide model handles the `cursor:*` topic family |
 | **Topic routing** | The update function matches `cursor:*` directly with `beryl/topic` |
 | **Session presence (ETS)** | The example-local `session_presence` tracker stores connected users and their username + color metadata in ETS |
-| **`broadcast_from`** | Fans out cursor moves to all *other* clients, excluding the sender |
+| **`broadcast_from`** | Sends cursor moves to all *other* clients, excluding the sender |
 | **Rate limiting** | `beryl.with_message_rate` throttles high-frequency cursor events |
 | **WebSocket transport** | `mist_transport.upgrade` handles Phoenix-compatible WebSocket requests |
 | **Phoenix JS client** | Frontend uses the official `phoenix` package over the standard wire protocol |
 
-### Architecture
+### How it fits together
 
 ```
 Browser (vanilla JS + Phoenix JS client)
@@ -102,7 +102,7 @@ Server (Gleam)
 
 ---
 
-## Chat Rooms
+## Chat rooms
 
 **Source**: [`examples/chatrooms`](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms)
 
@@ -115,7 +115,7 @@ gleam run
 # Open http://localhost:8001?token=beryl-demo in multiple browser tabs
 ```
 
-### What it demonstrates
+### Features used
 
 This example uses parts of the beryl API that the cursor example does not use:
 
@@ -131,7 +131,7 @@ This example uses parts of the beryl API that the cursor example does not use:
 | **Multiple topics** | `lobby` and `room:*` handlers compose in one `channel.child_spec` table |
 | **Rate limiting** | `with_join_rate` (5/sec) and `with_channel_rate` (10/sec/channel) |
 
-### Architecture
+### How it fits together
 
 ```
 Browser (vanilla JS + Phoenix JS client, token auth)
@@ -158,7 +158,7 @@ Server (Gleam)
 
 ---
 
-## Collaborative CRDT Docs
+## Collaborative documents
 
 **Source**: [`examples/collab_docs`](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs)
 
@@ -171,17 +171,17 @@ cd examples/collab_docs && gleam run
 # Open http://localhost:8002 in multiple browser tabs
 ```
 
-### What it demonstrates
+### Features used
 
 | beryl feature | How it's used |
 |---|---|
 | **Segment-shaped topics** | The `document:*` handler claims the prefix, then validates each `document:<tenant>:<document>` topic on join |
 | **Client-side CRDT merge** | Browser state uses `lattice_core`, `lattice_maps`, and `lattice_registers` with `ORMap(MVRegister(String))` document blocks |
-| **Unordered realtime transport** | Beryl broadcasts document updates while the CRDT handles merge convergence |
+| **Unordered realtime transport** | beryl broadcasts document updates while the CRDT handles merge convergence |
 | **Late joiner cache** | Server returns cached merged state in the join reply for new clients |
 | **Conflict resolution UI** | Concurrent edits to the same block render explicit conflict cards with all versions |
 
-### Architecture
+### How it fits together
 
 ```
 Browser (vanilla JS + Phoenix JS client + lattice CRDT packages)
@@ -190,12 +190,12 @@ Server (Gleam)
   ├── Mist HTTP — serves HTML + static files
   ├── beryl/channel — document:* handler with tenant/document validation
   ├── document cache — merged state for late joiners
-  └── beryl pubsub — fan-out of CRDT updates
+  └── beryl pubsub — sends CRDT updates to subscribers
 ```
 
 ---
 
-## Choosing a starting point
+## Choose an example
 
 | Starting point | Go here |
 |---|---|

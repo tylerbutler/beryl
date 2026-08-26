@@ -1,5 +1,5 @@
 ---
-title: "Composition: Raw Dispatch and beryl/channel"
+title: "Move from raw dispatch to channel handlers"
 description: Move from one socket-wide update function to channel handlers that each keep their own state and message type.
 ---
 
@@ -8,12 +8,12 @@ stores each child model. The parent message type has one variant for each child
 message type. The parent update function looks at the message and sends it to
 the correct child.
 
-Raw Beryl works the same way. One update function sees every topic on a socket.
+Raw beryl works the same way. One update function sees every topic on a socket.
 This is type-safe, and it gives you full control. But the work grows with each
 new topic family you add. `beryl/channel` does that routing for you. It runs on
 the same core runtime.
 
-## Raw dispatch: your update function is the router
+## Raw dispatch makes your update function route topics
 
 Imagine one socket that serves polls, document cursors, and account alerts. In
 raw dispatch, your `Model` must hold state for all three. Your `Message` type
@@ -56,7 +56,7 @@ branches.
 This is not a type-safety problem. It is the price you pay when your app owns
 the full socket router.
 
-## The channel layer is the router
+## Channel handlers route topics for you
 
 For apps with many topic families, or apps shaped like Phoenix Channels, use
 `beryl/channel`. Step 4 of the example starts it like this:
@@ -91,10 +91,10 @@ One handler owns the `poll:*` topics. The other owns `guide`. Each one uses a
 different state type and a different info type. Both still fit in one
 `List(channel.Handler)`. The next sections show how.
 
-## A handler makes one channel for each join
+## A handler creates one channel for each join
 
 A handler has two parts: a topic pattern and a join function. When a client
-joins a topic that matches the pattern, Beryl calls the join function with a
+joins a topic that matches the pattern, beryl calls the join function with a
 `channel.JoinContext`. The join function returns the new channel.
 
 ```gleam
@@ -158,7 +158,7 @@ Read it from the top:
 The state type is `String`. The info type is `PollInfo`. Neither type appears
 in a socket-wide `Model` or `Message`. They belong to this handler only.
 
-## How different handlers fit in one list
+## Keep different state types in one handler list
 
 `channel.Handler` has no type parameters. This is what lets the poll handler
 and the guide handler share one list.
@@ -169,14 +169,14 @@ store the state and callbacks inside more closures. Each `channel.next` does
 the same with the new state. The types stay concrete inside those closures.
 From the outside, every handler has the same type.
 
-Beryl does not turn your state or info messages into `Dynamic`. Only the
+beryl does not turn your state or info messages into `Dynamic`. Only the
 client payload is `Dynamic`, because it comes from the wire. That is true for
 both APIs.
 
 The channel layer is built on the public core API. It gives `beryl.child_spec`
 its own raw `init` and `update` pair. It does not go around the runtime.
 
-## The second handler
+## Add a handler with different types
 
 The guide handler uses different types from the poll handler:
 
@@ -214,7 +214,7 @@ The browser joins `guide` after it joins its poll topic. The `Ready` message
 becomes a `tip` push. The client stores the tip as the `title` of its status
 element.
 
-## Actions belong to one channel
+## Actions apply to one channel
 
 A raw effect names its topic:
 
@@ -241,7 +241,7 @@ can reply, push, broadcast, track presence, or close. In `on_terminate`, the
 channel is closing. A reply, push, or presence track makes no sense there, and
 the compiler rejects them. Broadcast and presence cleanup still work.
 
-## Actions become effects, in order
+## beryl runs actions in list order
 
 The vote branch returns:
 
@@ -257,7 +257,7 @@ The channel layer turns each action into one core `socket.Effect`. It keeps the
 order. The same runtime runs them, so the reply goes out before the broadcast.
 
 A join can also return actions. Use `channel.with_actions` on an accepted join.
-Beryl sends the join acknowledgment first, then those actions. A push can never
+beryl sends the join acknowledgment first, then those actions. A push can never
 arrive before its own join acknowledgment.
 
 ## Pick one API for each endpoint
@@ -279,10 +279,8 @@ the Elm analogy stops.
 
 - [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)
 - [`beryl/channel` source](https://github.com/tylerbutler/beryl/blob/main/packages/beryl/src/beryl/channel.gleam)
-- [Beryl channels guide](/guides/channels/)
-- [Choose a Beryl API](/choosing-an-api/)
-- [ADR 0002: app-side dispatch](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0002-app-side-dispatch.md)
-- [ADR 0003: layered channel API](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0003-layered-channel-api.md)
+- [beryl channels guide](/guides/channels/)
+- [Choose a beryl API](/choosing-an-api/)
 
 ## Runnable checkpoint: step 04
 

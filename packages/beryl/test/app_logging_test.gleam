@@ -15,7 +15,7 @@ import gleeunit/should
 import test_helpers
 
 /// Palabres's level is a global, singleton setting (see
-/// `beryl/internal.configure`); restore it to Beryl's own default so a
+/// `beryl/internal.configure`); restore it to beryl's own default so a
 /// `DebugLevel` test doesn't leak verbosity into tests that run after it.
 fn restore_default_logging_level() -> Nil {
   internal.configure(internal.LoggingConfig(

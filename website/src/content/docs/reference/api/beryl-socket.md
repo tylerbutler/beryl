@@ -27,7 +27,7 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
 
  Most effects are applied in one actor turn. `PresenceTrack` and
  `PresenceUntrack` are the exception: they are applied by the presence
- actor. Beryl holds the rest of the list and every later input for that
+ actor. beryl holds the rest of the list and every later input for that
  socket until the mutation has been applied. It then continues exactly
  where it left off. The visible order is unchanged (a
  `PushPresence` after a `PresenceTrack` still sees the track), and the

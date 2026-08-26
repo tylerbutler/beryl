@@ -9,37 +9,37 @@ web
 ## Users
 
 The primary users are Gleam developers on the Erlang/BEAM target who are
-evaluating or learning Beryl. They arrive from Hex, the Gleam package index,
-GitHub, or word of mouth to decide whether Beryl fits a realtime feature and
+evaluating or learning beryl. They arrive from Hex, the Gleam package index,
+GitHub, or word of mouth to decide whether beryl fits a realtime feature and
 to learn how to build their first channel. They are technical, skim-read, and
 use documentation quality as evidence of library maturity.
 
 ## Product Purpose
 
-Beryl provides type-safe realtime channels, presence, and PubSub for Gleam on
+beryl provides type-safe realtime channels, presence, and PubSub for Gleam on
 the BEAM. It gives developers a direct path from a typed application model to
 Phoenix-compatible WebSocket behavior without requiring an Elixir or Phoenix
 application.
 
-The website is Beryl's public product surface. It must help a curious developer
+The website is beryl's public product surface. It must help a curious developer
 understand the library, choose an API, and reach a working first channel with
-little friction. Success means that developers can evaluate Beryl accurately,
+little friction. Success means that developers can evaluate beryl accurately,
 run an example, and apply the documented model in their own supervised Gleam
 application.
 
 ## Positioning
 
-Beryl combines typed app-dispatch and channel APIs with Phoenix-compatible wire
+beryl combines typed app-dispatch and channel APIs with Phoenix-compatible wire
 behavior on Gleam and the Erlang/BEAM runtime. The type-safe application model,
 public transport SPI, and Phoenix protocol compatibility are one system rather
 than separate integrations.
 
 ## Operating Context
 
-Developers evaluate Beryl through the Astro and Starlight website in `website/`,
+Developers evaluate beryl through the Astro and Starlight website in `website/`,
 the generated API reference, GitHub source, and runnable examples. They add a
-Beryl package to a Gleam application, choose raw app dispatch or
-`beryl/channel`, select a wire codec and WebSocket transport, place Beryl's
+beryl package to a Gleam application, choose raw app dispatch or
+`beryl/channel`, select a wire codec and WebSocket transport, place beryl's
 child specification in an OTP supervision tree, and connect a compatible
 client.
 
@@ -50,15 +50,15 @@ complete application flows.
 
 ## Capabilities and Constraints
 
-- Beryl supports typed socket events and effects, channels, presence, PubSub,
+- beryl supports typed socket events and effects, channels, presence, PubSub,
   groups, runtime statistics, wire codecs, and pluggable WebSocket transports.
 - The built-in codec implements the Phoenix wire format.
-- Beryl targets Erlang/BEAM. Transport packages must depend only on the public
-  transport SPI and must not import Beryl's internal runtime modules.
+- beryl targets Erlang/BEAM. Transport packages must depend only on the public
+  transport SPI and must not import beryl's internal runtime modules.
 - Configuration APIs are opaque and use builder functions.
 - Fallible public APIs return `Result`; public behavior must preserve exhaustive
   matching and typed boundaries.
-- Beryl is pre-1.0. The website must describe evolving APIs accurately and must
+- beryl is pre-1.0. The website must describe evolving APIs accurately and must
   not imply stability guarantees that do not exist.
 - The website uses Astro and Starlight and must preserve link validation,
   generated reference content, keyboard navigation, and screen-reader support.

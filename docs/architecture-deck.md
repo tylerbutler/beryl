@@ -17,7 +17,7 @@ Type-safe realtime channels & presence on the BEAM
 
 <!--
 Speaker notes:
-Opening frame. Beryl provides Phoenix-compatible realtime messaging and
+Opening frame. beryl provides Phoenix-compatible realtime messaging and
 presence as a type-safe Gleam library on the Erlang VM. Explain the deck in
 this order: the purpose, the module map, the runtime effect interpreter, and
 the connection lifecycle. The lifecycle includes connect, join, event,
@@ -53,7 +53,7 @@ Speaker notes:
 Read the diagram from top to bottom. A raw WebSocket frame enters the
 transport. The wire codec converts bytes into typed messages. One OTP runtime
 actor for each app sends typed `Input` values to the app's `update` function
-and applies the returned `Effect` list. Beryl has no channel registry or
+and applies the returned `Effect` list. beryl has no channel registry or
 per-channel callback modules. One `update` function handles all relevant
 topics and routes them by matching the topic string. PubSub is the only
 primitive that crosses node boundaries. All layers above PubSub are local to
@@ -107,12 +107,12 @@ mailbox in sequence. Effects apply in strict list order within one turn.
 
 <!--
 Speaker notes:
-This slide replaces the former coordinator and channel registry model. Beryl
+This slide replaces the former coordinator and channel registry model. beryl
 does not need a registry because it does not look up per-topic handlers. One
 `update` function handles each event for each socket on this runtime.
 
 The runtime owns four types of state. Socket state contains the app's `model`,
-not a Beryl `assigns` record. The app contract contains `init`, `update`, and
+not a beryl `assigns` record. The app contract contains `init`, `update`, and
 the `Effect` list that `update` returns. PubSub subscriptions receive
 broadcasts. The heartbeat timer removes dead sockets.
 
@@ -129,7 +129,7 @@ scale across nodes through `pg`.
 ```mermaid
 flowchart LR
   subgraph App["your application supervision tree"]
-    AppSup["application supervisor"] --> Sup["Beryl subtree supervisor<br/>OneForOne"]
+    AppSup["application supervisor"] --> Sup["beryl subtree supervisor<br/>OneForOne"]
     Sup --> Rt["runtime<br/>Transient · significant"]
     Sup --> Lim["connection limiter (optional)"]
   end
@@ -137,7 +137,7 @@ flowchart LR
 
 - `child_spec` returns a child specification for the runtime subtree and a stable handle
 - Add the subtree to *your* application supervisor
-- Beryl **borrows** PubSub, presence, and groups. They are not children of this subtree.
+- beryl **borrows** PubSub, presence, and groups. They are not children of this subtree.
 
 <!--
 Speaker notes:
@@ -147,7 +147,7 @@ optional connection limiter sibling), then hands back a
 `ChildSpecification` that the caller passes to `static_supervisor.add`. The
 application supervisor owns the lifecycle. Presence, PubSub, and groups are
 not part of this tree. The application starts and owns them, and the runtime
-borrows their handles. `beryl.stop` terminates only Beryl's subtree. It does
+borrows their handles. `beryl.stop` terminates only beryl's subtree. It does
 not terminate the PubSub instance, presence actor, or group actors.
 -->
 
@@ -352,7 +352,7 @@ typed `Subscriber(payload)` handle with `pubsub.subscriber`, `join`, and
 
 Repeat the originating-socket exclusion rule from the previous slide. Also
 explain the scope atom. Erlang atoms provide namespaces for groups, and the
-default scope is `beryl_pubsub`. This permits multiple Beryl instances to
+default scope is `beryl_pubsub`. This permits multiple beryl instances to
 coexist. Do not derive the scope from user input because the VM does not
 garbage-collect atoms.
 -->
@@ -390,7 +390,7 @@ Speaker notes:
 Presence reports who is connected across the cluster. It stays consistent
 without a central coordinator or database. Each node runs a presence actor
 that holds one replica of an add-wins OR-set CRDT from `lattice_presence`.
-The application starts and supervises this actor outside Beryl's subtree.
+The application starts and supervises this actor outside beryl's subtree.
 
 Public presence calls are synchronous. An application-owned worker performs
 them outside the shared socket runtime and then broadcasts the result. On a
@@ -436,7 +436,7 @@ data, the same codec encodes runtime replies and pushes. The runtime then gives
 them to the socket's send function.
 
 `Codec` is a data value, not fixed runtime logic. An application can change
-framing without changing the runtime or application code. Beryl has no
+framing without changing the runtime or application code. beryl has no
 implicit wire default. Callers pass a codec to `beryl.config`. Use
 `wire.phoenix_codec()` for Phoenix JSON and V2 binary compatibility.
 

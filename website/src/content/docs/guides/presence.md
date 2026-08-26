@@ -1,21 +1,22 @@
 ---
 title: Presence
+description: Track connected users, publish Phoenix-compatible updates, and replicate presence across nodes.
 ---
 
-beryl can track connected users and their metadata. It uses the
-`lattice_presence` conflict-free replicated data type (CRDT). The CRDT resolves
-conflicts across Erlang nodes.
+beryl can track connected users and their metadata. It uses a
+`lattice_presence` conflict-free replicated data type (CRDT), which merges
+concurrent changes from Erlang nodes without a central coordinator.
 
-## How it works
+## How beryl tracks presence
 
 Presence uses an **add-wins observed-remove set** (AWORSet) with causal context.
 When a user joins or leaves, nodes merge their state without coordination. The
 system does not need a leader or consensus.
 
-The presence system has two layers:
+The presence API has two main parts:
 
-1. **`beryl/presence`** — OTP actor wrapping the CRDT with PubSub replication
-2. **`beryl/presence.Diff`** — An opaque notification value for `on_diff`, with accessor helpers for changed topics, joins, and leaves
+1. **`beryl/presence`**: an OTP actor that manages the CRDT and PubSub replication
+2. **`beryl/presence.Diff`**: a change value for `on_diff`, with functions that read changed topics, joins, and leaves
 
 ## Starting presence
 
@@ -60,7 +61,7 @@ let assert Ok(_root) =
 unavailable or does not reply within this timeout. Presence reads bypass the
 actor mailbox and do not use it.
 
-## Tracking presences
+## Track connected users
 
 Track a user's presence when they join a channel:
 
@@ -101,7 +102,7 @@ leaving other refs for the same key unchanged. Keep the returned ref for the
 next `update` or `untrack`; the previous ref becomes stale. An unknown, removed,
 or non-public ref returns `Error(presence.UnknownRef)`.
 
-## Untracking
+## Remove presence entries
 
 ```gleam
 // Remove a specific presence, using the ref returned by `track`
@@ -116,7 +117,7 @@ remove that entry with `untrack`. To clear all entries for a disconnected
 socket, call `untrack_all` with the session ID. The `session_id` string
 identifies the logical session, not a BEAM process.
 
-## Listing presences
+## Read presence
 
 ```gleam
 // Get all presences in a topic
@@ -132,10 +133,10 @@ let assert Ok(alice_sessions) =
 let assert Ok(online_count) = presence.count(p, "room:lobby")
 ```
 
-`list`, `get_by_key`, and `count` read an actor-owned ETS snapshot rather than
-calling through the actor mailbox, so reads remain nonblocking while the actor
-is busy. Synchronous mutations publish before replying, giving immediate
-read-after-write consistency. `count` reads a materialized count in O(1).
+`list`, `get_by_key`, and `count` read a snapshot from an ETS table owned by the
+actor. They do not wait in the actor mailbox. Synchronous changes update the
+snapshot before replying, so the next read sees the change. `count` reads a
+stored count in O(1).
 
 The table lifetime follows the actor. Before startup, after the actor stops, or
 during the brief window before a supervisor starts its replacement,
@@ -155,9 +156,9 @@ replacement actor and read model after a supervised restart. Presence entries
 and tracking refs are in-memory state and reset on restart; connected clients
 must re-track their presence.
 
-## Diff callbacks
+## Handle presence changes
 
-Use `on_diff` to receive presence changes:
+Use `on_diff` to receive presence changes.
 
 The presence actor calls the callback for local changes and remote merges. It
 calls the function before it publishes new read-model snapshots and before it
@@ -187,7 +188,7 @@ The actor calls `on_diff` after a local change or a remote merge produces a
 non-empty diff. It calls the function for each change, so rapid changes do not
 lose diffs.
 
-## Broadcasting Phoenix-compatible diffs
+## Send Phoenix-compatible `presence_diff` events
 
 Use `beryl.broadcast_presence_diff` to send a `presence_diff` event to sockets
 on the changed topic:
@@ -227,9 +228,12 @@ The payload matches Phoenix Presence's shape, with joins and leaves grouped by p
 }
 ```
 
-For lower-level integrations, `beryl/presence/wire.encode_diff(diff, topic)` returns the encoded JSON payload without broadcasting it. If channels are configured with PubSub, `broadcast_presence_diff` uses the same distributed delivery behavior as `beryl.broadcast`.
+For direct integrations, `beryl/presence/wire.encode_diff(diff, topic)`
+returns the encoded JSON payload without broadcasting it. If channels use
+PubSub, `broadcast_presence_diff` uses the same cross-node delivery as
+`beryl.broadcast`.
 
-## Cross-node replication
+## Replicate presence across nodes
 
 When you configure PubSub, the presence actor:
 
@@ -242,7 +246,7 @@ Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process th
 
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
-## Integration with app-side dispatch
+## Use presence from raw dispatch
 
 Start and supervise the standalone presence actor, then attach its handle with
 `beryl.with_presence_handle`. In `update`, use presence effects rather than
@@ -271,19 +275,20 @@ shutdown handling continue while one socket waits.
 
 With `beryl/channel`, use the corresponding
 `channel.presence_track`, `presence_untrack`, `push_presence`, and
-`broadcast_presence` actions. They lower onto these same effects and keep the
-same ordering and asynchronous suspension semantics.
+`broadcast_presence` actions. They convert to the same effects, preserve the
+same order, and wait for asynchronous presence changes.
 
 The runtime owns refs created by `PresenceTrack` and automatically removes any
 remaining refs when the topic closes. Public synchronous `presence.track`
-calls remain available to application actors and other out-of-band workflows;
+calls remain available to application actors and code outside the socket runtime;
 their refs are independently addressable and are not part of runtime cleanup.
 Repeating `PresenceTrack` for the same topic and key replaces the runtime-owned
-meta atomically. Out-of-band workflows should use `presence.update` with the
+metadata atomically. Code outside the socket runtime should use
+`presence.update` with the
 ref returned by `presence.track`.
 
 ## Next steps
 
-- [PubSub guide](/guides/pubsub/) — required for cross-node presence replication; configure PubSub before passing it to presence config
-- [Reference: Client compatibility](/reference/#client-compatibility) — Phoenix JS and other clients that can handle `presence_diff` events
-- [Troubleshooting](/troubleshooting/#presence-is-stale-or-incorrect) — diagnosing stale entries, missing diffs, and cross-node sync failures
+- [PubSub guide](/guides/pubsub/): configure PubSub for cross-node presence replication
+- [Client compatibility](/reference/#client-compatibility): clients that handle `presence_diff` events
+- [Troubleshooting](/troubleshooting/#presence-is-stale-or-incorrect): diagnose stale entries, missing diffs, and cross-node synchronization failures

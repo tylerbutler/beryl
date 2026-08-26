@@ -1,6 +1,6 @@
 ---
 title: Coming from Phoenix
-description: Compare Phoenix Channels modules, callbacks, assigns, and Presence with both beryl APIs.
+description: Map Phoenix Channels processes, callbacks, assigns, and Presence to both beryl APIs.
 ---
 
 When configured with `wire.phoenix_codec()`, beryl speaks the same wire
@@ -14,8 +14,8 @@ beryl gives you two layers, and Phoenix maps onto both:
 - **`beryl/channel`, the channel layer:** This is the closest match and the
   recommended default for a Phoenix style app. Register one handler for each
   topic pattern. Each channel has callbacks and private state.
-- **`beryl`, raw app-side dispatch:** This is the core API. Define one `init`
-  and `update` pair for the socket system. Beryl runs them separately for each
+- **`beryl`, raw dispatch:** This is the core API. Define one `init`
+  and `update` pair for the socket system. beryl runs them separately for each
   connected socket. Your `update` function owns topic dispatch.
 
 [Choose an API](/choosing-an-api/) compares both APIs. Both support
@@ -23,7 +23,7 @@ colon-delimited topics, wildcard patterns, CRDT presence, `pg` PubSub,
 and heartbeats. Both use the Phoenix JSON array format when configured with
 `wire.phoenix_codec()`.
 
-## The core difference: processes and state
+## Compare processes and state
 
 In Phoenix, the framework owns the router and process tree. You define a
 routing table in the socket module, such as
@@ -40,29 +40,29 @@ dispatch has no handler table: one `update` receives every event for the socket
 as `socket.Input(msg)`, and one `model` stores its state. Different socket
 actors run concurrently.
 
-This gives beryl a coarser isolation boundary than Phoenix. Different sockets
-have separate actors, but channels on one socket share an actor mailbox,
-execution context, and lifecycle. A slow callback delays every topic on that
-socket. A fault in the socket actor closes all its topics.
+beryl provides less fault isolation between joined topics than Phoenix.
+Different sockets have separate actors, but channels on one socket share an
+actor mailbox, execution time, and lifecycle. A slow callback delays every
+topic on that socket. A fault in the socket actor closes all its topics.
 
-Beryl rescues expected callback crashes with narrower behavior: a join panic
+beryl catches expected callback panics with narrower behavior: a join panic
 rejects that join, a message panic closes that topic, an `on_info` panic ends
 the socket, and a terminate panic loses that callback's actions while teardown
-continues. These rescue boundaries limit known callback failures, but they do
+continues. These rules limit known callback failures, but they do
 not provide Phoenix's process isolation between joined topics. See
-[crash behavior](/guides/channels/#crash-behavior). Run long or blocking work
+[callback panics](/guides/channels/#when-callbacks-panic). Run long or blocking work
 in another process and return results with `channel.notify` or
 `socket.notify`.
 
 [Issue #337](https://github.com/tylerbutler/beryl/issues/337) tracks a
 Phoenix-style process-per-channel prototype.
 
-## Concept map
+## Phoenix-to-beryl comparison
 
 | Phoenix | beryl channel layer (`beryl/channel`) | beryl raw dispatch (`beryl`) |
 | --- | --- | --- |
 | `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
-| `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)` — request data in `info.seed` |
+| `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)`; request data is in `info.seed` |
 | `channel "room:*", RoomChannel` routing table | the handler list passed to `channel.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
 | One channel process per joined topic | one socket actor per connection, with one private state value per joined topic | one socket actor and one `model` per connection, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
@@ -76,7 +76,7 @@ Phoenix-style process-per-channel prototype.
 | `push(socket, event, payload)` | `channel.push(event, payload)` action | `socket.Push(topic, event, payload)` effect |
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
 | `broadcast_from!/3` | `channel.broadcast_from(event, payload)` action | `socket.BroadcastFrom(topic, event, payload)` effect |
-| `handle_info(msg, socket)` + `send(pid, msg)` | `channel.on_info` + `channel.notify(sender, msg)` — typed per channel | `socket.Info(msg)` + `socket.notify(sender, msg)` — typed per socket |
+| `handle_info(msg, socket)` + `send(pid, msg)` | `channel.on_info` + `channel.notify(sender, msg)`; typed per channel | `socket.Info(msg)` + `socket.notify(sender, msg)`; typed per socket |
 | `:after_join` self-send | `channel.with_actions` on the accepted join (ordered immediately after the ack) | order the effects after `AcceptJoin` in the same list |
 | `terminate/2` | `channel.on_terminate`, which returns actions | `socket.Closed(topic, reason)` event, delivered on every exit path |
 | `{:stop, reason, socket}` (ends one channel) | `channel.close(actions)` | `socket.KickTopic(topic)` |
@@ -86,9 +86,9 @@ Phoenix-style process-per-channel prototype.
 | `Phoenix.Presence.track/3` / `untrack/3` | `channel.presence_track(key, meta)` / `channel.presence_untrack(key)` actions | `socket.PresenceTrack(topic, key, meta)` / `socket.PresenceUntrack(topic, key)` effects |
 | `Phoenix.Presence.update/4` | repeat `channel.presence_track(key, meta)`; for standalone refs, `presence.update(handle, ref, meta)` | repeat `socket.PresenceTrack(topic, key, meta)`; for standalone refs, `presence.update(handle, ref, meta)` |
 | `push(socket, "presence_state", Presence.list(socket))` | `channel.push_presence("presence_state", presence_wire.encode_state)` | `socket.PushPresence(topic, "presence_state", presence_wire.encode_state)` |
-| `intercept` / `handle_out` | no equivalent — shape payloads before `broadcast`, or per-socket with `push` | no equivalent — same advice |
+| `intercept` / `handle_out` | no equivalent; create payloads before `broadcast`, or use `push` for one socket | no equivalent; use the same approach |
 
-## Side by side: a room channel
+## Compare room channel examples
 
 The same channel in all three models. Phoenix first:
 
@@ -116,9 +116,9 @@ defmodule MyAppWeb.RoomChannel do
 end
 ```
 
-The channel layer keeps the shape — one module per channel, colocated
-callbacks, per-topic state — and turns the imperative `push`/`broadcast_from!`
-calls into ordered action values:
+The channel layer follows the same structure: one module per channel,
+callbacks in that module, and per-topic state. It turns the imperative
+`push` and `broadcast_from!` calls into ordered action values:
 
 ```gleam
 import beryl/channel
@@ -166,7 +166,7 @@ pub fn room() -> channel.Handler {
 }
 ```
 
-Raw dispatch flattens the same behavior into arms of one `case`, and names the
+Raw dispatch puts the same behavior in branches of one `case` and names the
 topic on every effect:
 
 ```gleam
@@ -234,12 +234,11 @@ Both beryl APIs differ from Phoenix in these ways:
   `{"reason": "unmatched topic"}`.
 - **Server-side messages are typed.** Phoenix's `handle_info` receives any
   term. The channel layer's `on_info` receives *this channel's* own `info`
-  type, delivered through the `channel.Sender(info)` in `JoinContext.self`; raw
-  dispatch's `Info(msg)` wraps the socket's `msg` type. Nothing is coerced in
-  either direction — the layer seals the typed value in a closure and stamps
-  the envelope with the join it belongs to, so a send to a channel that has
-  closed, or to a topic that has since been rejoined, is dropped rather than
-  delivered to the wrong join.
+  type, delivered through the `channel.Sender(info)` in `JoinContext.self`.
+  Raw dispatch's `Info(msg)` wraps the socket's `msg` type. beryl keeps the
+  value typed and records which join owns it. If that join closes or the topic
+  joins again, beryl drops the message instead of delivering it to the wrong
+  join.
 
 ## Assigns become a typed state value
 
@@ -253,11 +252,11 @@ type State {
 
 There is no `assign/3`: a callback returns the next state directly, for example
 with `channel.next(State(..state, joined_at: now), actions)`. Because
-the state type is sealed inside the channel's closures, two channels in the
-same handler table can have states with nothing in common — and the compiler
-still checks every field access.
+the channel keeps its state type private, two channels in the same handler
+table can use unrelated state types. The compiler still checks every field
+access.
 
-## Presence and the `:after_join` dance
+## Replace the `:after_join` self-send
 
 The common Phoenix pattern sends itself a message so tracking happens after the
 join is acknowledged:
@@ -291,9 +290,8 @@ where the effects go in one list after `AcceptJoin`. Presence mutations are
 asynchronous in the runtime: this socket resumes in order after the mutation,
 while other sockets may continue in the meantime.
 
-The mirror image — Phoenix's `terminate/2` — is `channel.on_terminate`, which
-returns actions of its own, so a leave announcement and a post-leave roster
-stay inside the channel:
+Phoenix's `terminate/2` maps to `channel.on_terminate`, which returns actions.
+This keeps a leave announcement and updated roster inside the channel:
 
 ```gleam
 |> channel.on_terminate(fn(state: State, _reason) {
@@ -306,13 +304,14 @@ stay inside the channel:
 
 The closing phase allows broadcasts, presence untracking, and presence
 broadcasts; active-only pushes, replies, and presence tracking do not
-type-check there. See [Termination](/guides/channels/#termination).
+type-check there. See
+[Handle channel termination](/guides/channels/#handle-channel-termination).
 
 The wire payloads (`presence_state`, `presence_diff`) match Phoenix Presence's
 shapes. See the [Presence guide](/guides/presence/) for setup and cross-node
 replication.
 
-## Broadcasting from outside a socket
+## Broadcast from outside a socket
 
 From a controller or background job, Phoenix uses
 `MyAppWeb.Endpoint.broadcast("room:lobby", "notice", %{})`. In beryl, call
@@ -326,23 +325,23 @@ beryl.broadcast(sockets, "room:lobby", "notice", json.object([]))
 With PubSub configured, `beryl.broadcast` distributes across the cluster, the
 same way `Endpoint.broadcast` rides `Phoenix.PubSub`.
 
-This is also how a channel reaches **another** topic. Channel actions are
-scoped to the channel's own topic on purpose, and the `Sockets` handle only
-becomes available after `child_spec` returns — so an app that needs cross-topic
-publishing keeps the handle in a small actor and calls it from its callbacks.
+This is also how a channel sends to **another** topic. Channel actions apply
+only to their own topic, and the `Sockets` handle becomes available after
+`child_spec` returns. An application that sends across topics can keep the
+handle in a small actor and call it from channel callbacks.
 That actor is the layer's `Endpoint.broadcast/3`; see
-[Limitations](/guides/channels/#limitations).
+[When to use raw dispatch or another process](/guides/channels/#when-to-use-raw-dispatch-or-another-process).
 
 To message one specific channel (Phoenix: `send(channel_pid, msg)`), keep the
-`channel.Sender(info)` from `JoinContext.self` and call `channel.notify` — the
+`channel.Sender(info)` from `JoinContext.self` and call `channel.notify`. The
 message arrives as a typed `on_info` call. With raw dispatch, keep the
 `socket.Sender(msg)` from `ConnectInfo.self` and call `socket.notify`.
 
 ## Next steps
 
-- [Channels](/guides/channels/) — the full channel-layer guide
-- [App-Side Dispatch](/guides/dispatch/) — the full routing model, topic helpers, and effect ordering
-- [Choose an API](/choosing-an-api/) — which layer fits your app
-- [WebSocket Transport](/guides/websocket/) — mount beryl on Mist or Ewe, Phoenix-compatible framing
-- [Presence](/guides/presence/) — tracking, snapshots, and cross-node sync
-- [PubSub](/guides/pubsub/) — the `pg`-backed publish/subscribe layer
+- [Channels](/guides/channels/): build handlers with private state and callbacks
+- [Raw Dispatch](/guides/dispatch/): route socket events and order effects
+- [Choose an API](/choosing-an-api/): compare channels and raw dispatch
+- [WebSocket Transport](/guides/websocket/): connect beryl to Mist
+- [Presence](/guides/presence/): track users and synchronize nodes
+- [PubSub](/guides/pubsub/): publish to subscribers through Erlang `pg`

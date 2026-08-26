@@ -12,7 +12,7 @@ change while proposed.
 
 ## Context
 
-Beryl currently runs one supervised runtime actor per socket system. That
+beryl currently runs one supervised runtime actor per socket system. That
 actor owns every connected socket's raw model, every joined channel's sealed
 state, protocol capabilities, topic membership, and effect interpretation.
 Application callbacks run in that actor.
@@ -94,7 +94,7 @@ The answer must cover both public programming models:
 - raw dispatch, where one model spans a socket and all its topics;
 - `beryl/channel`, where each accepted topic has private state and callbacks.
 
-It must also preserve Beryl's existing protocol and type-safety contracts:
+It must also preserve beryl's existing protocol and type-safety contracts:
 
 - Phoenix-compatible text and binary framing;
 - exact `JoinRef` and `ReplyRef` capability identity;
@@ -127,7 +127,7 @@ Costs:
 
 - application callbacks do not use BEAM process boundaries for isolation;
 - a blocking callback delays unrelated sockets in the same runtime;
-- rescue policy becomes part of Beryl's correctness surface;
+- rescue policy becomes part of beryl's correctness surface;
 - runtime-wide state and callback execution share one throughput bottleneck;
 - Phoenix-shaped APIs have different server-side failure semantics from
   Phoenix even though the wire protocol matches.
@@ -164,7 +164,7 @@ Costs:
 - the process count grows with concurrent connections.
 
 This option gives raw dispatch a natural fault boundary. The boundary is
-coarser than the Phoenix Channels boundary. It is also coarser than Beryl's
+coarser than the Phoenix Channels boundary. It is also coarser than beryl's
 current topic-scoped rescue for message and binary callbacks.
 
 ### 3. Use one process per socket and one process per channel
@@ -178,7 +178,7 @@ A possible topology is:
 
 ```text
 application supervisor
-└── Beryl subtree
+└── beryl subtree
     ├── control plane and PubSub integration
     ├── connection limiter (optional)
     ├── socket session supervisor
@@ -302,7 +302,7 @@ Build the smallest runtime path that can:
 - preserve ordered effects for one socket;
 - route external broadcasts and PubSub messages;
 - close the transport when the socket actor exits;
-- stop all socket actors during graceful Beryl shutdown.
+- stop all socket actors during graceful beryl shutdown.
 
 ### Prototype B: process per channel
 
@@ -336,7 +336,7 @@ focused tests for:
 - runtime, session, and worker shutdown order;
 - PubSub delivery during socket or channel teardown;
 - connection-limit release after abnormal process exit;
-- restart-intensity exhaustion in the enclosing Beryl subtree.
+- restart-intensity exhaustion in the enclosing beryl subtree.
 
 No option is acceptable if it weakens capability identity, generation checks,
 wire ordering, or transport ownership.

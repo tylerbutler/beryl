@@ -54,7 +54,7 @@ A PubSub message delivered to subscribers.
 
  ## Frozen wire contract
 
- Beryl sends broadcasts **raw between nodes** through `pg` as a five-element
+ beryl sends broadcasts **raw between nodes** through `pg` as a five-element
  tuple. The PubSub scope atom comes first. The four message fields follow in
  order. This scope-tagged runtime shape is the frozen wire contract for each
  `payload` type. The contract also applies to `PubSubFrom`.
