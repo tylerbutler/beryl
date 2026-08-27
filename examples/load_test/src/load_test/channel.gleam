@@ -1,3 +1,4 @@
+import beryl/channel
 import beryl/socket.{
   type Effect, type Input, type Next, AcceptJoin, Broadcast, Join, Message,
   RejectJoin, ReplyError,
@@ -7,11 +8,12 @@ import example_helpers/session_presence
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import load_test/bench
 
-pub fn init(_info) {
+pub fn init(_info: socket.ConnectInfo(msg)) -> #(Nil, List(Effect)) {
   #(Nil, [])
 }
 
@@ -38,7 +40,8 @@ pub fn update(
         message_effects(presence, topic, event_name, payload, ref),
       )
     }
-    _ -> socket.Next(model, [])
+    socket.Binary(..) | socket.Closed(..) | socket.Info(_) ->
+      socket.Next(model, [])
   }
 }
 
@@ -137,4 +140,62 @@ fn reply_error(
     Some(value) -> [ReplyError(value, payload)]
     None -> []
   }
+}
+
+/// The same topics as `beryl/channel` handlers, with the same events and
+/// replies as `update`, so a run against either API compares topology
+/// alone. `message_effects` stays the source of truth for what each event
+/// does.
+pub fn handlers(
+  presence: session_presence.Tracker,
+  cost_us: Int,
+) -> List(channel.Handler) {
+  [
+    channel.handler("guardrail:forbidden", fn(_context) {
+      channel.reject(json.object([#("reason", json.string("forbidden"))]))
+    }),
+    channel.handler("bench:*", fn(context) {
+      channel.accept(Nil)
+      |> channel.on_message(fn(_state, message) {
+        bench.burn(cost_us)
+        channel.next(Nil, actions(presence, context.topic, message))
+      })
+    }),
+  ]
+}
+
+/// Lower the raw target's effect list onto channel actions.
+fn actions(
+  presence: session_presence.Tracker,
+  topic: String,
+  message: channel.Message,
+) -> List(channel.Action(channel.Active)) {
+  message_effects(
+    presence,
+    topic,
+    message.event,
+    message.payload,
+    message.reply,
+  )
+  |> list.filter_map(fn(effect) {
+    case effect {
+      socket.ReplyOk(payload: payload, ..) ->
+        Ok(channel.reply_ok(message.reply, payload))
+      socket.ReplyError(payload: payload, ..) ->
+        Ok(channel.reply_error(message.reply, payload))
+      socket.Broadcast(event: event, payload: payload, ..) ->
+        Ok(channel.broadcast(event, payload))
+      // `message_effects` never produces these; listing them keeps the two
+      // bench targets from drifting silently if it ever does.
+      socket.AcceptJoin(..)
+      | socket.RejectJoin(..)
+      | socket.Push(..)
+      | socket.BroadcastFrom(..)
+      | socket.PresenceTrack(..)
+      | socket.PresenceUntrack(..)
+      | socket.PushPresence(..)
+      | socket.BroadcastPresence(..)
+      | socket.KickTopic(..) -> Error(Nil)
+    }
+  })
 }

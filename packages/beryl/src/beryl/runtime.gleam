@@ -2764,13 +2764,17 @@ fn exec_input(
         // message is cast to it. `Binary` and `Info` are socket-scoped and
         // still reach `update`; `Closed` for a worker topic never gets
         // here, because `exec_close_topic` routes the close to the worker.
-        SocketActorRole(workers: Some(factory), ..), sock.Join(..) ->
+        SocketActorRole(workers: Some(factory), ..),
+          sock.Join(topic: topic_name, payload:, ref:)
+        ->
           exec_worker_join(
             state,
             socket_id,
             socket,
             factory,
-            input,
+            topic_name,
+            payload,
+            ref,
             source,
             cont,
           )
@@ -2783,9 +2787,19 @@ fn exec_input(
                 worker.subject,
                 WorkerDeliver(event, payload, ref, kind, started_at),
               )
-            _, _ ->
+            Error(Nil), _ ->
               state.logger
               |> log.warn("Message dropped: topic has no worker", [
+                #("socket_id", socket_id),
+                #("topic", topic_name),
+              ])
+            // A `Message` is only ever delivered from a `MessageSource`.
+            Ok(_), JoinSource(..)
+            | Ok(_), InfoSource(..)
+            | Ok(_), ClosedSource
+            ->
+              state.logger
+              |> log.error("Message dropped: not attributed to a message", [
                 #("socket_id", socket_id),
                 #("topic", topic_name),
               ])
@@ -2822,7 +2836,7 @@ fn exec_update_result(
       state.logger
       |> log.debug("Update stopped socket", [
         #("socket_id", socket_id),
-        #("reason", stop_reason_string(reason)),
+        #("reason", stop_reason_to_string(reason)),
       ])
       // A join answered with Stop is still unanswered on the wire: fail it
       // closed before the teardown frames.
@@ -3067,7 +3081,7 @@ fn exec_close_topic(
           |> log.debug("Topic closed", [
             #("socket_id", socket_id),
             #("topic", topic_name),
-            #("reason", stop_reason_string(reason)),
+            #("reason", stop_reason_to_string(reason)),
           ])
           let close_join_ref = joined_ref(socket, topic_name)
           let worker = dict.get(socket.workers, topic_name)
@@ -3241,7 +3255,10 @@ fn exec_teardown(
       |> log.debug(
         "Socket teardown",
         list.append(
-          [#("socket_id", socket_id), #("reason", stop_reason_string(reason))],
+          [
+            #("socket_id", socket_id),
+            #("reason", stop_reason_to_string(reason)),
+          ],
           joined_topics_metadata(socket),
         ),
       )
@@ -4879,7 +4896,7 @@ fn send_frame_logged(
   send_result
 }
 
-fn stop_reason_string(reason: StopReason) -> String {
+fn stop_reason_to_string(reason: StopReason) -> String {
   case reason {
     sock.Normal -> "normal"
     sock.Shutdown -> "shutdown"
@@ -5109,69 +5126,61 @@ fn exec_worker_join(
   socket_id: String,
   socket: SocketState(model, msg),
   factory: WorkerFactory,
-  input: Input(msg),
+  topic_name: String,
+  payload: Dynamic,
+  ref: JoinRef,
   source: Source,
   cont: Cont,
 ) -> Exec(model, msg) {
-  case input {
-    sock.Join(topic: topic_name, payload:, ref:) -> {
-      let self = state.self_subject
-      let spawn =
-        WorkerSpawn(
-          open: factory.open,
-          socket_id: socket_id,
-          seed: socket.seed,
-          topic: topic_name,
-          payload: payload,
-          report: fn(pid, report) {
-            process.send(self, WorkerReport(socket_id, topic_name, pid, report))
-          },
-          telemetry: state.config.telemetry,
-        )
-      let #(state, result) = case
-        factory_supervisor.start_child(factory.supervisor, spawn)
-      {
-        Ok(actor.Started(pid:, data: WorkerOpened(subject, reply, effects))) -> {
-          let worker =
-            WorkerRef(subject: subject, pid: pid, monitor: process.monitor(pid))
-          let state =
-            store_socket(
-              state,
-              SocketState(
-                ..socket,
-                workers: dict.insert(socket.workers, topic_name, worker),
-              ),
-            )
-          #(
-            state,
-            Ok(
-              sock.Next(socket.model, [sock.AcceptJoin(ref, reply), ..effects]),
-            ),
-          )
-        }
-        Ok(actor.Started(data: WorkerRefused(reason), ..)) -> #(
+  let self = state.self_subject
+  let spawn =
+    WorkerSpawn(
+      open: factory.open,
+      socket_id: socket_id,
+      seed: socket.seed,
+      topic: topic_name,
+      payload: payload,
+      report: fn(pid, report) {
+        process.send(self, WorkerReport(socket_id, topic_name, pid, report))
+      },
+      telemetry: state.config.telemetry,
+    )
+  let #(state, result) = case
+    factory_supervisor.start_child(factory.supervisor, spawn)
+  {
+    Ok(actor.Started(pid:, data: WorkerOpened(subject, reply, effects))) -> {
+      let worker =
+        WorkerRef(subject: subject, pid: pid, monitor: process.monitor(pid))
+      let state =
+        store_socket(
           state,
-          Ok(sock.Next(socket.model, [sock.RejectJoin(ref, reason)])),
-        )
-        Error(actor.InitTimeout) -> #(
-          state,
-          Error(
-            "join timed out after "
-            <> int.to_string(worker_join_timeout_ms)
-            <> "ms",
+          SocketState(
+            ..socket,
+            workers: dict.insert(socket.workers, topic_name, worker),
           ),
         )
-        Error(actor.InitFailed(reason)) -> #(state, Error(reason))
-        Error(actor.InitExited(reason)) -> #(
-          state,
-          Error(exit_reason_string(reason)),
-        )
-      }
-      exec_update_result(state, socket_id, source, cont, result)
+      #(
+        state,
+        Ok(sock.Next(socket.model, [sock.AcceptJoin(ref, reply), ..effects])),
+      )
     }
-    // Unreachable: only joins are routed here.
-    _ -> Continue(state, cont_steps(cont, [], None))
+    Ok(actor.Started(data: WorkerRefused(reason), ..)) -> #(
+      state,
+      Ok(sock.Next(socket.model, [sock.RejectJoin(ref, reason)])),
+    )
+    Error(actor.InitTimeout) -> #(
+      state,
+      Error(
+        "join timed out after " <> int.to_string(worker_join_timeout_ms) <> "ms",
+      ),
+    )
+    Error(actor.InitFailed(reason)) -> #(state, Error(reason))
+    Error(actor.InitExited(reason)) -> #(
+      state,
+      Error(exit_reason_to_string(reason)),
+    )
   }
+  exec_update_result(state, socket_id, source, cont, result)
 }
 
 /// Apply a worker's report if the worker still owns its topic.
@@ -5258,7 +5267,7 @@ fn handle_worker_down(
           // Its close already finished, or it was never this socket's.
           Error(Nil) -> state
           Ok(#(topic_name, _)) -> {
-            let exit = exit_reason_string(reason)
+            let exit = exit_reason_to_string(reason)
             state.logger
             |> log.error("Topic worker exited; closing topic", [
               #("socket_id", socket_id),
@@ -5325,7 +5334,9 @@ fn close_worker_topic(
           log_terminate_crash(state, socket_id, topic_name, crash)
           effects
         }
-        Ok(_) -> []
+        // The worker answers this subject only from `WorkerTerminate`;
+        // callback results always go to the socket actor's mailbox.
+        Ok(WorkerRan(..)) | Ok(WorkerCrashed(..)) -> []
         Error(Nil) -> {
           kill_stuck_worker(state, socket_id, topic_name, worker)
           []
@@ -5365,7 +5376,7 @@ fn awaited_worker_event(
           if pid == awaited
         -> Some(WorkerFinished(effects, crash))
         WorkerDown(process.ProcessDown(pid:, reason:, ..)) if pid == awaited ->
-          Some(WorkerExited(exit_reason_string(reason)))
+          Some(WorkerExited(exit_reason_to_string(reason)))
         WorkerTerminateTimedOut(worker: pid, ..) if pid == awaited ->
           Some(WorkerTimedOut)
         _ -> None
@@ -5488,7 +5499,7 @@ fn forget_worker(worker: WorkerRef) -> Nil {
   process.demonitor_process(worker.monitor)
 }
 
-fn exit_reason_string(reason: process.ExitReason) -> String {
+fn exit_reason_to_string(reason: process.ExitReason) -> String {
   case reason {
     process.Normal -> "normal"
     process.Killed -> "killed"

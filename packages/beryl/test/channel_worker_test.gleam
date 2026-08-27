@@ -92,7 +92,11 @@ fn ran_pid(reports: process.Subject(Report), callback: String) -> process.Pid {
   pid
 }
 
-fn terminated(reports: process.Subject(Report), topic: String, reason: String) {
+fn terminated(
+  reports: process.Subject(Report),
+  topic: String,
+  reason: String,
+) -> Nil {
   next_report(reports) |> should.equal(Terminated(topic, reason))
 }
 

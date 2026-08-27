@@ -9,7 +9,6 @@ import gleam/result
 import gleam/string
 import load_test/bench
 import load_test/channel
-import load_test/handlers
 
 pub type App {
   App(channels: beryl.Sockets)
@@ -22,7 +21,7 @@ pub fn start() -> App {
     True ->
       beryl_channel.child_spec(
         environment_config(),
-        handlers: handlers.handlers(presence_tracker, cost_us),
+        handlers: channel.handlers(presence_tracker, cost_us),
       )
       |> result.map_error(fn(error) { string.inspect(error) })
     False ->
