@@ -57,17 +57,27 @@ The channel composition surface: a channel is a topic pattern paired
  `state` and `info` types compose in one list. No value is
  ever erased to `Dynamic` and no unchecked coercion is involved:
  typed `info` values travel inside a closure that only the join which
- created it can open. The socket that owns the join opens it. If the join
- has ended, the socket drops it unopened.
+ created it can open. The worker process that owns the join opens it. If
+ the join has ended, that process is gone and the value reaches nothing.
 
- ## Ordering
+ ## Processes and ordering
+
+ Each accepted topic runs in its own worker process under a supervisor
+ that its socket actor owns. The socket actor keeps the connection:
+ protocol state, refs, subscriptions, presence bookkeeping, and every
+ frame write. `join` runs while the worker starts, and the socket actor
+ waits for that one join (at most five seconds). `on_message` and
+ `on_info` run in the worker, which reports its actions back to the
+ socket actor.
 
  Action lists are applied strictly from left to right, and they always
  target the channel's own topic. They lower onto
  beryl's core `Effect` values, which the runtime applies in list order.
- Action order is therefore wire order. An asynchronous presence effect can
- park this socket while other sockets continue. The remaining actions
- resume only after that effect completes.
+ Action order is therefore wire order for one topic. Between different
+ topics on one socket, no order is promised: their workers run
+ concurrently, as Phoenix channel processes do. An asynchronous presence
+ effect can park this socket while other sockets continue. The remaining
+ actions resume only after that effect completes.
 
  A join's actions (see [`with_actions`](#with_actions)) are emitted with
  the join acknowledgment, immediately after it: the socket is already
@@ -76,6 +86,8 @@ The channel composition surface: a channel is a topic pattern paired
  reservation; use application-owned synchronous state for atomic
  capacity checks.
 
+ A close reaches the worker after the messages it already holds, so a
+ reply computed before a leave is still delivered. Then
  [`on_terminate`](#on_terminate) actions are lowered in the turn that
  closes the topic, after the channel instance is gone. Its closing-phase
  action type permits only operations that remain meaningful then.
@@ -229,29 +241,17 @@ A typed handle for sending server-side messages to one joined channel.
  receives each message with its type intact.
 
  A sender is scoped to the join that produced it. Sending is asynchronous
- and never fails. It cannot report that the channel is gone. The delivery
- point checks liveness. It drops the message after a normal close, such as
- a client leave, a [`close`](#close) result, or a socket teardown. It also
- drops the message after the same topic is joined again. A different join
- never receives the message.
-
- The one exception is a panic inside [`on_terminate`](#on_terminate).
- Core's policy for a crash while closing a topic is to log it and keep
- the model from before the close, so the channel system keeps that
- instance: a sender created by it can still reach its `on_info` until
- the topic is joined again or the socket ends. Nothing is handed to
- another join in that window. It is the *same* instance, outliving its own
- termination.
+ and never fails. It cannot report that the channel is gone. The message
+ goes to the worker process of that join. After the join ends, for any
+ reason, that process is gone and the message is dropped. A later join of
+ the same topic has a different worker, so a different join never
+ receives the message.
 
  ## Cost
 
- Delivery is cast-free but not free. Each message is carried to the
- socket's runtime actor as a sealed thunk, and unsealing it does a
- selective receive on that actor's mailbox in the same turn. A
- selective receive scans the mailbox, so under a deep backlog on a busy
- socket the cost of one delivery is O(mailbox depth). It is a
- non-issue at ordinary depths; it is worth knowing before using
- `notify` as a high-rate data path.
+ Each message is carried to the worker as a sealed thunk, and unsealing
+ it does a selective receive on the worker's own mailbox in the same
+ turn. That mailbox holds only this topic's work, so the cost is small.
 
 ```gleam
 pub type Sender(a)
@@ -389,8 +389,7 @@ Send a typed server-side message to the channel that owns `sender`.
 
  This is a fire-and-forget send. It returns when the message is enqueued,
  whether or not the channel is still joined. The runtime discards a message
- for a channel that has ended. See [`Sender`](#sender) for delivery cost and
- the one case in which an ended channel can still receive a message.
+ for a channel that has ended. See [`Sender`](#sender) for delivery cost.
 
 ```gleam
 pub fn notify(
