@@ -105,9 +105,6 @@ jobs:
       - name: Install website dependencies
         run: pnpm -C website install --frozen-lockfile
 
-      - name: Install rebar3
-        uses: ./.github/actions/install-rebar3
-
       - name: Install interactive client dependencies
         run: cd website/interactive && gleam deps download
 
