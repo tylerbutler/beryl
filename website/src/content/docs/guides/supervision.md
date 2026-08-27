@@ -79,12 +79,12 @@ import beryl/presence
 import beryl/wire
 import gleam/otp/static_supervisor
 
-pub fn main() {
-  let #(presence_actor, presence_spec) =
+pub fn main() -> Nil {
+  let #(presence_actor, presence_specification) =
     presence.child_spec(presence.default_config("node1"))
-  let #(groups, groups_spec) = group.child_spec()
+  let #(groups, groups_specification) = group.child_spec()
 
-  let assert Ok(#(channels, beryl_spec)) =
+  let assert Ok(#(channels, beryl_specification)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: init,
@@ -92,12 +92,13 @@ pub fn main() {
     )
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(presence_spec)
-    |> static_supervisor.add(groups_spec)
-    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.add(presence_specification)
+    |> static_supervisor.add(groups_specification)
+    |> static_supervisor.add(beryl_specification)
     |> static_supervisor.start()
 
   // ... start the transport, run forever
+  Nil
 }
 ```
 
@@ -122,7 +123,8 @@ Configure it with `beryl.with_pubsub`.
 
 ```gleam
 case beryl.child_spec(config, init: init, update: update) {
-  Ok(#(sockets, spec)) -> add_to_supervisor(sockets, spec)
+  Ok(#(sockets, runtime_specification)) ->
+    add_to_supervisor(sockets, runtime_specification)
   Error(beryl.HeartbeatTimeoutTooLow(2)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"

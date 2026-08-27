@@ -16,20 +16,20 @@
 //// ## Quick Start
 ////
 //// ```gleam
-//// let ps = pubsub.start(pubsub.default_config())
+//// let pubsub_handle = pubsub.start(pubsub.default_config())
 ////
 //// // Sending: broadcast to all subscribers of a topic
-//// pubsub.broadcast(ps, "room:lobby", "new_msg", "hello")
+//// pubsub.broadcast(pubsub_handle, "room:lobby", "new_msg", "hello")
 ////
 //// // Receiving: create a `subscriber`, join topics, and fold its
 //// // `selecting` into an actor's own `Selector`. `RemoteBroadcast` here is
 //// // the actor's own message constructor that wraps a `pubsub.Message`.
-//// let sub = pubsub.subscriber(ps)
-//// pubsub.join(sub, "room:lobby")
+//// let subscriber = pubsub.subscriber(pubsub_handle)
+//// pubsub.join(subscriber, "room:lobby")
 //// let selector =
 ////   process.new_selector()
 ////   |> process.select(subject)
-////   |> pubsub.selecting(sub, RemoteBroadcast)
+////   |> pubsub.selecting(subscriber, RemoteBroadcast)
 //// ```
 
 import gleam/dynamic.{type Dynamic}
@@ -220,12 +220,12 @@ pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
 /// type.
 ///
 /// ```gleam
-/// let sub = pubsub.subscriber(ps)
-/// pubsub.join(sub, "room:lobby")
+/// let subscriber = pubsub.subscriber(pubsub_handle)
+/// pubsub.join(subscriber, "room:lobby")
 /// let selector =
 ///   process.new_selector()
 ///   |> process.select(subject)
-///   |> pubsub.selecting(sub, RemoteBroadcast)
+///   |> pubsub.selecting(subscriber, RemoteBroadcast)
 /// ```
 pub fn selecting(
   selector: Selector(message),

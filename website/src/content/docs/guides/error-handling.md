@@ -11,8 +11,8 @@ and how your application should respond.
 Return a `RejectJoin` effect to reject a client. The error payload is sent back as a `phx_reply` with `status: "error"`:
 
 ```gleam
-fn update(model: Model, ev: Input(Msg)) -> Next(Model) {
-  case ev {
+fn update(model: Model, input: Input(Message)) -> Next(Model) {
+  case input {
     socket.Join(topic, payload, ref) ->
       case authenticate(payload) {
         Error(_) ->
@@ -60,8 +60,8 @@ import beryl/transport/server
 
 let config =
   server.default_config("/socket/websocket")
-  |> server.with_on_connect(fn(req) {
-    case extract_token(req) {
+  |> server.with_on_connect(fn(request) {
+    case extract_token(request) {
       Ok(_) -> Ok([])  // Allow; no connect metadata
       Error(_) -> Error(server.ConnectRejected)  // → HTTP 403, connection refused
     }
@@ -125,7 +125,9 @@ socket.Closed(topic, reason) -> {
       // Clean up: remove from presence, release locks, etc.
       Nil
     }
-    _ -> Nil
+    socket.Normal -> Nil
+    socket.Shutdown -> Nil
+    socket.Errored(_) -> Nil
   }
   socket.Next(prune(model, topic), [])
 }
@@ -231,7 +233,8 @@ within 5 seconds.
 
 ```gleam
 case beryl.child_spec(config, init: init, update: update) {
-  Ok(#(sockets, spec)) -> add_to_supervisor(sockets, spec)
+  Ok(#(sockets, child_specification)) ->
+    add_to_supervisor(sockets, child_specification)
   Error(beryl.HeartbeatTimeoutTooLow(2)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"

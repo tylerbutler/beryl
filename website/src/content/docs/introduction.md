@@ -66,10 +66,10 @@ list of channel handlers. Each handler has a topic pattern and a typed `join`
 callback. The layer routes each event to the channel that owns the topic:
 
 ```gleam
-let assert Ok(#(sockets, spec)) =
+let assert Ok(#(sockets, child_specification)) =
   channel.child_spec(
     beryl.config(wire.phoenix_codec()),
-    handlers: [lobby.channel(), rooms.channel(), documents.channel()],
+    handlers: [lobby.channel(), room.channel(), document.channel()],
   )
 ```
 
@@ -78,7 +78,7 @@ let assert Ok(#(sockets, spec)) =
 full control of routing and effect order:
 
 ```gleam
-let assert Ok(#(sockets, spec)) =
+let assert Ok(#(sockets, child_specification)) =
   beryl.child_spec(
     beryl.config(wire.phoenix_codec()),
     init: init,
@@ -110,8 +110,8 @@ pub type Model {
   Model(user_id: String, room_id: String)
 }
 
-fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model) {
-  case ev {
+fn update(model: Model, input: socket.Input(Nil)) -> socket.Next(Model) {
+  case input {
     socket.Join("room:" <> room_id, _payload, ref) ->
       socket.Next(Model(..model, room_id: room_id), [socket.AcceptJoin(ref, None)])
 
@@ -125,7 +125,12 @@ fn update(model: Model, ev: socket.Input(Nil)) -> socket.Next(Model) {
         )],
       )
 
-    _ -> socket.Next(model, [])
+    socket.Join(_, _, _)
+    | socket.Message(_, _, _, _)
+    | socket.Binary(_, _)
+    | socket.Closed(_, _)
+    | socket.Info(_) ->
+      socket.Next(model, [])
   }
 }
 ```

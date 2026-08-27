@@ -61,10 +61,10 @@ Upgrade a request to WebSocket if it matches the configured path.
 
  Usage in your Ewe handler:
  ```gleam
- fn handle_request(req: Request(Connection), sockets: Sockets) -> Response(ResponseBody) {
-   use <- ewe_transport.upgrade(req, sockets, server.default_config("/socket"))
+ fn handle_request(http_request: Request(Connection), sockets: Sockets) -> Response(ResponseBody) {
+   use <- ewe_transport.upgrade(http_request, sockets, server.default_config("/socket"))
    // Fall through to regular HTTP routing
-   case request.path_segments(req) {
+   case request.path_segments(http_request) {
      [] -> index_page()
      _ -> response.new(404) |> response.set_body(ewe.Empty)
    }

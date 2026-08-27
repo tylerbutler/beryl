@@ -5,10 +5,10 @@ import live_poll/server
 import live_poll/store
 import live_poll/timer
 
-pub fn main() {
+pub fn main() -> Nil {
   let assert Ok(polls) = store.start()
   let assert Ok(clock) = timer.start()
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, child_specification)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: raw.init,
@@ -16,7 +16,7 @@ pub fn main() {
     )
   server.run(
     sockets,
-    spec,
+    child_specification,
     "Step 03 - typed timer messages",
     8103,
     False,

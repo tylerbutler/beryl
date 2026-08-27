@@ -152,26 +152,26 @@ pub fn handlers() -> List(channel.Handler) {
   [room_channel.channel()]
 }
 
-pub fn main() {
+pub fn main() -> Nil {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, child_specification)) =
     channel.child_spec(config, handlers: handlers())
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
 
   let assert Ok(_) =
-    fn(req) {
+    fn(http_request) {
       mist_transport.upgrade(
-        req,
+        http_request,
         sockets,
         server.default_config("/socket/websocket"),
-        fn() { handle_http(req) },
+        fn() { handle_http(http_request) },
       )
     }
     |> mist.new
@@ -182,9 +182,9 @@ pub fn main() {
 }
 
 fn handle_http(
-  req: request.Request(mist.Connection),
+  http_request: request.Request(mist.Connection),
 ) -> response.Response(mist.ResponseData) {
-  case request.path_segments(req) {
+  case request.path_segments(http_request) {
     [] ->
       response.new(200)
       |> response.set_body(mist.Bytes(bytes_tree.from_string("Hello!")))
@@ -293,7 +293,7 @@ import gleam/json
 import gleam/option.{None, Some}
 import gleam/result
 
-pub type Msg {
+pub type Message {
   NoOp
 }
 
@@ -301,12 +301,12 @@ pub type Model {
   Model(socket_id: String)
 }
 
-pub fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
+pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) {
   #(Model(socket_id: info.socket_id), [])
 }
 
-pub fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
-  case ev {
+pub fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
+  case input {
     socket.Join("room:" <> _, payload, ref) ->
       socket.Next(
         model,

@@ -18,10 +18,10 @@ Clients do not receive group information.
 import beryl/group
 import gleam/otp/static_supervisor
 
-let #(groups, groups_spec) = group.child_spec()
+let #(groups, groups_specification) = group.child_spec()
 let assert Ok(_root) =
   static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.add(groups_specification)
   |> static_supervisor.start()
 ```
 
@@ -35,10 +35,10 @@ Configure a different timeout when starting the actor:
 let config =
   group.default_config()
   |> group.with_call_timeout(10_000)
-let #(groups, groups_spec) = group.child_spec_with_config(config)
+let #(groups, groups_specification) = group.child_spec_with_config(config)
 let assert Ok(_root) =
   static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.add(groups_specification)
   |> static_supervisor.start()
 ```
 
@@ -57,7 +57,7 @@ let assert Ok(Nil) = group.create(groups, "team:engineering")
 case group.create(groups, "team:engineering") {
   Ok(Nil) -> Nil
   Error(group.GroupAlreadyExists) -> Nil  // already there
-  Error(_) -> Nil
+  Error(group.GroupNotFound) -> Nil       // cannot occur for create
 }
 
 // Delete a group (removes it and all its topic memberships)
@@ -67,7 +67,7 @@ let assert Ok(Nil) = group.delete(groups, "team:engineering")
 case group.delete(groups, "team:gone") {
   Ok(Nil) -> Nil
   Error(group.GroupNotFound) -> Nil
-  Error(_) -> Nil
+  Error(group.GroupAlreadyExists) -> Nil  // cannot occur for delete
 }
 ```
 
@@ -96,7 +96,7 @@ Adding the same topic twice does nothing because the group stores a set.
 case group.topics(groups, "team:engineering") {
   Ok(topic_set) -> set.to_list(topic_set)  // ["room:frontend", "room:backend"]
   Error(group.GroupNotFound) -> []
-  Error(_) -> []
+  Error(group.GroupAlreadyExists) -> []   // cannot occur for topics
 }
 
 // List all group names
@@ -146,10 +146,10 @@ import gleam/json
 import gleam/otp/static_supervisor
 
 // At startup
-let #(groups, groups_spec) = group.child_spec()
+let #(groups, groups_specification) = group.child_spec()
 let assert Ok(_root) =
   static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(groups_spec)
+  |> static_supervisor.add(groups_specification)
   |> static_supervisor.start()
 let assert Ok(Nil) = group.create(groups, "team:eng")
 let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")

@@ -10,10 +10,10 @@
 //// ## Example
 ////
 //// ```gleam
-//// let #(groups, groups_spec) = group.child_spec()
+//// let #(groups, groups_specification) = group.child_spec()
 //// let assert Ok(_root) =
 ////   static_supervisor.new(static_supervisor.OneForOne)
-////   |> static_supervisor.add(groups_spec)
+////   |> static_supervisor.add(groups_specification)
 ////   |> static_supervisor.start()
 //// let assert Ok(Nil) = group.create(groups, "team:engineering")
 //// let assert Ok(Nil) = group.add(groups, "team:engineering", "room:frontend")

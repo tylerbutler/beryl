@@ -42,11 +42,11 @@ import gleam/string
 import mist
 
 /// Prefer the Authorization: Bearer header, fall back to a ?token= query param.
-fn extract_token(req: Request(mist.Connection)) -> Result(String, Nil) {
-  case bearer_token(request.get_header(req, "authorization")) {
+fn extract_token(http_request: Request(mist.Connection)) -> Result(String, Nil) {
+  case bearer_token(request.get_header(http_request, "authorization")) {
     Ok(token) -> Ok(token)
     Error(_) ->
-      request.get_query(req)
+      request.get_query(http_request)
       |> result.try(list.key_find(_, "token"))
   }
 }
@@ -80,12 +80,12 @@ import beryl/transport/server
 
 // let verify_token: fn(String) -> Result(Claims, Nil)
 
-let ws_config =
+let websocket_config =
   server.default_config("/socket/websocket")
   // Reject cross-site handshakes when auth relies on ambient credentials.
   |> server.with_allowed_origins(["https://app.example.com"])
-  |> server.with_on_connect(fn(req) {
-    case extract_token(req) {
+  |> server.with_on_connect(fn(http_request) {
+    case extract_token(http_request) {
       Ok(token) ->
         case verify_token(token) {
           Ok(claims) -> Ok(claims_metadata(claims))
@@ -130,7 +130,7 @@ pub type Model {
 
 beryl.child_spec(
   config,
-  init: fn(info: socket.ConnectInfo(Msg)) {
+  init: fn(info: socket.ConnectInfo(Message)) {
     #(model_from_metadata(info.seed.metadata), [])
   },
   update: update,
@@ -144,7 +144,9 @@ fn model_from_metadata(metadata: List(#(String, String))) -> Model {
         username: username,
         roles: decode_roles(metadata),
       ))
-    _, _ -> Anonymous
+    Ok(_), Error(_) -> Anonymous
+    Error(_), Ok(_) -> Anonymous
+    Error(_), Error(_) -> Anonymous
   }
 }
 
@@ -172,8 +174,8 @@ The model already contains the claims. `update` only decides whether the user
 can join the topic:
 
 ```gleam
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
-  case ev {
+fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
+  case input {
     socket.Join(topic, _payload, ref) ->
       case model {
         Authenticated(claims) ->

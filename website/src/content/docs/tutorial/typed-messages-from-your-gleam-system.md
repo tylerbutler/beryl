@@ -179,7 +179,7 @@ case stage {
     timer.after(clock, duration_ms, fn() {
       socket.notify(model.sender, ClosePoll(topic))
     })
-  _ -> Nil
+  ReadOnly | Voting -> Nil
 }
 ```
 

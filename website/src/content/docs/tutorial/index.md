@@ -45,7 +45,8 @@ configuration and starts the shared modules:
 
 - `raw.gleam` has the raw `init`, `Model`, `Message`, and `update` function
   used by steps 1 through 3.
-- `channels.gleam` has the two `channel.Handler` values used by steps 4 and 5.
+- `channel_handler.gleam` has the two `channel.Handler` values used by steps 4
+  and 5.
 - `poll.gleam` defines the poll types and turns client `Dynamic` payloads into
   poll commands.
 - `store.gleam` keeps poll state in a Gleam OTP actor.

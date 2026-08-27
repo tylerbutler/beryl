@@ -24,10 +24,10 @@ import mist.{type Connection, type ResponseData, type WebsocketConnection}
 ///
 /// Usage in your Mist handler:
 /// ```gleam
-/// fn handle_request(req: Request(Connection), sockets: Sockets) -> Response(ResponseData) {
-///   use <- mist_transport.upgrade(req, sockets, server.default_config("/socket"))
+/// fn handle_request(http_request: Request(Connection), sockets: Sockets) -> Response(ResponseData) {
+///   use <- mist_transport.upgrade(http_request, sockets, server.default_config("/socket"))
 ///   // Fall through to regular HTTP routing
-///   case request.path_segments(req) {
+///   case request.path_segments(http_request) {
 ///     [] -> index_page()
 ///     _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
 ///   }

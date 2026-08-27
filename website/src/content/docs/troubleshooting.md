@@ -55,7 +55,7 @@ state. It does not receive `phx_reply`.
 
 2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` or `channel.child_spec` after its child spec is started:
    ```gleam
-   use <- mist_transport.upgrade(req, channels, config)
+   use <- mist_transport.upgrade(request, channels, config)
    ```
 
 3. **Check for a `Join` crash.** A crash during `Join` rejects the join but
@@ -163,8 +163,10 @@ receive the event.
 
 3. **Single-node vs. multi-node.** Without PubSub, broadcasts are local to the node. If your deployment runs multiple BEAM nodes, configure PubSub:
    ```gleam
-   let ps = pubsub.start(pubsub.default_config())
-   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
+   let pubsub_handle = pubsub.start(pubsub.default_config())
+   let config =
+     beryl.config(wire.phoenix_codec())
+     |> beryl.with_pubsub(pubsub_handle)
    ```
 
 4. **broadcast_from excluding the wrong socket.** `beryl.broadcast_from` excludes the socket whose ID you pass. Verify that the socket ID matches the sender.

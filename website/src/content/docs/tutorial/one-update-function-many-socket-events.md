@@ -222,7 +222,7 @@ The `Message` branch also checks that the model knows the topic:
 case set.contains(model.topics, topic), room_name(topic) {
   True, Ok(room) ->
     handle_command(stage, polls, model, topic, room, event, payload, reply)
-  _, _ -> socket.Next(model, [])
+  True, Error(_) | False, Ok(_) | False, Error(_) -> socket.Next(model, [])
 }
 ```
 

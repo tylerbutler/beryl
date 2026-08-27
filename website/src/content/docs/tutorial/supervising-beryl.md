@@ -20,15 +20,15 @@ The live-poll example starts beryl under a root supervisor. Then it starts the
 Mist listener:
 
 ```gleam
-let assert Ok(#(sockets, spec)) =
+let assert Ok(#(sockets, child_specification)) =
   channel.child_spec(
     config,
-    handlers: channels.handlers(polls, clock, 60_000),
+    handlers: channel_handler.handlers(polls, clock, 60_000),
   )
 
 let assert Ok(_root) =
   static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(spec)
+  |> static_supervisor.add(child_specification)
   |> static_supervisor.start()
 ```
 
@@ -39,12 +39,14 @@ The supervisor code comes from
 The server then passes `sockets` to `mist_transport.upgrade`.
 
 The order matters. You get the handle when `child_spec` returns. But no runtime
-process exists until a supervisor starts `spec`. Before that, beryl refuses new
-connections. Calls through the handle that do not wait for a reply, such as a
-broadcast, do nothing. They do not crash because the process is missing.
+process exists until a supervisor starts `child_specification`. Before that,
+beryl refuses new connections. Calls through the handle that do not wait for a
+reply, such as a broadcast, do nothing. They do not crash because the process
+is missing.
 
 `child_spec` checks the configuration and the handler list before it returns
-`spec`. If it returns an error, there is nothing to add to the supervisor.
+`child_specification`. If it returns an error, there is nothing to add to the
+supervisor.
 
 ## Processes started by beryl
 

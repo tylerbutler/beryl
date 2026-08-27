@@ -320,15 +320,15 @@ Build a channel system's supervision child specification for embedding
  ## Example
 
  ```gleam
- let assert Ok(#(sockets, spec)) =
+ let assert Ok(#(sockets, child_specification)) =
    channel.child_spec(
      beryl.config(wire.phoenix_codec()),
-     handlers: [rooms.channel()],
+     handlers: [room.channel()],
    )
 
  let assert Ok(_root) =
    static_supervisor.new(static_supervisor.OneForOne)
-   |> static_supervisor.add(spec)
+   |> static_supervisor.add(child_specification)
    |> static_supervisor.start()
  ```
 
