@@ -2,13 +2,12 @@
 
 ## Status
 
-Proposed (2026-08-17).
+Accepted (2026-08-26). Proposed 2026-08-17.
 
 This ADR records an architectural question that ADRs
 [0001](0001-type-erased-channel-registry.md),
 [0002](0002-app-side-dispatch.md), and
-[0003](0003-layered-channel-api.md) did not evaluate. It makes no runtime
-change while proposed.
+[0003](0003-layered-channel-api.md) did not evaluate.
 
 ## Context
 
@@ -369,20 +368,52 @@ latency.
 
 ## Decision
 
-This ADR does not accept a process topology change yet.
+beryl adopts option 2 for raw dispatch and option 3 for `beryl/channel`.
 
-Prototype options 2 and 3, gather the required correctness and performance
-evidence, then amend this ADR with one of these outcomes:
+- **Raw dispatch: one process per socket.** Landed in
+  [#343](https://github.com/tylerbutler/beryl/pull/343) (issue #334). The
+  socket actor owns the raw model and runs `init` and `update`; the router
+  stays a stable, named forwarder.
+- **Channel layer: one process per socket and one process per joined topic.**
+  Landed with issue #337. Each socket actor starts a linked factory supervisor
+  and one `Temporary` worker for each accepted join. The worker owns the
+  channel's sealed state and runs `join`, `on_message`, `on_info`, and
+  `on_terminate`. The socket actor keeps connection-level protocol state,
+  capabilities, subscriptions, presence bookkeeping, and every frame write.
 
-- retain the shared runtime and document callback rescue as the chosen fault
-  model;
-- move raw and channel dispatch to process-per-socket actors;
-- use process-per-socket for raw dispatch and process-per-channel for the
-  channel layer;
-- adopt another topology justified by the same evidence.
+Prototype B's sequencing decisions were resolved as follows:
 
-Until that amendment, ADRs 0002 and 0003 remain authoritative and the current
-shared runtime behavior remains supported.
+- Workers on one socket run concurrently. A slow callback delays only its
+  own topic.
+- No ordering is promised between different topics on one socket. Within one
+  topic, action order is wire order.
+- `join` runs in the worker's initialiser. The socket actor is blocked for
+  that one join, at most 5 seconds, then the join is rejected. Joins on
+  different sockets never serialise.
+- No backpressure yet. Worker mailboxes and pending reports are unbounded
+  ([#249](https://github.com/tylerbutler/beryl/issues/249) is the follow-up).
+- Presence suspension stays in the socket actor. Workers emit presence
+  actions; the socket actor applies them with the existing ordering rules.
+- A close is routed to the worker before the topic's reply refs are dropped,
+  and the socket parks until the worker has run `on_terminate`. Results the
+  worker computed before the close are applied first, so a reply to a push
+  sent before a leave is still delivered. A worker that does not finish
+  `on_terminate` in 5 seconds is killed.
+
+Contract changes recorded with this decision:
+
+- An `on_info` panic closes only its topic. It previously tore down the
+  socket.
+- The terminate-panic exception is removed. A panic in `on_terminate` is
+  logged, the close completes, and the worker stops, so its sender delivers
+  nothing afterwards.
+- A worker process that dies (for example, killed) closes its topic with
+  `phx_error` and skips `on_terminate`, because the state died with it. The
+  client rejoins. This matches Phoenix.
+
+Performance evidence is reported in the pull request for #337. ADRs 0002 and
+0003 remain authoritative for the raw and channel APIs; this ADR changes only
+the process topology behind them.
 
 ## Sources
 

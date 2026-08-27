@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Each accepted channel topic now runs in its own supervised process, so a slow or panicking callback affects only that topic. An on_info panic closes its topic instead of the socket, and no order is promised between different topics on one socket."

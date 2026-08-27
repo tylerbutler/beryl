@@ -5,9 +5,10 @@ title: Socket processes & restarts
 The runtime uses one router actor and one actor for each connected socket.
 Transports send admitted, decoded frames to the router. The router sends each
 frame to the actor that owns the socket. Your application's `init` and `update`
-functions run in that socket actor. The application owns separate supervised
-children for presence and groups. PubSub wraps Erlang `pg` and is not a runtime
-child.
+functions run in that socket actor. With the channel layer, the socket actor
+also starts one worker process for each accepted topic, and the channel's
+callbacks run there. The application owns separate supervised children for
+presence and groups. PubSub wraps Erlang `pg` and is not a runtime child.
 
 ## How the processes divide the work
 
@@ -15,6 +16,15 @@ Each socket actor stores the app model, wire-send functions, joined topics, and
 heartbeat time for one socket. It processes mailbox messages in sequence. This
 serializes that socket's `update` calls and frame writes without locks. A slow
 callback for one socket does not stop other sockets.
+
+With the channel layer, each joined topic has a worker under a supervisor
+that the socket actor starts and links. `join` runs while the worker starts,
+and the socket actor waits for it. `on_message` and `on_info` run in the
+worker, which reports lowered effects back to the socket actor. The socket
+actor applies them in arrival order and writes every frame, so one topic's
+effects keep their order, and different topics on one socket interleave.
+A close is routed to the worker before the topic's reply refs are dropped,
+so a reply computed before a leave is still delivered.
 
 The router manages admission, the topic subscriber index, the PubSub
 subscription, and stats. It only matches and forwards messages. It does not run
@@ -96,11 +106,12 @@ topic, or socket. It never continues with a partial result. Other faults can
 still stop the socket actor, which closes that socket. A router fault invokes
 supervision.
 
-For the channel layer, those scopes map to `join`, `on_message` /
-`on_info`, and `on_terminate`. A terminate panic discards that
-router update, so its actions are lost and the old instance remains reachable
-only through its own typed sender until rejoin or socket teardown. Core still
-finishes closing the topic and continues closing sibling channels.
+For the channel layer, a `join` panic rejects that join, and an `on_message`
+or `on_info` panic closes only that topic; the worker keeps its previous
+state, so `on_terminate` still runs. A terminate panic loses its actions, and
+the worker stops. A worker process that dies closes its topic with
+`phx_error` and skips `on_terminate`. Core still finishes closing the topic
+and continues closing sibling channels.
 
 ## Detect inactive sockets
 
@@ -123,6 +134,8 @@ flowchart TB
   SUP --> RT["router actor (significant Transient)<br/>init/update captured in child spec"]
   SUP -. optional .-> LIMITER["connection limiter"]
   RT <-. "monitor ×2" .-> SA1["socket actor (one per connection)<br/>model, heartbeat, frame writes"]
+  SA1 --> WS["topic worker supervisor<br/>(channel layer, linked)"]
+  WS --> W["topic workers (one per joined topic, Temporary)<br/>channel state and callbacks"]
 ```
 
 - The child specification contains the `init` and `update` closures. A restart

@@ -32,30 +32,27 @@ joined topic**. It calls `join`, `handle_in`, `handle_info`, and `terminate`.
 Each callback receives channel state in `socket.assigns`, which is a map of
 atoms to untyped terms.
 
-beryl starts **one socket actor for each connected socket**, not one process
-for each joined topic. A separate router actor maintains the socket and topic
-indexes. With the channel layer, all channels on one socket run in sequence in
-that socket's actor. Each channel has a private state value of your type. Raw
-dispatch has no handler table: one `update` receives every event for the socket
-as `socket.Input(msg)`, and one `model` stores its state. Different socket
-actors run concurrently.
+beryl starts **one socket actor for each connected socket** and, with the
+channel layer, **one worker process for each joined topic**, as Phoenix does.
+A separate router actor maintains the socket and topic indexes. The socket
+actor owns the connection: protocol state, heartbeats, refs, subscriptions,
+presence bookkeeping, and every frame write. Each channel runs its callbacks
+in its own worker and has a private state value of your type. Raw dispatch has
+no handler table and no workers: one `update` receives every event for the
+socket as `socket.Input(msg)`, and one `model` stores its state.
 
-beryl provides less fault isolation between joined topics than Phoenix.
-Different sockets have separate actors, but channels on one socket share an
-actor mailbox, execution time, and lifecycle. A slow callback delays every
-topic on that socket. A fault in the socket actor closes all its topics.
+The isolation boundaries match Phoenix. Workers on one socket run
+concurrently, so a slow callback delays only its own topic, and beryl
+promises no order between different topics on one socket. `join` runs while
+the worker starts, and the socket actor waits for it, as the Phoenix socket
+waits for `join/3`.
 
-beryl catches expected callback panics with narrower behavior: a join panic
-rejects that join, a message panic closes that topic, an `on_info` panic ends
-the socket, and a terminate panic loses that callback's actions while teardown
-continues. These rules limit known callback failures, but they do
-not provide Phoenix's process isolation between joined topics. See
-[callback panics](/guides/channels/#when-callbacks-panic). Run long or blocking work
-in another process and return results with `channel.notify` or
-`socket.notify`.
-
-[Issue #337](https://github.com/tylerbutler/beryl/issues/337) tracks a
-Phoenix-style process-per-channel prototype.
+beryl also catches callback panics: a join panic rejects that join, a message
+or `on_info` panic closes that topic and still runs `on_terminate`, and a
+terminate panic loses that callback's actions while the close completes. A
+worker process that dies closes its topic with `phx_error` and skips
+`on_terminate`, as a Phoenix channel crash skips `terminate/2`. See
+[callback panics](/guides/channels/#when-callbacks-panic).
 
 ## Phoenix-to-beryl comparison
 
@@ -64,7 +61,7 @@ Phoenix-style process-per-channel prototype.
 | `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
 | `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)`; request data is in `info.seed` |
 | `channel "room:*", RoomChannel` routing table | the handler list passed to `channel.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
-| One channel process per joined topic | one socket actor per connection, with one private state value per joined topic | one socket actor and one `model` per connection, covering all its topics |
+| One channel process per joined topic | one socket actor per connection and one worker process per joined topic, each with its own private state | one socket actor and one `model` per connection, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
 | `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
 | `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |

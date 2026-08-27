@@ -260,16 +260,12 @@ channel.notify(sender, Tick(1))
 ```
 
 This mechanism does not use casts. `notify` keeps the value in a typed
-function and adds the join topic and a unique join generation. The router
-compares both values with the live channel instance. Only that join can read
-the value during delivery. The socket actor's mailbox does not store the typed
-value between turns.
+function and sends it to the worker process of that join. Only that join can
+read the value during delivery. No mailbox stores the typed value between
+turns.
 
-Delivery uses a selective receive, which scans the socket actor's mailbox.
-One delivery therefore costs O(mailbox depth). The cost is small when the
-mailbox is short. Do not use `notify` for high-rate traffic when the mailbox
-can have a large backlog. See
-[When to use raw dispatch or another process](#when-to-use-raw-dispatch-or-another-process).
+Delivery uses a selective receive on the worker's own mailbox, which holds
+only that topic's work, so the cost is small.
 
 ### Senders from closed or rejoined channels
 
@@ -279,20 +275,13 @@ live:
 
 - If the channel has **closed** after a client leave, `close([])`, or socket
   shutdown, the layer drops the message.
-- If the same topic has since been **joined again**, the message's
-  generation no longer matches the live instance, so it is dropped rather
-  than handed to the new join.
+- If the same topic has since been **joined again**, the new join has a
+  different worker, so the message is dropped rather than handed to it.
 - A live match delivers exactly one `on_info` call. Sends are never
-  coalesced, and they arrive in the order the owning socket receives them.
+  coalesced, and they arrive in the order the worker receives them.
 
 A long-lived process can keep a sender. It cannot send a message to a different
 join. If the target join is gone, the message is dropped.
-
-A **panic inside `on_terminate`** is an exception. For a crash during topic
-close, the core logs the crash and keeps the model from before the close. That
-model still contains the channel instance. Its sender can deliver `on_info`
-until the topic joins again or the socket ends. See
-[When callbacks panic](#when-callbacks-panic).
 
 Use `notify` to schedule a **later** turn, including from another process. Put
 work that must occur during the join in
@@ -483,26 +472,23 @@ where the panic occurred:
 | Panic in | Effect |
 |---|---|
 | `join` | That join is rejected; the socket survives |
-| `on_message` | That topic closes; the socket's other topics survive |
-| `on_info` | The whole socket is torn down |
-| `on_terminate` | Teardown still completes, and sibling channels still run their own termination actions |
+| `on_message` | That topic closes with `phx_error`; `on_terminate` still runs; the socket's other topics survive |
+| `on_info` | Same as `on_message`: that topic closes; the socket's other topics survive |
+| `on_terminate` | The panic is logged, the close completes without its actions, and sibling channels still run their own termination actions |
 
-A panic inside `on_terminate` discards the channel's `Closed` turn. The
-termination actions and model update are lost. The instance stays at its
-original generation. The core cannot reach it through the closed topic. Client messages and another
-`Closed` cannot name it. However, `on_info` applies to the socket, not the
-topic. A `Sender` from that join can still deliver to the retained instance. A
-rejoin replaces the entry, and socket shutdown removes it.
+Each topic runs in its own worker process. A panic in a callback keeps the
+state from before that callback, so `on_terminate` still sees it. After
+`on_terminate` the worker stops, so a sender for that join delivers nothing.
 
-The panic discards the model update that would remove the instance. The core
-must log this panic, so the channel layer does not hide it. Keep code that can
-panic out of `on_terminate`. Then beryl removes the closed channel and drops
-messages from its senders.
+If the worker process itself dies, for example when it is killed, the topic
+closes with `phx_error` and `on_terminate` does not run, because the state
+died with the process. The client must rejoin. A worker that does not finish
+`on_terminate` within five seconds is killed, and the close completes without
+its actions.
 
-Crash isolation stops at the socket, as it does with raw dispatch: a
-panic in `on_info` ends one socket, not the router. Another fault in that
-socket actor also loses only that socket. A router crash loses every socket on
-that `beryl.Sockets` handle. See
+Crash isolation stops at the socket for other faults: a fault in the socket
+actor loses only that socket and its workers. A router crash loses every
+socket on that `beryl.Sockets` handle. See
 [Socket Processes & Restarts](/architecture/runtime/).
 
 ## Supervise the channel system
@@ -593,14 +579,13 @@ The layer handles one topic at a time. Note these limits:
   `on_info`, forward them yourself from your own process by calling
   `channel.notify(context.self, ..)`. The typed sender is safe to hold and
   is dropped after the join ends.
-- **Nothing is per-topic-process.** Like raw dispatch, all of a socket's
-  channels run in its socket actor, sequentially. Long or blocking work
-  belongs in your own process, which can hand results back through
-  `channel.notify`.
-- **`notify` delivery costs O(mailbox depth).** A selective receive scans the
-  socket actor's mailbox to recover the typed value. This is suitable for a
-  short mailbox, but not for high-rate traffic with a large backlog. Batch
-  messages in your own process instead of sending each item separately.
+- **A slow callback delays only its own topic.** Each channel runs in its
+  own worker, so other topics on the socket continue. The exception is
+  `join`, which the socket actor waits for (at most five seconds). Keep
+  `join` short; do long work in your own process and hand results back
+  through `channel.notify`.
+- **No order between topics.** Actions of one topic keep their order. Replies
+  and pushes of different topics on one socket can interleave in any order.
 
 ## Next steps
 

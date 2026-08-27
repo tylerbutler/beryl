@@ -842,7 +842,41 @@ pub fn child_spec(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
 ) {
-  use subtree <- result.map(build_app_subtree(config, init, update))
+  child_spec_with(config, init, update, None)
+}
+
+/// Build a socket system that runs one process per accepted topic.
+///
+/// The package-internal entry point behind `channel.child_spec`: `open`
+/// runs in each new topic worker's initialiser and seals that topic's
+/// callbacks. The socket-level `init`/`update` pair is a stub, because
+/// every joined topic is owned by its worker.
+@internal
+pub fn worker_child_spec(
+  config: Config,
+  open: fn(socket.WorkerContext) -> socket.WorkerOutcome,
+) -> Result(
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
+) {
+  child_spec_with(
+    config,
+    fn(_info) { #(Nil, []) },
+    fn(_model, _input) { socket.Next(Nil, []) },
+    Some(open),
+  )
+}
+
+fn child_spec_with(
+  config: Config,
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
+) -> Result(
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
+) {
+  use subtree <- result.map(build_app_subtree(config, init, update, open_worker))
   // The subtree is a `Transient` child of the application's supervisor: a
   // graceful `beryl.stop` auto-shuts the subtree down with reason `shutdown`,
   // which a transient child treats as normal, so the parent does not restart
@@ -886,6 +920,7 @@ fn build_app_subtree(
   config: Config,
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
   update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -915,6 +950,7 @@ fn build_app_subtree(
             config: to_runtime_config(config),
             init: init,
             update: update,
+            open_worker: open_worker,
             router: process.named_subject(runtime_name),
             router_pid: runtime_pid,
           )

@@ -15,7 +15,7 @@ manage presence and groups. Only PubSub sends data across nodes.
 Each page describes one subsystem and lists its source files.
 
 - [How beryl handles a message](/architecture/message-lifecycle): how a frame travels from WebSocket to your `update` function and back
-- [Socket Processes & Restarts](/architecture/runtime): the router, one process per socket, typed messages, and restart behavior
+- [Socket Processes & Restarts](/architecture/runtime): the router, one process per socket, one worker per channel, typed messages, and restart behavior
 - [Broadcasts Across Nodes](/architecture/pubsub-and-distribution): Erlang `pg` groups, sender exclusion, and delivery between nodes
 - [Presence](/architecture/presence): CRDT-backed presence tracking, diffs, and replication
 - [WebSocket Frames & Transports](/architecture/wire-and-transport): message encoding, Phoenix frames, and the Mist WebSocket adapter
@@ -26,7 +26,7 @@ Each page describes one subsystem and lists its source files.
 flowchart TB
   T["WebSocket Transport<br/>beryl_mist · beryl_ewe"]
   W["Wire Protocol<br/>beryl/wire · beryl/wire/codec"]
-  RT["Runtime<br/>router + one actor per socket<br/>beryl/runtime"]
+  RT["Runtime<br/>router + one actor per socket<br/>+ one worker per channel<br/>beryl/runtime"]
   subgraph App["Your app"]
     C["channel handlers<br/>beryl/channel"]
     U["init / update<br/>beryl/socket"]
@@ -49,7 +49,7 @@ flowchart TB
 | `beryl` | Public entry-point: `config/1`, `child_spec/3`, `broadcast/4`, `broadcast_from/5`, `stop/1` | — |
 | `beryl/channel` | Recommended channel layer: supervised startup, handler validation, typed per-topic state, join and close callbacks, senders, and ordered actions | [Channels](/guides/channels/) |
 | `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `JoinRef`/`ReplyRef`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
-| `beryl/runtime` | Router and socket actors: subscriber index, per-socket models, event delivery, returned effects, and heartbeat enforcement | [Runtime](/architecture/runtime) |
+| `beryl/runtime` | Router, socket actors, and topic workers: subscriber index, per-socket models, per-topic channel processes, event delivery, returned effects, and heartbeat enforcement | [Runtime](/architecture/runtime) |
 | `beryl/pubsub` | Distributed publish and subscribe through Erlang `pg` | [Broadcasts Across Nodes](/architecture/pubsub-and-distribution) |
 | `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, cross-node diff broadcast, `on_diff` callbacks | [Presence](/architecture/presence) |
 | `beryl/presence/wire` | Phoenix-compatible JSON encoding for presence diffs (`joins`/`leaves` maps) | [Presence](/architecture/presence) |
@@ -71,6 +71,7 @@ flowchart TB
   S["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
   S --> RT["router actor (Transient)"]
   RT <-. "monitor" .-> SA["socket actors<br/>one per connection"]
+  SA --> TW["topic workers<br/>one per joined channel"]
   PR["presence (app-started)"]
   GR["groups (app-started)"]
   SA -. "async mutation" .-> PR

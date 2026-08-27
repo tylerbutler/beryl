@@ -33,7 +33,7 @@ fn start_system() -> beryl.Sockets {
       beryl.config(wire.phoenix_codec()),
       init: channel.init,
       update: fn(model, input) {
-        channel.update(presence_tracker, model, input)
+        channel.update(presence_tracker, 0, model, input)
       },
     )
   session_presence.configure(presence_tracker, sockets)

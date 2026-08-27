@@ -9,6 +9,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import load_test/bench
 
 pub fn init(_info) {
   #(Nil, [])
@@ -16,6 +17,7 @@ pub fn init(_info) {
 
 pub fn update(
   presence: session_presence.Tracker,
+  cost_us: Int,
   model: Nil,
   input: Input(msg),
 ) -> Next(Nil) {
@@ -29,11 +31,13 @@ pub fn update(
       socket.Next(model, [
         RejectJoin(ref, json.object([#("reason", json.string("unmatched"))])),
       ])
-    Message(topic, event_name, payload, ref) ->
+    Message(topic, event_name, payload, ref) -> {
+      bench.burn(cost_us)
       socket.Next(
         model,
         message_effects(presence, topic, event_name, payload, ref),
       )
+    }
     _ -> socket.Next(model, [])
   }
 }

@@ -135,12 +135,14 @@ fn update(model: Model, input: socket.Input(Nil)) -> socket.Next(Model) {
 }
 ```
 
-### One process per socket
+### One process per socket and per channel
 
 Each `beryl.Sockets` handle identifies one router actor and one actor for each
-connected socket. The socket actor owns that socket's model and runs its
-callbacks, while the router maintains the socket and topic indexes. A separate
-OTP actor manages the presence CRDT. PubSub uses Erlang `pg`.
+connected socket. The socket actor owns that socket's connection state and
+frame writes, while the router maintains the socket and topic indexes. With
+the channel layer, each joined topic runs its callbacks in its own worker
+process, as in Phoenix. A separate OTP actor manages the presence CRDT.
+PubSub uses Erlang `pg`.
 
 ### Presence across Erlang nodes
 

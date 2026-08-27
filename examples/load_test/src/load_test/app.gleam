@@ -1,4 +1,5 @@
 import beryl
+import beryl/channel as beryl_channel
 import beryl/wire
 import envoy
 import example_helpers/session_presence
@@ -6,7 +7,9 @@ import gleam/int
 import gleam/otp/static_supervisor
 import gleam/result
 import gleam/string
+import load_test/bench
 import load_test/channel
+import load_test/handlers
 
 pub type App {
   App(channels: beryl.Sockets)
@@ -14,14 +17,24 @@ pub type App {
 
 pub fn start() -> App {
   let presence_tracker = session_presence.start()
-  let assert Ok(#(channels, spec)) =
-    beryl.child_spec(
-      environment_config(),
-      init: channel.init,
-      update: fn(model, input) {
-        channel.update(presence_tracker, model, input)
-      },
-    )
+  let cost_us = bench.callback_cost_us()
+  let assert Ok(#(channels, spec)) = case bench.use_channel_layer() {
+    True ->
+      beryl_channel.child_spec(
+        environment_config(),
+        handlers: handlers.handlers(presence_tracker, cost_us),
+      )
+      |> result.map_error(fn(error) { string.inspect(error) })
+    False ->
+      beryl.child_spec(
+        environment_config(),
+        init: channel.init,
+        update: fn(model, input) {
+          channel.update(presence_tracker, cost_us, model, input)
+        },
+      )
+      |> result.map_error(fn(error) { string.inspect(error) })
+  }
   session_presence.configure(presence_tracker, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
