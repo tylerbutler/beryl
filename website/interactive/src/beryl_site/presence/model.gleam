@@ -85,7 +85,7 @@ pub type Model {
 /// Returns the initial model with production defaults.
 pub fn initial() -> Model {
   Model(
-    service_url: "https://demos.beryl.tylerbutler.com",
+    service_url: "https://demo.beryl.tylerbutler.com",
     expected_compatibility_version: 1,
     status: Static,
     topic: "",

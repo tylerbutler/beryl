@@ -17,7 +17,7 @@
 - The first slice implements only the presence lab and shared event transcript.
 - Do not compile arbitrary Gleam in the browser.
 - Use compatibility version `1` and scenario identifier `presence-v1`.
-- Use `https://demos.beryl.tylerbutler.com` as the production demo service URL.
+- Use `https://demo.beryl.tylerbutler.com` as the production demo service URL.
 - Treat every demo client as hostile: enforce an origin allow-list, frame limits, connection limits, join limits, message limits, bounded topics, and explicit cleanup.
 - Preserve readable static content when JavaScript or the demo service is unavailable.
 - Use pnpm for JavaScript dependencies.
@@ -577,7 +577,7 @@ pub fn scenario_creation_opens_primary_client_test() {
   |> should.equal([
     model.OpenClient(
       role: model.Primary,
-      service_url: "https://demos.beryl.tylerbutler.com",
+      service_url: "https://demo.beryl.tylerbutler.com",
       topic: "demo:presence:0123456789abcdef0123456789abcdef",
       name: "Alice",
       compatibility_version: 1,
@@ -1991,7 +1991,7 @@ Create `website/src/components/PresenceLab.astro`:
 ---
 const serviceUrl =
   import.meta.env.PUBLIC_BERYL_DEMO_URL ??
-  "https://demos.beryl.tylerbutler.com";
+  "https://demo.beryl.tylerbutler.com";
 ---
 
 <beryl-presence-lab

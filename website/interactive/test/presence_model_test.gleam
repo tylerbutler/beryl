@@ -28,7 +28,7 @@ pub fn scenario_creation_opens_primary_client_test() {
   |> should.equal([
     model.OpenClient(
       role: model.Primary,
-      service_url: "https://demos.beryl.tylerbutler.com",
+      service_url: "https://demo.beryl.tylerbutler.com",
       topic: "demo:presence:0123456789abcdef0123456789abcdef",
       name: "Alice",
       compatibility_version: 1,
@@ -148,7 +148,7 @@ pub fn reset_closes_old_topic_and_opens_new_test() {
     model.CloseAll(old_topic),
     model.OpenClient(
       role: model.Primary,
-      service_url: "https://demos.beryl.tylerbutler.com",
+      service_url: "https://demo.beryl.tylerbutler.com",
       topic: new_topic,
       name: "Alice",
       compatibility_version: 1,

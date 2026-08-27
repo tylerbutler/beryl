@@ -182,7 +182,7 @@ gleam docs build
   -> deploy to Netlify
 ```
 
-The demo service deploys separately at `demos.beryl.tylerbutler.com`. Local
+The demo service deploys separately at `demo.beryl.tylerbutler.com`. Local
 development uses an Astro proxy or an explicit localhost origin.
 
 The documentation remains readable when the component bundle or demo service
