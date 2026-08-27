@@ -1,27 +1,29 @@
-//// Topic - Pattern matching for channel routing
+//// Pattern matching for topic routing.
 ////
 //// Topics are string identifiers that clients join (e.g., "room:lobby").
-//// Patterns define how topics are routed to channel handlers. Patterns can be
-//// exact, legacy trailing prefix wildcards, or segment-aware wildcards where
-//// "*" occupies a complete colon-delimited segment.
+//// Patterns define how topics are routed to the app's `update` function.
+//// Patterns can be exact, legacy trailing prefix wildcards, or
+//// segment-aware wildcards where "*" occupies a complete colon-delimited
+//// segment.
 
 import gleam/bool
 import gleam/list
 import gleam/result
 import gleam/string
 
-/// Topic pattern for routing
+/// A topic pattern for routing.
 pub type TopicPattern {
-  /// Exact match: "room:lobby" only matches "room:lobby"
+  /// Exact match. `"room:lobby"` matches only `"room:lobby"`.
   Exact(String)
-  /// Wildcard suffix: "room:*" matches "room:lobby", "room:123", etc.
+  /// Wildcard suffix. `"room:*"` matches `"room:lobby"`, `"room:123"`,
+  /// and other values with the same prefix.
   Wildcard(prefix: String)
-  /// Segment wildcard: "document:*:ops" matches the same number of ":"
-  /// segments where "*" occupies one complete segment.
+  /// Segment wildcard. `"document:*:ops"` matches topics with the same
+  /// number of `":"` segments. `"*"` occupies one complete segment.
   SegmentWildcard(segments: List(String))
 }
 
-/// Parse a pattern string into TopicPattern
+/// Parse a pattern string into `TopicPattern`.
 ///
 /// ## Examples
 ///
@@ -44,7 +46,7 @@ pub fn parse_pattern(pattern: String) -> TopicPattern {
   Wildcard(string.drop_end(pattern, 1))
 }
 
-/// Check if a topic matches a pattern
+/// Return whether a topic matches a pattern.
 ///
 /// ## Examples
 ///
@@ -110,7 +112,7 @@ pub type ExtractError {
   EmptyNamespace
 }
 
-/// Extract the wildcard portion from a topic
+/// Extract the wildcard part of a topic.
 ///
 /// ## Examples
 ///
@@ -143,8 +145,9 @@ pub fn extract_id(
 
 /// Extract values captured by wildcard segments.
 ///
-/// For legacy prefix wildcards, returns the suffix as a single value.
-/// For segment wildcards, returns each topic segment matched by "*".
+/// For legacy prefix wildcards, this function returns the suffix as one
+/// value. For segment wildcards, it returns each topic segment matched by
+/// `"*"`.
 ///
 /// ## Examples
 ///
@@ -193,7 +196,7 @@ fn collect_wildcard_values(
   })
 }
 
-/// Parse a topic into segments by splitting on ":"
+/// Split a topic into segments at each `":"`.
 ///
 /// ## Examples
 ///
@@ -205,7 +208,7 @@ pub fn segments(topic: String) -> List(String) {
   string.split(topic, ":")
 }
 
-/// Get the first segment (namespace) of a topic
+/// Return the first segment (namespace) of a topic.
 ///
 /// ## Examples
 ///
@@ -221,7 +224,7 @@ pub fn namespace(topic: String) -> Result(String, ExtractError) {
   |> result.replace_error(EmptyNamespace)
 }
 
-/// Build a topic from segments
+/// Build a topic from segments.
 ///
 /// ## Examples
 ///
@@ -233,12 +236,12 @@ pub fn from_segments(parts: List(String)) -> String {
   string.join(parts, ":")
 }
 
-/// Validate a topic string
+/// Validate a topic string.
 ///
-/// Topics must:
-/// - Not be empty
-/// - Not contain control characters (codepoints 0–31 or 127)
-/// - Not start or end with ":"
+/// A topic must:
+/// - not be empty;
+/// - not contain control characters (codepoints 0–31 or 127); and
+/// - not start or end with `":"`.
 pub fn validate(topic: String) -> Result(String, TopicError) {
   use <- bool.guard(when: string.is_empty(topic), return: Error(EmptyTopic))
   use <- bool.guard(
@@ -252,11 +255,11 @@ pub fn validate(topic: String) -> Result(String, TopicError) {
   Ok(topic)
 }
 
-/// Validate a topic pattern string
+/// Validate a topic pattern string.
 ///
-/// Patterns must:
-/// - Not be empty
-/// - Not contain control characters (codepoints 0–31 or 127)
+/// A pattern must:
+/// - not be empty; and
+/// - not contain control characters (codepoints 0–31 or 127).
 ///
 /// The bare pattern `"*"` is valid: it parses to a catch-all wildcard that
 /// matches every topic.
@@ -269,11 +272,11 @@ pub fn validate_pattern(pattern: String) -> Result(String, TopicError) {
   Ok(pattern)
 }
 
-/// Validate an event name string
+/// Validate an event name.
 ///
-/// Event names must:
-/// - Not be empty
-/// - Not contain control characters (codepoints 0–31 or 127)
+/// An event name must:
+/// - not be empty; and
+/// - not contain control characters (codepoints 0–31 or 127).
 pub fn validate_event(event: String) -> Result(String, TopicError) {
   use <- bool.guard(
     when: string.is_empty(event),
@@ -286,7 +289,6 @@ pub fn validate_event(event: String) -> Result(String, TopicError) {
   Ok(event)
 }
 
-// nolint: unused_exports -- package-internal logging helper; hidden from public docs with @internal
 /// Escape control characters in a string for safe use in log metadata.
 ///
 /// Replaces codepoints in the range 0–31 and 127 with `?` so that
@@ -314,6 +316,11 @@ fn has_control_characters(value: String) -> Bool {
 }
 
 /// Errors returned when validating a topic or topic pattern.
+///
+/// A minor release can add variants as validation gets stricter. Do not treat
+/// this type as closed for exhaustive matching. Match exact variants only
+/// when you handle them differently. Otherwise, use a catch-all arm
+/// (`_ -> ...`) so new variants do not break your code.
 pub type TopicError {
   /// The topic or pattern was an empty string.
   EmptyTopic

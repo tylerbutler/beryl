@@ -3,13 +3,22 @@
 //// These spin up a real Mist listener so we can verify how the composed
 //// handler routes WebSocket upgrades versus plain HTTP requests.
 
+import app_test_helpers as h
 import beryl
+import beryl/socket
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
+import gleam/bit_array
 import gleam/bytes_tree
+import gleam/dict
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/http/response
 import gleam/int
+import gleam/option.{None}
 import gleam/string
 import gleeunit/should
 import mist
@@ -42,6 +51,29 @@ fn send_text(
   text: String,
 ) -> Result(WebsocketClient, Nil)
 
+@external(erlang, "beryl_mist_transport_test_ffi", "send_binary")
+fn send_binary(
+  client: WebsocketClient,
+  data: BitArray,
+) -> Result(WebsocketClient, Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "attach_transport_events")
+fn attach_transport_events() -> Dynamic
+
+@external(erlang, "beryl_mist_transport_test_ffi", "detach_transport_events")
+fn detach_transport_events(handler_id: Dynamic) -> Nil
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_upgrade_event")
+fn receive_upgrade_event(timeout: Int) -> Result(#(String, String), Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_frame_event")
+fn receive_frame_event(
+  timeout: Int,
+) -> Result(#(String, String, String, Int), Nil)
+
+@external(erlang, "beryl_mist_transport_test_ffi", "receive_message_event")
+fn receive_message_event(timeout: Int) -> Result(#(String, String, String), Nil)
+
 @external(erlang, "beryl_mist_transport_test_ffi", "receive_text")
 fn receive_text(client: WebsocketClient, timeout: Int) -> Result(String, Nil)
 
@@ -54,15 +86,77 @@ fn http_get(port: Int, path: String) -> Result(Int, Nil)
 @external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
 
+// Runtime log capture distinguishes edge shedding from runtime shedding.
+type CapturedLog {
+  CapturedLog(message: String, metadata: dict.Dict(String, String))
+}
+
+@external(erlang, "beryl_log_capture", "start")
+fn start_capture(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_log_capture", "stop")
+fn stop_capture() -> Nil
+
+fn captured_decoder() -> decode.Decoder(CapturedLog) {
+  use message <- decode.field(1, decode.string)
+  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
+  decode.success(CapturedLog(message:, metadata:))
+}
+
+fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
+  case decode.run(value, captured_decoder()) {
+    Ok(captured) -> captured
+    Error(_) -> CapturedLog(message: "", metadata: dict.new())
+  }
+}
+
+fn captured_selector() -> process.Selector(CapturedLog) {
+  process.new_selector()
+  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
+}
+
+fn drain_captured(selector: process.Selector(CapturedLog)) -> Nil {
+  case process.selector_receive(selector, 0) {
+    Ok(_) -> drain_captured(selector)
+    Error(Nil) -> Nil
+  }
+}
+
+fn begin_capture() -> process.Selector(CapturedLog) {
+  start_capture(process.self())
+  let selector = captured_selector()
+  drain_captured(selector)
+  selector
+}
+
+fn receive_log(
+  selector: process.Selector(CapturedLog),
+  message: String,
+  attempts: Int,
+) -> Result(CapturedLog, Nil) {
+  case attempts <= 0 {
+    True -> Error(Nil)
+    False ->
+      case process.selector_receive(selector, 500) {
+        Ok(captured) ->
+          case captured.message == message {
+            True -> Ok(captured)
+            False -> receive_log(selector, message, attempts - 1)
+          }
+        Error(Nil) -> Error(Nil)
+      }
+  }
+}
+
 // The HTTP fallback replies with a distinctive 418 so routing to the fallback
 // is observable from the test client.
-fn start_server(channels: beryl.Channels) -> #(Int, process.Pid) {
-  start_server_with_config(channels, mist_transport.default_config("/socket"))
+fn start_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
+  start_server_with_config(channels, server.default_config("/socket"))
 }
 
 fn start_server_with_config(
-  channels: beryl.Channels,
-  config: mist_transport.TransportConfig(assigns),
+  channels: beryl.Sockets,
+  config: server.TransportConfig(mist.Connection),
 ) -> #(Int, process.Pid) {
   let port_subject = process.new_subject()
   let http_fallback = fn(_request) {
@@ -83,8 +177,8 @@ fn start_server_with_config(
 }
 
 fn start_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_connections_per_ip(max_connections: 1),
     )
@@ -92,17 +186,91 @@ fn start_limited_server() -> #(Int, process.Pid) {
 }
 
 fn start_frame_limited_server() -> #(Int, process.Pid) {
-  let assert Ok(channels) =
-    beryl.start(
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_max_inbound_frame_bytes(max_bytes: 32),
     )
   start_server(channels)
 }
 
-fn start_channels() -> beryl.Channels {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+fn start_channels() -> beryl.Sockets {
+  start_app_system(beryl.config(wire.phoenix_codec()))
+}
+
+/// Start a minimal app-side dispatch system for transport-edge tests. The
+/// `update` never dispatches anything — these tests exercise upgrade, origin,
+/// connection-limit, frame-size, and flood-shedding behaviour, not routing.
+fn start_app_system(config: beryl.Config) -> beryl.Sockets {
+  let assert Ok(channels) =
+    h.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, _ev) {
+      socket.Next(model, [])
+    })
   channels
+}
+
+fn start_telemetry_system() -> beryl.Sockets {
+  let assert Ok(channels) =
+    h.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_telemetry,
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
+      update: fn(model, socket_event) {
+        case socket_event {
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, None)])
+          _ -> socket.Next(model, [])
+        }
+      },
+    )
+  channels
+}
+
+pub fn telemetry_preserves_decoded_text_and_binary_message_kinds_test() {
+  let channels = start_telemetry_system()
+  let #(port, server_pid) = start_server(channels)
+  let handler_id = attach_transport_events()
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  receive_upgrade_event(1000)
+  |> should.equal(Ok(#("mist", "success")))
+
+  let join = "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]"
+  let assert Ok(client) = send_text(client, join)
+  let assert Ok(_) = receive_text(client, 1000)
+  receive_frame_event(1000)
+  |> should.equal(Ok(#("mist", "text", "routed", string.byte_size(join))))
+
+  let text_event = "[\"join-ref\",\"text-ref\",\"room:lobby\",\"ping\",{}]"
+  let assert Ok(client) = send_text(client, text_event)
+  receive_frame_event(1000)
+  |> should.equal(Ok(#("mist", "text", "routed", string.byte_size(text_event))))
+  receive_message_event(1000)
+  |> should.equal(Ok(#("text", "handled", "no_reply")))
+
+  let binary_event = <<
+    0,
+    8,
+    10,
+    10,
+    4,
+    "join-ref":utf8,
+    "binary-ref":utf8,
+    "room:lobby":utf8,
+    "ping":utf8,
+    1,
+  >>
+  let assert Ok(client) = send_binary(client, binary_event)
+  receive_frame_event(1000)
+  |> should.equal(
+    Ok(#("mist", "binary", "routed", bit_array.byte_size(binary_event))),
+  )
+  receive_message_event(1000)
+  |> should.equal(Ok(#("binary", "handled", "no_reply")))
+
+  close(client)
+  detach_transport_events(handler_id)
+  stop_supervisor(server_pid)
+  let assert Ok(Nil) = beryl.stop(channels)
 }
 
 pub fn handler_routes_websocket_upgrade_to_upgrade_test() {
@@ -153,8 +321,8 @@ pub fn handler_routes_websocket_on_other_path_to_fallback_test() {
 pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
   let channels = start_channels()
   let config =
-    mist_transport.default_config("/socket")
-    |> mist_transport.with_allowed_origins(["https://app.example.com"])
+    server.default_config("/socket")
+    |> server.with_allowed_origins(["https://app.example.com"])
   let #(port, server_pid) = start_server_with_config(channels, config)
 
   websocket_upgrade_status_with_origin(
@@ -216,8 +384,8 @@ pub fn handler_allow_all_origins_admits_cross_origin_test() {
   // behaviour for apps that intentionally accept cross-origin sockets.
   let channels = start_channels()
   let config =
-    mist_transport.default_config("/socket")
-    |> mist_transport.with_allow_all_origins()
+    server.default_config("/socket")
+    |> server.with_allow_all_origins()
   let #(port, server_pid) = start_server_with_config(channels, config)
 
   let assert Ok(client) =
@@ -277,22 +445,75 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_sheds_message_flood_at_the_edge_test() {
-  let assert Ok(channels) =
-    beryl.start(
+pub fn handler_sheds_frame_flood_at_the_edge_test() {
+  let channels =
+    start_app_system(
       beryl.config(wire.phoenix_codec())
-      |> beryl.with_message_rate(per_second: 1, burst: 2),
+      |> beryl.with_frame_rate(per_second: 1, burst: 2),
     )
   let #(port, server_pid) = start_server(channels)
   let assert Ok(client) = connect_websocket(port, "/socket")
 
   // Flood heartbeats: only the burst allowance may produce replies. The
-  // rest are shed by the connection process before reaching the
-  // coordinator.
+  // rest are shed by the connection process, pre-decode, before reaching
+  // the runtime — `with_frame_rate` alone accomplishes this with no
+  // `with_message_rate` configured.
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)
   { replies <= 2 } |> should.be_true
   { replies >= 1 } |> should.be_true
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() {
+  // Regression: `with_message_rate` governs the runtime bucket only. A
+  // heartbeat flood still gets shed (the runtime's message limiter catches
+  // it after decode), but the two settings are independent — this proves
+  // `with_message_rate` is not silently doing edge-level frame shedding.
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_message_rate(per_second: 1, burst: 2)
+      |> beryl.with_logging(beryl.logging_config(
+        level: beryl.DebugLevel,
+        include_payloads: False,
+      )),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  let selector = begin_capture()
+
+  send_heartbeats(client, 10)
+  let replies = count_replies(client, 0)
+  { replies <= 2 } |> should.be_true
+  { replies >= 1 } |> should.be_true
+  receive_log(selector, "Message rate limited", 20) |> should.be_ok
+  stop_capture()
+
+  close(client)
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_frame_rate_counts_malformed_frames_test() {
+  // Regression: the frame-rate bucket counts every complete inbound frame
+  // before decoding, so a malformed frame consumes a token the same as a
+  // well-formed one — a single-token burst spent on garbage leaves no
+  // token for a following valid heartbeat.
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_frame_rate(per_second: 1, burst: 1),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+
+  let assert Ok(_) = send_text(client, "not-valid-json")
+  let assert Ok(_) =
+    send_text(client, "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]")
+
+  receive_text(client, 200) |> should.equal(Error(Nil))
 
   close(client)
   stop_supervisor(server_pid)

@@ -9,11 +9,7 @@ var CustomType = class {
 };
 var List = class {
   static fromArray(array3, tail) {
-    let t = tail || new Empty();
-    for (let i = array3.length - 1; i >= 0; --i) {
-      t = new NonEmpty(array3[i], t);
-    }
-    return t;
+    return toList(array3, tail);
   }
   [Symbol.iterator]() {
     return new ListIterator(this);
@@ -45,7 +41,11 @@ function prepend(element, tail) {
   return new NonEmpty(element, tail);
 }
 function toList(elements, tail) {
-  return List.fromArray(elements, tail);
+  let t = tail || List$Empty$const;
+  for (let i = elements.length - 1; i >= 0; --i) {
+    t = new NonEmpty(elements[i], t);
+  }
+  return t;
 }
 var ListIterator = class {
   #current;
@@ -64,7 +64,8 @@ var ListIterator = class {
 };
 var Empty = class extends List {
 };
-var List$Empty = () => new Empty();
+var List$Empty$const = new Empty();
+var List$Empty = () => List$Empty$const;
 var List$isEmpty = (value4) => value4 instanceof Empty;
 var NonEmpty = class extends List {
   constructor(head, tail) {
@@ -252,8 +253,8 @@ function bitArrayByteAt(buffer, bitOffset, index4) {
   }
 }
 var Result = class _Result extends CustomType {
-  static isResult(data2) {
-    return data2 instanceof _Result;
+  static isResult(data) {
+    return data instanceof _Result;
   }
 };
 var Ok = class extends Result {
@@ -356,10 +357,13 @@ function makeError(variant, file, module, line, fn, message, extra) {
 // build/dev/javascript/gleam_stdlib/gleam/order.mjs
 var Lt = class extends CustomType {
 };
+var Order$Lt$const = new Lt();
 var Eq = class extends CustomType {
 };
+var Order$Eq$const = new Eq();
 var Gt = class extends CustomType {
 };
+var Order$Gt$const = new Gt();
 
 // build/dev/javascript/gleam_stdlib/gleam/option.mjs
 var Some = class extends CustomType {
@@ -370,6 +374,7 @@ var Some = class extends CustomType {
 };
 var None = class extends CustomType {
 };
+var Option$None$const = new None();
 
 // build/dev/javascript/gleam_stdlib/dict.mjs
 var referenceMap = /* @__PURE__ */ new WeakMap();
@@ -483,59 +488,74 @@ var Dict = class {
 var bits = 5;
 var mask = (1 << bits) - 1;
 var noElementMarker = /* @__PURE__ */ Symbol();
-var generationKey = /* @__PURE__ */ Symbol();
+var Node = class _Node {
+  constructor(generation, datamap, nodemap, data) {
+    this.datamap = datamap;
+    this.nodemap = nodemap;
+    this.data = data;
+    this.generation = generation;
+  }
+  equals(other) {
+    if (this === other) return true;
+    if (!(other instanceof _Node)) return false;
+    if (this.datamap !== other.datamap || this.nodemap !== other.nodemap) {
+      return false;
+    }
+    const leftData = this.data;
+    const rightData = other.data;
+    if (leftData.length !== rightData.length) return false;
+    if (this.datamap === 0 && this.nodemap === 0) {
+      return this.#equalsOverflowEntries(rightData);
+    }
+    const edgesStart = leftData.length - popcount(this.nodemap);
+    for (let i = 0; i < edgesStart; i += 2) {
+      if (!isEqual(leftData[i], rightData[i]) || !isEqual(leftData[i + 1], rightData[i + 1])) {
+        return false;
+      }
+    }
+    for (let i = edgesStart; i < leftData.length; ++i) {
+      if (!leftData[i].equals(rightData[i])) return false;
+    }
+    return true;
+  }
+  #equalsOverflowEntries(otherData) {
+    const data = this.data;
+    entries: for (let i = 0; i < data.length; i += 2) {
+      for (let j = 0; j < otherData.length; j += 2) {
+        if (isEqual(data[i], otherData[j])) {
+          if (!isEqual(data[i + 1], otherData[j + 1])) return false;
+          continue entries;
+        }
+      }
+      return false;
+    }
+    return true;
+  }
+  hashCode() {
+    const data = this.data;
+    const edgesStart = data.length - popcount(this.nodemap);
+    let hash = 0;
+    for (let i = 0; i < edgesStart; i += 2) {
+      hash = hash + hashMerge(getHash(data[i + 1]), getHash(data[i])) | 0;
+    }
+    for (let i = edgesStart; i < data.length; ++i) {
+      hash = hash + data[i].hashCode() | 0;
+    }
+    return hash;
+  }
+};
 var emptyNode = /* @__PURE__ */ newNode(0);
 var emptyDict = /* @__PURE__ */ new Dict(0, emptyNode);
 var errorNil = /* @__PURE__ */ Result$Error(void 0);
-function makeNode(generation, datamap, nodemap, data2) {
-  return {
-    // A node is a high-arity (32 in practice) hybrid tree node.
-    // Hybrid means that it stores data directly as well as pointers to child nodes.
-    //
-    // Each node contains 2 bitmaps:
-    // - The datamap has a bit set if that slot in the node contains direct data
-    // - The nodemap has a bit set if that slot in the node contains another node.
-    //
-    // Both are exclusive to on another, so datamap & nodemap == 0.
-    //
-    // Every key/hash value directly correlates to a specific bit by using a trie
-    // suffix (least significant bits first) encoding.
-    // For example, if the last 5 bits of the hash are 1101, the bit to check for
-    // that value is the 13th bit.
-    datamap,
-    nodemap,
-    // The slots itself are stored in a single contiguous array that contains
-    // both direct k/v-pairs and child nodes.
-    //
-    // The direct children come first, followed by the child nodes in _reverse order_:
-    //
-    //              7654321
-    //     datamap: 1000100
-    //     nodemap:   10011
-    //     data: [key3, value3, key7, value7, child5, child2, child1]
-    //            ------------------------->  <---------------------
-    //                     datamap                    nodemap
-    //
-    // Every `1` bit in the datamap corresponds to a pair of [key, value] entries,
-    // and every `1` bit in the nodemap corresponds to a child node entry.
-    //
-    // Children are stored in reverse order to avoid having to store or calculate an
-    // "offset" value to skip over the direct children.
-    data: data2,
-    // The generation is used to track which nodes need to be copied during transient updates.
-    // Using a symbol here makes `isEqual` ignore this field.
-    [generationKey]: generation
-  };
-}
 function newNode(generation) {
-  return makeNode(generation, 0, 0, []);
+  return new Node(generation, 0, 0, []);
 }
 function copyNode(node, generation) {
-  if (node[generationKey] === generation) {
+  if (node.generation === generation) {
     return node;
   }
   const newData = node.data.slice(0);
-  return makeNode(generation, node.datamap, node.nodemap, newData);
+  return new Node(generation, node.datamap, node.nodemap, newData);
 }
 function copyAndSet(node, generation, idx, val) {
   if (node.data[idx] === val) {
@@ -546,26 +566,26 @@ function copyAndSet(node, generation, idx, val) {
   return node;
 }
 function copyAndInsertPair(node, generation, bit, idx, key, val) {
-  const data2 = node.data;
-  const length2 = data2.length;
+  const data = node.data;
+  const length2 = data.length;
   const newData = new Array(length2 + 2);
   let readIndex = 0;
   let writeIndex = 0;
-  while (readIndex < idx) newData[writeIndex++] = data2[readIndex++];
+  while (readIndex < idx) newData[writeIndex++] = data[readIndex++];
   newData[writeIndex++] = key;
   newData[writeIndex++] = val;
-  while (readIndex < length2) newData[writeIndex++] = data2[readIndex++];
-  return makeNode(generation, node.datamap | bit, node.nodemap, newData);
+  while (readIndex < length2) newData[writeIndex++] = data[readIndex++];
+  return new Node(generation, node.datamap | bit, node.nodemap, newData);
 }
 function copyAndRemovePair(node, generation, bit, idx) {
   node = copyNode(node, generation);
-  const data2 = node.data;
-  const length2 = data2.length;
+  const data = node.data;
+  const length2 = data.length;
   for (let w = idx, r = idx + 2; r < length2; ++r, ++w) {
-    data2[w] = data2[r];
+    data[w] = data[r];
   }
-  data2.pop();
-  data2.pop();
+  data.pop();
+  data.pop();
   node.datamap ^= bit;
   return node;
 }
@@ -591,13 +611,13 @@ function has(dict4, key) {
 }
 function lookup(node, key, hash) {
   for (let shift = 0; shift < 32; shift += bits) {
-    const data2 = node.data;
+    const data = node.data;
     const bit = hashbit(hash, shift);
     if (node.nodemap & bit) {
-      node = data2[data2.length - 1 - index(node.nodemap, bit)];
+      node = data[data.length - 1 - index(node.nodemap, bit)];
     } else if (node.datamap & bit) {
       const dataidx = Math.imul(index(node.datamap, bit), 2);
-      return isEqual(key, data2[dataidx]) ? data2[dataidx + 1] : noElementMarker;
+      return isEqual(key, data[dataidx]) ? data[dataidx + 1] : noElementMarker;
     } else {
       return noElementMarker;
     }
@@ -626,14 +646,14 @@ function fromTransient(transient) {
 }
 function nextGeneration(dict4) {
   const root = dict4.root;
-  if (root[generationKey] < Number.MAX_SAFE_INTEGER) {
-    return root[generationKey] + 1;
+  if (root.generation < Number.MAX_SAFE_INTEGER) {
+    return root.generation + 1;
   }
   const queue = [root];
   while (queue.length) {
     const node = queue.pop();
-    node[generationKey] = 0;
-    const nodeStart = data.length - popcount(node.nodemap);
+    node.generation = 0;
+    const nodeStart = node.data.length - popcount(node.nodemap);
     for (let i = nodeStart; i < node.data.length; ++i) {
       queue.push(node.data[i]);
     }
@@ -666,21 +686,21 @@ function destructiveTransientUpdateWith(key, fun, value4, transient) {
   return transient;
 }
 function insertIntoNode(transient, node, key, value4, hash, shift) {
-  const data2 = node.data;
+  const data = node.data;
   const generation = transient.generation;
   if (shift > 32) {
-    for (let i = 0; i < data2.length; i += 2) {
-      if (isEqual(key, data2[i])) {
+    for (let i = 0; i < data.length; i += 2) {
+      if (isEqual(key, data[i])) {
         return copyAndSet(node, generation, i + 1, value4);
       }
     }
     transient.size += 1;
-    return copyAndInsertPair(node, generation, 0, data2.length, key, value4);
+    return copyAndInsertPair(node, generation, 0, data.length, key, value4);
   }
   const bit = hashbit(hash, shift);
   if (node.nodemap & bit) {
-    const nodeidx2 = data2.length - 1 - index(node.nodemap, bit);
-    let child2 = data2[nodeidx2];
+    const nodeidx2 = data.length - 1 - index(node.nodemap, bit);
+    let child2 = data[nodeidx2];
     child2 = insertIntoNode(transient, child2, key, value4, hash, shift + bits);
     return copyAndSet(node, generation, nodeidx2, child2);
   }
@@ -689,28 +709,28 @@ function insertIntoNode(transient, node, key, value4, hash, shift) {
     transient.size += 1;
     return copyAndInsertPair(node, generation, bit, dataidx, key, value4);
   }
-  if (isEqual(key, data2[dataidx])) {
+  if (isEqual(key, data[dataidx])) {
     return copyAndSet(node, generation, dataidx + 1, value4);
   }
   const childShift = shift + bits;
   let child = emptyNode;
   child = insertIntoNode(transient, child, key, value4, hash, childShift);
-  const key2 = data2[dataidx];
-  const value22 = data2[dataidx + 1];
+  const key2 = data[dataidx];
+  const value22 = data[dataidx + 1];
   const hash2 = getHash(key2);
   child = insertIntoNode(transient, child, key2, value22, hash2, childShift);
   transient.size -= 1;
-  const length2 = data2.length;
+  const length2 = data.length;
   const nodeidx = length2 - 1 - index(node.nodemap, bit);
   const newData = new Array(length2 - 1);
   let readIndex = 0;
   let writeIndex = 0;
-  while (readIndex < dataidx) newData[writeIndex++] = data2[readIndex++];
+  while (readIndex < dataidx) newData[writeIndex++] = data[readIndex++];
   readIndex += 2;
-  while (readIndex <= nodeidx) newData[writeIndex++] = data2[readIndex++];
+  while (readIndex <= nodeidx) newData[writeIndex++] = data[readIndex++];
   newData[writeIndex++] = child;
-  while (readIndex < length2) newData[writeIndex++] = data2[readIndex++];
-  return makeNode(generation, node.datamap ^ bit, node.nodemap | bit, newData);
+  while (readIndex < length2) newData[writeIndex++] = data[readIndex++];
+  return new Node(generation, node.datamap ^ bit, node.nodemap | bit, newData);
 }
 function destructiveTransientDelete(key, transient) {
   const hash = getHash(key);
@@ -718,11 +738,11 @@ function destructiveTransientDelete(key, transient) {
   return transient;
 }
 function deleteFromNode(transient, node, key, hash, shift) {
-  const data2 = node.data;
+  const data = node.data;
   const generation = transient.generation;
   if (shift > 32) {
-    for (let i = 0; i < data2.length; i += 2) {
-      if (isEqual(key, data2[i])) {
+    for (let i = 0; i < data.length; i += 2) {
+      if (isEqual(key, data[i])) {
         transient.size -= 1;
         return copyAndRemovePair(node, generation, 0, i);
       }
@@ -732,25 +752,25 @@ function deleteFromNode(transient, node, key, hash, shift) {
   const bit = hashbit(hash, shift);
   const dataidx = Math.imul(index(node.datamap, bit), 2);
   if ((node.nodemap & bit) !== 0) {
-    const nodeidx = data2.length - 1 - index(node.nodemap, bit);
-    let child = data2[nodeidx];
+    const nodeidx = data.length - 1 - index(node.nodemap, bit);
+    let child = data[nodeidx];
     child = deleteFromNode(transient, child, key, hash, shift + bits);
     if (child.nodemap !== 0 || child.data.length > 2) {
       return copyAndSet(node, generation, nodeidx, child);
     }
-    const length2 = data2.length;
+    const length2 = data.length;
     const newData = new Array(length2 + 1);
     let readIndex = 0;
     let writeIndex = 0;
-    while (readIndex < dataidx) newData[writeIndex++] = data2[readIndex++];
+    while (readIndex < dataidx) newData[writeIndex++] = data[readIndex++];
     newData[writeIndex++] = child.data[0];
     newData[writeIndex++] = child.data[1];
-    while (readIndex < nodeidx) newData[writeIndex++] = data2[readIndex++];
+    while (readIndex < nodeidx) newData[writeIndex++] = data[readIndex++];
     readIndex++;
-    while (readIndex < length2) newData[writeIndex++] = data2[readIndex++];
-    return makeNode(generation, node.datamap | bit, node.nodemap ^ bit, newData);
+    while (readIndex < length2) newData[writeIndex++] = data[readIndex++];
+    return new Node(generation, node.datamap | bit, node.nodemap ^ bit, newData);
   }
-  if ((node.datamap & bit) === 0 || !isEqual(key, data2[dataidx])) {
+  if ((node.datamap & bit) === 0 || !isEqual(key, data[dataidx])) {
     return node;
   }
   transient.size -= 1;
@@ -760,13 +780,13 @@ function fold(dict4, state, fun) {
   const queue = [dict4.root];
   while (queue.length) {
     const node = queue.pop();
-    const data2 = node.data;
-    const edgesStart = data2.length - popcount(node.nodemap);
+    const data = node.data;
+    const edgesStart = data.length - popcount(node.nodemap);
     for (let i = 0; i < edgesStart; i += 2) {
-      state = fun(state, data2[i], data2[i + 1]);
+      state = fun(state, data[i], data[i + 1]);
     }
-    for (let i = edgesStart; i < data2.length; ++i) {
-      queue.push(data2[i]);
+    for (let i = edgesStart; i < data.length; ++i) {
+      queue.push(data[i]);
     }
   }
   return state;
@@ -790,7 +810,7 @@ function is_empty(dict4) {
 function to_list(dict4) {
   return fold(
     dict4,
-    toList([]),
+    List$Empty$const,
     (acc, key, value4) => {
       return prepend([key, value4], acc);
     }
@@ -817,7 +837,7 @@ function from_list(list3) {
 function keys(dict4) {
   return fold(
     dict4,
-    toList([]),
+    List$Empty$const,
     (acc, key, _) => {
       return prepend(key, acc);
     }
@@ -826,7 +846,7 @@ function keys(dict4) {
 function values(dict4) {
   return fold(
     dict4,
-    toList([]),
+    List$Empty$const,
     (acc, _, value4) => {
       return prepend(value4, acc);
     }
@@ -862,12 +882,9 @@ function do_combine(combine2, left, right) {
     }];
   }
   let $ = _block;
-  let big;
-  let small;
-  let combine$1;
-  big = $[0];
-  small = $[1];
-  combine$1 = $[2];
+  let big = $[0];
+  let small = $[1];
+  let combine$1 = $[2];
   let _pipe = toTransient(big);
   let _pipe$1 = fold(
     small,
@@ -904,8 +921,10 @@ function delete$(dict4, key) {
 // build/dev/javascript/gleam_stdlib/gleam/list.mjs
 var Ascending = class extends CustomType {
 };
+var Sorting$Ascending$const = new Ascending();
 var Descending = class extends CustomType {
 };
+var Sorting$Descending$const = new Descending();
 function reverse_and_prepend(loop$prefix, loop$suffix) {
   while (true) {
     let prefix = loop$prefix;
@@ -921,7 +940,7 @@ function reverse_and_prepend(loop$prefix, loop$suffix) {
   }
 }
 function reverse(list3) {
-  return reverse_and_prepend(list3, toList([]));
+  return reverse_and_prepend(list3, List$Empty$const);
 }
 function map_loop(loop$list, loop$fun, loop$acc) {
   while (true) {
@@ -940,7 +959,7 @@ function map_loop(loop$list, loop$fun, loop$acc) {
   }
 }
 function map2(list3, fun) {
-  return map_loop(list3, fun, toList([]));
+  return map_loop(list3, fun, List$Empty$const);
 }
 function try_map_loop(loop$list, loop$fun, loop$acc) {
   while (true) {
@@ -965,7 +984,7 @@ function try_map_loop(loop$list, loop$fun, loop$acc) {
   }
 }
 function try_map(list3, fun) {
-  return try_map_loop(list3, fun, toList([]));
+  return try_map_loop(list3, fun, List$Empty$const);
 }
 function append_loop(loop$first, loop$second) {
   while (true) {
@@ -1043,7 +1062,7 @@ function unique_loop(loop$list, loop$seen, loop$acc) {
   }
 }
 function unique(list3) {
-  return unique_loop(list3, make(), toList([]));
+  return unique_loop(list3, make(), List$Empty$const);
 }
 function merge_descendings(loop$list1, loop$list2, loop$compare, loop$acc) {
   while (true) {
@@ -1102,7 +1121,7 @@ function merge_descending_pairs(loop$sequences, loop$compare, loop$acc) {
           descending1,
           descending2,
           compare4,
-          toList([])
+          List$Empty$const
         );
         loop$sequences = rest$1;
         loop$compare = compare4;
@@ -1168,7 +1187,7 @@ function merge_ascending_pairs(loop$sequences, loop$compare, loop$acc) {
           ascending1,
           ascending2,
           compare4,
-          toList([])
+          List$Empty$const
         );
         loop$sequences = rest$1;
         loop$compare = compare4;
@@ -1190,9 +1209,13 @@ function merge_all(loop$sequences, loop$direction, loop$compare) {
         let sequence = sequences2.head;
         return sequence;
       } else {
-        let sequences$1 = merge_ascending_pairs(sequences2, compare4, toList([]));
+        let sequences$1 = merge_ascending_pairs(
+          sequences2,
+          compare4,
+          List$Empty$const
+        );
         loop$sequences = sequences$1;
-        loop$direction = new Descending();
+        loop$direction = Sorting$Descending$const;
         loop$compare = compare4;
       }
     } else {
@@ -1201,9 +1224,13 @@ function merge_all(loop$sequences, loop$direction, loop$compare) {
         let sequence = sequences2.head;
         return reverse(sequence);
       } else {
-        let sequences$1 = merge_descending_pairs(sequences2, compare4, toList([]));
+        let sequences$1 = merge_descending_pairs(
+          sequences2,
+          compare4,
+          List$Empty$const
+        );
         loop$sequences = sequences$1;
-        loop$direction = new Ascending();
+        loop$direction = Sorting$Ascending$const;
         loop$compare = compare4;
       }
     }
@@ -1259,11 +1286,11 @@ function sequences(loop$list, loop$compare, loop$growing, loop$direction, loop$p
             let _block$1;
             let $1 = compare4(new$1, next);
             if ($1 instanceof Lt) {
-              _block$1 = new Ascending();
+              _block$1 = Sorting$Ascending$const;
             } else if ($1 instanceof Eq) {
-              _block$1 = new Ascending();
+              _block$1 = Sorting$Ascending$const;
             } else {
-              _block$1 = new Descending();
+              _block$1 = Sorting$Descending$const;
             }
             let direction$1 = _block$1;
             loop$list = rest$2;
@@ -1290,11 +1317,11 @@ function sequences(loop$list, loop$compare, loop$growing, loop$direction, loop$p
           let _block$1;
           let $1 = compare4(new$1, next);
           if ($1 instanceof Lt) {
-            _block$1 = new Ascending();
+            _block$1 = Sorting$Ascending$const;
           } else if ($1 instanceof Eq) {
-            _block$1 = new Ascending();
+            _block$1 = Sorting$Ascending$const;
           } else {
-            _block$1 = new Descending();
+            _block$1 = Sorting$Descending$const;
           }
           let direction$1 = _block$1;
           loop$list = rest$2;
@@ -1320,11 +1347,11 @@ function sequences(loop$list, loop$compare, loop$growing, loop$direction, loop$p
           let _block$1;
           let $1 = compare4(new$1, next);
           if ($1 instanceof Lt) {
-            _block$1 = new Ascending();
+            _block$1 = Sorting$Ascending$const;
           } else if ($1 instanceof Eq) {
-            _block$1 = new Ascending();
+            _block$1 = Sorting$Ascending$const;
           } else {
-            _block$1 = new Descending();
+            _block$1 = Sorting$Descending$const;
           }
           let direction$1 = _block$1;
           loop$list = rest$2;
@@ -1359,11 +1386,11 @@ function sort(list3, compare4) {
       let _block;
       let $1 = compare4(x, y);
       if ($1 instanceof Lt) {
-        _block = new Ascending();
+        _block = Sorting$Ascending$const;
       } else if ($1 instanceof Eq) {
-        _block = new Ascending();
+        _block = Sorting$Ascending$const;
       } else {
-        _block = new Descending();
+        _block = Sorting$Descending$const;
       }
       let direction = _block;
       let sequences$1 = sequences(
@@ -1372,9 +1399,9 @@ function sort(list3, compare4) {
         toList([x]),
         direction,
         y,
-        toList([])
+        List$Empty$const
       );
-      return merge_all(sequences$1, new Ascending(), compare4);
+      return merge_all(sequences$1, Sorting$Ascending$const, compare4);
     }
   }
 }
@@ -1398,55 +1425,51 @@ var Decoder = class extends CustomType {
 var float2 = /* @__PURE__ */ new Decoder(decode_float);
 var int2 = /* @__PURE__ */ new Decoder(decode_int);
 var string2 = /* @__PURE__ */ new Decoder(decode_string);
-function run(data2, decoder3) {
-  let $ = decoder3.function(data2);
-  let maybe_invalid_data;
-  let errors;
-  maybe_invalid_data = $[0];
-  errors = $[1];
+function run(data, decoder3) {
+  let $ = decoder3.function(data);
+  let maybe_invalid_data = $[0];
+  let errors = $[1];
   if (errors instanceof Empty) {
     return new Ok(maybe_invalid_data);
   } else {
     return new Error(errors);
   }
 }
-function run_dynamic_function(data2, name, f) {
-  let $ = f(data2);
+function run_dynamic_function(data, name, f) {
+  let $ = f(data);
   if ($ instanceof Ok) {
     let data$1 = $[0];
-    return [data$1, toList([])];
+    return [data$1, List$Empty$const];
   } else {
     let placeholder = $[0];
     return [
       placeholder,
-      toList([new DecodeError(name, classify_dynamic(data2), toList([]))])
+      toList([new DecodeError(name, classify_dynamic(data), List$Empty$const)])
     ];
   }
 }
-function decode_float(data2) {
-  return run_dynamic_function(data2, "Float", float);
+function decode_float(data) {
+  return run_dynamic_function(data, "Float", float);
 }
 function map3(decoder3, transformer) {
   return new Decoder(
     (d) => {
       let $ = decoder3.function(d);
-      let data2;
-      let errors;
-      data2 = $[0];
-      errors = $[1];
-      return [transformer(data2), errors];
+      let data = $[0];
+      let errors = $[1];
+      return [transformer(data), errors];
     }
   );
 }
-function decode_int(data2) {
-  return run_dynamic_function(data2, "Int", int);
+function decode_int(data) {
+  return run_dynamic_function(data, "Int", int);
 }
-function decode_string(data2) {
-  return run_dynamic_function(data2, "String", string);
+function decode_string(data) {
+  return run_dynamic_function(data, "String", string);
 }
 function run_decoders(loop$data, loop$failure, loop$decoders) {
   while (true) {
-    let data2 = loop$data;
+    let data = loop$data;
     let failure2 = loop$failure;
     let decoders = loop$decoders;
     if (decoders instanceof Empty) {
@@ -1454,15 +1477,13 @@ function run_decoders(loop$data, loop$failure, loop$decoders) {
     } else {
       let decoder3 = decoders.head;
       let decoders$1 = decoders.tail;
-      let $ = decoder3.function(data2);
-      let layer;
-      let errors;
-      layer = $;
-      errors = $[1];
+      let $ = decoder3.function(data);
+      let layer = $;
+      let errors = $[1];
       if (errors instanceof Empty) {
         return layer;
       } else {
-        loop$data = data2;
+        loop$data = data;
         loop$failure = failure2;
         loop$decoders = decoders$1;
       }
@@ -1473,10 +1494,8 @@ function one_of(first, alternatives) {
   return new Decoder(
     (dynamic_data) => {
       let $ = first.function(dynamic_data);
-      let layer;
-      let errors;
-      layer = $;
-      errors = $[1];
+      let layer = $;
+      let errors = $[1];
       if (errors instanceof Empty) {
         return layer;
       } else {
@@ -1530,15 +1549,15 @@ function push_path(layer, path) {
 }
 function list2(inner) {
   return new Decoder(
-    (data2) => {
+    (data) => {
       return list(
-        data2,
+        data,
         inner.function,
         (p, k) => {
           return push_path(p, toList([k]));
         },
         0,
-        toList([])
+        List$Empty$const
       );
     }
   );
@@ -1548,16 +1567,16 @@ function index3(loop$path, loop$position, loop$inner, loop$data, loop$handle_mis
     let path = loop$path;
     let position = loop$position;
     let inner = loop$inner;
-    let data2 = loop$data;
+    let data = loop$data;
     let handle_miss = loop$handle_miss;
     if (path instanceof Empty) {
-      let _pipe = data2;
+      let _pipe = data;
       let _pipe$1 = inner(_pipe);
       return push_path(_pipe$1, reverse(position));
     } else {
       let key = path.head;
       let path$1 = path.tail;
-      let $ = index2(data2, key);
+      let $ = index2(data, key);
       if ($ instanceof Ok) {
         let $1 = $[0];
         if ($1 instanceof Some) {
@@ -1568,16 +1587,17 @@ function index3(loop$path, loop$position, loop$inner, loop$data, loop$handle_mis
           loop$data = data$1;
           loop$handle_miss = handle_miss;
         } else {
-          return handle_miss(data2, prepend(key, position));
+          return handle_miss(data, prepend(key, position));
         }
       } else {
         let kind = $[0];
-        let $1 = inner(data2);
-        let default$;
-        default$ = $1[0];
+        let $1 = inner(data);
+        let default$ = $1[0];
         let _pipe = [
           default$,
-          toList([new DecodeError(kind, classify_dynamic(data2), toList([]))])
+          toList([
+            new DecodeError(kind, classify_dynamic(data), List$Empty$const)
+          ])
         ];
         return push_path(_pipe, reverse(position));
       }
@@ -1586,51 +1606,45 @@ function index3(loop$path, loop$position, loop$inner, loop$data, loop$handle_mis
 }
 function subfield(field_path, field_decoder, next) {
   return new Decoder(
-    (data2) => {
+    (data) => {
       let $ = index3(
         field_path,
-        toList([]),
+        List$Empty$const,
         field_decoder.function,
-        data2,
-        (data3, position) => {
-          let $12 = field_decoder.function(data3);
-          let default$;
-          default$ = $12[0];
+        data,
+        (data2, position) => {
+          let $12 = field_decoder.function(data2);
+          let default$ = $12[0];
           let _pipe = [
             default$,
-            toList([new DecodeError("Field", "Nothing", toList([]))])
+            toList([new DecodeError("Field", "Nothing", List$Empty$const)])
           ];
           return push_path(_pipe, reverse(position));
         }
       );
-      let out;
-      let errors1;
-      out = $[0];
-      errors1 = $[1];
-      let $1 = next(out).function(data2);
-      let out$1;
-      let errors2;
-      out$1 = $1[0];
-      errors2 = $1[1];
+      let out = $[0];
+      let errors1 = $[1];
+      let $1 = next(out).function(data);
+      let out$1 = $1[0];
+      let errors2 = $1[1];
       return [out$1, append(errors1, errors2)];
     }
   );
 }
 function at(path, inner) {
   return new Decoder(
-    (data2) => {
+    (data) => {
       return index3(
         path,
-        toList([]),
+        List$Empty$const,
         inner.function,
-        data2,
-        (data3, position) => {
-          let $ = inner.function(data3);
-          let default$;
-          default$ = $[0];
+        data,
+        (data2, position) => {
+          let $ = inner.function(data2);
+          let default$ = $[0];
           let _pipe = [
             default$,
-            toList([new DecodeError("Field", "Nothing", toList([]))])
+            toList([new DecodeError("Field", "Nothing", List$Empty$const)])
           ];
           return push_path(_pipe, reverse(position));
         }
@@ -1638,14 +1652,14 @@ function at(path, inner) {
     }
   );
 }
-function success(data2) {
+function success(data) {
   return new Decoder((_) => {
-    return [data2, toList([])];
+    return [data, List$Empty$const];
   });
 }
 function decode_error(expected, found) {
   return toList([
-    new DecodeError(expected, classify_dynamic(found), toList([]))
+    new DecodeError(expected, classify_dynamic(found), List$Empty$const)
   ]);
 }
 function field(field_name, field_decoder, next) {
@@ -1653,37 +1667,35 @@ function field(field_name, field_decoder, next) {
 }
 function optional_field(key, default$, field_decoder, next) {
   return new Decoder(
-    (data2) => {
+    (data) => {
       let _block;
       let _block$1;
-      let $1 = index2(data2, key);
+      let $1 = index2(data, key);
       if ($1 instanceof Ok) {
         let $22 = $1[0];
         if ($22 instanceof Some) {
           let data$1 = $22[0];
           _block$1 = field_decoder.function(data$1);
         } else {
-          _block$1 = [default$, toList([])];
+          _block$1 = [default$, List$Empty$const];
         }
       } else {
         let kind = $1[0];
         _block$1 = [
           default$,
-          toList([new DecodeError(kind, classify_dynamic(data2), toList([]))])
+          toList([
+            new DecodeError(kind, classify_dynamic(data), List$Empty$const)
+          ])
         ];
       }
       let _pipe = _block$1;
       _block = push_path(_pipe, toList([key]));
       let $ = _block;
-      let out;
-      let errors1;
-      out = $[0];
-      errors1 = $[1];
-      let $2 = next(out).function(data2);
-      let out$1;
-      let errors2;
-      out$1 = $2[0];
-      errors2 = $2[1];
+      let out = $[0];
+      let errors1 = $[1];
+      let $2 = next(out).function(data);
+      let out$1 = $2[0];
+      let errors2 = $2[1];
       return [out$1, append(errors1, errors2)];
     }
   );
@@ -1711,13 +1723,13 @@ function fold_dict(acc, key, value4, key_decoder, value_decoder) {
 }
 function dict2(key, value4) {
   return new Decoder(
-    (data2) => {
-      let $ = dict(data2);
+    (data) => {
+      let $ = dict(data);
       if ($ instanceof Ok) {
         let dict$1 = $[0];
         return fold(
           dict$1,
-          [make(), toList([])],
+          [make(), List$Empty$const],
           (a, k, v) => {
             let $1 = a[1];
             if ($1 instanceof Empty) {
@@ -1728,7 +1740,7 @@ function dict2(key, value4) {
           }
         );
       } else {
-        return [make(), decode_error("Dict", data2)];
+        return [make(), decode_error("Dict", data)];
       }
     }
   );
@@ -1737,16 +1749,12 @@ function then$(decoder3, next) {
   return new Decoder(
     (dynamic_data) => {
       let $ = decoder3.function(dynamic_data);
-      let data2;
-      let errors;
-      data2 = $[0];
-      errors = $[1];
-      let decoder$1 = next(data2);
+      let data = $[0];
+      let errors = $[1];
+      let decoder$1 = next(data);
       let $1 = decoder$1.function(dynamic_data);
-      let layer;
-      let data$1;
-      layer = $1;
-      data$1 = $1[0];
+      let layer = $1;
+      let data$1 = $1[0];
       if (errors instanceof Empty) {
         return layer;
       } else {
@@ -1795,31 +1803,31 @@ var trim_start_regex = /* @__PURE__ */ new RegExp(
   `^[${unicode_whitespaces}]*`
 );
 var trim_end_regex = /* @__PURE__ */ new RegExp(`[${unicode_whitespaces}]*$`);
-function classify_dynamic(data2) {
-  if (typeof data2 === "string") {
+function classify_dynamic(data) {
+  if (typeof data === "string") {
     return "String";
-  } else if (typeof data2 === "boolean") {
+  } else if (typeof data === "boolean") {
     return "Bool";
-  } else if (isResult(data2)) {
+  } else if (isResult(data)) {
     return "Result";
-  } else if (isList(data2)) {
+  } else if (isList(data)) {
     return "List";
-  } else if (data2 instanceof BitArray) {
+  } else if (data instanceof BitArray) {
     return "BitArray";
-  } else if (data2 instanceof Dict) {
+  } else if (data instanceof Dict) {
     return "Dict";
-  } else if (Number.isInteger(data2)) {
+  } else if (Number.isInteger(data)) {
     return "Int";
-  } else if (Array.isArray(data2)) {
+  } else if (Array.isArray(data)) {
     return `Array`;
-  } else if (typeof data2 === "number") {
+  } else if (typeof data === "number") {
     return "Float";
-  } else if (data2 === null) {
+  } else if (data === null) {
     return "Nil";
-  } else if (data2 === void 0) {
+  } else if (data === void 0) {
     return "Nil";
   } else {
-    const type = typeof data2;
+    const type = typeof data;
     return type.charAt(0).toUpperCase() + type.slice(1);
   }
 }
@@ -1841,39 +1849,39 @@ function float_to_string(float3) {
     }
   }
 }
-function index2(data2, key) {
-  if (data2 instanceof Dict) {
-    const result = get(data2, key);
+function index2(data, key) {
+  if (data instanceof Dict) {
+    const result = get(data, key);
     return Result$Ok(result.isOk() ? new Some(result[0]) : new None());
   }
-  if (data2 instanceof WeakMap || data2 instanceof Map) {
+  if (data instanceof WeakMap || data instanceof Map) {
     const token2 = {};
-    const entry = data2.get(key, token2);
+    const entry = data.get(key, token2);
     if (entry === token2) return Result$Ok(new None());
     return Result$Ok(new Some(entry));
   }
   const key_is_int = Number.isInteger(key);
-  if (key_is_int && key >= 0 && key < 8 && isList(data2)) {
+  if (key_is_int && key >= 0 && key < 8 && isList(data)) {
     let i = 0;
-    for (const value4 of data2) {
+    for (const value4 of data) {
       if (i === key) return Result$Ok(new Some(value4));
       i++;
     }
     return Result$Error("Indexable");
   }
-  if (key_is_int && Array.isArray(data2) || data2 && typeof data2 === "object" || data2 && Object.getPrototypeOf(data2) === Object.prototype) {
-    if (key in data2) return Result$Ok(new Some(data2[key]));
+  if (key_is_int && Array.isArray(data) || data && typeof data === "object" || data && Object.getPrototypeOf(data) === Object.prototype) {
+    if (key in data) return Result$Ok(new Some(data[key]));
     return Result$Ok(new None());
   }
   return Result$Error(key_is_int ? "Indexable" : "Dict");
 }
-function list(data2, decode2, pushPath, index4, emptyList) {
-  if (!(isList(data2) || Array.isArray(data2))) {
-    const error = DecodeError$DecodeError("List", classify_dynamic(data2), emptyList);
+function list(data, decode2, pushPath, index4, emptyList) {
+  if (!(isList(data) || Array.isArray(data))) {
+    const error = DecodeError$DecodeError("List", classify_dynamic(data), emptyList);
     return [emptyList, arrayToList([error])];
   }
   const decoded = [];
-  for (const element of data2) {
+  for (const element of data) {
     const layer = decode2(element);
     const [out, errors] = layer;
     if (List$isNonEmpty(errors)) {
@@ -1885,35 +1893,35 @@ function list(data2, decode2, pushPath, index4, emptyList) {
   }
   return [arrayToList(decoded), emptyList];
 }
-function dict(data2) {
-  if (data2 instanceof Dict) {
-    return Result$Ok(data2);
+function dict(data) {
+  if (data instanceof Dict) {
+    return Result$Ok(data);
   }
-  if (data2 instanceof Map || data2 instanceof WeakMap) {
-    return Result$Ok(from(data2));
+  if (data instanceof Map || data instanceof WeakMap) {
+    return Result$Ok(from(data));
   }
-  if (data2 == null) {
+  if (data == null) {
     return Result$Error("Dict");
   }
-  if (typeof data2 !== "object") {
+  if (typeof data !== "object") {
     return Result$Error("Dict");
   }
-  const proto = Object.getPrototypeOf(data2);
+  const proto = Object.getPrototypeOf(data);
   if (proto === Object.prototype || proto === null) {
-    return Result$Ok(from(Object.entries(data2)));
+    return Result$Ok(from(Object.entries(data)));
   }
   return Result$Error("Dict");
 }
-function float(data2) {
-  if (typeof data2 === "number") return Result$Ok(data2);
+function float(data) {
+  if (typeof data === "number") return Result$Ok(data);
   return Result$Error(0);
 }
-function int(data2) {
-  if (Number.isInteger(data2)) return Result$Ok(data2);
+function int(data) {
+  if (Number.isInteger(data)) return Result$Ok(data);
   return Result$Error(0);
 }
-function string(data2) {
-  if (typeof data2 === "string") return Result$Ok(data2);
+function string(data) {
+  if (typeof data === "string") return Result$Ok(data);
   return Result$Error("");
 }
 function arrayToList(array3) {
@@ -1924,11 +1932,11 @@ function arrayToList(array3) {
   }
   return list3;
 }
-function isList(data2) {
-  return List$isEmpty(data2) || List$isNonEmpty(data2);
+function isList(data) {
+  return List$isEmpty(data) || List$isNonEmpty(data);
 }
-function isResult(data2) {
-  return Result$isOk(data2) || Result$isError(data2);
+function isResult(data) {
+  return Result$isOk(data) || Result$isError(data);
 }
 
 // build/dev/javascript/gleam_stdlib/gleam/int.mjs
@@ -1941,17 +1949,28 @@ function max(a, b) {
   }
 }
 
+// build/dev/javascript/gleam_stdlib/gleam/string_tree.mjs
+var All = class extends CustomType {
+};
+var Direction$All$const = new All();
+
 // build/dev/javascript/gleam_stdlib/gleam/string.mjs
+var Leading = class extends CustomType {
+};
+var Direction$Leading$const = new Leading();
+var Trailing = class extends CustomType {
+};
+var Direction$Trailing$const = new Trailing();
 function compare2(a, b) {
   let $ = a === b;
   if ($) {
-    return new Eq();
+    return Order$Eq$const;
   } else {
     let $1 = less_than(a, b);
     if ($1) {
-      return new Lt();
+      return Order$Lt$const;
     } else {
-      return new Gt();
+      return Order$Gt$const;
     }
   }
 }
@@ -2088,7 +2107,8 @@ function getPositionFromMultiline(line, column, string4) {
 // build/dev/javascript/gleam_json/gleam/json.mjs
 var UnexpectedEndOfInput = class extends CustomType {
 };
-var DecodeError$UnexpectedEndOfInput = () => new UnexpectedEndOfInput();
+var DecodeError$UnexpectedEndOfInput$const = new UnexpectedEndOfInput();
+var DecodeError$UnexpectedEndOfInput = () => DecodeError$UnexpectedEndOfInput$const;
 var UnexpectedByte = class extends CustomType {
   constructor($0) {
     super();
@@ -2143,7 +2163,7 @@ function dict3(dict4, keys3, values2) {
   return object2(
     fold(
       dict4,
-      toList([]),
+      List$Empty$const,
       (acc, k, v) => {
         return prepend([keys3(k), values2(v)], acc);
       }
@@ -2162,8 +2182,7 @@ function new$(id) {
   return new ReplicaId(id);
 }
 function to_string3(replica_id) {
-  let s;
-  s = replica_id[0];
+  let s = replica_id[0];
   return s;
 }
 function compare3(a, b) {
@@ -2177,6 +2196,18 @@ function decoder() {
 }
 
 // build/dev/javascript/lattice_core/lattice_core/version_vector.mjs
+var Before = class extends CustomType {
+};
+var Order$Before$const = new Before();
+var After = class extends CustomType {
+};
+var Order$After$const = new After();
+var Concurrent = class extends CustomType {
+};
+var Order$Concurrent$const = new Concurrent();
+var Equal = class extends CustomType {
+};
+var Order$Equal$const = new Equal();
 var VersionVector = class extends CustomType {
   constructor(dict4) {
     super();
@@ -2187,24 +2218,20 @@ function new$2() {
   return new VersionVector(make());
 }
 function increment(vv, replica_id) {
-  let dict4;
-  dict4 = vv.dict;
+  let dict4 = vv.dict;
   let current = unwrap(get(dict4, replica_id), 0);
   return new VersionVector(insert(dict4, replica_id, current + 1));
 }
 function get2(vv, replica_id) {
-  let dict4;
-  dict4 = vv.dict;
+  let dict4 = vv.dict;
   return unwrap(get(dict4, replica_id), 0);
 }
 function is_empty2(vv) {
-  let d;
-  d = vv.dict;
+  let d = vv.dict;
   return is_empty(d);
 }
 function set_max(vv, replica_id, value4) {
-  let d;
-  d = vv.dict;
+  let d = vv.dict;
   let current = unwrap(get(d, replica_id), 0);
   let $ = value4 > current;
   if ($) {
@@ -2214,10 +2241,8 @@ function set_max(vv, replica_id, value4) {
   }
 }
 function merge2(a, b) {
-  let da;
-  da = a.dict;
-  let db;
-  db = b.dict;
+  let da = a.dict;
+  let db = b.dict;
   let merged = fold(
     db,
     da,
@@ -2234,8 +2259,7 @@ function merge2(a, b) {
   return new VersionVector(merged);
 }
 function to_json2(vv) {
-  let d;
-  d = vv.dict;
+  let d = vv.dict;
   return object2(
     toList([
       ["type", string3("version_vector")],
@@ -2301,7 +2325,7 @@ function from_json(json_string) {
             new DecodeError(
               "type=version_vector and v=1",
               type_tag + " v=" + to_string(version),
-              toList([])
+              List$Empty$const
             )
           ])
         )
@@ -2339,8 +2363,7 @@ function decoder2() {
   );
 }
 function to_dict(vv) {
-  let d;
-  d = vv.dict;
+  let d = vv.dict;
   return d;
 }
 function from_dict(d) {
@@ -2388,12 +2411,9 @@ function merge_helper(loop$a, loop$b, loop$keys, loop$acc) {
   }
 }
 function merge3(a, b) {
-  let dict_a;
-  let self_id_a;
-  dict_a = a.dict;
-  self_id_a = a.self_id;
-  let dict_b;
-  dict_b = b.dict;
+  let dict_a = a.dict;
+  let self_id_a = a.self_id;
+  let dict_b = b.dict;
   let a_keys = keys(dict_a);
   let b_keys = keys(dict_b);
   let all_keys = unique(append(a_keys, b_keys));
@@ -2401,10 +2421,8 @@ function merge3(a, b) {
   return new GCounter(merged_dict, self_id_a);
 }
 function to_json3(counter) {
-  let d;
-  let self_id;
-  d = counter.dict;
-  self_id = counter.self_id;
+  let d = counter.dict;
+  let self_id = counter.self_id;
   return object2(
     toList([
       ["type", string3("g_counter")],
@@ -2491,7 +2509,7 @@ function from_json2(json_string) {
             new DecodeError(
               "type=g_counter and v=1",
               type_tag + " v=" + to_string(version),
-              toList([])
+              List$Empty$const
             )
           ])
         )
@@ -2502,10 +2520,8 @@ function from_json2(json_string) {
   }
 }
 function to_parts(counter) {
-  let dict4;
-  let self_id;
-  dict4 = counter.dict;
-  self_id = counter.self_id;
+  let dict4 = counter.dict;
+  let self_id = counter.self_id;
   return [dict4, self_id];
 }
 function from_parts(dict4, self_id) {
@@ -2524,34 +2540,24 @@ function new$4(replica_id) {
   return new PNCounter(new$3(replica_id), new$3(replica_id));
 }
 function merge4(a, b) {
-  let positive_a;
-  let negative_a;
-  positive_a = a.positive;
-  negative_a = a.negative;
-  let positive_b;
-  let negative_b;
-  positive_b = b.positive;
-  negative_b = b.negative;
+  let positive_a = a.positive;
+  let negative_a = a.negative;
+  let positive_b = b.positive;
+  let negative_b = b.negative;
   return new PNCounter(
     merge3(positive_a, positive_b),
     merge3(negative_a, negative_b)
   );
 }
 function to_json4(counter) {
-  let positive;
-  let negative;
-  positive = counter.positive;
-  negative = counter.negative;
+  let positive = counter.positive;
+  let negative = counter.negative;
   let $ = to_parts(positive);
-  let pos_dict;
-  let pos_id;
-  pos_dict = $[0];
-  pos_id = $[1];
+  let pos_dict = $[0];
+  let pos_id = $[1];
   let $1 = to_parts(negative);
-  let neg_dict;
-  let neg_id;
-  neg_dict = $1[0];
-  neg_id = $1[1];
+  let neg_dict = $1[0];
+  let neg_id = $1[1];
   return object2(
     toList([
       ["type", string3("pn_counter")],
@@ -2676,7 +2682,7 @@ function from_json3(json_string) {
             new DecodeError(
               "type=pn_counter and v=1",
               type_tag + " v=" + to_string(version),
-              toList([])
+              List$Empty$const
             )
           ])
         )
@@ -2800,7 +2806,7 @@ function from_json4(json_string) {
             new DecodeError(
               "type=lww_register and v=1 or v=2",
               type_tag + " v=" + to_string(version),
-              toList([])
+              List$Empty$const
             )
           ])
         )
@@ -2830,18 +2836,24 @@ var MVRegister = class extends CustomType {
 function new$6(replica_id) {
   return new MVRegister(replica_id, make(), new$2());
 }
-function set(register, val) {
+function set_with_delta(register, val) {
   let new_vclock = increment(
     register.vclock,
     register.replica_id
   );
   let new_counter = get2(new_vclock, register.replica_id);
   let tag = new Tag(register.replica_id, new_counter);
-  return new MVRegister(
+  let new_state = new MVRegister(
     register.replica_id,
     insert(make(), tag, val),
     new_vclock
   );
+  return [new_state, new_state];
+}
+function set(register, val) {
+  let $ = set_with_delta(register, val);
+  let updated = $[0];
+  return updated;
 }
 function value2(register) {
   return values(register.entries);
@@ -2873,12 +2885,9 @@ function merge6(a, b) {
   );
 }
 function to_json6(register) {
-  let rid;
-  let entries;
-  let vclock;
-  rid = register.replica_id;
-  entries = register.entries;
-  vclock = register.vclock;
+  let rid = register.replica_id;
+  let entries = register.entries;
+  let vclock = register.vclock;
   let entries_json = array2(
     to_list(entries),
     (pair) => {
@@ -3037,7 +3046,7 @@ function from_json5(json_string) {
             new DecodeError(
               "type=mv_register and v=1",
               type_tag + " v=" + to_string(version),
-              toList([])
+              List$Empty$const
             )
           ])
         )
@@ -3103,10 +3112,8 @@ function order(first, second) {
 }
 function union(first, second) {
   let $ = order(first, second);
-  let larger;
-  let smaller;
-  larger = $[0];
-  smaller = $[1];
+  let larger = $[0];
+  let smaller = $[1];
   return fold3(smaller, larger, insert2);
 }
 
@@ -3183,7 +3190,7 @@ function from_json6(json_string) {
             new DecodeError(
               "type=g_set and v=1",
               type_tag + " v=" + to_string(version),
-              toList([])
+              List$Empty$const
             )
           ])
         )
@@ -3221,7 +3228,7 @@ function new$9(replica_id) {
     new$2()
   );
 }
-function add2(orset, element) {
+function add_with_delta(orset, element) {
   let new_counter = orset.counter + 1;
   let tag = new Tag2(orset.replica_id, new_counter);
   let existing_tags = unwrap(
@@ -3229,13 +3236,46 @@ function add2(orset, element) {
     new$7()
   );
   let new_tags = insert2(existing_tags, tag);
-  return new ORSet(
+  let updated = new ORSet(
     orset.replica_id,
     new_counter,
     insert(orset.entries, element, new_tags),
     orset.tombstones,
     orset.pruned
   );
+  let delta = new ORSet(
+    orset.replica_id,
+    new_counter,
+    from_list(toList([[element, from_list2(toList([tag]))]])),
+    new$7(),
+    new$2()
+  );
+  return [updated, delta];
+}
+function remove_with_delta(orset, element) {
+  let removed_tags = unwrap(
+    get(orset.entries, element),
+    new$7()
+  );
+  let updated = new ORSet(
+    orset.replica_id,
+    orset.counter,
+    delete$(orset.entries, element),
+    union(orset.tombstones, removed_tags),
+    orset.pruned
+  );
+  let delta = new ORSet(
+    orset.replica_id,
+    orset.counter,
+    make(),
+    removed_tags,
+    new$2()
+  );
+  return [updated, delta];
+}
+function value3(orset) {
+  let _pipe = keys(orset.entries);
+  return from_list2(_pipe);
 }
 function contains2(orset, element) {
   let $ = get(orset.entries, element);
@@ -3246,15 +3286,9 @@ function contains2(orset, element) {
     return false;
   }
 }
-function value3(orset) {
-  let _pipe = keys(orset.entries);
-  return from_list2(_pipe);
-}
 function pruned_on_side_without_live_tag(tag, live_tags, pruned) {
-  let rid;
-  let c;
-  rid = tag.replica_id;
-  c = tag.counter;
+  let rid = tag.replica_id;
+  let c = tag.counter;
   return get2(pruned, rid) >= c && !contains(
     live_tags,
     tag
@@ -3268,10 +3302,8 @@ function is_pruned_zombie(tag, a_tags, a_pruned, b_tags, b_pruned) {
   );
 }
 function not_dominated(tag, pruned) {
-  let rid;
-  let c;
-  rid = tag.replica_id;
-  c = tag.counter;
+  let rid = tag.replica_id;
+  let c = tag.counter;
   return get2(pruned, rid) < c;
 }
 function merge8(a, b) {
@@ -3331,10 +3363,8 @@ function tags_to_bound(tags) {
     tags,
     new$2(),
     (vv, tag) => {
-      let rid;
-      let c;
-      rid = tag.replica_id;
-      c = tag.counter;
+      let rid = tag.replica_id;
+      let c = tag.counter;
       return set_max(vv, rid, c);
     }
   );
@@ -3355,10 +3385,8 @@ function remove_with_bound(orset, element) {
   return [updated, bound];
 }
 function encode_tag(tag) {
-  let rid;
-  let c;
-  rid = tag.replica_id;
-  c = tag.counter;
+  let rid = tag.replica_id;
+  let c = tag.counter;
   return object2(
     toList([
       ["r", string3(to_string3(rid))],
@@ -3431,7 +3459,7 @@ function from_json7(json_string) {
               (entries) => {
                 return optional_field(
                   "tombstones",
-                  toList([]),
+                  List$Empty$const,
                   list2(tag_decoder),
                   (tombstones) => {
                     return success(
@@ -3539,7 +3567,9 @@ function from_json7(json_string) {
     } else {
       return new Error(
         new UnableToDecode(
-          toList([new DecodeError("type=or_set", type_tag, toList([]))])
+          toList([
+            new DecodeError("type=or_set", type_tag, List$Empty$const)
+          ])
         )
       );
     }
@@ -3631,7 +3661,7 @@ function from_json8(json_string) {
             new DecodeError(
               "type=two_p_set and v=1",
               type_tag + " v=" + to_string(version),
-              toList([])
+              List$Empty$const
             )
           ])
         )
@@ -3700,18 +3730,25 @@ var TypeMismatch = class extends CustomType {
 };
 var GCounterSpec = class extends CustomType {
 };
+var CrdtSpec$GCounterSpec$const = new GCounterSpec();
 var PnCounterSpec = class extends CustomType {
 };
+var CrdtSpec$PnCounterSpec$const = new PnCounterSpec();
 var LwwRegisterSpec = class extends CustomType {
 };
+var CrdtSpec$LwwRegisterSpec$const = new LwwRegisterSpec();
 var MvRegisterSpec = class extends CustomType {
 };
+var CrdtSpec$MvRegisterSpec$const = new MvRegisterSpec();
 var GSetSpec = class extends CustomType {
 };
+var CrdtSpec$GSetSpec$const = new GSetSpec();
 var TwoPSetSpec = class extends CustomType {
 };
+var CrdtSpec$TwoPSetSpec$const = new TwoPSetSpec();
 var OrSetSpec = class extends CustomType {
 };
+var CrdtSpec$OrSetSpec$const = new OrSetSpec();
 function type_name(value4) {
   if (value4 instanceof CrdtGCounter) {
     return "g_counter";
@@ -3944,6 +3981,16 @@ var ORMap = class extends CustomType {
     this.remove_bounds = remove_bounds;
   }
 };
+var ORMapDelta = class extends CustomType {
+  constructor(replica_id, crdt_spec, key_set_delta, value_deltas, remove_bounds_delta) {
+    super();
+    this.replica_id = replica_id;
+    this.crdt_spec = crdt_spec;
+    this.key_set_delta = key_set_delta;
+    this.value_deltas = value_deltas;
+    this.remove_bounds_delta = remove_bounds_delta;
+  }
+};
 function spec_to_string(spec) {
   if (spec instanceof GCounterSpec) {
     return "g_counter";
@@ -3963,19 +4010,19 @@ function spec_to_string(spec) {
 }
 function string_to_spec(s) {
   if (s === "g_counter") {
-    return new Ok(new GCounterSpec());
+    return new Ok(CrdtSpec$GCounterSpec$const);
   } else if (s === "pn_counter") {
-    return new Ok(new PnCounterSpec());
+    return new Ok(CrdtSpec$PnCounterSpec$const);
   } else if (s === "lww_register") {
-    return new Ok(new LwwRegisterSpec());
+    return new Ok(CrdtSpec$LwwRegisterSpec$const);
   } else if (s === "mv_register") {
-    return new Ok(new MvRegisterSpec());
+    return new Ok(CrdtSpec$MvRegisterSpec$const);
   } else if (s === "g_set") {
-    return new Ok(new GSetSpec());
+    return new Ok(CrdtSpec$GSetSpec$const);
   } else if (s === "two_p_set") {
-    return new Ok(new TwoPSetSpec());
+    return new Ok(CrdtSpec$TwoPSetSpec$const);
   } else if (s === "or_set") {
-    return new Ok(new OrSetSpec());
+    return new Ok(CrdtSpec$OrSetSpec$const);
   } else {
     return new Error(void 0);
   }
@@ -3988,6 +4035,21 @@ function new$11(replica_id, crdt_spec) {
     make(),
     make()
   );
+}
+function put_value(map4, key, value4) {
+  let $ = add_with_delta(map4.key_set, key);
+  let updated_key_set = $[0];
+  let key_set_delta = $[1];
+  return [
+    new ORMap(
+      map4.replica_id,
+      map4.crdt_spec,
+      updated_key_set,
+      insert(map4.values, key, value4),
+      delete$(map4.remove_bounds, key)
+    ),
+    key_set_delta
+  ];
 }
 function matches_spec(value4, spec) {
   if (spec instanceof GCounterSpec) {
@@ -4032,32 +4094,30 @@ function matches_spec(value4, spec) {
     return false;
   }
 }
-function update(map4, key, f) {
-  let _block;
+function current_value(map4, key) {
   let $ = contains2(map4.key_set, key);
   let $1 = get(map4.values, key);
   if ($ && $1 instanceof Ok) {
     let crdt_val = $1[0];
-    _block = crdt_val;
+    return crdt_val;
   } else {
-    _block = default_crdt(map4.crdt_spec, map4.replica_id);
+    return default_crdt(map4.crdt_spec, map4.replica_id);
   }
-  let current = _block;
-  let _block$1;
-  let $2 = matches_spec(f(current), map4.crdt_spec);
-  if ($2) {
-    _block$1 = f(current);
+}
+function update(map4, key, f) {
+  let current = current_value(map4, key);
+  let new_value = f(current);
+  let _block;
+  let $ = matches_spec(new_value, map4.crdt_spec);
+  if ($) {
+    _block = new_value;
   } else {
-    _block$1 = current;
+    _block = current;
   }
-  let updated = _block$1;
-  return new ORMap(
-    map4.replica_id,
-    map4.crdt_spec,
-    add2(map4.key_set, key),
-    insert(map4.values, key, updated),
-    delete$(map4.remove_bounds, key)
-  );
+  let safe_value = _block;
+  let $1 = put_value(map4, key, safe_value);
+  let updated = $1[0];
+  return updated;
 }
 function get3(map4, key) {
   let $ = contains2(map4.key_set, key);
@@ -4072,27 +4132,45 @@ function get3(map4, key) {
     return new Error(void 0);
   }
 }
-function remove(map4, key) {
-  let $ = remove_with_bound(map4.key_set, key);
-  let updated_key_set;
-  let bound;
-  updated_key_set = $[0];
-  bound = $[1];
+function remove_with_delta2(map4, key) {
+  let $ = remove_with_delta(map4.key_set, key);
+  let updated_key_set = $[0];
+  let key_set_delta = $[1];
+  let $1 = remove_with_bound(map4.key_set, key);
+  let bound = $1[1];
   let _block;
-  let $1 = is_empty2(bound);
-  if ($1) {
-    _block = map4.remove_bounds;
+  let $3 = is_empty2(bound);
+  if ($3) {
+    _block = [map4.remove_bounds, make()];
   } else {
-    _block = insert(map4.remove_bounds, key, bound);
+    _block = [
+      insert(map4.remove_bounds, key, bound),
+      from_list(toList([[key, bound]]))
+    ];
   }
-  let updated_bounds = _block;
-  return new ORMap(
+  let $2 = _block;
+  let updated_bounds = $2[0];
+  let bounds_delta = $2[1];
+  let updated = new ORMap(
     map4.replica_id,
     map4.crdt_spec,
     updated_key_set,
     map4.values,
     updated_bounds
   );
+  let delta = new ORMapDelta(
+    map4.replica_id,
+    map4.crdt_spec,
+    key_set_delta,
+    make(),
+    bounds_delta
+  );
+  return [updated, delta];
+}
+function remove(map4, key) {
+  let $ = remove_with_delta2(map4, key);
+  let updated = $[0];
+  return updated;
 }
 function keys2(map4) {
   return to_list2(value3(map4.key_set));
@@ -4152,7 +4230,7 @@ function merge11(a, b) {
             "panic",
             FILEPATH,
             "lattice_maps/or_map",
-            205,
+            199,
             "merge",
             "unreachable: key must exist in at least one map",
             {}
@@ -4215,23 +4293,16 @@ function merge11(a, b) {
   }
 }
 function to_json11(map4) {
-  let rid;
-  let crdt_spec;
-  let key_set;
-  let values$1;
-  let remove_bounds;
-  rid = map4.replica_id;
-  crdt_spec = map4.crdt_spec;
-  key_set = map4.key_set;
-  values$1 = map4.values;
-  remove_bounds = map4.remove_bounds;
+  let rid = map4.replica_id;
+  let crdt_spec = map4.crdt_spec;
+  let key_set = map4.key_set;
+  let values$1 = map4.values;
+  let remove_bounds = map4.remove_bounds;
   let values_json = array2(
     to_list(values$1),
     (pair) => {
-      let key;
-      let crdt_val;
-      key = pair[0];
-      crdt_val = pair[1];
+      let key = pair[0];
+      let crdt_val = pair[1];
       return object2(
         toList([
           ["key", string3(key)],
@@ -4297,10 +4368,8 @@ function decode_or_map_state(replica_id_str, crdt_spec_str, key_set_str, values_
       let values_result = try_map(
         values_list,
         (pair) => {
-          let key;
-          let crdt_str;
-          key = pair[0];
-          crdt_str = pair[1];
+          let key = pair[0];
+          let crdt_str = pair[1];
           let $2 = from_json9(crdt_str);
           if ($2 instanceof Ok) {
             let c = $2[0];
@@ -4488,7 +4557,9 @@ function from_json10(json_string) {
     } else {
       return new Error(
         new UnableToDecode(
-          toList([new DecodeError("type=or_map", type_tag, toList([]))])
+          toList([
+            new DecodeError("type=or_map", type_tag, List$Empty$const)
+          ])
         )
       );
     }
@@ -4521,7 +4592,7 @@ var RenderBlock$RenderBlock$1 = (value4) => value4.values;
 function new_document(replica) {
   return new Document(
     replica,
-    new$11(new$(replica), new MvRegisterSpec())
+    new$11(new$(replica), CrdtSpec$MvRegisterSpec$const)
   );
 }
 function from_json11(replica, encoded) {
@@ -4529,8 +4600,7 @@ function from_json11(replica, encoded) {
   if ($ instanceof Ok) {
     let remote = $[0];
     let $1 = new_document(replica);
-    let local;
-    local = $1.state;
+    let local = $1.state;
     let $2 = merge11(local, remote);
     if ($2 instanceof Ok) {
       let state = $2[0];
@@ -4543,17 +4613,14 @@ function from_json11(replica, encoded) {
   }
 }
 function to_json12(document) {
-  let state;
-  state = document.state;
+  let state = document.state;
   let _pipe = state;
   let _pipe$1 = to_json11(_pipe);
   return to_string2(_pipe$1);
 }
 function put_block(document, id, block_json) {
-  let replica;
-  let state;
-  replica = document.replica;
-  state = document.state;
+  let replica = document.replica;
+  let state = document.state;
   let replica_id = new$(replica);
   let updated = update(
     state,
@@ -4611,17 +4678,13 @@ function edit_block(document, expected_id, block_json) {
   }
 }
 function remove_block(document, block_id) {
-  let replica;
-  let state;
-  replica = document.replica;
-  state = document.state;
+  let replica = document.replica;
+  let state = document.state;
   return new Document(replica, remove(state, block_id));
 }
 function merge_json(document, remote_json) {
-  let replica;
-  let state;
-  replica = document.replica;
-  state = document.state;
+  let replica = document.replica;
+  let state = document.state;
   let $ = from_json10(remote_json);
   if ($ instanceof Ok) {
     let remote = $[0];
@@ -4637,8 +4700,7 @@ function merge_json(document, remote_json) {
   }
 }
 function blocks(document) {
-  let state;
-  state = document.state;
+  let state = document.state;
   let _pipe = state;
   let _pipe$1 = keys2(_pipe);
   let _pipe$2 = sort(_pipe$1, compare2);
@@ -4655,10 +4717,10 @@ function blocks(document) {
           let _pipe$4 = value2(_pipe$3);
           _block = sort(_pipe$4, compare2);
         } else {
-          _block = toList([]);
+          _block = List$Empty$const;
         }
       } else {
-        _block = toList([]);
+        _block = List$Empty$const;
       }
       let values2 = _block;
       return new RenderBlock(id, values2);

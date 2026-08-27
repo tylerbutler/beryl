@@ -1,9 +1,9 @@
-//// Shared Beryl-owned error helpers.
+//// Shared beryl-owned error helpers.
 
 import gleam/erlang/process
 import gleam/otp/actor
 
-/// A stable description of an internal Beryl actor startup failure.
+/// A stable description of an internal beryl actor startup failure.
 ///
 /// This type hides OTP's `actor.StartError` so public APIs do not expose
 /// dependency-specific error constructors.
@@ -17,7 +17,7 @@ type StartFailureReason {
   StartExited(String)
 }
 
-/// Convert a startup failure to a human-readable diagnostic string.
+/// Return a human-readable description of a startup failure.
 pub fn describe_start_failure(failure: StartFailure) -> String {
   case failure.reason {
     StartTimedOut -> "actor init timed out"
@@ -26,7 +26,7 @@ pub fn describe_start_failure(failure: StartFailure) -> String {
   }
 }
 
-/// Convert a `gleam/otp/actor.StartError` into beryl's `StartFailure`.
+/// Convert a `gleam/otp/actor.StartError` to beryl's `StartFailure`.
 pub fn from_actor_start_error(error: actor.StartError) -> StartFailure {
   case error {
     actor.InitTimeout -> StartFailure(StartTimedOut)

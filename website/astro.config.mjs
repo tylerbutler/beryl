@@ -22,6 +22,24 @@ export default defineConfig({
 			},
 			description:
 				"Type-safe real-time channels and presence for Gleam.",
+			// Green-based syntax themes so code tokens stay in the beryl
+			// palette instead of the default themes' neon purples.
+			expressiveCode: {
+				themes: ["everforest-dark", "everforest-light"],
+				// Token colors come from Everforest; frame chrome and
+				// backgrounds stay on the site palette.
+				useStarlightUiThemeColors: true,
+				// Wrap rather than clip. The gleam.toml git-dependency lines
+				// are the most important snippet on the site and were being
+				// cut mid-string (718px visible of 947px) at desktop widths,
+				// with no fade, scrollbar or wrap to signal it. Since beryl
+				// isn't on Hex, those lines have to be read and adapted, not
+				// blind-copied. preserveIndent keeps continuations aligned.
+				defaultProps: {
+					wrap: true,
+					preserveIndent: true,
+				},
+			},
 			lastUpdated: true,
 			logo: {
 				src: "./src/assets/beryl.webp",
@@ -42,8 +60,10 @@ export default defineConfig({
 			plugins: [
 				starlightLlmsTxt(),
 				starlightLinksValidator({
-					// Report broken links but don't fail the build on them.
-					failOnError: false,
+					// Fail the build in CI so broken links can't ship; stay
+					// permissive locally so a work-in-progress page doesn't
+					// block `astro dev`.
+					failOnError: Boolean(process.env.CI),
 				}),
 			],
 			social: [
@@ -55,7 +75,7 @@ export default defineConfig({
 			],
 			sidebar: [
 				{
-					label: "Start Here",
+					label: "Start here",
 					items: [
 						{
 							label: "What is beryl?",
@@ -66,7 +86,11 @@ export default defineConfig({
 							slug: "installation",
 						},
 						{
-							label: "Quick Start",
+							label: "Choose an API",
+							slug: "choosing-an-api",
+						},
+						{
+							label: "Quick start",
 							slug: "quick-start",
 						},
 						{
@@ -76,47 +100,109 @@ export default defineConfig({
 					],
 				},
 				{
+					label: "Tutorial",
+					items: [
+						{
+							label: "Build a live poll",
+							slug: "tutorial",
+						},
+						{
+							label: "1. Elm Architecture without a DOM",
+							slug: "tutorial/the-elm-architecture-without-a-dom",
+						},
+						{
+							label: "2. One update function",
+							slug: "tutorial/one-update-function-many-socket-events",
+						},
+						{
+							label: "3. Typed system messages",
+							slug: "tutorial/typed-messages-from-your-gleam-system",
+						},
+						{
+							label: "4. Raw dispatch and channels",
+							slug: "tutorial/composition-raw-dispatch-and-channels",
+						},
+						{
+							label: "5. Runtime boundaries",
+							slug: "tutorial/where-the-analogy-ends",
+						},
+						{
+							label: "6. Supervision",
+							slug: "tutorial/supervising-beryl",
+						},
+					],
+				},
+				{
 					label: "Guides",
 					items: [
 						{
-							label: "Channels",
-							slug: "guides/channels",
+							label: "Core concepts",
+							items: [
+								{
+									label: "Raw dispatch",
+									slug: "guides/dispatch",
+								},
+								{
+									label: "Channel handlers",
+									slug: "guides/channels",
+								},
+								{
+									label: "Presence",
+									slug: "guides/presence",
+								},
+								{
+									label: "PubSub",
+									slug: "guides/pubsub",
+								},
+								{
+									label: "Groups",
+									slug: "guides/groups",
+								},
+							],
 						},
 						{
-							label: "Presence",
-							slug: "guides/presence",
+							label: "Integration",
+							collapsed: true,
+							items: [
+								{
+									label: "WebSocket transport",
+									slug: "guides/websocket",
+								},
+								{
+									label: "Authentication",
+									slug: "guides/authentication",
+								},
+								{
+									label: "Backend integration",
+									slug: "guides/backend-integration",
+								},
+								{
+									label: "Coming from Phoenix",
+									slug: "guides/coming-from-phoenix",
+								},
+							],
 						},
 						{
-							label: "PubSub",
-							slug: "guides/pubsub",
-						},
-						{
-							label: "Groups",
-							slug: "guides/groups",
-						},
-						{
-							label: "Supervision",
-							slug: "guides/supervision",
-						},
-						{
-							label: "Error Handling",
-							slug: "guides/error-handling",
-						},
-						{
-							label: "WebSocket Transport",
-							slug: "guides/websocket",
-						},
-						{
-							label: "Authentication",
-							slug: "guides/authentication",
-						},
-						{
-							label: "Backend Integration",
-							slug: "guides/backend-integration",
-						},
-						{
-							label: "Production Hardening",
-							slug: "guides/production-hardening",
+							label: "Running in production",
+							collapsed: true,
+							items: [
+								{
+									label: "Supervision",
+									slug: "guides/supervision",
+								},
+								{
+									label: "Error handling",
+									slug: "guides/error-handling",
+								},
+								{
+									label: "Observability",
+									slug: "guides/observability",
+								},
+								{
+									label: "Production hardening",
+									slug: "guides/production-hardening",
+								},
+							],
 						},
 					],
 				},
@@ -124,11 +210,12 @@ export default defineConfig({
 					label: "Reference",
 					items: [
 						{
-							label: "API Overview",
+							label: "API overview",
 							slug: "reference",
 						},
 						{
 							label: "Generated API",
+							collapsed: true,
 							items: [
 								{
 									autogenerate: {
@@ -141,21 +228,28 @@ export default defineConfig({
 				},
 				{
 					label: "Architecture",
+					// Collapsed by default like Integration and Running in
+					// Production. Expanded it put 6 links on every page —
+					// the group least relevant to someone on Quick Start took
+					// the most open real estate, and the open/closed policy
+					// tracked nothing a reader could predict. Starlight still
+					// auto-expands whichever group holds the current page.
+					collapsed: true,
 					items: [
 						{
 							label: "Overview",
 							slug: "architecture/overview",
 						},
 						{
-							label: "Message Lifecycle",
+							label: "How beryl handles a message",
 							slug: "architecture/message-lifecycle",
 						},
 						{
-							label: "Coordinator & Supervision",
-							slug: "architecture/coordinator",
+							label: "Socket processes & restarts",
+							slug: "architecture/runtime",
 						},
 						{
-							label: "PubSub & Distribution",
+							label: "Broadcasts across nodes",
 							slug: "architecture/pubsub-and-distribution",
 						},
 						{
@@ -163,7 +257,7 @@ export default defineConfig({
 							slug: "architecture/presence",
 						},
 						{
-							label: "Wire & Transport",
+							label: "WebSocket frames & transports",
 							slug: "architecture/wire-and-transport",
 						},
 					],
@@ -174,10 +268,6 @@ export default defineConfig({
 						{
 							label: "Troubleshooting",
 							slug: "troubleshooting",
-						},
-						{
-							label: "Migration & Releases",
-							slug: "migration",
 						},
 					],
 				},

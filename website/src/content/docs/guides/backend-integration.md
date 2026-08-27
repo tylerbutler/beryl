@@ -1,85 +1,87 @@
 ---
-title: Backend Integration
-description: Use beryl alongside an existing backend that owns auth and persistence and publishes over an internal endpoint.
+title: Connect beryl to an existing backend
+description: Keep authentication and database writes in your backend, then send real-time updates through beryl.
 ---
 
-beryl does not have to own your application. A common setup keeps an existing
-backend — a Phoenix, Rails, or another Gleam service — as the source of truth
-for **authentication and persistence**, and uses beryl purely as the realtime
-fan-out layer. The backend tells beryl *what* to push; beryl handles delivery to
-connected sockets.
+beryl does not need to manage your full application. An existing Phoenix,
+Rails, or Gleam backend can manage **authentication and database writes**.
+beryl can send real-time updates to connected clients.
 
-This guide wires up that split:
+This guide uses this design:
 
-1. The existing backend authenticates users and issues a token.
-2. beryl verifies that token at connect (see [Authentication](/guides/authentication)).
-3. When domain data changes, the backend calls an **internal publish endpoint**
-   on the beryl service, which forwards the change with `beryl.broadcast`.
+1. The backend authenticates users and issues a token.
+2. beryl verifies the token when the socket connects.
+3. The backend calls an internal publish endpoint when application data changes.
+4. The endpoint sends the change with `beryl.broadcast`.
 
-```
+```text
 Browser ──WebSocket──► beryl ◄──HTTP POST /internal/publish── Backend
                          │                                      │
                          └── broadcasts to topic subscribers     └── owns auth + DB
 ```
 
-## The internal publish endpoint
+Either API can provide the `beryl.Sockets` handle.
+`beryl.child_spec` and `channel.child_spec` return the same handle type.
+`beryl.broadcast` works the same with both APIs.
 
-Run the endpoint on the same Mist listener as the WebSocket transport. Guard it
-with a shared secret so only your backend — never a browser — can publish:
+## Add a private publish endpoint
+
+Run the endpoint on the Mist listener that serves the WebSocket transport.
+Protect it with a shared secret. Only the backend must be able to publish.
 
 ```gleam
 import beryl
+import beryl/transport/server
 import beryl_mist as mist_transport
 import gleam/bytes_tree
-import gleam/dynamic/decode
 import gleam/http.{Post}
+import gleam/http/request
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import gleam/json
-import gleam/result
 import mist
 
 fn handle_request(
-  req: Request(mist.Connection),
-  channels: beryl.Channels,
-  ws_config,
+  http_request: Request(mist.Connection),
+  sockets: beryl.Sockets,
+  websocket_config: server.TransportConfig(mist.Connection),
 ) -> Response(mist.ResponseData) {
-  // WebSocket upgrades go to beryl; everything else is normal HTTP routing.
-  use <- mist_transport.upgrade(req, channels, ws_config)
+  use <- mist_transport.upgrade(http_request, sockets, websocket_config)
 
-  case request.path_segments(req), req.method {
-    ["internal", "publish"], Post -> publish(req, channels)
+  case request.path_segments(http_request), http_request.method {
+    ["internal", "publish"], Post -> publish(http_request, sockets)
     _, _ -> not_found()
   }
 }
 ```
 
-The handler decodes the backend's request into a typed event and forwards it:
+The handler decodes the backend's request into a typed event and forwards it.
 
 ```gleam
-/// The contract your backend POSTs to /internal/publish.
-type PublishRequest {
+import gleam/dynamic/decode
+import gleam/http/response as response
+import gleam/json
+import gleam/result
+
+pub type PublishRequest {
   PublishRequest(topic: String, order_id: String, status: String)
 }
 
 fn publish(
-  req: Request(mist.Connection),
-  channels: beryl.Channels,
+  http_request: Request(mist.Connection),
+  sockets: beryl.Sockets,
 ) -> Response(mist.ResponseData) {
-  // Only the trusted backend knows this secret.
-  case authorized_internal(req) {
+  case authorized_internal(http_request) {
     False -> forbidden()
     True ->
-      case read_publish_request(req) {
-        Ok(msg) -> {
-          // Fan out to every socket subscribed to the topic.
+      case read_publish_request(http_request) {
+        Ok(publish_request) -> {
           beryl.broadcast(
-            channels,
-            msg.topic,
+            sockets,
+            publish_request.topic,
             "order_updated",
             json.object([
-              #("order_id", json.string(msg.order_id)),
-              #("status", json.string(msg.status)),
+              #("order_id", json.string(publish_request.order_id)),
+              #("status", json.string(publish_request.status)),
             ]),
           )
           accepted()
@@ -90,10 +92,10 @@ fn publish(
 }
 
 fn read_publish_request(
-  req: Request(mist.Connection),
+  http_request: Request(mist.Connection),
 ) -> Result(PublishRequest, Nil) {
-  use req <- result.try(
-    mist.read_body(req, 1_000_000) |> result.replace_error(Nil),
+  use http_request <- result.try(
+    mist.read_body(http_request, 1_000_000) |> result.replace_error(Nil),
   )
   let decoder = {
     use topic <- decode.field("topic", decode.string)
@@ -101,23 +103,18 @@ fn read_publish_request(
     use status <- decode.field("status", decode.string)
     decode.success(PublishRequest(topic:, order_id:, status:))
   }
-  json.parse_bits(req.body, decoder) |> result.replace_error(Nil)
+  json.parse_bits(http_request.body, decoder) |> result.replace_error(Nil)
 }
 ```
 
-## Guarding the endpoint
-
-`authorized_internal` compares a shared secret from an internal-only header. Keep
-the endpoint on a private network or behind your ingress so it is never exposed
-to browsers:
+## Protect the endpoint
 
 ```gleam
 import gleam/crypto
 
-fn authorized_internal(req: Request(mist.Connection)) -> Bool {
-  case request.get_header(req, "x-internal-secret") {
+fn authorized_internal(http_request: Request(mist.Connection)) -> Bool {
+  case request.get_header(http_request, "x-internal-secret") {
     Ok(provided) ->
-      // Constant-time comparison avoids leaking the secret via timing.
       crypto.secure_compare(
         <<provided:utf8>>,
         <<internal_secret():utf8>>,
@@ -127,12 +124,15 @@ fn authorized_internal(req: Request(mist.Connection)) -> Bool {
 }
 ```
 
+Keep this endpoint on a private network or behind a trusted proxy. Do not let
+browsers access it.
+
 ## Response helpers
 
-The backend only needs an acknowledgement — beryl returns `202 Accepted` once the
-broadcast is queued:
-
 ```gleam
+import gleam/http/response
+import gleam/http/response.{type Response}
+
 fn accepted() -> Response(mist.ResponseData) {
   response.new(202) |> response.set_body(mist.Bytes(bytes_tree.new()))
 }
@@ -150,15 +150,21 @@ fn not_found() -> Response(mist.ResponseData) {
 }
 ```
 
-## Why this split works
+## Send typed updates to one socket
 
-- **One source of truth.** Your backend keeps owning auth and the database; beryl
-  never persists domain state, it only relays it.
-- **Push from anywhere.** Any backend process — an HTTP handler, a background job,
-  a webhook consumer — can publish by POSTing to the internal endpoint.
-- **Distributed fan-out for free.** If beryl runs as a cluster, use the
-  [PubSub layer](/guides/pubsub) so a broadcast on one node reaches subscribers on
-  every node.
+Use `beryl.broadcast` when the backend sends JSON payloads by topic.
 
-For the connect-time verification of the tokens your backend issues, see the
-[Authentication guide](/guides/authentication).
+For typed updates from a long-lived application actor, use the socket's
+`socket.Sender(message)` with `beryl/bridge`. The bridge forwards messages from
+the actor to `socket.Info(message)`.
+
+## Benefits
+
+- **One source of truth:** Your backend manages authentication and the
+  database. beryl sends updates to connected clients.
+- **Publish from trusted processes:** An HTTP handler, worker, or webhook
+  consumer can publish.
+- **Cluster-wide delivery:** With PubSub, one `beryl.broadcast` reaches
+  subscribers on every connected node.
+
+For connect-time verification of the tokens your backend issues, see [Authentication](/guides/authentication/).

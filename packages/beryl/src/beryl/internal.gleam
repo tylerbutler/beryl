@@ -8,15 +8,15 @@ import palabres
 import palabres/level
 import palabres/options
 
-/// Logging verbosity for Beryl's internal helpers.
+/// Logging verbosity for beryl's internal helpers.
 pub type LogLevel {
   Debug
   Info
   Warn
-  Err
+  ErrorLevel
 }
 
-/// Logging configuration shared by internal Beryl modules.
+/// Logging configuration shared by internal beryl modules.
 pub type LoggingConfig {
   LoggingConfig(
     level: LogLevel,
@@ -25,10 +25,10 @@ pub type LoggingConfig {
   )
 }
 
-/// Configure the global palabres logger from a Beryl logging configuration.
+/// Configure the global palabres logger from a beryl logging configuration.
 ///
 /// Palabres is a singleton configured once at startup; the level set here is
-/// global across every Beryl logger. Called when a coordinator starts.
+/// global across every beryl logger. Called when a runtime starts.
 pub fn configure(config: LoggingConfig) -> Nil {
   options.defaults()
   |> options.level(to_palabres_level(config.level))
@@ -40,7 +40,7 @@ fn to_palabres_level(log_level: LogLevel) -> level.Level {
     Debug -> level.Debug
     Info -> level.Info
     Warn -> level.Warning
-    Err -> level.Error
+    ErrorLevel -> level.Error
   }
 }
 
@@ -49,9 +49,15 @@ pub fn result_error(error: e) -> Result(a, e) {
 }
 
 // nolint: stringly_typed_error -- the error is the formatted BEAM crash description; callers wrap or log it at use sites
+/// Crash boundary for work that runs inside a shared actor.
+///
 /// Run a callback, converting any BEAM crash (error/exit/throw) into an
-/// `Error(description)` so a faulty callback cannot take down the shared actor
-/// that invoked it.
+/// `Error(description)`. This is deliberately not left to OTP supervision:
+/// restarting the runtime or presence actor would discard every socket's or
+/// subscriber's state to recover from one scoped failure. Callers must discard
+/// the failed result and preserve or tear down only the affected scope; they
+/// must never continue with a partial result. Faults outside an explicit
+/// boundary still crash the actor and are handled by supervision.
 ///
 /// The description is depth-limited and truncated by the FFI so a
 /// client-triggered crash cannot bloat log metadata.
@@ -63,7 +69,7 @@ pub fn logger(name: String) -> Logger {
   log.new(name)
 }
 
-/// Build a named logger using the supplied Beryl logging configuration.
+/// Build a named logger using the supplied beryl logging configuration.
 ///
 /// The level is applied globally via `configure`; the returned logger only
 /// carries its name.

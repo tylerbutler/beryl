@@ -4,62 +4,77 @@
 </tr></table>
 
 > [!IMPORTANT]
-> beryl is not yet 1.0. The API is unstable, features may be removed in minor
-> releases, and quality should not be considered production-ready. We welcome
-> usage and feedback in the meantime!
+> beryl is not yet 1.0. Minor releases can change the API or remove features.
+> Treat beryl as experimental. Try it and send feedback.
 
 ## Install
 
-```sh
-gleam add beryl beryl_mist
+GitHub hosts the current beryl packages. Hex does not. Add these dependencies
+to `gleam.toml`:
+
+```toml
+[dependencies]
+beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
+beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
 ```
 
-`beryl` is the core channels library; `beryl_mist` is the [Mist](https://hex.pm/packages/mist)
-WebSocket transport. Both live in this repository (a [trellis](https://trellis.tylerbutler.com)-managed
-workspace under `packages/`).
+```sh
+gleam deps download
+```
 
-beryl targets the **Erlang/BEAM** runtime only. It does not support the JavaScript target.
+`beryl` includes raw dispatch and the recommended `beryl/channel` composition
+layer. `beryl_mist` provides the [Mist](https://hex.pm/packages/mist)
+WebSocket transport. `beryl_ewe` provides an
+[Ewe](https://hex.pm/packages/ewe) transport with the same API.
+
+beryl supports only the **Erlang/BEAM** runtime. It does not support
+JavaScript.
 
 ## Quick start
 
 ```gleam
 import beryl
-import beryl/channel.{type Channel, type HandleResult, type JoinResult}
-import beryl/socket.{type Socket}
-import beryl_mist as mist_transport
+import beryl/transport/server
 import beryl/wire
-import gleam/dynamic/decode
+import beryl/channel
+import beryl_mist as mist_transport
 import gleam/erlang/process
-import gleam/json
-import gleam/option.{None}
+import gleam/otp/static_supervisor
 import mist
 
-pub type RoomAssigns { RoomAssigns(username: String) }
+type State {
+  State(room: String)
+}
 
-fn new_channel() -> Channel(RoomAssigns, info) {
-  channel.new(fn(_topic, payload, socket) {
-    let username_decoder = {
-      use username <- decode.field("username", decode.string)
-      decode.success(username)
-    }
-    let username = case channel.decode_payload(payload, username_decoder) {
-      Ok(username) -> username
-      Error(_) -> "anonymous"
-    }
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, RoomAssigns(username:)))
-  })
-  |> channel.with_handle_in(fn(_event, _payload, socket) {
-    channel.NoReply(socket)
+fn room_channel() -> channel.Handler {
+  channel.handler("room:*", fn(context) {
+    channel.accept(State(room: context.topic))
+    |> channel.on_message(fn(state, message) {
+      channel.next(state, [
+        channel.broadcast(
+          message.event,
+          wire.dynamic_to_json(message.payload),
+        ),
+      ])
+    })
   })
 }
 
 pub fn main() {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  let assert Ok(_) = beryl.register(channels, "room:*", new_channel())
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
+  let assert Ok(#(channels, spec)) =
+    channel.child_spec(config, handlers: [room_channel()])
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
 
   let assert Ok(_) =
-    mist_transport.handler(channels, mist_transport.default_config("/socket/websocket"), fn(_req) {
-      // your regular HTTP handler here
+    mist_transport.handler(channels, server.default_config("/socket/websocket"), fn(_req) {
+      // your HTTP handler here
       panic as "not implemented"
     })
     |> mist.new
@@ -70,26 +85,27 @@ pub fn main() {
 }
 ```
 
-`mist_transport.handler` composes the WebSocket upgrade and your HTTP handler
-into a single Mist request handler: WebSocket upgrades on the configured path go
-to beryl, everything else falls through to the HTTP fallback. If you need to drive
-the upgrade decision yourself, `mist_transport.upgrade` (and the
-`mist_transport.is_websocket_request` guard) remain available.
+`mist_transport.handler` combines the WebSocket upgrade and your HTTP handler
+in one Mist request handler. It sends WebSocket upgrades on the configured
+path to beryl. It sends all other requests to the HTTP fallback. To control
+the upgrade decision, use `mist_transport.upgrade` and
+`beryl/transport/server.is_websocket_request`.
 
-For a complete end-to-end walkthrough including Phoenix JS client code, see the
-**[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)** on the docs website.
+For a full example with Phoenix JS client code, see the
+**[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)**.
 
 ## Documentation
 
-- **Website & guides**: <https://beryl.tylerbutler.com>
-- **Generated API docs**: <https://hexdocs.pm/beryl/>
+- **Website and guides**: <https://beryl.tylerbutler.com>
+- **Generated API reference**: <https://beryl.tylerbutler.com/reference/api/>
+- **Repository and git releases**: <https://github.com/tylerbutler/beryl>
 
 ## Ecosystem
 
-Beryl is the server-side channel runtime. It owns socket registration, channel
-handlers, broadcasts, presence, groups, pubsub, and transport integration.
-Beryl has its own pluggable wire codec, and its Phoenix codec is kept compatible
-with Roost and Aquamarine by shared conformance fixtures.
+beryl is a server runtime for real-time applications. It manages socket
+registration, broadcasts, presence, groups, PubSub, and transport integration.
+beryl has a pluggable wire codec. Shared conformance fixtures keep its Phoenix
+codec compatible with Roost and Aquamarine.
 
 ```mermaid
 flowchart TD
@@ -114,165 +130,159 @@ flowchart TD
 | Package | Responsibility |
 |---------|----------------|
 | `phoenix_channel_fixtures` | Shared test fixtures for Phoenix channel wire compatibility. |
-| `roost` | Pure Phoenix channel frame constants, encode/decode helpers, and reply helpers. |
+| `roost` | Phoenix channel frame constants, encode/decode helpers, and reply helpers. |
 | `beryl` | Server-side runtime with its own pluggable codec; its Phoenix codec is fixture-tested. |
+| `beryl/channel` | Typed channel composition module in the `beryl` package. |
 | `aquamarine` | Client-side channel runtime that uses Roost for Phoenix compatibility. |
 
 ## Features
 
-- **Channels** — Topic-based pub/sub with typed callbacks and pattern matching (e.g. `room:*`, `document:*:*`)
-- **Presence** — Distributed presence tracking using a CRDT (add-wins observed-remove set)
-- **Groups** — Named channel groups for multi-topic broadcasting
-- **PubSub** — pg-based distributed publish/subscribe
-- **Actor bridge** — forward an external OTP actor's stream to a socket with `beryl/bridge`
-- **WebSocket transport** — Mist integration with Phoenix-compatible wire protocol
-- **Connect hook** — Socket-level `on_connect` authentication (Phoenix `UserSocket.connect/3` analogue): runs once per socket, can reject the whole connection before any join, and seeds initial assigns
+- **Channels:** Register typed handlers by topic pattern. Each joined topic has
+  private state and a typed server-message API.
+- **App dispatch:** Use the core `init` and `update` API when you need direct
+  control of the router.
+- **Presence:** Track distributed presence with an add-wins observed-remove set
+  CRDT.
+- **Groups:** Broadcast to named groups of channels.
+- **PubSub:** Publish and subscribe across Erlang nodes with `pg`.
+- **Typed server messages:** Send a message to a socket through
+  `Sender(msg)`. `update` receives it as `Info(msg)` without a cast.
+- **WebSocket transport:** Use Mist with the Phoenix wire protocol.
+- **Connect hook:** Use socket-level `on_connect` authentication, similar to
+  Phoenix `UserSocket.connect/3`. The hook runs once for each socket and can
+  reject the connection before a join. `ConnectSeed` passes request data to
+  `init`.
 
 ## Examples
 
-Three runnable demos are included in the `examples/` directory:
+The `examples/` directory contains four runnable demos:
 
 | Example | What it demonstrates |
 |---------|----------------------|
-| [`examples/cursors`](examples/cursors/) | Channels, topic wildcards, presence, `broadcast_from`, rate limiting |
-| [`examples/chatrooms`](examples/chatrooms/) | Auth (`on_connect`), join rejection, `Reply`, `Push`, groups, validation, typing indicators |
-| [`examples/collab_docs`](examples/collab_docs/) | Client-side CRDT document blocks, segment wildcards, conflict resolution |
+| [`examples/cursors`](examples/cursors/) | App-side dispatch, topic wildcards, session presence, `BroadcastFrom`, rate limiting |
+| [`examples/chatrooms`](examples/chatrooms/) | Channel handlers, auth, join rejection, replies, pushes, groups, validation, typing indicators |
+| [`examples/collab_docs`](examples/collab_docs/) | Channel handlers, client-side CRDT document blocks, segment wildcards, conflict resolution |
+| [`examples/showcase`](examples/showcase/) | End-to-end `beryl/channel` composition across every subsystem |
 
-See the [Examples page](https://beryl.tylerbutler.com/examples/) in the docs for a full comparison.
+See the [Examples page](https://beryl.tylerbutler.com/examples/) for a full
+comparison.
 
 ## Recipe: bridge an external actor to a socket
 
-A long-lived domain actor (for example a per-document session) often emits
-updates that need to be pushed to each joined socket. The `beryl/bridge` module
-removes the per-socket forwarder boilerplate: start a bridge in `join`, subscribe
-your actor to the bridge's `Subject`, and stop it in `terminate`. Each value the
-actor emits is translated and delivered to the channel's `handle_info` callback
-via `beryl.send_info`. The forwarder also monitors the channel process, so it is
-cleaned up automatically if that process dies — no leaked processes.
+A long-lived actor, such as a document session, can send updates to each joined
+socket. `beryl/bridge` starts a small forwarding process. The process converts
+the actor messages and sends typed `Info` events through the socket
+`Sender`.
 
 ```gleam
-import beryl.{type RegisteredChannel}
 import beryl/bridge.{type Bridge}
-import beryl/channel.{type Channel}
-import beryl/socket
+import beryl/socket.{Closed, Info, Next, Push}
 import gleam/json
-import gleam/option.{None}
 
-// Messages emitted by your domain actor.
 pub type DocEvent {
   Updated(version: Int)
 }
 
-pub type Assigns {
-  Assigns(bridge: Bridge(DocEvent))
+pub type Msg {
+  DocUpdated(version: Int)
 }
 
-// `registered_channel` is the handle returned by `beryl.register`.
-fn new_channel(
-  registered_channel: RegisteredChannel(Assigns, DocEvent),
-  doc_actor,
-) -> Channel(Assigns, DocEvent) {
-  channel.new(fn(topic, _payload, socket) {
-    // Forward every DocEvent emitted by the actor to this socket/topic.
-    let b =
-      bridge.start(
-        channel: registered_channel,
-        socket_id: socket.id(socket),
-        topic: topic,
-        with: fn(event) { event },
-      )
-    // Hand the bridge's subject to the domain actor as its subscriber.
-    doc.subscribe(doc_actor, bridge.subject(b))
-    channel.JoinOk(reply: None, socket: socket.set_assigns(socket, Assigns(b)))
-  })
-  // `handle_info` receives the typed `DocEvent` directly — no decode step.
-  |> channel.with_handle_info(fn(event, socket) {
-    case event {
-      Updated(version) ->
-        channel.Push(
-          "doc_updated",
-          json.object([#("version", json.int(version))]),
-          socket,
-        )
+pub type Model {
+  Model(bridge: Bridge(DocEvent))
+}
+
+fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
+  let assert Ok(forwarder) =
+    bridge.start(to: info.self, with: fn(event: DocEvent) {
+      let Updated(version) = event
+      DocUpdated(version)
+    })
+  doc.subscribe(doc_actor, bridge.subject(forwarder))
+  #(Model(bridge: forwarder), [])
+}
+
+fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
+  case ev {
+    Info(DocUpdated(version)) ->
+      Next(model, [
+        Push("doc:1", "doc_updated", json.object([#("version", json.int(version))])),
+      ])
+    Closed(_, _) -> {
+      bridge.stop(model.bridge)
+      Next(model, [])
     }
-  })
-  // Always stop the bridge on terminate for prompt, deterministic cleanup.
-  |> channel.with_terminate(fn(_reason, socket) {
-    bridge.stop(socket.get_assigns(socket).bridge)
-  })
+    _ -> Next(model, [])
+  }
 }
 ```
 
-## Releases & changelog
+Call `bridge.stop` when the owner socket or topic closes. The bridge monitors
+its creator and stops if that process exits.
 
-See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
-release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
-and changelogs are managed with [trellis](https://trellis.tylerbutler.com) changelog fragments.
+## Releases and changelog
+
+See [GitHub Releases](https://github.com/tylerbutler/beryl/releases) for release
+notes. Releases use
+[Conventional Commits](https://www.conventionalcommits.org/). The project uses
+[trellis](https://trellis.tylerbutler.com) changelog fragments.
 
 ## Security
 
-Beryl uses **Erlang distribution** for its distributed PubSub and presence
-replication, which means **every node in your cluster is fully trusted**.
-Application- and channel-level authorization protects you against untrusted
-WebSocket clients; it does **not** protect you against a hostile Erlang
-distribution peer, which can inject internal beryl traffic and presence state.
+beryl uses **Erlang distribution** for PubSub and presence replication. You
+must trust **every node in the cluster**. Application and channel authorization
+protect against untrusted WebSocket clients. They do **not** protect against a
+hostile Erlang distribution peer. Such a peer can inject internal beryl
+traffic and presence state.
 
-Before running beryl in production, read **[SECURITY.md](SECURITY.md)**, which
-covers:
+Read **[SECURITY.md](SECURITY.md)** before you run beryl in production. It
+explains:
 
-- The Erlang distribution **trust boundary** and what a compromised peer can do.
-- Distribution hardening: a strong protected cookie, TLS distribution, EPMD/port
-  firewalling, and keeping cluster membership closed.
-- Why internal PubSub/presence messages are trusted while client WebSocket
-  messages are validated and rate-limited.
-- The `pubsub.config_with_scope` atom-table constraint (never pass it
-  user-derived values).
+- The Erlang distribution **trust boundary** and the effect of a compromised
+  peer.
+- Distribution security: a strong protected cookie, TLS distribution,
+  EPMD and port firewall rules, and closed cluster membership.
+- Why beryl trusts internal PubSub and presence messages but validates and
+  rate-limits client WebSocket messages.
+- The atom-table limit for `pubsub.config_with_scope`. Do not pass values from
+  users to this function.
 
-For client-facing abuse controls (rate limits, connection caps, origin checks),
-see the [Production Hardening guide](https://beryl.tylerbutler.com/guides/production-hardening/).
+For controls against client abuse, such as rate limits, connection limits, and
+origin checks, see the
+[Production Hardening guide](https://beryl.tylerbutler.com/guides/production-hardening/).
 
 ### Required: an edge proxy frame-size limit
 
-Beryl's `with_max_inbound_frame_bytes` limit is enforced **post-assembly** —
-the WebSocket transport (Mist/gramps) buffers and reassembles a complete frame
-*before* Beryl measures it and rejects oversized frames. This bounds
-per-message processing cost, but it does **not** bound transport memory.
+beryl applies the `with_max_inbound_frame_bytes` limit **after frame
+assembly**. The WebSocket transport (Mist/gramps) buffers and assembles a full
+frame before beryl measures it. beryl then rejects an oversized frame. This
+limit controls the processing cost of one message. It does **not** limit
+transport memory.
 
-A hostile client can therefore exhaust node memory with a single connection by
-either:
+A hostile client can exhaust node memory through one connection in two ways:
 
-- declaring a huge payload length in a frame header and streaming the body
-  slowly, or
-- sending a long run of fragmented continuation frames that the transport
-  aggregates into one buffer.
+- It can declare a large payload length in a frame header and send the body
+  at a low rate.
+- It can send many fragmented continuation frames that the transport puts in
+  one buffer.
 
-In both cases the transport's receive buffer grows unbounded *before* Beryl's
-frame-size check ever runs. **Beryl's per-IP connection limit
-(`with_max_connections_per_ip`) and per-socket message-rate limit
-(`with_message_rate`) do not mitigate this vector** — the buffer grows within a
-single admitted connection and before any message is emitted to a channel.
+In both cases, the transport receive buffer has no size limit before beryl
+checks the frame size. **beryl's per-IP connection limit
+(`with_max_connections_per_ip`), per-connection frame-rate limit
+(`with_frame_rate`), and per-socket message-rate limit (`with_message_rate`)
+do not prevent this attack**. These limits run after frame assembly. The
+buffer can grow in one accepted connection before dispatch.
 
-To bound transport memory in production you **must** place an edge proxy or
-load balancer (e.g. nginx, HAProxy, Envoy, or your cloud LB) in front of Beryl
-and configure:
+To limit transport memory in production, you **must** put an edge proxy or load
+balancer in front of beryl. You can use nginx, HAProxy, Envoy, or a cloud load
+balancer. Configure:
 
-- a **maximum WebSocket frame/message size** at or below your chosen
-  `with_max_inbound_frame_bytes` value, and
-- a matching **request/body size limit** for the initial HTTP upgrade.
+- A **maximum WebSocket frame or message size** that is not greater than the
+  `with_max_inbound_frame_bytes` value.
+- A matching **request or body size limit** for the first HTTP upgrade request.
 
-Set the proxy limit to reject oversized frames at the edge, before they are
-buffered by the BEAM node. Beryl's in-process limit should be treated as
-defense-in-depth for per-message cost, not as a memory bound.
-
-The upstream work needed to enforce a size cap *before* buffering (in
-gramps/mist) is tracked in
-[`docs/security/frame-buffering-followup.md`](docs/security/frame-buffering-followup.md).
-
-## Releases & changelog
-
-See the [GitHub Releases](https://github.com/tylerbutler/beryl/releases) page for
-release notes. Releases follow [Conventional Commits](https://www.conventionalcommits.org/)
-and the changelog is managed with [changie](https://changie.dev/).
+Set the proxy to reject oversized frames before the BEAM node buffers them.
+Use beryl's in-process limit as a second control for message processing cost.
+Do not use it as a memory limit.
 
 ## Development
 
@@ -304,30 +314,33 @@ just ci        # Run all CI checks
 
 ### CI/CD
 
-This project uses GitHub Actions for CI and automated releases:
+This project uses GitHub Actions for CI and releases:
 
-- **CI**: Runs on every push/PR to main
-- **PR Validation**: Checks PR title (commitlint), workspace invariants (`trellis doctor`), and changelog fragments (`trellis changelog check`)
-- **Release**: [trellis](https://trellis.tylerbutler.com) maintains a release PR from unreleased changelog fragments
-- **Publish**: Merging the release PR publishes each package to [Hex.pm](https://hex.pm) in dependency order and creates per-package tags
+- **CI:** Runs for each push and pull request to `main`.
+- **PR validation:** Checks the PR title with commitlint, checks workspace
+  rules with `trellis doctor`, and checks changelog fragments with
+  `trellis changelog check`.
+- **Release:** [trellis](https://trellis.tylerbutler.com) maintains a release
+  PR from unreleased changelog fragments.
+- **Publish:** Merging the release PR creates package tags and GitHub releases.
+  Hex.pm publishing is disabled.
 
 ### GitHub Secrets Required
 
 | Secret | Description |
 |--------|-------------|
 | `RELEASE_PAT` | GitHub PAT with `contents:write` and `pull-requests:write` permissions |
-| `HEXPM_API_KEY` | API key from [hex.pm](https://hex.pm) for publishing |
 
 ### Commit Convention
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 
-- `feat:` - New features (minor version bump)
-- `fix:` - Bug fixes (patch version bump)
-- `docs:` - Documentation changes
-- `chore:` - Maintenance tasks
-- `BREAKING CHANGE:` in commit body - Major version bump
+- `feat:` - Adds a feature and causes a minor version increase.
+- `fix:` - Fixes a defect and causes a patch version increase.
+- `docs:` - Changes documentation.
+- `chore:` - Performs maintenance.
+- `BREAKING CHANGE:` in the commit body - Causes a major version increase.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).

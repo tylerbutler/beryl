@@ -1,10 +1,22 @@
 //// Shared test helpers for beryl tests
 ////
 //// Provides polling utilities to replace fragile `process.sleep()` calls
-//// with deterministic condition-based waiting.
+//// with deterministic condition-based waiting, plus a palabres log-capture
+//// harness (backed by the `beryl_log_capture` Erlang test handler) used to
+//// observe runtime-side logging as a proxy for "did the decoded envelope
+//// reach the runtime", where reply presence/absence alone cannot
+//// distinguish edge-level shedding from runtime-level shedding.
 
+import beryl/presence
+import gleam/dict
+import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleeunit/should
+
+@external(erlang, "beryl_test_process_ffi", "mailbox_length")
+pub fn mailbox_length(pid: process.Pid) -> Int
 
 /// Poll a condition function until it returns True, or fail after timeout.
 ///
@@ -34,5 +46,95 @@ pub fn wait_until(
         }
       }
     }
+  }
+}
+
+// ── Palabres log capture ────────────────────────────────────────────────────
+
+/// A single captured palabres log: its message and string-keyed metadata.
+pub type CapturedLog {
+  CapturedLog(message: String, metadata: dict.Dict(String, String))
+}
+
+@external(erlang, "beryl_log_capture", "start")
+fn start_capture(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_log_capture", "stop")
+fn stop_capture_ffi() -> Nil
+
+fn captured_decoder() -> decode.Decoder(CapturedLog) {
+  use message <- decode.field(1, decode.string)
+  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
+  decode.success(CapturedLog(message:, metadata:))
+}
+
+fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
+  case decode.run(value, captured_decoder()) {
+    Ok(captured) -> captured
+    Error(_) -> CapturedLog(message: "", metadata: dict.new())
+  }
+}
+
+fn captured_selector() -> process.Selector(CapturedLog) {
+  process.new_selector()
+  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
+}
+
+fn drain(selector: process.Selector(CapturedLog)) -> Nil {
+  case process.selector_receive(selector, 0) {
+    Ok(_) -> drain(selector)
+    Error(Nil) -> Nil
+  }
+}
+
+/// Install the capture handler (bound to the calling process) and return a
+/// drained selector ready to observe logs emitted from this point on. Pair
+/// with `stop_capture` once the test is done.
+pub fn begin_capture() -> process.Selector(CapturedLog) {
+  start_capture(process.self())
+  let selector = captured_selector()
+  drain(selector)
+  selector
+}
+
+/// Remove the capture handler installed by `begin_capture`.
+pub fn stop_capture() -> Nil {
+  stop_capture_ffi()
+}
+
+// ── Presence actor lifetime ──────────────────────────────────────────────────
+
+/// Kill a presence actor's process, simulating a crash without cleanup.
+pub fn kill_presence(p: presence.Presence) -> Nil {
+  let assert Ok(pid) = process.subject_owner(presence.subject(p))
+  // The actor is linked to this (test) process; unlink before killing so
+  // the exit signal does not take the test runner down with it.
+  process.unlink(pid)
+  process.kill(pid)
+  // Wait for the process to actually be gone.
+  wait_until(fn() { !process.is_alive(pid) }, 1000, 5)
+}
+
+/// Receive captured logs from `selector` until one matching `message`
+/// arrives (`Ok`), a mismatching log has been seen `attempts` times without
+/// a match, or no further log arrives within 500ms (`Error(Nil)` in either
+/// case). A small `attempts` count combined with the 500ms per-attempt wait
+/// also makes this usable as an absence check.
+pub fn receive_log(
+  selector: process.Selector(CapturedLog),
+  message: String,
+  attempts: Int,
+) -> Result(CapturedLog, Nil) {
+  case attempts <= 0 {
+    True -> Error(Nil)
+    False ->
+      case process.selector_receive(selector, 500) {
+        Ok(captured) ->
+          case captured.message == message {
+            True -> Ok(captured)
+            False -> receive_log(selector, message, attempts - 1)
+          }
+        Error(Nil) -> Error(Nil)
+      }
   }
 }

@@ -1,5 +1,4 @@
 import beryl
-import beryl/presence
 import example_helpers/static
 import gleam/bytes_tree
 import gleam/http/request.{type Request}
@@ -7,11 +6,7 @@ import gleam/http/response.{type Response}
 import mist.{type Connection, type ResponseData}
 
 pub type Context {
-  Context(
-    channels: beryl.Channels,
-    presence: presence.Presence,
-    base_path: String,
-  )
+  Context(channels: beryl.Sockets, base_path: String)
 }
 
 pub fn handle_request(
@@ -59,6 +54,13 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
         <p>Move your mouse to share your cursor position in real-time.</p>
         <p class=\"hint\">Open this page in multiple tabs to see it in action.</p>
         <p class=\"powered-by\">Powered by <a href=\"https://github.com/tylerbutler/beryl\">beryl</a></p>
+      </div>
+      <div id=\"reaction-toolbar\" role=\"toolbar\" aria-label=\"Choose reaction\">
+        <button class=\"reaction-option is-selected\" type=\"button\" data-reaction=\"👍\" aria-label=\"Thumbs up\" aria-pressed=\"true\">👍</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"❤️\" aria-label=\"Heart\" aria-pressed=\"false\">❤️</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"😂\" aria-label=\"Face with tears of joy\" aria-pressed=\"false\">😂</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"🎉\" aria-label=\"Party popper\" aria-pressed=\"false\">🎉</button>
+        <button class=\"reaction-option\" type=\"button\" data-reaction=\"🔥\" aria-label=\"Fire\" aria-pressed=\"false\">🔥</button>
       </div>
     </div>
     <aside id=\"sidebar\">

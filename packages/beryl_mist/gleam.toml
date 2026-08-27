@@ -1,6 +1,6 @@
 name = "beryl_mist"
-version = "0.0.1"
-description = "Mist WebSocket transport for beryl real-time channels"
+version = "0.3.2"
+description = "Mist WebSocket transport for beryl real-time sockets"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl_mist" }
 gleam = ">= 1.13.0"

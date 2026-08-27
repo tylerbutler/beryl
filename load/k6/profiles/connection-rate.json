@@ -1,0 +1,23 @@
+{
+  "name": "connection-rate",
+  "exec": "connectionRate",
+  "executor": {
+    "executor": "constant-arrival-rate",
+    "rate": 10,
+    "timeUnit": "1s",
+    "duration": "1m",
+    "preAllocatedVUs": 20,
+    "maxVUs": 100,
+    "gracefulStop": "15s"
+  },
+  "thresholds": {
+    "checks": ["rate==1"],
+    "phoenix_scenario_operation_rate": ["rate==1"],
+    "phoenix_client_errors": ["count==0"],
+    "phoenix_unexpected_client_errors": ["count==0"],
+    "phoenix_protocol_errors": ["count==0"],
+    "phoenix_decode_errors": ["count==0"],
+    "phoenix_ws_failure_rate": ["rate==0"]
+  },
+  "parameters": {}
+}

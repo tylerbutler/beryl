@@ -1,31 +1,40 @@
 import beryl
-import beryl/presence
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
-import cursors/cursor_channel
+import cursors/app as cursors_app
 import cursors/router
 import envoy
+import example_helpers/session_presence
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/otp/static_supervisor
 import gleam/result
 import mist
 
 pub fn main() {
-  // Start beryl channels with rate limiting for cursor events
+  let presence_tracker = session_presence.start()
+  let ctx = cursors_app.Ctx(presence: presence_tracker)
+
+  // The frame limit covers every pre-decode frame and sits modestly above
+  // the decoded cursor-event limit to account for joins and malformed data.
   let config =
     beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(channels) = beryl.start(config)
-
-  // Start presence tracking
-  let presence_config = presence.default_config("node1")
-  let assert Ok(presence_actor) = presence.start(presence_config)
-
-  // Register the cursor channel handler
-  let handler = cursor_channel.new_handler(channels, presence_actor)
-  let assert Ok(_) = beryl.register(channels, "cursor:*", handler)
+  let assert Ok(#(channels, beryl_spec)) =
+    beryl.child_spec(
+      config,
+      init: cursors_app.cursor_rooms_init,
+      update: cursors_app.cursor_rooms_update(ctx),
+    )
+  session_presence.configure(presence_tracker, channels)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.start()
 
   // Honor $PORT (Railway/PaaS) and $HOST/$BIND_ADDRESS; fall back to local defaults.
   let port =
@@ -40,16 +49,16 @@ pub fn main() {
   io.println("   Listening on " <> interface <> ":" <> int.to_string(port))
   io.println("")
 
-  // Start the HTTP server
-  let ctx = router.Context(channels:, presence: presence_actor, base_path: "")
+  // Start the HTTP server.
+  let ctx_router = router.Context(channels:, base_path: "")
 
   let assert Ok(_) =
     fn(req) {
       mist_transport.upgrade(
         req,
         channels,
-        mist_transport.default_config("/socket/websocket"),
-        fn() { router.handle_request(req, ctx) },
+        server.default_config("/socket/websocket"),
+        fn() { router.handle_request(req, ctx_router) },
       )
     }
     |> mist.new

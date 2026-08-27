@@ -1,131 +1,211 @@
 import beryl/pubsub
-import gleam/dynamic
 import gleam/erlang/atom
 import gleam/erlang/process
-import gleam/json
-import gleeunit
 import gleeunit/should
 
-@external(erlang, "beryl_ffi", "identity")
-fn unsafe_coerce_to_pubsub_message(value: dynamic.Dynamic) -> pubsub.Message
-
-fn pubsub_message_selector() {
-  process.new_selector()
-  |> process.select_record(
-    atom.create("message"),
-    4,
-    unsafe_coerce_to_pubsub_message,
-  )
-}
-
-pub fn main() {
-  gleeunit.main()
-}
+@external(erlang, "beryl_pubsub_test_ffi", "is_scoped_wire_message")
+fn is_scoped_wire_message(
+  scope: atom.Atom,
+  topic: String,
+  event: String,
+  payload: String,
+  timeout: Int,
+) -> Bool
 
 pub fn pubsub_start_test() {
   let config = pubsub.config_with_scope("test_pubsub_start")
-  let _ps: pubsub.PubSub = pubsub.start(config)
+  let _ps: pubsub.PubSub(String) = pubsub.start(config)
   should.be_true(True)
 }
 
 pub fn pubsub_start_default_config_test() {
-  let _ps: pubsub.PubSub = pubsub.start(pubsub.default_config())
+  let _ps: pubsub.PubSub(String) = pubsub.start(pubsub.default_config())
   should.be_true(True)
 }
 
 pub fn pubsub_subscribe_and_count_test() {
   let config = pubsub.config_with_scope("test_pubsub_sub")
-  let ps = pubsub.start(config)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
 
-  pubsub.subscribe(ps, "room:lobby")
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "room:lobby")
   pubsub.subscriber_count(ps, "room:lobby") |> should.equal(1)
 
   // Cleanup
-  pubsub.unsubscribe(ps, "room:lobby")
+  pubsub.leave(sub, "room:lobby")
 }
 
 pub fn pubsub_unsubscribe_test() {
   let config = pubsub.config_with_scope("test_pubsub_unsub")
-  let ps = pubsub.start(config)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
 
-  pubsub.subscribe(ps, "room:lobby")
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "room:lobby")
   pubsub.subscriber_count(ps, "room:lobby") |> should.equal(1)
 
-  pubsub.unsubscribe(ps, "room:lobby")
+  pubsub.leave(sub, "room:lobby")
   pubsub.subscriber_count(ps, "room:lobby") |> should.equal(0)
 }
 
 pub fn pubsub_subscribers_returns_pids_test() {
   let config = pubsub.config_with_scope("test_pubsub_pids")
-  let ps = pubsub.start(config)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
 
-  pubsub.subscribe(ps, "room:lobby")
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "room:lobby")
   let subs = pubsub.subscribers(ps, "room:lobby")
   should.equal(subs, [process.self()])
 
   // Cleanup
-  pubsub.unsubscribe(ps, "room:lobby")
+  pubsub.leave(sub, "room:lobby")
 }
 
 pub fn pubsub_broadcast_delivers_message_test() {
   let config = pubsub.config_with_scope("test_pubsub_bcast")
-  let ps = pubsub.start(config)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
 
-  pubsub.subscribe(ps, "room:lobby")
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "room:lobby")
 
-  pubsub.broadcast(ps, "room:lobby", "new_msg", json.string("hello"))
+  pubsub.broadcast(ps, "room:lobby", "new_msg", "hello")
 
-  let selector = pubsub_message_selector()
+  let selector =
+    process.new_selector()
+    |> pubsub.selecting(sub, fn(msg) { msg })
 
   let assert Ok(message) = process.selector_receive(from: selector, within: 100)
   message.topic |> should.equal("room:lobby")
   message.event |> should.equal("new_msg")
-  message.payload |> should.equal(json.string("hello"))
+  message.payload |> should.equal("hello")
   message.from |> should.equal(pubsub.System)
 
   // Cleanup
-  pubsub.unsubscribe(ps, "room:lobby")
+  pubsub.leave(sub, "room:lobby")
+}
+
+pub fn pubsub_broadcast_uses_scope_tagged_wire_shape_test() {
+  let scope = "test_pubsub_scoped_wire_shape"
+  let config = pubsub.config_with_scope(scope)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
+  let topic = "wire:raw"
+  let event = "shape"
+  let payload = "four-fields"
+
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, topic)
+  pubsub.broadcast(ps, topic, event, payload)
+
+  is_scoped_wire_message(atom.create(scope), topic, event, payload, 100)
+  |> should.be_true
+
+  pubsub.leave(sub, topic)
+}
+
+pub fn pubsub_selecting_discriminates_scopes_test() {
+  let text_ps: pubsub.PubSub(String) =
+    pubsub.start(pubsub.config_with_scope("test_pubsub_scope_text"))
+  let number_ps: pubsub.PubSub(Int) =
+    pubsub.start(pubsub.config_with_scope("test_pubsub_scope_number"))
+  let topic = "scope:shared-mailbox"
+  let text_sub = pubsub.subscriber(text_ps)
+  let number_sub = pubsub.subscriber(number_ps)
+  pubsub.join(text_sub, topic)
+  pubsub.join(number_sub, topic)
+
+  pubsub.broadcast(number_ps, topic, "number", 42)
+  pubsub.broadcast(text_ps, topic, "text", "correct scope")
+
+  let text_selector =
+    process.new_selector()
+    |> pubsub.selecting(text_sub, fn(message) { message.payload })
+  let assert Ok(text) =
+    process.selector_receive(from: text_selector, within: 100)
+  text |> should.equal("correct scope")
+
+  let number_selector =
+    process.new_selector()
+    |> pubsub.selecting(number_sub, fn(message) { message.payload })
+  let assert Ok(number) =
+    process.selector_receive(from: number_selector, within: 100)
+  number |> should.equal(42)
+
+  pubsub.leave(text_sub, topic)
+  pubsub.leave(number_sub, topic)
 }
 
 pub fn pubsub_broadcast_from_excludes_sender_test() {
   let config = pubsub.config_with_scope("test_pubsub_bcast_from")
-  let ps = pubsub.start(config)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
 
-  pubsub.subscribe(ps, "room:lobby")
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "room:lobby")
 
   // Broadcast from self - should NOT receive it
-  pubsub.broadcast_from(ps, process.self(), "room:lobby", "typing", json.null())
+  pubsub.broadcast_from(ps, process.self(), "room:lobby", "typing", "")
 
-  let selector = pubsub_message_selector()
+  let selector =
+    process.new_selector()
+    |> pubsub.selecting(sub, fn(msg) { msg })
 
   // Should time out since we excluded ourselves
   let result = process.selector_receive(from: selector, within: 50)
   should.be_error(result)
 
   // Cleanup
-  pubsub.unsubscribe(ps, "room:lobby")
+  pubsub.leave(sub, "room:lobby")
 }
 
 pub fn pubsub_no_subscribers_is_noop_test() {
   let config = pubsub.config_with_scope("test_pubsub_nosubs")
-  let ps = pubsub.start(config)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
 
   // Broadcast to topic with no subscribers - should not crash
-  pubsub.broadcast(ps, "room:empty", "event", json.null())
+  pubsub.broadcast(ps, "room:empty", "event", "")
   pubsub.subscriber_count(ps, "room:empty") |> should.equal(0)
 }
 
 pub fn pubsub_multiple_topics_test() {
   let config = pubsub.config_with_scope("test_pubsub_multi")
-  let ps = pubsub.start(config)
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
 
-  pubsub.subscribe(ps, "room:lobby")
-  pubsub.subscribe(ps, "room:private")
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "room:lobby")
+  pubsub.join(sub, "room:private")
 
   pubsub.subscriber_count(ps, "room:lobby") |> should.equal(1)
   pubsub.subscriber_count(ps, "room:private") |> should.equal(1)
 
   // Cleanup
-  pubsub.unsubscribe(ps, "room:lobby")
-  pubsub.unsubscribe(ps, "room:private")
+  pubsub.leave(sub, "room:lobby")
+  pubsub.leave(sub, "room:private")
+}
+
+pub fn pubsub_one_subscriber_receives_from_multiple_topics_test() {
+  let config = pubsub.config_with_scope("test_pubsub_multi_recv")
+  let ps: pubsub.PubSub(String) = pubsub.start(config)
+
+  // A single subscriber joined to two topics receives both topics' messages
+  // through its one typed subject — no per-topic subject bookkeeping.
+  let sub = pubsub.subscriber(ps)
+  pubsub.join(sub, "room:lobby")
+  pubsub.join(sub, "room:private")
+
+  let selector =
+    process.new_selector()
+    |> pubsub.selecting(sub, fn(msg) { msg })
+
+  pubsub.broadcast(ps, "room:lobby", "a", "one")
+  pubsub.broadcast(ps, "room:private", "b", "two")
+
+  let assert Ok(first) = process.selector_receive(from: selector, within: 100)
+  let assert Ok(second) = process.selector_receive(from: selector, within: 100)
+
+  [first.topic, second.topic]
+  |> should.equal(["room:lobby", "room:private"])
+  [first.payload, second.payload]
+  |> should.equal(["one", "two"])
+
+  // Cleanup
+  pubsub.leave(sub, "room:lobby")
+  pubsub.leave(sub, "room:private")
 }

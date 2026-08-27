@@ -1,169 +1,285 @@
-//// Transport SPI — the contract between beryl core and WebSocket transport
-//// implementations such as the `beryl_mist` package.
+//// Transport SPI: the contract between beryl core and WebSocket transport
+//// implementations such as the `beryl_mist` and `beryl_ewe` packages.
 ////
-//// A transport implementation:
-//// 1. Admits a connection (origin/auth policy is the transport's concern),
-////    acquiring a slot with `beryl.acquire_connection_slot` and binding it
-////    with `beryl.bind_connection_slot`.
-//// 2. Announces the socket with `socket_connected` then `register_closer`.
-//// 3. Decodes inbound frames with the codec from `active_codec` (see
-////    `beryl/wire/codec`) and routes them with `route_decoded` /
-////    `route_binary`, shedding over-rate frames via `new_message_limiter` /
-////    `take_token` and oversized frames via `beryl.max_inbound_frame_bytes`.
-//// 4. Announces disconnects with `socket_disconnected` and releases the
-////    slot with `beryl.release_connection_slot`.
+//// `beryl/transport/server` owns the shared admission, connection, rate,
+//// decode, and telemetry pipeline. This low-level SPI keeps only the hooks a
+//// transport implementation needs: connection-capacity permits, exact-owner
+//// atomic admission, disconnect, text/binary routing, the configured codec,
+//// and transport telemetry.
 
-import beryl.{type Channels}
-import beryl/coordinator
-import beryl/internal
-import beryl/log
-import beryl/rate_limit
-import beryl/wire/codec.{type Codec, type Inbound}
-import gleam/dynamic.{type Dynamic}
+import beryl
+import beryl/connection_limit
+import beryl/socket
+import beryl/telemetry
+import beryl/wire/codec
+import gleam/bool
 import gleam/erlang/process
-import gleam/option.{type Option, None}
+import gleam/option.{type Option}
 import gleam/result
 
-// --- Socket lifecycle ---
+/// A runtime handle for transport implementations.
+pub type Sockets =
+  beryl.Sockets
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Announce a newly connected socket. `send`/`send_binary` deliver outbound
-/// frames on this connection; `assigns` seeds connect-time socket assigns
-/// (type-erased internally) that channels see at join. Call `register_closer`
-/// immediately after this.
-pub fn socket_connected(
-  channels channels: Channels,
-  socket_id socket_id: String,
-  send send: fn(String) -> Result(Nil, Nil),
-  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
-  assigns assigns: assigns,
+/// A held connection slot returned by `acquire_connection_slot`.
+///
+/// Hold it for the connection's lifetime. Pass it to
+/// `release_connection_slot` when the connection closes. When no connection
+/// limit is configured, the permit allows all connections. Releasing it does
+/// nothing.
+pub opaque type ConnectionPermit {
+  ConnectionPermit(inner: Option(connection_limit.Permit))
+}
+
+/// Try to acquire a configured connection slot for a transport.
+///
+/// Pass the real socket peer IP. Do not pass a client-supplied address such as
+/// `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
+/// node-wide limit is already reached.
+pub fn acquire_connection_slot(
+  sockets: Sockets,
+  ip: String,
+) -> Result(ConnectionPermit, Nil) {
+  connection_limit.acquire_optional(
+    beryl.configured_connection_limiter(sockets),
+    ip,
+  )
+  |> result.map(ConnectionPermit)
+}
+
+/// Bind an acquired connection slot to the calling connection process.
+///
+/// The limiter monitors the caller. It reclaims the slot if the process dies
+/// without running its close path.
+pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.bind_optional(permit.inner)
+}
+
+/// Release a connection slot acquired by a transport.
+pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
+  connection_limit.release_optional(permit.inner)
+}
+
+/// Return the configured inbound frame size cap for transports.
+pub fn max_inbound_frame_bytes(sockets: Sockets) -> Int {
+  beryl.configured_max_inbound_frame_bytes(sockets)
+}
+
+// --- Telemetry ---
+
+/// WebSocket transport implementations in beryl's telemetry schema.
+pub type TelemetryTransport {
+  Mist
+  Ewe
+}
+
+/// Closed terminal outcomes for a matched WebSocket upgrade.
+pub type UpgradeOutcome {
+  UpgradeSucceeded
+  OriginRejected
+  VersionRejected
+  AuthRejected
+  CapacityRejected
+  HandshakeFailed
+}
+
+/// WebSocket data frame kinds.
+pub type FrameKind {
+  TextFrame
+  BinaryFrame
+}
+
+/// Closed terminal outcomes for inbound frame processing.
+pub type FrameOutcome {
+  FrameRouted
+  FrameOversized
+  FrameRateLimited
+  FrameDecodeFailed
+}
+
+/// A low-cost transport telemetry context.
+///
+/// When telemetry is disabled, operations avoid VM clock calls and event
+/// construction.
+pub opaque type Telemetry {
+  Telemetry(enabled: Bool, transport: telemetry.Transport)
+}
+
+/// Create a telemetry context from the channels configuration.
+pub fn telemetry(
+  channels: Sockets,
+  transport: TelemetryTransport,
+) -> Telemetry {
+  Telemetry(
+    enabled: beryl.channels_telemetry_enabled(channels),
+    transport: case transport {
+      Mist -> telemetry.Mist
+      Ewe -> telemetry.Ewe
+    },
+  )
+}
+
+/// Start a timed transport operation.
+///
+/// Returns zero when telemetry is disabled.
+pub fn telemetry_start(context: Telemetry) -> Int {
+  use <- bool.guard(when: !context.enabled, return: 0)
+  telemetry.start_time()
+}
+
+/// Emit exactly one terminal matched-upgrade event.
+pub fn telemetry_upgrade_stop(
+  context: Telemetry,
+  started_at: Int,
+  outcome: UpgradeOutcome,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketConnected(
-      socket_id,
-      send,
-      send_binary,
-      None,
-      erase(assigns),
+  use <- bool.guard(when: !context.enabled, return: Nil)
+  telemetry.emit(
+    True,
+    telemetry.TransportUpgradeStop(
+      duration: telemetry.duration_since(started_at),
+      transport: context.transport,
+      outcome: case outcome {
+        UpgradeSucceeded -> telemetry.UpgradeSucceeded
+        OriginRejected -> telemetry.OriginRejected
+        VersionRejected -> telemetry.VersionRejected
+        AuthRejected -> telemetry.AuthRejected
+        CapacityRejected -> telemetry.CapacityRejected
+        HandshakeFailed -> telemetry.HandshakeFailed
+      },
     ),
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Register a function that force-closes the socket's underlying connection
-/// so the coordinator can actively evict it (e.g. heartbeat timeout) instead
-/// of leaving a zombie socket whose frames are silently dropped.
-pub fn register_closer(
-  channels channels: Channels,
-  socket_id socket_id: String,
-  close close: fn() -> Nil,
+/// Emit exactly one terminal inbound-frame event.
+pub fn telemetry_frame_stop(
+  context: Telemetry,
+  started_at: Int,
+  bytes: Int,
+  kind: FrameKind,
+  outcome: FrameOutcome,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.RegisterCloser(socket_id, close),
+  use <- bool.guard(when: !context.enabled, return: Nil)
+  telemetry.emit(
+    True,
+    telemetry.TransportFrameStop(
+      duration: telemetry.duration_since(started_at),
+      bytes: bytes,
+      transport: context.transport,
+      kind: case kind {
+        TextFrame -> telemetry.TextFrame
+        BinaryFrame -> telemetry.BinaryFrame
+      },
+      outcome: case outcome {
+        FrameRouted -> telemetry.FrameRouted
+        FrameOversized -> telemetry.FrameOversized
+        FrameRateLimited -> telemetry.FrameRateLimited
+        FrameDecodeFailed -> telemetry.FrameDecodeFailed
+      },
+    ),
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Announce that a socket's connection has closed.
 pub fn socket_disconnected(
-  channels channels: Channels,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
 ) -> Nil {
-  process.send(
-    beryl.coordinator_subject(channels),
-    coordinator.SocketDisconnected(socket_id),
-  )
+  beryl.app_dispatch(sockets).socket_disconnected(socket_id)
 }
 
 // --- Inbound routing ---
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Route a transport-decoded inbound message to the coordinator. Decode in
+/// Route a transport-decoded inbound message to the runtime. Decode in
 /// the connection process (see `active_codec`) so parse cost and malformed
-/// input never reach the shared coordinator.
+/// input never reach the runtime.
+///
+/// Runtime message-rate limiting applies after routing. If it sheds a
+/// heartbeat, that heartbeat does not refresh the socket's deadline; sustained
+/// over-rate traffic therefore leads to heartbeat eviction and a call to the
+/// closer registered by `admit_socket`.
 pub fn route_decoded(
-  channels channels: Channels,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
-  message message: Inbound,
+  message message: codec.Inbound,
 ) -> Nil {
-  coordinator.route_decoded(
-    beryl.coordinator_subject(channels),
-    socket_id,
-    message,
-  )
+  beryl.app_dispatch(sockets).route_decoded(socket_id, message)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Route a raw binary frame, for codecs without a binary decoder (fans out
-/// to the socket's joined topics' `handle_binary`).
+/// Route a transport-decoded binary message while preserving its binary
+/// frame classification for runtime telemetry and rate accounting.
+///
+/// This function supplements `route_decoded`. The text semantics of
+/// `route_decoded` remain unchanged for third-party transport compatibility.
+pub fn route_decoded_binary(
+  sockets sockets: Sockets,
+  socket_id socket_id: String,
+  message message: codec.Inbound,
+) -> Nil {
+  beryl.app_dispatch(sockets).route_decoded_binary(socket_id, message)
+}
+
+/// Route a raw binary frame for a codec without a binary decoder.
+///
+/// The runtime sends a `Binary` event to `update` for each joined topic.
 pub fn route_binary(
-  channels channels: Channels,
+  sockets sockets: Sockets,
   socket_id socket_id: String,
   data data: BitArray,
 ) -> Nil {
-  coordinator.route_binary(beryl.coordinator_subject(channels), socket_id, data)
+  beryl.app_dispatch(sockets).route_binary(socket_id, data)
 }
 
 // --- Configuration ---
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// The wire codec configured for these channels. Transports decode inbound
-/// frames with it in the connection process.
-pub fn active_codec(channels: Channels) -> Codec {
-  beryl.configured_codec(channels)
+/// Return the wire codec configured for these sockets.
+///
+/// Transports use it to decode inbound frames in the connection process.
+pub fn active_codec(sockets: Sockets) -> codec.Codec {
+  beryl.configured_codec(sockets)
 }
 
-// --- Per-connection message rate limiting ---
+// --- Connection ownership ---
 
-/// A per-connection token bucket enforcing the configured message rate at
-/// the transport edge, so a flooding socket is shed before frames are
-/// decoded or enqueued on the coordinator.
-pub opaque type RateLimiter {
-  RateLimiter(bucket: rate_limit.Bucket)
+/// Return the pid of the runtime that owns transport connections.
+///
+/// On `Ok(pid)`, monitor that exact PID before admission and close the
+/// connection on its `Down`. `Error(Nil)` means the runtime is unavailable
+/// (pre-start or a restart window), so the connection must be refused.
+pub fn runtime_pid(sockets: Sockets) -> Result(process.Pid, Nil) {
+  beryl.app_runtime_pid(sockets)
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Create a fresh per-connection message limiter, `None` when no message
-/// rate is configured.
-pub fn new_message_limiter(channels: Channels) -> Option(RateLimiter) {
-  beryl.message_limits(channels)
-  |> option.map(fn(config) { RateLimiter(rate_limit.new_bucket(config)) })
+/// Register a socket and its closer against the captured connection owner.
+///
+/// Install a monitor for `owner` before calling this function. Admission
+/// succeeds only if that runtime instance processes the registration. A
+/// restart cannot redirect it to the next runtime. On `Error`, this function
+/// closes the connection so its bound permit can be released.
+pub fn admit_socket(
+  sockets sockets: Sockets,
+  owner owner: process.Pid,
+  socket_id socket_id: String,
+  send send: fn(String) -> Result(Nil, Nil),
+  send_binary send_binary: fn(BitArray) -> Result(Nil, Nil),
+  codec codec: Option(codec.Codec),
+  seed seed: socket.ConnectSeed,
+  close close: fn() -> Nil,
+) -> Result(Nil, Nil) {
+  use <- bool.lazy_guard(
+    when: !beryl.app_dispatch(sockets).admit_socket(
+      owner,
+      socket_id,
+      send,
+      send_binary,
+      codec,
+      seed,
+      close,
+    ),
+    return: fn() {
+      close()
+      Error(Nil)
+    },
+  )
+  Ok(Nil)
 }
-
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Take one token; returns the updated limiter and whether the frame is
-/// admitted. Transports drop the frame when `False`.
-pub fn take_token(limiter: RateLimiter) -> #(RateLimiter, Bool) {
-  let #(bucket, taken) = rate_limit.take(limiter.bucket)
-  #(RateLimiter(bucket), result.is_ok(taken))
-}
-
-// --- Logging ---
-
-/// A named logger for transport diagnostics, routed through beryl's
-/// configured logging backend.
-pub opaque type Logger {
-  Logger(inner: log.Logger)
-}
-
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Create a named transport logger (e.g. `"beryl.transport.mist"`).
-pub fn logger(name: String) -> Logger {
-  Logger(internal.logger(name))
-}
-
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
-/// Log a warning with structured metadata.
-pub fn log_warning(
-  logger logger: Logger,
-  message message: String,
-  metadata metadata: List(#(String, String)),
-) -> Nil {
-  log.warn(logger.inner, message, metadata)
-}
-
-/// Type-erase connect-time assigns before handing them to the coordinator.
-@external(erlang, "beryl_ffi", "identity")
-fn erase(value: anything) -> Dynamic

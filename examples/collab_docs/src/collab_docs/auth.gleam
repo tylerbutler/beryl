@@ -4,9 +4,10 @@
 //// and bound to a tenant identifier. The server signs a token for each
 //// tenant the user is allowed to access (here, just `"demo"`) and embeds
 //// it in the page HTML. The client passes the token in the Phoenix join
-//// payload, and the channel handler verifies it before allowing the join.
+//// payload, and the app's `update` function verifies it before allowing the
+//// join.
 ////
-//// This is a minimal demo of channel-level auth — production code would
+//// This is a minimal demo of topic-level auth — production code would
 //// add an expiry claim, scope tokens to a user/session, and load the
 //// secret from a secret manager rather than generating it at boot.
 

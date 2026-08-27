@@ -1,22 +1,51 @@
 ---
 title: Groups
+description: Name sets of topics and send one event to every topic in a set.
 ---
 
-Groups are **server-side named collections of topics**. They let you broadcast a single event to many topics at once without tracking subscriptions yourself — similar to Socket.IO rooms or SignalR groups, but adapted to beryl's topic/channel model.
+Groups are **named sets of topics on the server**. Use one group broadcast
+to send an event to many topics. You do not need to track subscriptions. Groups
+are similar to Socket.IO rooms and SignalR groups.
 
 :::note[Server-side only]
-Groups are a server concern. Clients join individual topics via `phx_join`; they have no concept of groups. Groups exist purely to make multi-topic server broadcasts convenient.
+Only the server uses groups. Clients join individual topics with `phx_join`.
+Clients do not receive group information.
 :::
 
-## Starting the groups actor
+## Start the groups actor
 
 ```gleam
 import beryl/group
+import gleam/otp/static_supervisor
 
-let assert Ok(groups) = group.start()
+let #(groups, groups_specification) = group.child_spec()
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_specification)
+  |> static_supervisor.start()
 ```
 
-`group.start()` returns `Result(Groups, GroupError)`. The only failure case is `StartFailed` — an OTP actor spawn failure.
+`group.child_spec()` returns a stable `Groups` handle. Add its child
+specification to the application supervisor before you use the handle.
+
+Synchronous group operations wait up to 5 seconds for the actor by default.
+Configure a different timeout when starting the actor:
+
+```gleam
+let config =
+  group.default_config()
+  |> group.with_call_timeout(10_000)
+let #(groups, groups_specification) = group.child_spec_with_config(config)
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_specification)
+  |> static_supervisor.start()
+```
+
+`create`, `delete`, `add`, `remove`, `topics`, and `list_groups` panic if the
+actor is unavailable or does not reply within this timeout. `broadcast` first
+performs the same synchronous topic lookup, then sends each topic broadcast
+without waiting for delivery.
 
 ## Creating and deleting groups
 
@@ -28,7 +57,7 @@ let assert Ok(Nil) = group.create(groups, "team:engineering")
 case group.create(groups, "team:engineering") {
   Ok(Nil) -> Nil
   Error(group.GroupAlreadyExists) -> Nil  // already there
-  Error(_) -> Nil
+  Error(group.GroupNotFound) -> Nil       // cannot occur for create
 }
 
 // Delete a group (removes it and all its topic memberships)
@@ -38,13 +67,14 @@ let assert Ok(Nil) = group.delete(groups, "team:engineering")
 case group.delete(groups, "team:gone") {
   Ok(Nil) -> Nil
   Error(group.GroupNotFound) -> Nil
-  Error(_) -> Nil
+  Error(group.GroupAlreadyExists) -> Nil  // cannot occur for delete
 }
 ```
 
 ## Adding and removing topics
 
-Topics are plain strings that match existing channel topics. Groups do not validate that a topic has any subscribers — they are just sets of strings.
+Topics are strings that match channel topics. Groups do not check whether a
+topic has subscribers. They store sets of strings.
 
 ```gleam
 let assert Ok(Nil) = group.add(groups, "team:engineering", "room:frontend")
@@ -57,25 +87,29 @@ let assert Ok(Nil) = group.remove(groups, "team:engineering", "room:infra")
 // Both add and remove return Error(GroupNotFound) if the group doesn't exist
 ```
 
-Adding the same topic twice is a no-op (topics are stored in a set).
+Adding the same topic twice does nothing because the group stores a set.
 
-## Inspecting groups
+## Read groups
 
 ```gleam
 // List all topics in a group
 case group.topics(groups, "team:engineering") {
   Ok(topic_set) -> set.to_list(topic_set)  // ["room:frontend", "room:backend"]
   Error(group.GroupNotFound) -> []
-  Error(_) -> []
+  Error(group.GroupAlreadyExists) -> []   // cannot occur for topics
 }
 
 // List all group names
 let names = group.list_groups(groups)  // ["team:engineering", "team:design"]
 ```
 
-## Broadcasting to a group
+## Send an event to every topic in a group
 
-`group.broadcast` sends an event to every topic in the named group using `beryl.broadcast` internally. It is **fire-and-forget**: the return type is `Nil`, not `Result`. If the named group does not exist, the call silently does nothing.
+`group.broadcast` asks the groups actor for the topic set. The calling process
+waits for that lookup, then sends the event to each topic with
+`beryl.broadcast`. The actor does not send the broadcasts itself. The function
+returns `Nil`, not `Result`. If the group does not exist, the function does
+nothing.
 
 ```gleam
 group.broadcast(
@@ -87,29 +121,36 @@ group.broadcast(
 )
 ```
 
-This is equivalent to calling `beryl.broadcast` on each topic in the group in sequence.
+This has the same effect as one `beryl.broadcast` call for each group topic.
 
-:::note[Missing group is a no-op]
-`group.broadcast` never returns an error. Broadcasting to a group that does not exist (or has no topics) silently does nothing. If you need to confirm a group exists before broadcasting, call `group.topics` first and handle `GroupNotFound`.
+:::note[Missing groups do nothing]
+`group.broadcast` does not return an error. It does nothing if the group is
+missing or empty. It panics if the groups actor is unavailable or does not
+reply within 5 seconds. To check a group first, call `group.topics` and handle
+`GroupNotFound`.
 :::
 
-## Error reference
+## Group errors
 
 | Error | When |
 |-------|------|
 | `GroupAlreadyExists` | `create` called for a name already in use |
 | `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
-| `GroupActorStartFailed` | `group.start()` — the internal group actor failed to initialize |
 
-## Full example: team rooms
+## Complete example: team rooms
 
 ```gleam
 import beryl
 import beryl/group
 import gleam/json
+import gleam/otp/static_supervisor
 
 // At startup
-let assert Ok(groups) = group.start()
+let #(groups, groups_specification) = group.child_spec()
+let assert Ok(_root) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_specification)
+  |> static_supervisor.start()
 let assert Ok(Nil) = group.create(groups, "team:eng")
 let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
 let assert Ok(Nil) = group.add(groups, "team:eng", "room:backend")
@@ -130,27 +171,17 @@ group.broadcast(
 let assert Ok(Nil) = group.delete(groups, "team:eng")
 ```
 
-## Using groups with the supervisor
+## Restarts and node limits
 
-When using `beryl/supervisor`, enable groups with `supervisor.with_groups` and access the groups handle from the returned `SupervisedChannels` via `supervisor.groups`:
+Start the groups actor with `group.child_spec`. Its handle uses a stable
+registered name and reaches the replacement actor after a supervised restart.
+The actor keeps group definitions and topic memberships in memory. A restart
+clears them.
 
-```gleam
-import beryl
-import beryl/supervisor
-import beryl/wire
-import gleam/option.{None, Some}
+The registered name is node-local. Keep a `Groups` handle on the node where its
+child specification runs. From another BEAM node, synchronous operations cannot
+reach the owning actor and panic as unavailable. `broadcast` also panics during
+its synchronous topic lookup. Group definitions and memberships are not
+replicated between nodes.
 
-let config =
-  supervisor.config(beryl.config(wire.phoenix_codec()))
-  |> supervisor.with_groups()
-let assert Ok(supervised) = supervisor.start(config)
-
-// supervisor.groups(supervised) is Option(group.Groups)
-case supervisor.groups(supervised) {
-  Some(g) ->
-    group.broadcast(g, supervisor.channels(supervised), "team:eng", "alert", payload)
-  None -> Nil
-}
-```
-
-See the [Supervision guide](/guides/supervision) for details on the supervised startup pattern.
+See the [Supervision guide](/guides/supervision) for the overall startup pattern.

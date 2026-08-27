@@ -1,78 +1,107 @@
 ---
-title: Production Hardening
+title: Prepare beryl for production
+description: Configure traffic limits, authentication, and Erlang distribution security.
 ---
 
-Beryl ships with all rate and connection limits **disabled**, because no
-default is right for every deployment. That is fine for development, but a
-production server with no abuse controls can be degraded by a single hostile
-(or buggy) client. Beryl logs a warning at startup when every control is
-off; this guide explains what to turn on and why.
+beryl disables rate and connection limits by default because each deployment
+needs different values. These defaults are suitable for development. In
+production, one hostile or faulty client can degrade a server that has no
+traffic controls. beryl logs a startup warning when all controls are off. This
+guide explains which controls to configure.
 
-## What is always on
+## Controls enabled by default
 
 Even with no configuration, beryl enforces:
 
-- **Frame size**: inbound WebSocket frames over 1 MiB close the connection
+- **Post-receipt frame size**: once the transport has assembled a complete
+  inbound WebSocket frame, beryl closes the connection if it exceeds 1 MiB
   (`with_max_inbound_frame_bytes` to adjust).
 - **Topic and event lengths**: topics over 256 bytes and event names over 64
-  bytes are rejected before reaching a channel
+  bytes are rejected before reaching your app
   (`with_max_topic_length`, `with_max_event_length`).
 - **Joined-topic cap**: a socket may join at most 1000 topics
   (`with_max_joined_topics_per_socket`).
-- **Protocol hygiene**: reserved `phx_*` events, reserved `beryl:*` topics,
-  and messages carrying a stale `join_ref` are dropped; heartbeat and leave
-  frames count against the message rate limit when one is configured.
+- **Protocol checks**: reserved `phx_*` events, reserved `beryl:*` topics,
+  and messages carrying a stale `join_ref` are dropped.
 - **Heartbeat eviction**: sockets that stop sending heartbeats are evicted
   and their connections closed (60 s window by default, `with_heartbeat`).
 
-## What you should configure for production
+The frame-size check limits decoding and routing work. It does **not** limit
+transport memory because buffering and reassembly occur before beryl receives
+the frame. In production, set a WebSocket frame or message limit in the reverse
+proxy or load balancer. Set it at or below beryl's limit. Also set a matching
+HTTP request or body limit for the upgrade.
+
+## Configure production limits
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
+  // Drop over-rate complete frames before decoding them.
+  |> beryl.with_frame_rate(per_second: 150, burst: 300)
   // Cap messages per socket. Size to your chattiest legitimate client:
   // for most interactive apps 50-100 msg/s with 2x burst is generous.
   |> beryl.with_message_rate(per_second: 100, burst: 200)
   // Joins are much rarer than messages. 10/s per socket tolerates
   // aggressive reconnect/rejoin loops while stopping join floods.
   |> beryl.with_join_rate(per_second: 10, burst: 20)
+  // Cap connection attempts per client IP. This allowance survives
+  // disconnects and app runtime restarts.
+  |> beryl.with_connection_rate_per_ip(per_second: 5, burst: 10)
   // Concurrent connections per client IP. Size to your expected
   // clients-behind-one-NAT worst case; see the caveat below.
   |> beryl.with_max_connections_per_ip(max_connections: 100)
   // Node-wide ceiling on concurrent connections across all IPs. Size to a
-  // single node's process/socket/coordinator budget; see below.
+  // single node's process/socket/runtime budget; see below.
   |> beryl.with_max_connections(max_connections: 10_000)
 ```
+
+`with_frame_rate` and `with_message_rate` are independent. Joins use frame and
+join quota, but not message quota. Leaves and heartbeats use frame and message
+quota. Configure both limits. Give the frame limit more capacity for protocol
+traffic and malformed frames. If a limiter drops a heartbeat, the runtime does
+not refresh the heartbeat deadline. Continued excess traffic then causes
+heartbeat eviction.
+
+Size both rate and burst allowances with enough headroom for legitimate client
+traffic **plus heartbeats**. A limit that admits an application's normal events
+but leaves no heartbeat capacity can evict healthy clients during ordinary
+bursts.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
 starve others.
 
-### Per-IP and node-wide limits compose
+### Combine per-IP rate and connection limits
 
-`with_max_connections_per_ip` throttles a single abusive peer, while
-`with_max_connections` caps concurrent connections across the whole node. When
-both are set a connection must be under **both** ceilings to be admitted;
-otherwise the transport rejects it with `429` **before** allocating any
-long-lived channel or coordinator state. Freed capacity is reclaimed on normal
-close, transport failure, heartbeat eviction, crash, and setup failure.
+`with_connection_rate_per_ip` caps how quickly each peer can open connections,
+which prevents repeated reconnects from refreshing per-connection frame and
+message bursts. Its token buckets are stored in the supervised connection
+limiter, so they survive disconnects and app runtime restarts. Idle buckets are
+removed after their allowance has fully refilled.
 
-The node-wide ceiling exists because a per-IP limit alone cannot stop many
-**distinct** source addresses — a botnet, or a single host rotating through an
-IPv6 range — from each opening a few connections and collectively exhausting
-the node's process, socket, and coordinator budget. The global ceiling bounds
-that total regardless of how the connections are spread across IPs.
+`with_max_connections_per_ip` separately throttles a single peer's concurrent
+connections, while `with_max_connections` caps concurrent connections across
+the whole node. A connection must pass every configured rate and concurrency
+limit; otherwise the transport rejects it with `429` **before** allocating any
+long-lived socket or runtime state. Freed concurrency capacity is reclaimed on
+normal close, transport failure, heartbeat eviction, crash, and setup failure.
+
+A per-IP limit cannot stop many source addresses. A botnet or a host that
+rotates IPv6 addresses can open a few connections from each address. Together,
+these connections can exhaust the node. The node-wide ceiling limits the total
+number of connections across all IP addresses.
 
 Because it is enforced per BEAM node, a load-balanced cluster of N nodes has an
 effective ceiling of roughly `max_connections × N`. Size the per-node value
 against one node's capacity, and use your load balancer's own global
 connection/rate controls when you need a cluster-wide cap.
 
-### The per-IP caveat
+### Limits behind proxies and shared IP addresses
 
-The connection limit uses the **real TCP peer address** and deliberately
-ignores forwarded headers like `X-Forwarded-For`, which clients can forge.
-Two consequences:
+The connection limit uses the **TCP peer address**. It ignores forwarded
+headers such as `X-Forwarded-For` because clients can forge them. This has two
+effects:
 
 - Behind a reverse proxy or load balancer, every connection appears to come
   from the proxy's IP, so a per-IP cap would throttle all clients together.
@@ -81,51 +110,55 @@ Two consequences:
   the cap high enough for your worst legitimate case, or leave it off and
   rely on rate limits.
 
-### Rate limits reset on reconnect
+### Reconnects reset per-connection limits
 
 Per-socket limits are keyed by connection, so a client that hits a limit
 can reconnect for a fresh allowance. They bound the damage of any single
-connection; they are not a substitute for infrastructure-level controls
-(load balancer connection/request limits, WAF rules) against determined
-attackers rotating connections.
+connection. Configure `with_connection_rate_per_ip` to limit repeated reconnects
+from one peer IP, and retain infrastructure-level controls (load balancer
+connection/request limits, WAF rules) against attackers rotating source
+addresses.
 
-## Origin checking and authentication
+## Check origins and authenticate
 
 - `with_allowed_origins` on the Mist transport rejects browser connections
   from unexpected origins before the WebSocket handshake.
-- `with_on_connect` authenticates the connection once, before upgrade —
+- `with_on_connect` authenticates the connection once, before upgrade.
   reject unauthenticated clients with a 403 rather than at join time.
-- Authorize each topic in your channel's `join` callback; clients cannot
+- Authorize each topic in your update's `Join` arm; clients cannot
   send events to topics they have not joined.
 
-## Erlang cluster security boundary
+<a id="erlang-cluster-security-boundary"></a>
 
-Beryl's distributed PubSub and presence replication run over Erlang
-distribution. Every node in your Erlang cluster is **fully trusted**: a
-process on any peer node can subscribe to any topic, receive all
-broadcasts, and deliver messages that beryl's coordinator will process as
-legitimate internal traffic. Channel authorization callbacks and
-WebSocket-layer controls do **not** apply to messages delivered over
-distribution — they protect only inbound WebSocket clients.
+## Secure the Erlang cluster
 
-### Internal vs. client messages
+beryl PubSub and presence replication use Erlang distribution. Trust every
+connected peer. Erlang peers can run arbitrary code on connected nodes. A
+hostile peer can compromise the full cluster. Topic access, broadcasts,
+internal traffic, and presence state are only part of that access. Channel
+authorization and WebSocket controls do not apply to distribution messages.
+They protect only WebSocket clients.
 
-| Source | Trust level | Gated by |
+### Trust for client and cluster traffic
+
+| Source | Trust level | Protected by |
 |---|---|---|
-| WebSocket clients | Untrusted | `with_on_connect` authentication, channel `join` authorization, and `handle_in` event handling |
-| Erlang distribution peers | Fully trusted | Erlang cookie + network controls |
+| WebSocket clients | Untrusted | `with_on_connect` authentication, `Join` authorization, and `Message` handling in `update` |
+| Erlang distribution peers | Fully trusted | Network isolation + mutually verified TLS distribution (cookies prevent accidental cross-cluster connections only) |
 
-A hostile distribution peer can broadcast arbitrary messages into any
-channel and read all presence state. Secure the cluster boundary **before**
-deploying multi-node beryl.
+All distributed BEAM applications need network isolation and secure
+distribution. beryl assumes that you enforce this trust boundary.
 
-### Erlang cookie
+### The Erlang cookie does not secure distribution
 
 Set a long, randomly generated cookie in `vm.args` or the
-`RELEASE_COOKIE` environment variable. The cookie is the only
-authentication mechanism for distribution peers; a weak or default cookie
-(`CHANGE_ME`, the hostname, etc.) allows any process that can reach your
-distribution port to join the cluster.
+`RELEASE_COOKIE` environment variable. Erlang
+[uses the cookie to distinguish clusters](https://www.erlang.org/doc/system/distributed.html#security)
+and prevent accidental cross-cluster connections; its handshake is not
+cryptographically secure authentication against an adversary. A strong cookie
+prevents accidental matches and makes offline guessing harder, but it must
+never be the security control. Keep distribution ports isolated and use
+mutually verified TLS distribution.
 
 Generate a strong cookie with, for example:
 
@@ -133,11 +166,10 @@ Generate a strong cookie with, for example:
 openssl rand -base64 48
 ```
 
-### TLS distribution
+### Use mutually verified TLS distribution
 
-When nodes communicate across networks you do not fully control — cloud
-subnets, VPNs, or any link that may traverse untrusted infrastructure —
-enable TLS distribution. See the
+Use TLS distribution with mutual certificate verification for secure
+multi-node deployments, including traffic within private networks. See the
 [Erlang TLS Distribution guide](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html)
 for setup instructions.
 
@@ -157,22 +189,23 @@ port to a known value for simpler rules:
 Or set `ERL_DIST_PORT` when using Elixir/Mix releases. Restrict both 4369
 and your chosen distribution port at the network layer.
 
-### Do not share clusters with untrusted tenants
+### Keep untrusted nodes outside the cluster
 
-Adding a node to an existing cluster grants it full visibility into all `pg`
-groups (PubSub topics) and all presence state on every node. Never connect
-beryl to a cluster that contains nodes owned or operated by parties outside
-your trust boundary.
+Adding a node to a cluster lets it run arbitrary code on connected nodes. It
+can also access all `pg` groups and presence state. Do not connect beryl to
+nodes you do not trust.
 
 See [SECURITY.md](https://github.com/tylerbutler/beryl/blob/main/SECURITY.md)
-for the full trust-boundary and distribution-hardening reference.
+for the full distribution security reference.
 
-## Operational notes
+## Runtime capacity
 
-- The coordinator is a single actor per channels system. The transport
-  sheds oversized frames and (when configured) rate-limited traffic before
-  it, but extreme fan-out workloads may want multiple channels systems
-  sharded by topic space.
-- If beryl is embedded in your own supervision tree via
-  `supervisor.child_spec`, restarts of the beryl subtree are bounded by a
-  rest-for-one strategy with an intensity of 3 restarts per 5 seconds.
+- The runtime uses one router actor per channel system and one actor per
+  connected socket. The transport drops oversized frames and, when configured,
+  over-rate traffic before routing. Applications that send one event to
+  many subscribers may need several channel systems divided by topic so one
+  router does not handle every subscriber.
+- The runtime always starts supervised (`child_spec` has no unsupervised
+  mode); restarts are bounded at 3 per 5 seconds, after which the crash
+  propagates to the process that called `child_spec`. See the
+  [Supervision guide](/guides/supervision/).

@@ -1,6 +1,6 @@
 import beryl
 import beryl/group
-import beryl/presence
+import example_helpers/session_presence
 import example_helpers/static
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -12,8 +12,8 @@ import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
-    channels: beryl.Channels,
-    presence: presence.Presence,
+    channels: beryl.Sockets,
+    presence: session_presence.Tracker,
     groups: group.Groups,
     base_path: String,
   )
@@ -46,7 +46,7 @@ fn rooms_api(ctx: Context) -> Response(ResponseData) {
           [_, name] -> name
           _ -> topic
         }
-        let user_count = list.length(presence.list(ctx.presence, topic))
+        let user_count = session_presence.count(ctx.presence, topic)
         json.object([
           #("topic", json.string(topic)),
           #("name", json.string(room_name)),
@@ -80,9 +80,15 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
     |> list.map(fn(name) {
       "<li class=\"room-item\" data-room=\""
       <> name
-      <> "\"><span class=\"room-hash\">#</span> "
+      <> "\"><span class=\"room-hash\">#</span>"
+      <> "<span class=\"room-name\">"
       <> name
-      <> "</li>"
+      <> "</span>"
+      <> "<span class=\"room-count\" data-room-count=\""
+      <> name
+      <> "\" aria-label=\"User count unavailable for "
+      <> name
+      <> "\">–</span></li>"
     })
     |> string.join("")
 
@@ -95,7 +101,7 @@ fn index_page(ctx: Context) -> Response(ResponseData) {
   <link rel=\"stylesheet\" href=\"" <> ctx.base_path <> "/static/style.css\">
 </head>
 <body>
-  <div id=\"app\">
+  <div id=\"app\" data-base-path=\"" <> ctx.base_path <> "\">
     <nav id=\"rooms-sidebar\">
       <h2>Rooms</h2>
       <ul id=\"room-list\">" <> room_options <> "</ul>

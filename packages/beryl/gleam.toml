@@ -1,16 +1,18 @@
 name = "beryl"
-version = "0.0.1"
-description = "Type-safe real-time channels and presence for Gleam"
+version = "0.4.1"
+description = "Type-safe real-time channels, raw sockets, and presence for Gleam"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl" }
 gleam = ">= 1.13.0"
 target = "erlang"
 internal_modules = [
+  "beryl/app_supervisor",
   "beryl/connection_limit",
-  "beryl/coordinator",
   "beryl/internal",
   "beryl/log",
   "beryl/rate_limit",
+  "beryl/telemetry",
+  "beryl/runtime",
 ]
 
 [dependencies]
@@ -20,7 +22,9 @@ gleam_erlang = ">= 1.3.0 and < 2.0.0"
 gleam_otp = ">= 1.2.0 and < 2.0.0"
 gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_crypto = ">= 1.6.0 and < 2.0.0"
+gleam_http = ">= 4.3.0 and < 5.0.0"
 lattice_presence = ">= 1.0.0 and < 2.0.0"
+telemetry = ">= 1.4.2 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

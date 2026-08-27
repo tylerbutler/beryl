@@ -1,11 +1,11 @@
-# Copilot instructions for Beryl
+# Copilot instructions for beryl
 
 ## Project shape
 
-Beryl is a Gleam library for type-safe realtime channels and presence on the Erlang/BEAM target.
+beryl is a Gleam library for type-safe realtime channels and presence on the Erlang/BEAM target.
 
-- `packages/beryl/src/beryl.gleam` is the main public API for starting/registering channels and broadcasting.
-- `packages/beryl/src/beryl/channel.gleam` defines typed channel callbacks; `packages/beryl/src/beryl/coordinator.gleam` owns socket/topic lifecycle and callback dispatch.
+- `packages/beryl/src/beryl.gleam` is the main public API for configuring a supervised app-dispatch system with `child_spec`, stopping it, and broadcasting.
+- `packages/beryl/src/beryl/event.gleam` defines typed app events/effects; `packages/beryl/src/beryl/runtime.gleam` owns socket/topic lifecycle and dispatches every event through the app's `update`.
 - `packages/beryl/src/beryl/pubsub.gleam` wraps Erlang `pg` via `packages/beryl/src/beryl_pubsub_ffi.erl` for distributed broadcasts.
 - Presence is the OTP actor in `packages/beryl/src/beryl/presence.gleam`, backed directly by `lattice_presence/presence_state`.
 - Core WebSocket transport is Mist-based in `packages/beryl_mist/src/beryl_mist.gleam` (its own package, built on the `beryl/transport` SPI); examples also use Mist directly for HTTP routing/static assets.
@@ -44,7 +44,7 @@ Example Playwright runs can create untracked test artifacts; clean those before 
 - BEAM mailbox state matters. PubSub, heartbeat, and WebSocket tests should select the exact message shape they expect and consume or drain messages they create.
 - Do not use broad "any message" selectors in tests that run near PubSub or transport assertions; a stale queued message can make the next test fail nondeterministically.
 - When replacing WebSocket transports or dependency surfaces, preserve existing Phoenix/WebSocket contract coverage by repurposing tests for the new transport instead of deleting them.
-- Public channel behavior changes should include integration-level coverage through the coordinator path, not only pure helper tests.
+- Public socket/event behavior changes should include integration-level coverage through the runtime and transport paths, not only pure helper tests.
 
 ## PR and release workflow
 
@@ -57,4 +57,8 @@ Example Playwright runs can create untracked test artifacts; clean those before 
 
 - Keep the public API small and document public functions with `///` comments.
 - Use `Result` for fallible APIs and preserve exhaustive pattern matching.
-- Follow existing callback/result handling patterns in `channel` and `coordinator` when adding new channel behavior.
+- Write the product name as `beryl` in prose, including at sentence starts and
+  in headings; preserve exact code identifiers and quoted text.
+- Use sentence case for website page titles, section headings, callout titles,
+  and sidebar labels.
+- Follow existing event/effect handling patterns in `event` and `runtime` when adding app-dispatch behavior.

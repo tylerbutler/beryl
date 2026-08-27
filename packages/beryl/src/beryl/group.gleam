@@ -4,10 +4,17 @@
 //// Useful for scenarios like broadcasting to all channels in a "team" or
 //// sending a system-wide notification.
 ////
+//// Groups are independent of the beryl runtime and run under your
+//// application's supervision tree.
+////
 //// ## Example
 ////
 //// ```gleam
-//// let assert Ok(groups) = group.start()
+//// let #(groups, groups_specification) = group.child_spec()
+//// let assert Ok(_root) =
+////   static_supervisor.new(static_supervisor.OneForOne)
+////   |> static_supervisor.add(groups_specification)
+////   |> static_supervisor.start()
 //// let assert Ok(Nil) = group.create(groups, "team:engineering")
 //// let assert Ok(Nil) = group.add(groups, "team:engineering", "room:frontend")
 //// let assert Ok(Nil) = group.add(groups, "team:engineering", "room:backend")
@@ -15,38 +22,46 @@
 //// ```
 
 import beryl
-import beryl/error as beryl_error
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/json
 import gleam/list
 import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/result
 import gleam/set.{type Set}
 
-/// A running Groups instance.
+/// A running groups instance.
 ///
-/// This handle is intentionally opaque so callers cannot forge the backing
-/// actor subject or depend on its runtime representation.
+/// This handle is opaque. Callers cannot forge the actor subject or depend
+/// on its runtime representation.
+///
+/// ## Node affinity
+///
+/// The stable registered subject is resolved on the caller's node. Keep a
+/// `Groups` handle on the node where its child specification runs. Calls from
+/// another BEAM node cannot reach the owning actor; synchronous operations
+/// panic as unavailable, and fire-and-forget broadcasts are not delivered.
 pub opaque type Groups {
-  Groups(subject: Subject(Message))
+  Groups(subject: Subject(Message), call_timeout_ms: Int)
 }
 
-/// Errors from group operations
+/// Configuration for starting a groups actor.
+///
+/// Build configs with `default_config` and the `with_*` functions.
+pub opaque type Config {
+  Config(call_timeout_ms: Int)
+}
+
+/// Errors from group operations.
 pub type GroupError {
-  /// The group already exists
+  /// The group already exists.
   GroupAlreadyExists
-  /// The group was not found
+  /// The group was not found.
   GroupNotFound
 }
 
-/// Errors when starting the groups actor.
-pub type GroupStartError {
-  /// The actor failed to start
-  GroupActorStartFailed(beryl_error.StartFailure)
-}
-
-/// Messages the groups actor handles
+/// Messages that the groups actor handles.
 pub opaque type Message {
   Create(name: String, reply: Subject(Result(Nil, GroupError)))
   Delete(name: String, reply: Subject(Result(Nil, GroupError)))
@@ -62,12 +77,6 @@ pub opaque type Message {
   )
   GetTopics(group_name: String, reply: Subject(Result(Set(String), GroupError)))
   ListGroups(reply: Subject(List(String)))
-  BroadcastToGroup(
-    group_name: String,
-    channels: beryl.Channels,
-    event: String,
-    payload: json.Json,
-  )
 }
 
 /// Internal state
@@ -75,21 +84,60 @@ type State {
   State(groups: Dict(String, Set(String)))
 }
 
-/// Start the groups actor
-pub fn start() -> Result(Groups, GroupStartError) {
-  build_groups()
-  |> actor.start
-  |> result.map(fn(started) { Groups(subject: started.data) })
-  |> result.map_error(fn(error) {
-    GroupActorStartFailed(beryl_error.from_actor_start_error(error))
+/// Build a groups configuration with a 5-second actor call timeout.
+pub fn default_config() -> Config {
+  Config(call_timeout_ms: 5000)
+}
+
+/// Set the timeout for synchronous group operations, in milliseconds.
+///
+/// This applies to `create`, `delete`, `add`, `remove`, `topics`, and
+/// `list_groups`. These functions panic if the actor does not reply within
+/// this timeout.
+pub fn with_call_timeout(_config: Config, timeout_ms: Int) -> Config {
+  Config(call_timeout_ms: timeout_ms)
+}
+
+/// Build the supervised groups actor with the default configuration.
+///
+/// Add the returned child specification to your application's supervisor.
+/// The returned handle is name-backed, so it reaches the replacement actor
+/// after a supervised restart. Group definitions are in-memory state and are
+/// reset by a restart.
+pub fn child_spec() -> #(
+  Groups,
+  supervision.ChildSpecification(Subject(Message)),
+) {
+  child_spec_with_config(default_config())
+}
+
+/// Build the supervised groups actor with a custom configuration.
+pub fn child_spec_with_config(
+  config: Config,
+) -> #(Groups, supervision.ChildSpecification(Subject(Message))) {
+  let name = process.new_name("beryl_groups")
+  #(
+    Groups(
+      subject: process.named_subject(name),
+      call_timeout_ms: config.call_timeout_ms,
+    ),
+    supervision.worker(fn() { start_named(name) }),
+  )
+}
+
+@internal
+pub fn start() -> Result(Groups, actor.StartError) {
+  let name = process.new_name("beryl_groups")
+  start_named(name)
+  |> result.map(fn(_started) {
+    Groups(
+      subject: process.named_subject(name),
+      call_timeout_ms: default_config().call_timeout_ms,
+    )
   })
 }
 
-// nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
-/// Start the groups actor with a registered name. Package-internal: used by
-/// `beryl/supervisor`; end users get supervision via `supervisor.child_spec`.
-@internal
-pub fn start_named(
+fn start_named(
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {
   build_groups()
@@ -97,13 +145,6 @@ pub fn start_named(
   |> actor.start
 }
 
-// nolint: unused_exports -- package-internal constructor for supervised groups; hidden from public docs with @internal
-@internal
-pub fn from_subject(subject: Subject(Message)) -> Groups {
-  Groups(subject: subject)
-}
-
-// nolint: unused_exports -- package-internal accessor for supervision tests; hidden from public docs with @internal
 @internal
 pub fn subject(groups: Groups) -> Subject(Message) {
   groups.subject
@@ -114,76 +155,97 @@ fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {
   |> actor.on_message(handle_message)
 }
 
-/// Create a new named group
+/// Create a named group.
 ///
-/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
+/// Panics if the groups actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn create(groups: Groups, name: String) -> Result(Nil, GroupError) {
-  process.call(groups.subject, 5000, fn(reply) { Create(name, reply) })
+  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+    Create(name, reply)
+  })
 }
 
-/// Delete a group
+/// Delete a group.
 ///
-/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
+/// Panics if the groups actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn delete(groups: Groups, name: String) -> Result(Nil, GroupError) {
-  process.call(groups.subject, 5000, fn(reply) { Delete(name, reply) })
+  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+    Delete(name, reply)
+  })
 }
 
-/// Add a topic to a group
+/// Add a topic to a group.
 ///
-/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
+/// Panics if the groups actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn add(
   groups: Groups,
   group_name: String,
   topic: String,
 ) -> Result(Nil, GroupError) {
-  process.call(groups.subject, 5000, fn(reply) { Add(group_name, topic, reply) })
+  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+    Add(group_name, topic, reply)
+  })
 }
 
-/// Remove a topic from a group
+/// Remove a topic from a group.
 ///
-/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
+/// Panics if the groups actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn remove(
   groups: Groups,
   group_name: String,
   topic: String,
 ) -> Result(Nil, GroupError) {
-  process.call(groups.subject, 5000, fn(reply) {
+  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
     Remove(group_name, topic, reply)
   })
 }
 
-/// Get all topics in a group
+/// Return all topics in a group.
 ///
-/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
+/// Panics if the groups actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn topics(
   groups: Groups,
   group_name: String,
 ) -> Result(Set(String), GroupError) {
-  process.call(groups.subject, 5000, fn(reply) { GetTopics(group_name, reply) })
+  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+    GetTopics(group_name, reply)
+  })
 }
 
-/// List all group names
+/// Return all group names.
 ///
-/// Panics if the groups actor is unavailable or does not reply within 5 seconds.
+/// Panics if the groups actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn list_groups(groups: Groups) -> List(String) {
-  process.call(groups.subject, 5000, fn(reply) { ListGroups(reply) })
+  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+    ListGroups(reply)
+  })
 }
 
-/// Broadcast a message to all topics in a group
+/// Broadcast a message to all topics in a group.
 ///
-/// Sends the message to every topic in the named group via beryl.broadcast().
-/// If the group doesn't exist, this is a silent no-op (fire and forget).
+/// This function sends the message to each topic through `beryl.broadcast`.
+/// The groups actor performs the topic lookup. The caller performs the
+/// fan-out. If the group does not exist, this function does nothing.
+///
+/// Panics if the groups actor is unavailable or does not reply within the
+/// configured call timeout.
 pub fn broadcast(
   groups: Groups,
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   group_name: String,
   event: String,
   payload: json.Json,
 ) -> Nil {
-  process.send(
-    groups.subject,
-    BroadcastToGroup(group_name, channels, event, payload),
-  )
+  case topics(groups, group_name) {
+    Ok(topics) -> broadcast_to_topics(topics, channels, event, payload)
+    Error(GroupAlreadyExists) -> Nil
+    Error(GroupNotFound) -> Nil
+  }
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
@@ -269,22 +331,12 @@ fn handle_message(
       process.send(reply, names)
       actor.continue(state)
     }
-
-    BroadcastToGroup(group_name, channels, event, payload) -> {
-      case dict.get(state.groups, group_name) {
-        Error(Nil) -> actor.continue(state)
-        Ok(topics) -> {
-          broadcast_to_topics(topics, channels, event, payload)
-          actor.continue(state)
-        }
-      }
-    }
   }
 }
 
 fn broadcast_to_topics(
   topics: Set(String),
-  channels: beryl.Channels,
+  channels: beryl.Sockets,
   event: String,
   payload: json.Json,
 ) -> Nil {

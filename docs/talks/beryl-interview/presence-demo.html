@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Presence state sync — beryl talk demo</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Hanken+Grotesk:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+  --bg: oklch(0.165 0.022 162);
+  --surface: oklch(0.215 0.028 163);
+  --surface-2: oklch(0.255 0.03 163);
+  --hairline: oklch(0.42 0.04 161 / 0.5);
+  --muted: oklch(0.6 0.04 159);
+  --text: oklch(0.81 0.032 157);
+  --strong: oklch(0.91 0.024 155);
+  --white: oklch(0.97 0.018 152);
+  --accent: oklch(0.78 0.16 158);
+  --accent-high: oklch(0.9 0.1 154);
+  --accent-soft: oklch(0.78 0.16 158 / 0.14);
+  --magenta: oklch(0.72 0.2 350);
+  --magenta-soft: oklch(0.72 0.2 350 / 0.16);
+
+  --font-display: 'Unbounded', 'Hanken Grotesk', system-ui, sans-serif;
+  --font-text: 'Hanken Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: clamp(16px, 1.6vw, 22px);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(16px, 2.5vw, 40px) clamp(20px, 3.5vw, 56px);
+  gap: clamp(12px, 1.6vh, 20px);
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75em;
+}
+
+header h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--white);
+  font-size: 1.25em;
+}
+
+header h1::after {
+  content: '';
+  display: block;
+  width: 2rem;
+  height: 4px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: var(--magenta);
+}
+
+nav { display: flex; gap: 0.5em; flex-wrap: wrap; }
+
+nav button {
+  font-family: var(--font-text);
+  font-size: 0.72em;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0.45em 1em;
+  cursor: pointer;
+}
+
+nav button[aria-selected="true"] {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr minmax(180px, 0.6fr) 1fr;
+  gap: clamp(12px, 1.8vw, 28px);
+  align-items: stretch;
+  min-height: 0;
+}
+
+.node {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  padding: 1em 1.1em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7em;
+  transition: border-color 0.25s, opacity 0.25s;
+}
+
+.node.wrong { border-color: var(--magenta); }
+.node.down { opacity: 0.45; }
+
+.node-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+}
+
+.node-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.9em;
+  color: var(--white);
+}
+
+.badge {
+  font-size: 0.62em;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.3em 0.8em;
+  white-space: nowrap;
+}
+
+.badge.ok    { color: var(--accent-high); background: var(--accent-soft); }
+.badge.wrong { color: var(--magenta); background: var(--magenta-soft); }
+.badge.down  { color: var(--muted); background: var(--surface-2); }
+
+.node-label {
+  font-size: 0.62em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.5em; align-content: flex-start; flex: 1; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0.3em 0.85em;
+  font-size: 0.78em;
+  color: var(--strong);
+  animation: pop 0.25s ease-out;
+}
+
+.chip .tag {
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: 5px;
+  padding: 0.05em 0.4em;
+}
+
+.chip.gone { border-style: dashed; color: var(--muted); text-decoration: line-through; animation: none; }
+
+.empty { color: var(--muted); font-size: 0.75em; font-style: italic; }
+
+@keyframes pop { from { transform: scale(0.85); opacity: 0; } }
+
+.lane {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.7em;
+  min-width: 0;
+}
+
+.lane-title {
+  text-align: center;
+  font-size: 0.6em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.msg {
+  font-family: var(--font-mono);
+  font-size: 0.68em;
+  color: var(--white);
+  background: var(--magenta-soft);
+  border: 1px solid var(--magenta);
+  border-radius: 10px;
+  padding: 0.5em 0.8em;
+  text-align: center;
+  animation: pop 0.25s ease-out, pulse 1.6s ease-in-out infinite;
+}
+
+.msg.join { background: var(--accent-soft); border-color: var(--accent); }
+
+.msg.delayed { border-style: dashed; }
+
+.msg .dir { font-weight: 600; }
+
+.msg .note { display: block; font-size: 0.8em; color: var(--muted); font-family: var(--font-text); }
+
+@keyframes pulse { 50% { transform: translateY(-2px); } }
+
+.truth {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 0.55em 1em;
+  font-size: 0.8em;
+}
+
+.truth .label {
+  font-size: 0.72em;
+  font-weight: 700;
+  color: var(--accent-high);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.truth .who { color: var(--strong); }
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+}
+
+.narration {
+  flex: 1;
+  background: var(--surface);
+  border-left: 4px solid var(--magenta);
+  border-radius: 0 12px 12px 0;
+  padding: 0.75em 1.1em;
+  color: var(--strong);
+  font-size: 0.92em;
+  min-height: 3.4em;
+}
+
+.controls { display: flex; align-items: center; gap: 0.6em; white-space: nowrap; }
+
+.controls button {
+  font-family: var(--font-text);
+  font-size: 0.8em;
+  font-weight: 700;
+  color: var(--bg);
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  padding: 0.5em 1em;
+  cursor: pointer;
+}
+
+.controls button:disabled { opacity: 0.35; cursor: default; }
+
+.step-count { font-family: var(--font-mono); font-size: 0.7em; color: var(--muted); }
+
+.hint { font-size: 0.6em; color: var(--muted); text-align: right; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>“Who's online?” — state sync, step by step</h1>
+  <nav id="tabs" role="tablist"></nav>
+</header>
+
+<main>
+  <section class="node" id="nodeA">
+    <div class="node-head">
+      <span class="node-name">node A</span>
+      <span class="badge" id="badgeA"></span>
+    </div>
+    <div class="node-label" id="labelA">presence set</div>
+    <div class="chips" id="chipsA"></div>
+  </section>
+
+  <div class="lane">
+    <div class="lane-title">messages in flight</div>
+    <div id="wires"></div>
+  </div>
+
+  <section class="node" id="nodeB">
+    <div class="node-head">
+      <span class="node-name">node B</span>
+      <span class="badge" id="badgeB"></span>
+    </div>
+    <div class="node-label" id="labelB">presence set</div>
+    <div class="chips" id="chipsB"></div>
+  </section>
+</main>
+
+<div class="truth">
+  <span class="label">reality</span>
+  <span class="who" id="truth"></span>
+</div>
+
+<footer>
+  <div class="narration" id="narration"></div>
+  <div class="controls">
+    <button id="prev">← back</button>
+    <span class="step-count" id="stepCount"></span>
+    <button id="next">next →</button>
+  </div>
+</footer>
+
+<div class="hint">keys: ← → step · 1 / 2 / 3 switch scenario</div>
+
+<script>
+// Each step is a full snapshot: node sets, in-flight messages, ground truth.
+// entries: { who, tag? , gone? }   wires: { dir:'AB'|'BA', kind:'join'|'leave', text, delayed?, note? }
+const scenarios = [
+  {
+    name: '1 · Naive events',
+    label: 'plain set',
+    steps: [
+      {
+        say: 'The obvious design: every node keeps a plain set of who is online, and broadcasts join/leave events to the other nodes. Let’s watch it break.',
+        A: [], B: [], wires: [], truth: 'nobody connected',
+      },
+      {
+        say: 'Alice connects to node A. A adds her to its local set and broadcasts join(alice) to the rest of the cluster.',
+        A: [{ who: 'alice' }], B: [],
+        wires: [{ dir: 'AB', kind: 'join', text: 'join(alice)' }],
+        truth: 'alice — connected to node A',
+      },
+      {
+        say: 'Node B applies the event. Both nodes agree. The happy path always works — that’s what makes the naive design so tempting.',
+        A: [{ who: 'alice' }], B: [{ who: 'alice' }],
+        wires: [], truth: 'alice — connected to node A',
+      },
+      {
+        say: 'Alice’s wifi blips. Her socket on A dies, and her client reconnects instantly — the load balancer lands her on node B. A broadcasts leave(alice)… but that message is slow. B broadcasts join(alice) for the new socket.',
+        A: [], B: [{ who: 'alice' }],
+        wires: [
+          { dir: 'AB', kind: 'leave', text: 'leave(alice)', delayed: true, note: 'delayed…' },
+          { dir: 'BA', kind: 'join', text: 'join(alice)' },
+        ],
+        truth: 'alice — connected to node B',
+      },
+      {
+        say: 'B’s join arrives at A first. A puts Alice back. So far the lists look right — but that stale leave is still out there.',
+        A: [{ who: 'alice' }], B: [{ who: 'alice' }],
+        wires: [{ dir: 'AB', kind: 'leave', text: 'leave(alice)', delayed: true, note: 'still in flight' }],
+        truth: 'alice — connected to node B',
+      },
+      {
+        say: 'The stale leave(alice) finally lands on B — after the join. B removes Alice. Alice is connected to node B right now, looking at a presence list that says she’s offline. Events carry no memory of which connection they meant; whichever arrives last wins.',
+        A: [{ who: 'alice' }], B: [{ who: 'alice', gone: true }],
+        wrongB: true,
+        wires: [], truth: 'alice — connected to node B',
+      },
+    ],
+  },
+  {
+    name: '2 · Node crash',
+    label: 'plain set',
+    steps: [
+      {
+        say: 'Same naive design, different failure. Bob and Carol are connected to node A; their joins were broadcast, so both nodes agree.',
+        A: [{ who: 'bob' }, { who: 'carol' }],
+        B: [{ who: 'bob' }, { who: 'carol' }],
+        wires: [], truth: 'bob, carol — connected to node A',
+      },
+      {
+        say: 'Node A crashes — OOM, power, a deploy gone wrong. Crashes don’t say goodbye: no leave event is ever sent for Bob or Carol.',
+        A: [], downA: true,
+        B: [{ who: 'bob' }, { who: 'carol' }],
+        wires: [], truth: 'nobody connected',
+      },
+      {
+        say: 'Node B shows Bob and Carol online forever — phantom users. To fix it you start hand-building failure detection: heartbeats, TTLs, cleanup jobs… and every one of those races against real reconnects.',
+        A: [], downA: true,
+        B: [{ who: 'bob', gone: true }, { who: 'carol', gone: true }],
+        wrongB: true,
+        wires: [], truth: 'nobody connected',
+      },
+      {
+        say: 'The BEAM already has the missing piece: the runtime monitors processes and nodes, and tells survivors when a peer dies. If each presence entry remembered which node it came from, B could drop everything A owned — automatically. That’s the shape of the real fix.',
+        A: [], downA: true,
+        B: [],
+        wires: [], truth: 'nobody connected',
+      },
+    ],
+  },
+  {
+    name: '3 · Observed-remove CRDT',
+    label: 'tagged set + causal context',
+    steps: [
+      {
+        say: 'Now the CRDT version — same wifi-blip story as scenario 1. One change: every join gets a unique tag (origin node + counter), and a leave removes only the tags it has observed.',
+        A: [], B: [], wires: [], truth: 'nobody connected', tags: true,
+      },
+      {
+        say: 'Alice connects to node A. Her entry is tagged A1, and the broadcast carries the tag.',
+        A: [{ who: 'alice', tag: 'A1' }], B: [],
+        wires: [{ dir: 'AB', kind: 'join', text: 'join(alice·A1)' }],
+        truth: 'alice — connected to node A', tags: true,
+      },
+      {
+        say: 'B applies it. Both nodes agree, and both know exactly which connection this entry is.',
+        A: [{ who: 'alice', tag: 'A1' }], B: [{ who: 'alice', tag: 'A1' }],
+        wires: [], truth: 'alice — connected to node A', tags: true,
+      },
+      {
+        say: 'The wifi blip again: socket A1 dies, Alice reconnects to node B as B1. A broadcasts leave — but this leave names its victim: “remove A1.” It’s slow, again. B broadcasts join(alice·B1).',
+        A: [], B: [{ who: 'alice', tag: 'A1' }, { who: 'alice', tag: 'B1' }],
+        wires: [
+          { dir: 'AB', kind: 'leave', text: 'leave{observed: A1}', delayed: true, note: 'delayed…' },
+          { dir: 'BA', kind: 'join', text: 'join(alice·B1)' },
+        ],
+        truth: 'alice — connected to node B', tags: true,
+      },
+      {
+        say: 'A applies the join: it now holds alice·B1 (A1 is already gone locally). The stale leave is still in flight — but this time it can’t do any damage.',
+        A: [{ who: 'alice', tag: 'B1' }],
+        B: [{ who: 'alice', tag: 'A1' }, { who: 'alice', tag: 'B1' }],
+        wires: [{ dir: 'AB', kind: 'leave', text: 'leave{observed: A1}', delayed: true, note: 'still in flight' }],
+        truth: 'alice — connected to node B', tags: true,
+      },
+      {
+        say: 'The stale leave lands on B — late, after the join, and it doesn’t matter. It removes only A1, the tag it observed; it cannot touch B1, a join it never saw. Both nodes converge on alice·B1: online. Order stopped mattering. That’s observed-remove — and when a join and leave are true concurrent ties, add-wins breaks the tie toward present.',
+        A: [{ who: 'alice', tag: 'B1' }],
+        B: [{ who: 'alice', tag: 'B1' }],
+        wires: [], truth: 'alice — connected to node B', tags: true,
+      },
+      {
+        say: 'And the crash from scenario 2? Every tag carries its origin node. When the runtime reports node A down, peers drop all A-tagged entries — no heartbeat code in your app. This is what beryl’s presence does, via the lattice_presence CRDT, replicated over pg PubSub.',
+        A: [{ who: 'alice', tag: 'B1' }],
+        B: [{ who: 'alice', tag: 'B1' }],
+        wires: [], truth: 'alice — connected to node B', tags: true,
+      },
+    ],
+  },
+];
+
+let scenario = 0;
+let step = 0;
+
+const $ = (id) => document.getElementById(id);
+
+function chip(entry) {
+  const el = document.createElement('span');
+  el.className = 'chip' + (entry.gone ? ' gone' : '');
+  el.append(entry.who);
+  if (entry.tag) {
+    const t = document.createElement('span');
+    t.className = 'tag';
+    t.textContent = entry.tag;
+    el.append(t);
+  }
+  return el;
+}
+
+function renderNode(key, entries, down, wrong, tags) {
+  const node = $('node' + key);
+  const badge = $('badge' + key);
+  node.className = 'node' + (down ? ' down' : '') + (wrong ? ' wrong' : '');
+  $('label' + key).textContent = tags ? 'presence set (tagged)' : 'presence set';
+  if (down) {
+    badge.className = 'badge down';
+    badge.textContent = '✗ crashed';
+  } else if (wrong) {
+    badge.className = 'badge wrong';
+    badge.textContent = '✗ wrong';
+  } else {
+    badge.className = 'badge ok';
+    badge.textContent = '✓ matches reality';
+  }
+  const chips = $('chips' + key);
+  chips.replaceChildren();
+  if (down) {
+    const e = document.createElement('span');
+    e.className = 'empty';
+    e.textContent = 'node down';
+    chips.append(e);
+  } else if (entries.length === 0) {
+    const e = document.createElement('span');
+    e.className = 'empty';
+    e.textContent = '∅ empty';
+    chips.append(e);
+  } else {
+    entries.forEach((entry) => chips.append(chip(entry)));
+  }
+}
+
+function render() {
+  const sc = scenarios[scenario];
+  const st = sc.steps[step];
+
+  document.querySelectorAll('#tabs button').forEach((b, i) => {
+    b.setAttribute('aria-selected', i === scenario ? 'true' : 'false');
+  });
+
+  // A node whose (live) view disagrees with reality gets flagged; steps
+  // hand-mark it so the story controls when the alarm goes off.
+  renderNode('A', st.A, !!st.downA, !!st.wrongA, !!st.tags);
+  renderNode('B', st.B, !!st.downB, !!st.wrongB, !!st.tags);
+
+  const wires = $('wires');
+  wires.replaceChildren();
+  st.wires.forEach((w) => {
+    const el = document.createElement('div');
+    el.className = 'msg ' + w.kind + (w.delayed ? ' delayed' : '');
+    const dir = document.createElement('span');
+    dir.className = 'dir';
+    dir.textContent = w.dir === 'AB' ? w.text + ' ⟶' : '⟵ ' + w.text;
+    el.append(dir);
+    if (w.note) {
+      const n = document.createElement('span');
+      n.className = 'note';
+      n.textContent = w.note;
+      el.append(n);
+    }
+    wires.append(el);
+  });
+  if (st.wires.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.style.textAlign = 'center';
+    e.textContent = '— quiet —';
+    wires.append(e);
+  }
+
+  $('truth').textContent = st.truth;
+  $('narration').textContent = st.say;
+  $('stepCount').textContent = (step + 1) + ' / ' + sc.steps.length;
+  $('prev').disabled = step === 0;
+  $('next').disabled = step === sc.steps.length - 1;
+}
+
+function go(delta) {
+  const max = scenarios[scenario].steps.length - 1;
+  step = Math.min(max, Math.max(0, step + delta));
+  render();
+}
+
+function pick(i) {
+  scenario = i;
+  step = 0;
+  render();
+}
+
+const tabs = $('tabs');
+scenarios.forEach((sc, i) => {
+  const b = document.createElement('button');
+  b.setAttribute('role', 'tab');
+  b.textContent = sc.name;
+  b.addEventListener('click', () => pick(i));
+  tabs.append(b);
+});
+
+$('prev').addEventListener('click', () => go(-1));
+$('next').addEventListener('click', () => go(1));
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); go(1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1); }
+  else if (e.key === '1') pick(0);
+  else if (e.key === '2') pick(1);
+  else if (e.key === '3') pick(2);
+});
+
+render();
+</script>
+</body>
+</html>
