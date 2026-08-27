@@ -1,6 +1,9 @@
 import beryl_site/presence/model
 import beryl_site/presence/protocol
 import gleam/dict
+import gleam/int
+import gleam/list
+import gleam/option.{None, Some}
 import gleeunit/should
 
 pub fn connect_requests_a_fresh_scenario_test() {
@@ -58,7 +61,10 @@ pub fn incompatible_join_disconnects_all_clients_test() {
 pub fn offline_close_preserves_client_for_phoenix_reconnect_test() {
   let connected = model.Model(..model.initial(), status: model.Connected)
   let #(updated, commands) =
-    model.update(connected, model.TransportClosed(model.Primary, "offline"))
+    model.update(
+      connected,
+      model.TransportClosed(model.Primary, model.NetworkOffline),
+    )
 
   updated.status |> should.equal(model.Offline)
   commands |> should.equal([])
@@ -74,7 +80,7 @@ pub fn reconnect_exhausted_enters_failed_and_closes_all_test() {
   let #(updated, commands) =
     model.update(
       connected,
-      model.TransportClosed(model.Primary, "reconnect_exhausted"),
+      model.TransportClosed(model.Primary, model.ReconnectExhausted),
     )
 
   updated.status |> should.equal(model.Failed("reconnect_exhausted"))
@@ -94,7 +100,7 @@ pub fn expired_session_stops_reconnects_test() {
   let #(updated, commands) =
     model.update(
       connected,
-      model.TransportClosed(model.Primary, "session_expired"),
+      model.TransportClosed(model.Primary, model.SessionExpired),
     )
 
   updated.status |> should.equal(model.Failed("session_expired"))
@@ -148,4 +154,51 @@ pub fn reset_closes_old_topic_and_opens_new_test() {
       compatibility_version: 1,
     ),
   ])
+}
+
+pub fn unexpected_close_while_connected_enters_reconnecting_test() {
+  let connected = model.Model(..model.initial(), status: model.Connected)
+  let #(updated, commands) =
+    model.update(
+      connected,
+      model.TransportClosed(model.Primary, model.OtherClose("socket_closed")),
+    )
+
+  updated.status |> should.equal(model.Reconnecting)
+  commands |> should.equal([])
+  let assert [newest, ..] = updated.transcript
+  newest.payload |> should.equal("socket_closed")
+}
+
+pub fn close_reason_round_trips_through_strings_test() {
+  ["reconnect_exhausted", "session_expired", "offline", "socket_error"]
+  |> list.each(fn(raw) {
+    raw
+    |> model.string_to_close_reason
+    |> model.close_reason_to_string
+    |> should.equal(raw)
+  })
+}
+
+pub fn transcript_keeps_newest_one_hundred_entries_test() {
+  // int.range(1, 102, ...) iterates 1..101 inclusive (stops when current == 102)
+  let recorded =
+    int.range(from: 1, to: 102, with: model.initial(), run: fn(current, _index) {
+      let #(next, _commands) =
+        model.update(current, model.TransportOpened(model.Secondary))
+      next
+    })
+
+  list.length(recorded.transcript) |> should.equal(100)
+  let assert [newest, ..] = recorded.transcript
+  newest.sequence |> should.equal(101)
+}
+
+pub fn reconnect_schedule_is_bounded_test() {
+  model.reconnect_delay(1) |> should.equal(Some(1000))
+  model.reconnect_delay(2) |> should.equal(Some(2000))
+  model.reconnect_delay(3) |> should.equal(Some(5000))
+  model.reconnect_delay(4) |> should.equal(Some(10_000))
+  model.reconnect_delay(5) |> should.equal(Some(10_000))
+  model.reconnect_delay(6) |> should.equal(None)
 }

@@ -1,18 +1,20 @@
-//// Compose the beryl channels system, presence tracking, absolute scenario
+//// Compose the beryl channel system, presence tracking, absolute scenario
 //// expiry, and the Mist listener into a single hardened demo service.
 
 import beryl
+import beryl/channel
 import beryl/presence
-import beryl/transport/mist as mist_transport
+import beryl/transport/server as transport
 import beryl/wire
 import beryl_demo/config
 import beryl_demo/expiry.{type Expiry}
 import beryl_demo/presence_channel
 import beryl_demo/router
+import beryl_mist as mist_transport
 import gleam/erlang/process
-import gleam/list
 import gleam/otp/actor
-import gleam/otp/static_supervisor
+import gleam/otp/static_supervisor.{type Supervisor}
+import gleam/result
 import mist
 
 /// Origin policy applied to the WebSocket handshake.
@@ -25,15 +27,29 @@ pub type OriginMode {
   TestOnlyAllowAll
 }
 
-/// Handle returned by `start`, exposing all handles the caller must own to
-/// tear the service down cleanly.
+/// Handles returned by `start` that the caller owns for lifecycle management.
+///
+/// `supervisor` owns the beryl channel system; `listener` is the Mist
+/// listener. Stop both, plus `expiry`, to tear the service down.
 pub type Started {
   Started(
     port: Int,
-    channels: beryl.Channels,
+    sockets: beryl.Sockets,
     expiry: Expiry,
-    supervisor: actor.Started(static_supervisor.Supervisor),
+    supervisor: actor.Started(Supervisor),
+    listener: actor.Started(Supervisor),
   )
+}
+
+/// Why the demo service failed to start.
+pub type StartError {
+  PresenceNotStarted(reason: actor.StartError)
+  ExpiryNotStarted(reason: actor.StartError)
+  InvalidChannelSystem(reason: channel.ChildSpecError)
+  SupervisorNotStarted(reason: actor.StartError)
+  ListenerNotStarted(reason: actor.StartError)
+  /// Mist started but did not report its bound port within five seconds.
+  PortNotReported
 }
 
 /// Start the demo service and return handles for lifecycle management.
@@ -43,82 +59,46 @@ pub type Started {
 pub fn start(
   service_config: config.Config,
   origin_mode: OriginMode,
-) -> Result(Started, Nil) {
-  case do_start(service_config, origin_mode) {
-    Ok(started) -> Ok(started)
-    Error(_) -> Error(Nil)
-  }
-}
-
-type StartError {
-  ChannelsStartError
-  PresenceStartError
-  ExpiryStartError
-  ChannelRegisterError
-  ListenerStartError
-  PortNotReported
-}
-
-fn do_start(
-  service_config: config.Config,
-  origin_mode: OriginMode,
 ) -> Result(Started, StartError) {
+  use presence_actor <- result.try(
+    presence.start(presence.default_config("beryl_demo@node"))
+    |> result.map_error(PresenceNotStarted),
+  )
+  use expiry_actor <- result.try(
+    expiry.start(service_config.session_ttl_ms)
+    |> result.map_error(ExpiryNotStarted),
+  )
+
   let beryl_config =
     beryl.config(wire.phoenix_codec())
-    |> beryl.with_heartbeat(interval_ms: 30_000, timeout_ms: 60_000)
+    |> beryl.with_presence_handle(presence: presence_actor)
+    |> beryl.with_heartbeat(timeout_ms: 60_000)
     |> beryl.with_max_connections(max_connections: 200)
     |> beryl.with_max_connections_per_ip(max_connections: 8)
     |> beryl.with_max_inbound_frame_bytes(max_bytes: 16 * 1024)
     |> beryl.with_max_joined_topics_per_socket(max_topics: 2)
     |> beryl.with_join_rate(per_second: 4, burst: 8)
     |> beryl.with_message_rate(per_second: 10, burst: 20)
-
-  use channels <- try_map(beryl.start(beryl_config), ChannelsStartError)
-
-  let presence_config =
-    presence.default_config("beryl_demo@node")
-    |> presence.with_on_diff(fn(diff) {
-      presence.diff_topics(diff)
-      |> list.each(fn(topic) {
-        beryl.broadcast_presence_diff(channels, topic, diff)
-      })
-    })
-
-  use presence_actor <- try_map(
-    presence.start(presence_config),
-    PresenceStartError,
+  use #(sockets, channel_spec) <- result.try(
+    channel.child_spec(beryl_config, handlers: [
+      presence_channel.handler(presence_actor, expiry_actor),
+    ])
+    |> result.map_error(InvalidChannelSystem),
   )
-
-  use expiry_actor <- try_map(
-    expiry.start(service_config.session_ttl_ms),
-    ExpiryStartError,
+  use supervisor <- result.try(
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(channel_spec)
+    |> static_supervisor.start
+    |> result.map_error(SupervisorNotStarted),
   )
-
-  let channel_handler =
-    presence_channel.new(
-      channels: channels,
-      presence_actor: presence_actor,
-      expiry_actor: expiry_actor,
-    )
-  use registered <- try_map(
-    beryl.register(channels, "demo:presence:*", channel_handler),
-    ChannelRegisterError,
-  )
-
-  expiry.initialize(expiry_actor, fn(socket_id, topic) {
-    beryl.send_info(registered, socket_id, topic, presence_channel.Expire)
-  })
-
-  let transport_config = build_transport_config(origin_mode)
 
   let port_subject = process.new_subject()
-  let handler =
-    mist_transport.handler(channels, transport_config, fn(req) {
-      router.handle_request(req, service_config)
-    })
-
-  let listener_result =
-    handler
+  use listener <- result.try(
+    mist_transport.handler(
+      sockets,
+      transport_config(origin_mode),
+      fn(http_request) { router.handle_request(http_request, service_config) },
+    )
     |> mist.new
     |> mist.port(service_config.port)
     |> mist.bind(service_config.bind_address)
@@ -126,40 +106,21 @@ fn do_start(
       process.send(port_subject, port)
     })
     |> mist.start
-
-  case listener_result {
-    Error(_) -> Error(ListenerStartError)
-    Ok(supervisor) ->
-      case process.receive(port_subject, 5000) {
-        Error(_) -> Error(PortNotReported)
-        Ok(actual_port) ->
-          Ok(Started(
-            port: actual_port,
-            channels: channels,
-            expiry: expiry_actor,
-            supervisor: supervisor,
-          ))
-      }
-  }
+    |> result.map_error(ListenerNotStarted),
+  )
+  use port <- result.try(
+    process.receive(port_subject, 5000)
+    |> result.replace_error(PortNotReported),
+  )
+  Ok(Started(port:, sockets:, expiry: expiry_actor, supervisor:, listener:))
 }
 
-fn build_transport_config(
+fn transport_config(
   origin_mode: OriginMode,
-) -> mist_transport.TransportConfig(Nil) {
-  let base = mist_transport.default_config(config.socket_path)
+) -> transport.TransportConfig(mist.Connection) {
+  let base = transport.default_config(config.socket_path)
   case origin_mode {
-    AllowOrigins(origins) -> mist_transport.with_allowed_origins(base, origins)
-    TestOnlyAllowAll -> mist_transport.with_allow_all_origins(base)
-  }
-}
-
-fn try_map(
-  result: Result(a, error),
-  wrap: StartError,
-  next: fn(a) -> Result(b, StartError),
-) -> Result(b, StartError) {
-  case result {
-    Ok(value) -> next(value)
-    Error(_) -> Error(wrap)
+    AllowOrigins(origins) -> transport.with_allowed_origins(base, origins)
+    TestOnlyAllowAll -> transport.with_allow_all_origins(base)
   }
 }

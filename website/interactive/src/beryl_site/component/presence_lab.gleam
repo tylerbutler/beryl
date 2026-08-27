@@ -1,39 +1,25 @@
 import beryl_site/phoenix
-import beryl_site/presence/model
-import beryl_site/presence/view as presence_view
+import beryl_site/presence/model.{type Message, type Model}
+import beryl_site/presence/view
 import gleam/int
 import gleam/result
-import lustre
+import lustre.{type App}
 import lustre/component
-import lustre/effect
+import lustre/effect.{type Effect}
 
 pub const tag = "beryl-presence-lab"
 
-pub type Model =
-  model.Model
-
-pub type Message =
-  model.Message
-
-pub fn initial_model() -> Model {
-  model.initial()
+fn init(_arguments: Nil) -> #(Model, Effect(Message)) {
+  #(model.initial(), effect.none())
 }
 
-fn init(_arguments: Nil) {
-  #(initial_model(), effect.none())
-}
-
-fn update(current: Model, message: Message) {
+fn update(current: Model, message: Message) -> #(Model, Effect(Message)) {
   let #(next, commands) = model.update(current, message)
   #(next, phoenix.run(commands))
 }
 
-pub fn view(current: Model) {
-  presence_view.view(current)
-}
-
-pub fn app() {
-  lustre.component(init:, update:, view:, options: [
+pub fn app() -> App(Nil, Model, Message) {
+  lustre.component(init:, update:, view: view.view, options: [
     component.on_attribute_change("service-url", fn(value) {
       Ok(model.ServiceUrlChanged(value))
     }),

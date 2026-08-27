@@ -11,10 +11,10 @@ import mist.{type Connection, type ResponseData}
 /// Route an incoming HTTP request to the matching handler, falling back to a
 /// plain-text 404 for anything else.
 pub fn handle_request(
-  req: Request(Connection),
+  http_request: Request(Connection),
   service_config: config.Config,
 ) -> Response(ResponseData) {
-  case request.path_segments(req) {
+  case request.path_segments(http_request) {
     ["healthz"] -> text_response(200, "ok")
     ["v1", "status"] ->
       json_response(

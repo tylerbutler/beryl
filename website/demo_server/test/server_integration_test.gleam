@@ -1,4 +1,3 @@
-import beryl
 import beryl_demo/config
 import beryl_demo/expiry
 import beryl_demo/server
@@ -9,11 +8,12 @@ import gleam/erlang/process
 import gleam/json.{type Json}
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleeunit
 import gleeunit/should
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -106,21 +106,14 @@ fn decode_json_frame(raw: String) -> Result(Frame, Nil) {
   }
 
   json.parse(from: raw, using: decoder)
-  |> result_nil
-}
-
-fn result_nil(result: Result(a, b)) -> Result(a, Nil) {
-  case result {
-    Ok(value) -> Ok(value)
-    Error(_) -> Error(Nil)
-  }
+  |> result.replace_error(Nil)
 }
 
 fn assert_json_string(
   payload: dynamic.Dynamic,
   field: String,
   expected: String,
-) {
+) -> Nil {
   let decoder = {
     use actual <- decode.field(field, decode.string)
     decode.success(actual)
@@ -138,7 +131,11 @@ fn dynamic_field(payload: dynamic.Dynamic, field: String) -> dynamic.Dynamic {
   value
 }
 
-fn assert_json_int(payload: dynamic.Dynamic, field: String, expected: Int) {
+fn assert_json_int(
+  payload: dynamic.Dynamic,
+  field: String,
+  expected: Int,
+) -> Nil {
   let decoder = {
     use actual <- decode.field(field, decode.int)
     decode.success(actual)
@@ -180,8 +177,8 @@ fn receive_presence_diff_with_key(
   remaining: Int,
 ) -> Frame {
   let frame = receive_frame(client, "presence_diff", None, remaining)
-  let section_dyn = dynamic_field(frame.payload, section)
-  case decode.run(section_dyn, decode.dict(decode.string, decode.dynamic)) {
+  let section_value = dynamic_field(frame.payload, section)
+  case decode.run(section_value, decode.dict(decode.string, decode.dynamic)) {
     Ok(entries) ->
       case dict.has_key(entries, key) {
         True -> frame
@@ -205,7 +202,7 @@ fn start_test_server(origin_mode: server.OriginMode) -> server.Started {
 
 fn stop_started(started: server.Started) -> Nil {
   expiry.stop(started.expiry)
-  beryl.stop(started.channels)
+  stop(started.listener.pid)
   stop(started.supervisor.pid)
 }
 
@@ -404,11 +401,10 @@ pub fn expired_scenario_closes_channels_and_rejects_rejoin_test() {
   stop_started(started)
 }
 
-/// Regression for the `untrack_all` presence-cleanup bug: leaving one topic on
-/// a socket that has joined two topics must remove only the ref-tracked
-/// presence for the topic being left. The other topic's presence must remain
-/// intact, which a fresh verifier proves by observing the original client in
-/// the second topic's `presence_state`.
+/// Leaving one topic on a socket that has joined two topics must remove only
+/// the presence tracked on the topic being left. The other topic's presence
+/// must remain intact, which a fresh verifier proves by observing the original
+/// client in the second topic's `presence_state`.
 pub fn leaving_one_topic_preserves_other_topic_presence_test() {
   let started = start_test_server(server.TestOnlyAllowAll)
   let topic_x = "demo:presence:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -438,8 +434,8 @@ pub fn leaving_one_topic_preserves_other_topic_presence_test() {
   let _leave_close = receive_frame(alice, "phx_close", None, 10)
 
   // Fresh verifier joins topic Y and reads Alice from the presence_state
-  // captured at join. If terminate had used `presence.untrack_all(socket_id)`,
-  // Alice's Y presence would be gone by now and this assertion would fail.
+  // captured at join. If leaving X had untracked every presence for the
+  // socket, Alice's Y presence would be gone by now and this would fail.
   let assert Ok(verifier) = connect_websocket(started.port, config.socket_path)
   let verifier_key = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
   let assert Ok(_) =

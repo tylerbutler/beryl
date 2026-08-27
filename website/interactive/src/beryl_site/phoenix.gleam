@@ -1,6 +1,5 @@
 import beryl_site/presence/model
 import beryl_site/presence/protocol
-import beryl_site/presence/reconnect
 import gleam/list
 import gleam/option
 import lustre/effect.{type Effect}
@@ -51,10 +50,7 @@ fn run_one(command: model.Command) -> Effect(model.Message) {
           topic,
           name,
           compatibility_version,
-          fn(attempt) {
-            reconnect.delay(attempt)
-            |> option.unwrap(-1)
-          },
+          fn(attempt) { model.reconnect_delay(attempt) |> option.unwrap(-1) },
           fn() { dispatch(model.TransportOpened(role)) },
           fn(encoded) {
             case protocol.decode_join(encoded) {
@@ -69,7 +65,12 @@ fn run_one(command: model.Command) -> Effect(model.Message) {
               Error(reason) -> dispatch(model.ProtocolFailed(reason))
             }
           },
-          fn(reason) { dispatch(model.TransportClosed(role, reason)) },
+          fn(reason) {
+            dispatch(model.TransportClosed(
+              role,
+              model.string_to_close_reason(reason),
+            ))
+          },
         )
       })
     model.CloseClient(topic, role) ->

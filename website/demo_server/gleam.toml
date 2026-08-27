@@ -6,6 +6,7 @@ target = "erlang"
 
 [dependencies]
 beryl = { path = "../../packages/beryl" }
+beryl_mist = { path = "../../packages/beryl_mist" }
 envoy = ">= 1.2.0 and < 2.0.0"
 gleam_erlang = ">= 1.3.0 and < 2.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"

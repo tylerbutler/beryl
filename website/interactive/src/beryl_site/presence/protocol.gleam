@@ -44,14 +44,14 @@ pub fn state(entries: List(#(String, List(Meta)))) -> PresenceState {
   dict.from_list(entries)
 }
 
-fn meta_decoder() {
+fn meta_decoder() -> decode.Decoder(Meta) {
   use name <- decode.field("name", decode.string)
   use color <- decode.field("color", decode.string)
   use phx_ref <- decode.field("phx_ref", decode.string)
   decode.success(Meta(name:, color:, phx_ref:))
 }
 
-fn state_decoder() {
+fn state_decoder() -> decode.Decoder(PresenceState) {
   // Each client entry is {"metas": [...]} — decode dict values by extracting metas.
   decode.dict(decode.string, {
     use metas <- decode.field("metas", decode.list(meta_decoder()))

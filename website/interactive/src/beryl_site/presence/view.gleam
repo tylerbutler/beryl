@@ -1,6 +1,5 @@
 import beryl_site/presence/model
 import beryl_site/presence/protocol
-import beryl_site/presence/transcript
 import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
@@ -121,13 +120,6 @@ fn name_field(current: model.Model) -> Element(model.Message) {
   ])
 }
 
-fn connect_enabled(status: model.Status) -> Bool {
-  case status {
-    model.Static | model.Failed(_) -> True
-    _ -> False
-  }
-}
-
 fn add_secondary_enabled(current: model.Model) -> Bool {
   current.status == model.Connected && !current.secondary_connected
 }
@@ -137,7 +129,7 @@ fn controls(current: model.Model) -> Element(model.Message) {
     html.button(
       [
         attribute.attribute("data-testid", "connect-primary"),
-        attribute.disabled(!connect_enabled(current.status)),
+        attribute.disabled(!model.can_connect(current.status)),
         event.on_click(model.ConnectRequested),
       ],
       [html.text("Connect")],
@@ -166,8 +158,8 @@ fn controls(current: model.Model) -> Element(model.Message) {
           "click",
           // Sets a host attribute then deliberately fails: Lustre's synchronous
           // attribute-change flush routes the reset token without a stale rAF-render race.
-          decode.then(decode.dynamic, fn(ev) {
-            set_reset_token(ev)
+          decode.then(decode.dynamic, fn(click_event) {
+            set_reset_token(click_event)
             decode.failure(
               model.ConnectRequested,
               "reset-handled-via-attribute",
@@ -216,7 +208,7 @@ fn event_transcript(current: model.Model) -> Element(model.Message) {
   )
 }
 
-fn transcript_item(entry: transcript.Entry) -> Element(model.Message) {
+fn transcript_item(entry: model.Entry) -> Element(model.Message) {
   html.li([], [
     html.text(int.to_string(entry.sequence) <> " " <> entry.event <> " "),
     html.text(entry.payload),

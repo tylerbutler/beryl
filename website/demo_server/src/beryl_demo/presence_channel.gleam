@@ -1,39 +1,22 @@
-//// Validated presence channel handler for the beryl demo service.
+//// Validated presence channel for the beryl demo service.
 ////
 //// The channel enforces the demo topic format, validates every field of the
-//// join payload, tracks presence for the socket, and expires scenarios after
-//// their absolute TTL by handling an `Expire` info message.
+//// join payload, tracks presence for the socket, and leaves the topic when
+//// the scenario's absolute TTL delivers an `Expire` info message.
 
-import beryl.{type Channels}
-import beryl/channel.{type Channel}
+import beryl/channel.{type Handler}
 import beryl/presence.{type Presence}
 import beryl/presence/wire as presence_wire
-import beryl/socket.{type Socket}
 import beryl_demo/config
 import beryl_demo/expiry.{type Expiry}
-import gleam/dynamic.{type Dynamic}
+import gleam/bool
 import gleam/dynamic/decode
 import gleam/json.{type Json}
 import gleam/list
-import gleam/option.{Some}
+import gleam/result
 import gleam/string
 
-/// Socket assigns retained across `join`, `handle_info`, and `terminate`.
-///
-/// `presence_ref` is the ref returned by `presence.track` for the join that
-/// created these assigns; it identifies exactly this one presence entry and is
-/// used at teardown so leaving one topic never disturbs presences on other
-/// topics the same socket has joined.
-pub type Assigns {
-  Assigns(
-    presence: Presence,
-    expiry: Expiry,
-    topic: String,
-    presence_ref: String,
-  )
-}
-
-/// Server-originated messages delivered to `handle_info`.
+/// Server-originated messages delivered to the channel's `on_info` callback.
 pub type Info {
   Expire
 }
@@ -71,42 +54,28 @@ pub fn validate_join(
   name name: String,
   color color: String,
 ) -> Result(Nil, Json) {
-  case
-    JoinPayload(
-      client_id: client_id,
-      compatibility_version: compatibility_version,
-      name: name,
-      color: color,
-    )
-    |> validate_payload
-  {
-    Ok(_) -> Ok(Nil)
-    Error(error) -> Error(error)
-  }
+  JoinPayload(client_id:, compatibility_version:, name:, color:)
+  |> validate_payload
+  |> result.replace(Nil)
 }
 
 fn validate_payload(payload: JoinPayload) -> Result(JoinPayload, Json) {
-  case string.length(payload.client_id) == 36 {
-    False -> Error(channel.error_with_code(422, "invalid client_id"))
-    True ->
-      case payload.compatibility_version == config.compatibility_version {
-        False ->
-          Error(channel.error_with_code(
-            409,
-            "unsupported compatibility_version",
-          ))
-        True -> {
-          let name_length = string.length(payload.name)
-          case name_length >= 1 && name_length <= 40 {
-            False -> Error(channel.error_with_code(422, "invalid name"))
-            True ->
-              case payload.color {
-                "emerald" | "magenta" -> Ok(payload)
-                _ -> Error(channel.error_with_code(422, "invalid color"))
-              }
-          }
-        }
-      }
+  let name_length = string.length(payload.name)
+  use <- bool.guard(
+    string.length(payload.client_id) != 36,
+    Error(error_with_code(422, "invalid client_id")),
+  )
+  use <- bool.guard(
+    payload.compatibility_version != config.compatibility_version,
+    Error(error_with_code(409, "unsupported compatibility_version")),
+  )
+  use <- bool.guard(
+    name_length < 1 || name_length > 40,
+    Error(error_with_code(422, "invalid name")),
+  )
+  case payload.color {
+    "emerald" | "magenta" -> Ok(payload)
+    _ -> Error(error_with_code(422, "invalid color"))
   }
 }
 
@@ -115,149 +84,89 @@ fn payload_decoder() -> decode.Decoder(JoinPayload) {
   use compatibility_version <- decode.field("compatibility_version", decode.int)
   use name <- decode.field("name", decode.string)
   use color <- decode.field("color", decode.string)
-  decode.success(JoinPayload(
-    client_id: client_id,
-    compatibility_version: compatibility_version,
-    name: name,
-    color: color,
-  ))
+  decode.success(JoinPayload(client_id:, compatibility_version:, name:, color:))
+}
+
+/// Error payload returned to the client on a rejected join or unknown event.
+fn error_with_code(code: Int, message: String) -> Json {
+  json.object([#("code", json.int(code)), #("error", json.string(message))])
 }
 
 /// Build the presence channel handler for `demo:presence:*` topics.
-///
-/// The `channels` handle is currently unused inside the handler (all diffs are
-/// broadcast from the presence `on_diff` callback in `server.gleam`) but is
-/// accepted to keep the constructor stable when future events need it.
-pub fn new(
-  channels channels: Channels,
-  presence_actor presence_actor: Presence,
-  expiry_actor expiry_actor: Expiry,
-) -> Channel(Assigns, Info) {
-  let _ = channels
-
-  channel.new(fn(topic, payload, socket) {
-    join(topic, payload, socket, presence_actor, expiry_actor)
+pub fn handler(presence_actor: Presence, expiry_actor: Expiry) -> Handler {
+  channel.handler("demo:presence:*", fn(context) {
+    case validate_request(context, expiry_actor) {
+      Error(reason) -> channel.reject(reason)
+      Ok(payload) -> accept(context, payload, presence_actor, expiry_actor)
+    }
   })
-  |> channel.with_handle_in(handle_in)
-  |> channel.with_handle_info(handle_info)
-  |> channel.with_terminate(terminate)
 }
 
-fn join(
-  topic: String,
-  payload: Dynamic,
-  client_socket: Socket(Assigns),
-  presence_actor: Presence,
+fn validate_request(
+  context: channel.JoinContext(Info),
   expiry_actor: Expiry,
-) -> channel.JoinResult(Assigns) {
-  case valid_topic(topic) {
-    False -> channel.JoinError(channel.error_with_code(404, "unknown topic"))
-    True ->
-      case expiry.is_expired(expiry_actor, topic) {
-        True ->
-          channel.JoinError(channel.error_with_code(410, "scenario expired"))
-        False ->
-          decode_and_join(
-            topic,
-            payload,
-            client_socket,
-            presence_actor,
-            expiry_actor,
-          )
-      }
-  }
+) -> Result(JoinPayload, Json) {
+  use <- bool.guard(
+    !valid_topic(context.topic),
+    Error(error_with_code(404, "unknown topic")),
+  )
+  use <- bool.guard(
+    expiry.is_expired(expiry_actor, context.topic),
+    Error(error_with_code(410, "scenario expired")),
+  )
+  use payload <- result.try(
+    decode.run(context.payload, payload_decoder())
+    |> result.replace_error(error_with_code(422, "invalid join payload")),
+  )
+  validate_payload(payload)
 }
 
-fn decode_and_join(
-  topic: String,
-  payload: Dynamic,
-  client_socket: Socket(Assigns),
-  presence_actor: Presence,
-  expiry_actor: Expiry,
-) -> channel.JoinResult(Assigns) {
-  case channel.decode_payload(payload, payload_decoder()) {
-    Error(_) ->
-      channel.JoinError(channel.error_with_code(422, "invalid join payload"))
-    Ok(decoded) ->
-      case validate_payload(decoded) {
-        Error(reason) -> channel.JoinError(reason)
-        Ok(valid) ->
-          track_and_reply(
-            topic,
-            valid,
-            client_socket,
-            presence_actor,
-            expiry_actor,
-          )
-      }
-  }
-}
-
-fn track_and_reply(
-  topic: String,
+/// Accept a validated join.
+///
+/// The reply carries the topic's presence snapshot from before this socket is
+/// tracked; the `presence_track` action then broadcasts this socket's own join
+/// diff to every subscriber, including this socket. When the topic closes for
+/// any reason the runtime untracks this socket's presence on that topic only.
+fn accept(
+  context: channel.JoinContext(Info),
   payload: JoinPayload,
-  client_socket: Socket(Assigns),
   presence_actor: Presence,
   expiry_actor: Expiry,
-) -> channel.JoinResult(Assigns) {
-  let socket_id = socket.id(client_socket)
+) -> channel.JoinResult(Nil, Info) {
+  let self = context.self
+  expiry.track(expiry_actor, context.topic, context.socket_id, fn() {
+    channel.notify(self, Expire)
+  })
+  let snapshot =
+    presence.list(presence_actor, context.topic)
+    |> result.unwrap([])
   let meta =
     json.object([
       #("name", json.string(payload.name)),
       #("color", json.string(payload.color)),
     ])
-  let presence_ref =
-    presence.track(presence_actor, topic, payload.client_id, socket_id, meta)
-  expiry.track(expiry_actor, topic, socket_id)
-
-  let assigns =
-    Assigns(
-      presence: presence_actor,
-      expiry: expiry_actor,
-      topic: topic,
-      presence_ref: presence_ref,
-    )
-  let updated_socket = socket.set_assigns(client_socket, assigns)
-
   let reply =
     json.object([
       #("client_id", json.string(payload.client_id)),
       #("compatibility_version", json.int(config.compatibility_version)),
-      #(
-        "presence_state",
-        presence_wire.encode_state(presence.list(presence_actor, topic)),
-      ),
+      #("presence_state", presence_wire.encode_state(snapshot)),
     ])
-  channel.JoinOk(reply: Some(reply), socket: updated_socket)
-}
 
-fn handle_in(
-  _event: String,
-  _payload: Dynamic,
-  client_socket: Socket(Assigns),
-) -> channel.HandleResult(Assigns) {
-  channel.ReplyError(
-    channel.error_with_code(404, "unknown event"),
-    client_socket,
-  )
-}
-
-fn handle_info(
-  message: Info,
-  _client_socket: Socket(Assigns),
-) -> channel.HandleResult(Assigns) {
-  case message {
-    Expire -> channel.Stop(channel.Shutdown)
-  }
-}
-
-fn terminate(
-  _reason: channel.StopReason,
-  client_socket: Socket(Assigns),
-) -> Nil {
-  let assigns = socket.get_assigns(client_socket)
-  let socket_id = socket.id(client_socket)
-  expiry.untrack(assigns.expiry, assigns.topic, socket_id)
-  presence.untrack(assigns.presence, assigns.presence_ref)
-  Nil
+  channel.accept(Nil)
+  |> channel.with_reply(reply)
+  |> channel.with_actions([channel.presence_track(payload.client_id, meta)])
+  |> channel.on_message(fn(state, message) {
+    channel.next(state, [
+      channel.reply_error(message.reply, error_with_code(404, "unknown event")),
+    ])
+  })
+  |> channel.on_info(fn(_state, info) {
+    case info {
+      Expire -> channel.close([])
+    }
+  })
+  |> channel.on_terminate(fn(_state, _reason) {
+    expiry.untrack(expiry_actor, context.topic, context.socket_id)
+    []
+  })
 }

@@ -1,13 +1,12 @@
-import beryl_site/component/presence_lab
 import beryl_site/presence/model
 import beryl_site/presence/protocol
-import beryl_site/presence/transcript
+import beryl_site/presence/view
 import gleam/string
 import gleeunit/should
 import lustre/element
 
 pub fn static_component_names_the_presence_lab_test() {
-  presence_lab.view(presence_lab.initial_model())
+  view.view(model.initial())
   |> element.to_readable_string
   |> string.contains("Presence lab")
   |> should.be_true
@@ -15,7 +14,7 @@ pub fn static_component_names_the_presence_lab_test() {
 
 pub fn disconnected_view_has_progressive_controls_test() {
   let rendered =
-    presence_lab.view(presence_lab.initial_model())
+    view.view(model.initial())
     |> element.to_readable_string
 
   rendered |> string.contains("data-testid=\"primary-name\"") |> should.be_true
@@ -28,14 +27,14 @@ pub fn disconnected_view_has_progressive_controls_test() {
 pub fn connected_view_shows_status_and_gates_controls_test() {
   let connected_model =
     model.Model(
-      ..presence_lab.initial_model(),
+      ..model.initial(),
       status: model.Connected,
       topic: "demo:presence:abc123",
       secondary_connected: False,
     )
 
   let rendered =
-    presence_lab.view(connected_model)
+    view.view(connected_model)
     |> element.to_readable_string
 
   rendered |> string.contains("Ready to connect") |> should.be_false
@@ -72,10 +71,10 @@ pub fn connected_view_shows_status_and_gates_controls_test() {
 
 pub fn incompatible_view_shows_status_and_reenables_connect_test() {
   let incompatible_model =
-    model.Model(..presence_lab.initial_model(), status: model.Incompatible)
+    model.Model(..model.initial(), status: model.Incompatible)
 
   let rendered =
-    presence_lab.view(incompatible_model)
+    view.view(incompatible_model)
     |> element.to_readable_string
 
   rendered
@@ -95,13 +94,10 @@ pub fn incompatible_view_shows_status_and_reenables_connect_test() {
 
 pub fn failed_view_shows_reason_and_reenables_connect_test() {
   let failed_model =
-    model.Model(
-      ..presence_lab.initial_model(),
-      status: model.Failed("session_expired"),
-    )
+    model.Model(..model.initial(), status: model.Failed("session_expired"))
 
   let rendered =
-    presence_lab.view(failed_model)
+    view.view(failed_model)
     |> element.to_readable_string
 
   rendered
@@ -126,13 +122,13 @@ pub fn failed_view_shows_reason_and_reenables_connect_test() {
 pub fn presence_list_renders_visible_name_and_color_text_test() {
   let with_presence =
     model.Model(
-      ..presence_lab.initial_model(),
+      ..model.initial(),
       presences: protocol.state([
         #("client-1", [protocol.Meta("Alice", "emerald", "ref-1")]),
       ]),
     )
 
-  presence_lab.view(with_presence)
+  view.view(with_presence)
   |> element.to_readable_string
   |> string.contains("Alice — emerald")
   |> should.be_true
@@ -140,13 +136,13 @@ pub fn presence_list_renders_visible_name_and_color_text_test() {
 
 pub fn transcript_renders_event_and_payload_text_test() {
   let with_transcript =
-    model.Model(..presence_lab.initial_model(), transcript: [
-      transcript.Entry(2, "presence_diff", "joins:client-2"),
-      transcript.Entry(1, "socket_open", "Primary"),
+    model.Model(..model.initial(), transcript: [
+      model.Entry(2, "presence_diff", "joins:client-2"),
+      model.Entry(1, "socket_open", "Primary"),
     ])
 
   let rendered =
-    presence_lab.view(with_transcript)
+    view.view(with_transcript)
     |> element.to_readable_string
 
   rendered |> string.contains("presence_diff") |> should.be_true

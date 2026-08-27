@@ -7,7 +7,7 @@ import beryl_demo/config
 import beryl_demo/server
 import gleam/erlang/process
 
-pub fn main() {
+pub fn main() -> Nil {
   let service_config = config.from_env()
   let assert Ok(_) =
     server.start(
