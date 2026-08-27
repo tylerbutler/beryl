@@ -16,8 +16,12 @@
 import beryl
 import beryl/channel
 import beryl/group
+import beryl/presence
 import beryl/transport/server
 import beryl/wire
+import beryl_demo/config as demo_config
+import beryl_demo/expiry
+import beryl_demo/presence_channel
 import beryl_mist as mist_transport
 import chatrooms/router as chatrooms_router
 import collab_docs/auth as docs_auth
@@ -48,6 +52,11 @@ pub type Deps {
     store: doc_store.Store,
     secret: BitArray,
     hub: hub.Hub,
+    /// beryl's own presence actor, used by the documentation site's
+    /// presence lab (`demo:presence:*`).
+    demo_presence: presence.Presence,
+    /// Absolute scenario expiry for presence lab topics.
+    demo_expiry: expiry.Expiry,
   )
 }
 
@@ -70,6 +79,7 @@ pub fn handlers(deps: Deps) -> List(channel.Handler) {
       store: deps.store,
       secret: deps.secret,
     )),
+    presence_channel.handler(deps.demo_presence, deps.demo_expiry),
   ]
 }
 
@@ -94,6 +104,13 @@ pub fn main() {
   // `lobby` room list).
   let assert Ok(hub) = hub.start()
 
+  // The documentation site's presence lab: beryl's presence actor plus the
+  // absolute scenario expiry from website/demo_server, on this same socket.
+  let assert Ok(demo_presence) =
+    presence.start(presence.default_config("showcase@node"))
+  let assert Ok(demo_expiry) =
+    expiry.start(demo_config.default().session_ttl_ms)
+
   // Per-topic-pattern rate limits replace the old single global
   // channel-rate compromise: cursors stream fast, chat and docs do not.
   // The frame budget sits modestly above the decoded-message budget to
@@ -106,6 +123,12 @@ pub fn main() {
     |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
     |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
     |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
+    |> beryl.with_topic_rate(
+      pattern: "demo:presence:*",
+      per_second: 10,
+      burst: 20,
+    )
+    |> beryl.with_presence_handle(presence: demo_presence)
 
   let deps =
     Deps(
@@ -114,6 +137,8 @@ pub fn main() {
       store: docs_store,
       secret: docs_secret,
       hub: hub,
+      demo_presence: demo_presence,
+      demo_expiry: demo_expiry,
     )
 
   let assert Ok(#(channels, beryl_spec)) =
@@ -152,6 +177,7 @@ pub fn main() {
       cursors: cursors_ctx,
       chatrooms: chatrooms_ctx,
       collab_docs: collab_docs_ctx,
+      demo: demo_config.from_env(),
     )
 
   let port =
@@ -169,14 +195,24 @@ pub fn main() {
   // Single WebSocket endpoint at /socket/websocket. No token gate — this
   // is a public demo. Phoenix JS client (new Socket("/socket")) in every
   // example targets this URL out of the box.
+  //
+  // The documentation site embeds the presence lab cross-origin, so the
+  // deployment sets ALLOWED_ORIGINS to an exact allow-list that names both
+  // this host and https://beryl.tylerbutler.com. Unset keeps the default
+  // same-origin policy for local runs.
+  let transport_config = case envoy.get("ALLOWED_ORIGINS") {
+    Ok(origins) ->
+      server.with_allowed_origins(
+        server.default_config(demo_config.socket_path),
+        demo_config.parse_origins(origins),
+      )
+    Error(Nil) -> server.default_config(demo_config.socket_path)
+  }
   let assert Ok(_) =
     fn(req) {
-      mist_transport.upgrade(
-        req,
-        channels,
-        server.default_config("/socket/websocket"),
-        fn() { router.handle_request(req, showcase_ctx) },
-      )
+      mist_transport.upgrade(req, channels, transport_config, fn() {
+        router.handle_request(req, showcase_ctx)
+      })
     }
     |> mist.new
     |> mist.bind(interface)

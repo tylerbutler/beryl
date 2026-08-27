@@ -477,3 +477,44 @@ fn settle_roster(frames: h.Frames, username: String) -> Nil {
   |> list.any(h.contains(_, ["presence_list", username]))
   |> should.be_true
 }
+
+// ---------------------------------------------------------------------------
+// demo:presence:* (the documentation site's presence lab)
+// ---------------------------------------------------------------------------
+
+const lab_topic = "demo:presence:0123456789abcdef0123456789abcdef"
+
+fn lab_join_payload(compatibility_version: Int) -> String {
+  "{\"client_id\":\"11111111-1111-1111-1111-111111111111\","
+  <> "\"compatibility_version\":"
+  <> int.to_string(compatibility_version)
+  <> ",\"name\":\"Alice\",\"color\":\"emerald\"}"
+}
+
+pub fn a_presence_lab_join_is_acknowledged_then_tracked_test() {
+  let system = h.start("lab-join")
+  let frames = h.connect(system, "s1")
+
+  h.join(system, "s1", lab_topic, "1", lab_join_payload(1))
+
+  // The acknowledgment carries the snapshot taken before this socket was
+  // tracked; the socket's own join arrives as the following diff.
+  let ack = h.recv(frames)
+  h.contains(ack, [
+    "phx_reply", "\"status\":\"ok\"", lab_topic, "\"compatibility_version\":1",
+    "presence_state",
+  ])
+  |> should.be_true
+  h.expect(frames, ["presence_diff", lab_topic, "\"joins\"", "Alice"])
+  h.stop(system)
+}
+
+pub fn a_presence_lab_join_with_another_version_is_rejected_test() {
+  let system = h.start("lab-version")
+  let frames = h.connect(system, "s1")
+
+  h.join(system, "s1", lab_topic, "1", lab_join_payload(2))
+
+  h.expect(frames, ["phx_reply", "\"status\":\"error\"", "\"code\":409"])
+  h.stop(system)
+}

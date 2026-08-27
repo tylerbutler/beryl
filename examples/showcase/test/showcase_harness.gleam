@@ -9,10 +9,13 @@
 import beryl
 import beryl/channel
 import beryl/group
+import beryl/presence
 import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import beryl_demo/config as demo_config
+import beryl_demo/expiry
 import collab_docs/auth
 import collab_docs/doc_store
 import example_helpers/broadcast_hub as hub
@@ -51,10 +54,15 @@ pub fn start(_replica: String) -> System {
   let assert Ok(store) = doc_store.start()
   let assert Ok(broadcast_hub) = hub.start()
   let secret = auth.new_secret()
+  let assert Ok(demo_presence) =
+    presence.start(presence.default_config("showcase_test"))
+  let assert Ok(demo_expiry) =
+    expiry.start(demo_config.default().session_ttl_ms)
 
   // Errors only: the runtime's info/warn lines would bury the test output.
   let config =
     beryl.config(wire.phoenix_codec())
+    |> beryl.with_presence_handle(presence: demo_presence)
     |> beryl.with_logging(beryl.logging_config(
       level: beryl.ErrorLevel,
       include_payloads: False,
@@ -69,6 +77,8 @@ pub fn start(_replica: String) -> System {
         store: store,
         secret: secret,
         hub: broadcast_hub,
+        demo_presence: demo_presence,
+        demo_expiry: demo_expiry,
       )),
     )
 

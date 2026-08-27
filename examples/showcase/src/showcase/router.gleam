@@ -2,6 +2,8 @@
 //// first path segment to the bundled cursors / chatrooms / collab_docs
 //// routers, each pinned to its own URL prefix.
 
+import beryl_demo/config as demo_config
+import beryl_demo/router as demo_router
 import chatrooms/router as chatrooms_router
 import collab_docs/router as collab_docs_router
 import cursors/router as cursors_router
@@ -16,6 +18,8 @@ pub type Context {
     cursors: cursors_router.Context,
     chatrooms: chatrooms_router.Context,
     collab_docs: collab_docs_router.Context,
+    /// Status endpoint for the documentation site's presence lab.
+    demo: demo_config.Config,
   )
 }
 
@@ -26,6 +30,7 @@ pub fn handle_request(
   case request.path_segments(req) {
     [] -> landing_page()
     ["healthz"] -> healthz()
+    ["v1", ..] -> demo_router.handle_request(req, ctx.demo)
     ["cursors", ..] -> cursors_router.handle_request(req, ctx.cursors)
     ["chat", ..] -> chatrooms_router.handle_request(req, ctx.chatrooms)
     // TODO: re-enable the collab_docs demo. The handler is still

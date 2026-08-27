@@ -1,9 +1,16 @@
 # Beryl documentation demo service
 
-This service runs the public realtime scenarios embedded in the beryl
-documentation. It is intentionally separate from the static site: every client
-is untrusted, joins only randomized `demo:presence:*` topics, and receives no
-access to application data.
+This package holds the realtime scenario embedded in the beryl documentation:
+a validated `demo:presence:*` channel with absolute scenario expiry, plus the
+`/v1/status` endpoint the site queries. Every client is untrusted, joins only
+randomized topics, and receives no access to application data.
+
+In production the channel is not a separate service: `examples/showcase`
+registers `beryl_demo/presence_channel` on its own socket and serves
+`/v1/status`, and the documentation site connects to
+`https://demo.beryl.tylerbutler.com`. The standalone server in
+`beryl_demo/server` exists for local development and the Playwright e2e
+suite, and its integration tests exercise the channel end to end.
 
 ## Run locally
 
@@ -26,20 +33,6 @@ Production must set:
 
 ```text
 ALLOWED_ORIGINS=https://beryl.tylerbutler.com
-```
-
-## Container
-
-Build from the repository root because the nested project uses the root beryl
-package as a path dependency:
-
-```bash
-docker build -f website/demo_server/Dockerfile -t beryl-demo .
-docker run --rm \
-  -p 4100:4100 \
-  -e ALLOWED_ORIGINS=https://beryl.tylerbutler.com \
-  -e BERYL_VERSION=0.1.0 \
-  beryl-demo
 ```
 
 ## Health and compatibility
