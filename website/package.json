@@ -17,7 +17,7 @@
 	},
 	"scripts": {
 		"astro": "astro",
-		"build:interactive": "node scripts/build-interactive.mjs",
+		"build:interactive": "cd interactive && gleam build --target javascript",
 		"build:site": "pnpm run generate:og && pnpm run build:interactive && astro build",
 		"check:astro": "pnpm run build:interactive && astro check",
 		"check:snippets": "node scripts/check-snippets.mjs",

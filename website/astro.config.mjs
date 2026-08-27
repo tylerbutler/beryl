@@ -1,6 +1,7 @@
 import starlight from "@astrojs/starlight";
 import mermaid from "astro-mermaid";
 import a11yEmoji from "@fec/remark-a11y-emoji";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "astro/config";
 import starlightLinksValidator from "starlight-links-validator";
 import starlightLlmsTxt from "starlight-llms-txt";
@@ -279,5 +280,14 @@ export default defineConfig({
 		remarkPlugins: [
 			a11yEmoji,
 		],
+	},
+	vite: {
+		server: {
+			fs: {
+				// PresenceLab.astro imports the Gleam-compiled Lustre client
+				// from interactive/build, outside the Astro root.
+				allow: [fileURLToPath(new URL("./interactive/build", import.meta.url))],
+			},
+		},
 	},
 });

@@ -5,6 +5,3 @@ node_modules/
 *.tsbuildinfo
 *.done.build.log
 interactive/build/
-interactive/dist/
-interactive/.lustre/
-public/interactive/

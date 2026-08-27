@@ -24,7 +24,12 @@ const serviceUrl =
   </section>
 </beryl-presence-lab>
 
-<script is:inline type="module" src="/interactive/beryl_site.mjs"></script>
+<script>
+  // Compiled by `pnpm build:interactive` (gleam build --target javascript);
+  // Vite bundles it from the Gleam build directory.
+  import { main } from "../../interactive/build/dev/javascript/beryl_site/beryl_site.mjs";
+  main();
+</script>
 
 <style>
   beryl-presence-lab {
