@@ -50,7 +50,7 @@ union. Then add router branches. With the channel layer, add one handler to the
 list.
 
 The layer gives each channel a private state type and server-side message type.
-Unrelated channels do not need a shared `Model` or `Msg`. A library can publish
+Unrelated channels do not need a shared `Model` or `Message`. A library can publish
 a channel value for direct use.
 
 ## Use raw dispatch for socket-wide control

@@ -41,20 +41,20 @@ Bridge - Forward an external OTP actor's message stream to a socket via
  }
 
  // Your app's server-side message type, delivered to `update` as `Info`.
- pub type Msg {
+ pub type Message {
    DocUpdated(version: Int)
  }
 
- fn init(info: ConnectInfo(Msg)) {
-   // Forward each DocEvent to this socket as an `Info(Msg)` event.
-   let assert Ok(b) =
-     bridge.start(to: info.self, with: fn(e: DocEvent) {
-       let Updated(v) = e
-       DocUpdated(v)
+ fn init(info: ConnectInfo(Message)) -> #(Model, List(socket.Effect)) {
+   // Forward each DocEvent to this socket as an `Info(Message)` event.
+   let assert Ok(bridge_handle) =
+     bridge.start(to: info.self, with: fn(event: DocEvent) {
+       let Updated(version) = event
+       DocUpdated(version)
      })
    // Subscribe the domain actor to the bridge's subject.
-   doc.subscribe(doc_actor, bridge.subject(b))
-   #(Model(bridge: b), [])
+   doc.subscribe(doc_actor, bridge.subject(bridge_handle))
+   #(Model(bridge: bridge_handle), [])
  }
 
  // Stop the bridge when the socket closes (e.g. from a `Closed` event).

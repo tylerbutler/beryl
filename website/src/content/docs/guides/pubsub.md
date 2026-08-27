@@ -12,10 +12,10 @@ to a topic, and each process subscribed to that topic receives them.
 import beryl/pubsub
 
 // Default scope ("beryl_pubsub")
-let ps = pubsub.start(pubsub.default_config())
+let pubsub_handle = pubsub.start(pubsub.default_config())
 
 // Custom scope (isolates process groups)
-let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
+let pubsub_handle = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 ```
 
 The scope maps to a `pg` scope atom and identifies the PubSub instance.
@@ -37,16 +37,16 @@ Create one typed subscriber in the process that owns the mailbox. Join the
 required topics. Add PubSub delivery to the process selector:
 
 ```gleam
-let sub = pubsub.subscriber(ps)
-pubsub.join(sub, "room:lobby")
+let subscriber = pubsub.subscriber(pubsub_handle)
+pubsub.join(subscriber, "room:lobby")
 
 let selector =
   process.new_selector()
   |> process.select(app_subject)
-  |> pubsub.selecting(sub, RemoteBroadcast)
+  |> pubsub.selecting(subscriber, RemoteBroadcast)
 
 // Later:
-pubsub.leave(sub, "room:lobby")
+pubsub.leave(subscriber, "room:lobby")
 ```
 
 PubSub records arrive as raw BEAM messages. `selecting` validates their types
@@ -91,11 +91,16 @@ runtimes do not send the message to that socket. Thus,
 import gleam/json
 
 // Broadcast to all subscribers (all nodes)
-pubsub.broadcast(ps, "room:lobby", "new_message", json.string("hello"))
+pubsub.broadcast(
+  pubsub_handle,
+  "room:lobby",
+  "new_message",
+  json.string("hello"),
+)
 
 // Broadcast to all except the sender process
 pubsub.broadcast_from(
-  ps,
+  pubsub_handle,
   process.self(),
   "room:lobby",
   "new_message",
@@ -104,7 +109,7 @@ pubsub.broadcast_from(
 
 // Broadcast to all except a specific socket ID (clustered "broadcast except this socket")
 pubsub.broadcast_from_socket(
-  ps,
+  pubsub_handle,
   process.self(),   // sending runtime process
   socket_id,        // socket ID to exclude on receiving runtimes
   "room:lobby",
@@ -113,7 +118,12 @@ pubsub.broadcast_from_socket(
 )
 
 // Broadcast to local node only
-pubsub.local_broadcast(ps, "room:lobby", "new_message", json.string("hello"))
+pubsub.local_broadcast(
+  pubsub_handle,
+  "room:lobby",
+  "new_message",
+  json.string("hello"),
+)
 ```
 
 Use `broadcast_from_socket` to send to all cluster subscribers except one
@@ -124,10 +134,10 @@ function.
 
 ```gleam
 // All subscribers across all nodes
-let pids = pubsub.subscribers(ps, "room:lobby")
+let pids = pubsub.subscribers(pubsub_handle, "room:lobby")
 
 // Count subscribers
-let count = pubsub.subscriber_count(ps, "room:lobby")
+let count = pubsub.subscriber_count(pubsub_handle, "room:lobby")
 ```
 
 ## Use PubSub across Erlang nodes
@@ -150,11 +160,14 @@ The channel system uses PubSub internally for distributed broadcasts when config
 import beryl
 import beryl/wire
 
-let ps = pubsub.start(pubsub.default_config())
-let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-let assert Ok(#(channels, spec)) =
+let pubsub_handle = pubsub.start(pubsub.default_config())
+let config =
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_pubsub(pubsub_handle)
+let assert Ok(#(channels, runtime_specification)) =
   beryl.child_spec(config, init: init, update: update)
-// Add `spec` to your application supervisor before using `channels`.
+// Add `runtime_specification` to your application supervisor before using
+// `channels`.
 
 // beryl.broadcast() now sends to all nodes automatically
 beryl.broadcast(channels, "room:lobby", "event", payload)

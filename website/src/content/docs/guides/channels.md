@@ -106,17 +106,17 @@ pub fn handlers() -> List(channel.Handler) {
   [room_channel.room()]
 }
 
-pub fn main() {
+pub fn main() -> Nil {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, channel_specification)) =
     channel.child_spec(config, handlers: handlers())
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(channel_specification)
     |> static_supervisor.start()
 
   // `sockets` is an ordinary core handle: hand it to a transport, to
@@ -519,7 +519,7 @@ import gleam/otp/static_supervisor
 import my_app
 
 pub fn start_supervised() -> beryl.Sockets {
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, channel_specification)) =
     channel.child_spec(
       beryl.config(wire.phoenix_codec()),
       handlers: my_app.handlers(),
@@ -527,7 +527,7 @@ pub fn start_supervised() -> beryl.Sockets {
 
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(channel_specification)
     |> static_supervisor.start()
 
   sockets

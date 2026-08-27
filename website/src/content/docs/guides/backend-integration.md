@@ -41,14 +41,14 @@ import gleam/http/response.{type Response}
 import mist
 
 fn handle_request(
-  req: Request(mist.Connection),
+  http_request: Request(mist.Connection),
   sockets: beryl.Sockets,
-  ws_config: server.TransportConfig(mist.Connection),
+  websocket_config: server.TransportConfig(mist.Connection),
 ) -> Response(mist.ResponseData) {
-  use <- mist_transport.upgrade(req, sockets, ws_config)
+  use <- mist_transport.upgrade(http_request, sockets, websocket_config)
 
-  case request.path_segments(req), req.method {
-    ["internal", "publish"], Post -> publish(req, sockets)
+  case request.path_segments(http_request), http_request.method {
+    ["internal", "publish"], Post -> publish(http_request, sockets)
     _, _ -> not_found()
   }
 }
@@ -67,21 +67,21 @@ pub type PublishRequest {
 }
 
 fn publish(
-  req: Request(mist.Connection),
+  http_request: Request(mist.Connection),
   sockets: beryl.Sockets,
 ) -> Response(mist.ResponseData) {
-  case authorized_internal(req) {
+  case authorized_internal(http_request) {
     False -> forbidden()
     True ->
-      case read_publish_request(req) {
-        Ok(msg) -> {
+      case read_publish_request(http_request) {
+        Ok(publish_request) -> {
           beryl.broadcast(
             sockets,
-            msg.topic,
+            publish_request.topic,
             "order_updated",
             json.object([
-              #("order_id", json.string(msg.order_id)),
-              #("status", json.string(msg.status)),
+              #("order_id", json.string(publish_request.order_id)),
+              #("status", json.string(publish_request.status)),
             ]),
           )
           accepted()
@@ -92,10 +92,10 @@ fn publish(
 }
 
 fn read_publish_request(
-  req: Request(mist.Connection),
+  http_request: Request(mist.Connection),
 ) -> Result(PublishRequest, Nil) {
-  use req <- result.try(
-    mist.read_body(req, 1_000_000) |> result.replace_error(Nil),
+  use http_request <- result.try(
+    mist.read_body(http_request, 1_000_000) |> result.replace_error(Nil),
   )
   let decoder = {
     use topic <- decode.field("topic", decode.string)
@@ -103,7 +103,7 @@ fn read_publish_request(
     use status <- decode.field("status", decode.string)
     decode.success(PublishRequest(topic:, order_id:, status:))
   }
-  json.parse_bits(req.body, decoder) |> result.replace_error(Nil)
+  json.parse_bits(http_request.body, decoder) |> result.replace_error(Nil)
 }
 ```
 
@@ -112,8 +112,8 @@ fn read_publish_request(
 ```gleam
 import gleam/crypto
 
-fn authorized_internal(req: Request(mist.Connection)) -> Bool {
-  case request.get_header(req, "x-internal-secret") {
+fn authorized_internal(http_request: Request(mist.Connection)) -> Bool {
+  case request.get_header(http_request, "x-internal-secret") {
     Ok(provided) ->
       crypto.secure_compare(
         <<provided:utf8>>,
@@ -155,8 +155,8 @@ fn not_found() -> Response(mist.ResponseData) {
 Use `beryl.broadcast` when the backend sends JSON payloads by topic.
 
 For typed updates from a long-lived application actor, use the socket's
-`socket.Sender(msg)` with `beryl/bridge`. The bridge forwards messages from the
-actor to `socket.Info(msg)`.
+`socket.Sender(message)` with `beryl/bridge`. The bridge forwards messages from
+the actor to `socket.Info(message)`.
 
 ## Benefits
 

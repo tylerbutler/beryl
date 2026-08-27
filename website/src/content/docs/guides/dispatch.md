@@ -21,7 +21,7 @@ import beryl/socket
 import beryl/wire
 import gleam/otp/static_supervisor
 
-let assert Ok(#(sockets, spec)) =
+let assert Ok(#(sockets, runtime_specification)) =
   beryl.child_spec(
     beryl.config(wire.phoenix_codec()),
     init: init,
@@ -29,7 +29,7 @@ let assert Ok(#(sockets, spec)) =
   )
 let assert Ok(_root) =
   static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(spec)
+  |> static_supervisor.add(runtime_specification)
   |> static_supervisor.start()
 ```
 
@@ -90,22 +90,22 @@ import gleam/json
 import gleam/list
 import gleam/option.{Some}
 
-pub type Msg {
+pub type Message {
   Tick(Int)
 }
 
 pub type Model {
-  Model(joined_topics: List(String), self: socket.Sender(Msg))
+  Model(joined_topics: List(String), self: socket.Sender(Message))
 }
 
-fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
+fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) {
   #(Model(joined_topics: [], self: info.self), [])
 }
 
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
+fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
   let room_pattern = topic.parse_pattern("room:*")
 
-  case ev {
+  case input {
     socket.Join(topic_name, _payload, ref) ->
       case topic.extract_id(room_pattern, topic_name) {
         Ok(room_id) ->
@@ -236,11 +236,11 @@ process can keep the sender. It can later call `socket.notify` to deliver
 ```gleam
 import beryl/socket
 
-pub type Msg {
+pub type Message {
   JobFinished(String)
 }
 
-fn notify_socket(sender: socket.Sender(Msg), job_id: String) -> Nil {
+fn notify_socket(sender: socket.Sender(Message), job_id: String) -> Nil {
   socket.notify(sender, JobFinished(job_id))
 }
 ```

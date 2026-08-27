@@ -5,14 +5,21 @@ import live_poll/server
 import live_poll/store
 import live_poll/timer
 
-pub fn main() {
+pub fn main() -> Nil {
   let assert Ok(polls) = store.start()
   let assert Ok(clock) = timer.start()
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, child_specification)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: raw.init,
       update: raw.update(raw.Voting, polls, clock, 60_000),
     )
-  server.run(sockets, spec, "Step 02 - raw voting", 8102, False, False)
+  server.run(
+    sockets,
+    child_specification,
+    "Step 02 - raw voting",
+    8102,
+    False,
+    False,
+  )
 }

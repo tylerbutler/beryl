@@ -26,20 +26,20 @@ import beryl/pubsub
 import gleam/otp/static_supervisor
 
 // Without PubSub (single-node only)
-let #(p, presence_spec) =
+let #(presence_handle, presence_specification) =
   presence.child_spec(presence.default_config("node1"))
 
 // With PubSub for cross-node replication
-let ps = pubsub.start(pubsub.default_config())
+let pubsub_handle = pubsub.start(pubsub.default_config())
 let config =
   presence.default_config("node1")
-  |> presence.with_pubsub(ps)
+  |> presence.with_pubsub(pubsub_handle)
   |> presence.with_broadcast_interval(1500)
-let #(p, presence_spec) = presence.child_spec(config)
+let #(presence_handle, presence_specification) = presence.child_spec(config)
 
 let assert Ok(_root) =
   static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(presence_spec)
+  |> static_supervisor.add(presence_specification)
   |> static_supervisor.start()
 ```
 
@@ -50,10 +50,10 @@ Presence mutations wait up to 5 seconds for the actor by default. Use
 let config =
   presence.default_config("node1")
   |> presence.with_call_timeout(10_000)
-let #(p, presence_spec) = presence.child_spec(config)
+let #(presence_handle, presence_specification) = presence.child_spec(config)
 let assert Ok(_root) =
   static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(presence_spec)
+  |> static_supervisor.add(presence_specification)
   |> static_supervisor.start()
 ```
 
@@ -70,7 +70,7 @@ import gleam/json
 
 // Track a user in a topic
 let ref = presence.track(
-  p,
+  presence_handle,
   "room:lobby",   // topic
   "user:alice",    // key (groups multiple connections)
   socket_id,       // session ID (unique per connection)
@@ -91,7 +91,7 @@ Replace one presence entry's metadata without removing its key from the roster:
 ```gleam
 let assert Ok(new_ref) =
   presence.update(
-    p,
+    presence_handle,
     ref,
     json.object([#("status", json.string("away"))]),
   )
@@ -106,10 +106,10 @@ or non-public ref returns `Error(presence.UnknownRef)`.
 
 ```gleam
 // Remove a specific presence, using the ref returned by `track`
-presence.untrack(p, new_ref)
+presence.untrack(presence_handle, new_ref)
 
 // Remove all presences for a session ID / socket (e.g., on disconnect)
-presence.untrack_all(p, socket_id)
+presence.untrack_all(presence_handle, socket_id)
 ```
 
 `track` returns a ref for the new presence entry. Keep the ref if you must
@@ -121,16 +121,16 @@ identifies the logical session, not a BEAM process.
 
 ```gleam
 // Get all presences in a topic
-let assert Ok(entries) = presence.list(p, "room:lobby")
+let assert Ok(entries) = presence.list(presence_handle, "room:lobby")
 // Returns: [PresenceEntry(session_id: "socket_1", key: "user:alice", meta: ...)]
 
 // Get presences for a specific key
 let assert Ok(alice_sessions) =
-  presence.get_by_key(p, "room:lobby", "user:alice")
+  presence.get_by_key(presence_handle, "room:lobby", "user:alice")
 // Returns: [#("socket_1", meta), #("socket_2", meta)]
 
 // Count without materializing the entry list
-let assert Ok(online_count) = presence.count(p, "room:lobby")
+let assert Ok(online_count) = presence.count(presence_handle, "room:lobby")
 ```
 
 `list`, `get_by_key`, and `count` read a snapshot from an ETS table owned by the
@@ -171,7 +171,7 @@ later actor messages.
 ```gleam
 let config =
   presence.default_config("node1")
-  |> presence.with_pubsub(ps)
+  |> presence.with_pubsub(pubsub_handle)
   |> presence.with_broadcast_interval(1500)
   |> presence.with_on_diff(fn(diff) {
     diff
@@ -198,7 +198,7 @@ import beryl
 
 let config =
   presence.default_config("node1")
-  |> presence.with_pubsub(ps)
+  |> presence.with_pubsub(pubsub_handle)
   |> presence.with_broadcast_interval(1500)
   |> presence.with_on_diff(fn(diff) {
     beryl.broadcast_presence_diff(channels, "room:lobby", diff)

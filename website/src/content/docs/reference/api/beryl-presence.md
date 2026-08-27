@@ -37,18 +37,25 @@ Presence - Distributed presence tracking backed by a CRDT
  ## Example
 
  ```gleam
- let ps = pubsub.start(pubsub.default_config())
+ let pubsub_handle = pubsub.start(pubsub.default_config())
  let config =
    presence.default_config("node1")
-   |> presence.with_pubsub(ps)
+   |> presence.with_pubsub(pubsub_handle)
    |> presence.with_broadcast_interval(1500)
- let #(p, presence_spec) = presence.child_spec(config)
+ let #(presence_handle, presence_specification) = presence.child_spec(config)
  let assert Ok(_root) =
    static_supervisor.new(static_supervisor.OneForOne)
-   |> static_supervisor.add(presence_spec)
+   |> static_supervisor.add(presence_specification)
    |> static_supervisor.start()
- let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
- let assert Ok(entries) = presence.list(p, "room:lobby")
+ let ref =
+   presence.track(
+     presence_handle,
+     "room:lobby",
+     "user:1",
+     "socket-1",
+     meta,
+   )
+ let assert Ok(entries) = presence.list(presence_handle, "room:lobby")
  ```
 
 ## Types

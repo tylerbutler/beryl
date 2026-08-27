@@ -30,36 +30,41 @@ beryl - Type-safe real-time communication
 
  ```gleam
  import beryl
- import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
+ import beryl/socket.{
+   AcceptJoin, Binary, Broadcast, Closed, Info, Join, Message, Next,
+ }
  import beryl/pubsub
  import beryl/wire
  import gleam/option
  import gleam/otp/static_supervisor
 
- pub fn main() {
+ pub fn main() -> Nil {
    // Optional: start PubSub for distributed messaging
-   let ps = pubsub.start(pubsub.default_config())
+   let pubsub_handle = pubsub.start(pubsub.default_config())
 
    // Build the supervised system. The app supplies `init` (the per-socket
    // model) and `update` (which routes every event by topic).
-   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-   let assert Ok(#(sockets, spec)) =
+   let config =
+     beryl.config(wire.phoenix_codec())
+     |> beryl.with_pubsub(pubsub_handle)
+   let assert Ok(#(sockets, child_specification)) =
      beryl.child_spec(
        config,
        init: fn(_info) { #(Nil, []) },
-       update: fn(model, ev) {
-         case ev {
+       update: fn(model, event) {
+         case event {
            Join("room:" <> _, _payload, ref) ->
              Next(model, [AcceptJoin(ref, option.None)])
            Message(topic, "new_msg", payload, _ref) ->
              Next(model, [Broadcast(topic, "new_msg", payload)])
-           _ -> Next(model, [])
+           Join(..) | Message(..) | Binary(..) | Closed(..) | Info(..) ->
+             Next(model, [])
          }
        },
      )
    let assert Ok(_root) =
      static_supervisor.new(static_supervisor.OneForOne)
-     |> static_supervisor.add(spec)
+     |> static_supervisor.add(child_specification)
      |> static_supervisor.start()
 
    // Broadcast to all subscribers of a topic
@@ -298,12 +303,12 @@ Build the app-side dispatch supervision child specification.
  ## Example
 
  ```gleam
- let assert Ok(#(sockets, spec)) =
+ let assert Ok(#(sockets, child_specification)) =
    beryl.child_spec(beryl.config(wire.phoenix_codec()), init:, update:)
 
  let assert Ok(_root) =
    static_supervisor.new(static_supervisor.OneForOne)
-   |> static_supervisor.add(spec)
+   |> static_supervisor.add(child_specification)
    |> static_supervisor.start()
 
  // `sockets` is usable once the tree above is running.

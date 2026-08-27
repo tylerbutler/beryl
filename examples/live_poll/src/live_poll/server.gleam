@@ -13,7 +13,9 @@ import mist
 
 pub fn run(
   sockets: beryl.Sockets,
-  spec: supervision.ChildSpecification(static_supervisor.Supervisor),
+  child_specification: supervision.ChildSpecification(
+    static_supervisor.Supervisor,
+  ),
   title: String,
   port: Int,
   healthz: Bool,
@@ -21,17 +23,17 @@ pub fn run(
 ) -> Nil {
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
 
   let assert Ok(_) =
-    fn(req) {
+    fn(http_request) {
       mist_transport.upgrade(
-        req,
+        http_request,
         sockets,
         server.default_config("/socket/websocket"),
         fn() {
-          case request.path_segments(req), healthz {
+          case request.path_segments(http_request), healthz {
             ["healthz"], True -> text(200, "ok")
             [], _ -> html(guide)
             _, _ -> text(404, "Not found")
@@ -48,13 +50,13 @@ pub fn run(
   process.sleep_forever()
 }
 
-fn text(status: Int, body: String) {
+fn text(status: Int, body: String) -> response.Response(mist.ResponseData) {
   response.new(status)
   |> response.set_header("content-type", "text/plain; charset=utf-8")
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
 }
 
-fn html(guide: Bool) {
+fn html(guide: Bool) -> response.Response(mist.ResponseData) {
   response.new(200)
   |> response.set_header("content-type", "text/html; charset=utf-8")
   |> response.set_body(mist.Bytes(bytes_tree.from_string(client_html(guide))))

@@ -62,10 +62,10 @@ For apps with many topic families, or apps shaped like Phoenix Channels, use
 `beryl/channel`. Step 4 of the example starts it like this:
 
 ```gleam
-let assert Ok(#(sockets, spec)) =
+let assert Ok(#(sockets, child_specification)) =
   channel.child_spec(
     beryl.config(wire.phoenix_codec()),
-    handlers: channels.handlers(polls, clock, 60_000),
+    handlers: channel_handler.handlers(polls, clock, 60_000),
   )
 ```
 
@@ -140,7 +140,7 @@ fn poll_channel(
 ```
 
 This exact excerpt comes from
-[`channels.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/channels.gleam).
+[`channel_handler.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/channel_handler.gleam).
 Read it from the top:
 
 - `channel.handler` pairs the pattern `poll:*` with the join function.
@@ -205,9 +205,9 @@ fn guide_channel() -> channel.Handler {
 }
 ```
 
-This exact excerpt also comes from `channels.gleam`. The guide channel uses an
-`Int` for state and `GuideInfo` for info. The poll channel uses a `String` and
-`PollInfo`. You do not write `Model(PollState, GuideState)` or
+This exact excerpt also comes from `channel_handler.gleam`. The guide channel
+uses an `Int` for state and `GuideInfo` for info. The poll channel uses a
+`String` and `PollInfo`. You do not write `Model(PollState, GuideState)` or
 `Message(PollMessage | GuideMessage)`. You put the two handlers in a list.
 
 The browser joins `guide` after it joins its poll topic. The `Ready` message

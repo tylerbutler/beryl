@@ -21,18 +21,18 @@ import gleam/http/response
 import mist
 
 fn handle_request(
-  req: Request(mist.Connection),
+  http_request: Request(mist.Connection),
   channels: beryl.Sockets,
 ) -> response.Response(mist.ResponseData) {
   // Upgrade /socket/websocket requests to WebSocket
   use <- mist_transport.upgrade(
-    req,
+    http_request,
     channels,
     server.default_config("/socket/websocket"),
   )
 
   // Non-WebSocket requests fall through here
-  case request.path_segments(req) {
+  case request.path_segments(http_request) {
     [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
     _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
   }
@@ -65,17 +65,17 @@ similar to Phoenix `UserSocket.connect/3`. The hook runs once for each socket
 before any channel join. It can reject the connection.
 
 ```gleam
-let ws_config =
+let websocket_config =
   server.default_config("/socket/websocket")
-  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
+  |> server.with_on_connect(fn(http_request: Request(mist.Connection)) {
     // Check auth token, session, etc.
-    case validate_token(req) {
+    case validate_token(http_request) {
       Ok(_user) -> Ok([])                        // Allow; no connect metadata
       Error(_) -> Error(server.ConnectRejected)  // Reject with 403
     }
   })
 
-use <- mist_transport.upgrade(req, channels, ws_config)
+use <- mist_transport.upgrade(http_request, channels, websocket_config)
 ```
 
 Return `Error(server.ConnectRejected)` to send HTTP 403 before the WebSocket
@@ -96,11 +96,11 @@ Use `with_allowed_origins` to allow only your application origins. Values match
 the full `Origin` header exactly: scheme, host, and port when present.
 
 ```gleam
-let ws_config =
+let websocket_config =
   server.default_config("/socket/websocket")
   |> server.with_allowed_origins(["https://app.example.com"])
-  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
-    validate_cookie_session(req)
+  |> server.with_on_connect(fn(http_request: Request(mist.Connection)) {
+    validate_cookie_session(http_request)
   })
 ```
 
@@ -131,11 +131,11 @@ list of string pairs that reaches `init` as `seed.metadata`. Resolve the identit
 Then `init` can read it instead of decoding the request again:
 
 ```gleam
-let ws_config =
+let websocket_config =
   server.default_config("/socket/websocket")
-  |> server.with_on_connect(fn(req: Request(mist.Connection)) {
+  |> server.with_on_connect(fn(http_request: Request(mist.Connection)) {
     // Validate once; reject the whole connection on failure.
-    case validate_token(req) {
+    case validate_token(http_request) {
       Ok(user_id) -> Ok([#("user_id", user_id)])
       Error(_) -> Error(server.ConnectRejected) // Reject with 403
     }
@@ -146,7 +146,7 @@ let ws_config =
 // init reads what on_connect already resolved. It does not decode again.
 beryl.child_spec(
   config,
-  init: fn(info: socket.ConnectInfo(Msg)) {
+  init: fn(info: socket.ConnectInfo(Message)) {
     let user_id =
       list.key_find(info.seed.metadata, "user_id")
       |> result.unwrap("anonymous")

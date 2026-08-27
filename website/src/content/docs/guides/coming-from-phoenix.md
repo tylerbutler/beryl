@@ -174,7 +174,7 @@ import beryl/socket
 import gleam/json
 import gleam/option.{Some}
 
-pub type Msg {
+pub type Message {
   Tick(Int)
 }
 
@@ -182,12 +182,12 @@ pub type Model {
   Model(room_id: String)
 }
 
-fn init(_info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
+fn init(_info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) {
   #(Model(room_id: ""), [])
 }
 
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
-  case ev {
+fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
+  case input {
     socket.Join("room:" <> room_id, _payload, ref) ->
       socket.Next(Model(room_id: room_id), [
         socket.AcceptJoin(
@@ -215,7 +215,11 @@ fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
         ),
       ])
 
-    _ -> socket.Next(model, [])
+    socket.Join(..)
+    | socket.Message(..)
+    | socket.Binary(..)
+    | socket.Closed(..) ->
+      socket.Next(model, [])
   }
 }
 ```
