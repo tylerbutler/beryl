@@ -100,15 +100,13 @@ fn terminated(
   next_report(reports) |> should.equal(Terminated(topic, reason))
 }
 
-fn wait_until_dead(pid: process.Pid, attempts: Int) -> Nil {
-  case process.is_alive(pid), attempts {
-    False, _ -> Nil
-    True, 0 -> should.fail()
-    True, _ -> {
-      process.sleep(10)
-      wait_until_dead(pid, attempts - 1)
-    }
-  }
+fn wait_until_dead(pid: process.Pid) -> Nil {
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(process.monitor(pid), fn(down) { down })
+    |> process.selector_receive(1000)
+    as "the process exited"
+  Nil
 }
 
 // --- isolation ---------------------------------------------------------------
@@ -302,7 +300,7 @@ pub fn a_blocking_terminate_is_bounded_and_the_worker_killed_test() {
   // kills it and still sends the terminal frame.
   let assert Ok(close) = process.receive(frames, 7000) as "the close frame"
   close |> string.contains("phx_close") |> should.be_true
-  wait_until_dead(worker, 100)
+  wait_until_dead(worker)
   // The socket is still usable afterwards.
   helper.join(channels, "s1", "room:a", "jr-2", "r-3")
   helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
@@ -338,8 +336,8 @@ pub fn a_disconnect_terminates_busy_workers_test() {
   terminated(reports, "room:a", "normal")
   terminated(reports, "room:b", "normal")
   helper.recv(peer) |> string.contains("\"left\"") |> should.be_true
-  wait_until_dead(a, 100)
-  wait_until_dead(b, 100)
+  wait_until_dead(a)
+  wait_until_dead(b)
 }
 
 pub fn stopping_beryl_runs_on_terminate_for_every_worker_test() {
@@ -358,8 +356,8 @@ pub fn stopping_beryl_runs_on_terminate_for_every_worker_test() {
 
   terminated(reports, "room:a", "shutdown")
   terminated(reports, "room:b", "shutdown")
-  wait_until_dead(a, 100)
-  wait_until_dead(b, 100)
+  wait_until_dead(a)
+  wait_until_dead(b)
 }
 
 pub fn many_topics_on_one_socket_each_get_a_worker_test() {

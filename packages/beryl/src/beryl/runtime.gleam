@@ -185,7 +185,7 @@ pub type Msg(msg) {
   /// exit while the topic is closing ends that close.
   WorkerDown(down: process.Down)
   /// A closing topic's worker did not report its termination in time.
-  WorkerTerminateTimedOut(socket_id: String, topic: String, worker: Pid)
+  WorkerTerminateTimedOut(socket_id: String, worker: Pid)
 }
 
 /// What a topic worker sends its socket actor.
@@ -784,7 +784,7 @@ fn handle_message(
     | HandleBinary(socket_id, _)
     | AppInfo(socket_id, _)
     | WorkerReport(socket_id, _, _, _)
-    | WorkerTerminateTimedOut(socket_id, _, _) ->
+    | WorkerTerminateTimedOut(socket_id, _) ->
       case state.role {
         // The router stays on the inbound path, one send per message: its
         // turn is a match-and-forward, never an app callback.
@@ -1063,12 +1063,8 @@ fn socket_turn(
   case dict.get(state.suspended, socket_id) {
     Error(Nil) -> after_socket_turn(state, dispatch_socket_msg(state, message))
     Ok(suspension) ->
-      case awaited_worker_event(suspension, message) {
-        Some(outcome) ->
-          after_socket_turn(
-            state,
-            resume_worker_close(state, socket_id, suspension, outcome),
-          )
+      case resume_worker_close(state, socket_id, suspension, message) {
+        Some(after) -> after_socket_turn(state, after)
         None -> actor.continue(enqueue_socket_msg(state, socket_id, message))
       }
   }
@@ -1114,7 +1110,11 @@ fn dispatch_socket_msg(
       handle_app_info(state, socket_id, app_message)
     WorkerReport(socket_id, topic_name, pid, report) ->
       handle_worker_report(state, socket_id, topic_name, pid, report)
-    WorkerDown(down) -> handle_worker_down(state, down)
+    WorkerDown(down) ->
+      case dict.keys(state.sockets) {
+        [socket_id] -> handle_worker_down(state, socket_id, down)
+        _ -> state
+      }
     // Only meaningful while its socket is parked on that worker, which
     // `socket_turn` handles before dispatch; anything else is a late timer.
     WorkerTerminateTimedOut(..) -> state
@@ -1531,7 +1531,7 @@ fn finalize_suspension(
             #("socket_id", socket_id),
             #("topic", topic),
           ])
-          forget_worker(worker)
+          process.demonitor_process(worker.monitor)
           process.kill(worker.pid)
           state
         }
@@ -4975,15 +4975,10 @@ type WorkerSpawn {
   )
 }
 
-/// What `start_child` hands back once the worker's `join` has run.
-type WorkerStarted {
-  WorkerOpened(
-    subject: Subject(WorkerMsg),
-    reply: Option(Json),
-    effects: List(Effect),
-  )
-  WorkerRefused(reason: Json)
-}
+/// What `start_child` hands back once the worker's `join` has run: the
+/// worker's subject and the join's outcome as the worker produced it.
+type WorkerStarted =
+  #(Subject(WorkerMsg), WorkerOutcome)
 
 /// Work cast to one topic worker.
 type WorkerMsg {
@@ -5027,18 +5022,17 @@ fn start_worker(spawn: WorkerSpawn) -> actor.StartResult(WorkerStarted) {
         payload: spawn.payload,
         deliver: fn(mail) { process.send(subject, WorkerInfo(mail)) },
       )
-    case spawn.open(context) {
-      sock.WorkerRejected(reason) -> {
+    let outcome = spawn.open(context)
+    let state = case outcome {
+      sock.WorkerRejected(_) -> {
         process.send(subject, WorkerHalt)
-        actor.initialised(WorkerRefusing)
-        |> actor.returning(WorkerRefused(reason))
-        |> Ok
+        WorkerRefusing
       }
-      sock.WorkerAccepted(reply:, effects:, worker:) ->
-        actor.initialised(WorkerRunning(worker, spawn))
-        |> actor.returning(WorkerOpened(subject, reply, effects))
-        |> Ok
+      sock.WorkerAccepted(worker:, ..) -> WorkerRunning(worker, spawn)
     }
+    actor.initialised(state)
+    |> actor.returning(#(subject, outcome))
+    |> Ok
   })
   |> actor.on_message(handle_worker_msg)
   |> actor.start
@@ -5148,7 +5142,10 @@ fn exec_worker_join(
   let #(state, result) = case
     factory_supervisor.start_child(factory.supervisor, spawn)
   {
-    Ok(actor.Started(pid:, data: WorkerOpened(subject, reply, effects))) -> {
+    Ok(actor.Started(
+      pid:,
+      data: #(subject, sock.WorkerAccepted(reply:, effects:, ..)),
+    )) -> {
       let worker =
         WorkerRef(subject: subject, pid: pid, monitor: process.monitor(pid))
       let state =
@@ -5164,21 +5161,11 @@ fn exec_worker_join(
         Ok(sock.Next(socket.model, [sock.AcceptJoin(ref, reply), ..effects])),
       )
     }
-    Ok(actor.Started(data: WorkerRefused(reason), ..)) -> #(
+    Ok(actor.Started(data: #(_, sock.WorkerRejected(reason)), ..)) -> #(
       state,
       Ok(sock.Next(socket.model, [sock.RejectJoin(ref, reason)])),
     )
-    Error(actor.InitTimeout) -> #(
-      state,
-      Error(
-        "join timed out after " <> int.to_string(worker_join_timeout_ms) <> "ms",
-      ),
-    )
-    Error(actor.InitFailed(reason)) -> #(state, Error(reason))
-    Error(actor.InitExited(reason)) -> #(
-      state,
-      Error(exit_reason_to_string(reason)),
-    )
+    Error(error) -> #(state, Error(string.inspect(error)))
   }
   exec_update_result(state, socket_id, source, cont, result)
 }
@@ -5254,44 +5241,44 @@ fn exec_worker_report(
 /// client learns to rejoin from the `phx_error`.
 fn handle_worker_down(
   state: State(model, msg),
+  socket_id: String,
   down: process.Down,
 ) -> State(model, msg) {
-  case down {
-    process.PortDown(..) -> state
-    process.ProcessDown(pid:, reason:, ..) ->
-      dict.fold(state.sockets, state, fn(state, socket_id, socket) {
-        let owned =
-          dict.to_list(socket.workers)
-          |> list.find(fn(entry) { { entry.1 }.pid == pid })
-        case owned {
-          // Its close already finished, or it was never this socket's.
-          Error(Nil) -> state
-          Ok(#(topic_name, _)) -> {
-            let exit = exit_reason_to_string(reason)
-            state.logger
-            |> log.error("Topic worker exited; closing topic", [
-              #("socket_id", socket_id),
-              #("topic", topic_name),
-              #("reason", exit),
-            ])
-            let state =
-              store_socket(
-                state,
-                SocketState(
-                  ..socket,
-                  workers: dict.delete(socket.workers, topic_name),
-                ),
-              )
-            run(state, socket_id, [
-              StepCloseTopic(
-                topic_name,
-                sock.Errored("worker exited: " <> exit),
-                ContDrive,
+  case down, dict.get(state.sockets, socket_id) {
+    process.PortDown(..), _ | _, Error(Nil) -> state
+    process.ProcessDown(pid:, reason:, ..), Ok(socket) -> {
+      let owned =
+        dict.to_list(socket.workers)
+        |> list.find(fn(entry) { { entry.1 }.pid == pid })
+      case owned {
+        // Its close already finished, or it was never this socket's.
+        Error(Nil) -> state
+        Ok(#(topic_name, _)) -> {
+          let exit = string.inspect(reason)
+          state.logger
+          |> log.error("Topic worker exited; closing topic", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+            #("reason", exit),
+          ])
+          let state =
+            store_socket(
+              state,
+              SocketState(
+                ..socket,
+                workers: dict.delete(socket.workers, topic_name),
               ),
-            ])
-          }
+            )
+          run(state, socket_id, [
+            StepCloseTopic(
+              topic_name,
+              sock.Errored("worker exited: " <> exit),
+              ContDrive,
+            ),
+          ])
         }
-      })
+      }
+    }
   }
 }
 
@@ -5317,7 +5304,7 @@ fn close_worker_topic(
         process.send_after(
           state.self_subject,
           worker_terminate_timeout_ms,
-          WorkerTerminateTimedOut(socket_id, topic_name, worker.pid),
+          WorkerTerminateTimedOut(socket_id, worker.pid),
         )
       Await(
         state,
@@ -5342,7 +5329,7 @@ fn close_worker_topic(
           []
         }
       }
-      forget_worker(worker)
+      process.demonitor_process(worker.monitor)
       Continue(state, [
         StepEffects(
           effects,
@@ -5355,36 +5342,8 @@ fn close_worker_topic(
   }
 }
 
-/// How the wait for a closing topic's worker ended.
-type WorkerCloseOutcome {
-  WorkerFinished(effects: List(Effect), crash: Option(String))
-  WorkerExited(reason: String)
-  WorkerTimedOut
-}
-
-/// The event a socket parked on a worker's termination is waiting for, if
-/// `message` is it.
-fn awaited_worker_event(
-  suspension: Suspension(msg),
-  message: Msg(msg),
-) -> Option(WorkerCloseOutcome) {
-  case suspension.waiting {
-    PresenceWait(..) -> None
-    WorkerWait(worker: WorkerRef(pid: awaited, ..), ..) ->
-      case message {
-        WorkerReport(worker: pid, report: WorkerTerminated(effects, crash), ..)
-          if pid == awaited
-        -> Some(WorkerFinished(effects, crash))
-        WorkerDown(process.ProcessDown(pid:, reason:, ..)) if pid == awaited ->
-          Some(WorkerExited(exit_reason_to_string(reason)))
-        WorkerTerminateTimedOut(worker: pid, ..) if pid == awaited ->
-          Some(WorkerTimedOut)
-        _ -> None
-      }
-  }
-}
-
-/// Finish a topic close once its worker has terminated.
+/// Finish a topic close if `message` is the worker termination the socket
+/// is parked on; `None` when it is not.
 ///
 /// Results the worker reported before terminating were queued behind
 /// the suspension. They name reply refs this close has not pruned yet,
@@ -5394,32 +5353,36 @@ fn resume_worker_close(
   state: State(model, msg),
   socket_id: String,
   suspension: Suspension(msg),
-  outcome: WorkerCloseOutcome,
-) -> State(model, msg) {
-  let _cancelled = process.cancel_timer(suspension.timer)
+  message: Msg(msg),
+) -> Option(State(model, msg)) {
   case suspension.waiting {
-    PresenceWait(..) -> state
+    PresenceWait(..) -> None
     WorkerWait(topic_name, worker, close_join_ref, reason, cont) -> {
-      forget_worker(worker)
-      let effects = case outcome {
-        WorkerFinished(effects, crash) -> {
+      let awaited = worker.pid
+      use effects <- option.map(case message {
+        WorkerReport(worker: pid, report: WorkerTerminated(effects, crash), ..)
+          if pid == awaited
+        -> {
           log_terminate_crash(state, socket_id, topic_name, crash)
-          effects
+          Some(effects)
         }
-        WorkerExited(exit) -> {
+        WorkerDown(process.ProcessDown(pid:, reason:, ..)) if pid == awaited -> {
           state.logger
           |> log.error("Topic worker exited while closing", [
             #("socket_id", socket_id),
             #("topic", topic_name),
-            #("reason", exit),
+            #("reason", string.inspect(reason)),
           ])
-          []
+          Some([])
         }
-        WorkerTimedOut -> {
+        WorkerTerminateTimedOut(worker: pid, ..) if pid == awaited -> {
           kill_stuck_worker(state, socket_id, topic_name, worker)
-          []
+          Some([])
         }
-      }
+        _ -> None
+      })
+      let _cancelled = process.cancel_timer(suspension.timer)
+      process.demonitor_process(worker.monitor)
       let #(in_flight, others) =
         dict.get(state.queued, socket_id)
         |> result.unwrap([])
@@ -5491,18 +5454,5 @@ fn log_terminate_crash(
         #("topic", topic_name),
         #("crash", crash),
       ])
-  }
-}
-
-/// Stop watching a worker. Flushes a `Down` already in the mailbox.
-fn forget_worker(worker: WorkerRef) -> Nil {
-  process.demonitor_process(worker.monitor)
-}
-
-fn exit_reason_to_string(reason: process.ExitReason) -> String {
-  case reason {
-    process.Normal -> "normal"
-    process.Killed -> "killed"
-    process.Abnormal(detail) -> string.inspect(detail)
   }
 }
