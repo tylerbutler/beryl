@@ -1,6 +1,9 @@
 ---
 title: "beryl/stats"
 description: "Local runtime statistics."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Local runtime statistics."
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Local runtime statistics.
 
@@ -19,19 +24,40 @@ Local runtime statistics.
  more frequently than roughly once per second so observation does not add
  meaningful runtime load.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-snapshot"><code>Snapshot</code></a></li>
+<li><a href="#api-type-snapshoterror"><code>SnapshotError</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-active_topics"><code>active_topics</code></a></li>
+<li><a href="#api-function-connected_sockets"><code>connected_sockets</code></a></li>
+<li><a href="#api-function-joined_socket_topic_pairs"><code>joined_socket_topic_pairs</code></a></li>
+<li><a href="#api-function-snapshot"><code>snapshot</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
-### `Snapshot`
+<div class="api-entry-anchor" id="api-type-snapshot" aria-hidden="true"></div>
 
-A point-in-time snapshot of local runtime state.
+### `Snapshot`
 
 ```gleam
 pub type Snapshot
 ```
 
-### `SnapshotError`
+A point-in-time snapshot of local runtime state.
 
-Errors from a runtime snapshot request.
+<div class="api-entry-anchor" id="api-type-snapshoterror" aria-hidden="true"></div>
+
+### `SnapshotError`
 
 ```gleam
 pub type SnapshotError {
@@ -40,45 +66,67 @@ pub type SnapshotError {
 }
 ```
 
+Errors from a runtime snapshot request.
+
 #### Constructors
 
 ##### `RuntimeUnavailable`
+
+```gleam
+RuntimeUnavailable
+```
 
 The local socket runtime is not running.
 
 ##### `RequestTimedOut`
 
+```gleam
+RequestTimedOut
+```
+
 The runtime did not process the request before the timeout.
 
 ## Functions
 
-### `active_topics`
+<div class="api-entry-anchor" id="api-function-active_topics" aria-hidden="true"></div>
 
-Return the number of topics with at least one local joined socket.
+### `active_topics`
 
 ```gleam
 pub fn active_topics(Snapshot) -> Int
 ```
 
-### `connected_sockets`
+Return the number of topics with at least one local joined socket.
 
-Return the number of sockets connected to the local runtime.
+<div class="api-entry-anchor" id="api-function-connected_sockets" aria-hidden="true"></div>
+
+### `connected_sockets`
 
 ```gleam
 pub fn connected_sockets(Snapshot) -> Int
 ```
 
+Return the number of sockets connected to the local runtime.
+
+<div class="api-entry-anchor" id="api-function-joined_socket_topic_pairs" aria-hidden="true"></div>
+
 ### `joined_socket_topic_pairs`
-
-Return the number of joined socket/topic pairs.
-
- One socket joined to two topics contributes two pairs.
 
 ```gleam
 pub fn joined_socket_topic_pairs(Snapshot) -> Int
 ```
 
+Return the number of joined socket/topic pairs.
+
+ One socket joined to two topics contributes two pairs.
+
+<div class="api-entry-anchor" id="api-function-snapshot" aria-hidden="true"></div>
+
 ### `snapshot`
+
+```gleam
+pub fn snapshot(beryl.Sockets) -> Result(Snapshot, SnapshotError)
+```
 
 Request a snapshot from the local runtime.
 
@@ -89,7 +137,3 @@ Request a snapshot from the local runtime.
  `sockets`; aggregate multi-node statistics outside beryl.
 
  Poll no more frequently than roughly once per second.
-
-```gleam
-pub fn snapshot(beryl.Sockets) -> Result(Snapshot, SnapshotError)
-```

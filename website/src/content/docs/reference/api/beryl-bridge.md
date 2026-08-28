@@ -1,6 +1,9 @@
 ---
 title: "beryl/bridge"
-description: "Bridge - Forward an external OTP actor's message stream to a socket via"
+description: "Bridge - Forward an external OTP actor's message stream to a socket via its `Sender`."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Bridge - Forward an external OTP actor's message stream to a socke
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Bridge - Forward an external OTP actor's message stream to a socket via
  its `Sender`.
@@ -61,9 +66,34 @@ Bridge - Forward an external OTP actor's message stream to a socket via
  bridge.stop(model.bridge)
  ```
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-bridge"><code>Bridge</code></a></li>
+<li><a href="#api-type-starterror"><code>StartError</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-pid"><code>pid</code></a></li>
+<li><a href="#api-function-start"><code>start</code></a></li>
+<li><a href="#api-function-stop"><code>stop</code></a></li>
+<li><a href="#api-function-subject"><code>subject</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-bridge" aria-hidden="true"></div>
+
 ### `Bridge`
+
+```gleam
+pub type Bridge(a)
+```
 
 A handle to a running bridge forwarder.
 
@@ -71,13 +101,9 @@ A handle to a running bridge forwarder.
  `Subject`. Get the subject with `subject`. Call `stop` to stop the
  forwarder.
 
-```gleam
-pub type Bridge(a)
-```
+<div class="api-entry-anchor" id="api-type-starterror" aria-hidden="true"></div>
 
 ### `StartError`
-
-Why a bridge failed to start.
 
 ```gleam
 pub type StartError {
@@ -85,27 +111,44 @@ pub type StartError {
 }
 ```
 
+Why a bridge failed to start.
+
 #### Constructors
 
 ##### `ForwarderUnavailable`
+
+```gleam
+ForwarderUnavailable
+```
 
 The forwarder did not report its subjects within
  `handshake_timeout_ms`. It failed to spawn or start.
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-pid" aria-hidden="true"></div>
+
 ### `pid`
+
+```gleam
+pub fn pid(Bridge(a)) -> process.Pid
+```
 
 Return the forwarder process ID.
 
  Use this value for diagnostics and supervision. Most callers need only
  `subject` and `stop`.
 
-```gleam
-pub fn pid(Bridge(a)) -> process.Pid
-```
+<div class="api-entry-anchor" id="api-function-start" aria-hidden="true"></div>
 
 ### `start`
+
+```gleam
+pub fn start(
+  to: socket.Sender(a),
+  with: fn(b) -> a
+) -> Result(Bridge(b), StartError)
+```
 
 Start a bridge from an external `Subject` to a socket's `update` function.
 
@@ -123,31 +166,28 @@ Start a bridge from an external `Subject` to a socket's `update` function.
  the owner dies without calling `stop`, but it does not track topic
  lifecycles.
 
-```gleam
-pub fn start(
-  to: socket.Sender(a),
-  with: fn(b) -> a
-) -> Result(Bridge(b), StartError)
-```
+<div class="api-entry-anchor" id="api-function-stop" aria-hidden="true"></div>
 
 ### `stop`
+
+```gleam
+pub fn stop(Bridge(a)) -> Nil
+```
 
 Stop the bridge's forwarder.
 
  Call this when the owning socket or topic ends. It is safe to call more
  than once and after the forwarder has already exited.
 
-```gleam
-pub fn stop(Bridge(a)) -> Nil
-```
+<div class="api-entry-anchor" id="api-function-subject" aria-hidden="true"></div>
 
 ### `subject`
+
+```gleam
+pub fn subject(Bridge(a)) -> process.Subject(a)
+```
 
 Return the `Subject` that receives the external actor's stream.
 
  Give this subject to the domain actor, for example as its subscriber.
  Each value is then sent to the bridged socket.
-
-```gleam
-pub fn subject(Bridge(a)) -> process.Subject(a)
-```

@@ -154,8 +154,12 @@ function moduleSlug(moduleName) {
 
 function descriptionFromDocs(documentation, fallback) {
 	const text = normalizeDoc(documentation);
-	const firstLine = text.split("\n").find((line) => line.trim().length > 0);
-	return firstLine ? firstLine.trim() : fallback;
+	const firstParagraph = text
+		.split(/\n\s*\n/)
+		.find((paragraph) => paragraph.trim().length > 0);
+	return firstParagraph
+		? firstParagraph.replaceAll(/\s+/g, " ").trim()
+		: fallback;
 }
 
 // Frontmatter values are arbitrary prose lifted from module docs, so they
@@ -165,10 +169,23 @@ function yamlString(value) {
 	return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-// Markdown tables are cell-delimited by `|`, so any pipe inside prose has
-// to be escaped or it splits the row.
-function tableCell(value) {
-	return String(value).replaceAll("|", "\\|");
+function html(value) {
+	return String(value)
+		.replaceAll("&", "&amp;")
+		.replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;")
+		.replaceAll('"', "&quot;");
+}
+
+function htmlInlineCode(value) {
+	return String(value)
+		.split(/(`[^`]+`)/g)
+		.map((part) =>
+			part.startsWith("`") && part.endsWith("`")
+				? `<code>${html(part.slice(1, -1))}</code>`
+				: html(part),
+		)
+		.join("");
 }
 
 function normalizeDoc(documentation) {
@@ -181,6 +198,30 @@ function normalizeDoc(documentation) {
 		return "";
 	}
 	return rewriteDocLinks(text);
+}
+
+function normalizeNestedDoc(documentation, parentLevel) {
+	const text = normalizeDoc(documentation);
+	let fence = null;
+	return text
+		.split("\n")
+		.map((line) => {
+			const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+			if (fenceMatch) {
+				const marker = fenceMatch[1][0];
+				fence = fence === marker ? null : fence ?? marker;
+				return line;
+			}
+			if (fence) {
+				return line;
+			}
+			return line.replace(
+				/^(\s{0,3})(#{1,6})(\s+)/,
+				(_match, indent, hashes, spacing) =>
+					`${indent}${"#".repeat(Math.min(6, hashes.length + parentLevel - 1))}${spacing}`,
+			);
+		})
+		.join("\n");
 }
 
 // Gleam docs use HexDocs HTML paths and case-preserving type fragments.
@@ -327,14 +368,17 @@ function renderIndex(packages) {
 						moduleInterface.documentation,
 						`Reference for ${moduleName}.`,
 					);
-					return `| [${code(moduleName)}](${referenceBasePath}/${moduleSlug(moduleName)}/) | ${tableCell(description)} |`;
+					return `<li class="api-module-list__item">
+  <a class="api-module-list__name" href="${referenceBasePath}/${moduleSlug(moduleName)}/"><code>${html(moduleName)}</code></a>
+  <p>${htmlInlineCode(description)}</p>
+</li>`;
 				})
 				.join("\n");
 			return `## ${code(packageInterface.name)} ${code(packageInterface.version)}
 
-| Module | Description |
-|---|---|
-${moduleRows}`;
+<ul class="api-module-list">
+${moduleRows}
+</ul>`;
 		})
 		.join("\n\n");
 
@@ -349,6 +393,8 @@ description: API reference generated from Gleam docs metadata.
 
 ${GENERATED_MARKER}
 
+<div class="api-reference-marker" aria-hidden="true"></div>
+
 This reference uses Gleam docs metadata for ${packageList}.
 
 :::note[Generated content]
@@ -357,6 +403,58 @@ The generator creates pages under \`${referenceBasePath}/\` from Gleam docs meta
 
 ${packageSections}
 `;
+}
+
+function symbolSlug(name) {
+	return name.toLowerCase().replaceAll(/\s+/g, "-");
+}
+
+function entryId(kind, name) {
+	return `api-${kind}-${symbolSlug(name)}`;
+}
+
+function entryAnchor(kind, name) {
+	return `<div class="api-entry-anchor" id="${entryId(kind, name)}" aria-hidden="true"></div>`;
+}
+
+function renderSymbolIndex(moduleInterface) {
+	const groups = [
+		["Types", "type", moduleInterface.types],
+		["Type aliases", "type-alias", moduleInterface["type-aliases"]],
+		["Constants", "constant", moduleInterface.constants],
+		["Functions", "function", moduleInterface.functions],
+	]
+		.map(([label, kind, entries]) => [
+			label,
+			kind,
+			Object.keys(entries || {}).sort((left, right) => left.localeCompare(right)),
+		])
+		.filter(([, , names]) => names.length > 0);
+
+	if (groups.length === 0) {
+		return "";
+	}
+
+	const contents = groups
+		.map(([label, kind, names]) => {
+			const links = names
+				.map(
+					(name) =>
+						`<li><a href="#${entryId(kind, name)}"><code>${html(name)}</code></a></li>`,
+				)
+				.join("\n");
+			return `<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#${symbolSlug(label)}">${html(label)}</a>
+  <ul>
+${links}
+  </ul>
+</section>`;
+		})
+		.join("\n");
+
+	return `<nav class="api-symbol-index" aria-label="Module contents">
+${contents}
+</nav>`;
 }
 
 function renderModulePage(moduleName, moduleInterface) {
@@ -374,11 +472,18 @@ function renderModulePage(moduleName, moduleInterface) {
 	return `---
 title: ${yamlString(moduleName)}
 description: ${yamlString(description)}
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 ${GENERATED_MARKER}
 
+<div class="api-reference-marker" aria-hidden="true"></div>
+
 ${normalizeDoc(moduleInterface.documentation) || description}
+
+${renderSymbolIndex(moduleInterface)}
 
 ${sections.join("\n\n")}
 `;
@@ -393,7 +498,13 @@ function renderConstructorsSection(typeInterface, moduleName) {
 	}
 
 	const items = constructors
-		.map((c) => `##### ${code(renderConstructor(c, moduleName))}\n\n${normalizeDoc(c.documentation)}`)
+		.map((c) => `##### ${code(c.name)}
+
+\`\`\`gleam
+${renderConstructor(c, moduleName)}
+\`\`\`
+
+${normalizeNestedDoc(c.documentation, 5)}`)
 		.join("\n\n");
 	return `#### Constructors\n\n${items}`;
 }
@@ -409,16 +520,20 @@ function renderTypes(types, moduleName) {
 	return [
 		"## Types",
 		...entries.map(([name, typeInterface]) => {
-			const docs = normalizeDoc(typeInterface.documentation);
+			const docs = normalizeNestedDoc(typeInterface.documentation, 3);
 			const deprecation = deprecationBlock(typeInterface.deprecation);
 			const definition = renderTypeDefinition(name, typeInterface, moduleName);
 			const constructors = renderConstructorsSection(typeInterface, moduleName);
 			const sections = [
-				docs ? `${docs}${deprecation}` : deprecation.replace(/^\n\n/, ""),
 				`\`\`\`gleam\n${definition}\n\`\`\``,
+				docs ? `${docs}${deprecation}` : deprecation.replace(/^\n\n/, ""),
 				constructors,
 			].filter((section) => section && section.length > 0);
-			return `### ${code(name)}\n\n${sections.join("\n\n")}`;
+			return `${entryAnchor("type", name)}
+
+### ${code(name)}
+
+${sections.join("\n\n")}`;
 		}),
 	].join("\n\n");
 }
@@ -442,13 +557,15 @@ function renderTypeAliases(typeAliases, moduleName) {
 
 	return [
 		"## Type aliases",
-		...entries.map(([name, alias]) => `### ${code(name)}
+		...entries.map(([name, alias]) => `${entryAnchor("type-alias", name)}
 
-${normalizeDoc(alias.documentation)}${deprecationBlock(alias.deprecation)}
+### ${code(name)}
 
 \`\`\`gleam
 ${renderAliasDefinition(name, alias, moduleName)}
-\`\`\``),
+\`\`\`
+
+${normalizeNestedDoc(alias.documentation, 3)}${deprecationBlock(alias.deprecation)}`),
 	].join("\n\n");
 }
 
@@ -462,13 +579,15 @@ function renderConstants(constants, moduleName) {
 
 	return [
 		"## Constants",
-		...entries.map(([name, constant]) => `### ${code(name)}
+		...entries.map(([name, constant]) => `${entryAnchor("constant", name)}
 
-${normalizeDoc(constant.documentation)}${deprecationBlock(constant.deprecation)}
+### ${code(name)}
 
 \`\`\`gleam
 ${renderConstantDefinition(name, constant, moduleName)}
-\`\`\``),
+\`\`\`
+
+${normalizeNestedDoc(constant.documentation, 3)}${deprecationBlock(constant.deprecation)}`),
 	].join("\n\n");
 }
 
@@ -489,13 +608,15 @@ function renderFunctions(functions, moduleName) {
 				functionInterface.return,
 				moduleName,
 			);
-			return `### ${code(name)}
+			return `${entryAnchor("function", name)}
 
-${normalizeDoc(functionInterface.documentation)}${deprecationBlock(functionInterface.deprecation)}
+### ${code(name)}
 
 \`\`\`gleam
 ${signature}
-\`\`\``;
+\`\`\`
+
+${normalizeNestedDoc(functionInterface.documentation, 3)}${deprecationBlock(functionInterface.deprecation)}`;
 		}),
 	].join("\n\n");
 }

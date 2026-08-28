@@ -1,6 +1,9 @@
 ---
 title: "beryl"
 description: "beryl - Type-safe real-time communication"
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "beryl - Type-safe real-time communication"
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 beryl - Type-safe real-time communication
 
@@ -72,9 +77,61 @@ beryl - Type-safe real-time communication
  }
  ```
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-config"><code>Config</code></a></li>
+<li><a href="#api-type-configerror"><code>ConfigError</code></a></li>
+<li><a href="#api-type-loggingconfig"><code>LoggingConfig</code></a></li>
+<li><a href="#api-type-loglevel"><code>LogLevel</code></a></li>
+<li><a href="#api-type-sockets"><code>Sockets</code></a></li>
+<li><a href="#api-type-stoperror"><code>StopError</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-broadcast"><code>broadcast</code></a></li>
+<li><a href="#api-function-broadcast_from"><code>broadcast_from</code></a></li>
+<li><a href="#api-function-broadcast_presence_diff"><code>broadcast_presence_diff</code></a></li>
+<li><a href="#api-function-child_spec"><code>child_spec</code></a></li>
+<li><a href="#api-function-config"><code>config</code></a></li>
+<li><a href="#api-function-logging_config"><code>logging_config</code></a></li>
+<li><a href="#api-function-stop"><code>stop</code></a></li>
+<li><a href="#api-function-validate_config"><code>validate_config</code></a></li>
+<li><a href="#api-function-with_channel_rate"><code>with_channel_rate</code></a></li>
+<li><a href="#api-function-with_channel_rate_max_keys_per_socket"><code>with_channel_rate_max_keys_per_socket</code></a></li>
+<li><a href="#api-function-with_connection_rate_per_ip"><code>with_connection_rate_per_ip</code></a></li>
+<li><a href="#api-function-with_frame_rate"><code>with_frame_rate</code></a></li>
+<li><a href="#api-function-with_heartbeat"><code>with_heartbeat</code></a></li>
+<li><a href="#api-function-with_join_rate"><code>with_join_rate</code></a></li>
+<li><a href="#api-function-with_logging"><code>with_logging</code></a></li>
+<li><a href="#api-function-with_max_connections"><code>with_max_connections</code></a></li>
+<li><a href="#api-function-with_max_connections_per_ip"><code>with_max_connections_per_ip</code></a></li>
+<li><a href="#api-function-with_max_event_length"><code>with_max_event_length</code></a></li>
+<li><a href="#api-function-with_max_inbound_frame_bytes"><code>with_max_inbound_frame_bytes</code></a></li>
+<li><a href="#api-function-with_max_joined_topics_per_socket"><code>with_max_joined_topics_per_socket</code></a></li>
+<li><a href="#api-function-with_max_topic_length"><code>with_max_topic_length</code></a></li>
+<li><a href="#api-function-with_message_rate"><code>with_message_rate</code></a></li>
+<li><a href="#api-function-with_payload_preview_bytes"><code>with_payload_preview_bytes</code></a></li>
+<li><a href="#api-function-with_presence_handle"><code>with_presence_handle</code></a></li>
+<li><a href="#api-function-with_pubsub"><code>with_pubsub</code></a></li>
+<li><a href="#api-function-with_telemetry"><code>with_telemetry</code></a></li>
+<li><a href="#api-function-with_topic_rate"><code>with_topic_rate</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-config" aria-hidden="true"></div>
+
 ### `Config`
+
+```gleam
+pub type Config
+```
 
 Configuration for an app-side socket runtime.
 
@@ -82,17 +139,9 @@ Configuration for an app-side socket runtime.
  `with_*` functions. beryl can then add configuration options without a
  breaking change.
 
-```gleam
-pub type Config
-```
+<div class="api-entry-anchor" id="api-type-configerror" aria-hidden="true"></div>
 
 ### `ConfigError`
-
-Why an eagerly validated `Config` was rejected before any process started.
-
- `child_spec` validates the configuration before it allocates names or
- starts the runtime. It returns an invalid configuration instead of
- crashing a supervised child during initialization.
 
 ```gleam
 pub type ConfigError {
@@ -104,9 +153,19 @@ pub type ConfigError {
 }
 ```
 
+Why an eagerly validated `Config` was rejected before any process started.
+
+ `child_spec` validates the configuration before it allocates names or
+ starts the runtime. It returns an invalid configuration instead of
+ crashing a supervised child during initialization.
+
 #### Constructors
 
-##### `HeartbeatTimeoutTooLow(minimum: Int)`
+##### `HeartbeatTimeoutTooLow`
+
+```gleam
+HeartbeatTimeoutTooLow(minimum: Int)
+```
 
 `heartbeat_timeout_ms` was below the minimum. The server derives its
  staleness check interval as `heartbeat_timeout_ms / 2` (integer
@@ -114,10 +173,14 @@ pub type ConfigError {
  disable heartbeat eviction. The wrapped `Int` is the
  smallest accepted timeout.
 
-##### `InvalidTopicPattern(
+##### `InvalidTopicPattern`
+
+```gleam
+InvalidTopicPattern(
   pattern: String,
   reason: topic.TopicError
-)`
+)
+```
 
 A per-topic-pattern rate limit used a pattern string that is not a valid
  topic pattern. `pattern` is the offending pattern and `reason` is the
@@ -130,7 +193,13 @@ A per-topic-pattern rate limit used a pattern string that is not a valid
  when you act on them differently, and otherwise keep a catch-all arm
  such as `InvalidTopicPattern(pattern, _)`.
 
+<div class="api-entry-anchor" id="api-type-loggingconfig" aria-hidden="true"></div>
+
 ### `LoggingConfig`
+
+```gleam
+pub type LoggingConfig
+```
 
 Logging configuration for beryl diagnostics.
 
@@ -138,16 +207,9 @@ Logging configuration for beryl diagnostics.
  the `with_*` functions. beryl can then add logging options without a
  breaking change.
 
-```gleam
-pub type LoggingConfig
-```
+<div class="api-entry-anchor" id="api-type-loglevel" aria-hidden="true"></div>
 
 ### `LogLevel`
-
-Logging verbosity for beryl's internal loggers.
-
- The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
- prelude's `Result` `Error` constructor when imported unqualified.
 
 ```gleam
 pub type LogLevel {
@@ -158,7 +220,18 @@ pub type LogLevel {
 }
 ```
 
+Logging verbosity for beryl's internal loggers.
+
+ The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
+ prelude's `Result` `Error` constructor when imported unqualified.
+
+<div class="api-entry-anchor" id="api-type-sockets" aria-hidden="true"></div>
+
 ### `Sockets`
+
+```gleam
+pub type Sockets
+```
 
 A runtime system handle.
 
@@ -171,13 +244,9 @@ A runtime system handle.
  inside monomorphic closures at construction time. They
  never appear in this handle or in any transport signature.
 
-```gleam
-pub type Sockets
-```
+<div class="api-entry-anchor" id="api-type-stoperror" aria-hidden="true"></div>
 
 ### `StopError`
-
-Errors when stopping a beryl system with [`stop`](#stop).
 
 ```gleam
 pub type StopError {
@@ -186,9 +255,15 @@ pub type StopError {
 }
 ```
 
+Errors when stopping a beryl system with [`stop`](#stop).
+
 #### Constructors
 
 ##### `NotRunning`
+
+```gleam
+NotRunning
+```
 
 The handle referred to a system that was not running: it was never
  started (for example, a `child_spec` handle whose supervisor was never
@@ -197,29 +272,18 @@ The handle referred to a system that was not running: it was never
 
 ##### `StopTimeout`
 
+```gleam
+StopTimeout
+```
+
 The runtime did not acknowledge the stop request within the shutdown
  window. The system may still be terminating.
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-broadcast" aria-hidden="true"></div>
+
 ### `broadcast`
-
-Broadcast a message to all subscribers of a topic.
-
- This function sends the message to all sockets subscribed to the topic.
- When the system was started with PubSub, it also sends the broadcast to
- subscribers on other nodes.
-
- ## Example
-
- ```gleam
- beryl.broadcast(
-   sockets,
-   "room:lobby",
-   "new_message",
-   json.object([#("text", json.string("Hello!"))]),
- )
- ```
 
 ```gleam
 pub fn broadcast(
@@ -230,26 +294,26 @@ pub fn broadcast(
 ) -> Nil
 ```
 
-### `broadcast_from`
+Broadcast a message to all subscribers of a topic.
 
-Broadcast a message to all subscribers except one socket.
+ This function sends the message to all sockets subscribed to the topic.
+ When the system was started with PubSub, it also sends the broadcast to
+ subscribers on other nodes.
 
- Useful for broadcasting a message to everyone except the sender.
- When PubSub is configured, the excluded socket ID is preserved across
- nodes so clustered deployments do not echo the event back to that
- socket on another node.
-
- ## Example
+ #### Example
 
  ```gleam
- beryl.broadcast_from(
+ beryl.broadcast(
    sockets,
-   socket_id,
    "room:lobby",
-   "user_typing",
-   json.object([#("user", json.string("alice"))]),
+   "new_message",
+   json.object([#("text", json.string("Hello!"))]),
  )
  ```
+
+<div class="api-entry-anchor" id="api-function-broadcast_from" aria-hidden="true"></div>
+
+### `broadcast_from`
 
 ```gleam
 pub fn broadcast_from(
@@ -261,7 +325,36 @@ pub fn broadcast_from(
 ) -> Nil
 ```
 
+Broadcast a message to all subscribers except one socket.
+
+ Useful for broadcasting a message to everyone except the sender.
+ When PubSub is configured, the excluded socket ID is preserved across
+ nodes so clustered deployments do not echo the event back to that
+ socket on another node.
+
+ #### Example
+
+ ```gleam
+ beryl.broadcast_from(
+   sockets,
+   socket_id,
+   "room:lobby",
+   "user_typing",
+   json.object([#("user", json.string("alice"))]),
+ )
+ ```
+
+<div class="api-entry-anchor" id="api-function-broadcast_presence_diff" aria-hidden="true"></div>
+
 ### `broadcast_presence_diff`
+
+```gleam
+pub fn broadcast_presence_diff(
+  Sockets,
+  String,
+  presence.Diff
+) -> Nil
+```
 
 Broadcast a Phoenix-compatible `presence_diff` event for a topic.
 
@@ -277,15 +370,17 @@ Broadcast a Phoenix-compatible `presence_diff` event for a topic.
  When the system was started with PubSub, the broadcast is distributed
  using the same semantics as `broadcast`.
 
-```gleam
-pub fn broadcast_presence_diff(
-  Sockets,
-  String,
-  presence.Diff
-) -> Nil
-```
+<div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
 
 ### `child_spec`
+
+```gleam
+pub fn child_spec(
+  Config,
+  init: fn(socket.ConnectInfo(a)) -> #(b, List(socket.Effect)),
+  update: fn(b, socket.Input(a)) -> socket.Next(b)
+) -> Result(#(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ConfigError)
+```
 
 Build the app-side dispatch supervision child specification.
 
@@ -300,7 +395,7 @@ Build the app-side dispatch supervision child specification.
  shutdown, fire-and-forget handle operations are no-ops and connection
  admission fails cleanly rather than panicking.
 
- ## Example
+ #### Example
 
  ```gleam
  let assert Ok(#(sockets, child_specification)) =
@@ -314,15 +409,13 @@ Build the app-side dispatch supervision child specification.
  // `sockets` is usable once the tree above is running.
  ```
 
-```gleam
-pub fn child_spec(
-  Config,
-  init: fn(socket.ConnectInfo(a)) -> #(b, List(socket.Effect)),
-  update: fn(b, socket.Input(a)) -> socket.Next(b)
-) -> Result(#(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ConfigError)
-```
+<div class="api-entry-anchor" id="api-function-config" aria-hidden="true"></div>
 
 ### `config`
+
+```gleam
+pub fn config(codec.Codec) -> Config
+```
 
 Build a configuration with sensible defaults.
 
@@ -330,17 +423,9 @@ Build a configuration with sensible defaults.
  default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
  or your own `Codec` for a custom framing.
 
-```gleam
-pub fn config(codec.Codec) -> Config
-```
+<div class="api-entry-anchor" id="api-function-logging_config" aria-hidden="true"></div>
 
 ### `logging_config`
-
-Build a logging configuration.
-
- Payloads are excluded by default to avoid accidental sensitive-data
- exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
- size when payload previews are enabled.
 
 ```gleam
 pub fn logging_config(
@@ -349,7 +434,19 @@ pub fn logging_config(
 ) -> LoggingConfig
 ```
 
+Build a logging configuration.
+
+ Payloads are excluded by default to avoid accidental sensitive-data
+ exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
+ size when payload previews are enabled.
+
+<div class="api-entry-anchor" id="api-function-stop" aria-hidden="true"></div>
+
 ### `stop`
+
+```gleam
+pub fn stop(Sockets) -> Result(Nil, StopError)
+```
 
 Stop a beryl system.
 
@@ -365,28 +462,22 @@ Stop a beryl system.
  acknowledge the stop within the shutdown window. After a successful stop
  the handle should no longer be used.
 
-```gleam
-pub fn stop(Sockets) -> Result(Nil, StopError)
-```
+<div class="api-entry-anchor" id="api-function-validate_config" aria-hidden="true"></div>
 
 ### `validate_config`
+
+```gleam
+pub fn validate_config(Config) -> Result(Nil, ConfigError)
+```
 
 Validate a [`Config`](#config) without starting any process.
 
  This checks that `heartbeat_timeout_ms` is at least 2 and that every
  per-topic rate-limit pattern is valid.
 
-```gleam
-pub fn validate_config(Config) -> Result(Nil, ConfigError)
-```
+<div class="api-entry-anchor" id="api-function-with_channel_rate" aria-hidden="true"></div>
 
 ### `with_channel_rate`
-
-Configure per-channel message rate limiting.
-
- The limiter applies only after a socket has joined a topic. Active
- per-socket channel buckets are capped by default; use
- `with_channel_rate_max_keys_per_socket` to adjust the cap.
 
 ```gleam
 pub fn with_channel_rate(
@@ -396,11 +487,15 @@ pub fn with_channel_rate(
 ) -> Config
 ```
 
+Configure per-channel message rate limiting.
+
+ The limiter applies only after a socket has joined a topic. Active
+ per-socket channel buckets are capped by default; use
+ `with_channel_rate_max_keys_per_socket` to adjust the cap.
+
+<div class="api-entry-anchor" id="api-function-with_channel_rate_max_keys_per_socket" aria-hidden="true"></div>
+
 ### `with_channel_rate_max_keys_per_socket`
-
-Configure the maximum active per-channel rate-limit buckets per socket.
-
- Values <= 0 disable the cap. The default is 1000.
 
 ```gleam
 pub fn with_channel_rate_max_keys_per_socket(
@@ -409,7 +504,21 @@ pub fn with_channel_rate_max_keys_per_socket(
 ) -> Config
 ```
 
+Configure the maximum active per-channel rate-limit buckets per socket.
+
+ Values <= 0 disable the cap. The default is 1000.
+
+<div class="api-entry-anchor" id="api-function-with_connection_rate_per_ip" aria-hidden="true"></div>
+
 ### `with_connection_rate_per_ip`
+
+```gleam
+pub fn with_connection_rate_per_ip(
+  Config,
+  per_second: Int,
+  burst: Int
+) -> Config
+```
 
 Configure a per-IP connection-attempt rate limit.
 
@@ -426,23 +535,9 @@ Configure a per-IP connection-attempt rate limit.
  This uses the same peer IP and trusted-proxy caveats as
  `with_max_connections_per_ip`.
 
-```gleam
-pub fn with_connection_rate_per_ip(
-  Config,
-  per_second: Int,
-  burst: Int
-) -> Config
-```
+<div class="api-entry-anchor" id="api-function-with_frame_rate" aria-hidden="true"></div>
 
 ### `with_frame_rate`
-
-Configure per-connection frame-rate limiting at the transport edge.
-
- Every complete inbound text or binary frame consumes this independent
- bucket before decoding. Configure it alongside `with_message_rate` to
- combine edge shedding with a runtime cap on decoded non-join traffic.
- An over-rate heartbeat is shed before it can refresh the socket's heartbeat
- deadline, so a sustained flood is eventually closed by heartbeat eviction.
 
 ```gleam
 pub fn with_frame_rate(
@@ -452,13 +547,17 @@ pub fn with_frame_rate(
 ) -> Config
 ```
 
+Configure per-connection frame-rate limiting at the transport edge.
+
+ Every complete inbound text or binary frame consumes this independent
+ bucket before decoding. Configure it alongside `with_message_rate` to
+ combine edge shedding with a runtime cap on decoded non-join traffic.
+ An over-rate heartbeat is shed before it can refresh the socket's heartbeat
+ deadline, so a sustained flood is eventually closed by heartbeat eviction.
+
+<div class="api-entry-anchor" id="api-function-with_heartbeat" aria-hidden="true"></div>
+
 ### `with_heartbeat`
-
-Configure the server-side heartbeat staleness window.
-
- The runtime evicts a socket that sends no heartbeat within `timeout_ms`.
- It checks at half this window, so values below 2 are rejected by
- `validate_config` with `HeartbeatTimeoutTooLow`. The default is 60000 ms.
 
 ```gleam
 pub fn with_heartbeat(
@@ -467,9 +566,15 @@ pub fn with_heartbeat(
 ) -> Config
 ```
 
-### `with_join_rate`
+Configure the server-side heartbeat staleness window.
 
-Configure per-socket join rate limiting.
+ The runtime evicts a socket that sends no heartbeat within `timeout_ms`.
+ It checks at half this window, so values below 2 are rejected by
+ `validate_config` with `HeartbeatTimeoutTooLow`. The default is 60000 ms.
+
+<div class="api-entry-anchor" id="api-function-with_join_rate" aria-hidden="true"></div>
+
+### `with_join_rate`
 
 ```gleam
 pub fn with_join_rate(
@@ -479,9 +584,11 @@ pub fn with_join_rate(
 ) -> Config
 ```
 
-### `with_logging`
+Configure per-socket join rate limiting.
 
-Configure beryl's internal logging.
+<div class="api-entry-anchor" id="api-function-with_logging" aria-hidden="true"></div>
+
+### `with_logging`
 
 ```gleam
 pub fn with_logging(
@@ -490,7 +597,18 @@ pub fn with_logging(
 ) -> Config
 ```
 
+Configure beryl's internal logging.
+
+<div class="api-entry-anchor" id="api-function-with_max_connections" aria-hidden="true"></div>
+
 ### `with_max_connections`
+
+```gleam
+pub fn with_max_connections(
+  Config,
+  max_connections: Int
+) -> Config
+```
 
 Configure the maximum number of concurrent connections allowed across the
  whole node, regardless of source IP.
@@ -503,7 +621,7 @@ Configure the maximum number of concurrent connections allowed across the
  increment atomically. Concurrent opens cannot materially exceed the
  ceiling.
 
- ## Composition with per-IP limits
+ #### Composition with per-IP limits
 
  This node-wide ceiling works with `with_max_connections_per_ip`. When both
  are set, a connection must be under *both* limits. The per-IP limit
@@ -513,7 +631,7 @@ Configure the maximum number of concurrent connections allowed across the
  process, socket, and runtime budget. A per-IP limit alone cannot stop this
  case.
 
- ## Composition with external load balancers
+ #### Composition with external load balancers
 
  This ceiling is enforced per BEAM node. If you run several nodes behind a
  load balancer, each node enforces its own limit independently, so the
@@ -522,14 +640,16 @@ Configure the maximum number of concurrent connections allowed across the
  value against a single node's capacity. Use the load balancer's
  global connection/rate controls when you need a cluster-wide cap.
 
+<div class="api-entry-anchor" id="api-function-with_max_connections_per_ip" aria-hidden="true"></div>
+
+### `with_max_connections_per_ip`
+
 ```gleam
-pub fn with_max_connections(
+pub fn with_max_connections_per_ip(
   Config,
   max_connections: Int
 ) -> Config
 ```
-
-### `with_max_connections_per_ip`
 
 Configure the maximum number of concurrent connections allowed per client
  IP address.
@@ -539,7 +659,7 @@ Configure the maximum number of concurrent connections allowed per client
  It rejects other connections. The transport frees the slot when the
  connection closes.
 
- ## Which IP is used
+ #### Which IP is used
 
  The limit is enforced on the **real socket peer IP** as reported by the
  transport (for the Mist transport, the address of the TCP connection).
@@ -554,20 +674,9 @@ Configure the maximum number of concurrent connections allowed per client
  built-in trusted-proxy opt-in may be added in a future release. See the
  WebSocket transport guide for deployment guidance.
 
-```gleam
-pub fn with_max_connections_per_ip(
-  Config,
-  max_connections: Int
-) -> Config
-```
+<div class="api-entry-anchor" id="api-function-with_max_event_length" aria-hidden="true"></div>
 
 ### `with_max_event_length`
-
-Configure the maximum allowed byte length for client-supplied event name
- strings.
-
- Event names longer than `max_length` bytes are dropped before reaching the
- app's `update` function. The default is 64.
 
 ```gleam
 pub fn with_max_event_length(
@@ -576,7 +685,22 @@ pub fn with_max_event_length(
 ) -> Config
 ```
 
+Configure the maximum allowed byte length for client-supplied event name
+ strings.
+
+ Event names longer than `max_length` bytes are dropped before reaching the
+ app's `update` function. The default is 64.
+
+<div class="api-entry-anchor" id="api-function-with_max_inbound_frame_bytes" aria-hidden="true"></div>
+
 ### `with_max_inbound_frame_bytes`
+
+```gleam
+pub fn with_max_inbound_frame_bytes(
+  Config,
+  max_bytes: Int
+) -> Config
+```
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
@@ -598,18 +722,9 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
 
  Values <= 0 disable the cap. The default is 1 MiB.
 
-```gleam
-pub fn with_max_inbound_frame_bytes(
-  Config,
-  max_bytes: Int
-) -> Config
-```
+<div class="api-entry-anchor" id="api-function-with_max_joined_topics_per_socket" aria-hidden="true"></div>
 
 ### `with_max_joined_topics_per_socket`
-
-Configure the maximum number of topics a socket may join at once.
-
- Values <= 0 disable the cap. The default is 1000.
 
 ```gleam
 pub fn with_max_joined_topics_per_socket(
@@ -618,14 +733,13 @@ pub fn with_max_joined_topics_per_socket(
 ) -> Config
 ```
 
+Configure the maximum number of topics a socket may join at once.
+
+ Values <= 0 disable the cap. The default is 1000.
+
+<div class="api-entry-anchor" id="api-function-with_max_topic_length" aria-hidden="true"></div>
+
 ### `with_max_topic_length`
-
-Configure the maximum allowed byte length for client-supplied topic
- strings.
-
- Topics longer than `max_length` bytes are rejected with a `phx_reply`
- error before reaching your `update` function, bounding the size of keys
- tracked per socket. The default is 256.
 
 ```gleam
 pub fn with_max_topic_length(
@@ -634,15 +748,16 @@ pub fn with_max_topic_length(
 ) -> Config
 ```
 
+Configure the maximum allowed byte length for client-supplied topic
+ strings.
+
+ Topics longer than `max_length` bytes are rejected with a `phx_reply`
+ error before reaching your `update` function, bounding the size of keys
+ tracked per socket. The default is 256.
+
+<div class="api-entry-anchor" id="api-function-with_message_rate" aria-hidden="true"></div>
+
 ### `with_message_rate`
-
-Configure per-socket decoded message-rate limiting in the runtime.
-
- Joins use `with_join_rate`; decoded leaves, heartbeats, events, decoded
- binary, and raw `Binary` inputs consume this bucket. It is independent of
- `with_frame_rate`. An over-rate heartbeat does not refresh the socket's
- heartbeat deadline, so a sustained flood is eventually closed by heartbeat
- eviction. Leave enough rate and burst headroom for legitimate heartbeats.
 
 ```gleam
 pub fn with_message_rate(
@@ -652,9 +767,17 @@ pub fn with_message_rate(
 ) -> Config
 ```
 
-### `with_payload_preview_bytes`
+Configure per-socket decoded message-rate limiting in the runtime.
 
-Configure the maximum payload/frame preview length for logs.
+ Joins use `with_join_rate`; decoded leaves, heartbeats, events, decoded
+ binary, and raw `Binary` inputs consume this bucket. It is independent of
+ `with_frame_rate`. An over-rate heartbeat does not refresh the socket's
+ heartbeat deadline, so a sustained flood is eventually closed by heartbeat
+ eviction. Leave enough rate and burst headroom for legitimate heartbeats.
+
+<div class="api-entry-anchor" id="api-function-with_payload_preview_bytes" aria-hidden="true"></div>
+
+### `with_payload_preview_bytes`
 
 ```gleam
 pub fn with_payload_preview_bytes(
@@ -663,9 +786,11 @@ pub fn with_payload_preview_bytes(
 ) -> LoggingConfig
 ```
 
-### `with_presence_handle`
+Configure the maximum payload/frame preview length for logs.
 
-Attach the presence actor used by socket presence effects.
+<div class="api-entry-anchor" id="api-function-with_presence_handle" aria-hidden="true"></div>
+
+### `with_presence_handle`
 
 ```gleam
 pub fn with_presence_handle(
@@ -674,9 +799,11 @@ pub fn with_presence_handle(
 ) -> Config
 ```
 
-### `with_pubsub`
+Attach the presence actor used by socket presence effects.
 
-Add PubSub to a configuration for distributed broadcasts.
+<div class="api-entry-anchor" id="api-function-with_pubsub" aria-hidden="true"></div>
+
+### `with_pubsub`
 
 ```gleam
 pub fn with_pubsub(
@@ -685,15 +812,30 @@ pub fn with_pubsub(
 ) -> Config
 ```
 
-### `with_telemetry`
+Add PubSub to a configuration for distributed broadcasts.
 
-Enable beryl's `:telemetry` events.
+<div class="api-entry-anchor" id="api-function-with_telemetry" aria-hidden="true"></div>
+
+### `with_telemetry`
 
 ```gleam
 pub fn with_telemetry(Config) -> Config
 ```
 
+Enable beryl's `:telemetry` events.
+
+<div class="api-entry-anchor" id="api-function-with_topic_rate" aria-hidden="true"></div>
+
 ### `with_topic_rate`
+
+```gleam
+pub fn with_topic_rate(
+  Config,
+  pattern: String,
+  per_second: Int,
+  burst: Int
+) -> Config
+```
 
 Configure a per-topic-pattern message rate limit for an app-dispatch
  runtime built with `child_spec`.
@@ -705,12 +847,3 @@ Configure a per-topic-pattern message rate limit for an app-dispatch
  only after a socket has joined the topic. A non-positive `per_second`
  explicitly disables limiting for matching topics, including any global
  channel limit, and allocates no bucket.
-
-```gleam
-pub fn with_topic_rate(
-  Config,
-  pattern: String,
-  per_second: Int,
-  burst: Int
-) -> Config
-```

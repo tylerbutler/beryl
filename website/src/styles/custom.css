@@ -380,6 +380,139 @@ body {
 }
 
 /* ==========================================================================
+   Generated API reference — a module map followed by signature-first entries.
+   The marker is emitted by the generator so these rules cannot leak into
+   hand-written guides.
+   ========================================================================== */
+
+.api-reference-marker {
+	display: none;
+}
+
+.api-entry-anchor {
+	height: 0;
+	scroll-margin-top: calc(var(--sl-nav-height) + 1rem);
+}
+
+.sl-markdown-content:has(> .api-reference-marker) {
+	--api-rule: color-mix(
+		in oklch,
+		var(--beryl-hairline) 72%,
+		transparent
+	);
+}
+
+.api-module-list {
+	display: grid;
+	gap: 0;
+	margin-block: 1.25rem 3rem;
+	padding: 0;
+	list-style: none;
+	border-block: 1px solid var(--api-rule);
+}
+
+.api-module-list__item {
+	display: grid;
+	grid-template-columns: minmax(11rem, 0.7fr) minmax(0, 1.3fr);
+	gap: 1rem 2rem;
+	align-items: baseline;
+	margin: 0;
+	padding: 1rem 0.25rem;
+	border-bottom: 1px solid var(--api-rule);
+}
+
+.api-module-list__item:last-child {
+	border-bottom: 0;
+}
+
+.api-module-list__item p {
+	max-width: 68ch;
+	margin: 0;
+	color: var(--sl-color-gray-2);
+}
+
+.api-module-list__name {
+	font-weight: 700;
+}
+
+.api-symbol-index {
+	display: grid;
+	gap: 1.5rem;
+	margin-block: 2.25rem 3.5rem;
+	padding-block: 1.25rem;
+	border-block: 1px solid var(--api-rule);
+}
+
+.api-symbol-index__group {
+	display: grid;
+	grid-template-columns: minmax(7rem, 0.22fr) minmax(0, 1fr);
+	gap: 0.75rem 1.5rem;
+	align-items: start;
+}
+
+.api-symbol-index__section {
+	color: var(--sl-color-white);
+	font-weight: 700;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.25em;
+}
+
+.api-symbol-index ul {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+	gap: 0.4rem 1rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.api-symbol-index li {
+	min-width: 0;
+	margin: 0;
+}
+
+.api-symbol-index li a {
+	display: inline-flex;
+	max-width: 100%;
+	padding-block: 0.18rem;
+}
+
+.api-symbol-index li code {
+	overflow-wrap: anywhere;
+}
+
+.sl-markdown-content:has(> .api-reference-marker)
+	.sl-heading-wrapper.level-h3 {
+	margin-top: 3rem;
+	padding-top: 1.5rem;
+	border-top: 1px solid var(--api-rule);
+}
+
+.sl-markdown-content:has(> .api-reference-marker)
+	.sl-heading-wrapper.level-h3
+	+ .expressive-code {
+	margin-top: 0.8rem;
+	margin-bottom: 1.25rem;
+}
+
+.sl-markdown-content:has(> .api-reference-marker)
+	.sl-heading-wrapper.level-h5 {
+	margin-top: 1.75rem;
+}
+
+@media (max-width: 38rem) {
+	.api-module-list__item,
+	.api-symbol-index__group {
+		grid-template-columns: 1fr;
+		gap: 0.45rem;
+	}
+
+	.api-symbol-index ul {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+/* ==========================================================================
    Prev / next pagination — match the card hover language: hairline border,
    accent lift on hover, emerald glow. Active state lives on the link title.
    ========================================================================== */

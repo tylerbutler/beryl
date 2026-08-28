@@ -1,6 +1,9 @@
 ---
 title: "beryl/wire"
-description: "Phoenix Wire Protocol: encoding/decoding helpers and the canonical"
+description: "Phoenix Wire Protocol: encoding/decoding helpers and the canonical `phoenix_codec()` for `beryl/wire/codec`."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Phoenix Wire Protocol: encoding/decoding helpers and the canonical
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Phoenix Wire Protocol: encoding/decoding helpers and the canonical
  `phoenix_codec()` for `beryl/wire/codec`.
@@ -22,14 +27,33 @@ Phoenix Wire Protocol: encoding/decoding helpers and the canonical
  beryl.config(wire.phoenix_codec())
  ```
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-binary_broadcast"><code>binary_broadcast</code></a></li>
+<li><a href="#api-function-binary_push"><code>binary_push</code></a></li>
+<li><a href="#api-function-binary_reply"><code>binary_reply</code></a></li>
+<li><a href="#api-function-channel_close"><code>channel_close</code></a></li>
+<li><a href="#api-function-channel_error"><code>channel_error</code></a></li>
+<li><a href="#api-function-decode_binary_message"><code>decode_binary_message</code></a></li>
+<li><a href="#api-function-decode_message"><code>decode_message</code></a></li>
+<li><a href="#api-function-dynamic_to_json"><code>dynamic_to_json</code></a></li>
+<li><a href="#api-function-encode"><code>encode</code></a></li>
+<li><a href="#api-function-format_decode_error"><code>format_decode_error</code></a></li>
+<li><a href="#api-function-heartbeat_reply"><code>heartbeat_reply</code></a></li>
+<li><a href="#api-function-phoenix_codec"><code>phoenix_codec</code></a></li>
+<li><a href="#api-function-push"><code>push</code></a></li>
+<li><a href="#api-function-reply_json"><code>reply_json</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-binary_broadcast" aria-hidden="true"></div>
+
 ### `binary_broadcast`
-
-Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
-
- Returns `Error(Nil)` when a metadata component exceeds the framing's
- 255-byte limit.
 
 ```gleam
 pub fn binary_broadcast(
@@ -39,12 +63,14 @@ pub fn binary_broadcast(
 ) -> Result(codec.Frame, Nil)
 ```
 
-### `binary_push`
-
-Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
+Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 
  Returns `Error(Nil)` when a metadata component exceeds the framing's
  255-byte limit.
+
+<div class="api-entry-anchor" id="api-function-binary_push" aria-hidden="true"></div>
+
+### `binary_push`
 
 ```gleam
 pub fn binary_push(
@@ -55,12 +81,14 @@ pub fn binary_push(
 ) -> Result(codec.Frame, Nil)
 ```
 
-### `binary_reply`
-
-Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
+Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 
  Returns `Error(Nil)` when a metadata component exceeds the framing's
  255-byte limit.
+
+<div class="api-entry-anchor" id="api-function-binary_reply" aria-hidden="true"></div>
+
+### `binary_reply`
 
 ```gleam
 pub fn binary_reply(
@@ -72,11 +100,14 @@ pub fn binary_reply(
 ) -> Result(codec.Frame, Nil)
 ```
 
+Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
+
+ Returns `Error(Nil)` when a metadata component exceeds the framing's
+ 255-byte limit.
+
+<div class="api-entry-anchor" id="api-function-channel_close" aria-hidden="true"></div>
+
 ### `channel_close`
-
-Create a Phoenix `phx_close` frame for a normal channel termination.
-
- Phoenix copies the channel's `join_ref` to the `ref` slot.
 
 ```gleam
 pub fn channel_close(
@@ -85,11 +116,13 @@ pub fn channel_close(
 ) -> codec.Frame
 ```
 
+Create a Phoenix `phx_close` frame for a normal channel termination.
+
+ Phoenix copies the channel's `join_ref` to the `ref` slot.
+
+<div class="api-entry-anchor" id="api-function-channel_error" aria-hidden="true"></div>
+
 ### `channel_error`
-
-Create a Phoenix `phx_error` frame for an abnormal channel termination.
-
- Phoenix clients respond by scheduling an automatic rejoin.
 
 ```gleam
 pub fn channel_error(
@@ -98,7 +131,17 @@ pub fn channel_error(
 ) -> codec.Frame
 ```
 
+Create a Phoenix `phx_error` frame for an abnormal channel termination.
+
+ Phoenix clients respond by scheduling an automatic rejoin.
+
+<div class="api-entry-anchor" id="api-function-decode_binary_message" aria-hidden="true"></div>
+
 ### `decode_binary_message`
+
+```gleam
+pub fn decode_binary_message(BitArray) -> Result(codec.Inbound, codec.DecodeError)
+```
 
 Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
 
@@ -109,57 +152,69 @@ Decode a Phoenix V2 binary push frame from a client into an `Inbound`.
  `ref` components decode as `None`. Reserved protocol events use the same
  classification as text frames.
 
-```gleam
-pub fn decode_binary_message(BitArray) -> Result(codec.Inbound, codec.DecodeError)
-```
+<div class="api-entry-anchor" id="api-function-decode_message" aria-hidden="true"></div>
 
 ### `decode_message`
+
+```gleam
+pub fn decode_message(String) -> Result(codec.Inbound, codec.DecodeError)
+```
 
 Parse a JSON string into an `Inbound`.
 
  Expected format: `[join_ref, ref, topic, event, payload]` where
  The `join_ref` and `ref` values can be `null`.
 
-```gleam
-pub fn decode_message(String) -> Result(codec.Inbound, codec.DecodeError)
-```
+<div class="api-entry-anchor" id="api-function-dynamic_to_json" aria-hidden="true"></div>
 
 ### `dynamic_to_json`
+
+```gleam
+pub fn dynamic_to_json(dynamic.Dynamic) -> Result(json.Json, Nil)
+```
 
 Convert a `Dynamic` value decoded from JSON back to `json.Json`.
 
  Returns `Error(Nil)` when the value exceeds the wire protocol's maximum
  JSON depth or contains a value that JSON cannot represent.
 
-```gleam
-pub fn dynamic_to_json(dynamic.Dynamic) -> Result(json.Json, Nil)
-```
+<div class="api-entry-anchor" id="api-function-encode" aria-hidden="true"></div>
 
 ### `encode`
-
-Encode an `Inbound` back to a Phoenix wire JSON string.
 
 ```gleam
 pub fn encode(codec.Inbound) -> String
 ```
 
-### `format_decode_error`
+Encode an `Inbound` back to a Phoenix wire JSON string.
 
-Format a `DecodeError` as a human-readable string.
+<div class="api-entry-anchor" id="api-function-format_decode_error" aria-hidden="true"></div>
+
+### `format_decode_error`
 
 ```gleam
 pub fn format_decode_error(codec.DecodeError) -> String
 ```
 
-### `heartbeat_reply`
+Format a `DecodeError` as a human-readable string.
 
-Create a Phoenix heartbeat reply.
+<div class="api-entry-anchor" id="api-function-heartbeat_reply" aria-hidden="true"></div>
+
+### `heartbeat_reply`
 
 ```gleam
 pub fn heartbeat_reply(option.Option(String)) -> codec.Frame
 ```
 
+Create a Phoenix heartbeat reply.
+
+<div class="api-entry-anchor" id="api-function-phoenix_codec" aria-hidden="true"></div>
+
 ### `phoenix_codec`
+
+```gleam
+pub fn phoenix_codec() -> codec.Codec
+```
 
 Return the canonical Phoenix wire codec.
 
@@ -172,13 +227,9 @@ Return the canonical Phoenix wire codec.
  `Binary` event only for an undecoded frame from a codec without a binary
  decoder.
 
-```gleam
-pub fn phoenix_codec() -> codec.Codec
-```
+<div class="api-entry-anchor" id="api-function-push" aria-hidden="true"></div>
 
 ### `push`
-
-Create a server-initiated push message.
 
 ```gleam
 pub fn push(
@@ -188,9 +239,11 @@ pub fn push(
 ) -> codec.Frame
 ```
 
-### `reply_json`
+Create a server-initiated push message.
 
-Create a Phoenix `phx_reply` JSON string.
+<div class="api-entry-anchor" id="api-function-reply_json" aria-hidden="true"></div>
+
+### `reply_json`
 
 ```gleam
 pub fn reply_json(
@@ -201,3 +254,5 @@ pub fn reply_json(
   json.Json
 ) -> codec.Frame
 ```
+
+Create a Phoenix `phx_reply` JSON string.
