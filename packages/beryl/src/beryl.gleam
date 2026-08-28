@@ -612,6 +612,9 @@ pub type AppHandle {
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
+    /// Current pid of the supervised socket factory, if running (used by
+    /// tests).
+    socket_factory_owner: fn() -> Result(process.Pid, Nil),
     stats: fn() -> Result(runtime.StatsSnapshot, StatsError),
   )
 }
@@ -928,6 +931,7 @@ fn build_app_subtree(
 
   let runtime_name = process.new_name("beryl_runtime")
   let supervisor_name = process.new_name("beryl_app_supervisor")
+  let factory_name = process.new_name("beryl_socket_factory")
   let limiter_name = case
     connection_limit.enabled(
       config.max_connections_per_ip,
@@ -946,13 +950,10 @@ fn build_app_subtree(
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
+        process.named_subject(factory_name),
         fn(runtime_pid) {
-          runtime.start_socket_actor(
-            config: to_runtime_config(config),
-            init: init,
-            update: update,
-            open_worker: open_worker,
-            router: process.named_subject(runtime_name),
+          runtime.start_socket_child(
+            factory: factory_name,
             router_pid: runtime_pid,
           )
         },
@@ -964,21 +965,53 @@ fn build_app_subtree(
       supervisor_name,
       stop_runtime(process.named_subject(runtime_name), _),
       fn() {
-        child_spec_supervisor(config, runtime_name, limiter_name, init, update)
+        child_spec_supervisor(
+          config,
+          runtime_name,
+          factory_name,
+          limiter_name,
+          init,
+          update,
+          open_worker,
+        )
       },
     )
   })
 }
 
-/// Start the nested beryl subtree: a one-for-one supervisor owning the runtime
-/// as a transient child, with the optional connection limiter as a sibling.
+/// Start the nested beryl subtree: a one-for-one supervisor owning the socket
+/// factory and the runtime, with the optional connection limiter as a sibling.
+///
+/// The socket factory is added first, so the runtime is asked to shut down
+/// before it (children terminate in reverse start order). A graceful
+/// `beryl.stop` therefore drains every socket actor through the router before
+/// the factory tears the survivors down.
 fn child_spec_supervisor(
   config: Config,
   runtime_name: process.Name(runtime.Msg(msg)),
+  factory_name: process.Name(runtime.SocketFactoryMessage(msg)),
   limiter_name: Option(process.Name(connection_limit.Message)),
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
   update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
+  // Socket actors are `Temporary` children of this factory: it owns their
+  // process lifetime and forced shutdown, but never reconstructs the
+  // connection state a stopped socket owned. A factory crash therefore takes
+  // its whole socket population with it; the router's monitors sweep the
+  // routing and presence state and close the transports, and the `Permanent`
+  // factory restarts under the same name to accept new connections.
+  let factory_child =
+    runtime.socket_factory_child(
+      config: to_runtime_config(config),
+      init: init,
+      update: update,
+      open_worker: open_worker,
+      router: process.named_subject(runtime_name),
+      name: factory_name,
+    )
+    |> supervision.restart(supervision.Permanent)
+
   let runtime_child =
     supervision.worker(fn() {
       runtime.start_named(
@@ -1000,6 +1033,7 @@ fn child_spec_supervisor(
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
     |> static_supervisor.auto_shutdown(static_supervisor.AnySignificant)
+    |> static_supervisor.add(factory_child)
     |> static_supervisor.add(runtime_child)
 
   let builder = case limiter_name {
@@ -1041,6 +1075,7 @@ fn await_admission(
 fn app_handle(
   subject: Subject(runtime.Msg(msg)),
   supervisor: Subject(app_supervisor.Message),
+  factory: Subject(runtime.SocketFactoryMessage(msg)),
   start_socket_actor: fn(process.Pid) ->
     Result(actor.Started(Subject(runtime.Msg(msg))), actor.StartError),
 ) -> AppHandle {
@@ -1056,17 +1091,15 @@ fn app_handle(
     ) {
       case process.subject_owner(subject) {
         Ok(current_owner) if current_owner == owner -> {
-          // The socket's actor is started here, in the transport's
-          // connection process, so connection setup never serialises
-          // through the runtime; the runtime's admission turn is an O(1)
-          // atomic admit-and-forward, and the actor answers `reply`
-          // itself once the app `init` has run.
+          // Phase one of admission: the socket factory starts the actor, so
+          // it is an owned supervision-tree child before registration
+          // begins. Only that start is serialised through the factory —
+          // the app `init` runs later, in the actor itself, so the
+          // runtime's admission turn stays an O(1) atomic
+          // admit-and-forward and connection setup stays parallel.
           case start_socket_actor(owner) {
             Error(_) -> False
             Ok(started) -> {
-              // `actor.start` linked the actor to this transport process;
-              // its lifecycle belongs to the runtime instead.
-              process.unlink(started.pid)
               let reply = process.new_subject()
               let admission = runtime.new_admission_token()
               process.send(
@@ -1124,6 +1157,7 @@ fn app_handle(
     },
     stop: fn() { request_runtime_stop(supervisor) },
     runtime_owner: fn() { process.subject_owner(subject) },
+    socket_factory_owner: fn() { process.subject_owner(factory) },
     stats: fn() {
       case process.subject_owner(subject) {
         Error(Nil) -> Error(StatsRuntimeUnavailable)
@@ -1206,6 +1240,12 @@ pub fn app_runtime_pid(channels: Sockets) -> Result(process.Pid, Nil) {
 @internal
 pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
   app_limiter_owner(channels.connection_limiter)
+}
+
+/// The pid of the app subtree's socket factory supervisor, if running.
+@internal
+pub fn app_socket_factory_pid(channels: Sockets) -> Result(process.Pid, Nil) {
+  channels.app.socket_factory_owner()
 }
 
 fn to_runtime_config(config: Config) -> runtime.Config {

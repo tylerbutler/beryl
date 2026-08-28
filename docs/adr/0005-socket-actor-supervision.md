@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-08-28).
+Accepted (2026-08-28).
 
 This ADR follows
 [ADR 0004](0004-channel-process-fault-boundaries.md). ADR 0004 assigns one
@@ -282,6 +282,13 @@ application `init`. Phase two will use the existing admission token and
 owner check. The router will monitor and index the actor before it forwards
 `AdmitSocket`. The actor will run application `init` and answer the transport.
 
+The `Booting` phase will be bounded. A cancelled admission stops the actor
+through the existing `StopSocketActor` cast. An actor whose transport process
+dies before it reaches the router receives no such cast, so the actor also
+stops itself at a boot deadline. This keeps a never-admitted child from
+accumulating under the factory. The deadline is read between turns only, so it
+never interrupts a slow application `init`.
+
 Socket actors will remain `Temporary`. The supervisor will not restart socket
 or topic state without a new client handshake. If a socket actor stops, the
 router monitor will still remove routing and presence state. If the router
@@ -294,6 +301,20 @@ it closes the WebSocket when the admitting router generation stops.
 Graceful `beryl.stop` must drain socket actors before the internal supervisor
 stops the socket factory. The factory shutdown timeout is a final safeguard
 for actors that do not finish the drain.
+
+### Factory failure
+
+The factory owns and links every socket actor it starts. If the factory
+fails, all of its socket actors stop with it, in both the `Booting` and the
+`Active` phase. The router monitors each admitted actor, so it sweeps their
+topic index entries and presence data and calls their transport closers. The
+clients see closed connections and reconnect.
+
+The factory is a `Permanent` child, so the nested beryl supervisor restarts it
+under the same registered name. The router is not restarted by that failure
+and keeps its generation. Transports reach the replacement factory through its
+name rather than a captured PID, so new connections are admitted as soon as
+the replacement is registered.
 
 ## Consequences
 
@@ -308,7 +329,8 @@ for actors that do not finish the drain.
 - The factory and router both retain per-socket process metadata.
 - Admission gains explicit `Booting`, `Active`, and `Closing` phases.
 - Shutdown must preserve drain-before-factory-stop order.
-- A factory failure can affect the ownership of all active socket actors.
+- A factory failure closes every connection the factory owned. The router
+  sweep and the `Permanent` restart restore service without a router restart.
 
 The new factory improves OTP ownership and inspection. It does not replace
 protocol-level monitors or client reconnect and rejoin recovery.
@@ -356,6 +378,33 @@ admission latency for unrelated sockets. Burst-start throughput must not
 regress by more than 10 percent at the expected deployment scale. The pull
 request must report the test scale, Erlang version, scheduler count, and raw
 results.
+
+### Results
+
+The implementation was compared with the direct-start design on Erlang
+27.2.1 with 12 schedulers. Both variants used the Mist transport and the k6
+`connection-rate` profile at 2,000 connections per second for 30 seconds.
+Each variant ran three times after a protocol warm-up and a 65-second
+cool-down between runs.
+
+| Design and run | Starts per second | p50 | p95 | p99 | Dropped | Errors |
+|---|---:|---:|---:|---:|---:|---:|
+| Direct 1 | 1,999.86 | 1 ms | 4 ms | 9 ms | 0 | 0 |
+| Direct 2 | 1,999.70 | 1 ms | 4 ms | 10 ms | 0 | 0 |
+| Direct 3 | 1,999.29 | 1 ms | 2 ms | 7 ms | 0 | 0 |
+| Factory 1 | 1,998.11 | 1 ms | 15 ms | 56 ms | 0 | 0 |
+| Factory 2 | 1,999.90 | 1 ms | 2 ms | 4 ms | 0 | 0 |
+| Factory 3 | 1,999.90 | 0 ms | 2 ms | 5 ms | 0 | 0 |
+
+Median throughput was 1,999.70 starts per second for direct startup and
+1,999.90 for factory startup. Factory throughput was 100.01 percent of the
+direct-start result, so it passed the 90 percent acceptance threshold. The
+factory medians were 1 ms at p50, 2 ms at p95, and 5 ms at p99, with no
+dropped iterations or unexpected errors.
+
+A higher-rate probe was excluded because other processes loaded the shared
+host during one variant. Capacity above 2,000 starts per second requires a
+separate comparison on an isolated host.
 
 ## Sources
 
