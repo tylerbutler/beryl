@@ -30,8 +30,8 @@ transport connection
   them, and the router monitors them.
 - With the channel layer, each socket actor starts a **topic worker
   supervisor** and one **topic worker** for each accepted join. Workers are
-  `Temporary`: a dead worker is not restarted, and the client rejoins. The
-  workers die with their socket actor.
+  `Temporary`. The supervisor does not restart a stopped worker. The client
+  must rejoin. The workers stop with their socket actor.
 - The router uses a stable registered name. The `Sockets` handle accepts new
   work after a restart. Existing connections close. Sends during the restart
   window do nothing.
@@ -68,8 +68,9 @@ router fault reaches the supervisor and closes all connections. See
 See the [Error Handling guide](/guides/error-handling/) for details.
 
 Channel callbacks run in the topic's worker. A `join`, `on_message`, or
-`on_info` panic affects only that join or topic. A terminate panic loses that
-callback's actions but does not stop sibling-channel teardown; see
+`on_info` panic affects only that join or topic. An `on_terminate` panic
+discards that callback's actions but does not stop cleanup for sibling
+channels. See
 [When callbacks panic](/guides/channels/#when-callbacks-panic).
 
 ## Supervise presence and groups

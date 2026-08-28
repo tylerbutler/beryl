@@ -15,7 +15,7 @@ manage presence and groups. Only PubSub sends data across nodes.
 Each page describes one subsystem and lists its source files.
 
 - [How beryl handles a message](/architecture/message-lifecycle): how a frame travels from WebSocket to your `update` function and back
-- [Socket Processes & Restarts](/architecture/runtime): the router, one process per socket, one worker per channel, typed messages, and restart behavior
+- [Socket processes & restarts](/architecture/runtime): the router, one process per socket, one worker per joined topic, typed messages, and restart behavior
 - [Broadcasts Across Nodes](/architecture/pubsub-and-distribution): Erlang `pg` groups, sender exclusion, and delivery between nodes
 - [Presence](/architecture/presence): CRDT-backed presence tracking, diffs, and replication
 - [WebSocket Frames & Transports](/architecture/wire-and-transport): message encoding, Phoenix frames, and the Mist WebSocket adapter

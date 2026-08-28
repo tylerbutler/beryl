@@ -41,17 +41,18 @@ in its own worker and has a private state value of your type. Raw dispatch has
 no handler table and no workers: one `update` receives every event for the
 socket as `socket.Input(msg)`, and one `model` stores its state.
 
-The isolation boundaries match Phoenix. Workers on one socket run
-concurrently, so a slow callback delays only its own topic, and beryl
-promises no order between different topics on one socket. `join` runs while
-the worker starts, and the socket actor waits for it, as the Phoenix socket
-waits for `join/3`.
+Each joined topic has a separate process, as in Phoenix. Workers on one socket
+run concurrently, so a slow callback delays only its own topic. beryl does not
+define an order between different topics on one socket. The worker runs `join`
+during startup. The socket actor waits for it, as the Phoenix socket waits for
+`join/3`.
 
-beryl also catches callback panics. A join panic rejects that join. A message
-or `on_info` panic closes that topic and still runs `on_terminate`. A
-terminate panic loses that callback's actions while the close completes. A
-worker process that dies closes its topic with `phx_error` and skips
-`on_terminate`, as a Phoenix channel crash skips `terminate/2`. See
+beryl also catches callback panics. A `join` panic rejects that join. An
+`on_message` or `on_info` panic closes that topic and still runs
+`on_terminate`. An `on_terminate` panic discards that callback's actions. The
+runtime still completes the close. If a worker stops unexpectedly, the runtime
+closes its topic with `phx_error` and does not run `on_terminate`. Similarly,
+a Phoenix channel crash skips `terminate/2`. See
 [callback panics](/guides/channels/#when-callbacks-panic).
 
 ## Phoenix-to-beryl comparison

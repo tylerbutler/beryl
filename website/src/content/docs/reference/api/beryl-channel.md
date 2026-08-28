@@ -54,30 +54,29 @@ The channel composition surface: a channel is a topic pattern paired
  `info`, the type of server-side messages it accepts. Neither escapes:
  [`handler`](#handler) seals both inside its registration closure, so the
  resulting [`Handler`](#handler) is not generic and handlers with unrelated
- `state` and `info` types compose in one list. No value is
- ever erased to `Dynamic` and no unchecked coercion is involved:
- typed `info` values travel inside a closure that only the join which
- created it can open. The worker process that owns the join opens it. If
- the join has ended, that process is gone and the value reaches nothing.
+ `state` and `info` types compose in one list. The runtime does not erase
+ values to `Dynamic` or use unchecked coercion:
+ a closure carries each typed `info` value. Only the worker for the join
+ that created the closure can open it. After the join ends, the worker no
+ longer exists and the runtime drops the value.
 
  ## Processes and ordering
 
  Each accepted topic runs in its own worker process under a supervisor
- that its socket actor owns. The socket actor keeps the connection:
- protocol state, refs, subscriptions, presence bookkeeping, and every
- frame write. `join` runs while the worker starts, and the socket actor
- waits for that one join (at most five seconds). `on_message` and
- `on_info` run in the worker, which reports its actions back to the
- socket actor.
+ that its socket actor owns. The socket actor owns the protocol state,
+ refs, subscriptions, presence data, and frame writes. The worker runs
+ `join` during startup. The socket actor waits for a maximum of five
+ seconds. The worker also runs `on_message` and `on_info`, and sends its
+ actions to the socket actor.
 
- Action lists are applied strictly from left to right, and they always
- target the channel's own topic. They lower onto
- beryl's core `Effect` values, which the runtime applies in list order.
- Action order is therefore wire order for one topic. Between different
- topics on one socket, no order is promised: their workers run
+ The runtime applies action lists from left to right. Actions always target
+ the channel's own topic. The runtime converts them to beryl's core
+ `Effect` values and applies them in list order.
+ Action order is therefore wire order for one topic. beryl does not define
+ an order between different topics on one socket. Their workers run
  concurrently, as Phoenix channel processes do. An asynchronous presence
- effect can park this socket while other sockets continue. The remaining
- actions resume only after that effect completes.
+ effect can pause this socket while other sockets continue. The runtime
+ resumes the remaining actions after that effect completes.
 
  A join's actions (see [`with_actions`](#with_actions)) are emitted with
  the join acknowledgment, immediately after it: the socket is already
@@ -86,11 +85,12 @@ The channel composition surface: a channel is a topic pattern paired
  reservation; use application-owned synchronous state for atomic
  capacity checks.
 
- A close reaches the worker after the messages it already holds, so a
- push or reply computed before a leave is still delivered. Then
- [`on_terminate`](#on_terminate) actions are lowered in the turn that
- closes the topic, after the channel instance is gone. Its closing-phase
- action type permits only operations that remain meaningful then.
+ The worker processes queued messages before a close. Thus, the runtime
+ still delivers a push or reply that the worker computed before a leave.
+ The runtime then applies [`on_terminate`](#on_terminate) actions in the
+ turn that closes the topic, after the channel instance is gone. Its
+ closing-phase action type permits only operations that remain meaningful
+ then.
 
 ## Types
 
@@ -242,16 +242,16 @@ A typed handle for sending server-side messages to one joined channel.
 
  A sender is scoped to the join that produced it. Sending is asynchronous
  and never fails. It cannot report that the channel is gone. The message
- goes to the worker process of that join. After the join ends, for any
- reason, that process is gone and the message is dropped. A later join of
- the same topic has a different worker, so a different join never
- receives the message.
+ goes to the worker process for that join. After the join ends, the worker
+ no longer exists and the runtime drops the message. A later join of the
+ same topic has a different worker. It cannot receive the message.
 
  ## Cost
 
- Each message is carried to the worker as a sealed thunk, and unsealing
- it does a selective receive on the worker's own mailbox in the same
- turn. That mailbox holds only this topic's work, so the cost is small.
+ A sealed function carries each message to the worker. The worker opens
+ the function and uses a selective receive in the same turn. One delivery
+ can scan queued work for that topic. Work for other topics does not add
+ to this cost.
 
 ```gleam
 pub type Sender(a)
@@ -385,7 +385,7 @@ Send a typed server-side message to the channel that owns `sender`.
 
  Each call enqueues one message. Each enqueued message produces one
  `on_info` call. The runtime does not combine sends. It delivers them in
- the order that the owning socket receives them.
+ the order that the worker receives them.
 
  This is a fire-and-forget send. It returns when the message is enqueued,
  whether or not the channel is still joined. The runtime discards a message
@@ -431,9 +431,9 @@ Run cleanup when the channel ends for any reason: client leave, a
  allows broadcasts, presence untracking, and presence broadcasts. It does
  not allow pushes, replies, or presence tracking.
 
- A panic here is not fatal. The runtime logs it, the close completes
- without this callback's actions, and the worker process stops. A
- [`Sender`](#sender) of this join then reaches nothing.
+ An `on_terminate` panic does not stop the socket. The runtime logs the
+ panic and completes the close without this callback's actions. The worker
+ stops, so a [`Sender`](#sender) for this join cannot deliver more messages.
 
 ```gleam
 pub fn on_terminate(

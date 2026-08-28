@@ -169,9 +169,10 @@ The channel layer applies the same results to these callbacks:
 | `on_terminate` | Logs the panic and completes the close; the callback's actions are lost |
 
 Each channel runs in its own worker process. A panic keeps the state from
-before the callback, so `on_terminate` still runs against it. If the worker
-process itself dies, the topic closes with `phx_error` and `on_terminate` is
-skipped. See [When callbacks panic](/guides/channels/#when-callbacks-panic).
+before the callback, so `on_terminate` still uses that state. If the worker
+stops unexpectedly, the runtime closes the topic with `phx_error`. It cannot
+run `on_terminate` because the worker held the channel state. See
+[When callbacks panic](/guides/channels/#when-callbacks-panic).
 
 ## Rate limits and dropped traffic
 

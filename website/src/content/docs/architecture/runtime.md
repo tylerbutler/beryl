@@ -18,13 +18,13 @@ serializes that socket's `update` calls and frame writes without locks. A slow
 callback for one socket does not stop other sockets.
 
 With the channel layer, each joined topic has a worker under a supervisor
-that the socket actor starts and links. `join` runs while the worker starts,
-and the socket actor waits for it. `on_message` and `on_info` run in the
-worker, which reports lowered effects back to the socket actor. The socket
-actor applies them in arrival order and writes every frame, so one topic's
-effects keep their order, and different topics on one socket interleave.
-A close is routed to the worker before the topic's reply refs are dropped,
-so a push or reply computed before a leave is still delivered.
+that the socket actor starts and links. The worker runs `join` during startup,
+and the socket actor waits for the result. The worker also runs `on_message`
+and `on_info`. It sends effects to the socket actor. The socket actor applies
+them in arrival order and writes each frame. Thus, effects for one topic keep
+their order. Effects for different topics can interleave. The socket actor
+sends a close to the worker before it drops the topic's reply refs. Thus, it
+can deliver a push or reply that the worker computed before a leave.
 
 The router manages admission, the topic subscriber index, the PubSub
 subscription, and stats. It only matches and forwards messages. It does not run
@@ -108,10 +108,11 @@ supervision.
 
 For the channel layer, a `join` panic rejects that join. An `on_message` or
 `on_info` panic closes only that topic. The worker keeps its previous state,
-so `on_terminate` still runs. A terminate panic loses its actions, and
-the worker stops. A worker process that dies closes its topic with
-`phx_error` and skips `on_terminate`. Core still finishes closing the topic
-and continues closing sibling channels.
+so `on_terminate` still runs. An `on_terminate` panic discards its actions and
+stops the worker. If a worker stops unexpectedly, the runtime closes its topic
+with `phx_error`. It cannot run `on_terminate` because the worker held the
+channel state. The runtime still closes the topic and continues to close
+sibling channels.
 
 ## Detect inactive sockets
 

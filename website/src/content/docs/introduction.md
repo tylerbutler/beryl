@@ -135,7 +135,7 @@ fn update(model: Model, input: socket.Input(Nil)) -> socket.Next(Model) {
 }
 ```
 
-### One process per socket and per channel
+### One process per socket and joined topic
 
 Each `beryl.Sockets` handle identifies one router actor and one actor for each
 connected socket. The socket actor owns that socket's connection state and

@@ -142,10 +142,9 @@ fn reply_error(
   }
 }
 
-/// The same topics as `beryl/channel` handlers, with the same events and
-/// replies as `update`, so a run against either API compares topology
-/// alone. `message_effects` stays the source of truth for what each event
-/// does.
+/// Define `beryl/channel` handlers for the same topics, events, and replies
+/// as `update`. Thus, a run against either API compares only the process
+/// topology. `message_effects` defines the behavior of each event.
 pub fn handlers(
   presence: session_presence.Tracker,
   cost_us: Int,
@@ -185,8 +184,8 @@ fn actions(
         Ok(channel.reply_error(message.reply, payload))
       socket.Broadcast(event: event, payload: payload, ..) ->
         Ok(channel.broadcast(event, payload))
-      // `message_effects` never produces these; listing them keeps the two
-      // bench targets from drifting silently if it ever does.
+      // `message_effects` does not produce these effects. This list makes a
+      // future difference between the two benchmark targets visible.
       socket.AcceptJoin(..)
       | socket.RejectJoin(..)
       | socket.Push(..)

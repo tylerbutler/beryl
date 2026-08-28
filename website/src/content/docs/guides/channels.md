@@ -264,8 +264,9 @@ function and sends it to the worker process of that join. Only that join can
 read the value during delivery. No mailbox stores the typed value between
 turns.
 
-Delivery uses a selective receive on the worker's own mailbox, which holds
-only that topic's work, so the cost is small.
+Delivery uses a selective receive on the worker's mailbox. One delivery can
+scan queued work for that topic. Work for other topics does not add to this
+cost.
 
 ### Senders from closed or rejoined channels
 
@@ -472,19 +473,19 @@ where the panic occurred:
 | Panic in | Effect |
 |---|---|
 | `join` | That join is rejected; the socket survives |
-| `on_message` | That topic closes with `phx_error`; `on_terminate` still runs; the socket's other topics survive |
-| `on_info` | Same as `on_message`: that topic closes; the socket's other topics survive |
-| `on_terminate` | The panic is logged, the close completes without its actions, and sibling channels still run their own termination actions |
+| `on_message` | The runtime closes that topic with `phx_error` and runs `on_terminate`. Other topics on the socket continue |
+| `on_info` | The runtime closes that topic with `phx_error` and runs `on_terminate`. Other topics on the socket continue |
+| `on_terminate` | The runtime logs the panic and completes the close without its actions. It still runs termination actions for sibling channels |
 
 Each topic runs in its own worker process. A panic in a callback keeps the
 state from before that callback, so `on_terminate` still sees it. After
 `on_terminate` the worker stops, so a sender for that join delivers nothing.
 
-If the worker process itself dies, for example when it is killed, the topic
-closes with `phx_error` and `on_terminate` does not run, because the state
-died with the process. The client must rejoin. A worker that does not finish
-its queued work and `on_terminate` within five seconds is killed, and the
-close completes without its actions.
+If the worker process stops unexpectedly, the runtime closes the topic with
+`phx_error`. It cannot run `on_terminate` because the worker held the channel
+state. The client must rejoin. The runtime kills a worker that does not finish
+its queued work and `on_terminate` within five seconds. It then completes the
+close without the termination actions.
 
 Crash isolation stops at the socket for other faults: a fault in the socket
 actor loses only that socket and its workers. A router crash loses every
@@ -580,12 +581,12 @@ The layer handles one topic at a time. Note these limits:
   `channel.notify(context.self, ..)`. The typed sender is safe to hold and
   is dropped after the join ends.
 - **A slow callback delays only its own topic.** Each channel runs in its
-  own worker, so other topics on the socket continue. The exception is
-  `join`, which the socket actor waits for (at most five seconds). Keep
-  `join` short; do long work in your own process and hand results back
-  through `channel.notify`.
-- **No order between topics.** Actions of one topic keep their order. Replies
-  and pushes of different topics on one socket can interleave in any order.
+  own worker, so other topics on the socket continue. The socket actor waits
+  for `join` for a maximum of five seconds. Keep `join` short. Run long work
+  in your own process and return results through `channel.notify`.
+- **beryl does not define an order between topics.** Actions for one topic
+  keep their order. Replies and pushes for different topics on one socket can
+  interleave.
 
 ## Next steps
 

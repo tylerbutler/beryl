@@ -148,10 +148,10 @@ worker runs the channel's callbacks and reports its actions back.
 | Runtime input | Channel layer behavior |
 |---|---|
 | `Join(topic, payload, ref)` | First matching handler wins. Its `join` runs while the worker starts, and the socket actor waits for it. The result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` |
-| `Message(topic, ..)` | Sent to the worker process of that topic, which runs `on_message` and reports its actions back |
+| `Message(topic, ..)` | The socket actor sends it to the topic worker. The worker runs `on_message` and reports its actions |
 | `Binary(topic, ..)` | Ignored by the channel layer |
-| `channel.notify` mail | Sent directly to the worker of the join that created the sender; mail for an ended join reaches no process |
-| `Closed(topic, reason)` | Routed to the worker, which runs `on_terminate`; the socket actor lowers its actions after the worker's earlier results and then sends the terminal frame |
+| `channel.notify` mail | The sender sends it to its join worker. Mail for an ended join reaches no process |
+| `Closed(topic, reason)` | The socket actor sends it to the worker. The worker runs `on_terminate`. The socket actor applies earlier results, applies the termination actions, and sends the terminal frame |
 
 If `on_terminate` panics, the core logs it and completes the close without
 its actions. The worker stops either way, so its sender delivers nothing

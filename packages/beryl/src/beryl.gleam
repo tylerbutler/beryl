@@ -847,12 +847,11 @@ pub fn child_spec(
 
 /// Build a socket system that runs one process per accepted topic.
 ///
-/// The package-internal entry point behind `channel.child_spec`: `open`
-/// runs in each new topic worker's initialiser and seals that topic's
-/// callbacks. The socket-level `init`/`update` pair is a stub that answers
-/// with no effects: every joined topic is owned by its worker, so `update`
-/// only still receives `Binary` frames and the `Closed` of a topic whose
-/// worker process died.
+/// This is the package-internal entry point for `channel.child_spec`. Each
+/// new topic worker runs `open` during initialization. The socket-level
+/// `init` and `update` functions return no effects. Each worker owns its
+/// joined topic. Thus, `update` receives only `Binary` frames and `Closed`
+/// events for workers that stopped unexpectedly.
 @internal
 pub fn worker_child_spec(
   config: Config,

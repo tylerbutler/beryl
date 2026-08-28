@@ -111,13 +111,14 @@ channel is still open. Capture `context.self` from each new join and install
 `presence_untrack`, or `broadcast_presence`; active-only pushes, replies, and
 presence tracking are rejected by the type checker.
 
-- If `on_terminate` panics, its actions are lost. Core still closes the topic
-  and sibling channels, and the worker stops.
+- If `on_terminate` panics, the runtime discards its actions. The runtime still
+  closes the topic and sibling channels. The worker stops.
 
 ### One channel crash closes more than expected
 
-Crash scope follows the callback: `join` rejects one join, and `on_message`
-or `on_info` closes one topic. Each topic runs in its own worker process. See
+Crash scope depends on the callback. A `join` panic rejects one join. An
+`on_message` or `on_info` panic closes one topic. Each topic runs in its own
+worker process. See
 [Crash behavior](/guides/channels/#crash-behavior).
 
 ---

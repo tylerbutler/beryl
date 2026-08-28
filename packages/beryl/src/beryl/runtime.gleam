@@ -171,18 +171,19 @@ pub type Msg(msg) {
   FinalizeForStop
   /// A socket actor finished shutdown phase one.
   StopPhaseDone
-  /// A topic worker reported the result of one callback, or its
-  /// termination. `worker` is the reporting process: a report from a
-  /// worker this socket no longer owns is dropped.
+  /// A topic worker reported a callback result or its termination.
+  ///
+  /// `worker` identifies the reporting process. The socket drops a report
+  /// from a worker that it no longer owns.
   WorkerReport(
     socket_id: String,
     topic: String,
     worker: Pid,
     report: WorkerReport,
   )
-  /// A topic worker exited. The socket actor monitors every worker it
-  /// starts: a live worker's exit closes its topic with an error, and an
-  /// exit while the topic is closing ends that close.
+  /// A topic worker stopped. The socket actor monitors each worker that it
+  /// starts. If an active worker stops, the actor closes its topic with an
+  /// error. If a closing worker stops, the actor completes that close.
   WorkerDown(down: process.Down)
   /// A closing topic's worker did not report its termination in time.
   WorkerTerminateTimedOut(socket_id: String, worker: Pid)
@@ -190,15 +191,14 @@ pub type Msg(msg) {
 
 /// What a topic worker sends its socket actor.
 pub type WorkerReport {
-  /// A callback ran. `closing` asks the socket to close the topic after
-  /// `effects`, the way an update's `KickTopic` would.
+  /// A callback completed. If `closing` is `True`, the socket applies
+  /// `effects` and then closes the topic.
   WorkerRan(effects: List(Effect), closing: Bool, source: Source)
-  /// A callback panicked. The worker kept its state from before the
-  /// callback and serves nothing else; the socket closes the topic, which
-  /// still runs `on_terminate`.
+  /// A callback panicked. The worker keeps its previous state and accepts no
+  /// more work. The socket closes the topic and runs `on_terminate`.
   WorkerCrashed(crash: String, source: Source)
-  /// `on_terminate` ran — or panicked, with `crash` set — and the worker
-  /// is stopping.
+  /// `on_terminate` completed, or it panicked and set `crash`. The worker is
+  /// stopping.
   WorkerTerminated(effects: List(Effect), crash: Option(String))
 }
 
@@ -286,12 +286,13 @@ type RuntimeRole(msg) {
   )
   SocketActorRole(
     router: Subject(Msg(msg)),
-    /// Where a socket actor starts topic workers. Present when the
-    /// app-side layer runs one process per accepted topic
-    /// (`beryl/channel`); absent for raw dispatch, whose model spans every
-    /// topic of a socket by design. Started by and linked to the socket
-    /// actor, so its workers die with their socket and a join never
-    /// serialises through another socket.
+    /// The supervisor that starts topic workers for a socket actor.
+    ///
+    /// `beryl/channel` uses this supervisor for one process per accepted
+    /// topic. Raw dispatch does not use it because its model contains all
+    /// topics for one socket. The socket actor starts and links the
+    /// supervisor. Thus, the workers stop with the socket. Joins on different
+    /// sockets do not wait for each other.
     workers: Option(factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted)),
   )
 }
@@ -303,14 +304,13 @@ type WorkerRef {
 
 // ── Suspended per-socket work ───────────────────────────────────────────────
 //
-// Presence mutations are asynchronous, but an effect list must still be
-// applied strictly in order and a topic close must still finish its cleanup
-// before its terminal frame. So the work a socket has left to do is reified
-// as a stack of `Step`s: the interpreter runs steps until the stack is
-// empty or a step needs a presence acknowledgement, at which point the
-// remaining stack is parked in `State.suspended` and resumed verbatim when
-// the acknowledgement (or the timeout) arrives. Nothing about the other
-// sockets, broadcasts, or heartbeats is parked with it.
+// Presence mutations are asynchronous. The runtime must still apply an effect
+// list in order and finish topic cleanup before it sends the terminal frame.
+// A stack of `Step` values stores the remaining work. The interpreter runs
+// steps until the stack is empty or a step needs a presence acknowledgment.
+// It then stores the remaining stack in `State.suspended`. The runtime resumes
+// that stack after the acknowledgment or timeout. Other sockets, broadcasts,
+// and heartbeats continue.
 
 /// A socket parked on one asynchronous operation.
 type Suspension(msg) {
@@ -327,9 +327,10 @@ type Suspension(msg) {
 type Waiting {
   /// A presence mutation's acknowledgement.
   PresenceWait(op_id: Int, op: PresenceOp)
-  /// A closing topic's worker to report its termination. The close then
-  /// continues exactly where `exec_close_topic` left it, after the
-  /// worker's in-flight results have been applied.
+  /// Wait for a closing topic worker to report its termination.
+  ///
+  /// The runtime first applies the worker results that are in flight. It then
+  /// continues the close from `exec_close_topic`.
   WorkerWait(
     topic: String,
     worker: WorkerRef,
@@ -460,9 +461,8 @@ type SocketState(model, msg) {
     send_binary: fn(BitArray) -> Result(Nil, Nil),
     close: fn() -> Nil,
     codec: Codec,
-    /// Request data assembled by the transport, handed to every topic
-    /// worker's `join`. Empty for raw dispatch, which hands it to `init`
-    /// instead and keeps nothing.
+    /// Request data from the transport. Each topic worker receives it in
+    /// `join`. Raw dispatch gives it to `init` and does not store it.
     seed: ConnectSeed,
     /// The app's per-socket model, threaded through `update`.
     model: model,
@@ -477,8 +477,8 @@ type SocketState(model, msg) {
     /// single-use), and pruned when its topic closes (so a stale ref stored
     /// across a leave/rejoin is not replied to).
     pending_reply_refs: Set(ReplyRef),
-    /// The worker owning each joined topic, when the layer runs one
-    /// process per topic. Removed when the topic starts closing.
+    /// The worker for each joined topic when the layer uses one process per
+    /// topic. The runtime removes it when the topic starts to close.
     workers: Dict(String, WorkerRef),
     last_heartbeat: Int,
     /// Native monotonic timestamp captured when the socket was accepted.
@@ -671,10 +671,9 @@ pub fn start_socket_actor(
 ) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
   actor.new_with_initialiser(5000, fn(subject) {
     let ack_subject = process.new_subject()
-    // One process per accepted topic needs somewhere to start them that
-    // is not linked to the caller of `start_child` (a worker crash must
-    // not travel to its socket) and dies with the socket (no orphaned
-    // workers). A factory supervisor linked to this actor is both.
+    // Start topic workers under a factory supervisor that links to this
+    // actor. A worker crash does not stop the socket, but all workers stop
+    // with the socket.
     use workers <- result.try(case open_worker {
       None -> Ok(None)
       Some(open) ->
@@ -713,9 +712,8 @@ pub fn start_socket_actor(
     // so a socket crash cannot travel the other way.
     let monitor = process.monitor(router_pid)
     schedule_heartbeat_check(subject, config)
-    // The router's monitor is matched by reference before the catch-all
-    // monitor handler, so every other `Down` this actor receives is one
-    // of its own topic workers.
+    // Match the router monitor before the general monitor handler. Each other
+    // `Down` message belongs to a topic worker for this socket.
     process.new_selector()
     |> process.select(subject)
     |> process.select_map(ack_subject, PresenceAcknowledged)
@@ -1050,9 +1048,9 @@ fn begin_stop_phase_two_if_ready(state: State(model, msg)) -> Nil {
 
 /// Run one socket-scoped message in a socket actor.
 ///
-/// A parked socket queues its own messages instead of dispatching them,
-/// so its inbound order survives the suspension — except the one event it
-/// is parked on, which ends the suspension.
+/// A suspended socket queues its messages instead of dispatching them. This
+/// preserves input order. The event that ends the suspension is the only
+/// exception.
 fn socket_turn(
   state: State(model, msg),
   socket_id: String,
@@ -1526,13 +1524,11 @@ fn finalize_suspension(
             )
           finish_presence_op(state, socket_id, op, Error(PresenceStopping))
         }
-        // The worker is already running `on_terminate`: the terminate was
-        // sent when the socket parked. It gets what is left of its budget
-        // to finish, then the close resumes as it would have in a turn —
-        // the results the worker reported before terminating are applied,
-        // the leave is answered, and the topic's state is closed. Nothing
-        // else queued for the socket is served: the teardown follows, and
-        // the actor stops after it.
+        // The worker is already running `on_terminate`. The socket sent the
+        // request when it started to wait. Give the worker the remaining
+        // time. Then apply its earlier results, answer the leave, and close
+        // the topic. Do not handle other queued socket work because shutdown
+        // stops the actor next.
         WorkerWait(worker:, ..) -> {
           let budget = case cancelled {
             process.Cancelled(time_remaining:) -> time_remaining
@@ -1573,13 +1569,12 @@ fn finalize_suspension(
   }
 }
 
-/// Wait, until `deadline`, for the termination of the worker a stopping
-/// socket is parked on, taking it from this actor's own mailbox.
+/// Wait until `deadline` for the worker of a stopping socket to terminate.
 ///
-/// The worker's earlier results are kept (newest first, like the queue
-/// they join) so the resumed close applies them; every other message is
-/// dropped, as the actor stops before it could serve them. Returns the
-/// message `resume_worker_close` needs to continue the close.
+/// Read the termination message from this actor's mailbox. Keep earlier
+/// worker results in newest-first order so the resumed close can apply them.
+/// Drop all other messages because the actor is stopping. Return the message
+/// that `resume_worker_close` needs to continue the close.
 fn await_worker_terminated(
   state: State(model, msg),
   socket_id: String,
@@ -2869,8 +2864,8 @@ fn exec_input(
         _, _ -> {
           let update = state.update
           let model = socket.model
-          // Crash boundary — see internal.rescue. The error path discards
-          // the callback result and tears down the narrowest safe scope.
+          // Crash boundary: see `internal.rescue`. The error path discards the
+          // callback result and closes the narrowest safe scope.
           exec_update_result(
             state,
             socket_id,
@@ -3149,10 +3144,10 @@ fn exec_close_topic(
           // and the router index entry removed below stops broadcasts. A
           // raw topic also leaves the joined set and drops its outstanding
           // reply refs here, before `Closed` runs. A worker topic keeps both
-          // until the worker has terminated — results it computed before
-          // the close reached it still push to and answer it, while
-          // everything else for the socket queues behind the park — and
-          // `exec_close_cleanup` drops them after those results are applied.
+          // until the worker stops. Results that it computed before the close
+          // can still push to and answer the topic. All other socket work
+          // waits until the close completes. `exec_close_cleanup` drops the
+          // refs after the runtime applies those results.
           let socket =
             SocketState(
               ..socket,
@@ -4433,9 +4428,9 @@ fn exec_close_cleanup(
       close.cont,
     ),
   ]
-  // Every result that could still push to or answer the topic has been
-  // applied by now (a no-op for a raw topic, which `exec_close_topic`
-  // already unsubscribed).
+  // The runtime has applied each result that can still push to or answer the
+  // topic. This is a no-op for a raw topic because `exec_close_topic` already
+  // removed its subscription.
   let state = unsubscribe_topic(state, socket_id, topic_name)
   case state.config.presence, dict.get(state.sockets, socket_id) {
     Some(handle), Ok(socket) ->
@@ -5008,46 +5003,44 @@ fn joined_topics_metadata(
 
 // ── Topic workers ───────────────────────────────────────────────────────────
 //
-// When the app-side layer runs one process per accepted topic
-// (`beryl/channel`), the socket actor owns the connection — protocol
-// state, heartbeats, rate limits, refs, subscriptions, and every frame
-// write — and one temporary worker under a per-socket factory supervisor
-// owns each joined topic's state and callbacks. Workers are `Temporary`
-// on purpose: a worker's join and authorization state died with it, so
-// the client rejoins instead of beryl restarting it behind the client's
-// back.
+// `beryl/channel` uses one process for each accepted topic. The socket actor
+// owns the protocol state, heartbeats, rate limits, refs, subscriptions, and
+// frame writes. One temporary worker owns the state and callbacks for each
+// joined topic. A per-socket factory supervisor starts these workers. The
+// supervisor does not restart a stopped worker because that worker held the
+// join and authorization state. The client must rejoin.
 //
-// A join runs in the worker's initialiser, with the socket actor blocked
-// on `start_child` (as Phoenix's socket is blocked on `join/3`); core
-// needs the outcome before the join's update turn ends. The worker then
-// waits for the socket actor to index the join before it serves its
-// mailbox, so mail its `join` queued for itself (a roster publish through
-// a presence tracker, say) cannot reach the topic's subscribers before the
-// subscription exists. Everything after that is asynchronous: messages and
-// typed mail are cast to the worker, and it reports lowered effects back
-// to the socket actor, which applies them in arrival order. Per topic that
-// is the worker's own order; across topics on one socket nothing is
-// promised, as in Phoenix.
+// The worker runs `join` during initialization. The socket actor waits on
+// `start_child`, as a Phoenix socket waits on `join/3`. The runtime needs the
+// result before the join turn ends. The worker then waits until the socket
+// actor indexes the join. This sequence prevents self-notifications from
+// reaching subscribers before the subscription exists. After this point,
+// messages and typed mail are asynchronous. The worker sends effects to the
+// socket actor. The actor applies them in arrival order. This preserves order
+// for one topic. beryl does not define an order across topics on one socket.
 //
-// A close is routed to the worker before the topic's reply refs are
-// dropped, and the socket parks until the worker has terminated. The
-// worker's mailbox is FIFO, so results it computed before the close
-// reached it are reported first; the socket applies them before finishing
-// the close, so a client that pushes and then leaves still gets its reply.
+// The socket sends a close to the worker before it drops the topic's reply
+// refs. The socket waits until the worker stops. The worker mailbox is FIFO,
+// so the worker first reports results that it computed before the close. The
+// socket applies these results before it completes the close. Thus, a client
+// that sends a message and then leaves can still receive its reply.
 
-/// How long a `join` callback may run before the join is rejected. The
-/// socket actor is blocked for at most this long per join.
+/// Maximum time for a `join` callback before the runtime rejects the join.
 ///
-/// ponytail: fixed, like Phoenix's own start timeout; promote to `Config`
-/// when a deployment needs a slower join.
+/// The socket actor waits for this time for each join.
+///
+/// ponytail: This fixed value matches the Phoenix start timeout. Add it to
+/// `Config` when a deployment needs a longer timeout.
 const worker_join_timeout_ms = 5000
 
-/// How long a closing topic waits for its worker to finish the work already
-/// in its mailbox and `on_terminate`, before the worker is killed and the
-/// close completes without its actions.
+/// Maximum time for a worker to finish queued work and `on_terminate`.
 ///
-/// ponytail: fixed, matching Phoenix's `Channel.Server.close/2` default;
-/// promote to `Config` alongside `worker_join_timeout_ms`.
+/// After this timeout, the runtime kills the worker and completes the close
+/// without its termination actions.
+///
+/// ponytail: This fixed value matches the Phoenix
+/// `Channel.Server.close/2` default. Add it to `Config` with
+/// `worker_join_timeout_ms`.
 const worker_terminate_timeout_ms = 5000
 
 /// The factory supervisor's child argument: one join attempt.
@@ -5060,10 +5053,11 @@ type WorkerSpawn {
   )
 }
 
-/// What `start_child` hands back once the worker's `join` has run: the
-/// worker's subject and the join's answer — the reply and accept-time
-/// effects, or the rejection. The sealed callbacks stay in the worker, so
-/// none of the join's state is copied out of it.
+/// The result that `start_child` returns after the worker runs `join`.
+///
+/// The result contains the worker subject and the join response. The response
+/// is a reply with accept-time effects, or a rejection. The callbacks and
+/// channel state stay in the worker.
 type WorkerStarted =
   #(Subject(WorkerMsg), Result(#(Option(Json), List(Effect)), Json))
 
@@ -5076,31 +5070,34 @@ type WorkerMsg {
     ref: Option(ReplyRef),
     source: Source,
   )
-  /// One sealed server-side message for `on_info`, sent directly by the
-  /// `Sender` that produced it: the join that sealed it *is* this
-  /// process, so mail for an ended join reaches a dead pid and is dropped
-  /// by the VM.
+  /// One sealed server-side message for `on_info`.
+  ///
+  /// The `Sender` sends it to the process for its join. After the join ends,
+  /// the VM drops mail to that stopped process.
   WorkerInfo(mail: Mail)
-  /// Run `on_terminate`, report its effects — to `reply` when given, else
-  /// to the socket actor — then stop.
+  /// Run `on_terminate`, report its effects, and then stop.
+  ///
+  /// Send the report to `reply` when it is present. Otherwise, send it to the
+  /// socket actor.
   WorkerTerminate(reason: StopReason, reply: Option(Subject(WorkerReport)))
   /// Stop without running any callback (a refused join has no channel).
   WorkerHalt
-  /// The socket actor has indexed the join: serve what was held, in
-  /// order, then the mailbox.
+  /// The socket actor indexed the join. Handle held work in order, and then
+  /// handle the mailbox.
   WorkerGo
 }
 
 type WorkerState {
-  /// Accepted, but the socket actor has not indexed the join yet (see
-  /// `release_worker`). What arrives meanwhile is held, newest first.
+  /// The socket actor accepted but did not index the join yet.
+  ///
+  /// See `release_worker`. Hold new work in newest-first order.
   WorkerHolding(worker: Worker, link: WorkerLink, held: List(WorkerMsg))
   WorkerRunning(worker: Worker, link: WorkerLink)
-  /// A callback asked to close the topic, or crashed. Only the terminate
-  /// is served from here: a message that reaches a closing channel is
-  /// dropped, as the shared interpreter drops one for a topic it closed in
-  /// the same turn, and `on_terminate` runs against the state that
-  /// callback left.
+  /// A callback requested a topic close or panicked.
+  ///
+  /// Accept only the termination request in this state. Drop messages for the
+  /// closing channel. Run `on_terminate` with the state from before the panic,
+  /// or with the state returned by the callback that requested the close.
   WorkerClosing(worker: Worker, link: WorkerLink)
   WorkerRefusing
 }
@@ -5116,14 +5113,12 @@ type WorkerLink {
   )
 }
 
-/// Start one topic worker, running its `join` in the new process.
+/// Start one topic worker and run `join` in the new process.
 ///
-/// `open`, the socket actor's subject and its telemetry flag are bound
-/// once into the supervisor's child template; `spawn` is the per-join
-/// data. A panic in `join` fails the start with the crash boundary's
-/// bounded description, which the socket actor turns into a rejection —
-/// the same outcome the shared interpreter gives a raw `Join`, by a
-/// different mechanism.
+/// The supervisor child template contains `open`, the socket actor subject,
+/// and the telemetry flag. `spawn` contains data for one join. If `join`
+/// panics, the worker start returns a bounded error description. The socket
+/// actor converts that error to a rejection.
 fn start_worker(
   open: fn(WorkerContext) -> WorkerOutcome,
   socket: Subject(Msg(msg)),
@@ -5139,7 +5134,7 @@ fn start_worker(
         payload: spawn.payload,
         deliver: fn(mail) { process.send(subject, WorkerInfo(mail)) },
       )
-    // Crash boundary — see internal.rescue.
+    // Crash boundary: see `internal.rescue`.
     use outcome <- result.try(internal.rescue(fn() { open(context) }))
     let self = process.self()
     let link =
@@ -5208,8 +5203,8 @@ fn serve(state: WorkerState, message: WorkerMsg) -> Result(WorkerState, Nil) {
     WorkerRunning(worker, link), WorkerTerminate(reason, reply)
     | WorkerClosing(worker, link), WorkerTerminate(reason, reply)
     -> {
-      // Crash boundary — see internal.rescue. The topic is closing
-      // either way; a panic here only loses its termination actions.
+      // Crash boundary: see `internal.rescue`. The topic closes in both cases.
+      // A panic discards only the termination actions.
       let report = case internal.rescue(fn() { worker.on_terminate(reason) }) {
         Ok(effects) -> WorkerTerminated(effects, None)
         Error(crash) -> WorkerTerminated([], Some(crash))
@@ -5227,18 +5222,17 @@ fn serve(state: WorkerState, message: WorkerMsg) -> Result(WorkerState, Nil) {
 
 /// Run one callback inside the crash boundary and report its result.
 ///
-/// A crash keeps the state from before the callback, as the shared
-/// interpreter does; the socket actor closes the topic, which still runs
-/// `on_terminate` against that state. A `WorkerClose` result keeps the
-/// worker alive too: the close it asks for comes back as a terminate.
-/// Either way the worker serves nothing else in the meantime.
+/// A panic keeps the state from before the callback. The socket actor closes
+/// the topic and runs `on_terminate` with that state. A `WorkerClose` result
+/// also keeps the worker alive until it receives the termination request.
+/// The worker accepts no other work while it waits.
 fn worker_step(
   worker: Worker,
   link: WorkerLink,
   source: Source,
   callback: fn() -> sock.WorkerStep,
 ) -> WorkerState {
-  // Crash boundary — see internal.rescue.
+  // Crash boundary: see `internal.rescue`.
   case internal.rescue(callback) {
     Ok(sock.WorkerContinue(next, effects)) -> {
       link.report(WorkerRan(effects, False, source))
@@ -5314,9 +5308,10 @@ fn exec_worker_join(
   exec_update_result(state, socket_id, source, cont, result)
 }
 
-/// Let a joined topic's worker serve its mailbox. The join is indexed, so
-/// whatever the worker does from here on — including the mail its `join`
-/// queued for itself — reaches the topic's subscribers.
+/// Let a joined topic worker handle its mailbox.
+///
+/// The runtime has indexed the join. Thus, actions from the worker can reach
+/// the topic subscribers. This includes mail that `join` sent to itself.
 fn release_worker(
   state: State(model, msg),
   socket_id: String,
@@ -5366,9 +5361,9 @@ fn exec_worker_report(
 ) -> Exec(model, msg) {
   case report {
     WorkerRan(effects, closing, source) -> {
-      // A close the worker asked for lowers to a kick, exactly as the
-      // shared interpreter's layer did — unless the topic is already
-      // closing, in which case the kick would be a no-op warning.
+      // Convert a worker close request to a kick, as the shared interpreter
+      // did. Do not add the kick when the topic is already closing because it
+      // would produce a no-op warning.
       let effects = case
         closing && socket_subscribed(state, socket_id, topic_name)
       {
@@ -5391,9 +5386,11 @@ fn exec_worker_report(
   }
 }
 
-/// A worker exited. A live worker's exit closes its topic as an error —
-/// `on_terminate` cannot run, its state died with the process — and the
-/// client learns to rejoin from the `phx_error`.
+/// Handle a worker that stopped.
+///
+/// If an active worker stops, close its topic with an error. The runtime
+/// cannot run `on_terminate` because the worker held the channel state. The
+/// `phx_error` tells the client to rejoin.
 fn handle_worker_down(
   state: State(model, msg),
   socket_id: String,
@@ -5439,10 +5436,10 @@ fn handle_worker_down(
 
 /// Route a close to the topic's worker.
 ///
-/// Normally the socket parks on the worker's termination (see the section
-/// comment). During shutdown there is no turn left to resume in, so the
-/// wait is a bounded synchronous receive on a reply subject the worker
-/// answers directly.
+/// Usually, the socket waits asynchronously for the worker to terminate.
+///
+/// During shutdown, the socket cannot resume another turn. It uses a bounded
+/// synchronous receive on a reply subject that the worker answers directly.
 fn close_worker_topic(
   state: State(model, msg),
   socket_id: String,
@@ -5452,9 +5449,9 @@ fn close_worker_topic(
   reason: StopReason,
   cont: Cont,
 ) -> Exec(model, msg) {
-  // A worker that already exited — its `Down` still queued behind a
-  // suspension, or not received yet — has nothing left to run, so the
-  // close continues at once instead of waiting out the terminate timeout.
+  // A stopped worker has no termination callback to run. Its `Down` message
+  // can still be queued or not yet received. Continue the close without
+  // waiting for the termination timeout.
   use <- bool.lazy_guard(when: !process.is_alive(worker.pid), return: fn() {
     state.logger
     |> log.error("Topic worker already exited; closing without on_terminate", [
@@ -5526,13 +5523,12 @@ fn close_worker_topic(
   }
 }
 
-/// Finish a topic close if `message` is the worker termination the socket
-/// is parked on; `None` when it is not.
+/// Finish a topic close when `message` reports the expected worker
+/// termination. Return `None` for a different message.
 ///
-/// Results the worker reported before terminating were queued behind
-/// the suspension. They name reply refs this close has not pruned yet,
-/// so they are applied first, in order, and the close continues after
-/// them.
+/// The queue contains results that the worker reported before termination.
+/// These results can use reply refs that the close has not removed. Apply
+/// them in order, and then continue the close.
 fn resume_worker_close(
   state: State(model, msg),
   socket_id: String,

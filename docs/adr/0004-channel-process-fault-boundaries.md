@@ -169,7 +169,7 @@ current topic-scoped rescue for message and binary callbacks.
 ### 3. Use one process per socket and one process per channel
 
 Each socket gets a session actor that owns connection-level protocol state.
-Each accepted topic gets a temporary channel worker under an OTP factory
+Each accepted topic gets a temporary topic worker under an OTP factory
 supervisor. The worker owns the channel's sealed state and invokes its
 callbacks.
 
@@ -212,7 +212,7 @@ Advantages:
 - resembles Phoenix's process-per-client-and-topic model;
 - lets OTP monitors drive cleanup instead of relying only on rescued
   exceptions;
-- gives channel workers independent mailboxes for typed server messages.
+- gives topic workers independent mailboxes for typed server messages.
 
 Costs:
 
@@ -238,7 +238,7 @@ behavior with the current runtime:
 - State whether a socket session permits only one in-flight callback. This
   choice preserves current socket-wide sequencing, and it allows one slow
   channel to delay its siblings.
-- State whether channel workers can run concurrently. If so, state which
+- State whether topic workers can run concurrently. If so, state which
   ordering guarantees remain between actions from different topics on one
   WebSocket.
 - State whether `join` runs while the worker starts. As an alternative,
@@ -260,7 +260,7 @@ worker process.
 This option is not a candidate for adoption. It would copy state into another
 process for each event and require a result handshake. It would also add
 timeout and cancellation semantics. The runtime would still decide whether a
-late result is valid. Persistent socket or channel workers provide a clearer
+late result is valid. Persistent socket or topic workers provide a clearer
 ownership boundary.
 
 ## Restart policy and protocol recovery
@@ -309,7 +309,7 @@ Tracked by [#337](https://github.com/tylerbutler/beryl/issues/337).
 
 Build on a socket session actor and demonstrate:
 
-- factory-supervised temporary channel workers;
+- factory-supervised temporary topic workers;
 - join success, rejection, panic, and timeout;
 - typed `channel.Sender` delivery to the correct worker generation;
 - ordered action batches returned to the session;
@@ -329,7 +329,7 @@ focused tests for:
 - a worker exit while an action batch is in flight;
 - leave followed immediately by rejoin of the same topic;
 - a stale typed sender targeting an earlier join generation;
-- a socket disconnect while channel workers are busy;
+- a socket disconnect while topic workers are busy;
 - ordered replies, pushes, broadcasts, and presence operations;
 - `JoinRef` and `ReplyRef` use after worker failure;
 - runtime, session, and worker shutdown order;
@@ -375,46 +375,47 @@ beryl adopts option 2 for raw dispatch and option 3 for `beryl/channel`.
   socket actor owns the raw model and runs `init` and `update`; the router
   stays a stable, named forwarder.
 - **Channel layer: one process per socket and one process per joined topic.**
-  Landed with issue #337. Each socket actor starts a linked factory supervisor
-  and one `Temporary` worker for each accepted join. The worker owns the
-  channel's sealed state and runs `join`, `on_message`, `on_info`, and
-  `on_terminate`. The socket actor keeps connection-level protocol state,
-  capabilities, subscriptions, presence bookkeeping, and every frame write.
+  [#371](https://github.com/tylerbutler/beryl/pull/371) implements issue #337.
+  Each socket actor starts a linked factory supervisor and one `Temporary`
+  worker for each accepted join. The worker owns the channel state and runs
+  `join`, `on_message`, `on_info`, and `on_terminate`. The socket actor owns
+  the protocol state, capabilities, subscriptions, presence data, and frame
+  writes.
 
-Prototype B's sequencing decisions were resolved as follows:
+beryl uses these sequence rules:
 
 - Workers on one socket run concurrently. A slow callback delays only its
   own topic.
-- No ordering is promised between different topics on one socket. Within one
-  topic, action order is wire order.
-- `join` runs in the worker's initialiser. The socket actor is blocked for
-  that one join, at most 5 seconds, then the join is rejected. Joins on
-  different sockets never serialise.
-- No backpressure yet. Worker mailboxes and pending reports are unbounded
-  ([#249](https://github.com/tylerbutler/beryl/issues/249) is the follow-up).
-- Presence suspension stays in the socket actor. Workers emit presence
-  actions; the socket actor applies them with the existing ordering rules.
-- A close is routed to the worker before the topic's reply refs are dropped,
-  and the socket parks until the worker has run `on_terminate`. Results the
-  worker computed before the close are applied first, so a push or a reply
-  computed before a leave is still delivered. A worker that does not finish
-  its queued work and `on_terminate` in 5 seconds is killed, and the replies
-  it still owed are dropped.
+- beryl does not define an order between different topics on one socket.
+  Within one topic, action order is wire order.
+- The worker runs `join` during initialization. The socket actor waits for a
+  maximum of 5 seconds. It rejects the join after this timeout. Joins on
+  different sockets do not wait for each other.
+- beryl does not limit worker mailboxes or pending reports.
+  [#249](https://github.com/tylerbutler/beryl/issues/249) tracks this work.
+- The socket actor owns presence suspension. Workers send presence actions to
+  the socket actor. The socket actor applies the existing order rules.
+- The socket actor sends a close to the worker before it drops the topic's
+  reply refs. The actor waits until the worker runs `on_terminate`. The actor
+  first applies results that the worker computed before the close. Thus, it
+  can deliver a push or reply that the worker computed before a leave. The
+  actor kills a worker that does not finish its queued work and
+  `on_terminate` in 5 seconds. It drops replies that the worker still owes.
 
 Contract changes recorded with this decision:
 
 - An `on_info` panic closes only its topic. It previously tore down the
   socket.
-- The terminate-panic exception is removed. A panic in `on_terminate` is
-  logged, the close completes, and the worker stops, so its sender delivers
-  nothing afterwards.
-- A worker process that dies (for example, killed) closes its topic with
-  `phx_error` and skips `on_terminate`, because the state died with it. The
-  client rejoins. This matches Phoenix.
+- The runtime no longer has a special case for an `on_terminate` panic. It
+  logs the panic, completes the close, and stops the worker. The sender for
+  that worker cannot deliver more messages.
+- If a worker process stops unexpectedly, the runtime closes its topic with
+  `phx_error`. The runtime cannot run `on_terminate` because the worker held
+  the channel state. The client must rejoin. This behavior matches Phoenix.
 
-Performance evidence is reported in the pull request for #337. ADRs 0002 and
-0003 remain authoritative for the raw and channel APIs; this ADR changes only
-the process topology behind them.
+[#371](https://github.com/tylerbutler/beryl/pull/371) contains the performance
+results. ADRs 0002 and 0003 remain authoritative for the raw and channel APIs.
+This ADR changes only their process topology.
 
 ## Sources
 

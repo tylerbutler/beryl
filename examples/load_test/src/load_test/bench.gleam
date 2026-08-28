@@ -11,8 +11,8 @@ pub fn env_int(name: String, default: Int) -> Int {
   |> result.unwrap(default)
 }
 
-/// `BENCH_CALLBACK_COST_US`: microseconds of CPU each message callback
-/// burns before answering. Zero (the default) is the plain target.
+/// `BENCH_CALLBACK_COST_US`: CPU time for each message callback, in
+/// microseconds. The default is zero.
 pub fn callback_cost_us() -> Int {
   env_int("BENCH_CALLBACK_COST_US", 0)
 }
@@ -23,6 +23,6 @@ pub fn use_channel_layer() -> Bool {
   envoy.get("BERYL_API") == Ok("channel")
 }
 
-/// Burn CPU on the calling process for `micros` microseconds.
+/// Use CPU on the calling process for `micros` microseconds.
 @external(erlang, "load_test_bench_ffi", "busy_wait")
 pub fn burn(micros: Int) -> Nil

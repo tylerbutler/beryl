@@ -297,29 +297,29 @@ pub type ConnectInfo(msg) {
 // ---------------------------------------------------------------------------
 // Topic worker seam
 //
-// The package-internal contract between the runtime and `beryl/channel`:
-// one accepted topic owned by its own process. The runtime starts a worker
-// per accepted join, runs its callbacks in that process, and applies the
-// effects it reports on the socket actor. Raw dispatch (`beryl.child_spec`)
-// never uses it: its model spans every topic of a socket by design.
+// These package-internal types connect the runtime to `beryl/channel`. The
+// runtime starts one worker for each accepted join. The worker owns one topic
+// and runs its callbacks. The socket actor applies the effects from the
+// worker. Raw dispatch (`beryl.child_spec`) does not use these types because
+// its model contains all topics for one socket.
 // ---------------------------------------------------------------------------
 
 /// One sealed server-side message for a topic worker.
 ///
-/// Running it places the typed value on a subject the worker process owns,
-/// where the worker's `on_info` reads it back at its original type in the
-/// same turn. It carries nothing the runtime can read.
+/// Run it to put the typed value on a subject that the worker owns.
+///
+/// The worker's `on_info` reads the value at its original type in the same
+/// turn. The runtime cannot read the value.
 @internal
 pub type Mail =
   fn() -> Nil
 
 /// Everything the runtime supplies for one join attempt.
 ///
-/// `deliver` sends one `Mail` to the worker being opened; it is bound
-/// before `open` runs, so a `join` callback that notifies itself addresses
-/// the join being opened. The worker serves that mail only once the runtime
-/// has indexed the join, so what it does then reaches the topic's
-/// subscribers.
+/// `deliver` sends one `Mail` to the new worker. The runtime binds `deliver`
+/// before it runs `open`. Thus, a `join` callback that notifies itself sends
+/// the message to the new join. The worker waits until the runtime indexes
+/// the join before it handles the message.
 @internal
 pub type WorkerContext {
   WorkerContext(
@@ -333,8 +333,8 @@ pub type WorkerContext {
 
 /// A joined topic's callbacks with its `state` and `info` types sealed.
 ///
-/// Every function runs in the worker process and lowers its result to
-/// core effects for the worker's own topic.
+/// Each function runs in the worker process and returns core effects for the
+/// worker's topic.
 @internal
 pub type Worker {
   Worker(
@@ -353,10 +353,10 @@ pub type WorkerStep {
   WorkerClose(effects: List(Effect))
 }
 
-/// The outcome of a worker's `join`, produced in the worker process.
+/// The result of a worker's `join`.
 ///
-/// `effects` are the join's accept-time effects, already in order; the
-/// runtime applies them after the join acknowledgment in the same turn.
+/// `effects` contains the ordered accept-time effects. The runtime applies
+/// them after the join acknowledgment in the same turn.
 @internal
 pub type WorkerOutcome {
   WorkerAccepted(reply: Option(Json), effects: List(Effect), worker: Worker)
