@@ -17,7 +17,7 @@ This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, and `beryl_mis
 The generator creates pages under `/reference/api/` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
 :::
 
-## `beryl` `0.4.1`
+## `beryl` `0.5.0`
 
 <ul class="api-module-list">
 <li class="api-module-list__item">
@@ -86,7 +86,7 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 </li>
 </ul>
 
-## `beryl_ewe` `0.2.2`
+## `beryl_ewe` `0.2.3`
 
 <ul class="api-module-list">
 <li class="api-module-list__item">
@@ -95,7 +95,7 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 </li>
 </ul>
 
-## `beryl_mist` `0.3.2`
+## `beryl_mist` `0.3.3`
 
 <ul class="api-module-list">
 <li class="api-module-list__item">
