@@ -76,7 +76,7 @@
 //// capacity checks.
 ////
 //// A close reaches the worker after the messages it already holds, so a
-//// reply computed before a leave is still delivered. Then
+//// push or reply computed before a leave is still delivered. Then
 //// [`on_terminate`](#on_terminate) actions are lowered in the turn that
 //// closes the topic, after the channel instance is gone. Its closing-phase
 //// action type permits only operations that remain meaningful then.
@@ -543,10 +543,9 @@ pub fn on_info(
 /// allows broadcasts, presence untracking, and presence broadcasts. It does
 /// not allow pushes, replies, or presence tracking.
 ///
-/// A panic here is not fatal. Core keeps the model from before the close.
-/// This instance stays in the channel system's map, and its
-/// [`Sender`](#sender) can reach it until the topic is rejoined or the socket
-/// ends.
+/// A panic here is not fatal. The runtime logs it, the close completes
+/// without this callback's actions, and the worker process stops. A
+/// [`Sender`](#sender) of this join then reaches nothing.
 pub fn on_terminate(
   result: JoinResult(state, info),
   handle: fn(state, socket.StopReason) -> List(Action(Closing)),
@@ -722,8 +721,9 @@ fn live(
       mail()
       case process.receive(handoff, 0) {
         Ok(message) -> step(channel.on_info(message), handoff, topic)
-        // Mail sealed by another join placed its value on that join's own
-        // subject; this one sees nothing and continues unchanged.
+        // Unreachable: `deliver` is bound to this worker's own subject and
+        // a mail places exactly one message on `handoff`, which this
+        // process owns. Continuing unchanged keeps the arm harmless.
         Error(Nil) ->
           socket.WorkerContinue(
             next: live(channel, handoff, topic),
@@ -821,7 +821,7 @@ fn open_topic(
   fn(context: socket.WorkerContext) {
     case select(handlers, context.topic) {
       Error(Nil) -> socket.WorkerRejected(unmatched_topic())
-      Ok(#(handler, params)) -> handler.open(context, params)
+      Ok(#(handler, params)) -> open(handler, context, params)
     }
   }
 }
@@ -850,8 +850,8 @@ fn unmatched_topic() -> json.Json {
 }
 
 /// Run a handler's sealed `join` for one join attempt, in the calling
-/// process. The runtime does this from a topic worker's initialiser; tests
-/// do it directly.
+/// process. The runtime does this from a topic worker's initialiser,
+/// through `open_topic`; tests call it directly.
 @internal
 pub fn open(
   handler: Handler,

@@ -4,12 +4,17 @@ import envoy
 import gleam/int
 import gleam/result
 
+/// Read an integer knob from the environment.
+pub fn env_int(name: String, default: Int) -> Int {
+  envoy.get(name)
+  |> result.try(int.parse)
+  |> result.unwrap(default)
+}
+
 /// `BENCH_CALLBACK_COST_US`: microseconds of CPU each message callback
 /// burns before answering. Zero (the default) is the plain target.
 pub fn callback_cost_us() -> Int {
-  envoy.get("BENCH_CALLBACK_COST_US")
-  |> result.try(int.parse)
-  |> result.unwrap(0)
+  env_int("BENCH_CALLBACK_COST_US", 0)
 }
 
 /// `BERYL_API`: `raw` (default) runs the topics through `beryl.child_spec`;

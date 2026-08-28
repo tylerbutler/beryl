@@ -24,7 +24,7 @@ worker, which reports lowered effects back to the socket actor. The socket
 actor applies them in arrival order and writes every frame, so one topic's
 effects keep their order, and different topics on one socket interleave.
 A close is routed to the worker before the topic's reply refs are dropped,
-so a reply computed before a leave is still delivered.
+so a push or reply computed before a leave is still delivered.
 
 The router manages admission, the topic subscriber index, the PubSub
 subscription, and stats. It only matches and forwards messages. It does not run
@@ -106,9 +106,9 @@ topic, or socket. It never continues with a partial result. Other faults can
 still stop the socket actor, which closes that socket. A router fault invokes
 supervision.
 
-For the channel layer, a `join` panic rejects that join, and an `on_message`
-or `on_info` panic closes only that topic; the worker keeps its previous
-state, so `on_terminate` still runs. A terminate panic loses its actions, and
+For the channel layer, a `join` panic rejects that join. An `on_message` or
+`on_info` panic closes only that topic. The worker keeps its previous state,
+so `on_terminate` still runs. A terminate panic loses its actions, and
 the worker stops. A worker process that dies closes its topic with
 `phx_error` and skips `on_terminate`. Core still finishes closing the topic
 and continues closing sibling channels.

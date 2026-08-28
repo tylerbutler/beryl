@@ -87,7 +87,7 @@ The channel composition surface: a channel is a topic pattern paired
  capacity checks.
 
  A close reaches the worker after the messages it already holds, so a
- reply computed before a leave is still delivered. Then
+ push or reply computed before a leave is still delivered. Then
  [`on_terminate`](#on_terminate) actions are lowered in the turn that
  closes the topic, after the channel instance is gone. Its closing-phase
  action type permits only operations that remain meaningful then.
@@ -431,10 +431,9 @@ Run cleanup when the channel ends for any reason: client leave, a
  allows broadcasts, presence untracking, and presence broadcasts. It does
  not allow pushes, replies, or presence tracking.
 
- A panic here is not fatal. Core keeps the model from before the close.
- This instance stays in the channel system's map, and its
- [`Sender`](#sender) can reach it until the topic is rejoined or the socket
- ends.
+ A panic here is not fatal. The runtime logs it, the close completes
+ without this callback's actions, and the worker process stops. A
+ [`Sender`](#sender) of this join then reaches nothing.
 
 ```gleam
 pub fn on_terminate(

@@ -849,8 +849,10 @@ pub fn child_spec(
 ///
 /// The package-internal entry point behind `channel.child_spec`: `open`
 /// runs in each new topic worker's initialiser and seals that topic's
-/// callbacks. The socket-level `init`/`update` pair is a stub, because
-/// every joined topic is owned by its worker.
+/// callbacks. The socket-level `init`/`update` pair is a stub that answers
+/// with no effects: every joined topic is owned by its worker, so `update`
+/// only still receives `Binary` frames and the `Closed` of a topic whose
+/// worker process died.
 @internal
 pub fn worker_child_spec(
   config: Config,

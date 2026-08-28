@@ -317,7 +317,9 @@ pub type Mail =
 ///
 /// `deliver` sends one `Mail` to the worker being opened; it is bound
 /// before `open` runs, so a `join` callback that notifies itself addresses
-/// the join being opened.
+/// the join being opened. The worker serves that mail only once the runtime
+/// has indexed the join, so what it does then reaches the topic's
+/// subscribers.
 @internal
 pub type WorkerContext {
   WorkerContext(

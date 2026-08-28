@@ -483,8 +483,8 @@ state from before that callback, so `on_terminate` still sees it. After
 If the worker process itself dies, for example when it is killed, the topic
 closes with `phx_error` and `on_terminate` does not run, because the state
 died with the process. The client must rejoin. A worker that does not finish
-`on_terminate` within five seconds is killed, and the close completes without
-its actions.
+its queued work and `on_terminate` within five seconds is killed, and the
+close completes without its actions.
 
 Crash isolation stops at the socket for other faults: a fault in the socket
 actor loses only that socket and its workers. A router crash loses every

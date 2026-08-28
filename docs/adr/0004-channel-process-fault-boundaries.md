@@ -396,9 +396,10 @@ Prototype B's sequencing decisions were resolved as follows:
   actions; the socket actor applies them with the existing ordering rules.
 - A close is routed to the worker before the topic's reply refs are dropped,
   and the socket parks until the worker has run `on_terminate`. Results the
-  worker computed before the close are applied first, so a reply to a push
-  sent before a leave is still delivered. A worker that does not finish
-  `on_terminate` in 5 seconds is killed.
+  worker computed before the close are applied first, so a push or a reply
+  computed before a leave is still delivered. A worker that does not finish
+  its queued work and `on_terminate` in 5 seconds is killed, and the replies
+  it still owed are dropped.
 
 Contract changes recorded with this decision:
 

@@ -192,16 +192,11 @@ pub type Msg(msg) {
 pub type WorkerReport {
   /// A callback ran. `closing` asks the socket to close the topic after
   /// `effects`, the way an update's `KickTopic` would.
-  WorkerRan(
-    effects: List(Effect),
-    closing: Bool,
-    kind: telemetry.MessageKind,
-    started_at: Int,
-  )
+  WorkerRan(effects: List(Effect), closing: Bool, source: Source)
   /// A callback panicked. The worker kept its state from before the
-  /// callback; the socket closes the topic, which still runs
-  /// `on_terminate`.
-  WorkerCrashed(crash: String, kind: telemetry.MessageKind, started_at: Int)
+  /// callback and serves nothing else; the socket closes the topic, which
+  /// still runs `on_terminate`.
+  WorkerCrashed(crash: String, source: Source)
   /// `on_terminate` ran — or panicked, with `crash` set — and the worker
   /// is stopping.
   WorkerTerminated(effects: List(Effect), crash: Option(String))
@@ -289,18 +284,15 @@ type RuntimeRole(msg) {
     stop_reply: Option(Subject(Bool)),
     stop_finalized: Int,
   )
-  SocketActorRole(router: Subject(Msg(msg)), workers: Option(WorkerFactory))
-}
-
-/// How a socket actor starts topic workers. Present when the app-side
-/// layer runs one process per accepted topic (`beryl/channel`); absent for
-/// raw dispatch, whose model spans every topic of a socket by design.
-type WorkerFactory {
-  WorkerFactory(
-    open: fn(WorkerContext) -> WorkerOutcome,
-    /// Started by and linked to the socket actor, so its workers die with
-    /// their socket and a join never serialises through another socket.
-    supervisor: factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted),
+  SocketActorRole(
+    router: Subject(Msg(msg)),
+    /// Where a socket actor starts topic workers. Present when the
+    /// app-side layer runs one process per accepted topic
+    /// (`beryl/channel`); absent for raw dispatch, whose model spans every
+    /// topic of a socket by design. Started by and linked to the socket
+    /// actor, so its workers die with their socket and a join never
+    /// serialises through another socket.
+    workers: Option(factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted)),
   )
 }
 
@@ -469,7 +461,8 @@ type SocketState(model, msg) {
     close: fn() -> Nil,
     codec: Codec,
     /// Request data assembled by the transport, handed to every topic
-    /// worker's `join`.
+    /// worker's `join`. Empty for raw dispatch, which hands it to `init`
+    /// instead and keeps nothing.
     seed: ConnectSeed,
     /// The app's per-socket model, threaded through `update`.
     model: model,
@@ -503,8 +496,9 @@ type Pending {
   )
 }
 
-/// Where an event delivered to `update` came from, for crash attribution.
-type Source {
+/// Where an event delivered to `update` (or cast to a topic worker) came
+/// from, for crash attribution and telemetry.
+pub type Source {
   JoinSource(
     topic: String,
     join_ref: Option(String),
@@ -519,7 +513,11 @@ type Source {
 
 /// Start runtime telemetry without touching the VM clock when disabled.
 fn telemetry_start(state: State(model, msg)) -> Int {
-  use <- bool.guard(when: !state.config.telemetry, return: 0)
+  start_time_if(state.config.telemetry)
+}
+
+fn start_time_if(enabled: Bool) -> Int {
+  use <- bool.guard(when: !enabled, return: 0)
   telemetry.start_time()
 }
 
@@ -680,12 +678,12 @@ pub fn start_socket_actor(
     use workers <- result.try(case open_worker {
       None -> Ok(None)
       Some(open) ->
-        factory_supervisor.worker_child(start_worker)
+        factory_supervisor.worker_child(fn(spawn) {
+          start_worker(open, subject, config.telemetry, spawn)
+        })
         |> factory_supervisor.restart_strategy(supervision.Temporary)
         |> factory_supervisor.start
-        |> result.map(fn(started) {
-          Some(WorkerFactory(open: open, supervisor: started.data))
-        })
+        |> result.map(fn(started) { Some(started.data) })
         |> result.map_error(fn(_) { "topic worker supervisor failed to start" })
     })
     let state =
@@ -1061,7 +1059,8 @@ fn socket_turn(
   message: Msg(msg),
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case dict.get(state.suspended, socket_id) {
-    Error(Nil) -> after_socket_turn(state, dispatch_socket_msg(state, message))
+    Error(Nil) ->
+      after_socket_turn(state, dispatch_socket_msg(state, socket_id, message))
     Ok(suspension) ->
       case resume_worker_close(state, socket_id, suspension, message) {
         Some(after) -> after_socket_turn(state, after)
@@ -1094,6 +1093,7 @@ fn after_socket_turn(
 /// suspended, so both paths share exactly one implementation.
 fn dispatch_socket_msg(
   state: State(model, msg),
+  socket_id: String,
   message: Msg(msg),
 ) -> State(model, msg) {
   case message {
@@ -1110,11 +1110,7 @@ fn dispatch_socket_msg(
       handle_app_info(state, socket_id, app_message)
     WorkerReport(socket_id, topic_name, pid, report) ->
       handle_worker_report(state, socket_id, topic_name, pid, report)
-    WorkerDown(down) ->
-      case dict.keys(state.sockets) {
-        [socket_id] -> handle_worker_down(state, socket_id, down)
-        _ -> state
-      }
+    WorkerDown(down) -> handle_worker_down(state, socket_id, down)
     // Only meaningful while its socket is parked on that worker, which
     // `socket_turn` handles before dispatch; anything else is a late timer.
     WorkerTerminateTimedOut(..) -> state
@@ -1191,7 +1187,7 @@ fn drain_messages(
   case messages {
     [] -> state
     [message, ..rest] -> {
-      let state = dispatch_socket_msg(state, message)
+      let state = dispatch_socket_msg(state, socket_id, message)
       case dict.has_key(state.suspended, socket_id) {
         True ->
           State(
@@ -1341,7 +1337,11 @@ fn register_socket(
           send_binary: send_binary,
           close: close,
           codec: option.unwrap(socket_codec, state.config.codec),
-          seed: seed,
+          seed: case state.role {
+            SocketActorRole(workers: Some(_), ..) -> seed
+            SocketActorRole(workers: None, ..) | RouterRole(..) ->
+              sock.empty_seed()
+          },
           model: model,
           subscribed_topics: set.new(),
           join_refs: dict.new(),
@@ -1504,12 +1504,10 @@ fn finalize_suspension(
   case dict.get(state.suspended, socket_id) {
     Error(Nil) -> state
     Ok(suspension) -> {
-      let _cancelled = process.cancel_timer(suspension.timer)
+      let cancelled = process.cancel_timer(suspension.timer)
       let state =
         State(
           ..state,
-          suspended: dict.delete(state.suspended, socket_id),
-          queued: dict.delete(state.queued, socket_id),
           // The runtime-owned sweep below also removes anything an earlier,
           // already-timed-out track of this socket could still add.
           unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
@@ -1520,20 +1518,50 @@ fn finalize_suspension(
           |> log.warn("Presence operation finalized: runtime stopping", [
             #("socket_id", socket_id),
           ])
+          let state =
+            State(
+              ..state,
+              suspended: dict.delete(state.suspended, socket_id),
+              queued: dict.delete(state.queued, socket_id),
+            )
           finish_presence_op(state, socket_id, op, Error(PresenceStopping))
         }
-        // The topic already left the joined state; the teardown that
-        // follows cannot close it again, so its terminal frame is not
-        // owed. The worker is stopped rather than waited for.
-        WorkerWait(topic:, worker:, ..) -> {
-          state.logger
-          |> log.warn("Topic close abandoned: runtime stopping", [
-            #("socket_id", socket_id),
-            #("topic", topic),
-          ])
-          process.demonitor_process(worker.monitor)
-          process.kill(worker.pid)
-          state
+        // The worker is already running `on_terminate`: the terminate was
+        // sent when the socket parked. It gets what is left of its budget
+        // to finish, then the close resumes as it would have in a turn —
+        // the results the worker reported before terminating are applied,
+        // the leave is answered, and the topic's state is closed. Nothing
+        // else queued for the socket is served: the teardown follows, and
+        // the actor stops after it.
+        WorkerWait(worker:, ..) -> {
+          let budget = case cancelled {
+            process.Cancelled(time_remaining:) -> time_remaining
+            process.TimerNotFound -> 0
+          }
+          let in_flight =
+            dict.get(state.queued, socket_id)
+            |> result.unwrap([])
+            |> list.filter(fn(message) {
+              case message {
+                WorkerReport(worker: pid, ..) -> pid == worker.pid
+                _ -> False
+              }
+            })
+          let #(in_flight, message) =
+            await_worker_terminated(
+              state,
+              socket_id,
+              worker,
+              in_flight,
+              monotonic_time_ms() + budget,
+            )
+          let state =
+            State(
+              ..state,
+              queued: dict.insert(state.queued, socket_id, in_flight),
+            )
+          resume_worker_close(state, socket_id, suspension, message)
+          |> option.unwrap(state)
         }
       }
       case state.config.presence {
@@ -1542,6 +1570,48 @@ fn finalize_suspension(
       }
       state
     }
+  }
+}
+
+/// Wait, until `deadline`, for the termination of the worker a stopping
+/// socket is parked on, taking it from this actor's own mailbox.
+///
+/// The worker's earlier results are kept (newest first, like the queue
+/// they join) so the resumed close applies them; every other message is
+/// dropped, as the actor stops before it could serve them. Returns the
+/// message `resume_worker_close` needs to continue the close.
+fn await_worker_terminated(
+  state: State(model, msg),
+  socket_id: String,
+  worker: WorkerRef,
+  in_flight: List(Msg(msg)),
+  deadline: Int,
+) -> #(List(Msg(msg)), Msg(msg)) {
+  let awaited = worker.pid
+  let received =
+    process.new_selector()
+    |> process.select_map(state.self_subject, Ok)
+    |> process.select_specific_monitor(worker.monitor, Error)
+    |> process.selector_receive(int.max(0, deadline - monotonic_time_ms()))
+  case received {
+    Ok(Ok(WorkerReport(worker: pid, report:, ..) as message))
+      if pid == awaited
+    ->
+      case report {
+        WorkerTerminated(..) -> #(in_flight, message)
+        WorkerRan(..) | WorkerCrashed(..) ->
+          await_worker_terminated(
+            state,
+            socket_id,
+            worker,
+            [message, ..in_flight],
+            deadline,
+          )
+      }
+    Ok(Ok(_)) ->
+      await_worker_terminated(state, socket_id, worker, in_flight, deadline)
+    Ok(Error(down)) -> #(in_flight, WorkerDown(down))
+    Error(Nil) -> #(in_flight, WorkerTerminateTimedOut(socket_id, awaited))
   }
 }
 
@@ -2781,25 +2851,15 @@ fn exec_input(
         SocketActorRole(workers: Some(_), ..),
           sock.Message(topic: topic_name, event:, payload:, ref:)
         -> {
-          case dict.get(socket.workers, topic_name), source {
-            Ok(worker), MessageSource(_, kind, started_at) ->
+          case dict.get(socket.workers, topic_name) {
+            Ok(worker) ->
               process.send(
                 worker.subject,
-                WorkerDeliver(event, payload, ref, kind, started_at),
+                WorkerDeliver(event, payload, ref, source),
               )
-            Error(Nil), _ ->
+            Error(Nil) ->
               state.logger
               |> log.warn("Message dropped: topic has no worker", [
-                #("socket_id", socket_id),
-                #("topic", topic_name),
-              ])
-            // A `Message` is only ever delivered from a `MessageSource`.
-            Ok(_), JoinSource(..)
-            | Ok(_), InfoSource(..)
-            | Ok(_), ClosedSource
-            ->
-              state.logger
-              |> log.error("Message dropped: not attributed to a message", [
                 #("socket_id", socket_id),
                 #("topic", topic_name),
               ])
@@ -3085,29 +3145,25 @@ fn exec_close_topic(
           ])
           let close_join_ref = joined_ref(socket, topic_name)
           let worker = dict.get(socket.workers, topic_name)
-          // The topic leaves the joined state now: broadcasts stop
-          // reaching it, inbound frames for it are unjoined, and a second
-          // close is a no-op. A worker topic keeps its outstanding reply
-          // refs until the worker has terminated — results it computed
-          // before the close reached it still name them.
+          // `join_refs` ends the join now, so a second close is a no-op,
+          // and the router index entry removed below stops broadcasts. A
+          // raw topic also leaves the joined set and drops its outstanding
+          // reply refs here, before `Closed` runs. A worker topic keeps both
+          // until the worker has terminated — results it computed before
+          // the close reached it still push to and answer it, while
+          // everything else for the socket queues behind the park — and
+          // `exec_close_cleanup` drops them after those results are applied.
           let socket =
             SocketState(
               ..socket,
-              subscribed_topics: set.delete(
-                socket.subscribed_topics,
-                topic_name,
-              ),
               join_refs: dict.delete(socket.join_refs, topic_name),
               workers: dict.delete(socket.workers, topic_name),
-              pending_reply_refs: case worker {
-                Ok(_) -> socket.pending_reply_refs
-                Error(Nil) ->
-                  set.filter(socket.pending_reply_refs, fn(ref) {
-                    sock.reply_ref_topic(ref) != topic_name
-                  })
-              },
             )
           let state = store_socket(state, socket)
+          let state = case worker {
+            Ok(_) -> state
+            Error(Nil) -> unsubscribe_topic(state, socket_id, topic_name)
+          }
           let state = remove_channel_bucket(state, socket_id, topic_name)
           let state = remove_topic_subscriber(state, socket_id, topic_name)
           case worker {
@@ -3483,6 +3539,7 @@ fn apply_accept_join(
   case matching_pending_join(ref, pending) {
     Some(pending_join) -> {
       let state = subscribe_socket(state, socket_id, pending_join)
+      release_worker(state, socket_id, pending_join.topic)
       case dict.get(state.sockets, socket_id) {
         Ok(socket) -> {
           let response = option.unwrap(reply, json.object([]))
@@ -3641,6 +3698,30 @@ fn apply_reply(
           )
         }
       }
+  }
+}
+
+/// Take a topic out of the joined set and drop its outstanding reply refs:
+/// pushes to it drop from here on, and a ref stored across a leave/rejoin
+/// is not replied to.
+fn unsubscribe_topic(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+) -> State(model, msg) {
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket) ->
+      store_socket(
+        state,
+        SocketState(
+          ..socket,
+          subscribed_topics: set.delete(socket.subscribed_topics, topic_name),
+          pending_reply_refs: set.filter(socket.pending_reply_refs, fn(ref) {
+            sock.reply_ref_topic(ref) != topic_name
+          }),
+        ),
+      )
   }
 }
 
@@ -4352,6 +4433,10 @@ fn exec_close_cleanup(
       close.cont,
     ),
   ]
+  // Every result that could still push to or answer the topic has been
+  // applied by now (a no-op for a raw topic, which `exec_close_topic`
+  // already unsubscribed).
+  let state = unsubscribe_topic(state, socket_id, topic_name)
   case state.config.presence, dict.get(state.sockets, socket_id) {
     Some(handle), Ok(socket) ->
       case dict.get(socket.presence_refs, topic_name) {
@@ -4934,11 +5019,15 @@ fn joined_topics_metadata(
 //
 // A join runs in the worker's initialiser, with the socket actor blocked
 // on `start_child` (as Phoenix's socket is blocked on `join/3`); core
-// needs the outcome before the join's update turn ends. Everything after
-// the join is asynchronous: messages and typed mail are cast to the
-// worker, and it reports lowered effects back to the socket actor, which
-// applies them in arrival order. Per topic that is the worker's own
-// order; across topics on one socket nothing is promised, as in Phoenix.
+// needs the outcome before the join's update turn ends. The worker then
+// waits for the socket actor to index the join before it serves its
+// mailbox, so mail its `join` queued for itself (a roster publish through
+// a presence tracker, say) cannot reach the topic's subscribers before the
+// subscription exists. Everything after that is asynchronous: messages and
+// typed mail are cast to the worker, and it reports lowered effects back
+// to the socket actor, which applies them in arrival order. Per topic that
+// is the worker's own order; across topics on one socket nothing is
+// promised, as in Phoenix.
 //
 // A close is routed to the worker before the topic's reply refs are
 // dropped, and the socket parks until the worker has terminated. The
@@ -4953,8 +5042,9 @@ fn joined_topics_metadata(
 /// when a deployment needs a slower join.
 const worker_join_timeout_ms = 5000
 
-/// How long a closing topic waits for its worker's `on_terminate` before
-/// the worker is killed and the close completes without its actions.
+/// How long a closing topic waits for its worker to finish the work already
+/// in its mailbox and `on_terminate`, before the worker is killed and the
+/// close completes without its actions.
 ///
 /// ponytail: fixed, matching Phoenix's `Channel.Server.close/2` default;
 /// promote to `Config` alongside `worker_join_timeout_ms`.
@@ -4963,22 +5053,19 @@ const worker_terminate_timeout_ms = 5000
 /// The factory supervisor's child argument: one join attempt.
 type WorkerSpawn {
   WorkerSpawn(
-    open: fn(WorkerContext) -> WorkerOutcome,
     socket_id: String,
     seed: ConnectSeed,
     topic: String,
     payload: Dynamic,
-    /// Send one report to the owning socket actor, tagged with the
-    /// reporting worker's pid.
-    report: fn(Pid, WorkerReport) -> Nil,
-    telemetry: Bool,
   )
 }
 
 /// What `start_child` hands back once the worker's `join` has run: the
-/// worker's subject and the join's outcome as the worker produced it.
+/// worker's subject and the join's answer — the reply and accept-time
+/// effects, or the rejection. The sealed callbacks stay in the worker, so
+/// none of the join's state is copied out of it.
 type WorkerStarted =
-  #(Subject(WorkerMsg), WorkerOutcome)
+  #(Subject(WorkerMsg), Result(#(Option(Json), List(Effect)), Json))
 
 /// Work cast to one topic worker.
 type WorkerMsg {
@@ -4987,8 +5074,7 @@ type WorkerMsg {
     event: String,
     payload: Dynamic,
     ref: Option(ReplyRef),
-    kind: telemetry.MessageKind,
-    started_at: Int,
+    source: Source,
   )
   /// One sealed server-side message for `on_info`, sent directly by the
   /// `Sender` that produced it: the join that sealed it *is* this
@@ -5000,19 +5086,50 @@ type WorkerMsg {
   WorkerTerminate(reason: StopReason, reply: Option(Subject(WorkerReport)))
   /// Stop without running any callback (a refused join has no channel).
   WorkerHalt
+  /// The socket actor has indexed the join: serve what was held, in
+  /// order, then the mailbox.
+  WorkerGo
 }
 
 type WorkerState {
-  WorkerRunning(worker: Worker, spawn: WorkerSpawn)
+  /// Accepted, but the socket actor has not indexed the join yet (see
+  /// `release_worker`). What arrives meanwhile is held, newest first.
+  WorkerHolding(worker: Worker, link: WorkerLink, held: List(WorkerMsg))
+  WorkerRunning(worker: Worker, link: WorkerLink)
+  /// A callback asked to close the topic, or crashed. Only the terminate
+  /// is served from here: a message that reaches a closing channel is
+  /// dropped, as the shared interpreter drops one for a topic it closed in
+  /// the same turn, and `on_terminate` runs against the state that
+  /// callback left.
+  WorkerClosing(worker: Worker, link: WorkerLink)
   WorkerRefusing
+}
+
+/// A worker's line back to its socket actor.
+type WorkerLink {
+  WorkerLink(
+    topic: String,
+    /// Send one report to the owning socket actor, tagged with this
+    /// worker's pid.
+    report: fn(WorkerReport) -> Nil,
+    telemetry: Bool,
+  )
 }
 
 /// Start one topic worker, running its `join` in the new process.
 ///
-/// A panic in `join` fails the start, which the socket actor turns into
-/// a rejection — the same outcome the shared interpreter's crash boundary
-/// gives a raw `Join`, by a different mechanism.
-fn start_worker(spawn: WorkerSpawn) -> actor.StartResult(WorkerStarted) {
+/// `open`, the socket actor's subject and its telemetry flag are bound
+/// once into the supervisor's child template; `spawn` is the per-join
+/// data. A panic in `join` fails the start with the crash boundary's
+/// bounded description, which the socket actor turns into a rejection —
+/// the same outcome the shared interpreter gives a raw `Join`, by a
+/// different mechanism.
+fn start_worker(
+  open: fn(WorkerContext) -> WorkerOutcome,
+  socket: Subject(Msg(msg)),
+  telemetry: Bool,
+  spawn: WorkerSpawn,
+) -> actor.StartResult(WorkerStarted) {
   actor.new_with_initialiser(worker_join_timeout_ms, fn(subject) {
     let context =
       sock.WorkerContext(
@@ -5022,16 +5139,32 @@ fn start_worker(spawn: WorkerSpawn) -> actor.StartResult(WorkerStarted) {
         payload: spawn.payload,
         deliver: fn(mail) { process.send(subject, WorkerInfo(mail)) },
       )
-    let outcome = spawn.open(context)
-    let state = case outcome {
-      sock.WorkerRejected(_) -> {
+    // Crash boundary — see internal.rescue.
+    use outcome <- result.try(internal.rescue(fn() { open(context) }))
+    let self = process.self()
+    let link =
+      WorkerLink(
+        topic: spawn.topic,
+        report: fn(report) {
+          process.send(
+            socket,
+            WorkerReport(spawn.socket_id, spawn.topic, self, report),
+          )
+        },
+        telemetry:,
+      )
+    let #(state, answer) = case outcome {
+      sock.WorkerRejected(reason) -> {
         process.send(subject, WorkerHalt)
-        WorkerRefusing
+        #(WorkerRefusing, Error(reason))
       }
-      sock.WorkerAccepted(worker:, ..) -> WorkerRunning(worker, spawn)
+      sock.WorkerAccepted(reply:, effects:, worker:) -> #(
+        WorkerHolding(worker, link, []),
+        Ok(#(reply, effects)),
+      )
     }
     actor.initialised(state)
-    |> actor.returning(#(subject, outcome))
+    |> actor.returning(#(subject, answer))
     |> Ok
   })
   |> actor.on_message(handle_worker_msg)
@@ -5042,40 +5175,53 @@ fn handle_worker_msg(
   state: WorkerState,
   message: WorkerMsg,
 ) -> actor.Next(WorkerState, WorkerMsg) {
-  case state {
-    WorkerRefusing -> actor.stop()
-    WorkerRunning(worker, spawn) ->
-      case message {
-        WorkerDeliver(event, payload, ref, kind, started_at) ->
-          worker_step(worker, spawn, kind, started_at, fn() {
-            worker.on_message(event, payload, ref)
-          })
-        WorkerInfo(mail) -> {
-          let started_at = case spawn.telemetry {
-            True -> telemetry.start_time()
-            False -> 0
-          }
-          worker_step(worker, spawn, telemetry.InfoMessage, started_at, fn() {
-            worker.on_info(mail)
-          })
-        }
-        WorkerTerminate(reason, reply) -> {
-          // Crash boundary — see internal.rescue. The topic is closing
-          // either way; a panic here only loses its termination actions.
-          let report = case
-            internal.rescue(fn() { worker.on_terminate(reason) })
-          {
-            Ok(effects) -> WorkerTerminated(effects, None)
-            Error(crash) -> WorkerTerminated([], Some(crash))
-          }
-          case reply {
-            Some(reply) -> process.send(reply, report)
-            None -> spawn.report(process.self(), report)
-          }
-          actor.stop()
-        }
-        WorkerHalt -> actor.stop()
+  case serve(state, message) {
+    Ok(state) -> actor.continue(state)
+    Error(Nil) -> actor.stop()
+  }
+}
+
+/// Serve one message; `Error(Nil)` once the worker has stopped.
+fn serve(state: WorkerState, message: WorkerMsg) -> Result(WorkerState, Nil) {
+  case state, message {
+    WorkerRefusing, _ | _, WorkerHalt -> Error(Nil)
+    WorkerHolding(worker, link, held), WorkerGo ->
+      list.try_fold(list.reverse(held), WorkerRunning(worker, link), serve)
+    WorkerHolding(worker, link, held), _ ->
+      Ok(WorkerHolding(worker, link, [message, ..held]))
+    WorkerRunning(..), WorkerGo | WorkerClosing(..), WorkerGo -> Ok(state)
+    WorkerRunning(worker, link), WorkerDeliver(event, payload, ref, source) ->
+      Ok(
+        worker_step(worker, link, source, fn() {
+          worker.on_message(event, payload, ref)
+        }),
+      )
+    WorkerRunning(worker, link), WorkerInfo(mail) -> {
+      let source =
+        MessageSource(
+          link.topic,
+          telemetry.InfoMessage,
+          start_time_if(link.telemetry),
+        )
+      Ok(worker_step(worker, link, source, fn() { worker.on_info(mail) }))
+    }
+    WorkerRunning(worker, link), WorkerTerminate(reason, reply)
+    | WorkerClosing(worker, link), WorkerTerminate(reason, reply)
+    -> {
+      // Crash boundary — see internal.rescue. The topic is closing
+      // either way; a panic here only loses its termination actions.
+      let report = case internal.rescue(fn() { worker.on_terminate(reason) }) {
+        Ok(effects) -> WorkerTerminated(effects, None)
+        Error(crash) -> WorkerTerminated([], Some(crash))
       }
+      case reply {
+        Some(reply) -> process.send(reply, report)
+        None -> link.report(report)
+      }
+      Error(Nil)
+    }
+    WorkerClosing(..), WorkerDeliver(..) | WorkerClosing(..), WorkerInfo(..) ->
+      Ok(state)
   }
 }
 
@@ -5085,27 +5231,26 @@ fn handle_worker_msg(
 /// interpreter does; the socket actor closes the topic, which still runs
 /// `on_terminate` against that state. A `WorkerClose` result keeps the
 /// worker alive too: the close it asks for comes back as a terminate.
+/// Either way the worker serves nothing else in the meantime.
 fn worker_step(
   worker: Worker,
-  spawn: WorkerSpawn,
-  kind: telemetry.MessageKind,
-  started_at: Int,
+  link: WorkerLink,
+  source: Source,
   callback: fn() -> sock.WorkerStep,
-) -> actor.Next(WorkerState, WorkerMsg) {
-  let self = process.self()
+) -> WorkerState {
   // Crash boundary — see internal.rescue.
   case internal.rescue(callback) {
     Ok(sock.WorkerContinue(next, effects)) -> {
-      spawn.report(self, WorkerRan(effects, False, kind, started_at))
-      actor.continue(WorkerRunning(next, spawn))
+      link.report(WorkerRan(effects, False, source))
+      WorkerRunning(next, link)
     }
     Ok(sock.WorkerClose(effects)) -> {
-      spawn.report(self, WorkerRan(effects, True, kind, started_at))
-      actor.continue(WorkerRunning(worker, spawn))
+      link.report(WorkerRan(effects, True, source))
+      WorkerClosing(worker, link)
     }
     Error(crash) -> {
-      spawn.report(self, WorkerCrashed(crash, kind, started_at))
-      actor.continue(WorkerRunning(worker, spawn))
+      link.report(WorkerCrashed(crash, source))
+      WorkerClosing(worker, link)
     }
   }
 }
@@ -5119,35 +5264,23 @@ fn exec_worker_join(
   state: State(model, msg),
   socket_id: String,
   socket: SocketState(model, msg),
-  factory: WorkerFactory,
+  factory: factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted),
   topic_name: String,
   payload: Dynamic,
   ref: JoinRef,
   source: Source,
   cont: Cont,
 ) -> Exec(model, msg) {
-  let self = state.self_subject
   let spawn =
     WorkerSpawn(
-      open: factory.open,
       socket_id: socket_id,
       seed: socket.seed,
       topic: topic_name,
       payload: payload,
-      report: fn(pid, report) {
-        process.send(self, WorkerReport(socket_id, topic_name, pid, report))
-      },
-      telemetry: state.config.telemetry,
     )
-  let #(state, result) = case
-    factory_supervisor.start_child(factory.supervisor, spawn)
-  {
-    Ok(actor.Started(
-      pid:,
-      data: #(subject, sock.WorkerAccepted(reply:, effects:, ..)),
-    )) -> {
-      let worker =
-        WorkerRef(subject: subject, pid: pid, monitor: process.monitor(pid))
+  let #(state, result) = case factory_supervisor.start_child(factory, spawn) {
+    Ok(actor.Started(pid:, data: #(subject, Ok(#(reply, effects))))) -> {
+      let worker = WorkerRef(subject:, pid:, monitor: process.monitor(pid))
       let state =
         store_socket(
           state,
@@ -5161,13 +5294,42 @@ fn exec_worker_join(
         Ok(sock.Next(socket.model, [sock.AcceptJoin(ref, reply), ..effects])),
       )
     }
-    Ok(actor.Started(data: #(_, sock.WorkerRejected(reason)), ..)) -> #(
+    Ok(actor.Started(data: #(_, Error(reason)), ..)) -> #(
       state,
       Ok(sock.Next(socket.model, [sock.RejectJoin(ref, reason)])),
     )
-    Error(error) -> #(state, Error(string.inspect(error)))
+    // A panicking `join` failed the start with the crash boundary's
+    // bounded description; the other failures are described here.
+    Error(actor.InitFailed(crash)) -> #(state, Error(crash))
+    Error(actor.InitTimeout) -> #(
+      state,
+      Error(
+        "join did not finish within "
+        <> int.to_string(worker_join_timeout_ms)
+        <> "ms",
+      ),
+    )
+    Error(actor.InitExited(reason)) -> #(state, Error(string.inspect(reason)))
   }
   exec_update_result(state, socket_id, source, cont, result)
+}
+
+/// Let a joined topic's worker serve its mailbox. The join is indexed, so
+/// whatever the worker does from here on — including the mail its `join`
+/// queued for itself — reaches the topic's subscribers.
+fn release_worker(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+) -> Nil {
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> Nil
+    Ok(socket) ->
+      case dict.get(socket.workers, topic_name) {
+        Ok(worker) -> process.send(worker.subject, WorkerGo)
+        Error(Nil) -> Nil
+      }
+  }
 }
 
 /// Apply a worker's report if the worker still owns its topic.
@@ -5203,7 +5365,7 @@ fn exec_worker_report(
   report: WorkerReport,
 ) -> Exec(model, msg) {
   case report {
-    WorkerRan(effects, closing, kind, started_at) -> {
+    WorkerRan(effects, closing, source) -> {
       // A close the worker asked for lowers to a kick, exactly as the
       // shared interpreter's layer did — unless the topic is already
       // closing, in which case the kick would be a no-op warning.
@@ -5213,7 +5375,6 @@ fn exec_worker_report(
         True -> list.append(effects, [sock.KickTopic(topic_name)])
         False -> effects
       }
-      let source = MessageSource(topic_name, kind, started_at)
       Continue(state, [
         StepEffects(
           effects,
@@ -5223,14 +5384,8 @@ fn exec_worker_report(
         ),
       ])
     }
-    WorkerCrashed(crash, kind, started_at) ->
-      exec_update_crash(
-        state,
-        socket_id,
-        MessageSource(topic_name, kind, started_at),
-        ContDrive,
-        crash,
-      )
+    WorkerCrashed(crash, source) ->
+      exec_update_crash(state, socket_id, source, ContDrive, crash)
     // Only meaningful as the event a parked socket is waiting for.
     WorkerTerminated(..) -> Continue(state, [])
   }
@@ -5297,6 +5452,25 @@ fn close_worker_topic(
   reason: StopReason,
   cont: Cont,
 ) -> Exec(model, msg) {
+  // A worker that already exited — its `Down` still queued behind a
+  // suspension, or not received yet — has nothing left to run, so the
+  // close continues at once instead of waiting out the terminate timeout.
+  use <- bool.lazy_guard(when: !process.is_alive(worker.pid), return: fn() {
+    state.logger
+    |> log.error("Topic worker already exited; closing without on_terminate", [
+      #("socket_id", socket_id),
+      #("topic", topic_name),
+    ])
+    process.demonitor_process(worker.monitor)
+    Continue(state, [
+      StepEffects(
+        [],
+        None,
+        [],
+        ContCloseTopic(topic_name, close_join_ref, reason, cont),
+      ),
+    ])
+  })
   case state.stopping {
     False -> {
       process.send(worker.subject, WorkerTerminate(reason, None))
@@ -5316,14 +5490,24 @@ fn close_worker_topic(
     True -> {
       let reply = process.new_subject()
       process.send(worker.subject, WorkerTerminate(reason, Some(reply)))
-      let effects = case process.receive(reply, worker_terminate_timeout_ms) {
-        Ok(WorkerTerminated(effects, crash)) -> {
+      let received =
+        process.new_selector()
+        |> process.select_map(reply, Ok)
+        |> process.select_specific_monitor(worker.monitor, Error)
+        |> process.selector_receive(worker_terminate_timeout_ms)
+      let effects = case received {
+        Ok(Ok(WorkerTerminated(effects, crash))) -> {
           log_terminate_crash(state, socket_id, topic_name, crash)
           effects
         }
         // The worker answers this subject only from `WorkerTerminate`;
         // callback results always go to the socket actor's mailbox.
-        Ok(WorkerRan(..)) | Ok(WorkerCrashed(..)) -> []
+        Ok(Ok(WorkerRan(..))) | Ok(Ok(WorkerCrashed(..))) -> []
+        // It exited before it could report.
+        Ok(Error(down)) -> {
+          log_worker_exit(state, socket_id, topic_name, down)
+          []
+        }
         Error(Nil) -> {
           kill_stuck_worker(state, socket_id, topic_name, worker)
           []
@@ -5366,13 +5550,8 @@ fn resume_worker_close(
           log_terminate_crash(state, socket_id, topic_name, crash)
           Some(effects)
         }
-        WorkerDown(process.ProcessDown(pid:, reason:, ..)) if pid == awaited -> {
-          state.logger
-          |> log.error("Topic worker exited while closing", [
-            #("socket_id", socket_id),
-            #("topic", topic_name),
-            #("reason", string.inspect(reason)),
-          ])
+        WorkerDown(process.ProcessDown(pid:, ..) as down) if pid == awaited -> {
+          log_worker_exit(state, socket_id, topic_name, down)
           Some([])
         }
         WorkerTerminateTimedOut(worker: pid, ..) if pid == awaited -> {
@@ -5383,14 +5562,18 @@ fn resume_worker_close(
       })
       let _cancelled = process.cancel_timer(suspension.timer)
       process.demonitor_process(worker.monitor)
+      // The queue is newest-first, so prepending while folding it leaves
+      // both halves oldest-first.
       let #(in_flight, others) =
         dict.get(state.queued, socket_id)
         |> result.unwrap([])
-        |> list.reverse
-        |> list.partition(fn(message) {
+        |> list.fold(#([], []), fn(split, message) {
           case message {
-            WorkerReport(worker: pid, ..) -> pid == worker.pid
-            _ -> False
+            WorkerReport(worker: pid, report:, ..) if pid == awaited -> #(
+              [StepWorkerReport(topic_name, report), ..split.0],
+              split.1,
+            )
+            _ -> #(split.0, [message, ..split.1])
           }
         })
       let state =
@@ -5403,14 +5586,7 @@ fn resume_worker_close(
           },
         )
       let steps =
-        list.filter_map(in_flight, fn(message) {
-          case message {
-            WorkerReport(report:, ..) ->
-              Ok(StepWorkerReport(topic_name, report))
-            _ -> Error(Nil)
-          }
-        })
-        |> list.append([
+        list.append(in_flight, [
           StepEffects(
             effects,
             None,
@@ -5424,6 +5600,23 @@ fn resume_worker_close(
   }
 }
 
+fn log_worker_exit(
+  state: State(model, msg),
+  socket_id: String,
+  topic_name: String,
+  down: process.Down,
+) -> Nil {
+  let reason = case down {
+    process.ProcessDown(reason:, ..) | process.PortDown(reason:, ..) -> reason
+  }
+  state.logger
+  |> log.error("Topic worker exited while closing", [
+    #("socket_id", socket_id),
+    #("topic", topic_name),
+    #("reason", string.inspect(reason)),
+  ])
+}
+
 fn kill_stuck_worker(
   state: State(model, msg),
   socket_id: String,
@@ -5431,11 +5624,14 @@ fn kill_stuck_worker(
   worker: WorkerRef,
 ) -> Nil {
   state.logger
-  |> log.error("Topic worker did not terminate in time; killing it", [
-    #("socket_id", socket_id),
-    #("topic", topic_name),
-    #("timeout_ms", int.to_string(worker_terminate_timeout_ms)),
-  ])
+  |> log.error(
+    "Topic worker did not finish its queued work and on_terminate in time; killing it",
+    [
+      #("socket_id", socket_id),
+      #("topic", topic_name),
+      #("timeout_ms", int.to_string(worker_terminate_timeout_ms)),
+    ],
+  )
   process.kill(worker.pid)
 }
 

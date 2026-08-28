@@ -46,12 +46,25 @@ fn sleepy(
     |> channel.on_message(fn(_state, message) {
       process.send(reports, Ran(context.topic, "on_message", process.self()))
       process.sleep(slow_ms)
-      channel.next(Nil, [
-        channel.reply_ok(
-          message.reply,
-          json.object([#("from", json.string(context.topic))]),
-        ),
-      ])
+      case message.event {
+        "quit" -> channel.close([])
+        "silent" -> channel.next(Nil, [])
+        "echo" ->
+          channel.next(Nil, [
+            channel.push("pong", json.string(context.topic)),
+            channel.reply_ok(
+              message.reply,
+              json.object([#("from", json.string(context.topic))]),
+            ),
+          ])
+        _ ->
+          channel.next(Nil, [
+            channel.reply_ok(
+              message.reply,
+              json.object([#("from", json.string(context.topic))]),
+            ),
+          ])
+      }
     })
     |> channel.on_info(fn(_state, _poke) {
       process.send(reports, Ran(context.topic, "on_info", process.self()))
@@ -199,13 +212,15 @@ pub fn a_reply_computed_before_a_leave_is_still_delivered_test() {
   let _ = ran_pid(reports, "join")
 
   // The push is in the worker's mailbox before the leave reaches it, so
-  // its reply is computed first and delivered before the topic closes —
-  // the ordering Phoenix's channel process gives for free.
-  helper.push(channels, "s1", "room:a", "ping", "r-2")
+  // its push and reply are computed first and delivered before the topic
+  // closes — the ordering Phoenix's channel process gives for free.
+  helper.push(channels, "s1", "room:a", "echo", "r-2")
   helper.leave(channels, "s1", "room:a", "jr-1", "r-3")
 
   helper.recv(frames) |> string.contains("\"r-3\"") |> should.be_true
-  let assert Ok(reply) = process.receive(frames, 1000) as "the push's reply"
+  let assert Ok(pushed) = process.receive(frames, 1000) as "the echo's push"
+  pushed |> string.contains("\"pong\"") |> should.be_true
+  let reply = helper.recv(frames)
   reply |> string.contains("\"r-2\"") |> should.be_true
   reply |> string.contains("\"from\":\"room:a\"") |> should.be_true
   helper.recv(frames) |> string.contains("phx_close") |> should.be_true
@@ -249,7 +264,132 @@ pub fn a_leave_followed_immediately_by_a_rejoin_is_ordered_test() {
   helper.recv(frames) |> string.contains("poked") |> should.be_true
 }
 
+pub fn a_ref_left_unanswered_before_a_leave_is_dropped_by_the_close_test() {
+  let reports = process.new_subject()
+  let senders = process.new_subject()
+  let channels = helper.start(config(), [quick("room:*", reports, senders)])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  let _ = ran_pid(reports, "join")
+
+  // "silent" never answers r-2, so its ref is outstanding until the close.
+  helper.push(channels, "s1", "room:a", "silent", "r-2")
+  let _ = ran_pid(reports, "on_message")
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-3")
+  helper.recv(frames) |> string.contains("\"r-3\"") |> should.be_true
+  helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  terminated(reports, "room:a", "normal")
+
+  // A rejoin that reuses the same refs is answered, not refused as a
+  // duplicate: the close dropped the old join's refs.
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  let _ = ran_pid(reports, "join")
+  helper.push(channels, "s1", "room:a", "ping", "r-2")
+  let _ = ran_pid(reports, "on_message")
+  let reply = helper.recv(frames)
+  reply |> string.contains("\"r-2\"") |> should.be_true
+  reply |> string.contains("\"status\":\"ok\"") |> should.be_true
+}
+
+pub fn a_message_behind_a_close_is_not_handled_test() {
+  let reports = process.new_subject()
+  let senders = process.new_subject()
+  let channels =
+    helper.start(config(), [
+      sleepy("room:*", reports, senders, slow_ms: 200, terminate_ms: 0),
+    ])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  let _ = ran_pid(reports, "join")
+
+  // "ping" reaches the worker's mailbox while "quit" is still running, so
+  // it sits behind the close the channel asked for.
+  helper.push(channels, "s1", "room:a", "quit", "r-2")
+  helper.push(channels, "s1", "room:a", "ping", "r-3")
+  let _ = ran_pid(reports, "on_message")
+
+  helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  terminated(reports, "room:a", "shutdown")
+  // The closed channel ran no further callback and answered nothing.
+  helper.recv_none(frames)
+  process.receive(reports, 100) |> should.be_error
+}
+
+pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() {
+  let tracker = process.new_name("roster_tracker")
+  let handler =
+    channel.handler("room:*", fn(context) {
+      // As a presence tracker would: the join asks itself to publish the
+      // roster, and the publish goes through a third process.
+      channel.notify(context.self, Poke)
+      channel.accept(Nil)
+      |> channel.on_info(fn(_state, _poke) {
+        process.send(process.named_subject(tracker), context.topic)
+        channel.stay(Nil)
+      })
+    })
+  let channels = helper.start(config(), [handler])
+  let _publisher =
+    process.spawn_unlinked(fn() {
+      let assert Ok(Nil) = process.register(process.self(), tracker)
+      let assert Ok(topic) =
+        process.receive(process.named_subject(tracker), 5000)
+      let _ = beryl.broadcast(channels, topic, "roster", json.string("r"))
+      Nil
+    })
+  let frames = helper.connect(channels, "s1")
+
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+
+  // The worker serves the join's own mail only once the socket has indexed
+  // the join, so the third process's broadcast finds the subscriber.
+  helper.recv(frames) |> string.contains("\"r-1\"") |> should.be_true
+  let assert Ok(roster) = process.receive(frames, 1000) as "the roster"
+  roster |> string.contains("\"roster\"") |> should.be_true
+}
+
 // --- worker death -------------------------------------------------------------
+
+pub fn a_close_of_a_dead_worker_does_not_wait_for_the_terminate_timeout_test() {
+  let reports = process.new_subject()
+  let terminating = process.new_subject()
+  let handler =
+    channel.handler("room:*", fn(context) {
+      process.send(reports, Ran(context.topic, "join", process.self()))
+      channel.accept(Nil)
+      |> channel.on_terminate(fn(_state, _reason) {
+        process.send(terminating, context.topic)
+        process.sleep(300)
+        []
+      })
+    })
+  let channels = helper.start(config(), [handler])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _ = helper.recv(frames)
+  let _a = ran_pid(reports, "join")
+  let b = ran_pid(reports, "join")
+
+  // The teardown closes room:a first and parks on its `on_terminate`;
+  // room:b's worker dies meanwhile, so its exit is queued behind the park.
+  helper.disconnect(channels, "s1")
+  let assert Ok("room:a") = process.receive(terminating, 1000)
+    as "room:a is terminating"
+  process.kill(b)
+  wait_until_dead(b)
+
+  // room:b's close finds the worker gone and completes at once instead of
+  // waiting out the terminate timeout.
+  helper.recv(frames) |> string.contains("room:a") |> should.be_true
+  let assert Ok(close) = process.receive(frames, 500) as "room:b's close"
+  close |> string.contains("room:b") |> should.be_true
+  process.receive(terminating, 100) |> should.be_error
+}
 
 pub fn a_killed_worker_closes_only_its_topic_with_phx_error_test() {
   let reports = process.new_subject()
@@ -358,6 +498,31 @@ pub fn stopping_beryl_runs_on_terminate_for_every_worker_test() {
   terminated(reports, "room:b", "shutdown")
   wait_until_dead(a)
   wait_until_dead(b)
+}
+
+pub fn stopping_beryl_while_a_leave_is_parked_lets_on_terminate_finish_test() {
+  let reports = process.new_subject()
+  let senders = process.new_subject()
+  let channels =
+    helper.start(config(), [
+      sleepy("room:*", reports, senders, slow_ms: 0, terminate_ms: 300),
+    ])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  let a = ran_pid(reports, "join")
+
+  // The leave parks the socket on room:a's `on_terminate`; the stop lands
+  // while it is still running. The callback finishes, its close still
+  // answers the leave, and only then does the socket tear down.
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
+  process.sleep(50)
+  beryl.stop(channels) |> should.be_ok
+
+  terminated(reports, "room:a", "normal")
+  helper.recv(frames) |> string.contains("\"r-2\"") |> should.be_true
+  helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  wait_until_dead(a)
 }
 
 pub fn many_topics_on_one_socket_each_get_a_worker_test() {

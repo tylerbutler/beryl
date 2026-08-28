@@ -47,8 +47,8 @@ promises no order between different topics on one socket. `join` runs while
 the worker starts, and the socket actor waits for it, as the Phoenix socket
 waits for `join/3`.
 
-beryl also catches callback panics: a join panic rejects that join, a message
-or `on_info` panic closes that topic and still runs `on_terminate`, and a
+beryl also catches callback panics. A join panic rejects that join. A message
+or `on_info` panic closes that topic and still runs `on_terminate`. A
 terminate panic loses that callback's actions while the close completes. A
 worker process that dies closes its topic with `phx_error` and skips
 `on_terminate`, as a Phoenix channel crash skips `terminate/2`. See
