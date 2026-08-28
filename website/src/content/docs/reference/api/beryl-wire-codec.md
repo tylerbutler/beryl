@@ -1,6 +1,9 @@
 ---
 title: "beryl/wire/codec"
 description: "Pluggable wire codec for beryl."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Pluggable wire codec for beryl."
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Pluggable wire codec for beryl.
 
@@ -23,22 +28,63 @@ Pluggable wire codec for beryl.
  All codecs must normalise inbound traffic to the `Inbound` shape so
  the runtime can stay framing-agnostic.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-codec"><code>Codec</code></a></li>
+<li><a href="#api-type-decodeerror"><code>DecodeError</code></a></li>
+<li><a href="#api-type-frame"><code>Frame</code></a></li>
+<li><a href="#api-type-inbound"><code>Inbound</code></a></li>
+<li><a href="#api-type-inboundkind"><code>InboundKind</code></a></li>
+<li><a href="#api-type-replystatus"><code>ReplyStatus</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-apply_decode_binary"><code>apply_decode_binary</code></a></li>
+<li><a href="#api-function-apply_decode_text"><code>apply_decode_text</code></a></li>
+<li><a href="#api-function-apply_encode_close"><code>apply_encode_close</code></a></li>
+<li><a href="#api-function-apply_encode_error"><code>apply_encode_error</code></a></li>
+<li><a href="#api-function-apply_encode_heartbeat_reply"><code>apply_encode_heartbeat_reply</code></a></li>
+<li><a href="#api-function-apply_encode_push"><code>apply_encode_push</code></a></li>
+<li><a href="#api-function-apply_encode_reply"><code>apply_encode_reply</code></a></li>
+<li><a href="#api-function-format_decode_error"><code>format_decode_error</code></a></li>
+<li><a href="#api-function-inbound"><code>inbound</code></a></li>
+<li><a href="#api-function-inbound_join_ref"><code>inbound_join_ref</code></a></li>
+<li><a href="#api-function-inbound_kind"><code>inbound_kind</code></a></li>
+<li><a href="#api-function-inbound_payload"><code>inbound_payload</code></a></li>
+<li><a href="#api-function-inbound_ref"><code>inbound_ref</code></a></li>
+<li><a href="#api-function-inbound_topic"><code>inbound_topic</code></a></li>
+<li><a href="#api-function-new"><code>new</code></a></li>
+<li><a href="#api-function-uses_topicless_events"><code>uses_topicless_events</code></a></li>
+<li><a href="#api-function-with_binary_decoder"><code>with_binary_decoder</code></a></li>
+<li><a href="#api-function-with_close_encoder"><code>with_close_encoder</code></a></li>
+<li><a href="#api-function-with_error_encoder"><code>with_error_encoder</code></a></li>
+<li><a href="#api-function-with_topicless_events"><code>with_topicless_events</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-codec" aria-hidden="true"></div>
+
 ### `Codec`
+
+```gleam
+pub type Codec
+```
 
 A wire codec.
 
  `Codec` is opaque. Build one with `new`. For binary support, add
  `with_binary_decoder`.
 
-```gleam
-pub type Codec
-```
+<div class="api-entry-anchor" id="api-type-decodeerror" aria-hidden="true"></div>
 
 ### `DecodeError`
-
-Errors a codec may emit when decoding inbound bytes.
 
 ```gleam
 pub type DecodeError {
@@ -48,24 +94,38 @@ pub type DecodeError {
 }
 ```
 
+Errors a codec may emit when decoding inbound bytes.
+
 #### Constructors
 
-##### `InvalidJson(reason: String)`
+##### `InvalidJson`
+
+```gleam
+InvalidJson(reason: String)
+```
 
 The bytes were not valid JSON; `reason` describes the parse error.
 
-##### `InvalidFormat(reason: String)`
+##### `InvalidFormat`
+
+```gleam
+InvalidFormat(reason: String)
+```
 
 The message was valid JSON but did not match the expected framing;
  `reason` describes the mismatch.
 
-##### `MissingField(name: String)`
+##### `MissingField`
+
+```gleam
+MissingField(name: String)
+```
 
 A required field was absent; `name` is the missing field.
 
-### `Frame`
+<div class="api-entry-anchor" id="api-type-frame" aria-hidden="true"></div>
 
-Encoded WebSocket frame returned by a codec.
+### `Frame`
 
 ```gleam
 pub type Frame {
@@ -74,17 +134,33 @@ pub type Frame {
 }
 ```
 
+Encoded WebSocket frame returned by a codec.
+
 #### Constructors
 
-##### `TextFrame(String)`
+##### `TextFrame`
+
+```gleam
+TextFrame(String)
+```
 
 A UTF-8 text frame.
 
-##### `BinaryFrame(BitArray)`
+##### `BinaryFrame`
+
+```gleam
+BinaryFrame(BitArray)
+```
 
 A binary frame.
 
+<div class="api-entry-anchor" id="api-type-inbound" aria-hidden="true"></div>
+
 ### `Inbound`
+
+```gleam
+pub type Inbound
+```
 
 A normalized inbound message.
 
@@ -92,13 +168,9 @@ A normalized inbound message.
  `inbound_*` accessors. The hidden record lets beryl add fields with
  defaults without breaking custom codecs.
 
-```gleam
-pub type Inbound
-```
+<div class="api-entry-anchor" id="api-type-inboundkind" aria-hidden="true"></div>
 
 ### `InboundKind`
-
-Structural inbound message kind used for protocol dispatch.
 
 ```gleam
 pub type InboundKind {
@@ -109,27 +181,45 @@ pub type InboundKind {
 }
 ```
 
+Structural inbound message kind used for protocol dispatch.
+
 #### Constructors
 
 ##### `Join`
+
+```gleam
+Join
+```
 
 A client joining a topic.
 
 ##### `Leave`
 
+```gleam
+Leave
+```
+
 A client leaving a topic.
 
 ##### `Heartbeat`
 
+```gleam
+Heartbeat
+```
+
 A heartbeat/keep-alive message.
 
-##### `Event(String)`
+##### `Event`
+
+```gleam
+Event(String)
+```
 
 A user-defined event; the wrapped `String` is the event name.
 
-### `ReplyStatus`
+<div class="api-entry-anchor" id="api-type-replystatus" aria-hidden="true"></div>
 
-Status of a reply produced by the app.
+### `ReplyStatus`
 
 ```gleam
 pub type ReplyStatus {
@@ -138,24 +228,31 @@ pub type ReplyStatus {
 }
 ```
 
+Status of a reply produced by the app.
+
 #### Constructors
 
 ##### `StatusOk`
+
+```gleam
+StatusOk
+```
 
 The handler succeeded (`"ok"` in Phoenix framing).
 
 ##### `StatusError`
 
+```gleam
+StatusError
+```
+
 The handler failed (`"error"` in Phoenix framing).
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-apply_decode_binary" aria-hidden="true"></div>
+
 ### `apply_decode_binary`
-
-Decode a binary frame with a codec, if it has a binary decoder.
-
- Returns `None` when the codec has no decoder configured with
- `with_binary_decoder`.
 
 ```gleam
 pub fn apply_decode_binary(
@@ -164,11 +261,14 @@ pub fn apply_decode_binary(
 ) -> option.Option(Result(Inbound, DecodeError))
 ```
 
+Decode a binary frame with a codec, if it has a binary decoder.
+
+ Returns `None` when the codec has no decoder configured with
+ `with_binary_decoder`.
+
+<div class="api-entry-anchor" id="api-function-apply_decode_text" aria-hidden="true"></div>
+
 ### `apply_decode_text`
-
-Decode a text frame with a codec.
-
- Codec authors can use this to test the decoder supplied to `new`.
 
 ```gleam
 pub fn apply_decode_text(
@@ -177,12 +277,13 @@ pub fn apply_decode_text(
 ) -> Result(Inbound, DecodeError)
 ```
 
+Decode a text frame with a codec.
+
+ Codec authors can use this to test the decoder supplied to `new`.
+
+<div class="api-entry-anchor" id="api-function-apply_encode_close" aria-hidden="true"></div>
+
 ### `apply_encode_close`
-
-Encode a graceful topic close with a codec, if it has a close encoder.
-
- Returns `None` when the codec has no encoder configured with
- `with_close_encoder`.
 
 ```gleam
 pub fn apply_encode_close(
@@ -192,13 +293,14 @@ pub fn apply_encode_close(
 ) -> option.Option(Frame)
 ```
 
-### `apply_encode_error`
-
-Encode an abnormal topic termination with a codec, if it has an error
- encoder.
+Encode a graceful topic close with a codec, if it has a close encoder.
 
  Returns `None` when the codec has no encoder configured with
- `with_error_encoder`.
+ `with_close_encoder`.
+
+<div class="api-entry-anchor" id="api-function-apply_encode_error" aria-hidden="true"></div>
+
+### `apply_encode_error`
 
 ```gleam
 pub fn apply_encode_error(
@@ -208,9 +310,15 @@ pub fn apply_encode_error(
 ) -> option.Option(Frame)
 ```
 
-### `apply_encode_heartbeat_reply`
+Encode an abnormal topic termination with a codec, if it has an error
+ encoder.
 
-Encode a heartbeat reply with a codec.
+ Returns `None` when the codec has no encoder configured with
+ `with_error_encoder`.
+
+<div class="api-entry-anchor" id="api-function-apply_encode_heartbeat_reply" aria-hidden="true"></div>
+
+### `apply_encode_heartbeat_reply`
 
 ```gleam
 pub fn apply_encode_heartbeat_reply(
@@ -219,9 +327,11 @@ pub fn apply_encode_heartbeat_reply(
 ) -> Frame
 ```
 
-### `apply_encode_push`
+Encode a heartbeat reply with a codec.
 
-Encode a server-initiated push with a codec.
+<div class="api-entry-anchor" id="api-function-apply_encode_push" aria-hidden="true"></div>
+
+### `apply_encode_push`
 
 ```gleam
 pub fn apply_encode_push(
@@ -232,9 +342,11 @@ pub fn apply_encode_push(
 ) -> Frame
 ```
 
-### `apply_encode_reply`
+Encode a server-initiated push with a codec.
 
-Encode a reply with a codec.
+<div class="api-entry-anchor" id="api-function-apply_encode_reply" aria-hidden="true"></div>
+
+### `apply_encode_reply`
 
 ```gleam
 pub fn apply_encode_reply(
@@ -247,27 +359,23 @@ pub fn apply_encode_reply(
 ) -> Frame
 ```
 
+Encode a reply with a codec.
+
+<div class="api-entry-anchor" id="api-function-format_decode_error" aria-hidden="true"></div>
+
 ### `format_decode_error`
-
-Format a `DecodeError` as human-readable text.
-
- The runtime log messages and `wire.format_decode_error` use this text.
 
 ```gleam
 pub fn format_decode_error(DecodeError) -> String
 ```
 
+Format a `DecodeError` as human-readable text.
+
+ The runtime log messages and `wire.format_decode_error` use this text.
+
+<div class="api-entry-anchor" id="api-function-inbound" aria-hidden="true"></div>
+
 ### `inbound`
-
-Construct a normalized inbound message.
-
- - `join_ref`: optional client-side reference assigned at join time
-   (used by some Phoenix replies; codecs without this concept should
-   pass `None`)
- - `ref`: optional per-message reference for reply correlation
- - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
- - `kind`: structural protocol event or user event
- - `payload`: message body as a `Dynamic` for the app to decode
 
 ```gleam
 pub fn inbound(
@@ -279,47 +387,78 @@ pub fn inbound(
 ) -> Inbound
 ```
 
-### `inbound_join_ref`
+Construct a normalized inbound message.
 
-Return the inbound message's join-time client reference, if any.
+ - `join_ref`: optional client-side reference assigned at join time
+   (used by some Phoenix replies; codecs without this concept should
+   pass `None`)
+ - `ref`: optional per-message reference for reply correlation
+ - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
+ - `kind`: structural protocol event or user event
+ - `payload`: message body as a `Dynamic` for the app to decode
+
+<div class="api-entry-anchor" id="api-function-inbound_join_ref" aria-hidden="true"></div>
+
+### `inbound_join_ref`
 
 ```gleam
 pub fn inbound_join_ref(Inbound) -> option.Option(String)
 ```
 
-### `inbound_kind`
+Return the inbound message's join-time client reference, if any.
 
-Return the inbound message's structural kind.
+<div class="api-entry-anchor" id="api-function-inbound_kind" aria-hidden="true"></div>
+
+### `inbound_kind`
 
 ```gleam
 pub fn inbound_kind(Inbound) -> InboundKind
 ```
 
-### `inbound_payload`
+Return the inbound message's structural kind.
 
-Return the inbound message body for the app to decode.
+<div class="api-entry-anchor" id="api-function-inbound_payload" aria-hidden="true"></div>
+
+### `inbound_payload`
 
 ```gleam
 pub fn inbound_payload(Inbound) -> dynamic.Dynamic
 ```
 
-### `inbound_ref`
+Return the inbound message body for the app to decode.
 
-Return the inbound message's per-message reply reference, if any.
+<div class="api-entry-anchor" id="api-function-inbound_ref" aria-hidden="true"></div>
+
+### `inbound_ref`
 
 ```gleam
 pub fn inbound_ref(Inbound) -> option.Option(String)
 ```
 
-### `inbound_topic`
+Return the inbound message's per-message reply reference, if any.
 
-Return the inbound message's subscription topic.
+<div class="api-entry-anchor" id="api-function-inbound_topic" aria-hidden="true"></div>
+
+### `inbound_topic`
 
 ```gleam
 pub fn inbound_topic(Inbound) -> String
 ```
 
+Return the inbound message's subscription topic.
+
+<div class="api-entry-anchor" id="api-function-new" aria-hidden="true"></div>
+
 ### `new`
+
+```gleam
+pub fn new(
+  decode_text: fn(String) -> Result(Inbound, DecodeError),
+  encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Frame,
+  encode_push: fn(String, String, json.Json) -> Frame,
+  encode_heartbeat_reply: fn(option.Option(String)) -> Frame
+) -> Codec
+```
 
 Build a text-only wire codec.
 
@@ -333,32 +472,21 @@ Build a text-only wire codec.
  delivered to the app's `update` as a raw `Binary` event. Add a binary
  decoder with `with_binary_decoder`.
 
-```gleam
-pub fn new(
-  decode_text: fn(String) -> Result(Inbound, DecodeError),
-  encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Frame,
-  encode_push: fn(String, String, json.Json) -> Frame,
-  encode_heartbeat_reply: fn(option.Option(String)) -> Frame
-) -> Codec
-```
+<div class="api-entry-anchor" id="api-function-uses_topicless_events" aria-hidden="true"></div>
 
 ### `uses_topicless_events`
-
-Whether the codec routes events without an explicit topic.
-
- Codec authors can use this to test `with_topicless_events`.
 
 ```gleam
 pub fn uses_topicless_events(Codec) -> Bool
 ```
 
+Whether the codec routes events without an explicit topic.
+
+ Codec authors can use this to test `with_topicless_events`.
+
+<div class="api-entry-anchor" id="api-function-with_binary_decoder" aria-hidden="true"></div>
+
 ### `with_binary_decoder`
-
-Add a binary decoder to a codec.
-
- When set, the decoder converts binary WebSocket frames to a normalized
- `Inbound` via `decode_binary`. The app's `update` function does not receive
- a raw `Binary` event.
 
 ```gleam
 pub fn with_binary_decoder(
@@ -367,14 +495,15 @@ pub fn with_binary_decoder(
 ) -> Codec
 ```
 
+Add a binary decoder to a codec.
+
+ When set, the decoder converts binary WebSocket frames to a normalized
+ `Inbound` via `decode_binary`. The app's `update` function does not receive
+ a raw `Binary` event.
+
+<div class="api-entry-anchor" id="api-function-with_close_encoder" aria-hidden="true"></div>
+
 ### `with_close_encoder`
-
-Add a topic-close encoder to a codec.
-
- When set, the runtime sends this frame when one of the client's topics
- terminates gracefully (leave, server shutdown, heartbeat
- eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
- leave the joined state instead of waiting out push timeouts.
 
 ```gleam
 pub fn with_close_encoder(
@@ -383,14 +512,16 @@ pub fn with_close_encoder(
 ) -> Codec
 ```
 
-### `with_error_encoder`
-
-Add a topic-error encoder to a codec.
+Add a topic-close encoder to a codec.
 
  When set, the runtime sends this frame when one of the client's topics
- terminates abnormally (crashed or stopped with an error):
- `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
- automatic rejoin.
+ terminates gracefully (leave, server shutdown, heartbeat
+ eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
+ leave the joined state instead of waiting out push timeouts.
+
+<div class="api-entry-anchor" id="api-function-with_error_encoder" aria-hidden="true"></div>
+
+### `with_error_encoder`
 
 ```gleam
 pub fn with_error_encoder(
@@ -399,7 +530,20 @@ pub fn with_error_encoder(
 ) -> Codec
 ```
 
+Add a topic-error encoder to a codec.
+
+ When set, the runtime sends this frame when one of the client's topics
+ terminates abnormally (crashed or stopped with an error):
+ `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
+ automatic rejoin.
+
+<div class="api-entry-anchor" id="api-function-with_topicless_events" aria-hidden="true"></div>
+
 ### `with_topicless_events`
+
+```gleam
+pub fn with_topicless_events(Codec) -> Codec
+```
 
 Mark a codec's events as topicless.
 
@@ -409,7 +553,3 @@ Mark a codec's events as topicless.
  zero or multiple joins.
  Topic-carrying codecs (like the Phoenix codec) must leave this off so
  the runtime rejects empty-topic frames instead of inferring a topic.
-
-```gleam
-pub fn with_topicless_events(Codec) -> Codec
-```

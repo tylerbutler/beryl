@@ -1,6 +1,9 @@
 ---
 title: "beryl_ewe"
 description: "Ewe WebSocket Transport - Direct Ewe integration for beryl"
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Ewe WebSocket Transport - Direct Ewe integration for beryl"
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Ewe WebSocket Transport - Direct Ewe integration for beryl
 
@@ -25,9 +30,29 @@ Ewe WebSocket Transport - Direct Ewe integration for beryl
  the Ewe-specific glue: the WebSocket upgrade call, frame sending, and
  peer IP extraction.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-handler"><code>handler</code></a></li>
+<li><a href="#api-function-upgrade"><code>upgrade</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
+
 ### `handler`
+
+```gleam
+pub fn handler(
+  beryl.Sockets,
+  server.TransportConfig(http1.Connection),
+  fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
+) -> fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
+```
 
 Build a combined request handler that serves both WebSocket upgrades and
  regular HTTP from a single Ewe listener.
@@ -47,15 +72,18 @@ Build a combined request handler that serves both WebSocket upgrades and
  |> ewe.start
  ```
 
-```gleam
-pub fn handler(
-  beryl.Sockets,
-  server.TransportConfig(http1.Connection),
-  fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
-) -> fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
-```
+<div class="api-entry-anchor" id="api-function-upgrade" aria-hidden="true"></div>
 
 ### `upgrade`
+
+```gleam
+pub fn upgrade(
+  request.Request(http1.Connection),
+  beryl.Sockets,
+  server.TransportConfig(http1.Connection),
+  fn() -> response.Response(ewe.ResponseBody)
+) -> response.Response(ewe.ResponseBody)
+```
 
 Upgrade a request to WebSocket if it matches the configured path.
 
@@ -77,12 +105,3 @@ Upgrade a request to WebSocket if it matches the configured path.
  `beryl/transport/server.upgrade` for the full contract. Enforcement
  uses the real socket peer IP from the TCP connection; forwarded headers
  such as `X-Forwarded-For` are not trusted.
-
-```gleam
-pub fn upgrade(
-  request.Request(http1.Connection),
-  beryl.Sockets,
-  server.TransportConfig(http1.Connection),
-  fn() -> response.Response(ewe.ResponseBody)
-) -> response.Response(ewe.ResponseBody)
-```

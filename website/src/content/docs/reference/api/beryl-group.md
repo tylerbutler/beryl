@@ -1,6 +1,9 @@
 ---
 title: "beryl/group"
 description: "Channel Groups - Named collections of topics for multi-topic broadcasting"
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Channel Groups - Named collections of topics for multi-topic broad
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Channel Groups - Named collections of topics for multi-topic broadcasting
 
@@ -32,21 +37,51 @@ Channel Groups - Named collections of topics for multi-topic broadcasting
  group.broadcast(groups, channels, "team:engineering", "announce", payload)
  ```
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-config"><code>Config</code></a></li>
+<li><a href="#api-type-grouperror"><code>GroupError</code></a></li>
+<li><a href="#api-type-groups"><code>Groups</code></a></li>
+<li><a href="#api-type-message"><code>Message</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-add"><code>add</code></a></li>
+<li><a href="#api-function-broadcast"><code>broadcast</code></a></li>
+<li><a href="#api-function-child_spec"><code>child_spec</code></a></li>
+<li><a href="#api-function-child_spec_with_config"><code>child_spec_with_config</code></a></li>
+<li><a href="#api-function-create"><code>create</code></a></li>
+<li><a href="#api-function-default_config"><code>default_config</code></a></li>
+<li><a href="#api-function-delete"><code>delete</code></a></li>
+<li><a href="#api-function-list_groups"><code>list_groups</code></a></li>
+<li><a href="#api-function-remove"><code>remove</code></a></li>
+<li><a href="#api-function-topics"><code>topics</code></a></li>
+<li><a href="#api-function-with_call_timeout"><code>with_call_timeout</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-config" aria-hidden="true"></div>
+
 ### `Config`
-
-Configuration for starting a groups actor.
-
- Build configs with `default_config` and the `with_*` functions.
 
 ```gleam
 pub type Config
 ```
 
-### `GroupError`
+Configuration for starting a groups actor.
 
-Errors from group operations.
+ Build configs with `default_config` and the `with_*` functions.
+
+<div class="api-entry-anchor" id="api-type-grouperror" aria-hidden="true"></div>
+
+### `GroupError`
 
 ```gleam
 pub type GroupError {
@@ -55,50 +90,61 @@ pub type GroupError {
 }
 ```
 
+Errors from group operations.
+
 #### Constructors
 
 ##### `GroupAlreadyExists`
+
+```gleam
+GroupAlreadyExists
+```
 
 The group already exists.
 
 ##### `GroupNotFound`
 
+```gleam
+GroupNotFound
+```
+
 The group was not found.
 
+<div class="api-entry-anchor" id="api-type-groups" aria-hidden="true"></div>
+
 ### `Groups`
+
+```gleam
+pub type Groups
+```
 
 A running groups instance.
 
  This handle is opaque. Callers cannot forge the actor subject or depend
  on its runtime representation.
 
- ## Node affinity
+ #### Node affinity
 
  The stable registered subject is resolved on the caller's node. Keep a
  `Groups` handle on the node where its child specification runs. Calls from
  another BEAM node cannot reach the owning actor; synchronous operations
  panic as unavailable, and fire-and-forget broadcasts are not delivered.
 
-```gleam
-pub type Groups
-```
+<div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
 
 ### `Message`
-
-Messages that the groups actor handles.
 
 ```gleam
 pub type Message
 ```
 
+Messages that the groups actor handles.
+
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-add" aria-hidden="true"></div>
+
 ### `add`
-
-Add a topic to a group.
-
- Panics if the groups actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn add(
@@ -108,16 +154,14 @@ pub fn add(
 ) -> Result(Nil, GroupError)
 ```
 
-### `broadcast`
-
-Broadcast a message to all topics in a group.
-
- This function sends the message to each topic through `beryl.broadcast`.
- The groups actor performs the topic lookup. The caller performs the
- fan-out. If the group does not exist, this function does nothing.
+Add a topic to a group.
 
  Panics if the groups actor is unavailable or does not reply within the
- configured call timeout.
+ configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-broadcast" aria-hidden="true"></div>
+
+### `broadcast`
 
 ```gleam
 pub fn broadcast(
@@ -129,7 +173,22 @@ pub fn broadcast(
 ) -> Nil
 ```
 
+Broadcast a message to all topics in a group.
+
+ This function sends the message to each topic through `beryl.broadcast`.
+ The groups actor performs the topic lookup. The caller performs the
+ fan-out. If the group does not exist, this function does nothing.
+
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout.
+
+<div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
+
 ### `child_spec`
+
+```gleam
+pub fn child_spec() -> #(Groups, supervision.ChildSpecification(process.Subject(Message)))
+```
 
 Build the supervised groups actor with the default configuration.
 
@@ -138,24 +197,19 @@ Build the supervised groups actor with the default configuration.
  after a supervised restart. Group definitions are in-memory state and are
  reset by a restart.
 
-```gleam
-pub fn child_spec() -> #(Groups, supervision.ChildSpecification(process.Subject(Message)))
-```
+<div class="api-entry-anchor" id="api-function-child_spec_with_config" aria-hidden="true"></div>
 
 ### `child_spec_with_config`
-
-Build the supervised groups actor with a custom configuration.
 
 ```gleam
 pub fn child_spec_with_config(Config) -> #(Groups, supervision.ChildSpecification(process.Subject(Message)))
 ```
 
+Build the supervised groups actor with a custom configuration.
+
+<div class="api-entry-anchor" id="api-function-create" aria-hidden="true"></div>
+
 ### `create`
-
-Create a named group.
-
- Panics if the groups actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn create(
@@ -164,20 +218,24 @@ pub fn create(
 ) -> Result(Nil, GroupError)
 ```
 
-### `default_config`
+Create a named group.
 
-Build a groups configuration with a 5-second actor call timeout.
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-default_config" aria-hidden="true"></div>
+
+### `default_config`
 
 ```gleam
 pub fn default_config() -> Config
 ```
 
+Build a groups configuration with a 5-second actor call timeout.
+
+<div class="api-entry-anchor" id="api-function-delete" aria-hidden="true"></div>
+
 ### `delete`
-
-Delete a group.
-
- Panics if the groups actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn delete(
@@ -186,23 +244,27 @@ pub fn delete(
 ) -> Result(Nil, GroupError)
 ```
 
+Delete a group.
+
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-list_groups" aria-hidden="true"></div>
+
 ### `list_groups`
+
+```gleam
+pub fn list_groups(Groups) -> List(String)
+```
 
 Return all group names.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
-```gleam
-pub fn list_groups(Groups) -> List(String)
-```
+<div class="api-entry-anchor" id="api-function-remove" aria-hidden="true"></div>
 
 ### `remove`
-
-Remove a topic from a group.
-
- Panics if the groups actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn remove(
@@ -212,12 +274,14 @@ pub fn remove(
 ) -> Result(Nil, GroupError)
 ```
 
-### `topics`
-
-Return all topics in a group.
+Remove a topic from a group.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-topics" aria-hidden="true"></div>
+
+### `topics`
 
 ```gleam
 pub fn topics(
@@ -226,13 +290,14 @@ pub fn topics(
 ) -> Result(set.Set(String), GroupError)
 ```
 
+Return all topics in a group.
+
+ Panics if the groups actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-with_call_timeout" aria-hidden="true"></div>
+
 ### `with_call_timeout`
-
-Set the timeout for synchronous group operations, in milliseconds.
-
- This applies to `create`, `delete`, `add`, `remove`, `topics`, and
- `list_groups`. These functions panic if the actor does not reply within
- this timeout.
 
 ```gleam
 pub fn with_call_timeout(
@@ -240,3 +305,9 @@ pub fn with_call_timeout(
   Int
 ) -> Config
 ```
+
+Set the timeout for synchronous group operations, in milliseconds.
+
+ This applies to `create`, `delete`, `add`, `remove`, `topics`, and
+ `list_groups`. These functions panic if the actor does not reply within
+ this timeout.

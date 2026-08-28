@@ -1,6 +1,9 @@
 ---
 title: "beryl/transport/origin"
 description: "Origin and handshake-version checks for WebSocket upgrades."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -9,6 +12,8 @@ description: "Origin and handshake-version checks for WebSocket upgrades."
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
+<div class="api-reference-marker" aria-hidden="true"></div>
+
 Origin and handshake-version checks for WebSocket upgrades.
 
  Pure string-level checks shared by beryl's WebSocket transports. They
@@ -16,9 +21,35 @@ Origin and handshake-version checks for WebSocket upgrades.
  types; `beryl/transport/server` applies them to `gleam/http` requests as
  part of the shared upgrade pipeline.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-originpolicy"><code>OriginPolicy</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-allowed"><code>allowed</code></a></li>
+<li><a href="#api-function-vsn_supported"><code>vsn_supported</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-originpolicy" aria-hidden="true"></div>
+
 ### `OriginPolicy`
+
+```gleam
+pub type OriginPolicy {
+  SameOrigin
+  AllowList(List(String))
+  AllowAll
+}
+```
 
 Policy for validating the browser `Origin` header before a WebSocket
  upgrade completes.
@@ -36,17 +67,13 @@ Policy for validating the browser `Origin` header before a WebSocket
  not apply to these clients. [`AllowList`](#originpolicy) is the exception.
  It requires a matching `Origin` and rejects an absent header.
 
-```gleam
-pub type OriginPolicy {
-  SameOrigin
-  AllowList(List(String))
-  AllowAll
-}
-```
-
 #### Constructors
 
 ##### `SameOrigin`
+
+```gleam
+SameOrigin
+```
 
 Allow an upgrade only when the request `Origin` authority (host plus any
  port, with the scheme stripped) matches the request `Host` authority.
@@ -62,7 +89,11 @@ Allow an upgrade only when the request `Origin` authority (host plus any
  headers such as `X-Forwarded-Host` are not trusted, because clients can
  spoof them.
 
-##### `AllowList(List(String))`
+##### `AllowList`
+
+```gleam
+AllowList(List(String))
+```
 
 Allow an upgrade only when the request `Origin` header matches one of the
  listed values exactly (including scheme, host, and any port), such as
@@ -71,20 +102,19 @@ Allow an upgrade only when the request `Origin` header matches one of the
 
 ##### `AllowAll`
 
+```gleam
+AllowAll
+```
+
 Allow every upgrade regardless of `Origin`. This disables CSWSH
  protection. Use it only for sockets that do not rely on ambient
  browser credentials (or that authenticate every message independently).
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-allowed" aria-hidden="true"></div>
+
 ### `allowed`
-
-Decide whether an upgrade is allowed under the configured origin policy.
-
- `origin` and `host` are the request's `Origin` and `Host` header values.
- Use `None` when a header is absent. `SameOrigin` and `AllowAll` admit a
- request without an `Origin` header because non-browser clients omit it.
- `AllowList` rejects the request because it requires an explicit match.
 
 ```gleam
 pub fn allowed(
@@ -94,7 +124,20 @@ pub fn allowed(
 ) -> Bool
 ```
 
+Decide whether an upgrade is allowed under the configured origin policy.
+
+ `origin` and `host` are the request's `Origin` and `Host` header values.
+ Use `None` when a header is absent. `SameOrigin` and `AllowAll` admit a
+ request without an `Origin` header because non-browser clients omit it.
+ `AllowList` rejects the request because it requires an explicit match.
+
+<div class="api-entry-anchor" id="api-function-vsn_supported" aria-hidden="true"></div>
+
 ### `vsn_supported`
+
+```gleam
+pub fn vsn_supported(vsn: option.Option(String)) -> Bool
+```
 
 Check a client's requested wire protocol version (the `?vsn=` query
  parameter sent by Phoenix clients) before upgrading.
@@ -104,7 +147,3 @@ Check a client's requested wire protocol version (the `?vsn=` query
  configured codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`)
  is rejected. Transports fail the handshake with `403 Forbidden` instead
  of accepting a connection with frames that cannot be decoded.
-
-```gleam
-pub fn vsn_supported(vsn: option.Option(String)) -> Bool
-```

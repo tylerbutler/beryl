@@ -1,6 +1,9 @@
 ---
 title: "beryl/transport/server"
 description: "Server-agnostic WebSocket transport infrastructure."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Server-agnostic WebSocket transport infrastructure."
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Server-agnostic WebSocket transport infrastructure.
 
@@ -24,11 +29,41 @@ Server-agnostic WebSocket transport infrastructure.
  request body type, so one config value works with any transport whose
  server exposes `gleam/http` requests.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-connecterror"><code>ConnectError</code></a></li>
+<li><a href="#api-type-connectionstate"><code>ConnectionState</code></a></li>
+<li><a href="#api-type-framedisposition"><code>FrameDisposition</code></a></li>
+<li><a href="#api-type-sendrequest"><code>SendRequest</code></a></li>
+<li><a href="#api-type-transportconfig"><code>TransportConfig</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-close_connection"><code>close_connection</code></a></li>
+<li><a href="#api-function-connect_seed"><code>connect_seed</code></a></li>
+<li><a href="#api-function-default_config"><code>default_config</code></a></li>
+<li><a href="#api-function-handle_binary_frame"><code>handle_binary_frame</code></a></li>
+<li><a href="#api-function-handle_text_frame"><code>handle_text_frame</code></a></li>
+<li><a href="#api-function-handler"><code>handler</code></a></li>
+<li><a href="#api-function-init_connection"><code>init_connection</code></a></li>
+<li><a href="#api-function-is_websocket_request"><code>is_websocket_request</code></a></li>
+<li><a href="#api-function-upgrade"><code>upgrade</code></a></li>
+<li><a href="#api-function-with_allow_all_origins"><code>with_allow_all_origins</code></a></li>
+<li><a href="#api-function-with_allowed_origins"><code>with_allowed_origins</code></a></li>
+<li><a href="#api-function-with_on_connect"><code>with_on_connect</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
-### `ConnectError`
+<div class="api-entry-anchor" id="api-type-connecterror" aria-hidden="true"></div>
 
-Errors returned from a transport `on_connect` callback.
+### `ConnectError`
 
 ```gleam
 pub type ConnectError {
@@ -36,23 +71,31 @@ pub type ConnectError {
 }
 ```
 
+Errors returned from a transport `on_connect` callback.
+
 #### Constructors
 
 ##### `ConnectRejected`
 
+```gleam
+ConnectRejected
+```
+
 Reject the WebSocket upgrade with `403 Forbidden`.
 
-### `ConnectionState`
+<div class="api-entry-anchor" id="api-type-connectionstate" aria-hidden="true"></div>
 
-State maintained per WebSocket connection.
+### `ConnectionState`
 
 ```gleam
 pub type ConnectionState
 ```
 
-### `FrameDisposition`
+State maintained per WebSocket connection.
 
-What a transport must do after it handles an inbound frame.
+<div class="api-entry-anchor" id="api-type-framedisposition" aria-hidden="true"></div>
+
+### `FrameDisposition`
 
 ```gleam
 pub type FrameDisposition {
@@ -61,22 +104,29 @@ pub type FrameDisposition {
 }
 ```
 
+What a transport must do after it handles an inbound frame.
+
 #### Constructors
 
-##### `Continue(ConnectionState)`
+##### `Continue`
+
+```gleam
+Continue(ConnectionState)
+```
 
 Keep the connection open with the updated state.
 
 ##### `Stop`
 
+```gleam
+Stop
+```
+
 Close the connection (the frame exceeded the configured size cap).
 
+<div class="api-entry-anchor" id="api-type-sendrequest" aria-hidden="true"></div>
+
 ### `SendRequest`
-
-Outbound requests from the runtime to a connection process.
-
- Transports receive these as custom or user WebSocket messages. They send
- the frame or close the connection.
 
 ```gleam
 pub type SendRequest {
@@ -86,36 +136,58 @@ pub type SendRequest {
 }
 ```
 
+Outbound requests from the runtime to a connection process.
+
+ Transports receive these as custom or user WebSocket messages. They send
+ the frame or close the connection.
+
 #### Constructors
 
 ##### `Close`
 
+```gleam
+Close
+```
+
 Runtime-initiated close (e.g. heartbeat eviction).
 
+<div class="api-entry-anchor" id="api-type-transportconfig" aria-hidden="true"></div>
+
 ### `TransportConfig`
+
+```gleam
+pub type TransportConfig(a)
+```
 
 Configuration for a WebSocket transport.
 
  The `body` parameter is the server's request body type. The same
  configuration works with any transport built on `gleam/http` requests.
 
-```gleam
-pub type TransportConfig(a)
-```
-
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-close_connection" aria-hidden="true"></div>
+
 ### `close_connection`
-
-Clean up a closed connection.
-
- Release the held connection slot and report the disconnect to the runtime.
 
 ```gleam
 pub fn close_connection(ConnectionState) -> Nil
 ```
 
+Clean up a closed connection.
+
+ Release the held connection slot and report the disconnect to the runtime.
+
+<div class="api-entry-anchor" id="api-function-connect_seed" aria-hidden="true"></div>
+
 ### `connect_seed`
+
+```gleam
+pub fn connect_seed(
+  request.Request(a),
+  List(#(String, String))
+) -> socket.ConnectSeed
+```
 
 Build the connection seed for an app-dispatch system's `init` function.
 
@@ -127,14 +199,13 @@ Build the connection seed for an app-dispatch system's `init` function.
  callback returns no metadata. This function preserves order and duplicate
  keys.
 
-```gleam
-pub fn connect_seed(
-  request.Request(a),
-  List(#(String, String))
-) -> socket.ConnectSeed
-```
+<div class="api-entry-anchor" id="api-function-default_config" aria-hidden="true"></div>
 
 ### `default_config`
+
+```gleam
+pub fn default_config(String) -> TransportConfig(a)
+```
 
 Create a default transport config with no connect hook.
 
@@ -148,15 +219,9 @@ Create a default transport config with no connect hook.
  metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
  `with_allow_all_origins` to opt out of origin checking entirely.
 
-```gleam
-pub fn default_config(String) -> TransportConfig(a)
-```
+<div class="api-entry-anchor" id="api-function-handle_binary_frame" aria-hidden="true"></div>
 
 ### `handle_binary_frame`
-
-Check the size and rate of an inbound binary frame, then decode it in the
- connection process. A codec without a binary decoder keeps the raw
- `transport.route_binary` fan-out through the runtime.
 
 ```gleam
 pub fn handle_binary_frame(
@@ -165,7 +230,20 @@ pub fn handle_binary_frame(
 ) -> FrameDisposition
 ```
 
+Check the size and rate of an inbound binary frame, then decode it in the
+ connection process. A codec without a binary decoder keeps the raw
+ `transport.route_binary` fan-out through the runtime.
+
+<div class="api-entry-anchor" id="api-function-handle_text_frame" aria-hidden="true"></div>
+
 ### `handle_text_frame`
+
+```gleam
+pub fn handle_text_frame(
+  ConnectionState,
+  String
+) -> FrameDisposition
+```
 
 Size-check, rate-check, and decode an inbound text frame in the
  connection process, so parse cost stays there and only valid,
@@ -175,19 +253,9 @@ Size-check, rate-check, and decode an inbound text frame in the
  silently drops over-rate frames. It logs and drops frames that it cannot
  decode.
 
-```gleam
-pub fn handle_text_frame(
-  ConnectionState,
-  String
-) -> FrameDisposition
-```
+<div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
 
 ### `handler`
-
-Build a request handler for WebSocket upgrades and other HTTP requests.
-
- The handler sends upgrade requests to the transport-specific `upgrade`
- function. It sends all other requests to HTTP.
 
 ```gleam
 pub fn handler(
@@ -196,7 +264,26 @@ pub fn handler(
 ) -> fn(request.Request(a)) -> response.Response(b)
 ```
 
+Build a request handler for WebSocket upgrades and other HTTP requests.
+
+ The handler sends upgrade requests to the transport-specific `upgrade`
+ function. It sends all other requests to HTTP.
+
+<div class="api-entry-anchor" id="api-function-init_connection" aria-hidden="true"></div>
+
 ### `init_connection`
+
+```gleam
+pub fn init_connection(
+  sockets: beryl.Sockets,
+  seed: socket.ConnectSeed,
+  connection_permit: transport.ConnectionPermit,
+  base_selector: process.Selector(SendRequest),
+  logger_name: String,
+  telemetry: transport.Telemetry,
+  codec: option.Option(codec.Codec)
+) -> #(ConnectionState, process.Selector(SendRequest))
+```
 
 Initialize a new WebSocket connection in its connection process.
 
@@ -214,19 +301,13 @@ Initialize a new WebSocket connection in its connection process.
  warnings (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this
  socket; `None` inherits the app-wide codec.
 
-```gleam
-pub fn init_connection(
-  sockets: beryl.Sockets,
-  seed: socket.ConnectSeed,
-  connection_permit: transport.ConnectionPermit,
-  base_selector: process.Selector(SendRequest),
-  logger_name: String,
-  telemetry: transport.Telemetry,
-  codec: option.Option(codec.Codec)
-) -> #(ConnectionState, process.Selector(SendRequest))
-```
+<div class="api-entry-anchor" id="api-function-is_websocket_request" aria-hidden="true"></div>
 
 ### `is_websocket_request`
+
+```gleam
+pub fn is_websocket_request(request.Request(a)) -> Bool
+```
 
 Determine whether a request is a WebSocket upgrade request.
 
@@ -234,11 +315,22 @@ Determine whether a request is a WebSocket upgrade request.
  regard to case. Use it to distinguish WebSocket handshakes from regular
  HTTP traffic on the same listener.
 
-```gleam
-pub fn is_websocket_request(request.Request(a)) -> Bool
-```
+<div class="api-entry-anchor" id="api-function-upgrade" aria-hidden="true"></div>
 
 ### `upgrade`
+
+```gleam
+pub fn upgrade(
+  request: request.Request(a),
+  sockets: beryl.Sockets,
+  config: TransportConfig(a),
+  telemetry: transport.Telemetry,
+  request_ip: fn(request.Request(a)) -> Result(String, Nil),
+  reject: fn(Int) -> response.Response(b),
+  accept: fn(List(#(String, String)), transport.ConnectionPermit) -> response.Response(b),
+  next: fn() -> response.Response(b)
+) -> response.Response(b)
+```
 
 Run the shared upgrade admission pipeline for a request.
 
@@ -254,12 +346,12 @@ Run the shared upgrade admission pipeline for a request.
 
  Non-matching paths fall through to `next`.
 
- ## Path matching
+ #### Path matching
 
  Request and configured paths are normalized without trailing or doubled
  slashes before an exact comparison.
 
- ## Connection limits
+ #### Connection limits
 
  When `beryl.with_max_connections_per_ip` is configured, the limit is
  enforced before completing the handshake, returning `reject(429)` once the
@@ -287,20 +379,13 @@ Run the shared upgrade admission pipeline for a request.
  scales with the node count. Use the load balancer's controls for a
  cluster-wide cap.
 
-```gleam
-pub fn upgrade(
-  request: request.Request(a),
-  sockets: beryl.Sockets,
-  config: TransportConfig(a),
-  telemetry: transport.Telemetry,
-  request_ip: fn(request.Request(a)) -> Result(String, Nil),
-  reject: fn(Int) -> response.Response(b),
-  accept: fn(List(#(String, String)), transport.ConnectionPermit) -> response.Response(b),
-  next: fn() -> response.Response(b)
-) -> response.Response(b)
-```
+<div class="api-entry-anchor" id="api-function-with_allow_all_origins" aria-hidden="true"></div>
 
 ### `with_allow_all_origins`
+
+```gleam
+pub fn with_allow_all_origins(TransportConfig(a)) -> TransportConfig(a)
+```
 
 Disable `Origin` checking, allowing WebSocket upgrades from any origin.
 
@@ -310,11 +395,16 @@ Disable `Origin` checking, allowing WebSocket upgrades from any origin.
  independently. For cookie/session-authenticated apps, prefer the default
  `SameOrigin` policy or `with_allowed_origins`.
 
-```gleam
-pub fn with_allow_all_origins(TransportConfig(a)) -> TransportConfig(a)
-```
+<div class="api-entry-anchor" id="api-function-with_allowed_origins" aria-hidden="true"></div>
 
 ### `with_allowed_origins`
+
+```gleam
+pub fn with_allowed_origins(
+  TransportConfig(a),
+  List(String)
+) -> TransportConfig(a)
+```
 
 Restrict WebSocket upgrades to requests whose `Origin` header exactly
  matches one of the given values.
@@ -329,14 +419,16 @@ Restrict WebSocket upgrades to requests whose `Origin` header exactly
  that should be allowed (e.g. behind a reverse proxy that rewrites the
  `Host` header, where `SameOrigin` cannot see the public host).
 
-```gleam
-pub fn with_allowed_origins(
-  TransportConfig(a),
-  List(String)
-) -> TransportConfig(a)
-```
+<div class="api-entry-anchor" id="api-function-with_on_connect" aria-hidden="true"></div>
 
 ### `with_on_connect`
+
+```gleam
+pub fn with_on_connect(
+  TransportConfig(a),
+  fn(request.Request(a)) -> Result(List(#(String, String)), ConnectError)
+) -> TransportConfig(a)
+```
 
 Set a socket-level connect/authentication callback on the transport config.
 
@@ -349,10 +441,3 @@ Set a socket-level connect/authentication callback on the transport config.
 
  `ConnectSeed.metadata` preserves callback order and duplicate keys.
  Transports never log metadata values.
-
-```gleam
-pub fn with_on_connect(
-  TransportConfig(a),
-  fn(request.Request(a)) -> Result(List(#(String, String)), ConnectError)
-) -> TransportConfig(a)
-```
