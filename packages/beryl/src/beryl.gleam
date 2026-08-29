@@ -850,15 +850,19 @@ pub fn child_spec(
 
 /// Build a socket system that runs one process per accepted topic.
 ///
-/// This is the package-internal entry point for `channel.child_spec`. Each
-/// new topic worker runs `open` during initialization. The socket-level
-/// `init` and `update` functions return no effects. Each worker owns its
-/// joined topic. Thus, `update` receives only `Binary` frames and `Closed`
-/// events for workers that stopped unexpectedly.
+/// This is the package-internal entry point for `channel.child_spec`. The
+/// socket actor calls `accepts` with the topic name before it starts a
+/// worker for a join: `Error(reason)` rejects the join with that reason and
+/// spawns no process. Each new topic worker runs `open` during
+/// initialization. The socket-level `init` and `update` functions return no
+/// effects. Each worker owns its joined topic. Thus, `update` receives only
+/// `Binary` frames and `Closed` events for workers that stopped
+/// unexpectedly.
 @internal
 pub fn worker_child_spec(
   config: Config,
-  open: fn(socket.WorkerContext) -> socket.WorkerOutcome,
+  accepts accepts: fn(String) -> Result(Nil, json.Json),
+  open open: fn(socket.WorkerContext) -> socket.WorkerOutcome,
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -867,7 +871,7 @@ pub fn worker_child_spec(
     config,
     fn(_info) { #(Nil, []) },
     fn(_model, _input) { socket.Next(Nil, []) },
-    Some(open),
+    Some(runtime.WorkerOpener(accepts:, open:)),
   )
 }
 
@@ -875,7 +879,7 @@ fn child_spec_with(
   config: Config,
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
   update: fn(model, socket.Input(msg)) -> socket.Next(model),
-  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
+  open_worker: Option(runtime.WorkerOpener),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -924,7 +928,7 @@ fn build_app_subtree(
   config: Config,
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
   update: fn(model, socket.Input(msg)) -> socket.Next(model),
-  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
+  open_worker: Option(runtime.WorkerOpener),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -993,7 +997,7 @@ fn child_spec_supervisor(
   limiter_name: Option(process.Name(connection_limit.Message)),
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
   update: fn(model, socket.Input(msg)) -> socket.Next(model),
-  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
+  open_worker: Option(runtime.WorkerOpener),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
   // Socket actors are `Temporary` children of this factory: it owns their
   // process lifetime and forced shutdown, but never reconstructs the

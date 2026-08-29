@@ -145,7 +145,11 @@ pub fn child_spec(
 ) {
   use table <- result.try(compile(handlers))
 
-  beryl.worker_child_spec(config, open_topic(table))
+  beryl.worker_child_spec(
+    config,
+    accepts: accepts_topic(table),
+    open: open_topic(table),
+  )
   |> result.map_error(InvalidConfig)
 }
 
@@ -806,6 +810,21 @@ fn table(handlers: List(Handler)) -> List(Registered) {
   list.map(handlers, fn(handler) {
     Registered(pattern: topic.parse_pattern(handler.pattern), handler: handler)
   })
+}
+
+/// Refuse an unmatched topic before the runtime starts a worker.
+///
+/// Uses the same table and match as `open_topic`, so the two agree on
+/// every topic name.
+fn accepts_topic(
+  handlers: List(Registered),
+) -> fn(String) -> Result(Nil, json.Json) {
+  fn(name) {
+    case select(handlers, name) {
+      Ok(_) -> Ok(Nil)
+      Error(Nil) -> Error(unmatched_topic())
+    }
+  }
 }
 
 /// Open a handler table in each new topic worker.

@@ -147,7 +147,7 @@ worker runs the channel's callbacks and reports its actions back.
 
 | Runtime input | Channel layer behavior |
 |---|---|
-| `Join(topic, payload, ref)` | First matching handler wins. Its `join` runs while the worker starts, and the socket actor waits for it. The result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` |
+| `Join(topic, payload, ref)` | First matching handler wins. Its `join` runs while the worker starts, and the socket actor waits for it. The result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` before a worker starts |
 | `Message(topic, ..)` | The socket actor sends it to the topic worker. The worker runs `on_message` and reports its actions |
 | `Binary(topic, ..)` | Ignored by the channel layer |
 | `channel.notify` mail | The sender sends it to its join worker. Mail for an ended join reaches no process |
