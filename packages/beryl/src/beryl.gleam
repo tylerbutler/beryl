@@ -842,7 +842,42 @@ pub fn child_spec(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
 ) {
-  use subtree <- result.map(build_app_subtree(config, init, update))
+  child_spec_with(config, init, update, None)
+}
+
+/// Build a socket system that runs one process per accepted topic.
+///
+/// This is the package-internal entry point for `channel.child_spec`. Each
+/// new topic worker runs `open` during initialization. The socket-level
+/// `init` and `update` functions return no effects. Each worker owns its
+/// joined topic. Thus, `update` receives only `Binary` frames and `Closed`
+/// events for workers that stopped unexpectedly.
+@internal
+pub fn worker_child_spec(
+  config: Config,
+  open: fn(socket.WorkerContext) -> socket.WorkerOutcome,
+) -> Result(
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
+) {
+  child_spec_with(
+    config,
+    fn(_info) { #(Nil, []) },
+    fn(_model, _input) { socket.Next(Nil, []) },
+    Some(open),
+  )
+}
+
+fn child_spec_with(
+  config: Config,
+  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
+) -> Result(
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
+) {
+  use subtree <- result.map(build_app_subtree(config, init, update, open_worker))
   // The subtree is a `Transient` child of the application's supervisor: a
   // graceful `beryl.stop` auto-shuts the subtree down with reason `shutdown`,
   // which a transient child treats as normal, so the parent does not restart
@@ -886,6 +921,7 @@ fn build_app_subtree(
   config: Config,
   init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
   update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  open_worker: Option(fn(socket.WorkerContext) -> socket.WorkerOutcome),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
@@ -915,6 +951,7 @@ fn build_app_subtree(
             config: to_runtime_config(config),
             init: init,
             update: update,
+            open_worker: open_worker,
             router: process.named_subject(runtime_name),
             router_pid: runtime_pid,
           )

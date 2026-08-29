@@ -32,24 +32,19 @@ pub type Note {
 fn context(
   topic topic: String,
   payload payload: dynamic.Dynamic,
-  deliver deliver: fn(channel.Mail) -> Nil,
-) -> channel.RoutedJoinContext {
-  channel.RoutedJoinContext(
+  deliver deliver: fn(socket.Mail) -> Nil,
+) -> socket.WorkerContext {
+  socket.WorkerContext(
     socket_id: "socket-1",
     seed: socket.empty_seed(),
     topic: topic,
-    params: [],
     payload: payload,
     deliver: deliver,
   )
 }
 
-fn quiet_context(topic: String) -> channel.RoutedJoinContext {
+fn quiet_context(topic: String) -> socket.WorkerContext {
   context(topic: topic, payload: dynamic.nil(), deliver: fn(_mail) { Nil })
-}
-
-fn client_message(event: String) -> channel.Message {
-  channel.Message(event: event, payload: dynamic.nil(), reply: option.None)
 }
 
 fn describe(effect: socket.Effect) -> String {
@@ -75,16 +70,20 @@ fn describe(effect: socket.Effect) -> String {
   }
 }
 
-fn rendered(actions: List(channel.Action(phase))) -> String {
-  channel.effects("room:lobby", actions)
+fn rendered(effects: List(socket.Effect)) -> String {
+  effects
   |> list.map(describe)
   |> string.join(",")
 }
 
-fn accepted_channel(outcome: channel.JoinOutcome) -> channel.LiveChannel {
-  let assert channel.Accepted(_reply, _actions, live) = outcome
+fn lowered(actions: List(channel.Action(phase))) -> String {
+  channel.effects("room:lobby", actions) |> rendered
+}
+
+fn accepted_channel(outcome: socket.WorkerOutcome) -> socket.Worker {
+  let assert socket.WorkerAccepted(_reply, _effects, worker) = outcome
     as "expected the join to be accepted"
-  live
+  worker
 }
 
 /// A minimal counting channel: every `"bump"` message adds one and pushes
@@ -118,9 +117,11 @@ fn counter_handler(pattern: String) -> channel.Handler {
 // --- join results ----------------------------------------------------------
 
 pub fn join_accepts_without_a_reply_test() {
-  case channel.open(counter_handler("room:*"), quiet_context("room:lobby")) {
-    channel.Accepted(reply, _actions, _live) -> reply |> should.be_none
-    channel.Rejected(_) -> should.fail()
+  case
+    channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
+  {
+    socket.WorkerAccepted(reply, _actions, _live) -> reply |> should.be_none
+    socket.WorkerRejected(_) -> should.fail()
   }
 }
 
@@ -131,13 +132,13 @@ pub fn join_accepts_with_a_reply_payload_test() {
       |> channel.with_reply(json.object([#("ok", json.bool(True))]))
     })
 
-  case channel.open(handler, quiet_context("room:lobby")) {
-    channel.Accepted(reply, _actions, _live) ->
+  case channel.open(handler, quiet_context("room:lobby"), []) {
+    socket.WorkerAccepted(reply, _actions, _live) ->
       reply
       |> should.be_some
       |> json.to_string
       |> should.equal("{\"ok\":true}")
-    channel.Rejected(_) -> should.fail()
+    socket.WorkerRejected(_) -> should.fail()
   }
 }
 
@@ -147,9 +148,9 @@ pub fn join_can_be_rejected_test() {
       channel.reject(json.object([#("reason", json.string("forbidden"))]))
     })
 
-  case channel.open(handler, quiet_context("secret:vault")) {
-    channel.Accepted(_, _, _) -> should.fail()
-    channel.Rejected(reason) ->
+  case channel.open(handler, quiet_context("secret:vault"), []) {
+    socket.WorkerAccepted(_, _, _) -> should.fail()
+    socket.WorkerRejected(reason) ->
       reason
       |> json.to_string
       |> should.equal("{\"reason\":\"forbidden\"}")
@@ -180,17 +181,18 @@ pub fn join_receives_the_topic_and_payload_test() {
         payload: dynamic.string("hello"),
         deliver: fn(_mail) { Nil },
       ),
+      [],
     )
 
   case outcome {
-    channel.Accepted(reply, _actions, _live) ->
+    socket.WorkerAccepted(reply, _actions, _live) ->
       reply
       |> should.be_some
       |> json.to_string
       |> should.equal(
         "{\"socket\":\"socket-1\",\"topic\":\"room:lobby\",\"payload\":\"hello\"}",
       )
-    channel.Rejected(_) -> should.fail()
+    socket.WorkerRejected(_) -> should.fail()
   }
 }
 
@@ -198,34 +200,34 @@ pub fn join_receives_the_topic_and_payload_test() {
 
 pub fn message_actions_keep_their_order_test() {
   let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
+    channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
     |> accepted_channel
 
-  case live.on_message(client_message("bump")) {
-    channel.StepContinue(_next, actions) ->
+  case live.on_message("bump", dynamic.nil(), option.None) {
+    socket.WorkerContinue(_next, actions) ->
       actions
       |> rendered
       |> should.equal("push/total/1,broadcast/bumped/\"room:lobby\"")
-    channel.StepClose(..) -> should.fail()
+    socket.WorkerClose(..) -> should.fail()
   }
 }
 
 pub fn channel_state_is_threaded_across_messages_test() {
   let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
+    channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
     |> accepted_channel
 
-  let assert channel.StepContinue(after_first, _) =
-    live.on_message(client_message("bump"))
-  let assert channel.StepContinue(after_second, _) =
-    after_first.on_message(client_message("bump"))
+  let assert socket.WorkerContinue(after_first, _) =
+    live.on_message("bump", dynamic.nil(), option.None)
+  let assert socket.WorkerContinue(after_second, _) =
+    after_first.on_message("bump", dynamic.nil(), option.None)
 
-  case after_second.on_message(client_message("bump")) {
-    channel.StepContinue(_next, actions) ->
+  case after_second.on_message("bump", dynamic.nil(), option.None) {
+    socket.WorkerContinue(_next, actions) ->
       actions
       |> rendered
       |> should.equal("push/total/3,broadcast/bumped/\"room:lobby\"")
-    channel.StepClose(..) -> should.fail()
+    socket.WorkerClose(..) -> should.fail()
   }
 }
 
@@ -233,11 +235,11 @@ pub fn unhandled_events_continue_without_actions_test() {
   let handler = channel.handler("room:*", fn(_context) { channel.accept(Nil) })
 
   let live =
-    channel.open(handler, quiet_context("room:lobby")) |> accepted_channel
+    channel.open(handler, quiet_context("room:lobby"), []) |> accepted_channel
 
-  case live.on_message(client_message("anything")) {
-    channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    channel.StepClose(..) -> should.fail()
+  case live.on_message("anything", dynamic.nil(), option.None) {
+    socket.WorkerContinue(_next, actions) -> actions |> should.equal([])
+    socket.WorkerClose(..) -> should.fail()
   }
 }
 
@@ -245,13 +247,13 @@ pub fn unhandled_events_continue_without_actions_test() {
 
 pub fn close_carries_its_final_actions_test() {
   let live =
-    channel.open(counter_handler("room:*"), quiet_context("room:lobby"))
+    channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
     |> accepted_channel
 
-  case live.on_message(client_message("quit")) {
-    channel.StepClose(actions) ->
+  case live.on_message("quit", dynamic.nil(), option.None) {
+    socket.WorkerClose(actions) ->
       actions |> rendered |> should.equal("push/bye/0")
-    channel.StepContinue(..) -> should.fail()
+    socket.WorkerContinue(..) -> should.fail()
   }
 }
 
@@ -267,7 +269,7 @@ pub fn terminate_runs_the_terminate_callback_test() {
     })
 
   let live =
-    channel.open(handler, quiet_context("room:lobby")) |> accepted_channel
+    channel.open(handler, quiet_context("room:lobby"), []) |> accepted_channel
   let _actions = live.on_terminate(socket.Shutdown)
 
   process.receive(observed, 100) |> should.equal(Ok(socket.Shutdown))
@@ -298,6 +300,7 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
       context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
         process.send(outbox, mail)
       }),
+      [],
     )
     |> accepted_channel
 
@@ -310,13 +313,13 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
   let assert Ok(second) = process.receive(outbox, 100)
   process.receive(outbox, 0) |> should.equal(Error(Nil))
 
-  let assert channel.StepContinue(next, first_actions) = live.on_mail(first)
+  let assert socket.WorkerContinue(next, first_actions) = live.on_info(first)
   first_actions |> rendered |> should.equal("push/note/\"hi\"")
 
-  case next.on_mail(second) {
-    channel.StepContinue(_next, actions) ->
+  case next.on_info(second) {
+    socket.WorkerContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"again\"")
-    channel.StepClose(..) -> should.fail()
+    socket.WorkerClose(..) -> should.fail()
   }
 }
 
@@ -342,6 +345,7 @@ pub fn an_unrun_mail_delivers_nothing_test() {
       context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
         process.send(outbox, mail)
       }),
+      [],
     )
     |> accepted_channel
 
@@ -355,10 +359,10 @@ pub fn an_unrun_mail_delivers_nothing_test() {
   let assert Ok(_dropped) = process.receive(outbox, 100)
   let assert Ok(kept) = process.receive(outbox, 100)
 
-  case live.on_mail(kept) {
-    channel.StepContinue(_next, actions) ->
+  case live.on_info(kept) {
+    socket.WorkerContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"kept\"")
-    channel.StepClose(..) -> should.fail()
+    socket.WorkerClose(..) -> should.fail()
   }
 }
 
@@ -383,8 +387,8 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
     context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
       process.send(outbox, mail)
     })
-  let first = channel.open(handler, join_context) |> accepted_channel
-  let second = channel.open(handler, join_context) |> accepted_channel
+  let first = channel.open(handler, join_context, []) |> accepted_channel
+  let second = channel.open(handler, join_context, []) |> accepted_channel
 
   let assert Ok(sender_of_first) = process.receive(senders, 100)
   let assert Ok(_sender_of_second) = process.receive(senders, 100)
@@ -393,17 +397,17 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
 
   // Handing one join's mail to another join delivers nothing and leaves
   // the mail sealed: the value is only ever readable by its own join.
-  case second.on_mail(mail) {
-    channel.StepContinue(_next, actions) -> actions |> should.equal([])
-    channel.StepClose(..) -> should.fail()
+  case second.on_info(mail) {
+    socket.WorkerContinue(_next, actions) -> actions |> should.equal([])
+    socket.WorkerClose(..) -> should.fail()
   }
 
   // ...so it is still intact and still the first join's message when the
   // join that sealed it runs it.
-  case first.on_mail(mail) {
-    channel.StepContinue(_next, actions) ->
+  case first.on_info(mail) {
+    socket.WorkerContinue(_next, actions) ->
       actions |> rendered |> should.equal("push/note/\"mine\"")
-    channel.StepClose(..) -> should.fail()
+    socket.WorkerClose(..) -> should.fail()
   }
 }
 
@@ -428,15 +432,16 @@ pub fn info_can_close_the_channel_test() {
       context(topic: "room:lobby", payload: dynamic.nil(), deliver: fn(mail) {
         process.send(outbox, mail)
       }),
+      [],
     )
     |> accepted_channel
   let assert Ok(sender) = process.receive(senders, 100)
   channel.notify(sender, Bye)
   let assert Ok(mail) = process.receive(outbox, 100)
 
-  case live.on_mail(mail) {
-    channel.StepClose(actions) -> actions |> should.equal([])
-    channel.StepContinue(..) -> should.fail()
+  case live.on_info(mail) {
+    socket.WorkerClose(actions) -> actions |> should.equal([])
+    socket.WorkerContinue(..) -> should.fail()
   }
 }
 
@@ -462,8 +467,8 @@ pub fn shared_actions_are_valid_in_both_phases_test() {
     "broadcast/broadcast/1,presence_untrack/user:1,"
     <> "broadcast_presence/state/2"
 
-  shared_active_actions() |> rendered |> should.equal(expected)
-  shared_closing_actions() |> rendered |> should.equal(expected)
+  shared_active_actions() |> lowered |> should.equal(expected)
+  shared_closing_actions() |> lowered |> should.equal(expected)
 }
 
 pub fn actions_cover_the_core_effect_capabilities_test() {
@@ -491,7 +496,7 @@ pub fn actions_cover_the_core_effect_capabilities_test() {
   ]
 
   built
-  |> rendered
+  |> lowered
   |> should.equal(
     "push/push/1,broadcast/broadcast/2,broadcast_from/broadcast_from/3,"
     <> "reply_ok/4,reply_error/5,presence_track/user:1/6,"
@@ -520,7 +525,7 @@ pub fn optional_reply_with_a_ref_lowers_in_order_test() {
     channel.reply_ok(option.Some(reply), json.int(1)),
     channel.reply_error(option.Some(reply), json.int(2)),
   ]
-  |> rendered
+  |> lowered
   |> should.equal("reply_ok/1,reply_error/2")
 }
 
@@ -532,10 +537,10 @@ pub fn repeated_join_action_lists_append_left_to_right_test() {
       |> channel.with_actions([channel.push("second", json.int(2))])
     })
 
-  case channel.open(handler, quiet_context("room:lobby")) {
-    channel.Accepted(_reply, actions, _live) ->
+  case channel.open(handler, quiet_context("room:lobby"), []) {
+    socket.WorkerAccepted(_reply, actions, _live) ->
       actions |> rendered |> should.equal("push/first/1,push/second/2")
-    channel.Rejected(_) -> should.fail()
+    socket.WorkerRejected(_) -> should.fail()
   }
 }
 

@@ -18,6 +18,8 @@ beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
 
 transport connection
 `- socket actor (one per connection, monitored by the router)
+   `- topic worker supervisor (channel layer only, linked to the socket actor)
+      `- topic worker (one per joined topic, Temporary)
 ```
 
 - The **router actor** maintains the socket actor table and topic subscriber
@@ -26,6 +28,10 @@ transport connection
 - Each **socket actor** holds one model and sends events to your `update`
   function. Socket actors are not supervisor children. The transport starts
   them, and the router monitors them.
+- With the channel layer, each socket actor starts a **topic worker
+  supervisor** and one **topic worker** for each accepted join. Workers are
+  `Temporary`. The supervisor does not restart a stopped worker. The client
+  must rejoin. The workers stop with their socket actor.
 - The router uses a stable registered name. The `Sockets` handle accepts new
   work after a restart. Existing connections close. Sends during the restart
   window do nothing.
@@ -52,7 +58,7 @@ crashes and limits their effect:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
-Each socket's callbacks run in its socket actor. A callback crash in that actor
+Raw dispatch callbacks run in the socket actor. A callback crash in that actor
 would close every topic on the socket. beryl catches a callback crash when it
 can discard the result and close only the affected topic or socket. Other socket
 actor faults close only that socket, and the router removes its entries. A
@@ -61,9 +67,10 @@ router fault reaches the supervisor and closes all connections. See
 
 See the [Error Handling guide](/guides/error-handling/) for details.
 
-For channel callbacks, those rows map to `join`, `on_message`, `on_info`, and
-`on_terminate`. A terminate panic loses that callback's actions but does not
-stop sibling-channel teardown; see
+Channel callbacks run in the topic's worker. A `join`, `on_message`, or
+`on_info` panic affects only that join or topic. An `on_terminate` panic
+discards that callback's actions but does not stop cleanup for sibling
+channels. See
 [When callbacks panic](/guides/channels/#when-callbacks-panic).
 
 ## Supervise presence and groups

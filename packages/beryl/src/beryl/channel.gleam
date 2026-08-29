@@ -43,20 +43,29 @@
 //// `info`, the type of server-side messages it accepts. Neither escapes:
 //// [`handler`](#handler) seals both inside its registration closure, so the
 //// resulting [`Handler`](#handler) is not generic and handlers with unrelated
-//// `state` and `info` types compose in one list. No value is
-//// ever erased to `Dynamic` and no unchecked coercion is involved:
-//// typed `info` values travel inside a closure that only the join which
-//// created it can open. The socket that owns the join opens it. If the join
-//// has ended, the socket drops it unopened.
+//// `state` and `info` types compose in one list. The runtime does not erase
+//// values to `Dynamic` or use unchecked coercion:
+//// a closure carries each typed `info` value. Only the worker for the join
+//// that created the closure can open it. After the join ends, the worker no
+//// longer exists and the runtime drops the value.
 ////
-//// ## Ordering
+//// ## Processes and ordering
 ////
-//// Action lists are applied strictly from left to right, and they always
-//// target the channel's own topic. They lower onto
-//// beryl's core `Effect` values, which the runtime applies in list order.
-//// Action order is therefore wire order. An asynchronous presence effect can
-//// park this socket while other sockets continue. The remaining actions
-//// resume only after that effect completes.
+//// Each accepted topic runs in its own worker process under a supervisor
+//// that its socket actor owns. The socket actor owns the protocol state,
+//// refs, subscriptions, presence data, and frame writes. The worker runs
+//// `join` during startup. The socket actor waits for a maximum of five
+//// seconds. The worker also runs `on_message` and `on_info`, and sends its
+//// actions to the socket actor.
+////
+//// The runtime applies action lists from left to right. Actions always target
+//// the channel's own topic. The runtime converts them to beryl's core
+//// `Effect` values and applies them in list order.
+//// Action order is therefore wire order for one topic. beryl does not define
+//// an order between different topics on one socket. Their workers run
+//// concurrently, as Phoenix channel processes do. An asynchronous presence
+//// effect can pause this socket while other sockets continue. The runtime
+//// resumes the remaining actions after that effect completes.
 ////
 //// A join's actions (see [`with_actions`](#with_actions)) are emitted with
 //// the join acknowledgment, immediately after it: the socket is already
@@ -65,18 +74,19 @@
 //// reservation; use application-owned synchronous state for atomic
 //// capacity checks.
 ////
-//// [`on_terminate`](#on_terminate) actions are lowered in the turn that
-//// closes the topic, after the channel instance is gone. Its closing-phase
-//// action type permits only operations that remain meaningful then.
+//// The worker processes queued messages before a close. Thus, the runtime
+//// still delivers a push or reply that the worker computed before a leave.
+//// The runtime then applies [`on_terminate`](#on_terminate) actions in the
+//// turn that closes the topic, after the channel instance is gone. Its
+//// closing-phase action type permits only operations that remain meaningful
+//// then.
 
 import beryl
 import beryl/presence
 import beryl/socket
 import beryl/topic
-import gleam/dict
 import gleam/dynamic
 import gleam/erlang/process
-import gleam/erlang/reference
 import gleam/json
 import gleam/list
 import gleam/option
@@ -135,7 +145,7 @@ pub fn child_spec(
 ) {
   use table <- result.try(compile(handlers))
 
-  beryl.child_spec(config, init: initialise(table), update: update)
+  beryl.worker_child_spec(config, open_topic(table))
   |> result.map_error(InvalidConfig)
 }
 
@@ -146,12 +156,6 @@ fn compile(
   use _ <- result.try(list.try_each(patterns, validate_pattern))
   use _ <- result.try(check_duplicates(patterns, set.new()))
   Ok(table(handlers))
-}
-
-fn initialise(
-  table: List(Registered),
-) -> fn(socket.ConnectInfo(Envelope)) -> #(Router, List(socket.Effect)) {
-  fn(info) { init(table, info) }
 }
 
 fn validate_pattern(pattern: String) -> Result(String, ChildSpecError) {
@@ -186,29 +190,17 @@ fn check_duplicates(
 /// receives each message with its type intact.
 ///
 /// A sender is scoped to the join that produced it. Sending is asynchronous
-/// and never fails. It cannot report that the channel is gone. The delivery
-/// point checks liveness. It drops the message after a normal close, such as
-/// a client leave, a [`close`](#close) result, or a socket teardown. It also
-/// drops the message after the same topic is joined again. A different join
-/// never receives the message.
-///
-/// The one exception is a panic inside [`on_terminate`](#on_terminate).
-/// Core's policy for a crash while closing a topic is to log it and keep
-/// the model from before the close, so the channel system keeps that
-/// instance: a sender created by it can still reach its `on_info` until
-/// the topic is joined again or the socket ends. Nothing is handed to
-/// another join in that window. It is the *same* instance, outliving its own
-/// termination.
+/// and never fails. It cannot report that the channel is gone. The message
+/// goes to the worker process for that join. After the join ends, the worker
+/// no longer exists and the runtime drops the message. A later join of the
+/// same topic has a different worker. It cannot receive the message.
 ///
 /// ## Cost
 ///
-/// Delivery is cast-free but not free. Each message is carried to the
-/// socket's runtime actor as a sealed thunk, and unsealing it does a
-/// selective receive on that actor's mailbox in the same turn. A
-/// selective receive scans the mailbox, so under a deep backlog on a busy
-/// socket the cost of one delivery is O(mailbox depth). It is a
-/// non-issue at ordinary depths; it is worth knowing before using
-/// `notify` as a high-rate data path.
+/// A sealed function carries each message to the worker. The worker opens
+/// the function and uses a selective receive in the same turn. One delivery
+/// can scan queued work for that topic. Work for other topics does not add
+/// to this cost.
 pub opaque type Sender(info) {
   Sender(send: fn(info) -> Nil)
 }
@@ -217,12 +209,11 @@ pub opaque type Sender(info) {
 ///
 /// Each call enqueues one message. Each enqueued message produces one
 /// `on_info` call. The runtime does not combine sends. It delivers them in
-/// the order that the owning socket receives them.
+/// the order that the worker receives them.
 ///
 /// This is a fire-and-forget send. It returns when the message is enqueued,
 /// whether or not the channel is still joined. The runtime discards a message
-/// for a channel that has ended. See [`Sender`](#sender) for delivery cost and
-/// the one case in which an ended channel can still receive a message.
+/// for a channel that has ended. See [`Sender`](#sender) for delivery cost.
 pub fn notify(sender: Sender(info), message: info) -> Nil {
   sender.send(message)
 }
@@ -552,10 +543,9 @@ pub fn on_info(
 /// allows broadcasts, presence untracking, and presence broadcasts. It does
 /// not allow pushes, replies, or presence tracking.
 ///
-/// A panic here is not fatal. Core keeps the model from before the close.
-/// This instance stays in the channel system's map, and its
-/// [`Sender`](#sender) can reach it until the topic is rejoined or the socket
-/// ends.
+/// An `on_terminate` panic does not stop the socket. The runtime logs the
+/// panic and completes the close without this callback's actions. The worker
+/// stops, so a [`Sender`](#sender) for this join cannot deliver more messages.
 pub fn on_terminate(
   result: JoinResult(state, info),
   handle: fn(state, socket.StopReason) -> List(Action(Closing)),
@@ -641,7 +631,10 @@ pub fn reject(reason: json.Json) -> JoinResult(state, info) {
 /// and `info` types. A single `List(Handler)` can therefore hold channels
 /// with unrelated types.
 pub opaque type Handler {
-  Handler(pattern: String, open: fn(RoutedJoinContext) -> JoinOutcome)
+  Handler(
+    pattern: String,
+    open: fn(socket.WorkerContext, List(String)) -> socket.WorkerOutcome,
+  )
 }
 
 /// Register a channel for every topic matching `pattern`.
@@ -656,25 +649,21 @@ pub fn handler(
   pattern: String,
   join: fn(JoinContext(info)) -> JoinResult(state, info),
 ) -> Handler {
-  Handler(pattern: pattern, open: fn(context: RoutedJoinContext) {
-    // The typed hand-off point for this join. It lives only inside this
-    // closure, where `info` is still in scope, which is what lets
-    // server-side sends stay typed without erasure.
+  Handler(pattern: pattern, open: fn(context: socket.WorkerContext, params) {
+    // This subject transfers typed messages for one join. It stays in this
+    // closure, where `info` remains in scope. Thus, server-side messages keep
+    // their type without erasure.
     //
-    // A `Sender` does *not* write to it directly: it seals the typed value
-    // into a `Mail` thunk and hands that to the router, which carries it
-    // to the socket that owns this join. Only once the router has decided
-    // the join is still live does it run the thunk — and it runs it
-    // through `on_mail`, which reads the value back at its original type
-    // in the same turn. Nothing typed is ever left sitting in a shared
-    // process mailbox between turns.
+    // A `Sender` does not write to this subject. It puts the typed value in a
+    // function and gives the function to the runtime. The runtime sends the
+    // function to the worker for this join. `on_info` runs the function and
+    // reads the value at its original type in the same turn. No process
+    // mailbox holds the typed value between turns. After the join ends, its
+    // worker no longer exists.
     let handoff = process.new_subject()
-    let join_id = reference.new()
     let sender =
       Sender(send: fn(message) {
-        context.deliver(
-          Mail(join: join_id, place: fn() { process.send(handoff, message) }),
-        )
+        context.deliver(fn() { process.send(handoff, message) })
       })
     let join_context =
       JoinContext(
@@ -682,167 +671,78 @@ pub fn handler(
         seed: context.seed,
         self: sender,
         topic: context.topic,
-        params: context.params,
+        params: params,
         payload: context.payload,
       )
 
     case join(join_context) {
-      JoinRejected(reason) -> Rejected(reason: reason)
+      JoinRejected(reason) -> socket.WorkerRejected(reason: reason)
       JoinAccepted(state, callbacks, reply, actions) ->
-        Accepted(
+        socket.WorkerAccepted(
           reply: reply,
-          actions: actions,
-          channel: live(seal(state, callbacks), handoff, join_id),
+          effects: effects(context.topic, actions),
+          worker: live(seal(state, callbacks), handoff, context.topic),
         )
     }
   })
 }
 
 // ---------------------------------------------------------------------------
-// Router seam
+// Worker seam
 //
-// Everything below is the package-internal representation the router
-// consumes. It is non-generic on purpose: it is what the sealing above
-// produces, and it never carries a typed `info` value.
+// The runtime uses the package-internal types below. Each accepted join has
+// one non-generic `socket.Worker`. The runtime runs it in the process for that
+// join. The worker contract does not carry a typed `info` value.
 // ---------------------------------------------------------------------------
 
-/// A joined channel with its `state` and `info` types fully sealed.
-@internal
-pub type LiveChannel {
-  LiveChannel(
-    on_message: fn(Message) -> Step,
-    /// Deliver one enqueued server-side message to this channel's
-    /// `on_info` callback.
-    ///
-    /// The router must call this **only after** it has confirmed that the
-    /// `Mail` was addressed to this exact join — same topic, same
-    /// generation — and must run each `Mail` at most once. `on_mail`
-    /// unseals the typed value and runs the callback in a single turn, so
-    /// no typed value is ever left behind for another turn, another
-    /// generation, or the actor's catch-all selector to pick up. One
-    /// `Mail` produces exactly one `on_info` call.
-    ///
-    /// A `Mail` belonging to a different join can never be delivered
-    /// here: its value goes to the join that sealed it, so this returns
-    /// an unchanged channel with no actions instead.
-    on_mail: fn(Mail) -> Step,
-    /// Run this channel's termination callback, returning the actions it
-    /// asked for. The router runs them in the turn that closes the topic,
-    /// after this instance has been removed.
-    on_terminate: fn(socket.StopReason) -> List(Action(Closing)),
-  )
-}
-
-/// One typed server-side message, sealed into a thunk.
+/// Seal an accepted channel into the runtime's worker contract.
 ///
-/// Opaque and inert: it carries no payload the router can read, construct,
-/// or redirect, and it has no effect at all until the join that sealed it
-/// runs it through [`LiveChannel.on_mail`](#LiveChannel). Dropping a
-/// `Mail` — which is what the router does for a stale topic or generation
-/// — sends nothing anywhere, and handing one to the wrong join does
-/// nothing either: it carries the identity of its own join.
-@internal
-pub opaque type Mail {
-  Mail(join: reference.Reference, place: fn() -> Nil)
-}
-
-/// The non-generic form of a callback result.
-@internal
-pub type Step {
-  StepContinue(next: LiveChannel, actions: List(Action(Active)))
-  StepClose(actions: List(Action(Active)))
-}
-
-/// Everything the router supplies for one join attempt.
-///
-/// `deliver` is bound by the router to this topic and join generation. The
-/// channel's `Sender` calls it with one sealed [`Mail`](#Mail) per
-/// `notify`; the router is expected to carry that mail to the owning
-/// socket as one envelope, check the envelope against the live join, and
-/// then either run it through `on_mail` or drop it. Envelopes are never
-/// coalesced: one send, one envelope, one `on_info`.
-///
-/// Bind `deliver` to the topic and generation this join is *about* to be
-/// given, before calling [`open`](#open): a `join` callback may use its
-/// own `Sender` to schedule a later turn, and the mail it enqueues has to
-/// be addressed to the join being opened rather than to the previous one.
-@internal
-pub type RoutedJoinContext {
-  RoutedJoinContext(
-    socket_id: String,
-    seed: socket.ConnectSeed,
-    topic: String,
-    params: List(String),
-    payload: dynamic.Dynamic,
-    deliver: fn(Mail) -> Nil,
-  )
-}
-
-/// The non-generic form of a `JoinResult`.
-///
-/// `actions` are the join's accept-time actions, already in order. The
-/// router must lower them **after** the accept effect and in the same
-/// update turn.
-@internal
-pub type JoinOutcome {
-  Accepted(
-    reply: option.Option(json.Json),
-    actions: List(Action(Active)),
-    channel: LiveChannel,
-  )
-  Rejected(reason: json.Json)
-}
-
-/// Run a handler's sealed `join` callback for one join attempt.
-@internal
-pub fn open(handler: Handler, context: RoutedJoinContext) -> JoinOutcome {
-  handler.open(context)
-}
-
+/// The worker process owns `handoff`. A handler runs `open` during worker
+/// initialization. `on_info` reads each `Mail` at its original type in the
+/// same turn. Another join cannot read it.
 fn live(
   channel: SealedChannel(info),
   handoff: process.Subject(info),
-  join_id: reference.Reference,
-) -> LiveChannel {
-  let unchanged = fn() {
-    StepContinue(next: live(channel, handoff, join_id), actions: [])
-  }
-  LiveChannel(
-    on_message: fn(message) {
-      step(channel.on_message(message), handoff, join_id)
+  topic: String,
+) -> socket.Worker {
+  socket.Worker(
+    on_message: fn(event, payload, reply) {
+      Message(event: event, payload: payload, reply: reply)
+      |> channel.on_message
+      |> step(handoff, topic)
     },
-    on_mail: fn(mail: Mail) {
-      case mail.join == join_id {
-        // Someone else's mail: leave it sealed, so its value stays where
-        // its own join can still read it and reaches nothing here.
-        False -> unchanged()
-        True -> {
-          // Unsealing and consuming happen back to back in this turn, so
-          // the typed value is never visible to anything else.
-          mail.place()
-          case process.receive(handoff, 0) {
-            Ok(message) -> step(channel.on_info(message), handoff, join_id)
-            // Unreachable: this join sealed the mail and a mail places
-            // exactly one message. Continuing unchanged keeps a router
-            // mistake from taking the socket down with it.
-            Error(Nil) -> unchanged()
-          }
-        }
+    on_info: fn(mail) {
+      // Open and consume the value in the same turn. No other code can read
+      // the typed value.
+      mail()
+      case process.receive(handoff, 0) {
+        Ok(message) -> step(channel.on_info(message), handoff, topic)
+        // `deliver` targets this worker and puts one message on `handoff`.
+        // Thus, this branch is not reachable. Keep the worker unchanged if
+        // the invariant fails.
+        Error(Nil) ->
+          socket.WorkerContinue(
+            next: live(channel, handoff, topic),
+            effects: [],
+          )
       }
     },
-    on_terminate: fn(reason) { channel.on_terminate(reason) },
+    on_terminate: fn(reason) { effects(topic, channel.on_terminate(reason)) },
   )
 }
 
 fn step(
   continuation: Continuation(info),
   handoff: process.Subject(info),
-  join_id: reference.Reference,
-) -> Step {
+  topic: String,
+) -> socket.WorkerStep {
   case continuation {
     ContinueWith(next, actions) ->
-      StepContinue(next: live(next, handoff, join_id), actions: actions)
-    CloseWith(actions) -> StepClose(actions: actions)
+      socket.WorkerContinue(
+        next: live(next, handoff, topic),
+        effects: effects(topic, actions),
+      )
+    CloseWith(actions) -> socket.WorkerClose(effects: effects(topic, actions))
   }
 }
 
@@ -892,40 +792,12 @@ fn effect(topic: String, action: Action(phase)) -> List(socket.Effect) {
 }
 
 // ---------------------------------------------------------------------------
-// Private socket router
+// Handler table
 // ---------------------------------------------------------------------------
-
-/// The socket-level message type of a channel system.
-///
-/// It carries no channel state and no typed `info` value: a `Mail` is a
-/// sealed thunk that only the join which created it can open, and the
-/// topic/generation pair says which join that is.
-type Envelope {
-  ChannelMail(topic: String, generation: Int, mail: Mail)
-}
 
 /// A handler with its topic pattern parsed once, at table build time.
 type Registered {
   Registered(pattern: topic.TopicPattern, handler: Handler)
-}
-
-/// One live channel instance and the generation it was opened at.
-type Instance {
-  Instance(generation: Int, channel: LiveChannel)
-}
-
-/// The per-socket model.
-type Router {
-  Router(
-    handlers: List(Registered),
-    socket_id: String,
-    seed: socket.ConnectSeed,
-    self: socket.Sender(Envelope),
-    /// The last generation handed out; strictly increasing, never reused.
-    generation: Int,
-    /// The topics this socket currently has an accepted instance on.
-    live: dict.Dict(String, Instance),
-  )
 }
 
 /// Parse every handler's pattern once, preserving registration order —
@@ -936,65 +808,18 @@ fn table(handlers: List(Handler)) -> List(Registered) {
   })
 }
 
-/// The `init` half of the pair: a socket starts with no joined channels.
-fn init(
+/// Open a handler table in each new topic worker.
+///
+/// The first match wins. The runtime rejects an unmatched topic and gives
+/// the reason to the client.
+fn open_topic(
   handlers: List(Registered),
-  info: socket.ConnectInfo(Envelope),
-) -> #(Router, List(socket.Effect)) {
-  let router =
-    Router(
-      handlers: handlers,
-      socket_id: info.socket_id,
-      seed: info.seed,
-      self: info.self,
-      generation: 0,
-      live: dict.new(),
-    )
-  #(router, [])
-}
-
-/// The `update` half of the pair.
-fn update(
-  router: Router,
-  input: socket.Input(Envelope),
-) -> socket.Next(Router) {
-  case input {
-    socket.Join(topic: name, payload: payload, ref: ref) ->
-      join(router, name, payload, ref)
-
-    socket.Message(topic: name, event: event, payload: payload, ref: ref) ->
-      on_live(router, name, fn(instance) {
-        instance.channel.on_message(Message(
-          event: event,
-          payload: payload,
-          reply: ref,
-        ))
-      })
-
-    socket.Binary(..) -> socket.Next(router, [])
-
-    socket.Closed(topic: name, reason: reason) -> closed(router, name, reason)
-
-    socket.Info(ChannelMail(topic: name, generation: generation, mail: mail)) ->
-      deliver(router, name, generation, mail)
-  }
-}
-
-// --- joining ---------------------------------------------------------------
-
-/// First match wins. An unmatched topic is refused explicitly rather than
-/// left unanswered, so the client always learns why.
-fn join(
-  router: Router,
-  name: String,
-  payload: dynamic.Dynamic,
-  ref: socket.JoinRef,
-) -> socket.Next(Router) {
-  case select(router.handlers, name) {
-    Error(Nil) ->
-      socket.Next(router, [socket.RejectJoin(ref, unmatched_topic())])
-    Ok(#(handler, params)) ->
-      open_join(router, handler, name, params, payload, ref)
+) -> fn(socket.WorkerContext) -> socket.WorkerOutcome {
+  fn(context: socket.WorkerContext) {
+    case select(handlers, context.topic) {
+      Error(Nil) -> socket.WorkerRejected(unmatched_topic())
+      Ok(#(handler, params)) -> open(handler, context, params)
+    }
   }
 }
 
@@ -1021,171 +846,15 @@ fn unmatched_topic() -> json.Json {
   json.object([#("reason", json.string("unmatched topic"))])
 }
 
-/// Allocate this join's generation, bind the channel's sends to it, and
-/// run the handler.
+/// Run a handler's sealed `join` for one join attempt in the calling process.
 ///
-/// The generation is bound into `deliver` *before* `open` runs,
-/// because a `join` callback may notify itself; its mail has to be
-/// addressed to the join being opened. The counter advances even when the
-/// handler rejects, so a rejected join's sender can never collide with a
-/// later accepted one.
-fn open_join(
-  router: Router,
+/// The runtime calls this function from a topic worker during initialization.
+/// Tests call it directly.
+@internal
+pub fn open(
   handler: Handler,
-  name: String,
+  context: socket.WorkerContext,
   params: List(String),
-  payload: dynamic.Dynamic,
-  ref: socket.JoinRef,
-) -> socket.Next(Router) {
-  let generation = router.generation + 1
-  let router = Router(..router, generation: generation)
-  let context =
-    RoutedJoinContext(
-      socket_id: router.socket_id,
-      seed: router.seed,
-      topic: name,
-      params: params,
-      payload: payload,
-      deliver: mailbox(router.self, name, generation),
-    )
-
-  case open(handler, context) {
-    // Only accepted joins become instances; a rejection leaves the socket
-    // with no channel on this topic.
-    Rejected(reason) -> socket.Next(router, [socket.RejectJoin(ref, reason)])
-    Accepted(reply: reply, actions: actions, channel: live) -> {
-      let instance = Instance(generation: generation, channel: live)
-      socket.Next(
-        Router(..router, live: dict.insert(router.live, name, instance)),
-        // The acknowledgment is ordered ahead of the join's own actions,
-        // so a push can never precede its own join reply and the
-        // subscription the accept creates is already in place when they
-        // run. Same turn, so nothing can interleave between them.
-        [socket.AcceptJoin(ref, reply), ..effects(name, actions)],
-      )
-    }
-  }
-}
-
-/// Bind one join's sends to its topic and generation. Every `notify`
-/// produces exactly one envelope; nothing is coalesced.
-fn mailbox(
-  self: socket.Sender(Envelope),
-  name: String,
-  generation: Int,
-) -> fn(Mail) -> Nil {
-  fn(mail) {
-    socket.notify(
-      self,
-      ChannelMail(topic: name, generation: generation, mail: mail),
-    )
-  }
-}
-
-// --- routing to a live instance --------------------------------------------
-
-/// Run `callback` against the live instance for `name`, if there is one.
-///
-/// Inputs for a topic this socket has no accepted instance on are ignored:
-/// a rejected join starts nothing, and a closed channel is gone.
-fn on_live(
-  router: Router,
-  name: String,
-  callback: fn(Instance) -> Step,
-) -> socket.Next(Router) {
-  case dict.get(router.live, name) {
-    Error(Nil) -> socket.Next(router, [])
-    Ok(instance) -> advance(router, name, instance, callback(instance))
-  }
-}
-
-/// Deliver one sealed server-side message.
-///
-/// The envelope is checked against the live instance **before** the mail
-/// is handed over, so a stale envelope — one from a closed channel or a
-/// superseded generation — is dropped with its thunk still sealed and its
-/// payload reaches nothing.
-fn deliver(
-  router: Router,
-  name: String,
-  generation: Int,
-  mail: Mail,
-) -> socket.Next(Router) {
-  case dict.get(router.live, name) {
-    Error(Nil) -> socket.Next(router, [])
-    Ok(instance) ->
-      case instance.generation == generation {
-        False -> socket.Next(router, [])
-        True -> advance(router, name, instance, instance.channel.on_mail(mail))
-      }
-  }
-}
-
-/// Lower one callback result onto the core.
-fn advance(
-  router: Router,
-  name: String,
-  instance: Instance,
-  step: Step,
-) -> socket.Next(Router) {
-  case step {
-    // The next instance keeps this join's generation: it is the same join.
-    StepContinue(next: next, actions: actions) -> {
-      let live =
-        dict.insert(router.live, name, Instance(..instance, channel: next))
-      socket.Next(Router(..router, live: live), effects(name, actions))
-    }
-
-    // Apply actions first, then kick. The instance stays live until the
-    // `Closed` the kick produces arrives, so termination runs there — on
-    // the one path every ending channel takes.
-    StepClose(actions: actions) ->
-      socket.Next(
-        router,
-        list.append(effects(name, actions), [socket.KickTopic(name)]),
-      )
-  }
-}
-
-// --- termination -----------------------------------------------------------
-
-/// A joined topic ended, for any reason.
-///
-/// The instance is removed *before* its termination callback runs, so the
-/// callback can neither be re-entered for this instance nor observe it as
-/// live, and `Closed` is the only place termination happens — exactly
-/// once per accepted join.
-///
-/// Termination actions are lowered inside this same `Closed` turn. Core
-/// has already dropped the subscription and purged the topic's
-/// outstanding reply refs by then, so it drops pushes to the closing
-/// topic (including presence snapshots pushed to this socket) and drops
-/// replies outright, while broadcasts still take effect. Core's automatic
-/// topic untrack runs immediately *after* this turn, so a
-/// `presence_track` here is undone as soon as it is applied — see
-/// `on_terminate`.
-///
-/// The removal only sticks if this turn returns. When `on_terminate`
-/// panics, core logs the crash and keeps the model from before this turn,
-/// which is the one that still holds this instance at this generation. It
-/// is not reachable from core's side — the topic is closed, so no client
-/// message or `Closed` can name it again — but `Info` is
-/// socket-scoped rather than topic-scoped, so a `Sender` created by this
-/// join still finds it in `live` and still delivers `on_info` to it. The
-/// entry goes away when the topic is joined again (`open` overwrites it)
-/// or when the socket ends. This layer cannot narrow that window: undoing
-/// it is exactly the model update the panic discarded, and rescuing the
-/// callback here would hide a crash core is responsible for reporting.
-fn closed(
-  router: Router,
-  name: String,
-  reason: socket.StopReason,
-) -> socket.Next(Router) {
-  case dict.get(router.live, name) {
-    Error(Nil) -> socket.Next(router, [])
-    Ok(instance) -> {
-      let router = Router(..router, live: dict.delete(router.live, name))
-      socket.Next(router, effects(name, instance.channel.on_terminate(reason)))
-    }
-  }
+) -> socket.WorkerOutcome {
+  handler.open(context, params)
 }

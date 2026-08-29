@@ -662,10 +662,11 @@ pub fn an_info_result_can_close_the_channel_test() {
 /// The join callback and `on_info` must run in the *same* process: the
 /// typed hand-off `channel.handler` creates is owned by whichever process
 /// ran the join, and only that process may read from it. This pins the
-/// process-affinity seam the adapter depends on — and pins that the
-/// process is the socket's own actor, not the shared runtime pid, so one
-/// socket's callbacks can never stall another's (#334).
-pub fn join_and_info_run_in_the_sockets_own_process_test() {
+/// process-affinity seam the layer depends on — and pins that the process
+/// is the topic's own worker, not the runtime's router, so one socket's
+/// callbacks can never stall another's (#334). `channel_worker_test` pins
+/// that different topics get different workers (#337).
+pub fn join_and_info_run_in_the_topics_own_process_test() {
   let #(channels, wiring, _frames) = joined_room("room:a")
   let sender = next_sender(wiring)
   let assert Ok(join_pid) = process.receive(wiring.pids, 500)

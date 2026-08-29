@@ -1,21 +1,19 @@
 //// The crash boundaries a channel system inherits from beryl's core.
 ////
-//// App code that panics must never take the runtime down. The core's
-//// policy is attributed by *where* the panic happened, and this layer
-//// must not blunt it:
+//// App code that panics must never take the runtime down. Each accepted
+//// topic runs in its own worker process, and the core's policy is
+//// attributed by *where* the panic happened:
 ////
 //// | Panic in | Effect |
 //// |---|---|
 //// | `join` | that join is rejected; the socket survives |
 //// | `on_message` | that topic closes; other topics survive |
-//// | `on_info` | the whole socket is torn down |
+//// | `on_info` | that topic closes; other topics survive |
 //// | `on_terminate` | teardown still completes; sibling channels still run their termination actions |
 ////
-//// A panic in `on_terminate` is the one place where the layer's
-//// "a closed channel is gone" rule has an exception: core preserves the
-//// pre-`Closed` model, so the router keeps that instance in its layer map
-//// and a sender for it can still be delivered. That is pinned below so it
-//// cannot drift silently.
+//// A panic in `on_terminate` ends the channel like any other close: its
+//// worker stops, so a sender for that join delivers nothing afterwards.
+//// That is pinned below so it cannot drift silently.
 ////
 //// Every assertion runs against a real system through beryl's public
 //// transport SPI.
@@ -234,7 +232,7 @@ pub fn a_panic_handling_a_message_closes_only_that_topic_test() {
 
 // --- info ------------------------------------------------------------------
 
-pub fn a_panic_handling_info_closes_the_whole_socket_test() {
+pub fn a_panic_handling_info_closes_only_that_topic_test() {
   let trace = process.new_subject()
   let senders = process.new_subject()
   let channels = start([info_panics(trace, senders), ok_handler(trace)])
@@ -248,21 +246,22 @@ pub fn a_panic_handling_info_closes_the_whole_socket_test() {
 
   channel.notify(sender, Poke)
 
-  // An `Info` has no topic to attribute the crash to, so the socket goes
-  // away — and *every* channel on it terminates, exactly once each.
-  let first = helper.next_trace(trace)
-  first
+  // The mail reached the topic's own worker, so the crash is attributed
+  // to that topic alone: it closes with the crash as its reason and its
+  // termination callback still runs, exactly once.
+  let line = helper.next_trace(trace)
+  line
   |> string.starts_with("terminate:crash_info:a:errored:")
   |> should.be_true
-  let second = helper.next_trace(trace)
-  second |> string.starts_with("terminate:room:b:errored:") |> should.be_true
   helper.no_trace(trace)
 
-  // The socket is gone: later frames reach nothing at all.
-  let _close_a = helper.recv(frames)
-  let _close_b = helper.recv(frames)
+  let close = helper.recv(frames)
+  close |> string.contains("phx_error") |> should.be_true
+  close |> string.contains("crash_info:a") |> should.be_true
+
+  // The other topic on the same socket is untouched.
   helper.push(channels, "s1", "room:b", "ping", "r-3")
-  helper.recv_none(frames)
+  helper.recv(frames) |> string.contains("\"pong\"") |> should.be_true
 }
 
 // --- terminate -------------------------------------------------------------
@@ -327,51 +326,14 @@ pub fn a_panic_while_terminating_does_not_stop_other_channels_closing_test() {
   helper.no_trace(trace)
 }
 
-// --- the terminate-panic exception -----------------------------------------
+// --- a terminate panic ends the channel ------------------------------------
 //
-// A panic in `on_terminate` is the one case where a channel instance
-// outlives its own termination. Core's `Closed` crash policy is to log
-// and keep the *last good model*, which is the model from before the
-// `Closed` turn — the one that still lists this instance at this
-// generation. Nothing in the layer can remove it from that model: the
-// removal is exactly what the panic discarded.
-//
-// These two tests pin what that actually means, so the documented
-// guarantee cannot drift: the retained instance is reachable by its own
-// sender, and the ordinary invalidation points still close the window.
+// The channel's state lives in its worker, and the worker stops after
+// `on_terminate` whether or not the callback panicked. Its sender then
+// addresses a process that no longer exists, so a terminated join can
+// never be re-entered, and a rejoin gets a fresh worker and sender.
 
-pub fn a_terminate_panic_leaves_the_instance_reachable_by_its_sender_test() {
-  let trace = process.new_subject()
-  let senders = process.new_subject()
-  let channels = start([terminate_panics_with_sender(trace, senders)])
-  let leaver = helper.connect(channels, "s1")
-  let peer = helper.connect(channels, "s2")
-  helper.join(channels, "s1", "crash_term:a", "jr-1", "r-1")
-  let _join_a = helper.recv(leaver)
-  helper.join(channels, "s2", "crash_term:a", "jr-1", "r-1")
-  let _join_peer = helper.recv(peer)
-  let assert Ok(sender) = process.receive(senders, 500)
-    as "the join reported its sender"
-
-  helper.push(channels, "s1", "crash_term:a", "leave", "r-2")
-
-  helper.next_trace(trace) |> should.equal("terminating:crash_term:a")
-  // The topic really did close: core sent the terminal frame and dropped
-  // the subscription.
-  helper.recv(leaver) |> string.contains("phx_close") |> should.be_true
-
-  // ...but the panic discarded the router model that removed the
-  // instance, so this sender still resolves to the terminated join.
-  channel.notify(sender, Poke)
-  helper.next_trace(trace) |> should.equal("info:crash_term:a")
-  helper.recv(peer) |> string.contains("\"late\"") |> should.be_true
-
-  // The socket itself is unaffected and still unsubscribed, so its own
-  // broadcast does not come back to it.
-  helper.recv_none(leaver)
-}
-
-pub fn a_rejoin_after_a_terminate_panic_invalidates_the_retained_sender_test() {
+pub fn a_terminate_panic_ends_the_channel_for_its_sender_test() {
   let trace = process.new_subject()
   let senders = process.new_subject()
   let channels = start([terminate_panics_with_sender(trace, senders)])
@@ -382,20 +344,29 @@ pub fn a_rejoin_after_a_terminate_panic_invalidates_the_retained_sender_test() {
   helper.join(channels, "s2", "crash_term:a", "jr-1", "r-1")
   let _join_peer = helper.recv(peer)
   let assert Ok(stale) = process.receive(senders, 500)
-    as "the first join reported its sender"
+    as "the join reported its sender"
 
   helper.push(channels, "s1", "crash_term:a", "leave", "r-2")
+
   helper.next_trace(trace) |> should.equal("terminating:crash_term:a")
+  // The topic really did close: core sent the terminal frame and dropped
+  // the subscription.
   helper.recv(leaver) |> string.contains("phx_close") |> should.be_true
 
-  // Rejoining the topic overwrites the retained entry with a new
-  // generation, which is the ordinary invalidation rule again.
-  helper.join(channels, "s1", "crash_term:a", "jr-2", "r-3")
-  helper.recv(leaver) |> string.contains("\"status\":\"ok\"") |> should.be_true
-  let assert Ok(_fresh) = process.receive(senders, 500)
-    as "the rejoin reported its own sender"
-
+  // The terminated join's sender reaches nothing.
   channel.notify(stale, Poke)
   helper.no_trace(trace)
   helper.recv_none(peer)
+
+  // Rejoining gives the topic a fresh worker and a fresh sender, and the
+  // stale one still reaches nothing.
+  helper.join(channels, "s1", "crash_term:a", "jr-2", "r-3")
+  helper.recv(leaver) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  let assert Ok(fresh) = process.receive(senders, 500)
+    as "the rejoin reported its own sender"
+  channel.notify(stale, Poke)
+  helper.no_trace(trace)
+  channel.notify(fresh, Poke)
+  helper.next_trace(trace) |> should.equal("info:crash_term:a")
+  helper.recv(peer) |> string.contains("\"late\"") |> should.be_true
 }

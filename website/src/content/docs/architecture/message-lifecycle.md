@@ -141,24 +141,21 @@ The same `Closed` path is used for client leaves, heartbeat timeouts,
 
 ## How channel handlers use this path
 
-`beryl/channel` supplies the `init` and `update` pair in these diagrams. Its
-`init` builds one channel model for each socket. Its `update` maps each input
-to the live channel instance for that topic.
+`beryl/channel` runs one worker process for each accepted topic. The socket
+actor in these diagrams keeps the connection and writes every frame; the
+worker runs the channel's callbacks and reports its actions back.
 
-| Runtime input | Channel model behavior |
+| Runtime input | Channel layer behavior |
 |---|---|
-| `Join(topic, payload, ref)` | First matching handler wins; its join result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` |
-| `Message(topic, ..)` / `Binary(topic, ..)` | Delivered to the live instance for that topic |
-| `Info(envelope)` | The runtime checks the topic and join generation, then drops messages sent to an older join |
-| `Closed(topic, reason)` | Calls `on_terminate` and lowers its actions after the topic is already unsubscribed |
+| `Join(topic, payload, ref)` | First matching handler wins. Its `join` runs while the worker starts, and the socket actor waits for it. The result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` |
+| `Message(topic, ..)` | The socket actor sends it to the topic worker. The worker runs `on_message` and reports its actions |
+| `Binary(topic, ..)` | Ignored by the channel layer |
+| `channel.notify` mail | The sender sends it to its join worker. Mail for an ended join reaches no process |
+| `Closed(topic, reason)` | The socket actor sends it to the worker. The worker runs `on_terminate`. The socket actor applies earlier results, applies the termination actions, and sends the terminal frame |
 
-Termination has one special case. The router removes the instance in the model
-returned by the `Closed` turn. If `on_terminate` panics, the core discards that
-model and keeps the old model. The retained instance can receive its own
-generation-scoped `channel.notify` mail. Client messages cannot reach the
-closed topic. A rejoin replaces the instance, and socket shutdown removes it.
-See
-[Crash behavior](/guides/channels/#crash-behavior).
+If `on_terminate` panics, the core logs it and completes the close without
+its actions. The worker stops either way, so its sender delivers nothing
+afterwards. See [Crash behavior](/guides/channels/#crash-behavior).
 
 Each channel action maps to one core effect. The runtime preserves their order.
 An asynchronous presence effect can pause one socket while other sockets

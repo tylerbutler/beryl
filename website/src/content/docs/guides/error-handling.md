@@ -164,15 +164,15 @@ The channel layer applies the same results to these callbacks:
 | Channel callback | Effect |
 |---|---|
 | `join` | Rejects only that join |
-| `on_message` | Closes only that topic |
-| `on_info` | Tears down that socket |
-| `on_terminate` | Logs the panic and continues core teardown; the callback's actions are lost |
+| `on_message` | Closes only that topic; `on_terminate` still runs |
+| `on_info` | Closes only that topic; `on_terminate` still runs |
+| `on_terminate` | Logs the panic and completes the close; the callback's actions are lost |
 
-A terminate panic also discards the router model returned by that `Closed`
-turn. The old instance therefore remains reachable through its own typed
-sender until the topic is rejoined or the socket ends, even though client
-traffic cannot reach the closed topic. Keep `on_terminate` small and
-non-panicking; see [When callbacks panic](/guides/channels/#when-callbacks-panic).
+Each channel runs in its own worker process. A panic keeps the state from
+before the callback, so `on_terminate` still uses that state. If the worker
+stops unexpectedly, the runtime closes the topic with `phx_error`. It cannot
+run `on_terminate` because the worker held the channel state. See
+[When callbacks panic](/guides/channels/#when-callbacks-panic).
 
 ## Rate limits and dropped traffic
 

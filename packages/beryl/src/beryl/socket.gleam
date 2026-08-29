@@ -293,3 +293,72 @@ pub type ConnectInfo(msg) {
     self: Sender(msg),
   )
 }
+
+// ---------------------------------------------------------------------------
+// Topic worker seam
+//
+// These package-internal types connect the runtime to `beryl/channel`. The
+// runtime starts one worker for each accepted join. The worker owns one topic
+// and runs its callbacks. The socket actor applies the effects from the
+// worker. Raw dispatch (`beryl.child_spec`) does not use these types because
+// its model contains all topics for one socket.
+// ---------------------------------------------------------------------------
+
+/// One sealed server-side message for a topic worker.
+///
+/// Run it to put the typed value on a subject that the worker owns.
+///
+/// The worker's `on_info` reads the value at its original type in the same
+/// turn. The runtime cannot read the value.
+@internal
+pub type Mail =
+  fn() -> Nil
+
+/// Everything the runtime supplies for one join attempt.
+///
+/// `deliver` sends one `Mail` to the new worker. The runtime binds `deliver`
+/// before it runs `open`. Thus, a `join` callback that notifies itself sends
+/// the message to the new join. The worker waits until the runtime indexes
+/// the join before it handles the message.
+@internal
+pub type WorkerContext {
+  WorkerContext(
+    socket_id: String,
+    seed: ConnectSeed,
+    topic: String,
+    payload: Dynamic,
+    deliver: fn(Mail) -> Nil,
+  )
+}
+
+/// A joined topic's callbacks with its `state` and `info` types sealed.
+///
+/// Each function runs in the worker process and returns core effects for the
+/// worker's topic.
+@internal
+pub type Worker {
+  Worker(
+    on_message: fn(String, Dynamic, Option(ReplyRef)) -> WorkerStep,
+    on_info: fn(Mail) -> WorkerStep,
+    on_terminate: fn(StopReason) -> List(Effect),
+  )
+}
+
+/// The result of one worker callback.
+@internal
+pub type WorkerStep {
+  /// Apply `effects`, then keep serving with `next`.
+  WorkerContinue(next: Worker, effects: List(Effect))
+  /// Apply `effects`, then close the topic. `on_terminate` still runs.
+  WorkerClose(effects: List(Effect))
+}
+
+/// The result of a worker's `join`.
+///
+/// `effects` contains the ordered accept-time effects. The runtime applies
+/// them after the join acknowledgment in the same turn.
+@internal
+pub type WorkerOutcome {
+  WorkerAccepted(reply: Option(Json), effects: List(Effect), worker: Worker)
+  WorkerRejected(reason: Json)
+}
