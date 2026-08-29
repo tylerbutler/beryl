@@ -525,6 +525,32 @@ pub fn stopping_beryl_while_a_leave_is_parked_lets_on_terminate_finish_test() {
   wait_until_dead(a)
 }
 
+pub fn stopping_beryl_bounds_a_blocking_terminate_inside_the_drain_test() {
+  let reports = process.new_subject()
+  let senders = process.new_subject()
+  let channels =
+    helper.start(config(), [
+      sleepy("slow:*", reports, senders, slow_ms: 0, terminate_ms: 3000),
+      quick("room:*", reports, senders),
+    ])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "slow:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _ = helper.recv(frames)
+  let slow = ran_pid(reports, "join")
+  let b = ran_pid(reports, "join")
+
+  // The slow worker's `on_terminate` outlives the stop-driven terminate
+  // timeout, so the runtime kills that worker. The stop still completes
+  // inside its budget and the sibling topic still runs `on_terminate`.
+  beryl.stop(channels) |> should.be_ok
+
+  terminated(reports, "room:b", "shutdown")
+  wait_until_dead(slow)
+  wait_until_dead(b)
+}
+
 pub fn many_topics_on_one_socket_each_get_a_worker_test() {
   let reports = process.new_subject()
   let senders = process.new_subject()

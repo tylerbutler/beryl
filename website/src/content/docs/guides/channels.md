@@ -485,7 +485,9 @@ If the worker process stops unexpectedly, the runtime closes the topic with
 `phx_error`. It cannot run `on_terminate` because the worker held the channel
 state. The client must rejoin. The runtime kills a worker that does not finish
 its queued work and `on_terminate` within five seconds. It then completes the
-close without the termination actions.
+close without the termination actions. During a graceful `beryl.stop` this
+bound is one second for each worker, so the full teardown stays inside the
+stop budget.
 
 Crash isolation stops at the socket for other faults: a fault in the socket
 actor loses only that socket and its workers. A router crash loses every
