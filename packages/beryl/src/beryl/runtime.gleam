@@ -187,6 +187,12 @@ pub type Msg(msg) {
   WorkerDown(down: process.Down)
   /// A closing topic's worker did not report its termination in time.
   WorkerTerminateTimedOut(socket_id: String, worker: Pid)
+  /// A socket actor was still `Booting` when its boot deadline expired: the
+  /// admission that started it was cancelled, or the transport process died
+  /// before it reached the router. The actor stops so the socket factory
+  /// cannot accumulate never-admitted children. Ignored once the actor is
+  /// `Active` or `Closing`.
+  BootTimedOut
 }
 
 /// What a topic worker sends its socket actor.
@@ -286,6 +292,8 @@ type RuntimeRole(msg) {
   )
   SocketActorRole(
     router: Subject(Msg(msg)),
+    /// Where this actor sits in the two-phase admission of ADR 0005.
+    phase: SocketPhase,
     /// The supervisor that starts topic workers for a socket actor.
     ///
     /// `beryl/channel` uses this supervisor for one process per accepted
@@ -295,6 +303,19 @@ type RuntimeRole(msg) {
     /// sockets do not wait for each other.
     workers: Option(factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted)),
   )
+}
+
+/// The admission phase of a socket actor (ADR 0005).
+///
+/// Phase one of admission starts the actor under the socket factory and
+/// returns before any application callback runs, so the actor is `Booting`.
+/// Phase two runs the application `init` from the router's `AdmitSocket`
+/// and moves the actor to `Active`. `Closing` covers teardown, where no
+/// admission may still be accepted.
+type SocketPhase {
+  Booting
+  Active
+  Closing
 }
 
 /// One topic worker a socket owns.
@@ -650,6 +671,74 @@ pub fn start_named(
   |> actor.start
 }
 
+/// The socket factory's message type, used only as the payload of its
+/// registered name. The per-connection start argument is the router pid the
+/// transport captured before admission.
+pub type SocketFactoryMessage(msg) =
+  factory_supervisor.Message(process.Pid, Subject(Msg(msg)))
+
+/// Build the socket factory child of the nested beryl supervisor (ADR 0005).
+///
+/// The factory is one `simple_one_for_one` supervisor for the whole system.
+/// Its child template captures the runtime configuration, the application
+/// `init` and `update`, and the optional topic-worker opener, so the only
+/// per-connection argument is the captured router pid. Socket actors are
+/// `Temporary`: a socket owns connection state that no supervisor can
+/// reconstruct, so a stopped socket is recovered by a client reconnect.
+///
+/// The template runs no application callback. It starts the actor, which
+/// runs `init` later, from the router's `AdmitSocket`.
+pub fn socket_factory_child(
+  config config: Config,
+  init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
+  update update: fn(model, Input(msg)) -> Next(model),
+  open_worker open_worker: Option(fn(WorkerContext) -> WorkerOutcome),
+  router router: Subject(Msg(msg)),
+  name name: process.Name(SocketFactoryMessage(msg)),
+) -> supervision.ChildSpecification(
+  factory_supervisor.Supervisor(process.Pid, Subject(Msg(msg))),
+) {
+  factory_supervisor.worker_child(fn(router_pid) {
+    start_socket_actor(
+      config:,
+      init:,
+      update:,
+      open_worker:,
+      router:,
+      router_pid:,
+    )
+  })
+  |> factory_supervisor.restart_strategy(supervision.Temporary)
+  |> factory_supervisor.named(name)
+  |> factory_supervisor.supervised
+}
+
+/// Start one socket actor as a `Temporary` child of the named socket factory.
+///
+/// Called from the transport's connection process (through `beryl`'s
+/// admission closure), so connection setup stays parallel and the router's
+/// admission turn stays O(1). The factory is reached through its registered
+/// name rather than a captured pid, so a restarted factory is used without
+/// the caller holding a stale reference. If no factory is registered — before
+/// startup, during a factory restart window, or after shutdown — this reports
+/// the failure instead of crashing the transport process.
+pub fn start_socket_child(
+  factory factory: process.Name(SocketFactoryMessage(msg)),
+  router_pid router_pid: process.Pid,
+) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
+  case
+    internal.rescue(fn() {
+      factory_supervisor.start_child(
+        factory_supervisor.get_by_name(factory),
+        router_pid,
+      )
+    })
+  {
+    Ok(result) -> result
+    Error(crash) -> Error(actor.InitFailed(crash))
+  }
+}
+
 /// Start one actor to own one socket.
 ///
 /// It runs the same `handle_message` on the same `State` as the router —
@@ -657,11 +746,10 @@ pub fn start_named(
 /// topic index beyond its own memberships, no PubSub subscriber, and
 /// `router` set. That is the whole lift of `dispatch_socket_msg`.
 ///
-/// Called from the transport's connection process (via `beryl`'s admission
-/// closure), not from the router, so connection setup stays parallel and
-/// the router's admission turn stays O(1). The caller is expected to
-/// unlink the started actor and hand it to the router with `AdmitSocket`.
-pub fn start_socket_actor(
+/// This is phase one of admission: it starts the actor and its per-socket
+/// topic-worker factory and returns. It runs no application callback, so a
+/// slow `init` never holds the socket factory's start turn.
+fn start_socket_actor(
   config config: Config,
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Input(msg)) -> Next(model),
@@ -705,13 +793,15 @@ pub fn start_socket_actor(
         queued: dict.new(),
         unacked_tracks: dict.new(),
         stopping: False,
-        role: SocketActorRole(router:, workers:),
+        role: SocketActorRole(router:, phase: Booting, workers:),
       )
     // Router death must take its socket actors with it: each actor
-    // monitors the router and stops on its `Down`, while staying unlinked
-    // so a socket crash cannot travel the other way.
+    // monitors the router and stops on its `Down`, while a socket crash
+    // reaches the router through the router's own monitor instead of a
+    // link.
     let monitor = process.monitor(router_pid)
     schedule_heartbeat_check(subject, config)
+    schedule_boot_check(subject)
     // Match the router monitor before the general monitor handler. Each other
     // `Down` message belongs to a topic worker for this socket.
     process.new_selector()
@@ -735,6 +825,20 @@ fn schedule_heartbeat_check(subject: Subject(Msg(msg)), config: Config) -> Nil {
       config.heartbeat_timeout_ms / 2,
       CheckHeartbeats,
     )
+  Nil
+}
+
+/// How long a socket actor may stay in `Booting` before it gives up.
+///
+/// The transport waits one second for admission and then cancels it, so an
+/// actor that is still unadmitted well past that has lost its transport: the
+/// connection process died before it reached the router, or its cancellation
+/// never arrived. The deadline is only read between turns, so it never cuts a
+/// slow application `init` short.
+const socket_boot_timeout_ms = 5000
+
+fn schedule_boot_check(subject: Subject(Msg(msg))) -> Nil {
+  let _timer = process.send_after(subject, socket_boot_timeout_ms, BootTimedOut)
   Nil
 }
 
@@ -939,6 +1043,17 @@ fn handle_message(
           handle_router_socket_actor_down(state, down, socket_actors)
       }
     RouterDown -> actor.stop()
+    BootTimedOut ->
+      case state.role {
+        SocketActorRole(phase: Booting, ..) -> {
+          state.logger
+          |> log.warn("Socket actor stopping: never admitted", [])
+          actor.stop()
+        }
+        SocketActorRole(phase: Active, ..)
+        | SocketActorRole(phase: Closing, ..)
+        | RouterRole(..) -> actor.continue(state)
+      }
   }
 }
 
@@ -1129,7 +1244,8 @@ fn dispatch_socket_msg(
     | IndexLeave(..)
     | SocketClosed(..)
     | SocketActorDown(..)
-    | RouterDown -> state
+    | RouterDown
+    | BootTimedOut -> state
   }
 }
 
@@ -1215,10 +1331,10 @@ fn handle_admit_socket(
   actor_pid: process.Pid,
 ) -> actor.Next(State(model, msg), Msg(msg)) {
   case state.role {
-    // In a socket actor: the router has already admitted this socket
-    // atomically in its own turn; this actor runs the app `init` and
-    // answers the transport directly.
-    SocketActorRole(router:, ..) -> {
+    // Phase two of admission (ADR 0005). The router has already admitted
+    // this socket atomically in its own turn; this actor runs the app
+    // `init` and answers the transport directly.
+    SocketActorRole(router:, phase: Booting, workers:) -> {
       let #(state, admitted) =
         register_socket(
           state,
@@ -1232,7 +1348,13 @@ fn handle_admit_socket(
         )
       process.send(reply, admitted)
       case admitted {
-        True -> actor.continue(state)
+        True ->
+          actor.continue(
+            State(
+              ..state,
+              role: SocketActorRole(router:, phase: Active, workers:),
+            ),
+          )
         // Refused: the app `init` crashed, or the transport's wait timed
         // out and cancelled the token. The router already indexed this
         // actor, so unwind that entry on the way out.
@@ -1241,6 +1363,13 @@ fn handle_admit_socket(
           actor.stop()
         }
       }
+    }
+    // A second admission for an actor that is already admitted or already
+    // tearing down. Only one socket may ever register per actor, so this
+    // is refused without running `init` again.
+    SocketActorRole(phase: Active, ..) | SocketActorRole(phase: Closing, ..) -> {
+      process.send(reply, False)
+      actor.continue(state)
     }
     // The router's whole admission turn: the checks that must be atomic
     // with each other, one monitor-free insert, and a forward. It never
@@ -1475,6 +1604,13 @@ fn finalize_for_stop(state: State(model, msg)) -> State(model, msg) {
   // From here on there is no runtime left to receive an acknowledgement,
   // so presence mutations are sent fire-and-forget and never suspend.
   let state = State(..state, stopping: True)
+  // A socket actor is closing from here on, so a late `AdmitSocket` must
+  // not run the application `init` behind the teardown.
+  let state = case state.role {
+    RouterRole(..) -> state
+    SocketActorRole(router:, workers:, ..) ->
+      State(..state, role: SocketActorRole(router:, phase: Closing, workers:))
+  }
   let state =
     dict.keys(state.suspended)
     |> list.fold(state, finalize_suspension)

@@ -10,15 +10,18 @@
 import app_test_helpers as h
 import beryl
 import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
+import beryl/stats
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
+import gleam/list
 import gleam/option.{None}
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
+import gleam/string
 import gleeunit/should
 import test_helpers
 
@@ -32,6 +35,9 @@ fn wait_for_gate(gate: Gate) -> Nil
 
 @external(erlang, "beryl_supervisor_test_ffi", "gate_release")
 fn release_gate(gate: Gate) -> Nil
+
+@external(erlang, "beryl_supervisor_test_ffi", "active_child_count")
+fn active_child_count(supervisor: process.Pid) -> Int
 
 // ── A trivial named sibling worker used to prove parent/sibling survival ────
 
@@ -786,4 +792,347 @@ pub fn stop_leaves_no_registered_name_or_process_test() {
   beryl.app_limiter_pid(sockets) |> should.be_error
   // The system is fully gone: a fresh connection cannot be admitted.
   transport.acquire_connection_slot(sockets, "1.2.3.4") |> should.be_error
+}
+
+// ── the socket factory owns the socket actors (ADR 0005) ────────────────────
+
+fn socket_factory_pid(sockets: beryl.Sockets) -> process.Pid {
+  let assert Ok(pid) = beryl.app_socket_factory_pid(sockets)
+  pid
+}
+
+fn connected_sockets(sockets: beryl.Sockets) -> Int {
+  case stats.snapshot(sockets) {
+    Ok(snapshot) -> stats.connected_sockets(snapshot)
+    Error(_) -> -1
+  }
+}
+
+pub fn socket_factory_crash_closes_sockets_and_recovers_test() {
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: h.accepting_init,
+      update: h.accepting_update,
+    )
+
+  let closed = process.new_subject()
+  let runtime = h.runtime_pid(sockets)
+  admit(sockets, runtime, "factory-a", fn() {
+    process.send(closed, "factory-a")
+  })
+  |> should.equal(Ok(Nil))
+  admit(sockets, runtime, "factory-b", fn() {
+    process.send(closed, "factory-b")
+  })
+  |> should.equal(Ok(Nil))
+
+  // Both socket actors are owned children of the shared factory.
+  let factory = socket_factory_pid(sockets)
+  active_child_count(factory) |> should.equal(2)
+
+  process.kill(factory)
+
+  // The factory took its whole socket population with it, and the router
+  // swept both actors through its monitors and closed their transports.
+  let assert Ok(first) = process.receive(closed, 2000)
+  let assert Ok(second) = process.receive(closed, 2000)
+  [first, second]
+  |> list.sort(string.compare)
+  |> should.equal(["factory-a", "factory-b"])
+  test_helpers.wait_until(fn() { connected_sockets(sockets) == 0 }, 2000, 10)
+  connected_sockets(sockets) |> should.equal(0)
+
+  // Only the factory restarted: the permanent child comes back under the same
+  // name while the router keeps running.
+  test_helpers.wait_until(
+    fn() {
+      case beryl.app_socket_factory_pid(sockets) {
+        Ok(pid) -> pid != factory && process.is_alive(pid)
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+  let recovered = socket_factory_pid(sockets)
+  recovered |> should.not_equal(factory)
+  beryl.app_runtime_pid(sockets) |> should.equal(Ok(runtime))
+  active_child_count(recovered) |> should.equal(0)
+
+  // New connections are accepted, and are children of the replacement.
+  admit(sockets, runtime, "after-factory-crash", fn() { Nil })
+  |> should.equal(Ok(Nil))
+  active_child_count(recovered) |> should.equal(1)
+  connected_sockets(sockets) |> should.equal(1)
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn cancelled_admission_leaves_no_booting_factory_child_test() {
+  let gate = new_gate()
+  let init_entered = process.new_subject()
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: socket.ConnectInfo(Nil)) {
+        process.send(init_entered, Nil)
+        wait_for_gate(gate)
+        #(Nil, [])
+      },
+      update: h.accepting_update,
+    )
+
+  let factory = socket_factory_pid(sockets)
+  let admission_result = process.new_subject()
+  let connection_closed = process.new_subject()
+  let _connection =
+    process.spawn(fn() {
+      let assert Ok(owner) = transport.runtime_pid(sockets)
+      process.send(
+        admission_result,
+        transport.admit_socket(
+          sockets: sockets,
+          owner: owner,
+          socket_id: "cancelled",
+          send: fn(_message) { Ok(Nil) },
+          send_binary: fn(_data) { Ok(Nil) },
+          codec: None,
+          seed: socket.empty_seed(),
+          close: fn() { process.send(connection_closed, Nil) },
+        ),
+      )
+    })
+
+  // Phase one is done: the actor exists as a factory child while it is still
+  // booting, before the application `init` has registered anything.
+  process.receive(init_entered, 1000) |> should.equal(Ok(Nil))
+  active_child_count(factory) |> should.equal(1)
+
+  // The transport's admission wait expires and cancels the token.
+  process.receive(admission_result, 2000) |> should.equal(Ok(Error(Nil)))
+  process.receive(connection_closed, 1000) |> should.equal(Ok(Nil))
+
+  // The booting actor finds its admission cancelled and stops instead of
+  // leaking as a never-admitted child of the factory.
+  release_gate(gate)
+  test_helpers.wait_until(fn() { active_child_count(factory) == 0 }, 2000, 10)
+  active_child_count(factory) |> should.equal(0)
+  test_helpers.wait_until(fn() { connected_sockets(sockets) == 0 }, 2000, 10)
+  connected_sockets(sockets) |> should.equal(0)
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn stop_drains_socket_actors_before_stopping_the_factory_test() {
+  let closes = process.new_subject()
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: h.accepting_init,
+      update: fn(model, input) {
+        case input {
+          socket.Closed(topic, reason) -> {
+            process.send(closes, #(topic, reason))
+            Next(model, [])
+          }
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          _ -> Next(model, [])
+        }
+      },
+    )
+
+  let transport_closed = process.new_subject()
+  let frames =
+    h.connect_with_close(sockets, "drained", fn() {
+      process.send(transport_closed, Nil)
+    })
+  h.join_ok(sockets, frames, "drained", "room:a", "jr-1", "r-1")
+  let factory = socket_factory_pid(sockets)
+  active_child_count(factory) |> should.equal(1)
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+
+  // The socket actor ran its shutdown teardown before the factory was
+  // stopped: a factory shutdown that preceded the drain would have killed the
+  // actor without ever delivering `Closed`.
+  process.receive(closes, 1000)
+  |> should.equal(Ok(#("room:a", socket.Shutdown)))
+  process.receive(transport_closed, 1000) |> should.equal(Ok(Nil))
+
+  // The factory is then torn down with the rest of the subtree.
+  test_helpers.wait_until(fn() { !process.is_alive(factory) }, 2000, 10)
+  process.is_alive(factory) |> should.be_false
+  beryl.app_socket_factory_pid(sockets) |> should.be_error
+}
+
+// ── transport close during `Booting` discards init effects (ADR 0005) ──────
+
+pub fn cancelled_admission_during_booting_discards_init_effects_test() {
+  let gate = new_gate()
+  let init_entered = process.new_subject()
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(info: socket.ConnectInfo(Nil)) {
+        case info.socket_id {
+          "cancelled-with-effects" -> {
+            process.send(init_entered, Nil)
+            wait_for_gate(gate)
+            #(Nil, [Broadcast("room:a", "leak", json.string("leaked"))])
+          }
+          _ -> #(Nil, [])
+        }
+      },
+      update: h.accepting_update,
+    )
+
+  // A bystander already joined to the topic the cancelled init would
+  // broadcast to: if the cancelled `init`'s effects ever leaked into the
+  // runtime, this socket would see the broadcast frame.
+  let frames = h.connect(sockets, "bystander")
+  h.join_ok(sockets, frames, "bystander", "room:a", "jr-0", "r-0")
+
+  let factory = socket_factory_pid(sockets)
+  active_child_count(factory) |> should.equal(1)
+
+  let admission_result = process.new_subject()
+  let connection_closed = process.new_subject()
+  let _connection =
+    process.spawn(fn() {
+      let assert Ok(owner) = transport.runtime_pid(sockets)
+      process.send(
+        admission_result,
+        transport.admit_socket(
+          sockets: sockets,
+          owner: owner,
+          socket_id: "cancelled-with-effects",
+          send: fn(_message) { Ok(Nil) },
+          send_binary: fn(_data) { Ok(Nil) },
+          codec: None,
+          seed: socket.empty_seed(),
+          close: fn() { process.send(connection_closed, Nil) },
+        ),
+      )
+    })
+
+  // Phase one is done: the actor exists as a factory child while `init` is
+  // still running, before it has registered anything.
+  process.receive(init_entered, 1000) |> should.equal(Ok(Nil))
+  active_child_count(factory) |> should.equal(2)
+
+  // The transport's admission wait expires and closes the connection while
+  // `init` is still running -- a transport close/disconnect during
+  // `Booting`.
+  process.receive(admission_result, 2000) |> should.equal(Ok(Error(Nil)))
+  process.receive(connection_closed, 1000) |> should.equal(Ok(Nil))
+
+  release_gate(gate)
+
+  // The cancelled actor stops instead of leaking as a factory child, and its
+  // `init` effects -- queued behind the cancellation check -- never apply:
+  // the bystander never sees the broadcast.
+  test_helpers.wait_until(fn() { active_child_count(factory) == 1 }, 2000, 10)
+  active_child_count(factory) |> should.equal(1)
+  h.recv_none(frames)
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+// ── graceful stop drains a `Booting` socket alongside an `Active` one ──────
+// (ADR 0005)
+
+pub fn stop_drains_active_and_booting_socket_actors_test() {
+  let gate = new_gate()
+  let init_entered = process.new_subject()
+  let closes = process.new_subject()
+  let assert Ok(sockets) =
+    h.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(info: socket.ConnectInfo(Nil)) {
+        case info.socket_id {
+          "booting" -> {
+            process.send(init_entered, Nil)
+            wait_for_gate(gate)
+            Nil
+          }
+          _ -> Nil
+        }
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Closed(topic, reason) -> {
+            process.send(closes, #(topic, reason))
+            Next(model, [])
+          }
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          _ -> Next(model, [])
+        }
+      },
+    )
+
+  let transport_closed = process.new_subject()
+  let frames =
+    h.connect_with_close(sockets, "active", fn() {
+      process.send(transport_closed, Nil)
+    })
+  h.join_ok(sockets, frames, "active", "room:a", "jr-1", "r-1")
+
+  let factory = socket_factory_pid(sockets)
+  active_child_count(factory) |> should.equal(1)
+
+  // A second connection whose `init` is gated: it stays `Booting`.
+  let admission_result = process.new_subject()
+  let booting_closed = process.new_subject()
+  let _connection =
+    process.spawn(fn() {
+      let assert Ok(owner) = transport.runtime_pid(sockets)
+      process.send(
+        admission_result,
+        transport.admit_socket(
+          sockets: sockets,
+          owner: owner,
+          socket_id: "booting",
+          send: fn(_message) { Ok(Nil) },
+          send_binary: fn(_data) { Ok(Nil) },
+          codec: None,
+          seed: socket.empty_seed(),
+          close: fn() { process.send(booting_closed, Nil) },
+        ),
+      )
+    })
+  process.receive(init_entered, 1000) |> should.equal(Ok(Nil))
+  active_child_count(factory) |> should.equal(2)
+
+  // `stop` blocks until the whole subtree drains, so it runs in its own
+  // process.
+  let stop_result = process.new_subject()
+  process.spawn(fn() { process.send(stop_result, beryl.stop(sockets)) })
+
+  // The drain waits for every socket actor to finish shutdown phase one
+  // before it tears any of them down: the already-`Active` socket's
+  // `Closed` and transport close have not fired while its sibling is still
+  // `Booting`.
+  process.receive(closes, 150) |> should.be_error
+  process.receive(transport_closed, 150) |> should.be_error
+
+  release_gate(gate)
+
+  // The booting socket finishes `init`, registers, and immediately reports
+  // its own shutdown phase one; only then does the drain proceed for both
+  // sockets.
+  process.receive(admission_result, 2000) |> should.equal(Ok(Ok(Nil)))
+  process.receive(booting_closed, 1000) |> should.equal(Ok(Nil))
+  process.receive(closes, 1000)
+  |> should.equal(Ok(#("room:a", socket.Shutdown)))
+  process.receive(transport_closed, 1000) |> should.equal(Ok(Nil))
+
+  // `stop` completes with its documented result once the drain finishes.
+  process.receive(stop_result, 2000) |> should.equal(Ok(Ok(Nil)))
+
+  // No booting factory child is left behind; the whole subtree is gone.
+  test_helpers.wait_until(fn() { !process.is_alive(factory) }, 2000, 10)
+  process.is_alive(factory) |> should.be_false
+  beryl.app_socket_factory_pid(sockets) |> should.be_error
 }
