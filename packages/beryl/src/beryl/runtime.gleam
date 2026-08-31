@@ -301,7 +301,7 @@ type RuntimeRole(msg) {
     /// topics for one socket. The socket actor starts and links the
     /// supervisor. Thus, the workers stop with the socket. Joins on different
     /// sockets do not wait for each other.
-    workers: Option(factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted)),
+    workers: Option(TopicWorkers),
   )
 }
 
@@ -692,7 +692,7 @@ pub fn socket_factory_child(
   config config: Config,
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Input(msg)) -> Next(model),
-  open_worker open_worker: Option(fn(WorkerContext) -> WorkerOutcome),
+  open_worker open_worker: Option(WorkerOpener),
   router router: Subject(Msg(msg)),
   name name: process.Name(SocketFactoryMessage(msg)),
 ) -> supervision.ChildSpecification(
@@ -753,7 +753,7 @@ fn start_socket_actor(
   config config: Config,
   init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
   update update: fn(model, Input(msg)) -> Next(model),
-  open_worker open_worker: Option(fn(WorkerContext) -> WorkerOutcome),
+  open_worker open_worker: Option(WorkerOpener),
   router router: Subject(Msg(msg)),
   router_pid router_pid: process.Pid,
 ) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
@@ -764,13 +764,15 @@ fn start_socket_actor(
     // with the socket.
     use workers <- result.try(case open_worker {
       None -> Ok(None)
-      Some(open) ->
+      Some(opener) ->
         factory_supervisor.worker_child(fn(spawn) {
-          start_worker(open, subject, config.telemetry, spawn)
+          start_worker(opener.open, subject, config.telemetry, spawn)
         })
         |> factory_supervisor.restart_strategy(supervision.Temporary)
         |> factory_supervisor.start
-        |> result.map(fn(started) { Some(started.data) })
+        |> result.map(fn(started) {
+          Some(TopicWorkers(accepts: opener.accepts, factory: started.data))
+        })
         |> result.map_error(fn(_) { "topic worker supervisor failed to start" })
     })
     let state =
@@ -2965,14 +2967,14 @@ fn exec_input(
         // message is cast to it. `Binary` and `Info` are socket-scoped and
         // still reach `update`; `Closed` for a worker topic never gets
         // here, because `exec_close_topic` routes the close to the worker.
-        SocketActorRole(workers: Some(factory), ..),
+        SocketActorRole(workers: Some(workers), ..),
           sock.Join(topic: topic_name, payload:, ref:)
         ->
           exec_worker_join(
             state,
             socket_id,
             socket,
-            factory,
+            workers,
             topic_name,
             payload,
             ref,
@@ -5179,6 +5181,28 @@ const worker_join_timeout_ms = 5000
 /// `worker_join_timeout_ms`.
 const worker_terminate_timeout_ms = 5000
 
+/// The worker contract that `beryl.worker_child_spec` hands to the runtime.
+///
+/// The socket actor calls `accepts` with the topic name before it starts a
+/// worker for a join. `Error(reason)` rejects the join with that reason and
+/// spawns no process. `open` runs in the new worker process for an accepted
+/// topic.
+pub type WorkerOpener {
+  WorkerOpener(
+    accepts: fn(String) -> Result(Nil, Json),
+    open: fn(WorkerContext) -> WorkerOutcome,
+  )
+}
+
+/// One socket actor's topic-worker machinery: the contract's pre-check and
+/// the factory that starts one worker per accepted join.
+type TopicWorkers {
+  TopicWorkers(
+    accepts: fn(String) -> Result(Nil, Json),
+    factory: factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted),
+  )
+}
+
 /// The factory supervisor's child argument: one join attempt.
 type WorkerSpawn {
   WorkerSpawn(
@@ -5387,10 +5411,48 @@ fn worker_step(
 
 /// Start the worker for a join and answer the join from its outcome.
 ///
+/// The contract's `accepts` runs first: a refused topic is rejected with
+/// its reason and no worker is spawned.
+///
 /// The accept-time effects are lowered behind the `AcceptJoin` in the
 /// same list, so the acknowledgment precedes the join's own pushes and
 /// the subscription exists when they are applied.
 fn exec_worker_join(
+  state: State(model, msg),
+  socket_id: String,
+  socket: SocketState(model, msg),
+  workers: TopicWorkers,
+  topic_name: String,
+  payload: Dynamic,
+  ref: JoinRef,
+  source: Source,
+  cont: Cont,
+) -> Exec(model, msg) {
+  case workers.accepts(topic_name) {
+    Error(reason) ->
+      exec_update_result(
+        state,
+        socket_id,
+        source,
+        cont,
+        Ok(sock.Next(socket.model, [sock.RejectJoin(ref, reason)])),
+      )
+    Ok(Nil) ->
+      exec_accepted_worker_join(
+        state,
+        socket_id,
+        socket,
+        workers.factory,
+        topic_name,
+        payload,
+        ref,
+        source,
+        cont,
+      )
+  }
+}
+
+fn exec_accepted_worker_join(
   state: State(model, msg),
   socket_id: String,
   socket: SocketState(model, msg),
