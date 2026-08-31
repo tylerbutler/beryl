@@ -20,7 +20,7 @@ deps: deps-gleam
 
 # Download gleam dependencies for every workspace member
 deps-gleam:
-    trellis run deps
+    trellis run deps --serial
 
 # === BUILD ===
 
