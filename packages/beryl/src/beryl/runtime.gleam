@@ -2,7 +2,7 @@
 ////
 //// One router actor indexes every socket started through `beryl.child_spec`,
 //// and one socket actor owns each connected socket. Both roles are generic
-//// over the app's `model` and `msg` types: each model lives in its socket
+//// over the app's `model` and `message` types: each model lives in its socket
 //// actor, typed `Info` messages arrive through that actor's mailbox, and no
 //// value is ever type-erased. Transports reach the actors through monomorphic
 //// closures captured by `beryl.child_spec`, so the frame-level transport SPI
@@ -15,6 +15,7 @@
 //// its socket actor applies strictly in order, so effect list order is wire
 //// order.
 
+import beryl/error as beryl_error
 import beryl/internal
 import beryl/log.{type Logger}
 import beryl/presence
@@ -101,7 +102,7 @@ fn claim_pending_admission(admission: Option(AdmissionToken)) -> Bool {
 }
 
 /// Messages the runtime actor handles.
-pub type Msg(msg) {
+pub type Msg(message) {
   AdmitSocket(
     owner: process.Pid,
     socket_id: String,
@@ -116,17 +117,17 @@ pub type Msg(msg) {
     /// so connection setup never serialises through the router. The router
     /// admits it atomically (monitor, index, forward) and the actor runs
     /// the app `init` and answers `reply` itself.
-    actor: Subject(Msg(msg)),
+    actor: Subject(Msg(message)),
     actor_pid: process.Pid,
   )
   SocketDisconnected(socket_id: String)
   RouteText(socket_id: String, raw_text: String)
-  RouteDecoded(socket_id: String, msg: codec.Inbound)
-  RouteDecodedBinary(socket_id: String, msg: codec.Inbound)
+  RouteDecoded(socket_id: String, message: codec.Inbound)
+  RouteDecodedBinary(socket_id: String, message: codec.Inbound)
   HandleBinary(socket_id: String, data: BitArray)
   /// A typed server-side message for one socket, sent through its
   /// `Sender`. Delivered to `update` as `Info(message)`.
-  AppInfo(socket_id: String, message: msg)
+  AppInfo(socket_id: String, message: message)
   /// Broadcast fan-out: local subscribers plus PubSub forwarding to other
   /// runtimes when PubSub is configured.
   Broadcast(topic: String, event: String, payload: Json, except: Option(String))
@@ -135,7 +136,7 @@ pub type Msg(msg) {
   GetStats(reply: Subject(StatsSnapshot))
   /// A presence mutation this runtime started has been applied (CRDT and
   /// read model both updated). Routed back to the socket waiting on it.
-  PresenceAcknowledged(ack: presence.MutationAck)
+  PresenceAcknowledged(acknowledgement: presence.MutationAck)
   /// A presence mutation was not acknowledged in time. Ignored unless the
   /// socket is still waiting on exactly that operation.
   PresenceOpTimedOut(socket_id: String, op_id: Int)
@@ -220,9 +221,9 @@ pub type StatsSnapshot {
 @external(erlang, "beryl_ffi", "monotonic_time_ms")
 fn monotonic_time_ms() -> Int
 
-type State(model, msg) {
+type State(model, message) {
   State(
-    sockets: Dict(String, SocketState(model, msg)),
+    sockets: Dict(String, SocketState(model, message)),
     /// Topic -> set of subscribed socket ids.
     topics: Dict(String, Set(String)),
     config: Config,
@@ -232,15 +233,15 @@ type State(model, msg) {
     /// delivery into the actor's selector.
     subscriber: Option(pubsub.Subscriber(Json)),
     logger: Logger,
-    self_subject: Subject(Msg(msg)),
-    init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-    update: fn(model, Input(msg)) -> Next(model),
+    self_subject: Subject(Msg(message)),
+    init: fn(ConnectInfo(message)) -> #(model, List(Effect)),
+    update: fn(model, Input(message)) -> Next(model),
     message_buckets: Dict(String, rate_limit.Bucket),
     join_buckets: Dict(String, rate_limit.Bucket),
     channel_buckets: Dict(String, Dict(String, rate_limit.Bucket)),
     /// Reply target for asynchronous presence mutations, folded into the
     /// actor's selector as `PresenceAcknowledged`.
-    presence_ack: Subject(presence.MutationAck),
+    presence_acknowledgement: Subject(presence.MutationAck),
     /// Source of presence operation ids. Monotonic, so an acknowledgement
     /// for an abandoned operation can never be mistaken for a newer one.
     next_op_id: Int,
@@ -248,18 +249,18 @@ type State(model, msg) {
     /// the work to resume once it is acknowledged. Only these sockets are
     /// suspended: every other socket, broadcast, and system message keeps
     /// being processed.
-    suspended: Dict(String, Suspension(msg)),
+    suspended: Dict(String, Suspension(message)),
     /// Socket-scoped messages that arrived while their socket was
     /// suspended, newest first. Delivered in arrival order once the socket
     /// resumes.
-    queued: Dict(String, List(Msg(msg))),
+    queued: Dict(String, List(Msg(message))),
     /// How many tracks per socket the runtime gave up on (timed out) while
     /// their acknowledgement could still arrive — the entries whose refs
     /// this runtime does not know and only learns from the late
     /// acknowledgement it compensates. Decremented as each one is
     /// compensated, and swept wholesale at shutdown, when no
     /// acknowledgement can be received any more.
-    unacked_tracks: Dict(String, Int),
+    unacknowledged_tracks: Dict(String, Int),
     /// Set while the runtime is draining for shutdown. Presence mutations
     /// are then fire-and-forget: there is no longer a runtime to deliver
     /// the acknowledgement to.
@@ -267,7 +268,7 @@ type State(model, msg) {
     /// The process's topology-specific state. A socket actor is this same
     /// `State` with exactly one entry in `sockets`; router-only shutdown and
     /// actor-index fields cannot be constructed for that role.
-    role: RuntimeRole(msg),
+    role: RuntimeRole(message),
   )
 }
 
@@ -275,23 +276,23 @@ type State(model, msg) {
 /// crash side of the actor's lifecycle: a normal close reports
 /// `SocketClosed` and is demonitored, while a crash is swept via
 /// `SocketActorDown`.
-type SocketActorRef(msg) {
+type SocketActorRef(message) {
   SocketActorRef(
-    subject: Subject(Msg(msg)),
+    subject: Subject(Msg(message)),
     pid: process.Pid,
     monitor: process.Monitor,
     close: fn() -> Nil,
   )
 }
 
-type RuntimeRole(msg) {
+type RuntimeRole(message) {
   RouterRole(
-    socket_actors: Dict(String, SocketActorRef(msg)),
+    socket_actors: Dict(String, SocketActorRef(message)),
     stop_reply: Option(Subject(Bool)),
     stop_finalized: Int,
   )
   SocketActorRole(
-    router: Subject(Msg(msg)),
+    router: Subject(Msg(message)),
     /// Where this actor sits in the two-phase admission of ADR 0005.
     phase: SocketPhase,
     /// The supervisor that starts topic workers for a socket actor.
@@ -334,13 +335,13 @@ type WorkerRef {
 // and heartbeats continue.
 
 /// A socket parked on one asynchronous operation.
-type Suspension(msg) {
+type Suspension(message) {
   Suspension(
     waiting: Waiting,
     /// Cancelled when the operation completes in time.
     timer: process.Timer,
     /// Work to resume, in order, after the operation completes.
-    stack: List(Step(msg)),
+    stack: List(Step(message)),
   )
 }
 
@@ -380,7 +381,7 @@ type PresenceOp {
 }
 
 /// One resumable unit of per-socket work.
-type Step(msg) {
+type Step(message) {
   /// Apply the remaining effects of one update's effect list.
   StepEffects(
     effects: List(Effect),
@@ -389,7 +390,7 @@ type Step(msg) {
     cont: Cont,
   )
   /// Deliver one input to the app's `update` and apply what it returns.
-  StepInput(input: Input(msg), source: Source, cont: Cont)
+  StepInput(input: Input(message), source: Source, cont: Cont)
   /// Deliver a join that was waiting for a duplicate topic to close.
   StepDeliverJoin(
     topic: String,
@@ -462,20 +463,20 @@ type Cont {
 }
 
 /// The result of executing one step.
-type Exec(model, msg) {
+type Exec(model, message) {
   /// Continue immediately with `steps` pushed onto the stack.
-  Continue(state: State(model, msg), steps: List(Step(msg)))
+  Continue(state: State(model, message), steps: List(Step(message)))
   /// Park the socket until `waiting` completes, then resume with `steps`
   /// pushed onto the stack.
   Await(
-    state: State(model, msg),
+    state: State(model, message),
     waiting: Waiting,
     timer: process.Timer,
-    steps: List(Step(msg)),
+    steps: List(Step(message)),
   )
 }
 
-type SocketState(model, msg) {
+type SocketState(model, message) {
   SocketState(
     id: String,
     send: fn(String) -> Result(Nil, Nil),
@@ -533,7 +534,7 @@ pub type Source {
 }
 
 /// Start runtime telemetry without touching the VM clock when disabled.
-fn telemetry_start(state: State(model, msg)) -> Int {
+fn telemetry_start(state: State(model, message)) -> Int {
   start_time_if(state.config.telemetry)
 }
 
@@ -543,7 +544,7 @@ fn start_time_if(enabled: Bool) -> Int {
 }
 
 fn emit_join_stop(
-  state: State(model, msg),
+  state: State(model, message),
   started_at: Int,
   outcome: telemetry.JoinOutcome,
 ) -> Nil {
@@ -558,7 +559,7 @@ fn emit_join_stop(
 }
 
 fn emit_message_stop(
-  state: State(model, msg),
+  state: State(model, message),
   started_at: Int,
   kind: telemetry.MessageKind,
   outcome: telemetry.MessageOutcome,
@@ -596,18 +597,18 @@ fn disconnect_reason_telemetry(
 /// handles valid across restarts (per-socket state is dropped on restart).
 pub fn start_named(
   config: Config,
-  name name: process.Name(Msg(msg)),
+  name name: process.Name(Msg(message)),
   pubsub pubsub_option: Option(PubSub(Json)),
-  init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Input(msg)) -> Next(model),
-) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
+  init init: fn(ConnectInfo(message)) -> #(model, List(Effect)),
+  update update: fn(model, Input(message)) -> Next(model),
+) -> Result(actor.Started(Subject(Msg(message))), actor.StartError) {
   internal.configure(config.logging)
 
   actor.new_with_initialiser(5000, fn(subject) {
     // Presence acknowledgements arrive on their own subject (the presence
-    // actor knows nothing about `Msg(msg)`) and are folded into the
+    // actor knows nothing about `Msg(message)`) and are folded into the
     // actor's selector.
-    let ack_subject = process.new_subject()
+    let acknowledgement_subject = process.new_subject()
     let base =
       State(
         sockets: dict.new(),
@@ -622,11 +623,11 @@ pub fn start_named(
         message_buckets: dict.new(),
         join_buckets: dict.new(),
         channel_buckets: dict.new(),
-        presence_ack: ack_subject,
+        presence_acknowledgement: acknowledgement_subject,
         next_op_id: 1,
         suspended: dict.new(),
         queued: dict.new(),
-        unacked_tracks: dict.new(),
+        unacknowledged_tracks: dict.new(),
         stopping: False,
         role: RouterRole(
           socket_actors: dict.new(),
@@ -644,7 +645,7 @@ pub fn start_named(
     let selector =
       process.new_selector()
       |> process.select(subject)
-      |> process.select_map(ack_subject, PresenceAcknowledged)
+      |> process.select_map(acknowledgement_subject, PresenceAcknowledged)
       |> process.select_monitors(SocketActorDown)
     case pubsub_option {
       Some(pubsub_instance) -> {
@@ -674,8 +675,8 @@ pub fn start_named(
 /// The socket factory's message type, used only as the payload of its
 /// registered name. The per-connection start argument is the router pid the
 /// transport captured before admission.
-pub type SocketFactoryMessage(msg) =
-  factory_supervisor.Message(process.Pid, Subject(Msg(msg)))
+pub type SocketFactoryMessage(message) =
+  factory_supervisor.Message(process.Pid, Subject(Msg(message)))
 
 /// Build the socket factory child of the nested beryl supervisor (ADR 0005).
 ///
@@ -690,13 +691,13 @@ pub type SocketFactoryMessage(msg) =
 /// runs `init` later, from the router's `AdmitSocket`.
 pub fn socket_factory_child(
   config config: Config,
-  init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Input(msg)) -> Next(model),
+  init init: fn(ConnectInfo(message)) -> #(model, List(Effect)),
+  update update: fn(model, Input(message)) -> Next(model),
   open_worker open_worker: Option(WorkerOpener),
-  router router: Subject(Msg(msg)),
-  name name: process.Name(SocketFactoryMessage(msg)),
+  router router: Subject(Msg(message)),
+  name name: process.Name(SocketFactoryMessage(message)),
 ) -> supervision.ChildSpecification(
-  factory_supervisor.Supervisor(process.Pid, Subject(Msg(msg))),
+  factory_supervisor.Supervisor(process.Pid, Subject(Msg(message))),
 ) {
   factory_supervisor.worker_child(fn(router_pid) {
     start_socket_actor(
@@ -723,9 +724,9 @@ pub fn socket_factory_child(
 /// startup, during a factory restart window, or after shutdown — this reports
 /// the failure instead of crashing the transport process.
 pub fn start_socket_child(
-  factory factory: process.Name(SocketFactoryMessage(msg)),
+  factory factory: process.Name(SocketFactoryMessage(message)),
   router_pid router_pid: process.Pid,
-) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
+) -> Result(actor.Started(Subject(Msg(message))), actor.StartError) {
   case
     internal.rescue(fn() {
       factory_supervisor.start_child(
@@ -751,14 +752,14 @@ pub fn start_socket_child(
 /// slow `init` never holds the socket factory's start turn.
 fn start_socket_actor(
   config config: Config,
-  init init: fn(ConnectInfo(msg)) -> #(model, List(Effect)),
-  update update: fn(model, Input(msg)) -> Next(model),
+  init init: fn(ConnectInfo(message)) -> #(model, List(Effect)),
+  update update: fn(model, Input(message)) -> Next(model),
   open_worker open_worker: Option(WorkerOpener),
-  router router: Subject(Msg(msg)),
+  router router: Subject(Msg(message)),
   router_pid router_pid: process.Pid,
-) -> Result(actor.Started(Subject(Msg(msg))), actor.StartError) {
+) -> Result(actor.Started(Subject(Msg(message))), actor.StartError) {
   actor.new_with_initialiser(5000, fn(subject) {
-    let ack_subject = process.new_subject()
+    let acknowledgement_subject = process.new_subject()
     // Start topic workers under a factory supervisor that links to this
     // actor. A worker crash does not stop the socket, but all workers stop
     // with the socket.
@@ -773,7 +774,11 @@ fn start_socket_actor(
         |> result.map(fn(started) {
           Some(TopicWorkers(accepts: opener.accepts, factory: started.data))
         })
-        |> result.map_error(fn(_) { "topic worker supervisor failed to start" })
+        |> result.map_error(fn(error) {
+          error
+          |> beryl_error.from_actor_start_error
+          |> beryl_error.describe_start_failure
+        })
     })
     let state =
       State(
@@ -789,11 +794,11 @@ fn start_socket_actor(
         message_buckets: dict.new(),
         join_buckets: dict.new(),
         channel_buckets: dict.new(),
-        presence_ack: ack_subject,
+        presence_acknowledgement: acknowledgement_subject,
         next_op_id: 1,
         suspended: dict.new(),
         queued: dict.new(),
-        unacked_tracks: dict.new(),
+        unacknowledged_tracks: dict.new(),
         stopping: False,
         role: SocketActorRole(router:, phase: Booting, workers:),
       )
@@ -808,7 +813,7 @@ fn start_socket_actor(
     // `Down` message belongs to a topic worker for this socket.
     process.new_selector()
     |> process.select(subject)
-    |> process.select_map(ack_subject, PresenceAcknowledged)
+    |> process.select_map(acknowledgement_subject, PresenceAcknowledged)
     |> process.select_specific_monitor(monitor, fn(_) { RouterDown })
     |> process.select_monitors(WorkerDown)
     |> actor.selecting(actor.returning(actor.initialised(state), subject), _)
@@ -820,7 +825,10 @@ fn start_socket_actor(
 
 /// Check at half the staleness window; `beryl.validate_config` guarantees the
 /// timeout is at least 2, so the interval is always positive.
-fn schedule_heartbeat_check(subject: Subject(Msg(msg)), config: Config) -> Nil {
+fn schedule_heartbeat_check(
+  subject: Subject(Msg(message)),
+  config: Config,
+) -> Nil {
   let _timer =
     process.send_after(
       subject,
@@ -839,15 +847,15 @@ fn schedule_heartbeat_check(subject: Subject(Msg(msg)), config: Config) -> Nil {
 /// slow application `init` short.
 const socket_boot_timeout_ms = 5000
 
-fn schedule_boot_check(subject: Subject(Msg(msg))) -> Nil {
+fn schedule_boot_check(subject: Subject(Msg(message))) -> Nil {
   let _timer = process.send_after(subject, socket_boot_timeout_ms, BootTimedOut)
   Nil
 }
 
 fn handle_message(
-  state: State(model, msg),
-  message: Msg(msg),
-) -> actor.Next(State(model, msg), Msg(msg)) {
+  state: State(model, message),
+  message: Msg(message),
+) -> actor.Next(State(model, message), Msg(message)) {
   case message {
     AdmitSocket(
       owner,
@@ -937,8 +945,11 @@ fn handle_message(
         }
       }
     CheckHeartbeats -> actor.continue(handle_check_heartbeats(state))
-    PresenceAcknowledged(ack) ->
-      after_socket_turn(state, handle_presence_ack(state, ack))
+    PresenceAcknowledged(acknowledgement) ->
+      after_socket_turn(
+        state,
+        handle_presence_acknowledgement(state, acknowledgement),
+      )
     PresenceOpTimedOut(socket_id, op_id) ->
       after_socket_turn(state, handle_presence_timeout(state, socket_id, op_id))
     GetStats(reply) -> {
@@ -1060,10 +1071,10 @@ fn handle_message(
 }
 
 fn handle_router_socket_actor_down(
-  state: State(model, msg),
+  state: State(model, message),
   down: process.Down,
-  socket_actors: Dict(String, SocketActorRef(msg)),
-) -> actor.Next(State(model, msg), Msg(msg)) {
+  socket_actors: Dict(String, SocketActorRef(message)),
+) -> actor.Next(State(model, message), Msg(message)) {
   case down {
     process.ProcessDown(pid: pid, monitor: _, reason: _) ->
       case
@@ -1098,9 +1109,9 @@ fn handle_router_socket_actor_down(
 /// progress. Shared by the normal close (`SocketClosed`) and the crash
 /// sweep (`SocketActorDown`).
 fn remove_socket_actor(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> actor.Next(State(model, msg), Msg(msg)) {
+) -> actor.Next(State(model, message), Msg(message)) {
   case state.role {
     SocketActorRole(..) -> actor.continue(state)
     RouterRole(socket_actors:, stop_reply:, stop_finalized:) -> {
@@ -1127,21 +1138,18 @@ fn remove_socket_actor(
             stop_finalized: stop_finalized,
           ),
         )
-      case stop_reply {
-        None -> actor.continue(state)
-        Some(reply) ->
-          case dict.is_empty(socket_actors) {
-            True -> {
-              process.send(reply, True)
-              actor.stop()
-            }
-            False -> {
-              // A crash during drain phase one would otherwise leave the
-              // router waiting on a `StopPhaseDone` that never arrives.
-              begin_stop_phase_two_if_ready(state)
-              actor.continue(state)
-            }
-          }
+      case stop_reply, dict.is_empty(socket_actors) {
+        None, True | None, False -> actor.continue(state)
+        Some(reply), True -> {
+          process.send(reply, True)
+          actor.stop()
+        }
+        Some(_), False -> {
+          // A crash during drain phase one would otherwise leave the router
+          // waiting on a `StopPhaseDone` that never arrives.
+          begin_stop_phase_two_if_ready(state)
+          actor.continue(state)
+        }
       }
     }
   }
@@ -1150,7 +1158,7 @@ fn remove_socket_actor(
 /// Start drain phase two once every surviving socket actor has finished
 /// phase one. Re-sending `StopSocketActor` to an actor that already got
 /// one is harmless: it stops on the first and never reads the second.
-fn begin_stop_phase_two_if_ready(state: State(model, msg)) -> Nil {
+fn begin_stop_phase_two_if_ready(state: State(model, message)) -> Nil {
   case state.role {
     SocketActorRole(..) -> Nil
     RouterRole(socket_actors:, stop_finalized:, ..) ->
@@ -1169,10 +1177,10 @@ fn begin_stop_phase_two_if_ready(state: State(model, msg)) -> Nil {
 /// preserves input order. The event that ends the suspension is the only
 /// exception.
 fn socket_turn(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  message: Msg(msg),
-) -> actor.Next(State(model, msg), Msg(msg)) {
+  message: Msg(message),
+) -> actor.Next(State(model, message), Msg(message)) {
   case dict.get(state.suspended, socket_id) {
     Error(Nil) ->
       after_socket_turn(state, dispatch_socket_msg(state, socket_id, message))
@@ -1187,9 +1195,9 @@ fn socket_turn(
 /// A socket actor's turn is over. If the socket is gone the actor has
 /// nothing left to own, so it tells the router and stops.
 fn after_socket_turn(
-  before: State(model, msg),
-  after: State(model, msg),
-) -> actor.Next(State(model, msg), Msg(msg)) {
+  before: State(model, message),
+  after: State(model, message),
+) -> actor.Next(State(model, message), Msg(message)) {
   case dict.keys(before.sockets), after.role {
     [socket_id], SocketActorRole(router:, ..) ->
       case dict.has_key(after.sockets, socket_id) {
@@ -1207,19 +1215,19 @@ fn after_socket_turn(
 /// running and from `drain_queue` for messages that arrived while it was
 /// suspended, so both paths share exactly one implementation.
 fn dispatch_socket_msg(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  message: Msg(msg),
-) -> State(model, msg) {
+  message: Msg(message),
+) -> State(model, message) {
   case message {
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
     RouteText(socket_id, raw_text) ->
       handle_route_text(state, socket_id, raw_text)
-    RouteDecoded(socket_id, msg) ->
-      dispatch_inbound(state, socket_id, msg, telemetry.TextMessage)
-    RouteDecodedBinary(socket_id, msg) ->
-      dispatch_inbound(state, socket_id, msg, telemetry.BinaryMessage)
+    RouteDecoded(socket_id, message) ->
+      dispatch_inbound(state, socket_id, message, telemetry.TextMessage)
+    RouteDecodedBinary(socket_id, message) ->
+      dispatch_inbound(state, socket_id, message, telemetry.BinaryMessage)
     HandleBinary(socket_id, data) -> handle_binary_in(state, socket_id, data)
     AppInfo(socket_id, app_message) ->
       handle_app_info(state, socket_id, app_message)
@@ -1255,10 +1263,10 @@ fn dispatch_socket_msg(
 /// stored newest-first and reversed once per drain, so queueing stays O(1)
 /// per message even under a flood.
 fn enqueue_socket_msg(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  message: Msg(msg),
-) -> State(model, msg) {
+  message: Msg(message),
+) -> State(model, message) {
   let queue =
     dict.get(state.queued, socket_id)
     |> result.unwrap([])
@@ -1275,9 +1283,9 @@ fn enqueue_socket_msg(
 /// Deliver everything queued for a socket, in arrival order, stopping if
 /// another presence mutation suspends it again.
 fn drain_queue(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   // Resuming one mutation can immediately park the socket on the next one;
   // its queue then has to keep waiting rather than jump the suspension.
   use <- bool.guard(
@@ -1296,10 +1304,10 @@ fn drain_queue(
 }
 
 fn drain_messages(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  messages: List(Msg(msg)),
-) -> State(model, msg) {
+  messages: List(Msg(message)),
+) -> State(model, message) {
   case messages {
     [] -> state
     [message, ..rest] -> {
@@ -1319,7 +1327,7 @@ fn drain_messages(
 // ── Socket lifecycle ────────────────────────────────────────────────────────
 
 fn handle_admit_socket(
-  state: State(model, msg),
+  state: State(model, message),
   owner: process.Pid,
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
@@ -1329,9 +1337,9 @@ fn handle_admit_socket(
   close: fn() -> Nil,
   admission: AdmissionToken,
   reply: Subject(Bool),
-  actor_subject: Subject(Msg(msg)),
+  actor_subject: Subject(Msg(message)),
   actor_pid: process.Pid,
-) -> actor.Next(State(model, msg), Msg(msg)) {
+) -> actor.Next(State(model, message), Msg(message)) {
   case state.role {
     // Phase two of admission (ADR 0005). The router has already admitted
     // this socket atomically in its own turn; this actor runs the app
@@ -1428,7 +1436,7 @@ fn handle_admit_socket(
 }
 
 fn register_socket(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   send: fn(String) -> Result(Nil, Nil),
   send_binary: fn(BitArray) -> Result(Nil, Nil),
@@ -1436,7 +1444,7 @@ fn register_socket(
   seed: ConnectSeed,
   close: fn() -> Nil,
   admission: Option(AdmissionToken),
-) -> #(State(model, msg), Bool) {
+) -> #(State(model, message), Bool) {
   use <- bool.guard(when: !admission_is_pending(admission), return: #(
     state,
     False,
@@ -1493,19 +1501,19 @@ fn register_socket(
 
 /// Start an effect list for a socket from outside an update.
 fn run_effects_from(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   effects: List(Effect),
-) -> State(model, msg) {
+) -> State(model, message) {
   run(state, socket_id, [StepEffects(effects, None, [], ContDrive)])
 }
 
 /// Build the typed `Sender` for a socket. The closure sends through the
 /// runtime's own mailbox — an ordinary typed send, usable from any process.
 fn make_socket_sender(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> sock.Sender(msg) {
+) -> sock.Sender(message) {
   let subject = state.self_subject
   sock.make_sender(fn(message) {
     process.send(subject, AppInfo(socket_id, message))
@@ -1513,9 +1521,9 @@ fn make_socket_sender(
 }
 
 fn handle_socket_disconnected(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   let metadata = case dict.get(state.sockets, socket_id) {
     Ok(socket) ->
       list.append([#("socket_id", socket_id)], joined_topics_metadata(socket))
@@ -1538,9 +1546,9 @@ const stop_drain_timeout_ms = 2000
 /// mailbox. The router answers `reply` once the last `SocketClosed` lands,
 /// or kills the survivors at `stop_drain_timeout_ms`.
 fn begin_router_stop(
-  state: State(model, msg),
+  state: State(model, message),
   reply: Subject(Bool),
-) -> actor.Next(State(model, msg), Msg(msg)) {
+) -> actor.Next(State(model, message), Msg(message)) {
   case state.role {
     SocketActorRole(..) -> handle_stop(state, Some(reply))
     RouterRole(socket_actors:, stop_finalized:, ..) -> {
@@ -1576,9 +1584,9 @@ fn begin_router_stop(
 }
 
 fn handle_stop(
-  state: State(model, msg),
+  state: State(model, message),
   reply: Option(Subject(Bool)),
-) -> actor.Next(State(model, msg), Msg(msg)) {
+) -> actor.Next(State(model, message), Msg(message)) {
   state.logger
   |> log.info("Runtime stopping", [
     #("socket_count", int.to_string(dict.size(state.sockets))),
@@ -1602,7 +1610,7 @@ fn handle_stop(
 /// down. Per-socket actors have to be told to do it as a separate phase,
 /// or a socket's shutdown leaves can be fanned out to sockets that are
 /// already gone.
-fn finalize_for_stop(state: State(model, msg)) -> State(model, msg) {
+fn finalize_for_stop(state: State(model, message)) -> State(model, message) {
   // From here on there is no runtime left to receive an acknowledgement,
   // so presence mutations are sent fire-and-forget and never suspend.
   let state = State(..state, stopping: True)
@@ -1622,8 +1630,8 @@ fn finalize_for_stop(state: State(model, msg)) -> State(model, msg) {
   // swept now, while there is still something to sweep them with. The sweep is
   // ordered behind the in-flight tracks themselves (same sender, same
   // mailbox), so it removes them rather than racing them.
-  dict.keys(state.unacked_tracks)
-  |> list.fold(state, sweep_unacked_track)
+  dict.keys(state.unacknowledged_tracks)
+  |> list.fold(state, sweep_unacknowledged_track)
 }
 
 /// Finalize a socket's in-flight presence mutation during shutdown.
@@ -1634,9 +1642,9 @@ fn finalize_for_stop(state: State(model, msg)) -> State(model, msg) {
 /// the normal stopping path, then every runtime-owned ref for the socket is
 /// swept behind the in-flight mutation in the presence actor's mailbox.
 fn finalize_suspension(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.suspended, socket_id) {
     Error(Nil) -> state
     Ok(suspension) -> {
@@ -1646,7 +1654,10 @@ fn finalize_suspension(
           ..state,
           // The runtime-owned sweep below also removes anything an earlier,
           // already-timed-out track of this socket could still add.
-          unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
+          unacknowledged_tracks: dict.delete(
+            state.unacknowledged_tracks,
+            socket_id,
+          ),
         )
       let state = case suspension.waiting {
         PresenceWait(op:, ..) -> {
@@ -1667,36 +1678,8 @@ fn finalize_suspension(
         // time. Then apply its earlier results, answer the leave, and close
         // the topic. Do not handle other queued socket work because shutdown
         // stops the actor next.
-        WorkerWait(worker:, ..) -> {
-          let budget = case cancelled {
-            process.Cancelled(time_remaining:) -> time_remaining
-            process.TimerNotFound -> 0
-          }
-          let in_flight =
-            dict.get(state.queued, socket_id)
-            |> result.unwrap([])
-            |> list.filter(fn(message) {
-              case message {
-                WorkerReport(worker: pid, ..) -> pid == worker.pid
-                _ -> False
-              }
-            })
-          let #(in_flight, message) =
-            await_worker_terminated(
-              state,
-              socket_id,
-              worker,
-              in_flight,
-              monotonic_time_ms() + budget,
-            )
-          let state =
-            State(
-              ..state,
-              queued: dict.insert(state.queued, socket_id, in_flight),
-            )
-          resume_worker_close(state, socket_id, suspension, message)
-          |> option.unwrap(state)
-        }
+        WorkerWait(worker:, ..) ->
+          finalize_worker_wait(state, socket_id, suspension, worker, cancelled)
       }
       case state.config.presence {
         Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
@@ -1707,6 +1690,48 @@ fn finalize_suspension(
   }
 }
 
+fn finalize_worker_wait(
+  state: State(model, message),
+  socket_id: String,
+  suspension: Suspension(message),
+  worker: WorkerRef,
+  cancelled: process.Cancelled,
+) -> State(model, message) {
+  let budget = case cancelled {
+    process.Cancelled(time_remaining:) -> time_remaining
+    process.TimerNotFound -> 0
+  }
+  let in_flight =
+    dict.get(state.queued, socket_id)
+    |> result.unwrap([])
+    |> list.filter(fn(message) {
+      case message {
+        WorkerReport(worker: pid, ..) -> pid == worker.pid
+        _ -> False
+      }
+    })
+  let #(in_flight, message) =
+    await_worker_terminated(
+      state,
+      socket_id,
+      worker,
+      in_flight,
+      monotonic_time_ms() + budget,
+    )
+  let state =
+    State(..state, queued: dict.insert(state.queued, socket_id, in_flight))
+  resume_worker_close(state, socket_id, suspension, message)
+  |> option.unwrap(state)
+}
+
+fn exit_reason_to_string(reason: process.ExitReason) -> String {
+  case reason {
+    process.Normal -> "normal"
+    process.Killed -> "killed"
+    process.Abnormal(_) -> "abnormal"
+  }
+}
+
 /// Wait until `deadline` for the worker of a stopping socket to terminate.
 ///
 /// Read the termination message from this actor's mailbox. Keep earlier
@@ -1714,12 +1739,12 @@ fn finalize_suspension(
 /// Drop all other messages because the actor is stopping. Return the message
 /// that `resume_worker_close` needs to continue the close.
 fn await_worker_terminated(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   worker: WorkerRef,
-  in_flight: List(Msg(msg)),
+  in_flight: List(Msg(message)),
   deadline: Int,
-) -> #(List(Msg(msg)), Msg(msg)) {
+) -> #(List(Msg(message)), Msg(message)) {
   let awaited = worker.pid
   let received =
     process.new_selector()
@@ -1753,10 +1778,10 @@ fn await_worker_terminated(
 /// `finalize_suspension`: the ref was never learned here, and after
 /// shutdown never will be, so the session's runtime-owned refs are removed
 /// instead of leaving an entry nothing can remove.
-fn sweep_unacked_track(
-  state: State(model, msg),
+fn sweep_unacknowledged_track(
+  state: State(model, message),
   socket_id: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   state.logger
   |> log.warn("Presence track abandoned: runtime stopping", [
     #("socket_id", socket_id),
@@ -1765,16 +1790,19 @@ fn sweep_unacked_track(
     Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
     None -> Nil
   }
-  State(..state, unacked_tracks: dict.delete(state.unacked_tracks, socket_id))
+  State(
+    ..state,
+    unacknowledged_tracks: dict.delete(state.unacknowledged_tracks, socket_id),
+  )
 }
 
 // ── Heartbeats ──────────────────────────────────────────────────────────────
 
 fn handle_heartbeat(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   ref: Option(String),
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) -> {
@@ -1796,7 +1824,9 @@ fn handle_heartbeat(
   }
 }
 
-fn handle_check_heartbeats(state: State(model, msg)) -> State(model, msg) {
+fn handle_check_heartbeats(
+  state: State(model, message),
+) -> State(model, message) {
   let now = monotonic_time_ms()
   let timeout_ms = state.config.heartbeat_timeout_ms
   let stale_socket_ids =
@@ -1828,10 +1858,10 @@ fn handle_check_heartbeats(state: State(model, msg)) -> State(model, msg) {
 // ── Inbound decoding and dispatch ───────────────────────────────────────────
 
 fn handle_route_text(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   raw_text: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   let active_codec = case dict.get(state.sockets, socket_id) {
     Ok(socket) -> socket.codec
     Error(Nil) -> state.config.codec
@@ -1852,19 +1882,20 @@ fn handle_route_text(
       )
       state
     }
-    Ok(msg) -> dispatch_inbound(state, socket_id, msg, telemetry.TextMessage)
+    Ok(message) ->
+      dispatch_inbound(state, socket_id, message, telemetry.TextMessage)
   }
 }
 
 fn dispatch_inbound(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  msg: codec.Inbound,
+  message: codec.Inbound,
   message_kind: telemetry.MessageKind,
-) -> State(model, msg) {
-  let msg_topic = codec.inbound_topic(msg)
-  let msg_ref = codec.inbound_ref(msg)
-  case codec.inbound_kind(msg) {
+) -> State(model, message) {
+  let msg_topic = codec.inbound_topic(message)
+  let msg_ref = codec.inbound_ref(message)
+  case codec.inbound_kind(message) {
     codec.Join -> {
       let started_at = telemetry_start(state)
       case
@@ -1875,12 +1906,12 @@ fn dispatch_inbound(
             state,
             socket_id,
             msg_topic,
-            codec.inbound_payload(msg),
-            codec.inbound_join_ref(msg),
+            codec.inbound_payload(message),
+            codec.inbound_join_ref(message),
             msg_ref,
             started_at,
           )
-        False -> reject_invalid_join(state, socket_id, msg, started_at)
+        False -> reject_invalid_join(state, socket_id, message, started_at)
       }
     }
     codec.Leave -> {
@@ -1906,7 +1937,7 @@ fn dispatch_inbound(
             state,
             socket_id,
             msg_topic,
-            codec.inbound_join_ref(msg),
+            codec.inbound_join_ref(message),
             msg_ref,
           )
       }
@@ -1955,8 +1986,8 @@ fn dispatch_inbound(
             socket_id,
             resolved,
             event_name,
-            codec.inbound_payload(msg),
-            codec.inbound_join_ref(msg),
+            codec.inbound_payload(message),
+            codec.inbound_join_ref(message),
             msg_ref,
             started_at,
             message_kind,
@@ -1987,7 +2018,7 @@ fn dispatch_inbound(
 /// Resolve the topic for an inbound Event when the codec opted into
 /// topicless events (see `codec.with_topicless_events`).
 fn resolve_event_topic(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   requested: String,
 ) -> String {
@@ -2028,13 +2059,13 @@ fn is_valid_event(event_name: String, config: Config) -> Bool {
 /// Apply the decoded-message limiter before semantic validation. Metadata is
 /// built only on the over-rate path, and attacker-driven drops log at debug.
 fn with_message_rate_limit(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   metadata: fn() -> List(#(String, String)),
   started_at: Int,
   kind: telemetry.MessageKind,
-  next: fn(State(model, msg)) -> State(model, msg),
-) -> State(model, msg) {
+  next: fn(State(model, message)) -> State(model, message),
+) -> State(model, message) {
   let #(state, allowed) = check_message_rate(state, socket_id)
   case allowed {
     False -> {
@@ -2057,12 +2088,12 @@ fn with_message_rate_limit(
 }
 
 fn reject_invalid_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  msg: codec.Inbound,
+  message: codec.Inbound,
   started_at: Int,
-) -> State(model, msg) {
-  let safe_topic = topic.sanitize_for_log(codec.inbound_topic(msg))
+) -> State(model, message) {
+  let safe_topic = topic.sanitize_for_log(codec.inbound_topic(message))
   state.logger
   |> log.warn("Join rejected: invalid topic", [
     #("socket_id", socket_id),
@@ -2076,9 +2107,9 @@ fn reject_invalid_join(
     Ok(socket) -> {
       let reply =
         codec.encode_reply(socket.codec)(
-          codec.inbound_join_ref(msg),
-          codec.inbound_ref(msg),
-          codec.inbound_topic(msg),
+          codec.inbound_join_ref(message),
+          codec.inbound_ref(message),
+          codec.inbound_topic(message),
           codec.StatusError,
           error_reason("invalid_topic"),
         )
@@ -2092,14 +2123,14 @@ fn reject_invalid_join(
 // ── Joins ───────────────────────────────────────────────────────────────────
 
 fn handle_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   payload: Dynamic,
   join_ref: Option(String),
   ref: Option(String),
   started_at: Int,
-) -> State(model, msg) {
+) -> State(model, message) {
   let #(state, join_allowed) = check_join_rate(state, socket_id)
   case join_allowed {
     False -> {
@@ -2133,14 +2164,14 @@ fn handle_join(
 }
 
 fn handle_join_inner(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   payload: Dynamic,
   join_ref: Option(String),
   ref: Option(String),
   started_at: Int,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
       state.logger
@@ -2194,7 +2225,7 @@ fn handle_join_inner(
 }
 
 fn can_join_topic(
-  socket: SocketState(model, msg),
+  socket: SocketState(model, message),
   topic_name: String,
   config: Config,
 ) -> Bool {
@@ -2206,12 +2237,12 @@ fn can_join_topic(
 // ── Leaves ──────────────────────────────────────────────────────────────────
 
 fn handle_leave(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   msg_join_ref: Option(String),
   ref: Option(String),
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) -> {
@@ -2256,7 +2287,7 @@ fn handle_leave(
 /// A message is stale when it carries a join_ref from a previous channel
 /// instance on this topic (the client rejoined since sending it).
 fn is_stale_join_ref(
-  socket: SocketState(model, msg),
+  socket: SocketState(model, message),
   topic_name: String,
   msg_join_ref: Option(String),
 ) -> Bool {
@@ -2267,7 +2298,7 @@ fn is_stale_join_ref(
 }
 
 fn joined_ref(
-  socket: SocketState(model, msg),
+  socket: SocketState(model, message),
   topic_name: String,
 ) -> Option(String) {
   dict.get(socket.join_refs, topic_name)
@@ -2277,7 +2308,7 @@ fn joined_ref(
 // ── Client messages ─────────────────────────────────────────────────────────
 
 fn handle_in_subscribed(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   event_name: String,
@@ -2286,7 +2317,7 @@ fn handle_in_subscribed(
   ref: Option(String),
   started_at: Int,
   kind: telemetry.MessageKind,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
       state.logger
@@ -2356,15 +2387,15 @@ fn handle_in_subscribed(
 /// Reject an event pushed to a topic the socket has not joined, replying
 /// with Phoenix's `unmatched topic` error when a ref is present.
 fn reject_unjoined_event(
-  state: State(model, msg),
-  socket: SocketState(model, msg),
+  state: State(model, message),
+  socket: SocketState(model, message),
   socket_id: String,
   topic_name: String,
   event_name: String,
   ref: Option(String),
   started_at: Int,
   kind: telemetry.MessageKind,
-) -> State(model, msg) {
+) -> State(model, message) {
   state.logger
   |> log.debug("Inbound message rejected", [
     #("socket_id", socket_id),
@@ -2398,8 +2429,8 @@ fn reject_unjoined_event(
 }
 
 fn handle_in_rate_limited(
-  state: State(model, msg),
-  socket: SocketState(model, msg),
+  state: State(model, message),
+  socket: SocketState(model, message),
   socket_id: String,
   topic_name: String,
   event_name: String,
@@ -2407,7 +2438,7 @@ fn handle_in_rate_limited(
   ref: Option(String),
   started_at: Int,
   kind: telemetry.MessageKind,
-) -> State(model, msg) {
+) -> State(model, message) {
   let #(state, allowed) = check_channel_rate(state, socket_id, topic_name)
   case allowed {
     False -> {
@@ -2441,8 +2472,8 @@ fn handle_in_rate_limited(
 }
 
 fn route_inbound_message(
-  state: State(model, msg),
-  socket: SocketState(model, msg),
+  state: State(model, message),
+  socket: SocketState(model, message),
   socket_id: String,
   topic_name: String,
   event_name: String,
@@ -2450,7 +2481,7 @@ fn route_inbound_message(
   ref: Option(String),
   started_at: Int,
   kind: telemetry.MessageKind,
-) -> State(model, msg) {
+) -> State(model, message) {
   state.logger
   |> log.debug("Inbound message routed", [
     #("socket_id", socket_id),
@@ -2494,8 +2525,8 @@ fn route_inbound_message(
 }
 
 fn route_message_with_ref(
-  state: State(model, msg),
-  socket: SocketState(model, msg),
+  state: State(model, message),
+  socket: SocketState(model, message),
   socket_id: String,
   topic_name: String,
   event_name: String,
@@ -2503,7 +2534,7 @@ fn route_message_with_ref(
   message_ref: ReplyRef,
   started_at: Int,
   kind: telemetry.MessageKind,
-) -> State(model, msg) {
+) -> State(model, message) {
   case set.contains(socket.pending_reply_refs, message_ref) {
     True -> {
       state.logger
@@ -2544,7 +2575,7 @@ fn route_message_with_ref(
 }
 
 fn deliver_client_message(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   event_name: String,
@@ -2552,7 +2583,7 @@ fn deliver_client_message(
   message_ref: Option(ReplyRef),
   started_at: Int,
   kind: telemetry.MessageKind,
-) -> State(model, msg) {
+) -> State(model, message) {
   let state = case message_ref {
     Some(message_ref) -> register_reply_ref(state, socket_id, message_ref)
     None -> state
@@ -2574,10 +2605,10 @@ fn deliver_client_message(
 // ── Binary frames ───────────────────────────────────────────────────────────
 
 fn handle_binary_in(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   data: BitArray,
-) -> State(model, msg) {
+) -> State(model, message) {
   let active_codec = case dict.get(state.sockets, socket_id) {
     Ok(socket) -> socket.codec
     Error(Nil) -> state.config.codec
@@ -2593,8 +2624,8 @@ fn handle_binary_in(
           ])
           state
         }
-        Ok(msg) ->
-          dispatch_inbound(state, socket_id, msg, telemetry.BinaryMessage)
+        Ok(message) ->
+          dispatch_inbound(state, socket_id, message, telemetry.BinaryMessage)
       }
     None -> handle_undecoded_binary_in(state, socket_id, data)
   }
@@ -2604,10 +2635,10 @@ fn handle_binary_in(
 /// The frame keeps binary telemetry classification; attacker-driven drops
 /// log at debug to avoid warning-level amplification.
 fn handle_undecoded_binary_in(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   data: BitArray,
-) -> State(model, msg) {
+) -> State(model, message) {
   let started_at = telemetry_start(state)
   let #(state, allowed) = check_message_rate(state, socket_id)
   case allowed, dict.get(state.sockets, socket_id) {
@@ -2667,10 +2698,10 @@ fn handle_undecoded_binary_in(
 // ── Server-side info ────────────────────────────────────────────────────────
 
 fn handle_app_info(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  message: msg,
-) -> State(model, msg) {
+  message: message,
+) -> State(model, message) {
   let started_at = telemetry_start(state)
   case dict.has_key(state.sockets, socket_id) {
     False -> {
@@ -2707,10 +2738,10 @@ fn handle_app_info(
 
 /// Run a socket's stack until it is empty or a presence mutation parks it.
 fn run(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  stack: List(Step(msg)),
-) -> State(model, msg) {
+  stack: List(Step(message)),
+) -> State(model, message) {
   case stack {
     [] -> state
     [step, ..rest] ->
@@ -2735,10 +2766,10 @@ fn run(
 }
 
 fn exec_step(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  step: Step(msg),
-) -> Exec(model, msg) {
+  step: Step(message),
+) -> Exec(model, message) {
   case step {
     StepEffects(effects, pending, kicks, cont) ->
       run_effects(state, socket_id, effects, pending, kicks, cont)
@@ -2820,7 +2851,7 @@ fn cont_steps(
   cont: Cont,
   kicks: List(String),
   stop: Option(StopReason),
-) -> List(Step(msg)) {
+) -> List(Step(message)) {
   case cont {
     ContDrive -> [StepDrive(kicks, stop)]
     ContKicks(rest) -> [StepDrive(list.append(rest, kicks), stop)]
@@ -2859,7 +2890,7 @@ fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
 }
 
 fn emit_missing_socket_telemetry(
-  state: State(model, msg),
+  state: State(model, message),
   source: Source,
 ) -> Nil {
   case source {
@@ -2886,7 +2917,7 @@ fn emit_missing_socket_telemetry(
 }
 
 fn emit_stopped_update_telemetry(
-  state: State(model, msg),
+  state: State(model, message),
   source: Source,
 ) -> Nil {
   case source {
@@ -2913,7 +2944,7 @@ fn emit_stopped_update_telemetry(
 }
 
 fn finish_update_telemetry(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   source: Source,
   effects: List(Effect),
@@ -2950,12 +2981,12 @@ fn finish_update_telemetry(
 /// its effect list. Kick and stop follow-ups reach `cont` only once every
 /// effect has been applied — they are never applied mid-list.
 fn exec_input(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  input: Input(msg),
+  input: Input(message),
   source: Source,
   cont: Cont,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
       emit_missing_socket_telemetry(state, source)
@@ -3017,12 +3048,12 @@ fn exec_input(
 }
 
 fn exec_update_result(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   source: Source,
   cont: Cont,
   result: Result(Next(model), String),
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case result {
     Error(crash) -> exec_update_crash(state, socket_id, source, cont, crash)
     Ok(sock.Stop(reason)) -> {
@@ -3060,12 +3091,12 @@ fn exec_update_result(
 /// the socket; a crash while handling `Closed` is logged and teardown
 /// continues with the last good model.
 fn exec_update_crash(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   source: Source,
   cont: Cont,
   crash: String,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case source {
     JoinSource(topic_name, join_ref, msg_ref, _, started_at) -> {
       state.logger
@@ -3132,7 +3163,7 @@ fn exec_update_crash(
 
 /// Fail closed when an update returns `Stop` while handling a join.
 fn reject_stopped_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   source: Source,
 ) -> Nil {
@@ -3149,7 +3180,7 @@ fn reject_stopped_join(
 
 /// Fail-closed reply for a join the update never answered.
 fn reject_unanswered_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   pending: Pending,
 ) -> Nil {
@@ -3166,14 +3197,14 @@ fn reject_unanswered_join(
 /// Deliver a join once whatever had to happen first (the close of a
 /// duplicate instance, including its presence cleanup) has finished.
 fn exec_deliver_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   payload: Dynamic,
   join_ref: Option(String),
   ref: Option(String),
   started_at: Int,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   // The Closed delivered for a duplicate join may have stopped the socket.
   use <- bool.lazy_guard(
     when: !dict.has_key(state.sockets, socket_id),
@@ -3203,12 +3234,12 @@ fn exec_deliver_join(
 /// Hand an undecodable binary frame to the next joined topic. Subscription
 /// is re-checked per topic because an earlier delivery may have closed it.
 fn exec_binary_topics(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topics: List(String),
   data: BitArray,
   started_at: Int,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case topics {
     [] -> Continue(state, [])
     [topic_name, ..rest] ->
@@ -3232,11 +3263,11 @@ fn exec_binary_topics(
 /// delivery may add further kicks). Terminates because every kick closes a
 /// joined topic and closed topics cannot be re-kicked.
 fn exec_drive(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   kicks: List(String),
   stop: Option(StopReason),
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case stop, kicks {
     Some(reason), _ -> Continue(state, [StepTeardown(reason)])
     None, [] -> Continue(state, [])
@@ -3258,12 +3289,12 @@ fn exec_drive(
 /// still reach the topic's remaining subscribers. The auto-untrack and the
 /// terminal frame follow in `StepCloseCleanup`/`StepCloseFinish`.
 fn exec_close_topic(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   reason: StopReason,
   cont: Cont,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> Continue(state, cont_steps(cont, [], None))
     Ok(socket) ->
@@ -3327,10 +3358,10 @@ fn exec_close_topic(
 /// Remove a socket from a topic's subscriber set, unsubscribing from
 /// PubSub and dropping the topic entry when it was the last subscriber.
 fn remove_topic_subscriber(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   let subscribers =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
@@ -3365,10 +3396,10 @@ fn remove_topic_subscriber(
 /// process that races the cast still misses the socket: that is decision
 /// 2's cast option and its documented window.
 fn add_topic_subscriber(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   let existing =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
@@ -3395,7 +3426,7 @@ fn add_topic_subscriber(
 /// `phx_close`/`phx_error` to leave the joined state (and, for errors,
 /// schedule a rejoin). Codecs without close/error encoders skip this.
 fn send_terminal_frame(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   close_join_ref: Option(String),
@@ -3433,10 +3464,10 @@ fn send_terminal_frame(
 /// by `exec_close_topic`'s own joined check. No topic can be joined during
 /// teardown, so the list taken up front covers every close.
 fn exec_teardown(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   reason: StopReason,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> Continue(state, [])
     Ok(socket) -> {
@@ -3468,12 +3499,12 @@ fn exec_teardown(
 }
 
 fn exec_teardown_finish(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   reason: StopReason,
   connected_at: Int,
   joined_channels: Int,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   let state = remove_socket_rate_limits(state, socket_id)
   // Actively close the transport connection after the terminal frames
   // above have been queued, so evicted sockets do not linger as zombies.
@@ -3505,7 +3536,7 @@ fn exec_teardown_finish(
 }
 
 fn socket_subscribed(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
 ) -> Bool {
@@ -3533,13 +3564,13 @@ fn socket_subscribed(
 /// When the list runs out, an unanswered pending join is rejected (fail
 /// closed) and the collected kicks are handed to `cont`.
 fn run_effects(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   effects: List(Effect),
   pending: Option(Pending),
   kicks: List(String),
   cont: Cont,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case effects {
     [] -> {
       case pending {
@@ -3575,12 +3606,12 @@ fn run_effects(
 /// to thread: the next state, the still-unanswered pending join, and the
 /// kicked topics collected so far.
 fn apply_effect(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   effect: Effect,
   pending: Option(Pending),
   kicks: List(String),
-) -> #(State(model, msg), Option(Pending), List(String)) {
+) -> #(State(model, message), Option(Pending), List(String)) {
   case effect {
     sock.AcceptJoin(ref, reply) ->
       apply_accept_join(state, socket_id, ref, reply, pending, kicks)
@@ -3640,12 +3671,12 @@ fn apply_effect(
 }
 
 fn apply_kick_topic(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   pending: Option(Pending),
   kicks: List(String),
-) -> #(State(model, msg), Option(Pending), List(String)) {
+) -> #(State(model, message), Option(Pending), List(String)) {
   use <- bool.lazy_guard(
     when: !socket_subscribed(state, socket_id, topic_name)
       || list.contains(kicks, topic_name),
@@ -3662,13 +3693,13 @@ fn apply_kick_topic(
 }
 
 fn apply_accept_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   ref: JoinRef,
   reply: Option(Json),
   pending: Option(Pending),
   kicks: List(String),
-) -> #(State(model, msg), Option(Pending), List(String)) {
+) -> #(State(model, message), Option(Pending), List(String)) {
   case matching_pending_join(ref, pending) {
     Some(pending_join) -> {
       let state = subscribe_socket(state, socket_id, pending_join)
@@ -3705,13 +3736,13 @@ fn apply_accept_join(
 }
 
 fn apply_reject_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   ref: JoinRef,
   reason: Json,
   pending: Option(Pending),
   kicks: List(String),
-) -> #(State(model, msg), Option(Pending), List(String)) {
+) -> #(State(model, message), Option(Pending), List(String)) {
   case matching_pending_join(ref, pending) {
     Some(p) -> {
       state.logger
@@ -3744,7 +3775,7 @@ fn matching_pending_join(
 }
 
 fn warn_unmatched_join_answer(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   ref: JoinRef,
   effect_name: String,
@@ -3760,10 +3791,10 @@ fn warn_unmatched_join_answer(
 /// socket to the topic's subscriber set, and subscribe the runtime to
 /// PubSub when it is the topic's first local subscriber.
 fn subscribe_socket(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   pending_join: Pending,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) -> {
@@ -3793,12 +3824,12 @@ fn subscribe_socket(
 /// across a leave/rejoin), is dropped rather than sent as a stale/duplicate
 /// reply.
 fn apply_reply(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   ref: ReplyRef,
   status: codec.ReplyStatus,
   payload: Json,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
@@ -3838,10 +3869,10 @@ fn apply_reply(
 /// pushes to it drop from here on, and a ref stored across a leave/rejoin
 /// is not replied to.
 fn unsubscribe_topic(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
@@ -3860,10 +3891,10 @@ fn unsubscribe_topic(
 
 /// Record a message reply ref as outstanding for a socket.
 fn register_reply_ref(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   ref: ReplyRef,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
@@ -3880,7 +3911,7 @@ fn register_reply_ref(
 /// Push to this socket on a joined topic; pushes to unjoined topics are
 /// dropped with a warning (order pushes after their topic's `AcceptJoin`).
 fn apply_push(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   event_name: String,
@@ -3944,13 +3975,13 @@ type PresenceGiveUp {
 /// resolve the operation immediately as a failure rather than stranding
 /// the socket, and neither invents a success.
 fn begin_presence_op(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   handle: presence.Presence,
   op: PresenceOp,
   send: fn(Int, Subject(presence.MutationAck)) -> Nil,
-  resume: List(Step(msg)),
-) -> Exec(model, msg) {
+  resume: List(Step(message)),
+) -> Exec(model, message) {
   case presence.is_running(handle), state.stopping {
     False, _ -> {
       state.logger
@@ -3974,7 +4005,7 @@ fn begin_presence_op(
             #("socket_id", socket_id),
             #("topic", presence_op_topic(op)),
           ])
-        UntrackOp(_, _, _) -> send(0, state.presence_ack)
+        UntrackOp(_, _, _) -> send(0, state.presence_acknowledgement)
       }
       Continue(
         finish_presence_op(state, socket_id, op, Error(PresenceStopping)),
@@ -3983,7 +4014,7 @@ fn begin_presence_op(
     }
     True, False -> {
       let op_id = state.next_op_id
-      send(op_id, state.presence_ack)
+      send(op_id, state.presence_acknowledgement)
       let timer =
         process.send_after(
           state.self_subject,
@@ -4022,11 +4053,11 @@ fn presence_op_topic(op: PresenceOp) -> String {
 /// logged that decision — so it is the only reason that skips the
 /// "failed"/"not acknowledged" error log.
 fn finish_presence_op(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   op: PresenceOp,
   outcome: Result(presence.MutationOutcome, PresenceGiveUp),
-) -> State(model, msg) {
+) -> State(model, message) {
   case op, outcome {
     TrackOp(topic_name, key, replaced), Ok(presence.Tracked(ref, meta)) -> {
       let state =
@@ -4053,7 +4084,7 @@ fn finish_presence_op(
       // The mutation did reach the presence actor and may still be
       // applied: remember that an acknowledgement — and with it a ref only
       // the compensation will ever learn — is still owed for this socket.
-      note_unacked_track(state, socket_id)
+      note_unacknowledged_track(state, socket_id)
     }
     // `PresenceNotRunning` never reached the actor, and an `Untracked`
     // acknowledgement for a track is a protocol impossibility (an
@@ -4103,12 +4134,12 @@ fn finish_presence_op(
 /// actor as its replacement, rather than leave clients showing a presence
 /// this runtime can no longer untrack. Nothing is recorded as tracked.
 fn failed_track(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   key: String,
   replaced: List(presence.PresenceEntry),
-) -> State(model, msg) {
+) -> State(model, message) {
   state.logger
   |> log.error("PresenceTrack failed: not acknowledged", [
     #("socket_id", socket_id),
@@ -4125,17 +4156,17 @@ fn failed_track(
 /// Record that a track the runtime gave up on may still be applied by the
 /// presence actor, so shutdown knows this socket can still be owed an
 /// entry whose ref nobody here will ever hold.
-fn note_unacked_track(
-  state: State(model, msg),
+fn note_unacknowledged_track(
+  state: State(model, message),
   socket_id: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   let outstanding =
-    dict.get(state.unacked_tracks, socket_id)
+    dict.get(state.unacknowledged_tracks, socket_id)
     |> result.unwrap(0)
   State(
     ..state,
-    unacked_tracks: dict.insert(
-      state.unacked_tracks,
+    unacknowledged_tracks: dict.insert(
+      state.unacknowledged_tracks,
       socket_id,
       outstanding + 1,
     ),
@@ -4144,21 +4175,24 @@ fn note_unacked_track(
 
 /// One of a socket's outstanding acknowledgements has now arrived (and been
 /// compensated), so it no longer needs sweeping at shutdown.
-fn clear_unacked_track(
-  state: State(model, msg),
+fn clear_unacknowledged_track(
+  state: State(model, message),
   socket_id: String,
-) -> State(model, msg) {
-  case dict.get(state.unacked_tracks, socket_id) {
+) -> State(model, message) {
+  case dict.get(state.unacknowledged_tracks, socket_id) {
     Error(Nil) | Ok(1) ->
       State(
         ..state,
-        unacked_tracks: dict.delete(state.unacked_tracks, socket_id),
+        unacknowledged_tracks: dict.delete(
+          state.unacknowledged_tracks,
+          socket_id,
+        ),
       )
     Ok(outstanding) ->
       State(
         ..state,
-        unacked_tracks: dict.insert(
-          state.unacked_tracks,
+        unacknowledged_tracks: dict.insert(
+          state.unacknowledged_tracks,
           socket_id,
           outstanding - 1,
         ),
@@ -4167,13 +4201,13 @@ fn clear_unacked_track(
 }
 
 fn store_presence_ref(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   key: String,
   ref: String,
   meta: Json,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) -> {
@@ -4207,32 +4241,38 @@ fn store_presence_ref(
 /// presence actor really did apply it: nothing else will ever learn that
 /// ref, so it is compensated with a precise untrack rather than left to
 /// leak (or to double up should the socket retry the same track).
-fn handle_presence_ack(
-  state: State(model, msg),
-  ack: presence.MutationAck,
-) -> State(model, msg) {
-  case dict.get(state.suspended, ack.tag) {
+fn handle_presence_acknowledgement(
+  state: State(model, message),
+  acknowledgement: presence.MutationAck,
+) -> State(model, message) {
+  case dict.get(state.suspended, acknowledgement.tag) {
     Error(Nil) -> {
       state.logger
       |> log.debug("Presence acknowledgement ignored: no socket waiting", [
-        #("socket_id", ack.tag),
-        #("op_id", int.to_string(ack.op_id)),
+        #("socket_id", acknowledgement.tag),
+        #("op_id", int.to_string(acknowledgement.op_id)),
       ])
-      compensate_stale_ack(state, ack)
+      compensate_stale_acknowledgement(state, acknowledgement)
     }
     Ok(suspension) ->
       case suspension.waiting {
-        PresenceWait(op_id:, op:) if op_id == ack.op_id -> {
+        PresenceWait(op_id:, op:) if op_id == acknowledgement.op_id -> {
           let _cancelled = process.cancel_timer(suspension.timer)
-          resume_socket(state, ack.tag, op, suspension.stack, Ok(ack.outcome))
+          resume_socket(
+            state,
+            acknowledgement.tag,
+            op,
+            suspension.stack,
+            Ok(acknowledgement.outcome),
+          )
         }
         PresenceWait(..) | WorkerWait(..) -> {
           state.logger
           |> log.debug("Presence acknowledgement ignored: stale operation", [
-            #("socket_id", ack.tag),
-            #("op_id", int.to_string(ack.op_id)),
+            #("socket_id", acknowledgement.tag),
+            #("op_id", int.to_string(acknowledgement.op_id)),
           ])
-          compensate_stale_ack(state, ack)
+          compensate_stale_acknowledgement(state, acknowledgement)
         }
       }
   }
@@ -4260,26 +4300,30 @@ fn handle_presence_ack(
 /// supersede only runtime-owned refs, while public synchronous refs remain
 /// independently addressable, so compensation cannot delete a newer public
 /// track even when session, topic, and key are identical.
-fn compensate_stale_ack(
-  state: State(model, msg),
-  ack: presence.MutationAck,
-) -> State(model, msg) {
-  case ack.outcome {
+fn compensate_stale_acknowledgement(
+  state: State(model, message),
+  acknowledgement: presence.MutationAck,
+) -> State(model, message) {
+  case acknowledgement.outcome {
     presence.Untracked -> state
     // The acknowledgement this socket was still owed has now arrived, so
     // shutdown no longer has to sweep its session — whether or not a
     // presence actor is still around to act on the ref it carries.
     presence.Tracked(ref, _meta) ->
-      untrack_stale_ref(clear_unacked_track(state, ack.tag), ack.tag, ref)
+      untrack_stale_ref(
+        clear_unacknowledged_track(state, acknowledgement.tag),
+        acknowledgement.tag,
+        ref,
+      )
   }
 }
 
 /// Ask presence to remove exactly the ref a stale acknowledgement carried.
 fn untrack_stale_ref(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   ref: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   case state.config.presence {
     None -> state
     Some(handle) ->
@@ -4292,7 +4336,7 @@ fn untrack_stale_ref(
             refs: [ref],
             tag: socket_id,
             op_id: op_id,
-            reply: state.presence_ack,
+            reply: state.presence_acknowledgement,
           )
           state.logger
           |> log.debug(
@@ -4306,10 +4350,10 @@ fn untrack_stale_ref(
 }
 
 fn handle_presence_timeout(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   op_id: Int,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.suspended, socket_id) {
     Error(Nil) -> state
     Ok(suspension) ->
@@ -4336,12 +4380,12 @@ fn handle_presence_timeout(
 }
 
 fn resume_socket(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   op: PresenceOp,
-  stack: List(Step(msg)),
+  stack: List(Step(message)),
   outcome: Result(presence.MutationOutcome, PresenceGiveUp),
-) -> State(model, msg) {
+) -> State(model, message) {
   let state = State(..state, suspended: dict.delete(state.suspended, socket_id))
   let state = finish_presence_op(state, socket_id, op, outcome)
   // `run` may park the socket again on a later presence effect or a
@@ -4355,13 +4399,13 @@ fn resume_socket(
 /// the new entry, so the topic never materializes a snapshot without the
 /// key, and the replacement is published as one leave plus one join.
 fn start_presence_track(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   key: String,
   meta: Json,
-  resume: List(Step(msg)),
-) -> Exec(model, msg) {
+  resume: List(Step(message)),
+) -> Exec(model, message) {
   case state.config.presence, dict.get(state.sockets, socket_id) {
     None, _ -> {
       state.logger
@@ -4453,12 +4497,12 @@ fn start_presence_track(
 /// Start a `PresenceUntrack`. A key the socket does not hold is ignored
 /// with a debug log and never parks the socket.
 fn start_presence_untrack(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   key: String,
-  resume: List(Step(msg)),
-) -> Exec(model, msg) {
+  resume: List(Step(message)),
+) -> Exec(model, message) {
   case state.config.presence, dict.get(state.sockets, socket_id) {
     None, Ok(_) -> {
       state.logger
@@ -4508,14 +4552,14 @@ fn start_presence_untrack(
 }
 
 fn begin_key_untrack(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   handle: presence.Presence,
   topic_name: String,
   key: String,
   tracked: #(String, Json),
-  resume: List(Step(msg)),
-) -> Exec(model, msg) {
+  resume: List(Step(message)),
+) -> Exec(model, message) {
   let #(ref, meta) = tracked
   begin_presence_op(
     state,
@@ -4551,11 +4595,11 @@ fn begin_key_untrack(
 /// acknowledgement, and one aggregate `presence_diff`, however many keys
 /// the socket held.
 fn exec_close_cleanup(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   close: CloseOutcome,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   let resume = [
     StepCloseFinish(
       topic_name,
@@ -4589,10 +4633,10 @@ fn exec_close_cleanup(
 }
 
 fn drop_topic_presence_refs(
-  state: State(model, msg),
-  socket: SocketState(model, msg),
+  state: State(model, message),
+  socket: SocketState(model, message),
   topic_name: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   store_socket(
     state,
     SocketState(
@@ -4603,13 +4647,13 @@ fn drop_topic_presence_refs(
 }
 
 fn begin_topic_cleanup(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   handle: presence.Presence,
   topic_name: String,
   entries: List(#(String, #(String, Json))),
-  resume: List(Step(msg)),
-) -> Exec(model, msg) {
+  resume: List(Step(message)),
+) -> Exec(model, message) {
   use <- bool.guard(when: entries == [], return: Continue(state, resume))
   let refs = list.map(entries, fn(entry) { entry.1.0 })
   let leaves =
@@ -4647,7 +4691,7 @@ fn begin_topic_cleanup(
 /// a crash drops the snapshot with an error log instead of taking down the
 /// runtime.
 fn presence_snapshot(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   encode: fn(List(presence.PresenceEntry)) -> Json,
@@ -4690,7 +4734,7 @@ fn presence_snapshot(
 }
 
 fn broadcast_presence_diff(
-  state: State(model, msg),
+  state: State(model, message),
   topic_name: String,
   joins: List(presence.PresenceEntry),
   leaves: List(presence.PresenceEntry),
@@ -4712,7 +4756,7 @@ fn broadcast_presence_diff(
 /// recipient so connections with different codecs each get their own
 /// framing.
 fn local_broadcast(
-  state: State(model, msg),
+  state: State(model, message),
   topic_name: String,
   event_name: String,
   payload: Json,
@@ -4770,7 +4814,7 @@ fn local_broadcast(
 }
 
 fn emit_broadcast(
-  state: State(model, msg),
+  state: State(model, message),
   topic_name: String,
   event_name: String,
   payload: Json,
@@ -4796,7 +4840,7 @@ fn emit_broadcast(
 /// the actor's own pid is the PubSub sender, so the runtime does not echo
 /// the message back to itself.
 fn broadcast_with_pubsub(
-  state: State(model, msg),
+  state: State(model, message),
   topic_name: String,
   event_name: String,
   payload: Json,
@@ -4839,11 +4883,11 @@ fn broadcast_with_pubsub(
         telemetry.Local,
       )
       case state.pubsub {
-        Some(ps) ->
+        Some(pubsub_instance) ->
           case except {
             None ->
               pubsub.broadcast_from(
-                ps,
+                pubsub_instance,
                 process.self(),
                 topic_name,
                 event_name,
@@ -4851,7 +4895,7 @@ fn broadcast_with_pubsub(
               )
             Some(socket_id) ->
               pubsub.broadcast_from_socket(
-                ps,
+                pubsub_instance,
                 process.self(),
                 socket_id,
                 topic_name,
@@ -4866,9 +4910,9 @@ fn broadcast_with_pubsub(
 }
 
 fn handle_remote_broadcast(
-  state: State(model, msg),
+  state: State(model, message),
   pubsub_msg: pubsub.Message(Json),
-) -> State(model, msg) {
+) -> State(model, message) {
   let except = case pubsub_msg.from {
     pubsub.FromSocket(_, socket_id) -> Some(socket_id)
     pubsub.System | pubsub.FromPid(_) -> None
@@ -4887,9 +4931,9 @@ fn handle_remote_broadcast(
 // ── Rate limiting ───────────────────────────────────────────────────────────
 
 fn check_message_rate(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> #(State(model, msg), Bool) {
+) -> #(State(model, message), Bool) {
   case state.config.message_limits {
     None -> #(state, True)
     Some(limits) -> {
@@ -4909,9 +4953,9 @@ fn check_message_rate(
 }
 
 fn check_join_rate(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> #(State(model, msg), Bool) {
+) -> #(State(model, message), Bool) {
   case state.config.join_limits {
     None -> #(state, True)
     Some(limits) -> {
@@ -4947,10 +4991,10 @@ fn resolve_channel_limits(
 }
 
 fn check_channel_rate(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
-) -> #(State(model, msg), Bool) {
+) -> #(State(model, message), Bool) {
   case resolve_channel_limits(state.config, topic_name) {
     None -> #(state, True)
     Some(limits) -> take_channel_token(state, socket_id, topic_name, limits)
@@ -4958,20 +5002,20 @@ fn check_channel_rate(
 }
 
 fn take_channel_token(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   limits: RateLimitConfig,
-) -> #(State(model, msg), Bool) {
+) -> #(State(model, message), Bool) {
   let socket_buckets =
     dict.get(state.channel_buckets, socket_id)
     |> result.unwrap(dict.new())
-  let cap = state.config.channel_limiter_max_keys_per_socket
-  let over_cap = case dict.has_key(socket_buckets, topic_name) {
+  let capacity = state.config.channel_limiter_max_keys_per_socket
+  let over_capacity = case dict.has_key(socket_buckets, topic_name) {
     True -> False
-    False -> cap > 0 && dict.size(socket_buckets) >= cap
+    False -> capacity > 0 && dict.size(socket_buckets) >= capacity
   }
-  use <- bool.guard(when: over_cap, return: #(state, False))
+  use <- bool.guard(when: over_capacity, return: #(state, False))
   let bucket =
     dict.get(socket_buckets, topic_name)
     |> result.lazy_unwrap(fn() { rate_limit.new_bucket(limits) })
@@ -4991,10 +5035,10 @@ fn take_channel_token(
 }
 
 fn remove_channel_bucket(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.channel_buckets, socket_id) {
     Error(Nil) -> state
     Ok(socket_buckets) ->
@@ -5010,9 +5054,9 @@ fn remove_channel_bucket(
 }
 
 fn remove_socket_rate_limits(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-) -> State(model, msg) {
+) -> State(model, message) {
   State(
     ..state,
     message_buckets: dict.delete(state.message_buckets, socket_id),
@@ -5028,17 +5072,17 @@ fn error_reason(text: String) -> Json {
 }
 
 fn store_socket(
-  state: State(model, msg),
-  socket: SocketState(model, msg),
-) -> State(model, msg) {
+  state: State(model, message),
+  socket: SocketState(model, message),
+) -> State(model, message) {
   State(..state, sockets: dict.insert(state.sockets, socket.id, socket))
 }
 
 fn store_model(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   model: model,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) -> store_socket(state, SocketState(..socket, model: model))
@@ -5047,7 +5091,7 @@ fn store_model(
 
 /// Send a `phx_reply` error to a socket (join rejections, rate limits).
 fn send_error_reply(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   join_ref: Option(String),
@@ -5072,7 +5116,7 @@ fn send_error_reply(
 }
 
 fn send_frame(
-  socket: SocketState(model, msg),
+  socket: SocketState(model, message),
   frame: codec.Frame,
 ) -> Result(Nil, Nil) {
   case frame {
@@ -5089,8 +5133,8 @@ fn frame_kind(frame: codec.Frame) -> String {
 }
 
 fn send_frame_logged(
-  state: State(model, msg),
-  socket: SocketState(model, msg),
+  state: State(model, message),
+  socket: SocketState(model, message),
   topic_name: String,
   frame: codec.Frame,
 ) -> Result(Nil, Nil) {
@@ -5130,7 +5174,7 @@ fn optional_string(value: Option(String)) -> String {
 }
 
 fn joined_topics_metadata(
-  socket: SocketState(model, msg),
+  socket: SocketState(model, message),
 ) -> List(#(String, String)) {
   let topics = set.to_list(socket.subscribed_topics)
   [
@@ -5281,7 +5325,7 @@ type WorkerLink {
 /// actor converts that error to a rejection.
 fn start_worker(
   open: fn(WorkerContext) -> WorkerOutcome,
-  socket: Subject(Msg(msg)),
+  socket: Subject(Msg(message)),
   telemetry: Bool,
   spawn: WorkerSpawn,
 ) -> actor.StartResult(WorkerStarted) {
@@ -5418,16 +5462,16 @@ fn worker_step(
 /// same list, so the acknowledgment precedes the join's own pushes and
 /// the subscription exists when they are applied.
 fn exec_worker_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  socket: SocketState(model, msg),
+  socket: SocketState(model, message),
   workers: TopicWorkers,
   topic_name: String,
   payload: Dynamic,
   ref: JoinRef,
   source: Source,
   cont: Cont,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case workers.accepts(topic_name) {
     Error(reason) ->
       exec_update_result(
@@ -5453,16 +5497,16 @@ fn exec_worker_join(
 }
 
 fn exec_accepted_worker_join(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  socket: SocketState(model, msg),
+  socket: SocketState(model, message),
   factory: factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted),
   topic_name: String,
   payload: Dynamic,
   ref: JoinRef,
   source: Source,
   cont: Cont,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   let spawn =
     WorkerSpawn(
       socket_id: socket_id,
@@ -5501,7 +5545,10 @@ fn exec_accepted_worker_join(
         <> "ms",
       ),
     )
-    Error(actor.InitExited(reason)) -> #(state, Error(string.inspect(reason)))
+    Error(actor.InitExited(reason)) -> #(
+      state,
+      Error(exit_reason_to_string(reason)),
+    )
   }
   exec_update_result(state, socket_id, source, cont, result)
 }
@@ -5511,7 +5558,7 @@ fn exec_accepted_worker_join(
 /// The runtime has indexed the join. Thus, actions from the worker can reach
 /// the topic subscribers. This includes mail that `join` sent to itself.
 fn release_worker(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
 ) -> Nil {
@@ -5527,12 +5574,12 @@ fn release_worker(
 
 /// Apply a worker's report if the worker still owns its topic.
 fn handle_worker_report(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   pid: Pid,
   report: WorkerReport,
-) -> State(model, msg) {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
@@ -5552,11 +5599,11 @@ fn handle_worker_report(
 }
 
 fn exec_worker_report(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   report: WorkerReport,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   case report {
     WorkerRan(effects, closing, source) -> {
       // Convert a worker close request to a kick, as the shared interpreter
@@ -5590,10 +5637,10 @@ fn exec_worker_report(
 /// cannot run `on_terminate` because the worker held the channel state. The
 /// `phx_error` tells the client to rejoin.
 fn handle_worker_down(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   down: process.Down,
-) -> State(model, msg) {
+) -> State(model, message) {
   case down, dict.get(state.sockets, socket_id) {
     process.PortDown(..), _ | _, Error(Nil) -> state
     process.ProcessDown(pid:, reason:, ..), Ok(socket) -> {
@@ -5604,7 +5651,7 @@ fn handle_worker_down(
         // Its close already finished, or it was never this socket's.
         Error(Nil) -> state
         Ok(#(topic_name, _)) -> {
-          let exit = string.inspect(reason)
+          let exit = exit_reason_to_string(reason)
           state.logger
           |> log.error("Topic worker exited; closing topic", [
             #("socket_id", socket_id),
@@ -5639,14 +5686,14 @@ fn handle_worker_down(
 /// During shutdown, the socket cannot resume another turn. It uses a bounded
 /// synchronous receive on a reply subject that the worker answers directly.
 fn close_worker_topic(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   worker: WorkerRef,
   close_join_ref: Option(String),
   reason: StopReason,
   cont: Cont,
-) -> Exec(model, msg) {
+) -> Exec(model, message) {
   // A stopped worker has no termination callback to run. Its `Down` message
   // can still be queued or not yet received. Continue the close without
   // waiting for the termination timeout.
@@ -5728,11 +5775,11 @@ fn close_worker_topic(
 /// These results can use reply refs that the close has not removed. Apply
 /// them in order, and then continue the close.
 fn resume_worker_close(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
-  suspension: Suspension(msg),
-  message: Msg(msg),
-) -> Option(State(model, msg)) {
+  suspension: Suspension(message),
+  message: Msg(message),
+) -> Option(State(model, message)) {
   case suspension.waiting {
     PresenceWait(..) -> None
     WorkerWait(topic_name, worker, close_join_ref, reason, cont) -> {
@@ -5795,7 +5842,7 @@ fn resume_worker_close(
 }
 
 fn log_worker_exit(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   down: process.Down,
@@ -5807,12 +5854,12 @@ fn log_worker_exit(
   |> log.error("Topic worker exited while closing", [
     #("socket_id", socket_id),
     #("topic", topic_name),
-    #("reason", string.inspect(reason)),
+    #("reason", exit_reason_to_string(reason)),
   ])
 }
 
 fn kill_stuck_worker(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   worker: WorkerRef,
@@ -5830,7 +5877,7 @@ fn kill_stuck_worker(
 }
 
 fn log_terminate_crash(
-  state: State(model, msg),
+  state: State(model, message),
   socket_id: String,
   topic_name: String,
   crash: Option(String),

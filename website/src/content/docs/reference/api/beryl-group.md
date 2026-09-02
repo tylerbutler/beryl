@@ -85,8 +85,8 @@ Configuration for starting a groups actor.
 
 ```gleam
 pub type GroupError {
-  GroupAlreadyExists
-  GroupNotFound
+  GroupAlreadyExists(name: String)
+  GroupNotFound(name: String)
 }
 ```
 
@@ -97,7 +97,7 @@ Errors from group operations.
 ##### `GroupAlreadyExists`
 
 ```gleam
-GroupAlreadyExists
+GroupAlreadyExists(name: String)
 ```
 
 The group already exists.
@@ -105,7 +105,7 @@ The group already exists.
 ##### `GroupNotFound`
 
 ```gleam
-GroupNotFound
+GroupNotFound(name: String)
 ```
 
 The group was not found.

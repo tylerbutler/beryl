@@ -46,7 +46,7 @@ fn sample_diff() -> presence.Diff {
   )
 }
 
-pub fn encode_diff_groups_metas_by_presence_key_for_topic_test() {
+pub fn encode_diff_groups_metas_by_presence_key_for_topic_test() -> Nil {
   let payload = presence_wire.encode_diff(sample_diff(), "room:lobby")
   let encoded = json.to_string(payload)
 
@@ -108,7 +108,7 @@ pub fn encode_diff_groups_metas_by_presence_key_for_topic_test() {
   user3_metas |> should.equal(["offline"])
 }
 
-pub fn encode_diff_omits_other_topics_test() {
+pub fn encode_diff_omits_other_topics_test() -> Nil {
   let payload = presence_wire.encode_diff(sample_diff(), "room:lobby")
 
   json.to_string(payload)
@@ -116,7 +116,7 @@ pub fn encode_diff_omits_other_topics_test() {
   |> should.be_false
 }
 
-pub fn encode_state_groups_metas_by_presence_key_test() {
+pub fn encode_state_groups_metas_by_presence_key_test() -> Nil {
   let entries = [
     presence.PresenceEntry(
       session_id: "socket-1",
@@ -170,7 +170,7 @@ pub fn encode_state_groups_metas_by_presence_key_test() {
   user2_metas |> should.equal(["mobile"])
 }
 
-pub fn tracked_metas_carry_phx_ref_test() {
+pub fn tracked_metas_carry_phx_ref_test() -> Nil {
   let assert Ok(p) = presence.start(presence.default_config("wire-node"))
 
   let ref =
@@ -201,7 +201,7 @@ pub fn tracked_metas_carry_phx_ref_test() {
   status |> should.equal("online")
 }
 
-pub fn tracked_multi_session_metas_have_distinct_phx_refs_test() {
+pub fn tracked_multi_session_metas_have_distinct_phx_refs_test() -> Nil {
   let assert Ok(p) = presence.start(presence.default_config("wire-node-2"))
 
   let ref1 =
@@ -227,7 +227,7 @@ pub fn tracked_multi_session_metas_have_distinct_phx_refs_test() {
   list.contains(refs, ref2) |> should.be_true
 }
 
-pub fn non_object_meta_is_stored_unchanged_test() {
+pub fn non_object_meta_is_stored_unchanged_test() -> Nil {
   let assert Ok(p) = presence.start(presence.default_config("wire-node-3"))
 
   let _ref =

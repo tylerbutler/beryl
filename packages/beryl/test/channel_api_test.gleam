@@ -16,7 +16,7 @@ import gleam/string
 import gleeunit
 import gleeunit/should
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -116,7 +116,7 @@ fn counter_handler(pattern: String) -> channel.Handler {
 
 // --- join results ----------------------------------------------------------
 
-pub fn join_accepts_without_a_reply_test() {
+pub fn join_accepts_without_a_reply_test() -> Nil {
   case
     channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
   {
@@ -125,7 +125,7 @@ pub fn join_accepts_without_a_reply_test() {
   }
 }
 
-pub fn join_accepts_with_a_reply_payload_test() {
+pub fn join_accepts_with_a_reply_payload_test() -> Nil {
   let handler =
     channel.handler("room:*", fn(_context) {
       channel.accept(Nil)
@@ -142,7 +142,7 @@ pub fn join_accepts_with_a_reply_payload_test() {
   }
 }
 
-pub fn join_can_be_rejected_test() {
+pub fn join_can_be_rejected_test() -> Nil {
   let handler =
     channel.handler("secret:*", fn(_context) {
       channel.reject(json.object([#("reason", json.string("forbidden"))]))
@@ -157,7 +157,7 @@ pub fn join_can_be_rejected_test() {
   }
 }
 
-pub fn join_receives_the_topic_and_payload_test() {
+pub fn join_receives_the_topic_and_payload_test() -> Nil {
   let handler =
     channel.handler("room:*", fn(context) {
       let decoded =
@@ -198,7 +198,7 @@ pub fn join_receives_the_topic_and_payload_test() {
 
 // --- callback dispatch and state threading ---------------------------------
 
-pub fn message_actions_keep_their_order_test() {
+pub fn message_actions_keep_their_order_test() -> Nil {
   let live =
     channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
     |> accepted_channel
@@ -212,7 +212,7 @@ pub fn message_actions_keep_their_order_test() {
   }
 }
 
-pub fn channel_state_is_threaded_across_messages_test() {
+pub fn channel_state_is_threaded_across_messages_test() -> Nil {
   let live =
     channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
     |> accepted_channel
@@ -231,7 +231,7 @@ pub fn channel_state_is_threaded_across_messages_test() {
   }
 }
 
-pub fn unhandled_events_continue_without_actions_test() {
+pub fn unhandled_events_continue_without_actions_test() -> Nil {
   let handler = channel.handler("room:*", fn(_context) { channel.accept(Nil) })
 
   let live =
@@ -245,7 +245,7 @@ pub fn unhandled_events_continue_without_actions_test() {
 
 // --- close -----------------------------------------------------------------
 
-pub fn close_carries_its_final_actions_test() {
+pub fn close_carries_its_final_actions_test() -> Nil {
   let live =
     channel.open(counter_handler("room:*"), quiet_context("room:lobby"), [])
     |> accepted_channel
@@ -257,7 +257,7 @@ pub fn close_carries_its_final_actions_test() {
   }
 }
 
-pub fn terminate_runs_the_terminate_callback_test() {
+pub fn terminate_runs_the_terminate_callback_test() -> Nil {
   let observed = process.new_subject()
   let handler =
     channel.handler("room:*", fn(_context) {
@@ -277,7 +277,7 @@ pub fn terminate_runs_the_terminate_callback_test() {
 
 // --- typed server-side sends -----------------------------------------------
 
-pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
+pub fn sender_seals_typed_info_into_one_mail_per_send_test() -> Nil {
   let outbox = process.new_subject()
   let senders = process.new_subject()
 
@@ -323,7 +323,7 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() {
   }
 }
 
-pub fn an_unrun_mail_delivers_nothing_test() {
+pub fn an_unrun_mail_delivers_nothing_test() -> Nil {
   let outbox = process.new_subject()
   let senders = process.new_subject()
 
@@ -366,7 +366,7 @@ pub fn an_unrun_mail_delivers_nothing_test() {
   }
 }
 
-pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
+pub fn a_mail_addressed_to_another_join_delivers_nothing_test() -> Nil {
   let outbox = process.new_subject()
   let senders = process.new_subject()
 
@@ -411,7 +411,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() {
   }
 }
 
-pub fn info_can_close_the_channel_test() {
+pub fn info_can_close_the_channel_test() -> Nil {
   let outbox = process.new_subject()
   let senders = process.new_subject()
   let handler =
@@ -462,7 +462,7 @@ fn shared_closing_actions() -> List(channel.Action(channel.Closing)) {
   ]
 }
 
-pub fn shared_actions_are_valid_in_both_phases_test() {
+pub fn shared_actions_are_valid_in_both_phases_test() -> Nil {
   let expected =
     "broadcast/broadcast/1,presence_untrack/user:1,"
     <> "broadcast_presence/state/2"
@@ -471,7 +471,7 @@ pub fn shared_actions_are_valid_in_both_phases_test() {
   shared_closing_actions() |> lowered |> should.equal(expected)
 }
 
-pub fn actions_cover_the_core_effect_capabilities_test() {
+pub fn actions_cover_the_core_effect_capabilities_test() -> Nil {
   let reply =
     socket.make_message_ref(
       topic: "room:lobby",
@@ -505,7 +505,7 @@ pub fn actions_cover_the_core_effect_capabilities_test() {
   )
 }
 
-pub fn optional_reply_without_a_ref_lowers_to_no_effect_test() {
+pub fn optional_reply_without_a_ref_lowers_to_no_effect_test() -> Nil {
   channel.effects("room:lobby", [
     channel.reply_ok(option.None, json.int(1)),
     channel.reply_error(option.None, json.int(2)),
@@ -513,7 +513,7 @@ pub fn optional_reply_without_a_ref_lowers_to_no_effect_test() {
   |> should.equal([])
 }
 
-pub fn optional_reply_with_a_ref_lowers_in_order_test() {
+pub fn optional_reply_with_a_ref_lowers_in_order_test() -> Nil {
   let reply =
     socket.make_message_ref(
       topic: "room:lobby",
@@ -529,7 +529,7 @@ pub fn optional_reply_with_a_ref_lowers_in_order_test() {
   |> should.equal("reply_ok/1,reply_error/2")
 }
 
-pub fn repeated_join_action_lists_append_left_to_right_test() {
+pub fn repeated_join_action_lists_append_left_to_right_test() -> Nil {
   let handler =
     channel.handler("room:*", fn(_context) {
       channel.accept(Nil)
@@ -544,7 +544,7 @@ pub fn repeated_join_action_lists_append_left_to_right_test() {
   }
 }
 
-pub fn presence_encoders_run_against_supplied_entries_test() {
+pub fn presence_encoders_run_against_supplied_entries_test() -> Nil {
   let actions = [
     channel.push_presence("state", fn(entries) {
       entries
@@ -562,6 +562,6 @@ pub fn presence_encoders_run_against_supplied_entries_test() {
   }
 }
 
-pub fn an_empty_action_list_is_empty_test() {
+pub fn an_empty_action_list_is_empty_test() -> Nil {
   channel.effects("room:lobby", []) |> should.equal([])
 }

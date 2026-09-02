@@ -33,7 +33,7 @@ fn join(system: matrix.System) -> #(matrix.Client, matrix.Frame) {
 
 // === Join ==================================================================
 
-pub fn a_join_is_accepted_with_the_same_reply_test() {
+pub fn a_join_is_accepted_with_the_same_reply_test() -> Nil {
   let reply =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, reply) = join(system)
@@ -51,7 +51,7 @@ pub fn a_join_is_accepted_with_the_same_reply_test() {
   )
 }
 
-pub fn a_rejected_join_reports_the_same_reason_test() {
+pub fn a_rejected_join_reports_the_same_reason_test() -> Nil {
   let reply =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let client = matrix.connect(system)
@@ -74,7 +74,7 @@ pub fn a_rejected_join_reports_the_same_reason_test() {
   |> should.equal("{\"response\":{\"reason\":\"denied\"},\"status\":\"error\"}")
 }
 
-pub fn a_join_for_an_unowned_topic_is_refused_the_same_way_test() {
+pub fn a_join_for_an_unowned_topic_is_refused_the_same_way_test() -> Nil {
   let reply =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let client = matrix.connect(system)
@@ -96,7 +96,7 @@ pub fn a_join_for_an_unowned_topic_is_refused_the_same_way_test() {
 
 // === Replies ===============================================================
 
-pub fn a_message_reply_is_identical_test() {
+pub fn a_message_reply_is_identical_test() -> Nil {
   let reply =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
@@ -117,7 +117,7 @@ pub fn a_message_reply_is_identical_test() {
   |> should.equal("{\"response\":{\"pong\":true},\"status\":\"ok\"}")
 }
 
-pub fn an_error_reply_is_identical_test() {
+pub fn an_error_reply_is_identical_test() -> Nil {
   let reply =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
@@ -137,7 +137,7 @@ pub fn an_error_reply_is_identical_test() {
 
 // === Push and fan-out ======================================================
 
-pub fn a_server_push_is_identical_test() {
+pub fn a_server_push_is_identical_test() -> Nil {
   let pushed =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
@@ -158,7 +158,7 @@ pub fn a_server_push_is_identical_test() {
   pushed.payload |> should.equal("{\"from\":\"server\"}")
 }
 
-pub fn broadcast_from_excludes_the_sender_identically_test() {
+pub fn broadcast_from_excludes_the_sender_identically_test() -> Nil {
   let received =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(sender, _join) = join(system)
@@ -191,7 +191,7 @@ pub fn broadcast_from_excludes_the_sender_identically_test() {
   received.payload |> should.equal("{\"body\":\"hi\"}")
 }
 
-pub fn a_server_side_broadcast_reaches_both_systems_identically_test() {
+pub fn a_server_side_broadcast_reaches_both_systems_identically_test() -> Nil {
   let received =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
@@ -212,7 +212,7 @@ pub fn a_server_side_broadcast_reaches_both_systems_identically_test() {
 
 // === Heartbeat and leave ===================================================
 
-pub fn a_heartbeat_is_answered_identically_test() {
+pub fn a_heartbeat_is_answered_identically_test() -> Nil {
   let reply =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
@@ -229,7 +229,7 @@ pub fn a_heartbeat_is_answered_identically_test() {
   reply.payload |> should.equal("{\"response\":{},\"status\":\"ok\"}")
 }
 
-pub fn a_leave_ends_the_channel_identically_test() {
+pub fn a_leave_ends_the_channel_identically_test() -> Nil {
   let frames =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
@@ -256,7 +256,7 @@ pub fn a_leave_ends_the_channel_identically_test() {
 
 // === Binary ================================================================
 
-pub fn a_codec_decoded_binary_frame_is_handled_identically_test() {
+pub fn a_codec_decoded_binary_frame_is_handled_identically_test() -> Nil {
   let pushed =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
@@ -275,7 +275,7 @@ pub fn a_codec_decoded_binary_frame_is_handled_identically_test() {
 
 // === Presence ==============================================================
 
-pub fn presence_tracking_produces_the_same_frames_test() {
+pub fn presence_tracking_produces_the_same_frames_test() -> Nil {
   let #(diff_shape, snapshot, entries) =
     matrix.compare(
       setup: fn() {
@@ -319,7 +319,7 @@ pub fn presence_tracking_produces_the_same_frames_test() {
 
 // === Abuse controls ========================================================
 
-pub fn the_join_rate_limiter_answers_identically_test() {
+pub fn the_join_rate_limiter_answers_identically_test() -> Nil {
   let reply =
     matrix.compare_with(
       config: fn() {
@@ -343,7 +343,7 @@ pub fn the_join_rate_limiter_answers_identically_test() {
   reply.payload |> string.contains("rate_limited") |> should.be_true
 }
 
-pub fn the_topic_cap_answers_identically_test() {
+pub fn the_topic_cap_answers_identically_test() -> Nil {
   let reply =
     matrix.compare_with(
       config: fn() {

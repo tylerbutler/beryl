@@ -1,4 +1,4 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket
 import beryl/transport
@@ -32,12 +32,12 @@ fn tagged_codec() -> codec.Codec {
   )
 }
 
-pub fn shared_server_preserves_negotiated_socket_codec_test() {
+pub fn shared_server_preserves_negotiated_socket_codec_test() -> Nil {
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: h.accepting_init,
-      update: h.accepting_update,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
     )
   let telemetry = transport.telemetry(sockets, transport.Mist)
   let assert Ok(connection_permit) =

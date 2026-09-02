@@ -111,7 +111,7 @@ fn ffi_get_members(scope: atom.Atom, group: String) -> List(Pid)
 fn ffi_get_local_members(scope: atom.Atom, group: String) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "send_to_pid")
-fn ffi_send_to_pid(pid: Pid, scope: atom.Atom, msg: Message(payload)) -> Nil
+fn ffi_send_to_pid(pid: Pid, scope: atom.Atom, message: Message(payload)) -> Nil
 
 /// Recover a `Message(payload)` from the raw process message `selecting`
 /// matched on. Safe only because `selecting` first confirms the message has the
@@ -190,8 +190,8 @@ pub opaque type Subscriber(payload) {
 /// A process may create subscribers for multiple scopes and payload types.
 /// `selecting` uses each subscriber's scope to keep their raw mailbox messages
 /// separate.
-pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
-  Subscriber(scope: ps.scope, owner: process.self())
+pub fn subscriber(pubsub_instance: PubSub(payload)) -> Subscriber(payload) {
+  Subscriber(scope: pubsub_instance.scope, owner: process.self())
 }
 
 /// Join a topic so this subscriber receives broadcasts sent to it.
@@ -239,73 +239,85 @@ pub fn selecting(
 
 /// Broadcast a message to all topic subscribers on all nodes.
 pub fn broadcast(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg = Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) { ffi_send_to_pid(pid, ps.scope, msg) })
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_members(pubsub_instance.scope, topic)
+  list.each(members, fn(pid) {
+    ffi_send_to_pid(pid, pubsub_instance.scope, message)
+  })
 }
 
 /// Broadcast a message to all subscribers except a specific PID.
 pub fn broadcast_from(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   from: Pid,
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg =
+  let message =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
-  ffi_get_members(ps.scope, topic)
+  ffi_get_members(pubsub_instance.scope, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, ps.scope, msg))
+  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
 /// Broadcast a message to all subscribers except a process.
 ///
 /// Preserve a socket ID that receiving runtimes must exclude locally.
 pub fn broadcast_from_socket(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   from: Pid,
   except_socket_id: String,
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg =
+  let message =
     Message(
       topic: topic,
       event: event,
       payload: payload,
       from: FromSocket(from, except_socket_id),
     )
-  ffi_get_members(ps.scope, topic)
+  ffi_get_members(pubsub_instance.scope, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, ps.scope, msg))
+  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
 // nolint: unused_exports -- public PubSub API intended for downstream consumers
 /// Broadcast a message only to subscribers on the current node.
 pub fn local_broadcast(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg = Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_local_members(ps.scope, topic)
-  list.each(members, fn(pid) { ffi_send_to_pid(pid, ps.scope, msg) })
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_local_members(pubsub_instance.scope, topic)
+  list.each(members, fn(pid) {
+    ffi_send_to_pid(pid, pubsub_instance.scope, message)
+  })
 }
 
 /// Return all topic subscribers on all nodes.
-pub fn subscribers(ps: PubSub(payload), topic: String) -> List(Pid) {
-  ffi_get_members(ps.scope, topic)
+pub fn subscribers(
+  pubsub_instance: PubSub(payload),
+  topic: String,
+) -> List(Pid) {
+  ffi_get_members(pubsub_instance.scope, topic)
 }
 
 /// Return the number of topic subscribers on all nodes.
-pub fn subscriber_count(ps: PubSub(payload), topic: String) -> Int {
-  list.length(ffi_get_members(ps.scope, topic))
+pub fn subscriber_count(
+  pubsub_instance: PubSub(payload),
+  topic: String,
+) -> Int {
+  list.length(ffi_get_members(pubsub_instance.scope, topic))
 }

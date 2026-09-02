@@ -3,15 +3,17 @@ import beryl/socket
 import gleam/erlang/process
 import gleam/string
 import gleeunit/should
-import test_helpers
+import test_helper
 
 /// Build a test `Sender` that forwards every notified value to a subject the
 /// test can receive on, standing in for a socket's real `update` delivery.
-fn capturing_sender(into received: process.Subject(msg)) -> socket.Sender(msg) {
-  socket.make_sender(fn(msg) { process.send(received, msg) })
+fn capturing_sender(
+  into received: process.Subject(message),
+) -> socket.Sender(message) {
+  socket.make_sender(fn(message) { process.send(received, message) })
 }
 
-pub fn bridge_forwards_subject_values_to_sender_test() {
+pub fn bridge_forwards_subject_values_to_sender_test() -> Nil {
   let received = process.new_subject()
   let sender = capturing_sender(into: received)
 
@@ -32,7 +34,7 @@ pub fn bridge_forwards_subject_values_to_sender_test() {
   bridge.stop(started)
 }
 
-pub fn bridge_stop_tears_down_forwarder_test() {
+pub fn bridge_stop_tears_down_forwarder_test() -> Nil {
   let received = process.new_subject()
   let assert Ok(started) =
     bridge.start(to: capturing_sender(into: received), with: fn(x: String) { x })
@@ -42,11 +44,11 @@ pub fn bridge_stop_tears_down_forwarder_test() {
 
   bridge.stop(started)
 
-  test_helpers.wait_until(fn() { !process.is_alive(pid) }, 1000, 10)
+  test_helper.wait_until(fn() { !process.is_alive(pid) }, 1000, 10)
   process.is_alive(pid) |> should.be_false
 }
 
-pub fn bridge_cleans_up_when_owner_dies_test() {
+pub fn bridge_cleans_up_when_owner_dies_test() -> Nil {
   let received = process.new_subject()
   let pid_back = process.new_subject()
 
@@ -63,6 +65,6 @@ pub fn bridge_cleans_up_when_owner_dies_test() {
 
   let assert Ok(forwarder) = process.receive(pid_back, 1000)
 
-  test_helpers.wait_until(fn() { !process.is_alive(forwarder) }, 1000, 10)
+  test_helper.wait_until(fn() { !process.is_alive(forwarder) }, 1000, 10)
   process.is_alive(forwarder) |> should.be_false
 }

@@ -30,15 +30,18 @@ pub fn accepting_update(
 ) -> socket.Next(Nil) {
   case input {
     socket.Join(_, _, ref) -> socket.Next(model, [socket.AcceptJoin(ref, None)])
-    _ -> socket.Next(model, [])
+    socket.Message(..)
+    | socket.Binary(..)
+    | socket.Closed(..)
+    | socket.Info(..) -> socket.Next(model, [])
   }
 }
 
 /// Build and start an app-side dispatch subtree for tests.
 pub fn start_app(
   config: beryl.Config,
-  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  init init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(message)) -> socket.Next(model),
 ) -> Result(beryl.Sockets, beryl.ConfigError) {
   use #(sockets, spec) <- result.try(beryl.child_spec(config, init:, update:))
   let assert Ok(_) =
@@ -115,8 +118,9 @@ fn connect_with_seed_and_close(
 /// Route a raw text frame the way a transport does: decode in the caller,
 /// then hand the decoded message to the runtime.
 pub fn route(channels: beryl.Sockets, socket_id: String, raw: String) -> Nil {
-  let assert Ok(msg) = codec.decode_text(transport.active_codec(channels))(raw)
-  transport.route_decoded(channels, socket_id, msg)
+  let assert Ok(message) =
+    codec.decode_text(transport.active_codec(channels))(raw)
+  transport.route_decoded(channels, socket_id, message)
 }
 
 /// Send a `phx_join` for a topic with the given join_ref/ref.
@@ -189,8 +193,8 @@ pub fn recv_none(frames: process.Subject(String)) -> Nil {
 
 /// Receive the next observed event, failing after 500ms.
 pub fn next_event(
-  events: process.Subject(socket.Input(msg)),
-) -> socket.Input(msg) {
+  events: process.Subject(socket.Input(message)),
+) -> socket.Input(message) {
   let assert Ok(ev) = process.receive(events, 500)
   ev
 }

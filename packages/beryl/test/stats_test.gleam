@@ -1,4 +1,4 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/presence
 import beryl/socket
@@ -9,11 +9,11 @@ import gleam/erlang/process
 import gleam/json
 import gleam/option.{None}
 import gleeunit/should
-import test_helpers
+import test_helper
 
 fn start_sockets() -> beryl.Sockets {
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, input) {
@@ -35,18 +35,18 @@ fn read_snapshot(sockets: beryl.Sockets) -> stats.Snapshot {
   snapshot
 }
 
-pub fn snapshot_tracks_socket_lifecycle_test() {
+pub fn snapshot_tracks_socket_lifecycle_test() -> Nil {
   let sockets = start_sockets()
   let initial = read_snapshot(sockets)
   stats.connected_sockets(initial) |> should.equal(0)
   stats.joined_socket_topic_pairs(initial) |> should.equal(0)
   stats.active_topics(initial) |> should.equal(0)
 
-  let first = h.connect(sockets, "socket-1")
-  let second = h.connect(sockets, "socket-2")
-  h.join(sockets, "socket-1", "room:a", "jr-1", "1")
-  h.join(sockets, "socket-1", "room:b", "jr-2", "2")
-  h.join(sockets, "socket-2", "room:a", "jr-3", "3")
+  let first = app_test_helper.connect(sockets, "socket-1")
+  let second = app_test_helper.connect(sockets, "socket-2")
+  app_test_helper.join(sockets, "socket-1", "room:a", "jr-1", "1")
+  app_test_helper.join(sockets, "socket-1", "room:b", "jr-2", "2")
+  app_test_helper.join(sockets, "socket-2", "room:a", "jr-3", "3")
   let assert Ok(_) = process.receive(first, 500)
   let assert Ok(_) = process.receive(first, 500)
   let assert Ok(_) = process.receive(second, 500)
@@ -57,7 +57,7 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   stats.active_topics(joined) |> should.equal(2)
 
   transport.socket_disconnected(sockets, "socket-2")
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { stats.connected_sockets(read_snapshot(sockets)) == 1 },
     500,
     10,
@@ -68,19 +68,20 @@ pub fn snapshot_tracks_socket_lifecycle_test() {
   stats.active_topics(after_disconnect) |> should.equal(2)
 
   let _ = beryl.stop(sockets)
+  Nil
 }
 
 /// A socket actor that dies without reporting `SocketClosed` (killed, or
 /// crashed outside a rescue boundary) must be swept by the router's
 /// monitor: neither its connection count nor its topic-index entries may
 /// leak.
-pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
+pub fn a_killed_socket_actor_is_swept_from_the_router_test() -> Nil {
   let pids = process.new_subject()
   let closed = process.new_subject()
   let assert Ok(presence_handle) =
     presence.start(presence.default_config("stats-actor-crash"))
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(presence_handle),
       init: fn(_info) {
@@ -103,19 +104,21 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
       },
     )
   let frames =
-    h.connect_with_close(sockets, "doomed", fn() { process.send(closed, Nil) })
-  h.join(sockets, "doomed", "room:x", "jr-1", "1")
+    app_test_helper.connect_with_close(sockets, "doomed", fn() {
+      process.send(closed, Nil)
+    })
+  app_test_helper.join(sockets, "doomed", "room:x", "jr-1", "1")
   let assert Ok(_) = process.receive(frames, 500)
   let assert Ok(actor_pid) = process.receive(pids, 500)
     as "init reported the socket actor's pid"
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { stats.connected_sockets(read_snapshot(sockets)) == 1 },
     500,
     10,
   )
   let joined = read_snapshot(sockets)
   stats.active_topics(joined) |> should.equal(1)
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() {
       case presence.list(presence_handle, "room:x") {
         Ok([_]) -> True
@@ -129,7 +132,7 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
   process.kill(actor_pid)
 
   process.receive(closed, 500) |> should.equal(Ok(Nil))
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { stats.connected_sockets(read_snapshot(sockets)) == 0 },
     500,
     10,
@@ -137,15 +140,16 @@ pub fn a_killed_socket_actor_is_swept_from_the_router_test() {
   let swept = read_snapshot(sockets)
   stats.joined_socket_topic_pairs(swept) |> should.equal(0)
   stats.active_topics(swept) |> should.equal(0)
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { presence.list(presence_handle, "room:x") == Ok([]) },
     500,
     10,
   )
   let _ = beryl.stop(sockets)
+  Nil
 }
 
-pub fn snapshot_returns_unavailable_after_stop_test() {
+pub fn snapshot_returns_unavailable_after_stop_test() -> Nil {
   let sockets = start_sockets()
   let assert Ok(Nil) = beryl.stop(sockets)
   stats.snapshot(sockets)
@@ -157,10 +161,10 @@ pub fn snapshot_returns_unavailable_after_stop_test() {
 /// callback is mid-flight. (A flooded router can still return
 /// `RequestTimedOut`; `snapshot_returns_unavailable_after_stop_test`
 /// covers the unavailable path.)
-pub fn snapshot_succeeds_while_a_socket_callback_is_busy_test() {
+pub fn snapshot_succeeds_while_a_socket_callback_is_busy_test() -> Nil {
   let entered = process.new_subject()
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, input) {
@@ -179,10 +183,10 @@ pub fn snapshot_succeeds_while_a_socket_callback_is_busy_test() {
         }
       },
     )
-  let frames = h.connect(sockets, "slow")
-  h.join(sockets, "slow", "room:slow", "jr", "join")
+  let frames = app_test_helper.connect(sockets, "slow")
+  app_test_helper.join(sockets, "slow", "room:slow", "jr", "join")
   let assert Ok(_) = process.receive(frames, 500)
-  h.push(sockets, "slow", "room:slow", "block", "ref")
+  app_test_helper.push(sockets, "slow", "room:slow", "block", "ref")
   let assert Ok(Nil) = process.receive(entered, 500)
 
   let snapshot = read_snapshot(sockets)
@@ -190,4 +194,5 @@ pub fn snapshot_succeeds_while_a_socket_callback_is_busy_test() {
   stats.joined_socket_topic_pairs(snapshot) |> should.equal(1)
   stats.active_topics(snapshot) |> should.equal(1)
   let _ = beryl.stop(sockets)
+  Nil
 }

@@ -31,7 +31,7 @@ fn reason(text: String) -> json.Json {
   json.object([#("reason", json.string(text))])
 }
 
-pub fn a_refused_topic_is_rejected_without_running_open_test() {
+pub fn a_refused_topic_is_rejected_without_running_open_test() -> Nil {
   let opened = process.new_subject()
   let channels =
     start(
@@ -55,7 +55,7 @@ pub fn a_refused_topic_is_rejected_without_running_open_test() {
   Nil
 }
 
-pub fn an_accepted_topic_still_reaches_open_test() {
+pub fn an_accepted_topic_still_reaches_open_test() -> Nil {
   let channels =
     start(accepts: fn(_topic) { Ok(Nil) }, open: fn(_context) {
       socket.WorkerRejected(reason("forbidden"))

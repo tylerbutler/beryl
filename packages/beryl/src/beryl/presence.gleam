@@ -231,7 +231,7 @@ pub opaque type Config {
 /// Errors from an update to a tracked presence.
 pub type PresenceUpdateError {
   /// The ref is unknown, already removed, or was not returned by `track`.
-  UnknownRef
+  UnknownRef(ref: String)
 }
 
 /// Messages that the presence actor handles.
@@ -638,7 +638,7 @@ fn build_presence(
 /// that branch from nesting too deeply.
 fn maybe_broadcast_state(
   actor_state: ActorState,
-  ps: PubSub(SyncPayload),
+  pubsub_instance: PubSub(SyncPayload),
 ) -> ActorState {
   use <- bool.guard(when: !actor_state.dirty, return: actor_state)
   let payload =
@@ -650,7 +650,13 @@ fn maybe_broadcast_state(
       state: actor_state.crdt,
     )
 
-  pubsub.broadcast_from(ps, process.self(), sync_topic, sync_event, payload)
+  pubsub.broadcast_from(
+    pubsub_instance,
+    process.self(),
+    sync_topic,
+    sync_event,
+    payload,
+  )
 
   ActorState(..actor_state, dirty: False)
 }
@@ -797,7 +803,7 @@ pub fn track(
 /// tracked refs for the same key do not change.
 ///
 /// Returns the replacement ref, which must be used for subsequent `update`
-/// or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+/// or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
 /// unknown, already removed, or belongs to the internal runtime.
 ///
 /// Panics if the presence actor is unavailable or does not reply within the
@@ -1018,8 +1024,8 @@ fn handle_message(
           process.send(reply, Ok(new_ref))
           actor.continue(new_state)
         }
-        _ -> {
-          process.send(reply, Error(UnknownRef))
+        Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner)) | Error(Nil) -> {
+          process.send(reply, Error(UnknownRef(ref)))
           actor.continue(actor_state)
         }
       }
@@ -1063,8 +1069,8 @@ fn handle_message(
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
-        Some(ps), Some(subject) -> {
-          let new_state = maybe_broadcast_state(actor_state, ps)
+        Some(pubsub_instance), Some(subject) -> {
+          let new_state = maybe_broadcast_state(actor_state, pubsub_instance)
           schedule_broadcast_tick(
             subject,
             actor_state.config.broadcast_interval_ms,

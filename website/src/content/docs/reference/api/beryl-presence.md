@@ -187,7 +187,7 @@ A presence entry returned from queries and diff accessors.
 
 ```gleam
 pub type PresenceUpdateError {
-  UnknownRef
+  UnknownRef(ref: String)
 }
 ```
 
@@ -198,7 +198,7 @@ Errors from an update to a tracked presence.
 ##### `UnknownRef`
 
 ```gleam
-UnknownRef
+UnknownRef(ref: String)
 ```
 
 The ref is unknown, already removed, or was not returned by `track`.
@@ -442,7 +442,7 @@ Replace the meta of a presence created by `track`.
  tracked refs for the same key do not change.
 
  Returns the replacement ref, which must be used for subsequent `update`
- or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+ or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
  unknown, already removed, or belongs to the internal runtime.
 
  Panics if the presence actor is unavailable or does not reply within the

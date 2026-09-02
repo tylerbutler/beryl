@@ -64,17 +64,17 @@ fn welcoming_handler() -> channel.Handler {
   })
 }
 
-pub fn the_join_acknowledgment_precedes_the_joins_own_actions_test() {
+pub fn the_join_acknowledgment_precedes_the_joins_own_actions_test() -> Nil {
   let channels = start([welcoming_handler()])
   let frames = helper.connect(channels, "s1")
 
   helper.join(channels, "s1", "room:a", "jr-1", "r-1")
 
   // The acknowledgment is first...
-  let ack = helper.recv(frames)
-  ack |> string.contains("phx_reply") |> should.be_true
-  ack |> string.contains("\"status\":\"ok\"") |> should.be_true
-  ack |> string.contains("\"joined\":\"room:a\"") |> should.be_true
+  let acknowledgement = helper.recv(frames)
+  acknowledgement |> string.contains("phx_reply") |> should.be_true
+  acknowledgement |> string.contains("\"status\":\"ok\"") |> should.be_true
+  acknowledgement |> string.contains("\"joined\":\"room:a\"") |> should.be_true
 
   // ...and the join's own actions follow it, in order. A push lowered
   // before the accept would have been dropped: the socket is not
@@ -105,7 +105,7 @@ fn capacity_handler(handle: presence.Presence) -> channel.Handler {
   })
 }
 
-pub fn a_join_time_presence_track_applies_in_the_join_turn_test() {
+pub fn a_join_time_presence_track_applies_in_the_join_turn_test() -> Nil {
   let handle = start_presence("join-turn")
   let channels = start_with_presence([capacity_handler(handle)], handle)
   let frames = helper.connect(channels, "s1")
@@ -126,7 +126,7 @@ pub fn a_join_time_presence_track_applies_in_the_join_turn_test() {
   entry.key |> should.equal("s1")
 }
 
-pub fn a_capacity_check_observes_a_completed_join_time_track_test() {
+pub fn a_capacity_check_observes_a_completed_join_time_track_test() -> Nil {
   let handle = start_presence("capacity")
   let channels = start_with_presence([capacity_handler(handle)], handle)
   let first = helper.connect(channels, "s1")
@@ -169,7 +169,7 @@ fn departing_handler(trace: process.Subject(String)) -> channel.Handler {
   })
 }
 
-pub fn termination_actions_are_applied_in_order_test() {
+pub fn termination_actions_are_applied_in_order_test() -> Nil {
   let handle = start_presence("terminate-order")
   let trace = process.new_subject()
   let channels = start_with_presence([departing_handler(trace)], handle)
@@ -193,7 +193,7 @@ pub fn termination_actions_are_applied_in_order_test() {
   roster |> string.contains("s1") |> should.be_false
 }
 
-pub fn termination_actions_run_exactly_once_test() {
+pub fn termination_actions_run_exactly_once_test() -> Nil {
   let handle = start_presence("terminate-once")
   let trace = process.new_subject()
   let channels = start_with_presence([departing_handler(trace)], handle)

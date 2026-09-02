@@ -158,7 +158,7 @@ Start a bridge from an external `Subject` to a socket's `update` function.
  `socket.notify(sender, transform(value))`.
 
  Use `transform` to translate the domain message into your app's
- server-side `msg` type (the `Info` payload). If no translation is needed,
+ server-side `message` type (the `Info` payload). If no translation is needed,
  pass the identity function `fn(value) { value }`.
 
  Always call `stop` when the owning socket or topic ends. The forwarder

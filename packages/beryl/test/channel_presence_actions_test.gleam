@@ -57,7 +57,7 @@ fn start_presence() -> presence.Presence {
   handle
 }
 
-pub fn presence_actions_target_the_channels_own_topic_test() {
+pub fn presence_actions_target_the_channels_own_topic_test() -> Nil {
   let handle = start_presence()
   let channels = start_system(handle)
   let frames = helper.connect(channels, "s1")
@@ -82,7 +82,7 @@ pub fn presence_actions_target_the_channels_own_topic_test() {
   entry.key |> should.equal("alice")
 }
 
-pub fn presence_snapshots_see_earlier_actions_in_the_same_list_test() {
+pub fn presence_snapshots_see_earlier_actions_in_the_same_list_test() -> Nil {
   let handle = start_presence()
   let channels = start_system(handle)
   let frames = helper.connect(channels, "s1")
