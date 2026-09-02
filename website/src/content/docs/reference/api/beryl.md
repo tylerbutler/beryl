@@ -240,7 +240,7 @@ A runtime system handle.
  so they can change without breaking application code.
 
  The handle is non-generic. An app-side dispatch system is
- generic over the application's `model`/`msg`, but those types are sealed
+ generic over the application's `model`/`message`, but those types are sealed
  inside monomorphic closures at construction time. They
  never appear in this handle or in any transport signature.
 

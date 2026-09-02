@@ -263,8 +263,8 @@ pub fn with_topic_rate(
 }
 
 /// Add PubSub to a configuration for distributed broadcasts.
-pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
-  Config(..config, pubsub: Some(ps))
+pub fn with_pubsub(config: Config, pubsub: PubSub(json.Json)) -> Config {
+  Config(..config, pubsub: Some(pubsub))
 }
 
 /// Attach the presence actor used by socket presence effects.
@@ -577,7 +577,7 @@ pub fn frame_limits(channels: Sockets) -> Option(rate_limit.RateLimitConfig) {
 /// so they can change without breaking application code.
 ///
 /// The handle is non-generic. An app-side dispatch system is
-/// generic over the application's `model`/`msg`, but those types are sealed
+/// generic over the application's `model`/`message`, but those types are sealed
 /// inside monomorphic closures at construction time. They
 /// never appear in this handle or in any transport signature.
 pub opaque type Sockets {
@@ -839,8 +839,8 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
 /// ```
 pub fn child_spec(
   config: Config,
-  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  init init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(message)) -> socket.Next(model),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
@@ -877,8 +877,8 @@ pub fn worker_child_spec(
 
 fn child_spec_with(
   config: Config,
-  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(message)) -> socket.Next(model),
   open_worker: Option(runtime.WorkerOpener),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
@@ -926,8 +926,8 @@ type AppSubtree {
 /// resurrected.
 fn build_app_subtree(
   config: Config,
-  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(message)) -> socket.Next(model),
   open_worker: Option(runtime.WorkerOpener),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
@@ -992,11 +992,11 @@ fn build_app_subtree(
 /// the factory tears the survivors down.
 fn child_spec_supervisor(
   config: Config,
-  runtime_name: process.Name(runtime.Msg(msg)),
-  factory_name: process.Name(runtime.SocketFactoryMessage(msg)),
+  runtime_name: process.Name(runtime.Msg(message)),
+  factory_name: process.Name(runtime.SocketFactoryMessage(message)),
   limiter_name: Option(process.Name(connection_limit.Message)),
-  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update: fn(model, socket.Input(msg)) -> socket.Next(model),
+  init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(message)) -> socket.Next(model),
   open_worker: Option(runtime.WorkerOpener),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
   // Socket actors are `Temporary` children of this factory: it owns their
@@ -1070,18 +1070,35 @@ fn await_admission(
   }
 }
 
+fn finish_admission(
+  started: actor.Started(Subject(runtime.Msg(message))),
+  reply: Subject(Bool),
+  admission: runtime.AdmissionToken,
+) -> Bool {
+  // nolint: prefer_guard_clause -- bool.guard eagerly evaluates its return value, which would stop an admitted actor
+  case await_admission(reply, admission) {
+    True -> True
+    False -> {
+      // Stopping is safe whether the runtime refused the actor or the
+      // admission timed out after the actor had already stopped.
+      process.send(started.data, runtime.StopSocketActor)
+      False
+    }
+  }
+}
+
 /// Build the monomorphic closure record over a generic runtime. This is
-/// plain closure capture by a generic function — the `model`/`msg` types
+/// plain closure capture by a generic function — the `model`/`message` types
 /// are sealed in here and never appear in any public signature. The
 /// subject is name-backed, so the closures keep working across supervised
 /// runtime restarts; sends are owner-guarded so use during a restart
 /// window or after `stop` degrades to a no-op instead of a crash.
 fn app_handle(
-  subject: Subject(runtime.Msg(msg)),
+  subject: Subject(runtime.Msg(message)),
   supervisor: Subject(app_supervisor.Message),
-  factory: Subject(runtime.SocketFactoryMessage(msg)),
+  factory: Subject(runtime.SocketFactoryMessage(message)),
   start_socket_actor: fn(process.Pid) ->
-    Result(actor.Started(Subject(runtime.Msg(msg))), actor.StartError),
+    Result(actor.Started(Subject(runtime.Msg(message))), actor.StartError),
 ) -> AppHandle {
   AppHandle(
     admit_socket: fn(
@@ -1093,60 +1110,48 @@ fn app_handle(
       seed,
       close,
     ) {
-      case process.subject_owner(subject) {
-        Ok(current_owner) if current_owner == owner -> {
-          // Phase one of admission: the socket factory starts the actor, so
-          // it is an owned supervision-tree child before registration
-          // begins. Only that start is serialised through the factory —
-          // the app `init` runs later, in the actor itself, so the
-          // runtime's admission turn stays an O(1) atomic
-          // admit-and-forward and connection setup stays parallel.
-          case start_socket_actor(owner) {
-            Error(_) -> False
-            Ok(started) -> {
-              let reply = process.new_subject()
-              let admission = runtime.new_admission_token()
-              process.send(
-                subject,
-                runtime.AdmitSocket(
-                  owner,
-                  socket_id,
-                  send,
-                  send_binary,
-                  socket_codec,
-                  seed,
-                  close,
-                  admission,
-                  reply,
-                  started.data,
-                  started.pid,
-                ),
-              )
-              case await_admission(reply, admission) {
-                True -> True
-                // Refused by the runtime, refused by the actor, or timed
-                // out. Stopping the actor is idempotent across all three:
-                // a never-registered actor just stops, and a dead one
-                // drops the message.
-                False -> {
-                  process.send(started.data, runtime.StopSocketActor)
-                  False
-                }
-              }
-            }
-          }
+      let owner_matches = case process.subject_owner(subject) {
+        Ok(current_owner) -> current_owner == owner
+        Error(Nil) -> False
+      }
+      use <- bool.guard(when: !owner_matches, return: False)
+
+      // Phase one of admission starts the actor as a socket-factory child.
+      // The app `init` runs later in the actor, so registration stays O(1).
+      case start_socket_actor(owner) {
+        // nolint: thrown_away_error -- admission exposes only success or failure; actor start details are not part of this transport callback
+        Error(_) -> False
+        Ok(started) -> {
+          let reply = process.new_subject()
+          let admission = runtime.new_admission_token()
+          process.send(
+            subject,
+            runtime.AdmitSocket(
+              owner,
+              socket_id,
+              send,
+              send_binary,
+              socket_codec,
+              seed,
+              close,
+              admission,
+              reply,
+              started.data,
+              started.pid,
+            ),
+          )
+          finish_admission(started, reply, admission)
         }
-        _ -> False
       }
     },
     socket_disconnected: fn(socket_id) {
       send_runtime(subject, runtime.SocketDisconnected(socket_id))
     },
-    route_decoded: fn(socket_id, msg) {
-      send_runtime(subject, runtime.RouteDecoded(socket_id, msg))
+    route_decoded: fn(socket_id, message) {
+      send_runtime(subject, runtime.RouteDecoded(socket_id, message))
     },
-    route_decoded_binary: fn(socket_id, msg) {
-      send_runtime(subject, runtime.RouteDecodedBinary(socket_id, msg))
+    route_decoded_binary: fn(socket_id, message) {
+      send_runtime(subject, runtime.RouteDecodedBinary(socket_id, message))
     },
     route_binary: fn(socket_id, data) {
       send_runtime(subject, runtime.HandleBinary(socket_id, data))
@@ -1210,7 +1215,7 @@ fn ensure_supervisor_running(
 }
 
 fn stop_runtime(
-  subject: Subject(runtime.Msg(msg)),
+  subject: Subject(runtime.Msg(message)),
   finished: Subject(Bool),
 ) -> Result(process.Monitor, Nil) {
   case process.subject_owner(subject) {
@@ -1226,8 +1231,8 @@ fn stop_runtime(
 /// Send to the runtime only while its name is registered, so handle use
 /// during a supervised restart window or after `stop` is a quiet no-op.
 fn send_runtime(
-  subject: Subject(runtime.Msg(msg)),
-  message: runtime.Msg(msg),
+  subject: Subject(runtime.Msg(message)),
+  message: runtime.Msg(message),
 ) -> Nil {
   case process.subject_owner(subject) {
     Ok(_) -> process.send(subject, message)

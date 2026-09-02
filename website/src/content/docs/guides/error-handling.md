@@ -217,8 +217,8 @@ Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(
 ```gleam
 case group.create(groups, name) {
   Ok(Nil) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // idempotent: treat as success if desired
-  Error(group.GroupNotFound) -> Nil       // shouldn't happen for create
+  Error(group.GroupAlreadyExists(_)) -> Nil  // idempotent: treat as success if desired
+  Error(group.GroupNotFound(_)) -> Nil       // shouldn't happen for create
 }
 ```
 

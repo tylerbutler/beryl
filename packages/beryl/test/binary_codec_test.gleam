@@ -3,7 +3,7 @@
 //// encoded back through the codec's binary frames, and codecs without a
 //// binary decoder fan raw frames out as `Binary` events.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket.{AcceptJoin, Binary, Join, Message, Next, ReplyOk}
 import beryl/transport
@@ -45,10 +45,10 @@ fn connect_binary(
   #(sent_text, sent_binary)
 }
 
-pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
+pub fn binary_codec_routes_join_message_and_reply_over_binary_test() -> Nil {
   let seen_payload = process.new_subject()
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(binary_test_codec.new()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {
@@ -104,12 +104,13 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() {
 
   process.receive(sent_text, 50) |> should.be_error
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn binary_codec_event_consumes_one_message_rate_token_test() {
+pub fn binary_codec_event_consumes_one_message_rate_token_test() -> Nil {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(binary_test_codec.new())
         |> beryl.with_message_rate(per_second: 100, burst: 2),
       init: fn(_info) { #(Nil, []) },
@@ -152,12 +153,13 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() {
   bit_array.to_string(second_reply_bits)
   |> should.equal(Ok("R|event-2|room:lobby|ok|{\"ok\":true}"))
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn binary_codec_broadcast_uses_binary_send_test() {
+pub fn binary_codec_broadcast_uses_binary_send_test() -> Nil {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(binary_test_codec.new()),
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: fn(model, ev) {
@@ -189,10 +191,11 @@ pub fn binary_codec_broadcast_uses_binary_send_test() {
   |> should.equal(Ok("P|room:lobby|announcement|{\"body\":\"hello\"}"))
   process.receive(sent_text, 50) |> should.be_error
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() {
+pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() -> Nil {
   let seen_binary = process.new_subject()
   // A text-only codec (no binary decoder): raw binary frames fan out to the
   // app as `Binary` events. The Phoenix codec now ships its own binary
@@ -205,7 +208,7 @@ pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() {
       encode_heartbeat_reply: wire.heartbeat_reply,
     )
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(text_only),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, ev) {
@@ -222,11 +225,11 @@ pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() {
 
   let #(sent_text, _sent_binary) = connect_binary(channels, "socket-1")
 
-  let assert Ok(msg) =
+  let assert Ok(message) =
     codec.decode_text(transport.active_codec(channels))(
       "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
     )
-  transport.route_decoded(channels, "socket-1", msg)
+  transport.route_decoded(channels, "socket-1", message)
   let assert Ok(_join_reply) = process.receive(sent_text, 500)
 
   transport.route_binary(channels, "socket-1", bit_array.from_string("raw"))
@@ -234,5 +237,6 @@ pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() {
   let assert Ok(raw_bits) = process.receive(seen_binary, 500)
   bit_array.to_string(raw_bits) |> should.equal(Ok("raw"))
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }

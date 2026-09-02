@@ -7,9 +7,9 @@ import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit
 import gleeunit/should
-import test_helpers
+import test_helper
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -17,7 +17,7 @@ fn test_config(replica: String) -> presence.Config {
   presence.default_config(replica)
 }
 
-pub fn presence_start_test() {
+pub fn presence_start_test() -> Nil {
   let #(p, spec) = presence.child_spec(test_config("node1"))
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
@@ -26,7 +26,7 @@ pub fn presence_start_test() {
   presence.list(p, "room:lobby") |> should.equal(Ok([]))
 }
 
-pub fn presence_handle_and_reads_survive_supervised_restart_test() {
+pub fn presence_handle_and_reads_survive_supervised_restart_test() -> Nil {
   let #(p, spec) = presence.child_spec(test_config("node1"))
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
@@ -37,7 +37,7 @@ pub fn presence_handle_and_reads_survive_supervised_restart_test() {
   let assert Ok(old_pid) = process.subject_owner(presence.subject(p))
 
   process.kill(old_pid)
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() {
       case process.subject_owner(presence.subject(p)) {
         Ok(pid) -> pid != old_pid
@@ -55,7 +55,7 @@ pub fn presence_handle_and_reads_survive_supervised_restart_test() {
   entry.key |> should.equal("user:new")
 }
 
-pub fn presence_track_and_list_test() {
+pub fn presence_track_and_list_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let meta = json.object([#("status", json.string("online"))])
@@ -69,7 +69,7 @@ pub fn presence_track_and_list_test() {
   entry.key |> should.equal("user:1")
 }
 
-pub fn presence_track_multiple_test() {
+pub fn presence_track_multiple_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ =
@@ -81,7 +81,7 @@ pub fn presence_track_multiple_test() {
   list.length(entries) |> should.equal(2)
 }
 
-pub fn presence_untrack_test() {
+pub fn presence_untrack_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -91,7 +91,7 @@ pub fn presence_untrack_test() {
   list.length(entries) |> should.equal(0)
 }
 
-pub fn presence_track_returns_ref_distinct_from_pid_test() {
+pub fn presence_track_returns_ref_distinct_from_pid_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -100,7 +100,7 @@ pub fn presence_track_returns_ref_distinct_from_pid_test() {
   ref |> should.not_equal("socket-1")
 }
 
-pub fn presence_track_yields_distinct_refs_test() {
+pub fn presence_track_yields_distinct_refs_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let ref1 = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -109,7 +109,7 @@ pub fn presence_track_yields_distinct_refs_test() {
   ref1 |> should.not_equal(ref2)
 }
 
-pub fn presence_untrack_removes_only_that_ref_test() {
+pub fn presence_untrack_removes_only_that_ref_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let ref1 = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -124,7 +124,7 @@ pub fn presence_untrack_removes_only_that_ref_test() {
   entry.session_id |> should.equal("socket-2")
 }
 
-pub fn presence_untrack_same_tuple_ref_preserves_other_ref_test() {
+pub fn presence_untrack_same_tuple_ref_preserves_other_ref_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let ref1 =
@@ -158,7 +158,7 @@ pub fn presence_untrack_same_tuple_ref_preserves_other_ref_test() {
   presence_count(p, "room:lobby") |> should.equal(0)
 }
 
-pub fn presence_untrack_unknown_ref_is_noop_test() {
+pub fn presence_untrack_unknown_ref_is_noop_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -168,7 +168,7 @@ pub fn presence_untrack_unknown_ref_is_noop_test() {
   list.length(presence_entries(p, "room:lobby")) |> should.equal(1)
 }
 
-pub fn presence_update_replaces_one_ref_in_one_diff_test() {
+pub fn presence_update_replaces_one_ref_in_one_diff_test() -> Nil {
   let diff_subject = process.new_subject()
   let config =
     presence.default_config("node1")
@@ -222,7 +222,7 @@ pub fn presence_update_replaces_one_ref_in_one_diff_test() {
   metas |> string.contains("desktop") |> should.be_false
 }
 
-pub fn presence_update_unknown_or_stale_ref_is_error_test() {
+pub fn presence_update_unknown_or_stale_ref_is_error_test() -> Nil {
   let diff_subject = process.new_subject()
   let config =
     presence.default_config("node1")
@@ -232,17 +232,17 @@ pub fn presence_update_unknown_or_stale_ref_is_error_test() {
   let assert Ok(_) = process.receive(diff_subject, 1000)
 
   presence.update(p, "does-not-exist", json.null())
-  |> should.equal(Error(presence.UnknownRef))
+  |> should.equal(Error(presence.UnknownRef("does-not-exist")))
   process.receive(diff_subject, 0) |> should.be_error
 
   let assert Ok(new_ref) = presence.update(p, ref, json.null())
   let assert Ok(_) = process.receive(diff_subject, 1000)
   presence.update(p, ref, json.null())
-  |> should.equal(Error(presence.UnknownRef))
+  |> should.equal(Error(presence.UnknownRef(ref)))
   presence.untrack(p, new_ref)
 }
 
-pub fn presence_update_rejects_runtime_owned_ref_test() {
+pub fn presence_update_rejects_runtime_owned_ref_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
   let reply = process.new_subject()
   presence.track_async(
@@ -262,12 +262,12 @@ pub fn presence_update_rejects_runtime_owned_ref_test() {
   )) = process.receive(reply, 1000)
 
   presence.update(p, runtime_ref, json.null())
-  |> should.equal(Error(presence.UnknownRef))
+  |> should.equal(Error(presence.UnknownRef(runtime_ref)))
   let assert [entry] = presence_entries(p, "room:lobby")
   json.to_string(entry.meta) |> string.contains("online") |> should.be_true
 }
 
-pub fn presence_untrack_all_test() {
+pub fn presence_untrack_all_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -284,7 +284,7 @@ pub fn presence_untrack_all_test() {
   list.length(presence_entries(p, "room:general")) |> should.equal(0)
 }
 
-pub fn presence_untrack_all_leaves_no_dangling_refs_test() {
+pub fn presence_untrack_all_leaves_no_dangling_refs_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let ref1 = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -305,7 +305,7 @@ pub fn presence_untrack_all_leaves_no_dangling_refs_test() {
   entry.session_id |> should.equal("socket-2")
 }
 
-pub fn presence_get_by_key_test() {
+pub fn presence_get_by_key_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let meta1 = json.object([#("device", json.string("desktop"))])
@@ -317,7 +317,7 @@ pub fn presence_get_by_key_test() {
   list.length(entries) |> should.equal(2)
 }
 
-pub fn presence_different_topics_isolated_test() {
+pub fn presence_different_topics_isolated_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -328,7 +328,7 @@ pub fn presence_different_topics_isolated_test() {
   list.length(presence_entries(p, "room:empty")) |> should.equal(0)
 }
 
-pub fn presence_empty_list_test() {
+pub fn presence_empty_list_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
   let entries = presence_entries(p, "room:empty")
   list.length(entries) |> should.equal(0)
@@ -336,7 +336,7 @@ pub fn presence_empty_list_test() {
 
 // ── count ────────────────────────────────────────────────────────────────
 
-pub fn presence_count_test() {
+pub fn presence_count_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -345,7 +345,7 @@ pub fn presence_count_test() {
   presence_count(p, "room:lobby") |> should.equal(2)
 }
 
-pub fn presence_count_matches_list_length_test() {
+pub fn presence_count_matches_list_length_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -356,13 +356,13 @@ pub fn presence_count_matches_list_length_test() {
   |> should.equal(list.length(presence_entries(p, "room:lobby")))
 }
 
-pub fn presence_count_missing_topic_is_zero_test() {
+pub fn presence_count_missing_topic_is_zero_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   presence_count(p, "room:never-touched") |> should.equal(0)
 }
 
-pub fn presence_count_empty_after_untrack_all_test() {
+pub fn presence_count_empty_after_untrack_all_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -373,7 +373,7 @@ pub fn presence_count_empty_after_untrack_all_test() {
 
 // ── get_by_key on a missing topic ───────────────────────────────────────────
 
-pub fn presence_get_by_key_missing_topic_returns_empty_test() {
+pub fn presence_get_by_key_missing_topic_returns_empty_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   presence_metas(p, "room:never-touched", "user:1")
@@ -387,7 +387,7 @@ pub fn presence_get_by_key_missing_topic_returns_empty_test() {
 // (not eventual) consistency: no `wait_until` polling, proving `track` only
 // replies after its read-model snapshot has already been published.
 
-pub fn track_is_immediately_visible_to_all_readers_test() {
+pub fn track_is_immediately_visible_to_all_readers_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let meta = json.object([#("status", json.string("online"))])
@@ -398,7 +398,7 @@ pub fn track_is_immediately_visible_to_all_readers_test() {
   list.length(presence_metas(p, "room:lobby", "user:1")) |> should.equal(1)
 }
 
-pub fn untrack_is_immediately_visible_to_all_readers_test() {
+pub fn untrack_is_immediately_visible_to_all_readers_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let ref = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -409,7 +409,7 @@ pub fn untrack_is_immediately_visible_to_all_readers_test() {
   presence_metas(p, "room:lobby", "user:1") |> should.equal([])
 }
 
-pub fn untrack_all_is_immediately_visible_across_topics_test() {
+pub fn untrack_all_is_immediately_visible_across_topics_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
 
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
@@ -421,7 +421,7 @@ pub fn untrack_all_is_immediately_visible_across_topics_test() {
   presence_count(p, "room:general") |> should.equal(0)
 }
 
-pub fn presence_default_config_test() {
+pub fn presence_default_config_test() -> Nil {
   let assert Ok(p) = presence.start(presence.default_config("my-node"))
   let _ = presence.track(p, "room:default", "user:1", "socket-1", json.null())
 
@@ -430,7 +430,7 @@ pub fn presence_default_config_test() {
   |> should.equal(1)
 }
 
-pub fn diff_topics_deduplicates_topics_in_joins_and_leaves_test() {
+pub fn diff_topics_deduplicates_topics_in_joins_and_leaves_test() -> Nil {
   let diff =
     presence.diff(joins: [#("room:lobby", [])], leaves: [#("room:lobby", [])])
 
@@ -440,7 +440,7 @@ pub fn diff_topics_deduplicates_topics_in_joins_and_leaves_test() {
 
 // ── on_diff callback tests ──────────────────────────────────────────────────
 
-pub fn on_diff_callback_receives_local_track_diff_test() {
+pub fn on_diff_callback_receives_local_track_diff_test() -> Nil {
   let diff_subject = process.new_subject()
 
   let config =
@@ -475,7 +475,7 @@ pub fn on_diff_callback_receives_local_track_diff_test() {
   presence.diff_leaves(diff, "room:lobby") |> should.equal([])
 }
 
-pub fn on_diff_callback_receives_local_untrack_diff_test() {
+pub fn on_diff_callback_receives_local_untrack_diff_test() -> Nil {
   let diff_subject = process.new_subject()
 
   let config =
@@ -512,7 +512,7 @@ pub fn on_diff_callback_receives_local_untrack_diff_test() {
   |> should.be_true
 }
 
-pub fn on_diff_callback_receives_all_rapid_diffs_test() {
+pub fn on_diff_callback_receives_all_rapid_diffs_test() -> Nil {
   let diff_subject = process.new_subject()
 
   let config =
@@ -537,7 +537,7 @@ pub fn on_diff_callback_receives_all_rapid_diffs_test() {
   list.length(joins2) |> should.equal(1)
 }
 
-pub fn diff_accessors_return_empty_lists_for_unmentioned_topics_test() {
+pub fn diff_accessors_return_empty_lists_for_unmentioned_topics_test() -> Nil {
   let diff =
     presence.diff(
       joins: [
@@ -582,11 +582,11 @@ fn assert_crashes(op: fn() -> Nil) -> Nil {
   }
 }
 
-pub fn list_fails_after_presence_terminated_test() {
+pub fn list_fails_after_presence_terminated_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
 
-  test_helpers.kill_presence(p)
+  test_helper.kill_presence(p)
 
   assert_crashes(fn() {
     let _ = presence_entries(p, "room:lobby")
@@ -594,11 +594,11 @@ pub fn list_fails_after_presence_terminated_test() {
   })
 }
 
-pub fn get_by_key_fails_after_presence_terminated_test() {
+pub fn get_by_key_fails_after_presence_terminated_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
 
-  test_helpers.kill_presence(p)
+  test_helper.kill_presence(p)
 
   assert_crashes(fn() {
     let _ = presence_metas(p, "room:lobby", "user:1")
@@ -606,30 +606,30 @@ pub fn get_by_key_fails_after_presence_terminated_test() {
   })
 }
 
-pub fn count_fails_after_presence_terminated_test() {
+pub fn count_fails_after_presence_terminated_test() -> Nil {
   let assert Ok(p) = presence.start(test_config("node1"))
   let _ = presence.track(p, "room:lobby", "user:1", "socket-1", json.null())
 
-  test_helpers.kill_presence(p)
+  test_helper.kill_presence(p)
 
   assert_crashes(fn() { presence_count(p, "room:lobby") |> should.equal(0) })
 }
 
-pub fn count_fails_after_presence_terminated_even_for_untouched_topic_test() {
+pub fn count_fails_after_presence_terminated_even_for_untouched_topic_test() -> Nil {
   // A topic that was never tracked reads as count 0 while the actor is
   // alive (see `presence_count_missing_topic_is_zero_test`); once the
   // actor is gone, `count` must still fail explicitly rather than reusing
   // that same "0" default, since the two situations are not the same.
   let assert Ok(p) = presence.start(test_config("node1"))
 
-  test_helpers.kill_presence(p)
+  test_helper.kill_presence(p)
 
   assert_crashes(fn() {
     presence_count(p, "room:never-touched") |> should.equal(0)
   })
 }
 
-pub fn configured_call_timeout_is_used_test() {
+pub fn configured_call_timeout_is_used_test() -> Nil {
   let config =
     presence.default_config("node1")
     |> presence.with_call_timeout(20)
@@ -653,7 +653,7 @@ pub fn configured_call_timeout_is_used_test() {
 // isolated from one another, and terminating one actor's table has no
 // effect on the others.
 
-pub fn multiple_presence_actors_have_independent_read_tables_test() {
+pub fn multiple_presence_actors_have_independent_read_tables_test() -> Nil {
   let assert Ok(p1) = presence.start(test_config("node1"))
   let assert Ok(p2) = presence.start(test_config("node2"))
   let assert Ok(p3) = presence.start(test_config("node3"))
@@ -669,14 +669,14 @@ pub fn multiple_presence_actors_have_independent_read_tables_test() {
   presence_count(p3, "room:lobby") |> should.equal(0)
 }
 
-pub fn killing_one_presence_actor_does_not_affect_others_test() {
+pub fn killing_one_presence_actor_does_not_affect_others_test() -> Nil {
   let assert Ok(p1) = presence.start(test_config("node1"))
   let assert Ok(p2) = presence.start(test_config("node2"))
 
   let _ = presence.track(p1, "room:lobby", "user:1", "socket-1", json.null())
   let _ = presence.track(p2, "room:lobby", "user:2", "socket-2", json.null())
 
-  test_helpers.kill_presence(p1)
+  test_helper.kill_presence(p1)
 
   // p1's table is gone, but p2's is a separate (unnamed) table: its reads
   // keep working exactly as before, untouched by p1's death.

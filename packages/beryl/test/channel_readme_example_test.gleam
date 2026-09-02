@@ -14,7 +14,7 @@ import gleam/otp/static_supervisor
 import gleeunit
 import gleeunit/should
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -30,7 +30,7 @@ pub fn room() -> channel.Handler {
 }
 
 /// The README's `main`, compiled and run.
-pub fn readme_quick_start_compiles_and_starts_test() {
+pub fn readme_quick_start_compiles_and_starts_test() -> Nil {
   let assert Ok(#(sockets, spec)) =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       room(),

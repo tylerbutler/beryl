@@ -129,31 +129,34 @@ fn format_decode_path(path: List(String)) -> String {
   }
 }
 
-fn validate_inbound_depth(msg: Inbound) -> Result(Inbound, DecodeError) {
+fn validate_inbound_depth(message: Inbound) -> Result(Inbound, DecodeError) {
   use <- bool.guard(
-    when: !within_json_depth(codec.inbound_payload(msg), max_json_nesting_depth),
+    when: !within_json_depth(
+      codec.inbound_payload(message),
+      max_json_nesting_depth,
+    ),
     return: Error(InvalidFormat("JSON nesting depth exceeded")),
   )
-  Ok(msg)
+  Ok(message)
 }
 
 /// Encode an `Inbound` back to a Phoenix wire JSON string.
-pub fn encode(msg: Inbound) -> String {
-  let join_ref_json = option_to_json(codec.inbound_join_ref(msg))
-  let ref_json = option_to_json(codec.inbound_ref(msg))
+pub fn encode(message: Inbound) -> String {
+  let join_ref_json = option_to_json(codec.inbound_join_ref(message))
+  let ref_json = option_to_json(codec.inbound_ref(message))
   // Decoded inbound payloads are depth-validated at `decode`, so conversion
   // only fails for hand-built payloads deeper than the wire limit; those
   // could not round-trip anyway and encode as null.
   let payload_json =
-    dynamic_to_json(codec.inbound_payload(msg))
+    dynamic_to_json(codec.inbound_payload(message))
     |> result.unwrap(json.null())
-  let event = phoenix_event_name(codec.inbound_kind(msg))
+  let event = phoenix_event_name(codec.inbound_kind(message))
 
   json.to_string(
     json.preprocessed_array([
       join_ref_json,
       ref_json,
-      json.string(codec.inbound_topic(msg)),
+      json.string(codec.inbound_topic(message)),
       json.string(event),
       payload_json,
     ]),
@@ -430,21 +433,28 @@ fn required_utf8(bytes: BitArray, name: String) -> Result(String, DecodeError) {
   |> result.replace_error(InvalidFormat(name <> " is not valid UTF-8"))
 }
 
+/// An error returned when encoding a Phoenix binary frame.
+pub type BinaryEncodeError {
+  /// A metadata component is too large for the protocol's one-byte length.
+  MetadataTooLong(component: String, byte_size: Int)
+}
+
 /// Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 ///
-/// Returns `Error(Nil)` when a metadata component exceeds the framing's
-/// 255-byte limit.
+/// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
+/// component exceeds the framing's 255-byte limit.
 pub fn binary_push(
   join_ref join_ref: Option(String),
   topic topic: String,
   event event: String,
   payload payload: BitArray,
-) -> Result(Frame, Nil) {
-  use #(join_ref_size, join_ref_bytes) <- result.try(
-    u8_component(option.unwrap(join_ref, "")),
-  )
-  use #(topic_size, topic) <- result.try(u8_component(topic))
-  use #(event_size, event) <- result.try(u8_component(event))
+) -> Result(Frame, BinaryEncodeError) {
+  use #(join_ref_size, join_ref_bytes) <- result.try(u8_component(
+    option.unwrap(join_ref, ""),
+    "join_ref",
+  ))
+  use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
+  use #(event_size, event) <- result.try(u8_component(event, "event"))
   Ok(
     codec.BinaryFrame(<<
       binary_push_kind,
@@ -461,25 +471,26 @@ pub fn binary_push(
 
 /// Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
 ///
-/// Returns `Error(Nil)` when a metadata component exceeds the framing's
-/// 255-byte limit.
+/// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
+/// component exceeds the framing's 255-byte limit.
 pub fn binary_reply(
   join_ref join_ref: Option(String),
   ref ref: Option(String),
   topic topic: String,
   status status: ReplyStatus,
   payload payload: BitArray,
-) -> Result(Frame, Nil) {
+) -> Result(Frame, BinaryEncodeError) {
   let status_string = case status {
     StatusOk -> "ok"
     StatusError -> "error"
   }
-  use #(join_ref_size, join_ref_bytes) <- result.try(
-    u8_component(option.unwrap(join_ref, "")),
-  )
-  use #(ref_size, ref) <- result.try(u8_component(option.unwrap(ref, "")))
-  use #(topic_size, topic) <- result.try(u8_component(topic))
-  use #(status_size, status) <- result.try(u8_component(status_string))
+  use #(join_ref_size, join_ref_bytes) <- result.try(u8_component(
+    option.unwrap(join_ref, ""),
+    "join_ref",
+  ))
+  use #(ref_size, ref) <- result.try(u8_component(option.unwrap(ref, ""), "ref"))
+  use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
+  use #(status_size, status) <- result.try(u8_component(status_string, "status"))
   Ok(
     codec.BinaryFrame(<<
       binary_reply_kind,
@@ -498,15 +509,15 @@ pub fn binary_reply(
 
 /// Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 ///
-/// Returns `Error(Nil)` when a metadata component exceeds the framing's
-/// 255-byte limit.
+/// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
+/// component exceeds the framing's 255-byte limit.
 pub fn binary_broadcast(
   topic topic: String,
   event event: String,
   payload payload: BitArray,
-) -> Result(Frame, Nil) {
-  use #(topic_size, topic) <- result.try(u8_component(topic))
-  use #(event_size, event) <- result.try(u8_component(event))
+) -> Result(Frame, BinaryEncodeError) {
+  use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
+  use #(event_size, event) <- result.try(u8_component(event, "event"))
   Ok(
     codec.BinaryFrame(<<
       binary_broadcast_kind,
@@ -519,12 +530,15 @@ pub fn binary_broadcast(
   )
 }
 
-fn u8_component(value: String) -> Result(#(Int, BitArray), Nil) {
+fn u8_component(
+  value: String,
+  component: String,
+) -> Result(#(Int, BitArray), BinaryEncodeError) {
   let bytes = bit_array.from_string(value)
   let size = bit_array.byte_size(bytes)
   case size <= 255 {
     True -> Ok(#(size, bytes))
-    False -> Error(Nil)
+    False -> Error(MetadataTooLong(component, size))
   }
 }
 

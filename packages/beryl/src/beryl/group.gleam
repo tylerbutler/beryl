@@ -56,9 +56,9 @@ pub opaque type Config {
 /// Errors from group operations.
 pub type GroupError {
   /// The group already exists.
-  GroupAlreadyExists
+  GroupAlreadyExists(name: String)
   /// The group was not found.
-  GroupNotFound
+  GroupNotFound(name: String)
 }
 
 /// Messages that the groups actor handles.
@@ -243,8 +243,8 @@ pub fn broadcast(
 ) -> Nil {
   case topics(groups, group_name) {
     Ok(topics) -> broadcast_to_topics(topics, channels, event, payload)
-    Error(GroupAlreadyExists) -> Nil
-    Error(GroupNotFound) -> Nil
+    Error(GroupAlreadyExists(_)) -> Nil
+    Error(GroupNotFound(_)) -> Nil
   }
 }
 
@@ -258,7 +258,7 @@ fn handle_message(
     Create(name, reply) -> {
       case dict.has_key(state.groups, name) {
         True -> {
-          process.send(reply, Error(GroupAlreadyExists))
+          process.send(reply, Error(GroupAlreadyExists(name)))
           actor.continue(state)
         }
         False -> {
@@ -272,7 +272,7 @@ fn handle_message(
     Delete(name, reply) -> {
       case dict.has_key(state.groups, name) {
         False -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(name)))
           actor.continue(state)
         }
         True -> {
@@ -286,7 +286,7 @@ fn handle_message(
     Add(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(group_name)))
           actor.continue(state)
         }
         Ok(topics) -> {
@@ -301,7 +301,7 @@ fn handle_message(
     Remove(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(group_name)))
           actor.continue(state)
         }
         Ok(topics) -> {
@@ -316,7 +316,7 @@ fn handle_message(
     GetTopics(group_name, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(group_name)))
           actor.continue(state)
         }
         Ok(topics) -> {

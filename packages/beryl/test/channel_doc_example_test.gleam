@@ -10,7 +10,7 @@ import gleam/otp/static_supervisor
 import gleeunit
 import gleeunit/should
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -45,14 +45,14 @@ pub fn room() -> channel.Handler {
   })
 }
 
-pub fn documented_example_compiles_and_joins_test() {
+pub fn documented_example_compiles_and_joins_test() -> Nil {
   let _handler = room()
   Nil
 }
 
 /// The `beryl/channel` module-doc entry-point example, compiled and run
 /// so the documented shape cannot drift from the real API either.
-pub fn documented_child_spec_example_compiles_and_starts_test() {
+pub fn documented_child_spec_example_compiles_and_starts_test() -> Nil {
   let handlers = [room()]
 
   let assert Ok(#(sockets, spec)) =

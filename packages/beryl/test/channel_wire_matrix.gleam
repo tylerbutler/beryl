@@ -91,7 +91,10 @@ fn raw_effects(
     socket.Message(name, "blob", payload, _ref) -> [
       socket.Push(name, binary_event, binary_payload("decoded", payload)),
     ]
-    _ -> []
+    socket.Message(..)
+    | socket.Binary(..)
+    | socket.Closed(..)
+    | socket.Info(..) -> []
   }
 }
 

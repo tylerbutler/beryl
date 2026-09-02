@@ -3,7 +3,7 @@
 //// over the binary transport (never text), consumes one message-rate token
 //// per binary event, and encodes broadcasts through the binary send path.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next, ReplyOk}
 import beryl/transport
@@ -20,25 +20,29 @@ fn start_system() -> beryl.Sockets {
 
 fn start_with(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
-      case ev {
-        Join(_, _, ref) ->
-          Next(model, [
-            AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
-          ])
-        Message(_topic, "ping", _payload, Some(ref)) ->
-          Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
-        Message(topic, "cast", _payload, _ref) ->
-          Next(model, [
-            Broadcast(
-              topic,
-              "announcement",
-              json.object([#("body", json.string("hello"))]),
-            ),
-          ])
-        _ -> Next(model, [])
-      }
-    })
+    app_test_helper.start_app(
+      config,
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, ev) {
+        case ev {
+          Join(_, _, ref) ->
+            Next(model, [
+              AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
+            ])
+          Message(_topic, "ping", _payload, Some(ref)) ->
+            Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
+          Message(topic, "cast", _payload, _ref) ->
+            Next(model, [
+              Broadcast(
+                topic,
+                "announcement",
+                json.object([#("body", json.string("hello"))]),
+              ),
+            ])
+          _ -> Next(model, [])
+        }
+      },
+    )
   channels
 }
 
@@ -83,7 +87,7 @@ fn route_binary(
   transport.route_binary(channels, socket_id, bit_array.from_string(raw))
 }
 
-pub fn binary_join_and_event_route_and_reply_over_binary_test() {
+pub fn binary_join_and_event_route_and_reply_over_binary_test() -> Nil {
   let channels = start_system()
   let #(text, binary) = connect_binary(channels, "s1")
 
@@ -99,7 +103,7 @@ pub fn binary_join_and_event_route_and_reply_over_binary_test() {
   process.receive(text, 50) |> should.be_error
 }
 
-pub fn binary_event_consumes_one_message_rate_token_test() {
+pub fn binary_event_consumes_one_message_rate_token_test() -> Nil {
   let channels =
     start_with(
       beryl.config(binary_test_codec.new())
@@ -118,7 +122,7 @@ pub fn binary_event_consumes_one_message_rate_token_test() {
   process.receive(binary, 100) |> should.be_error
 }
 
-pub fn binary_broadcast_uses_binary_send_test() {
+pub fn binary_broadcast_uses_binary_send_test() -> Nil {
   let channels = start_system()
   let #(text, binary) = connect_binary(channels, "s1")
   route_binary(channels, "s1", "J|join-ref|join-1|room:lobby|{}")
@@ -131,7 +135,7 @@ pub fn binary_broadcast_uses_binary_send_test() {
   process.receive(text, 50) |> should.be_error
 }
 
-pub fn undecodable_binary_frame_is_dropped_test() {
+pub fn undecodable_binary_frame_is_dropped_test() -> Nil {
   let channels = start_system()
   let #(text, binary) = connect_binary(channels, "s1")
   route_binary(channels, "s1", "J|join-ref|join-1|room:lobby|{}")

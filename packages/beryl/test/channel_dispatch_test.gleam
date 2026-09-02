@@ -196,7 +196,7 @@ fn next_sender(wiring: Wiring) -> channel.Sender(Note) {
 
 // --- handler selection -----------------------------------------------------
 
-pub fn join_selects_the_first_matching_handler_test() {
+pub fn join_selects_the_first_matching_handler_test() -> Nil {
   let channels =
     start([
       labelled_handler("room:lobby", "lobby"),
@@ -215,7 +215,7 @@ pub fn join_selects_the_first_matching_handler_test() {
   |> should.be_true
 }
 
-pub fn registration_order_decides_overlapping_patterns_test() {
+pub fn registration_order_decides_overlapping_patterns_test() -> Nil {
   let channels =
     start([
       labelled_handler("room:*", "room"),
@@ -229,7 +229,7 @@ pub fn registration_order_decides_overlapping_patterns_test() {
   |> should.be_true
 }
 
-pub fn a_multi_segment_pattern_only_matches_its_own_shape_test() {
+pub fn a_multi_segment_pattern_only_matches_its_own_shape_test() -> Nil {
   let channels =
     start([
       labelled_handler("document:*:ops", "ops"),
@@ -255,7 +255,7 @@ pub fn a_multi_segment_pattern_only_matches_its_own_shape_test() {
   |> should.be_true
 }
 
-pub fn join_context_contains_wildcard_captures_in_pattern_order_test() {
+pub fn join_context_contains_wildcard_captures_in_pattern_order_test() -> Nil {
   let channels =
     start([
       params_handler("room:lobby"),
@@ -272,7 +272,7 @@ pub fn join_context_contains_wildcard_captures_in_pattern_order_test() {
   |> should.be_true
 }
 
-pub fn a_join_can_be_accepted_without_a_reply_payload_test() {
+pub fn a_join_can_be_accepted_without_a_reply_payload_test() -> Nil {
   let channels =
     start([
       channel.handler("room:*", fn(_context) { channel.accept(Nil) }),
@@ -287,7 +287,7 @@ pub fn a_join_can_be_accepted_without_a_reply_payload_test() {
   reply |> string.contains("\"response\":{}") |> should.be_true
 }
 
-pub fn unmatched_topic_is_rejected_with_the_documented_reason_test() {
+pub fn unmatched_topic_is_rejected_with_the_documented_reason_test() -> Nil {
   let #(channels, wiring, frames) = start_room()
 
   helper.join(channels, "s1", "other:1", "jr-1", "r-1")
@@ -302,7 +302,7 @@ pub fn unmatched_topic_is_rejected_with_the_documented_reason_test() {
   helper.no_trace(wiring.trace)
 }
 
-pub fn a_rejecting_handler_reports_its_own_reason_test() {
+pub fn a_rejecting_handler_reports_its_own_reason_test() -> Nil {
   let channels =
     start([
       channel.handler("room:*", fn(_context) {
@@ -318,7 +318,7 @@ pub fn a_rejecting_handler_reports_its_own_reason_test() {
   reply |> string.contains("forbidden") |> should.be_true
 }
 
-pub fn a_rejected_join_leaves_no_live_channel_test() {
+pub fn a_rejected_join_leaves_no_live_channel_test() -> Nil {
   let events = process.new_subject()
   let channels =
     start([
@@ -344,7 +344,7 @@ pub fn a_rejected_join_leaves_no_live_channel_test() {
 
 // --- client messages -------------------------------------------------------
 
-pub fn optional_reply_actions_handle_none_and_some_on_the_wire_test() {
+pub fn optional_reply_actions_handle_none_and_some_on_the_wire_test() -> Nil {
   let channels = start([optional_reply_handler()])
   let frames = helper.connect(channels, "s1")
   helper.join(channels, "s1", "reply:a", "jr-1", "r-1")
@@ -361,7 +361,7 @@ pub fn optional_reply_actions_handle_none_and_some_on_the_wire_test() {
   helper.recv(frames) |> string.contains("\"after\"") |> should.be_true
 }
 
-pub fn client_messages_reach_the_live_channel_test() {
+pub fn client_messages_reach_the_live_channel_test() -> Nil {
   let #(channels, _wiring, frames) = joined_room("room:a")
 
   helper.push(channels, "s1", "room:a", "echo", "r-2")
@@ -376,7 +376,7 @@ pub fn client_messages_reach_the_live_channel_test() {
   error_reply |> string.contains("r-3") |> should.be_true
 }
 
-pub fn channel_state_advances_across_messages_test() {
+pub fn channel_state_advances_across_messages_test() -> Nil {
   let #(channels, _wiring, frames) = joined_room("room:a")
 
   helper.push(channels, "s1", "room:a", "count", "r-2")
@@ -386,7 +386,7 @@ pub fn channel_state_advances_across_messages_test() {
   helper.recv(frames) |> string.contains("\"count\",2") |> should.be_true
 }
 
-pub fn each_topic_keeps_its_own_state_test() {
+pub fn each_topic_keeps_its_own_state_test() -> Nil {
   let #(channels, wiring, frames) = start_room()
   helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _join_a = helper.recv(frames)
@@ -406,7 +406,7 @@ pub fn each_topic_keeps_its_own_state_test() {
   |> should.be_true
 }
 
-pub fn actions_are_applied_in_order_on_the_channel_topic_test() {
+pub fn actions_are_applied_in_order_on_the_channel_topic_test() -> Nil {
   let #(channels, _wiring, frames) = joined_room("room:a")
 
   helper.push(channels, "s1", "room:a", "burst", "r-2")
@@ -421,7 +421,7 @@ pub fn actions_are_applied_in_order_on_the_channel_topic_test() {
   third |> string.contains("\"room:a\",\"four\"") |> should.be_true
 }
 
-pub fn raw_binary_frames_are_ignored_test() {
+pub fn raw_binary_frames_are_ignored_test() -> Nil {
   let wiring = new_wiring()
   let channels =
     helper.start(beryl.config(helper.text_only_codec()), handlers: [
@@ -441,7 +441,7 @@ pub fn raw_binary_frames_are_ignored_test() {
 
 // --- termination -----------------------------------------------------------
 
-pub fn close_applies_actions_then_kicks_the_topic_test() {
+pub fn close_applies_actions_then_kicks_the_topic_test() -> Nil {
   let #(channels, wiring, frames) = joined_room("room:a")
 
   helper.push(channels, "s1", "room:a", "leave", "r-2")
@@ -453,7 +453,7 @@ pub fn close_applies_actions_then_kicks_the_topic_test() {
   helper.no_trace(wiring.trace)
 }
 
-pub fn a_client_leave_terminates_the_channel_once_test() {
+pub fn a_client_leave_terminates_the_channel_once_test() -> Nil {
   let #(channels, wiring, frames) = joined_room("room:a")
 
   helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
@@ -464,7 +464,7 @@ pub fn a_client_leave_terminates_the_channel_once_test() {
   helper.no_trace(wiring.trace)
 }
 
-pub fn a_disconnect_terminates_every_channel_once_test() {
+pub fn a_disconnect_terminates_every_channel_once_test() -> Nil {
   let #(channels, wiring, frames) = start_room()
   helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _join_a = helper.recv(frames)
@@ -480,7 +480,7 @@ pub fn a_disconnect_terminates_every_channel_once_test() {
   helper.no_trace(wiring.trace)
 }
 
-pub fn a_disconnect_after_a_leave_does_not_terminate_twice_test() {
+pub fn a_disconnect_after_a_leave_does_not_terminate_twice_test() -> Nil {
   let #(channels, wiring, frames) = start_room()
   helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _join_a = helper.recv(frames)
@@ -504,7 +504,7 @@ pub fn a_disconnect_after_a_leave_does_not_terminate_twice_test() {
 
 // --- duplicate rejoin ------------------------------------------------------
 
-pub fn a_rejoin_terminates_the_previous_instance_first_test() {
+pub fn a_rejoin_terminates_the_previous_instance_first_test() -> Nil {
   let #(channels, wiring, frames) = joined_room("room:a")
 
   helper.push(channels, "s1", "room:a", "count", "r-2")
@@ -527,7 +527,7 @@ pub fn a_rejoin_terminates_the_previous_instance_first_test() {
 
 // --- typed server-side sends -----------------------------------------------
 
-pub fn typed_info_reaches_the_channels_on_info_test() {
+pub fn typed_info_reaches_the_channels_on_info_test() -> Nil {
   let #(_channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
 
@@ -536,7 +536,7 @@ pub fn typed_info_reaches_the_channels_on_info_test() {
   helper.recv(frames) |> string.contains("\"hello#1\"") |> should.be_true
 }
 
-pub fn every_send_delivers_exactly_one_payload_in_order_test() {
+pub fn every_send_delivers_exactly_one_payload_in_order_test() -> Nil {
   let #(_channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
 
@@ -548,7 +548,7 @@ pub fn every_send_delivers_exactly_one_payload_in_order_test() {
   helper.recv_none(frames)
 }
 
-pub fn sends_from_another_process_are_delivered_test() {
+pub fn sends_from_another_process_are_delivered_test() -> Nil {
   let #(_channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
   let done = process.new_subject()
@@ -562,7 +562,7 @@ pub fn sends_from_another_process_are_delivered_test() {
   helper.recv(frames) |> string.contains("\"remote#1\"") |> should.be_true
 }
 
-pub fn a_stale_generations_send_is_never_delivered_test() {
+pub fn a_stale_generations_send_is_never_delivered_test() -> Nil {
   let #(channels, wiring, frames) = joined_room("room:a")
   let stale = next_sender(wiring)
 
@@ -587,7 +587,7 @@ pub fn a_stale_generations_send_is_never_delivered_test() {
 /// A rejected join still consumes a generation. If it did not, the next
 /// join on the same topic would reuse the rejected join's generation and
 /// its `Sender` would deliver into a channel that never admitted it.
-pub fn a_rejected_joins_sender_cannot_reach_a_later_accepted_join_test() {
+pub fn a_rejected_joins_sender_cannot_reach_a_later_accepted_join_test() -> Nil {
   let senders = process.new_subject()
   let channels =
     start([
@@ -633,7 +633,7 @@ fn next_sender_of(
   sender
 }
 
-pub fn a_send_to_a_closed_channel_is_never_delivered_test() {
+pub fn a_send_to_a_closed_channel_is_never_delivered_test() -> Nil {
   let #(channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
 
@@ -647,7 +647,7 @@ pub fn a_send_to_a_closed_channel_is_never_delivered_test() {
   helper.recv_none(frames)
 }
 
-pub fn an_info_result_can_close_the_channel_test() {
+pub fn an_info_result_can_close_the_channel_test() -> Nil {
   let #(_channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
 
@@ -666,7 +666,7 @@ pub fn an_info_result_can_close_the_channel_test() {
 /// is the topic's own worker, not the runtime's router, so one socket's
 /// callbacks can never stall another's (#334). `channel_worker_test` pins
 /// that different topics get different workers (#337).
-pub fn join_and_info_run_in_the_topics_own_process_test() {
+pub fn join_and_info_run_in_the_topics_own_process_test() -> Nil {
   let #(channels, wiring, _frames) = joined_room("room:a")
   let sender = next_sender(wiring)
   let assert Ok(join_pid) = process.receive(wiring.pids, 500)

@@ -53,21 +53,21 @@ without waiting for delivery.
 // Create a group
 let assert Ok(Nil) = group.create(groups, "team:engineering")
 
-// Error: GroupAlreadyExists if the name is taken
+// The error includes the name that is already in use.
 case group.create(groups, "team:engineering") {
   Ok(Nil) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // already there
-  Error(group.GroupNotFound) -> Nil       // cannot occur for create
+  Error(group.GroupAlreadyExists(name)) -> Nil
+  Error(group.GroupNotFound(_)) -> Nil  // cannot occur for create
 }
 
 // Delete a group (removes it and all its topic memberships)
 let assert Ok(Nil) = group.delete(groups, "team:engineering")
 
-// Error: GroupNotFound if it doesn't exist
+// The error includes the name that was not found.
 case group.delete(groups, "team:gone") {
   Ok(Nil) -> Nil
-  Error(group.GroupNotFound) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // cannot occur for delete
+  Error(group.GroupNotFound(name)) -> Nil
+  Error(group.GroupAlreadyExists(_)) -> Nil  // cannot occur for delete
 }
 ```
 
@@ -95,8 +95,8 @@ Adding the same topic twice does nothing because the group stores a set.
 // List all topics in a group
 case group.topics(groups, "team:engineering") {
   Ok(topic_set) -> set.to_list(topic_set)  // ["room:frontend", "room:backend"]
-  Error(group.GroupNotFound) -> []
-  Error(group.GroupAlreadyExists) -> []   // cannot occur for topics
+  Error(group.GroupNotFound(_)) -> []
+  Error(group.GroupAlreadyExists(_)) -> []  // cannot occur for topics
 }
 
 // List all group names
@@ -134,8 +134,8 @@ reply within 5 seconds. To check a group first, call `group.topics` and handle
 
 | Error | When |
 |-------|------|
-| `GroupAlreadyExists` | `create` called for a name already in use |
-| `GroupNotFound` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
+| `GroupAlreadyExists(name)` | `create` called for a name already in use |
+| `GroupNotFound(name)` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
 
 ## Complete example: team rooms
 

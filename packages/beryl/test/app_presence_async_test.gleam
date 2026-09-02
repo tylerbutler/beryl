@@ -8,7 +8,7 @@
 //// callback calls into, so every "while the mutation is in flight" step is
 //// a deterministic handshake rather than a sleep.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/presence
 import beryl/socket.{
@@ -27,9 +27,9 @@ import gleam/otp/actor
 import gleam/string
 import gleeunit
 import gleeunit/should
-import test_helpers
+import test_helper
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -238,7 +238,7 @@ fn start_system(
   configure: fn(beryl.Config) -> beryl.Config,
 ) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(handle)
         |> configure,
@@ -256,56 +256,70 @@ fn identity_config(config: beryl.Config) -> beryl.Config {
 
 /// One socket parked on a presence mutation must not delay any other
 /// socket's join, message, or heartbeat handling.
-pub fn pending_track_does_not_block_other_sockets_test() {
+pub fn pending_track_does_not_block_other_sockets_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let slow_frames = h.connect(channels, "slow")
+  let slow_frames = app_test_helper.connect(channels, "slow")
   arm(gate)
-  h.join(channels, "slow", "room:a", "jr-1", "r-1")
+  app_test_helper.join(channels, "slow", "room:a", "jr-1", "r-1")
   // The join reply is written before the track effect, so it lands even
   // though the socket is about to park.
-  h.recv(slow_frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.recv(slow_frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
 
   // With `slow` parked, another socket still joins, gets replies, and gets
   // heartbeat answers.
-  let other_frames = h.connect(channels, "other")
-  h.join(channels, "other", "plain:a", "jr-2", "r-2")
-  h.recv(other_frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
-  h.push(channels, "other", "plain:a", "ping", "r-3")
+  let other_frames = app_test_helper.connect(channels, "other")
+  app_test_helper.join(channels, "other", "plain:a", "jr-2", "r-2")
+  app_test_helper.recv(other_frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  app_test_helper.push(channels, "other", "plain:a", "ping", "r-3")
   process.receive(events, 500) |> should.equal(Ok("ping"))
-  h.route(channels, "other", "[null,\"hb-1\",\"phoenix\",\"heartbeat\",{}]")
-  h.recv(other_frames) |> string.contains("hb-1") |> should.be_true
+  app_test_helper.route(
+    channels,
+    "other",
+    "[null,\"hb-1\",\"phoenix\",\"heartbeat\",{}]",
+  )
+  app_test_helper.recv(other_frames)
+  |> string.contains("hb-1")
+  |> should.be_true
 
   release(gate)
 
   // The parked socket then finishes its own effect list, in order.
-  h.recv(slow_frames) |> string.contains("presence_diff") |> should.be_true
-  h.recv(slow_frames) |> string.contains("presence_list") |> should.be_true
+  app_test_helper.recv(slow_frames)
+  |> string.contains("presence_diff")
+  |> should.be_true
+  app_test_helper.recv(slow_frames)
+  |> string.contains("presence_list")
+  |> should.be_true
 }
 
 /// A parked socket's later inbound events are queued, not dropped or
 /// reordered, and are delivered once the mutation is acknowledged.
-pub fn queued_messages_are_delivered_in_arrival_order_test() {
+pub fn queued_messages_are_delivered_in_arrival_order_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
   await_entered(entered)
 
-  h.push(channels, "s1", "room:a", "one", "r-2")
-  h.push(channels, "s1", "room:a", "two", "r-3")
-  h.push(channels, "s1", "room:a", "three", "r-4")
+  app_test_helper.push(channels, "s1", "room:a", "one", "r-2")
+  app_test_helper.push(channels, "s1", "room:a", "two", "r-3")
+  app_test_helper.push(channels, "s1", "room:a", "three", "r-4")
 
   // Queued, not dispatched: the app has not seen them yet.
   process.receive(events, 200) |> should.be_error
@@ -319,20 +333,22 @@ pub fn queued_messages_are_delivered_in_arrival_order_test() {
 
 /// `[PresenceTrack, BroadcastPresence]` — the snapshot reflects the track
 /// and the diff is written first.
-pub fn track_then_snapshot_keeps_wire_order_test() {
+pub fn track_then_snapshot_keeps_wire_order_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
 
-  let diff = h.recv(frames)
+  let diff = app_test_helper.recv(frames)
   diff |> string.contains("presence_diff") |> should.be_true
   diff |> string.contains("\"joins\"") |> should.be_true
 
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("\"s1\"") |> should.be_true
   snapshot |> string.contains("online") |> should.be_true
@@ -340,25 +356,25 @@ pub fn track_then_snapshot_keeps_wire_order_test() {
 
 /// `[PresenceUntrack, BroadcastPresence]` — the snapshot reflects the
 /// untrack, and the leave diff still comes first.
-pub fn untrack_then_snapshot_keeps_wire_order_test() {
+pub fn untrack_then_snapshot_keeps_wire_order_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
-  let _join_diff = h.recv(frames)
-  let _join_snapshot = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let _join_diff = app_test_helper.recv(frames)
+  let _join_snapshot = app_test_helper.recv(frames)
 
-  h.push(channels, "s1", "room:a", "untrack", "r-2")
+  app_test_helper.push(channels, "s1", "room:a", "untrack", "r-2")
 
-  let diff = h.recv(frames)
+  let diff = app_test_helper.recv(frames)
   diff |> string.contains("presence_diff") |> should.be_true
   diff |> string.contains("\"leaves\"") |> should.be_true
   diff |> string.contains("user:s1") |> should.be_true
 
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("\"s1\"") |> should.be_false
   presence_count(handle, "room:a") |> should.equal(0)
@@ -367,24 +383,24 @@ pub fn untrack_then_snapshot_keeps_wire_order_test() {
 /// Re-tracking a key is one atomic replacement: one diff frame carrying
 /// both the leave and the join, no empty snapshot in between, and the
 /// leave's `phx_ref` is exactly the ref the previous join published.
-pub fn replacement_is_atomic_and_shares_phx_refs_test() {
+pub fn replacement_is_atomic_and_shares_phx_refs_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
-  let join_diff = h.recv(frames)
-  let _join_snapshot = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let join_diff = app_test_helper.recv(frames)
+  let _join_snapshot = app_test_helper.recv(frames)
   let first_ref = phx_ref_of(join_diff, "joins")
   // The published ref is the one actually stored.
   first_ref |> should.equal(stored_phx_ref(handle, "room:a"))
 
-  h.push(channels, "s1", "room:a", "promote", "r-2")
+  app_test_helper.push(channels, "s1", "room:a", "promote", "r-2")
 
   // Exactly one diff frame, carrying the whole leave+join transition.
-  let replace_diff = h.recv(frames)
+  let replace_diff = app_test_helper.recv(frames)
   replace_diff |> string.contains("presence_diff") |> should.be_true
   replace_diff |> string.contains("online") |> should.be_true
   replace_diff |> string.contains("away") |> should.be_true
@@ -397,19 +413,19 @@ pub fn replacement_is_atomic_and_shares_phx_refs_test() {
 
   // The replacement never left the key absent: one entry throughout.
   presence_count(handle, "room:a") |> should.equal(1)
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("away") |> should.be_true
   snapshot |> string.contains("online") |> should.be_false
   // No second diff: the replacement was not a separate untrack + track.
-  h.recv_none(frames)
+  app_test_helper.recv_none(frames)
 }
 
 /// Closing a topic untracks every key the socket still held as one batch:
 /// one aggregate leave diff, no duplicates.
-pub fn topic_close_emits_one_aggregate_leave_diff_test() {
+pub fn topic_close_emits_one_aggregate_leave_diff_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(handle),
       init: fn(info: socket.ConnectInfo(Nil)) { #(info.socket_id, []) },
@@ -425,35 +441,39 @@ pub fn topic_close_emits_one_aggregate_leave_diff_test() {
       },
     )
 
-  let watcher = h.connect(channels, "watcher")
-  h.join(channels, "watcher", "room:a", "jr-w", "r-w")
-  let _watcher_reply = h.recv(watcher)
+  let watcher = app_test_helper.connect(channels, "watcher")
+  app_test_helper.join(channels, "watcher", "room:a", "jr-w", "r-w")
+  let _watcher_reply = app_test_helper.recv(watcher)
   // The watcher's own three join diffs.
-  let _own_one = h.recv(watcher)
-  let _own_two = h.recv(watcher)
-  let _own_three = h.recv(watcher)
+  let _own_one = app_test_helper.recv(watcher)
+  let _own_two = app_test_helper.recv(watcher)
+  let _own_three = app_test_helper.recv(watcher)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
   // s1 tracks three keys: three separate join diffs, one per effect.
-  let _one = h.recv(watcher)
-  let _two = h.recv(watcher)
-  let _three = h.recv(watcher)
+  let _one = app_test_helper.recv(watcher)
+  let _two = app_test_helper.recv(watcher)
+  let _three = app_test_helper.recv(watcher)
   presence_count(handle, "room:a") |> should.equal(6)
 
-  h.route(channels, "s1", "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]")
+  app_test_helper.route(
+    channels,
+    "s1",
+    "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]",
+  )
 
   // One diff for the whole topic, naming each of s1's keys exactly once.
-  let leave_diff = h.recv(watcher)
+  let leave_diff = app_test_helper.recv(watcher)
   leave_diff |> string.contains("presence_diff") |> should.be_true
   leave_diff |> string.contains("\"joins\":{}") |> should.be_true
   count_occurrences(leave_diff, "s1:a") |> should.equal(1)
   count_occurrences(leave_diff, "s1:b") |> should.equal(1)
   count_occurrences(leave_diff, "s1:c") |> should.equal(1)
-  h.recv_none(watcher)
+  app_test_helper.recv_none(watcher)
 
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { presence_count(handle, "room:a") == 3 },
     2000,
     20,
@@ -471,7 +491,7 @@ fn multi_track_effects(topic: String, model: String) -> List(Effect) {
 /// the runtime gives up after the configured timeout, resumes the rest of
 /// the effect list without claiming the track succeeded, and safely
 /// discards the acknowledgement when it finally shows up.
-pub fn unacknowledged_mutation_times_out_and_late_ack_is_ignored_test() {
+pub fn unacknowledged_mutation_times_out_and_late_ack_is_ignored_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
@@ -479,28 +499,30 @@ pub fn unacknowledged_mutation_times_out_and_late_ack_is_ignored_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
 
   // After the timeout the socket resumes: no join diff was broadcast (the
   // track was never confirmed), but the snapshot effect after it still
   // runs.
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("presence_diff") |> should.be_false
 
   // The socket is live again straight away, not waiting on anything.
-  h.push(channels, "s1", "room:a", "ping", "r-2")
+  app_test_helper.push(channels, "s1", "room:a", "ping", "r-2")
   process.receive(events, 1000) |> should.equal(Ok("ping"))
 
   // The acknowledgement finally arrives, for an operation nobody is
   // waiting on any more: dropped, with no extra frame and no crash.
   release(gate)
-  h.recv_none(frames)
-  h.push(channels, "s1", "room:a", "pong", "r-3")
+  app_test_helper.recv_none(frames)
+  app_test_helper.push(channels, "s1", "room:a", "pong", "r-3")
   process.receive(events, 1000) |> should.equal(Ok("pong"))
 }
 
@@ -510,7 +532,7 @@ pub fn unacknowledged_mutation_times_out_and_late_ack_is_ignored_test() {
 /// just created is real: left alone it would sit in presence forever,
 /// with nothing ever holding the ref needed to remove it. The runtime must
 /// untrack exactly that ref instead.
-pub fn late_tracked_ack_after_timeout_is_compensated_test() {
+pub fn late_tracked_ack_after_timeout_is_compensated_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
@@ -518,15 +540,17 @@ pub fn late_tracked_ack_after_timeout_is_compensated_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
 
   // The runtime gives up before the actor replies: no ref was recorded,
   // so presence itself is still empty from this side's point of view.
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
   presence_count(handle, "room:a") |> should.equal(0)
 
@@ -535,8 +559,8 @@ pub fn late_tracked_ack_after_timeout_is_compensated_test() {
   // still compensate: presence settles back to empty rather than keeping
   // a ghost entry nothing can ever remove.
   release(gate)
-  h.recv_none(frames)
-  test_helpers.wait_until(
+  app_test_helper.recv_none(frames)
+  test_helper.wait_until(
     fn() { presence_count(handle, "room:a") == 0 },
     2000,
     20,
@@ -548,7 +572,7 @@ pub fn late_tracked_ack_after_timeout_is_compensated_test() {
 /// attempt's stale acknowledgement is still going to show up; it must not
 /// leave its ref coexisting with the retry's, or presence would show the
 /// same session twice under the same key.
-pub fn retrack_after_timeout_does_not_double_count_test() {
+pub fn retrack_after_timeout_does_not_double_count_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
@@ -556,29 +580,35 @@ pub fn retrack_after_timeout_does_not_double_count_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
 
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
 
   // Let the stale first attempt land and be compensated before retrying,
   // so the retry starts from a genuinely empty topic.
   release(gate)
-  h.recv_none(frames)
-  test_helpers.wait_until(
+  app_test_helper.recv_none(frames)
+  test_helper.wait_until(
     fn() { presence_count(handle, "room:a") == 0 },
     2000,
     20,
   )
 
   // The app retries the same track.
-  h.push(channels, "s1", "room:a", "promote", "r-2")
-  h.recv(frames) |> string.contains("presence_diff") |> should.be_true
-  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+  app_test_helper.push(channels, "s1", "room:a", "promote", "r-2")
+  app_test_helper.recv(frames)
+  |> string.contains("presence_diff")
+  |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
 
   // Exactly one entry, and it is the retry's — not a leftover from the
   // timed-out first attempt plus the retry.
@@ -599,7 +629,7 @@ pub fn retrack_after_timeout_does_not_double_count_test() {
 /// compensating untrack take the newer entry with it — is covered by
 /// `same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test`
 /// below.)
-pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() {
+pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
@@ -607,27 +637,29 @@ pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
 
   // Queued behind the parked socket: it cannot start until the timeout
   // resumes it below.
-  h.join(channels, "s1", "room:b", "jr-2", "r-2")
+  app_test_helper.join(channels, "s1", "room:b", "jr-2", "r-2")
 
   // The runtime gives up on the first track (room:a). Its own remaining
   // effect (the join's snapshot) runs, and only then does the queued join
   // on room:b start its own track — while the first attempt's
   // acknowledgement is still outstanding at the (still gate-blocked)
   // presence actor.
-  let snapshot_a = h.recv(frames)
+  let snapshot_a = app_test_helper.recv(frames)
   snapshot_a |> string.contains("presence_list") |> should.be_true
   snapshot_a |> string.contains("room:a") |> should.be_true
   snapshot_a |> string.contains("presence_diff") |> should.be_false
 
-  let reply_b = h.recv(frames)
+  let reply_b = app_test_helper.recv(frames)
   reply_b |> string.contains("\"status\":\"ok\"") |> should.be_true
 
   // Let both the stale room:a track and the pending room:b track resolve
@@ -637,24 +669,24 @@ pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() {
   // room:b's own join diff and snapshot land, in order: it completed on
   // its own terms, untouched by the stale room:a acknowledgement arriving
   // around the same time.
-  let diff_b = h.recv(frames)
+  let diff_b = app_test_helper.recv(frames)
   diff_b |> string.contains("presence_diff") |> should.be_true
   diff_b |> string.contains("room:b") |> should.be_true
   diff_b |> string.contains("user:s1") |> should.be_true
-  let snapshot_b = h.recv(frames)
+  let snapshot_b = app_test_helper.recv(frames)
   snapshot_b |> string.contains("presence_list") |> should.be_true
   snapshot_b |> string.contains("room:b") |> should.be_true
 
   // room:b's track is intact — not corrupted by the stale room:a
   // acknowledgement — and room:a's stale entry is cleaned up rather than
   // left stranded.
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { presence_count(handle, "room:b") == 1 },
     2000,
     20,
   )
   presence_count(handle, "room:b") |> should.equal(1)
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { presence_count(handle, "room:a") == 0 },
     2000,
     20,
@@ -672,7 +704,7 @@ pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() {
 /// the compensation would remove the retrack's entry too if both refs
 /// could coexist — so the retrack must supersede the stale ref in the same
 /// actor turn that adds its own, leaving the compensation a no-op.
-pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
+pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -681,12 +713,14 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   // The join's track blocks inside the presence actor's `on_diff`, so its
   // acknowledgement cannot reach the runtime before the timeout.
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
   // The first attempt's entry exists inside the actor's turn but has not
   // been published yet, and the runtime never learned its ref.
@@ -697,12 +731,12 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
 
   // Queued behind the parked socket: a retrack of the *same* key, on the
   // same topic, from the same socket.
-  h.push(channels, "s1", "room:a", "promote", "r-2")
+  app_test_helper.push(channels, "s1", "room:a", "promote", "r-2")
 
   // The runtime gives up on the first track and resumes the socket: its
   // snapshot effect runs (with no join diff — the track was never
   // confirmed) and the queued retrack is dispatched behind it.
-  let stale_snapshot = h.recv(frames)
+  let stale_snapshot = app_test_helper.recv(frames)
   stale_snapshot |> string.contains("presence_list") |> should.be_true
   stale_snapshot |> string.contains("presence_diff") |> should.be_false
 
@@ -723,23 +757,23 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
   // Let the retrack finish. The stale acknowledgement and its compensating
   // untrack interleave with it: the compensation reaches the actor after
   // the retrack's turn, and must be a no-op there.
-  h.push(channels, "s1", "room:a", "echo", "r-3")
+  app_test_helper.push(channels, "s1", "room:a", "echo", "r-3")
   release(gate)
 
-  let retrack_diff = h.recv(frames)
+  let retrack_diff = app_test_helper.recv(frames)
   retrack_diff |> string.contains("presence_diff") |> should.be_true
   retrack_diff |> string.contains("away") |> should.be_true
   // The timed-out attempt was never broadcast, so there is nothing to
   // leave — and the join names the ref presence actually stored.
   retrack_diff |> string.contains("\"leaves\":{}") |> should.be_true
   phx_ref_of(retrack_diff, "joins") |> should.equal(second_ref)
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("away") |> should.be_true
   snapshot |> string.contains("online") |> should.be_false
   // Only then the message queued while the socket was parked on the
   // retrack.
-  h.recv(frames) |> string.contains("echoed") |> should.be_true
+  app_test_helper.recv(frames) |> string.contains("echoed") |> should.be_true
 
   // Barrier: the compensating untrack was sent to the presence actor
   // before the acknowledgement that produced the frames above, so it is
@@ -758,15 +792,21 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
 
   // And the runtime's own bookkeeping still names that entry, so an
   // ordinary untrack removes it.
-  h.push(channels, "s1", "room:a", "untrack", "r-4")
-  let leave_diff = h.recv(frames)
+  app_test_helper.push(channels, "s1", "room:a", "untrack", "r-4")
+  let leave_diff = app_test_helper.recv(frames)
   leave_diff |> string.contains("presence_diff") |> should.be_true
   phx_ref_of(leave_diff, "leaves") |> should.equal(second_ref)
-  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
   presence_count(handle, "room:a") |> should.equal(0)
 
   // Closing the topic afterwards has nothing left to clean up.
-  h.route(channels, "s1", "[\"jr-1\",\"r-5\",\"room:a\",\"phx_leave\",{}]")
+  app_test_helper.route(
+    channels,
+    "s1",
+    "[\"jr-1\",\"r-5\",\"room:a\",\"phx_leave\",{}]",
+  )
   process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
   presence_count(handle, "room:a") |> should.equal(0)
 }
@@ -775,7 +815,7 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() {
 /// `presence.track` has claimed the exact same session/topic/key. The stale
 /// compensation must remove only the runtime-owned CRDT tag, survive normal
 /// topic cleanup, and leave neither ref capable of deleting a later entry.
-pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
+pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -784,17 +824,21 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
   let #(runtime_joins, runtime_leaves) = next_diff(diffs)
   runtime_leaves |> should.equal([])
   let assert [runtime_ref] = runtime_joins
 
   // The runtime times out while the actor is still inside the first track.
-  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
 
   // Queue the public track behind that in-flight runtime mutation before
   // releasing it. Mailbox observation makes the ordering deterministic.
@@ -806,8 +850,8 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
         presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
       process.send(public_done, ref)
     })
-  test_helpers.wait_until(
-    fn() { test_helpers.mailbox_length(presence_pid) >= 1 },
+  test_helper.wait_until(
+    fn() { test_helper.mailbox_length(presence_pid) >= 1 },
     1000,
     5,
   )
@@ -832,7 +876,11 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
   |> should.be_true
 
   // Runtime topic cleanup owns no public ref and must leave it intact.
-  h.route(channels, "s1", "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]")
+  app_test_helper.route(
+    channels,
+    "s1",
+    "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]",
+  )
   process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
   presence.untrack(handle, "no-such-ref")
   presence_count(handle, "room:a") |> should.equal(1)
@@ -870,7 +918,7 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() {
 /// Shutdown cannot wait for a timed-out track's ref, so it queues a
 /// runtime-owned session sweep behind the in-flight mutation. A public track
 /// already queued for the same tuple must survive that cleanup.
-pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() {
+pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -879,15 +927,19 @@ pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
   let #(runtime_joins, runtime_leaves) = next_diff(diffs)
   runtime_leaves |> should.equal([])
   let assert [runtime_ref] = runtime_joins
-  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
 
   let public_done = process.new_subject()
   let assert Ok(presence_pid) = process.subject_owner(presence.subject(handle))
@@ -897,8 +949,8 @@ pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() {
         presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
       process.send(public_done, ref)
     })
-  test_helpers.wait_until(
-    fn() { test_helpers.mailbox_length(presence_pid) >= 1 },
+  test_helper.wait_until(
+    fn() { test_helper.mailbox_length(presence_pid) >= 1 },
     1000,
     5,
   )
@@ -934,7 +986,7 @@ pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() {
 /// nothing left to receive its acknowledgement, so nothing left to
 /// compensate it either. Shutdown therefore sweeps every session still
 /// owed such an acknowledgement, ordered behind the in-flight track itself.
-pub fn shutdown_sweeps_sessions_owed_a_stale_track_test() {
+pub fn shutdown_sweeps_sessions_owed_a_stale_track_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -943,14 +995,18 @@ pub fn shutdown_sweeps_sessions_owed_a_stale_track_test() {
   let channels =
     start_system(handle, events, beryl.with_presence_op_timeout(_, 150))
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
 
   // The runtime gives up on the track and resumes the socket without it.
-  h.recv(frames) |> string.contains("presence_list") |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
 
   // Stopping dispatches the sweep for the acknowledgement still owed; the
   // presence actor only applies the track after that.
@@ -977,15 +1033,15 @@ pub fn shutdown_sweeps_sessions_owed_a_stale_track_test() {
 /// untracks it from presence and broadcasts its leave. The presence actor
 /// itself is never stopped by `beryl.stop` and must still be responsive
 /// afterwards, holding no stray entry for this socket.
-pub fn closed_presence_track_replacement_during_stop_does_not_orphan_entry_test() {
+pub fn closed_presence_track_replacement_during_stop_does_not_orphan_entry_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "reclose:room", "jr-1", "r-1")
-  let _reply = h.recv(frames)
-  let _join_diff = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "reclose:room", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let _join_diff = app_test_helper.recv(frames)
   presence_count(handle, "reclose:room") |> should.equal(1)
 
   let assert Ok(Nil) = beryl.stop(channels)
@@ -1002,14 +1058,14 @@ pub fn closed_presence_track_replacement_during_stop_does_not_orphan_entry_test(
 /// The same scenario, but the socket never held the key `Closed` tries to
 /// (re-)track: with no previous ref, the dropped track must stay dropped
 /// and create no entry at all.
-pub fn closed_presence_track_with_no_previous_ref_during_stop_creates_no_entry_test() {
+pub fn closed_presence_track_with_no_previous_ref_during_stop_creates_no_entry_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "reclose-fresh:room", "jr-1", "r-1")
-  let _reply = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "reclose-fresh:room", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
   presence_count(handle, "reclose-fresh:room") |> should.equal(0)
 
   let assert Ok(Nil) = beryl.stop(channels)
@@ -1025,7 +1081,7 @@ pub fn closed_presence_track_with_no_previous_ref_during_stop_creates_no_entry_t
 /// previous ref from socket bookkeeping. It must publish that previous entry's
 /// leave, then let the presence actor finish and sweep the replacement ref so
 /// local subscribers and remote presence replicas both converge to empty.
-pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() {
+pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -1033,26 +1089,26 @@ pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() {
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let watcher = h.connect(channels, "watcher")
-  h.join(channels, "watcher", "room:a", "jr-w", "r-w")
-  let _watcher_reply = h.recv(watcher)
-  let watcher_join = h.recv(watcher)
+  let watcher = app_test_helper.connect(channels, "watcher")
+  app_test_helper.join(channels, "watcher", "room:a", "jr-w", "r-w")
+  let _watcher_reply = app_test_helper.recv(watcher)
+  let watcher_join = app_test_helper.recv(watcher)
   let watcher_ref = phx_ref_of(watcher_join, "joins")
-  let _watcher_snapshot = h.recv(watcher)
+  let _watcher_snapshot = app_test_helper.recv(watcher)
   let _watcher_actor_join = next_diff(diffs)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
-  let initial_join = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let initial_join = app_test_helper.recv(frames)
   let previous_ref = phx_ref_of(initial_join, "joins")
-  let _snapshot = h.recv(frames)
-  let _watcher_saw_join = h.recv(watcher)
-  let _watcher_saw_snapshot = h.recv(watcher)
+  let _snapshot = app_test_helper.recv(frames)
+  let _watcher_saw_join = app_test_helper.recv(watcher)
+  let _watcher_saw_snapshot = app_test_helper.recv(watcher)
   let _initial_actor_join = next_diff(diffs)
 
   arm(gate)
-  h.push(channels, "s1", "room:a", "promote", "r-2")
+  app_test_helper.push(channels, "s1", "room:a", "promote", "r-2")
   await_entered(entered)
   let #(replacement_joins, replacement_leaves) = next_diff(diffs)
   replacement_leaves |> should.equal([previous_ref])
@@ -1063,7 +1119,7 @@ pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() {
   // The runtime finalizes the pending replacement through PresenceStopping
   // before tearing sockets down, so the still-subscribed watcher sees the
   // previous entry leave even though the replacement acknowledgement is held.
-  let local_leave = h.recv(watcher)
+  let local_leave = app_test_helper.recv(watcher)
   local_leave |> string.contains("presence_diff") |> should.be_true
   phx_ref_of(local_leave, "leaves") |> should.equal(previous_ref)
 
@@ -1090,7 +1146,7 @@ pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() {
 /// bookkeeping. Shutdown must still publish its leave instead of relying on
 /// topic cleanup that can no longer see it, while the actor completes the
 /// exact-ref removal for remote convergence.
-pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() {
+pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -1098,26 +1154,26 @@ pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() {
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let watcher = h.connect(channels, "watcher")
-  h.join(channels, "watcher", "room:a", "jr-w", "r-w")
-  let _watcher_reply = h.recv(watcher)
-  let watcher_join = h.recv(watcher)
+  let watcher = app_test_helper.connect(channels, "watcher")
+  app_test_helper.join(channels, "watcher", "room:a", "jr-w", "r-w")
+  let _watcher_reply = app_test_helper.recv(watcher)
+  let watcher_join = app_test_helper.recv(watcher)
   let watcher_ref = phx_ref_of(watcher_join, "joins")
-  let _watcher_snapshot = h.recv(watcher)
+  let _watcher_snapshot = app_test_helper.recv(watcher)
   let _watcher_actor_join = next_diff(diffs)
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
-  let initial_join = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let initial_join = app_test_helper.recv(frames)
   let tracked_ref = phx_ref_of(initial_join, "joins")
-  let _snapshot = h.recv(frames)
-  let _watcher_saw_join = h.recv(watcher)
-  let _watcher_saw_snapshot = h.recv(watcher)
+  let _snapshot = app_test_helper.recv(frames)
+  let _watcher_saw_join = app_test_helper.recv(watcher)
+  let _watcher_saw_snapshot = app_test_helper.recv(watcher)
   let _initial_actor_join = next_diff(diffs)
 
   arm(gate)
-  h.push(channels, "s1", "room:a", "untrack", "r-2")
+  app_test_helper.push(channels, "s1", "room:a", "untrack", "r-2")
   await_entered(entered)
   let #(actor_joins, actor_leaves) = next_diff(diffs)
   actor_joins |> should.equal([])
@@ -1125,7 +1181,7 @@ pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() {
 
   let assert Ok(Nil) = beryl.stop(channels)
 
-  let local_leave = h.recv(watcher)
+  let local_leave = app_test_helper.recv(watcher)
   local_leave |> string.contains("presence_diff") |> should.be_true
   phx_ref_of(local_leave, "leaves") |> should.equal(tracked_ref)
 
@@ -1146,7 +1202,7 @@ pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() {
 /// fire-and-forget, without waiting for an acknowledgement — there is no
 /// runtime left to receive one. That is not a failure and must not be
 /// logged as one.
-pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() {
+pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let events = process.new_subject()
   let channels =
@@ -1158,13 +1214,13 @@ pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() {
       ))
     })
 
-  let selector = test_helpers.begin_capture()
+  let selector = test_helper.begin_capture()
 
-  let frames = h.connect(channels, "s1")
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
-  let _diff = h.recv(frames)
-  let _snapshot = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let _diff = app_test_helper.recv(frames)
+  let _snapshot = app_test_helper.recv(frames)
 
   let _ = beryl.stop(channels)
 
@@ -1178,92 +1234,94 @@ pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() {
   |> list.any(fn(l) { l.message == "Presence cleanup failed: not acknowledged" })
   |> should.be_false
 
-  test_helpers.stop_capture()
+  test_helper.stop_capture()
 }
 
 /// A disconnect that arrives while a track is in flight is queued behind
 /// it, so the socket first completes the track and then tears down —
 /// leaving no tracked entry behind and emitting no duplicate diffs.
-pub fn disconnect_while_track_is_pending_leaves_no_presence_test() {
+pub fn disconnect_while_track_is_pending_leaves_no_presence_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let watcher = h.connect(channels, "watcher")
-  h.join(channels, "watcher", "room:a", "jr-w", "r-w")
-  let _watcher_reply = h.recv(watcher)
-  let _watcher_diff = h.recv(watcher)
-  let _watcher_snapshot = h.recv(watcher)
+  let watcher = app_test_helper.connect(channels, "watcher")
+  app_test_helper.join(channels, "watcher", "room:a", "jr-w", "r-w")
+  let _watcher_reply = app_test_helper.recv(watcher)
+  let _watcher_diff = app_test_helper.recv(watcher)
+  let _watcher_snapshot = app_test_helper.recv(watcher)
   presence_count(handle, "room:a") |> should.equal(1)
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _reply = h.recv(frames)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
   await_entered(entered)
 
   transport.socket_disconnected(channels, "s1")
   release(gate)
 
   // The watcher sees s1 join and then leave, in that order, once each.
-  let join_diff = h.recv(watcher)
+  let join_diff = app_test_helper.recv(watcher)
   join_diff |> string.contains("\"joins\"") |> should.be_true
   join_diff |> string.contains("user:s1") |> should.be_true
-  let _join_snapshot = h.recv(watcher)
-  let leave_diff = h.recv(watcher)
+  let _join_snapshot = app_test_helper.recv(watcher)
+  let leave_diff = app_test_helper.recv(watcher)
   leave_diff |> string.contains("user:s1") |> should.be_true
   count_occurrences(leave_diff, "user:s1") |> should.equal(1)
   process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
 
   // Nothing of s1's survives, and nothing resurrects it.
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() { presence_count(handle, "room:a") == 1 },
     2000,
     20,
   )
   let assert [entry] = presence_entries(handle, "room:a")
   entry.key |> should.equal("user:watcher")
-  h.recv_none(watcher)
+  app_test_helper.recv_none(watcher)
 }
 
 /// Two mutations in one effect list park the socket twice. Work queued
 /// behind the first must not slip in between them: the whole list still
 /// reaches the wire before anything that arrived while it was parked.
-pub fn second_mutation_keeps_queued_work_waiting_test() {
+pub fn second_mutation_keeps_queued_work_waiting_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let handle = start_gated_presence(gate)
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
-  let frames = h.connect(channels, "s1")
+  let frames = app_test_helper.connect(channels, "s1")
   arm(gate)
-  h.join(channels, "s1", "flip:a", "jr-1", "r-1")
-  h.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  app_test_helper.join(channels, "s1", "flip:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   await_entered(entered)
 
-  h.push(channels, "s1", "flip:a", "echo", "r-2")
+  app_test_helper.push(channels, "s1", "flip:a", "echo", "r-2")
   release(gate)
 
   // Both diffs and the snapshot land first, in list order.
-  let join_diff = h.recv(frames)
+  let join_diff = app_test_helper.recv(frames)
   join_diff |> string.contains("presence_diff") |> should.be_true
   join_diff |> string.contains("\"leaves\":{}") |> should.be_true
-  let leave_diff = h.recv(frames)
+  let leave_diff = app_test_helper.recv(frames)
   leave_diff |> string.contains("presence_diff") |> should.be_true
   leave_diff |> string.contains("\"joins\":{}") |> should.be_true
-  let snapshot = h.recv(frames)
+  let snapshot = app_test_helper.recv(frames)
   snapshot |> string.contains("presence_list") |> should.be_true
   // Only then the message that was queued while the socket was parked.
-  h.recv(frames) |> string.contains("echoed") |> should.be_true
+  app_test_helper.recv(frames) |> string.contains("echoed") |> should.be_true
   presence_count(handle, "flip:a") |> should.equal(0)
 }
 
 /// The public synchronous API is unchanged: a track is visible to the very
 /// next read, and so is an untrack.
-pub fn public_presence_api_keeps_read_after_write_test() {
+pub fn public_presence_api_keeps_read_after_write_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let ref = presence.track(handle, "room:a", "user:1", "s1", meta("online"))
   presence_count(handle, "room:a") |> should.equal(1)
@@ -1288,8 +1346,8 @@ pub fn public_presence_api_keeps_read_after_write_test() {
 /// presence/absence across the whole stream without risking a message
 /// being consumed (and discarded) by an earlier, unrelated check.
 fn drain_captured_logs(
-  selector: process.Selector(test_helpers.CapturedLog),
-) -> List(test_helpers.CapturedLog) {
+  selector: process.Selector(test_helper.CapturedLog),
+) -> List(test_helper.CapturedLog) {
   case process.selector_receive(selector, 300) {
     Ok(captured) -> [captured, ..drain_captured_logs(selector)]
     Error(Nil) -> []

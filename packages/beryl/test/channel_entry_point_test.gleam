@@ -22,7 +22,7 @@ fn ok_handler(pattern: String) -> channel.Handler {
 
 // --- validation happens first ----------------------------------------------
 
-pub fn child_spec_rejects_an_invalid_pattern_before_building_test() {
+pub fn child_spec_rejects_an_invalid_pattern_before_building_test() -> Nil {
   channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
     ok_handler("room:*"),
     ok_handler(""),
@@ -30,7 +30,7 @@ pub fn child_spec_rejects_an_invalid_pattern_before_building_test() {
   |> should.equal(Error(channel.InvalidPattern("", topic.EmptyTopic)))
 }
 
-pub fn child_spec_rejects_an_invalid_handler_table_test() {
+pub fn child_spec_rejects_an_invalid_handler_table_test() -> Nil {
   let result =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       ok_handler("room:*"),
@@ -41,7 +41,7 @@ pub fn child_spec_rejects_an_invalid_handler_table_test() {
   |> should.equal(Error(channel.DuplicatePattern("room:*")))
 }
 
-pub fn child_spec_nests_the_core_config_error_verbatim_test() {
+pub fn child_spec_nests_the_core_config_error_verbatim_test() -> Nil {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_heartbeat(timeout_ms: 1)
@@ -52,7 +52,7 @@ pub fn child_spec_nests_the_core_config_error_verbatim_test() {
 
 // --- a supervised system dispatches ----------------------------------------
 
-pub fn child_spec_dispatches_once_its_supervisor_runs_test() {
+pub fn child_spec_dispatches_once_its_supervisor_runs_test() -> Nil {
   let assert Ok(#(channels, spec)) =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       ok_handler("room:*"),
@@ -75,7 +75,7 @@ pub fn child_spec_dispatches_once_its_supervisor_runs_test() {
 
 /// The explicit child-spec path and the shared supervised test helper must
 /// produce the same channel lifecycle.
-pub fn child_spec_runs_the_same_lifecycle_through_both_supervised_paths_test() {
+pub fn child_spec_runs_the_same_lifecycle_through_both_supervised_paths_test() -> Nil {
   let helper_started = process.new_subject()
   let supervised = process.new_subject()
 

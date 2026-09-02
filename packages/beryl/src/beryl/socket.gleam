@@ -4,7 +4,7 @@
 //// every wire event for a socket to one `update` function, and the
 //// function returns the next model plus a list of `Effect`s for beryl to
 //// apply. There are no channel modules, no registry, and no type erasure.
-//// Each socket has a single `model` and a single `msg` type.
+//// Each socket has a single `model` and a single `message` type.
 ////
 //// ## Effect ordering guarantee
 ////
@@ -121,7 +121,7 @@ pub type StopReason {
 }
 
 /// Everything the runtime delivers to the app's `update` function.
-pub type Input(msg) {
+pub type Input(message) {
   /// A client asked to join a topic. Return an `AcceptJoin` or `RejectJoin`
   /// effect. The runtime rejects a `Join` that is unanswered at the end of
   /// the update turn.
@@ -139,7 +139,7 @@ pub type Input(msg) {
   Closed(topic: String, reason: StopReason)
   /// A typed server-side message, sent via the socket's `Sender` (see
   /// `ConnectInfo.self` and `notify`).
-  Info(msg)
+  Info(message)
 }
 
 /// The result of one `update` call.
@@ -265,12 +265,12 @@ pub fn empty_seed() -> ConnectSeed {
 /// Get this handle from `ConnectInfo.self` in `init`. Any process can call
 /// `notify` with it. The socket's `update` function receives the message as
 /// an `Info` event. This typed send does not erase the message type.
-pub opaque type Sender(msg) {
-  Sender(send: fn(msg) -> Nil)
+pub opaque type Sender(message) {
+  Sender(send: fn(message) -> Nil)
 }
 
 @internal
-pub fn make_sender(send: fn(msg) -> Nil) -> Sender(msg) {
+pub fn make_sender(send: fn(message) -> Nil) -> Sender(message) {
   Sender(send)
 }
 
@@ -278,19 +278,19 @@ pub fn make_sender(send: fn(msg) -> Nil) -> Sender(msg) {
 ///
 /// The socket's `update` function receives `Info(message)`. The runtime
 /// ignores the message if the socket has disconnected.
-pub fn notify(sender: Sender(msg), message: msg) -> Nil {
+pub fn notify(sender: Sender(message), message: message) -> Nil {
   sender.send(message)
 }
 
 /// Everything the app's `init` receives when a socket connects.
-pub type ConnectInfo(msg) {
+pub type ConnectInfo(message) {
   ConnectInfo(
     /// Unique id of the connecting socket.
     socket_id: String,
     /// Request data assembled by the transport.
     seed: ConnectSeed,
     /// Sender for delivering typed `Info` messages to this socket.
-    self: Sender(msg),
+    self: Sender(message),
   )
 }
 

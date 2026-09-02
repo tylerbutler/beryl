@@ -20,7 +20,7 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
  every wire event for a socket to one `update` function, and the
  function returns the next model plus a list of `Effect`s for beryl to
  apply. There are no channel modules, no registry, and no type erasure.
- Each socket has a single `model` and a single `msg` type.
+ Each socket has a single `model` and a single `message` type.
 
  ## Effect ordering guarantee
 

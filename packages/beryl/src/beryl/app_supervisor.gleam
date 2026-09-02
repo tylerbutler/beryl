@@ -171,7 +171,13 @@ fn handle_runtime_down(
       process.trap_exits(False)
       actor.stop_abnormal("app subtree restart intensity exceeded")
     }
-    _, _ -> actor.continue(state)
+    process.ProcessDown(_, _, _), Running
+    | process.ProcessDown(_, _, _), Stopping(_, _, RuntimeStopAcknowledged)
+    | process.ProcessDown(_, _, _), Stopping(_, _, AwaitingBoth)
+    | process.ProcessDown(_, _, _), Stopping(_, _, SupervisorExited)
+    | process.PortDown(_, _, _), Running
+    | process.PortDown(_, _, _), Stopping(_, _, _)
+    -> actor.continue(state)
   }
 }
 
