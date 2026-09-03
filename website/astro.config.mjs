@@ -107,7 +107,7 @@ export default defineConfig({
 							slug: "tutorial",
 						},
 						{
-							label: "1. Elm Architecture without a DOM",
+							label: "1. Elm architecture without a DOM",
 							slug: "tutorial/the-elm-architecture-without-a-dom",
 						},
 						{

@@ -4,9 +4,9 @@ title: Presence
 
 ## How presence stores changes
 
-beryl presence uses an OTP actor and
+beryl presence uses an OTP actor and an **add-wins, observed-remove
+conflict-free replicated data type (CRDT)** from
 [`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence).
-an **add-wins, observed-remove conflict-free replicated data type (CRDT)**.
 Each cluster node keeps one copy. Nodes can merge their copies in any order.
 Joins and leaves that happen at the same time produce the same final result.
 

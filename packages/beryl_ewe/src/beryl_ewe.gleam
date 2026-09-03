@@ -1,4 +1,4 @@
-//// Ewe WebSocket Transport - Direct Ewe integration for beryl
+//// Ewe WebSocket transport for beryl
 ////
 //// This module provides the bridge between Ewe's native WebSocket handling
 //// and the beryl runtime using Ewe request and response types directly.

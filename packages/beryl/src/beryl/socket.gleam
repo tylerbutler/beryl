@@ -150,7 +150,8 @@ pub type Next(model) {
   /// Continue with the given model, applying the effects in order.
   Next(model: model, effects: List(Effect))
   /// Tear down the socket: every joined topic receives a `Closed` input,
-  /// terminal frames are sent, and the transport connection is closed.
+  /// configured terminal frames are sent, and the transport connection is
+  /// closed.
   Stop(reason: StopReason)
 }
 
@@ -218,8 +219,9 @@ pub type Effect {
     event: String,
     encode: fn(List(PresenceEntry)) -> Json,
   )
-  /// Close this socket's subscription to a topic. The topic receives a
-  /// `Closed(topic, Shutdown)` input and the client a terminal frame.
+  /// Close this socket's subscription to a topic. The topic receives
+  /// `Closed(topic, Shutdown)`. If the codec has a close encoder, the client
+  /// also receives its terminal frame.
   KickTopic(topic: String)
 }
 

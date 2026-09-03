@@ -1,8 +1,8 @@
-//// beryl - Type-safe real-time communication
+//// beryl: type-safe real-time communication
 ////
-//// A standalone Gleam library for building real-time applications on the BEAM.
-//// Provides app-side WebSocket dispatch, distributed presence tracking,
-//// pub/sub messaging, and topic groups.
+//// beryl is a standalone Gleam library for building real-time applications on
+//// the BEAM. It provides app-side WebSocket dispatch, distributed presence
+//// tracking, PubSub messaging, and topic groups.
 ////
 //// ## Features
 ////
@@ -15,7 +15,7 @@
 //// - **Groups**: Named collections of topics for multi-topic broadcasting
 ////   (`beryl/group`)
 ////
-//// ## Quick Start
+//// ## Quick start
 ////
 //// ```gleam
 //// import beryl
@@ -24,6 +24,7 @@
 //// }
 //// import beryl/pubsub
 //// import beryl/wire
+//// import gleam/json
 //// import gleam/option
 //// import gleam/otp/static_supervisor
 ////
@@ -106,7 +107,7 @@ pub opaque type LoggingConfig {
     level: LogLevel,
     /// Whether debug diagnostics may include bounded payload/frame previews.
     include_payloads: Bool,
-    /// Maximum number of bytes/characters included in payload previews.
+    /// Maximum number of grapheme clusters included in payload previews.
     payload_preview_bytes: Int,
   )
 }
@@ -203,11 +204,10 @@ pub fn logging_config(
   )
 }
 
-/// Build a configuration with sensible defaults.
+/// Build a configuration with the default settings.
 ///
-/// A `codec` is required. beryl no longer provides an implicit Phoenix
-/// default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
-/// or your own `Codec` for a custom framing.
+/// Pass `wire.phoenix_codec()` for Phoenix framing or a custom `Codec` for
+/// another framing.
 pub fn config(codec: codec.Codec) -> Config {
   Config(
     codec: codec,
@@ -320,9 +320,8 @@ pub fn with_heartbeat(config: Config, timeout_ms timeout_ms: Int) -> Config {
 /// If beryl runs behind a trusted reverse proxy or load balancer, every
 /// connection shares the proxy's address, so a per-IP limit throttles all
 /// clients as a single IP. In that topology you must resolve the real client
-/// IP yourself at the proxy layer (for example, by enforcing limits there). A
-/// built-in trusted-proxy opt-in may be added in a future release. See the
-/// WebSocket transport guide for deployment guidance.
+/// IP yourself at the proxy layer, for example by enforcing limits there. See
+/// the WebSocket transport guide for deployment guidance.
 pub fn with_max_connections_per_ip(
   config: Config,
   max_connections max_connections: Int,
@@ -394,7 +393,9 @@ pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
 }
 
 // nolint: unused_exports -- public logging builder intended for downstream users
-/// Configure the maximum payload/frame preview length for logs.
+/// Configure the maximum payload and frame preview length for logs.
+///
+/// The `bytes` argument is measured in grapheme clusters.
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
   bytes bytes: Int,

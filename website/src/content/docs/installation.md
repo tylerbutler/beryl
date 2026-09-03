@@ -3,9 +3,9 @@ title: Installation
 ---
 
 :::note[Pre-1.0]
-beryl is not yet version 1.0. Minor releases can change the API. The library is
-not ready for production. Try it and report problems. Your feedback will help
-define version 1.0.
+beryl is not yet version 1.0. Minor releases can change the API, and the
+library is not ready for production. Report problems to help define version
+1.0.
 :::
 
 Install beryl packages from

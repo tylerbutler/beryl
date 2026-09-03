@@ -1,5 +1,5 @@
-//// Bridge - Forward an external OTP actor's message stream to a socket via
-//// its `Sender`.
+//// Forward an external OTP actor's message stream to a socket through its
+//// `Sender`.
 ////
 //// A common pattern is a long-lived domain actor (e.g. a per-document
 //// session) that emits updates which need to be pushed to a connected
