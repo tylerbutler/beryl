@@ -460,7 +460,7 @@ pub fn new(
 ) -> Codec
 ```
 
-Build a text-only wire codec.
+Build a codec without an inbound binary decoder.
 
  - `decode_text`: decode raw inbound text into a normalized `Inbound`.
  - `encode_reply`: encode a reply to a client message:

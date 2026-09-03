@@ -1,8 +1,7 @@
-//// Channel Groups - Named collections of topics for multi-topic broadcasting
+//// Topic groups
 ////
-//// Groups let you organize topics and broadcast to all of them at once.
-//// Useful for scenarios like broadcasting to all channels in a "team" or
-//// sending a system-wide notification.
+//// Groups organize topics for broadcasts to several topics at once, such as
+//// every channel in a team or a system-wide notification.
 ////
 //// Groups are independent of the beryl runtime and run under your
 //// application's supervision tree.
@@ -40,8 +39,9 @@ import gleam/set.{type Set}
 ///
 /// The stable registered subject is resolved on the caller's node. Keep a
 /// `Groups` handle on the node where its child specification runs. Calls from
-/// another BEAM node cannot reach the owning actor; synchronous operations
-/// panic as unavailable, and fire-and-forget broadcasts are not delivered.
+/// another BEAM node cannot reach the owning actor. All public operations,
+/// including `broadcast`, panic if the actor is unavailable or the call times
+/// out.
 pub opaque type Groups {
   Groups(subject: Subject(Message), call_timeout_ms: Int)
 }

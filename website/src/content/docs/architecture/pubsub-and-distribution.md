@@ -24,8 +24,6 @@ The Gleam module `beryl/pubsub` calls
 `src/beryl_pubsub_ffi.erl` through `@external` declarations. This small Erlang
 module translates Gleam calls into built-in `pg` functions.
 
-**PubSub functions:**
-
 | Function | Description |
 |---|---|
 | `start(config)` | Start a pg scope (idempotent, safe to call multiple times) |

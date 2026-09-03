@@ -3,14 +3,13 @@ title: What is beryl?
 ---
 
 :::note[Pre-1.0]
-beryl is not yet version 1.0. Minor releases can change the API. The library is
-not ready for production. Try it and report problems. Your feedback will help
-define version 1.0.
+beryl is not yet version 1.0. Minor releases can change the API, and the
+library is not ready for production. Report problems to help define version
+1.0.
 :::
 
-beryl is a **type-safe real-time channels and presence library** for Gleam,
-for the Erlang (BEAM) runtime. It helps you add real-time features to Gleam web
-applications.
+beryl is a **type-safe library for real-time Gleam channels and presence** on
+the Erlang (BEAM) runtime.
 
 ## beryl's model in one minute
 

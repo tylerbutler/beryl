@@ -1,6 +1,6 @@
 ---
 title: "beryl"
-description: "beryl - Type-safe real-time communication"
+description: "beryl: type-safe real-time communication"
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 2
@@ -14,11 +14,11 @@ tableOfContents:
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-beryl - Type-safe real-time communication
+beryl: type-safe real-time communication
 
- A standalone Gleam library for building real-time applications on the BEAM.
- Provides app-side WebSocket dispatch, distributed presence tracking,
- pub/sub messaging, and topic groups.
+ beryl is a standalone Gleam library for building real-time applications on
+ the BEAM. It provides app-side WebSocket dispatch, distributed presence
+ tracking, PubSub messaging, and topic groups.
 
  ## Features
 
@@ -31,7 +31,7 @@ beryl - Type-safe real-time communication
  - **Groups**: Named collections of topics for multi-topic broadcasting
    (`beryl/group`)
 
- ## Quick Start
+ ## Quick start
 
  ```gleam
  import beryl
@@ -40,6 +40,7 @@ beryl - Type-safe real-time communication
  }
  import beryl/pubsub
  import beryl/wire
+ import gleam/json
  import gleam/option
  import gleam/otp/static_supervisor
 
@@ -417,11 +418,10 @@ Build the app-side dispatch supervision child specification.
 pub fn config(codec.Codec) -> Config
 ```
 
-Build a configuration with sensible defaults.
+Build a configuration with the default settings.
 
- A `codec` is required. beryl no longer provides an implicit Phoenix
- default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
- or your own `Codec` for a custom framing.
+ Pass `wire.phoenix_codec()` for Phoenix framing or a custom `Codec` for
+ another framing.
 
 <div class="api-entry-anchor" id="api-function-logging_config" aria-hidden="true"></div>
 
@@ -670,9 +670,8 @@ Configure the maximum number of concurrent connections allowed per client
  If beryl runs behind a trusted reverse proxy or load balancer, every
  connection shares the proxy's address, so a per-IP limit throttles all
  clients as a single IP. In that topology you must resolve the real client
- IP yourself at the proxy layer (for example, by enforcing limits there). A
- built-in trusted-proxy opt-in may be added in a future release. See the
- WebSocket transport guide for deployment guidance.
+ IP yourself at the proxy layer, for example by enforcing limits there. See
+ the WebSocket transport guide for deployment guidance.
 
 <div class="api-entry-anchor" id="api-function-with_max_event_length" aria-hidden="true"></div>
 
@@ -786,7 +785,9 @@ pub fn with_payload_preview_bytes(
 ) -> LoggingConfig
 ```
 
-Configure the maximum payload/frame preview length for logs.
+Configure the maximum payload and frame preview length for logs.
+
+ The `bytes` argument is measured in grapheme clusters.
 
 <div class="api-entry-anchor" id="api-function-with_presence_handle" aria-hidden="true"></div>
 

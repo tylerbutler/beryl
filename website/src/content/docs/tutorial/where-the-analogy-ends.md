@@ -11,7 +11,7 @@ It does not bring your socket state back after a crash. One router actor keeps
 the list of sockets and sends broadcasts to them. Each socket actor calls your
 update function and runs the effects it returns, in order.
 
-The production decisions start where the frontend analogy ends.
+The frontend analogy does not cover beryl's production behavior.
 
 ## Follow one frame
 
@@ -94,8 +94,7 @@ The channel's sender can still reach the old channel until the client joins the
 topic again or the socket ends. Client traffic cannot reach it, because the
 topic is closed. Keep `on_terminate` small. Do not do half-finished work there.
 
-This policy contains crashes in your callbacks. It does not pretend that every
-crash has the same size.
+The runtime limits callback crashes to the affected join, topic, or socket.
 
 ## A restart restores the service, not socket state
 
