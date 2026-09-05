@@ -122,8 +122,8 @@ fn origin_authority(origin: String) -> Result(String, Nil) {
 /// Accept a missing `vsn` or a value beginning with `2.`. Custom-codec clients
 /// must omit `vsn` unless they use that version form. Other values, such as
 /// the V1 object framing's `vsn=1.0.0`, are rejected with `403 Forbidden`.
-pub fn vsn_supported(vsn vsn: Option(String)) -> Bool {
-  case vsn {
+pub fn version_supported(version version: Option(String)) -> Bool {
+  case version {
     Some(version) -> string.starts_with(version, "2.")
     None -> True
   }

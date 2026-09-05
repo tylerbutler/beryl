@@ -252,7 +252,8 @@ fn release_slot(state: State, ip: String) -> State {
         total: total,
         counts: dict.insert(state.counts, ip, count - 1),
       )
-    _ -> State(..state, total: total, counts: dict.delete(state.counts, ip))
+    Ok(_) | Error(Nil) ->
+      State(..state, total: total, counts: dict.delete(state.counts, ip))
   }
 }
 

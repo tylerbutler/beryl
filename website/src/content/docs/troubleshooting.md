@@ -94,7 +94,7 @@ receive a reply or push.
 
 - `InvalidPattern(pattern, reason)` means the pattern is not valid
   `beryl/topic` syntax. `reason` is the nested `TopicError` (`EmptyTopic` or
-  `InvalidFormat(detail)` today); keep a catch-all arm for future variants.
+  `InvalidFormat(detail)`). Match both variants explicitly.
 - `DuplicatePattern(pattern)` means the same pattern string appears twice.
   Overlapping but different patterns are valid; first match wins.
 

@@ -61,7 +61,7 @@ fn params_handler(pattern: String) -> channel.Handler {
     channel.accept(Nil)
     |> channel.with_reply(
       json.object([
-        #("params", json.array(context.params, json.string)),
+        #("params", json.array(context.parameters, json.string)),
       ]),
     )
   })
@@ -602,7 +602,8 @@ pub fn a_rejected_joins_sender_cannot_reach_a_later_accepted_join_test() -> Nil 
                 channel.push("note", json.string(text)),
               ])
             })
-          _ -> channel.reject(json.object([#("reason", json.string("no"))]))
+          Ok(False) | Error(_) ->
+            channel.reject(json.object([#("reason", json.string("no"))]))
         }
       }),
     ])

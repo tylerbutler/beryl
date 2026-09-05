@@ -4,7 +4,7 @@
 
 import app_test_helper
 import beryl
-import beryl/socket.{AcceptJoin, Join, Message, Next}
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/int
@@ -31,11 +31,11 @@ fn start_capped_app_with(
         |> beryl.with_channel_rate(per_second: 1000, burst: 1000)
         |> beryl.with_channel_rate_max_keys_per_socket(max_keys: max_keys),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
+      update: fn(model, input) {
+        process.send(events, input)
+        case input {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
+          Message(..) | Binary(..) | Closed(..) | Info(..) -> Next(model, [])
         }
       },
     )
@@ -48,7 +48,7 @@ fn expect_handled(
   topic: String,
 ) -> Nil {
   case process.receive(events, 500) {
-    Ok(Message(t, _, _, _)) if t == topic -> Nil
+    Ok(Message(received_topic, _, _, _)) if received_topic == topic -> Nil
     Ok(_other) -> expect_handled(events, topic)
     Error(Nil) -> should.fail()
   }
@@ -60,7 +60,8 @@ fn expect_dropped(
   topic: String,
 ) -> Nil {
   case process.receive(events, 100) {
-    Ok(Message(t, _, _, _)) if t == topic -> should.fail()
+    Ok(Message(received_topic, _, _, _)) if received_topic == topic ->
+      should.fail()
     Ok(_other) -> expect_dropped(events, topic)
     Error(Nil) -> Nil
   }

@@ -37,9 +37,9 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 | **RejectJoin** | `beryl/socket` | Room capacity check rejects when full |
 | **ReplyOk** | `beryl/socket` | Message delivery confirmed on the client's ref |
 | **Broadcast** | `beryl/socket` | System join/leave messages broadcast to room |
-| **error code** | `chatrooms/app` | Empty message validation returns code 422 |
+| **error code** | `chatroom/app` | Empty message validation returns code 422 |
 | **Topic helpers** | `beryl/topic` | Extract room name from `room:*` pattern |
-| **Session presence** | `example_helpers/session_presence` | ETS-backed online users and typing metadata |
+| **Session presence** | `example_helper/session_presence` | ETS-backed online users and typing metadata |
 | **join_rate** | `beryl` | 5 joins/sec per socket |
 | **channel_rate** | `beryl` | 10 msg/sec per channel |
 | **Multiple topics** | `beryl` | Each room is a separate topic |

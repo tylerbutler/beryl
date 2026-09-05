@@ -273,7 +273,7 @@ pub fn phoenix_codec_encodes_shared_server_push_fixtures_test() -> Nil {
         codec.encode_push(phoenix)(case_.topic, event, case_.payload)
         |> text_frame()
         |> should.equal(case_.encoded)
-      _, _, _ -> Nil
+      Some(_), _, _ | None, _, _ -> Nil
     }
   })
 }

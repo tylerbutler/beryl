@@ -217,10 +217,11 @@ pub fn upgrade(
   config config: TransportConfig(body),
   telemetry telemetry: transport.Telemetry,
   request_ip request_ip: fn(Request(body)) -> Result(String, Nil),
-  reject reject: fn(Int) -> Response(resp),
-  accept accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
-  next next: fn() -> Response(resp),
-) -> Response(resp) {
+  reject reject: fn(Int) -> Response(response_body),
+  accept accept: fn(List(#(String, String)), ConnectionPermit) ->
+    Response(response_body),
+  next next: fn() -> Response(response_body),
+) -> Response(response_body) {
   let path = "/" <> string.join(request.path_segments(request), "/")
 
   case path == config.path {
@@ -244,9 +245,10 @@ pub fn upgrade(
 /// The handler sends upgrade requests to the transport-specific `upgrade`
 /// function. It sends all other requests to HTTP.
 pub fn handler(
-  upgrade upgrade: fn(Request(body), fn() -> Response(resp)) -> Response(resp),
-  http_fallback http_fallback: fn(Request(body)) -> Response(resp),
-) -> fn(Request(body)) -> Response(resp) {
+  upgrade upgrade: fn(Request(body), fn() -> Response(response_body)) ->
+    Response(response_body),
+  http_fallback http_fallback: fn(Request(body)) -> Response(response_body),
+) -> fn(Request(body)) -> Response(response_body) {
   fn(request) {
     case is_websocket_request(request) {
       True -> upgrade(request, fn() { http_fallback(request) })
@@ -261,9 +263,10 @@ fn handle_matched_upgrade(
   config: TransportConfig(body),
   telemetry: transport.Telemetry,
   request_ip: fn(Request(body)) -> Result(String, Nil),
-  reject: fn(Int) -> Response(resp),
-  accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
-) -> Response(resp) {
+  reject: fn(Int) -> Response(response_body),
+  accept: fn(List(#(String, String)), ConnectionPermit) ->
+    Response(response_body),
+) -> Response(response_body) {
   let started_at = transport.telemetry_start(telemetry)
   use <- bool.lazy_guard(
     when: !request_origin_allowed(request, config.origin_policy),
@@ -277,15 +280,18 @@ fn handle_matched_upgrade(
       )
     },
   )
-  use <- bool.lazy_guard(when: !request_vsn_supported(request), return: fn() {
-    reject_upgrade(
-      reject,
-      telemetry,
-      started_at,
-      transport.VersionRejected,
-      403,
-    )
-  })
+  use <- bool.lazy_guard(
+    when: !request_version_supported(request),
+    return: fn() {
+      reject_upgrade(
+        reject,
+        telemetry,
+        started_at,
+        transport.VersionRejected,
+        403,
+      )
+    },
+  )
   let peer_ip = request_ip(request) |> result.unwrap("unknown")
   case transport.acquire_connection_slot(sockets, peer_ip) {
     Error(Nil) ->
@@ -310,12 +316,12 @@ fn handle_matched_upgrade(
 }
 
 fn reject_upgrade(
-  reject: fn(Int) -> Response(resp),
+  reject: fn(Int) -> Response(response_body),
   telemetry: transport.Telemetry,
   started_at: Int,
   outcome: transport.UpgradeOutcome,
   status: Int,
-) -> Response(resp) {
+) -> Response(response_body) {
   transport.telemetry_upgrade_stop(telemetry, started_at, outcome)
   reject(status)
 }
@@ -326,9 +332,10 @@ fn run_on_connect(
   connection_permit: ConnectionPermit,
   telemetry: transport.Telemetry,
   started_at: Int,
-  reject: fn(Int) -> Response(resp),
-  accept: fn(List(#(String, String)), ConnectionPermit) -> Response(resp),
-) -> Response(resp) {
+  reject: fn(Int) -> Response(response_body),
+  accept: fn(List(#(String, String)), ConnectionPermit) ->
+    Response(response_body),
+) -> Response(response_body) {
   case config.on_connect {
     Some(callback) ->
       case callback(request) {
@@ -341,7 +348,7 @@ fn run_on_connect(
             reject,
             telemetry,
             started_at,
-            transport.AuthRejected,
+            transport.AuthenticationRejected,
             403,
           )
         }
@@ -367,10 +374,12 @@ fn request_origin_allowed(
 
 /// Check the request's `?vsn=` query parameter. A missing or unparseable
 /// query string means no version was requested, which is accepted.
-fn request_vsn_supported(request: Request(body)) -> Bool {
+fn request_version_supported(request: Request(body)) -> Bool {
   case request.get_query(request) {
-    Ok(params) ->
-      origin.vsn_supported(list.key_find(params, "vsn") |> option.from_result)
+    Ok(parameters) ->
+      origin.version_supported(
+        version: list.key_find(parameters, "vsn") |> option.from_result,
+      )
     Error(Nil) -> True
   }
 }
@@ -378,11 +387,11 @@ fn request_vsn_supported(request: Request(body)) -> Bool {
 /// Complete an upgrade telemetry span and release its slot if the server
 /// rejected the WebSocket handshake before connection callbacks could run.
 fn finish_upgrade(
-  response: Response(resp),
+  response: Response(response_body),
   connection_permit: ConnectionPermit,
   telemetry: transport.Telemetry,
   started_at: Int,
-) -> Response(resp) {
+) -> Response(response_body) {
   case response.status >= 400 {
     True -> {
       transport.release_connection_slot(connection_permit)

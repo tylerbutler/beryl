@@ -108,7 +108,7 @@ fn poll_channel(
   duration_ms: Int,
 ) -> channel.Handler {
   channel.handler("poll:*", fn(context) {
-    let room = case context.params {
+    let room = case context.parameters {
       [room] -> room
       _ -> ""
     }
@@ -126,7 +126,7 @@ fn poll_channel(
       case store.close(polls, room) {
         store.ClosedNow(state) ->
           channel.next(room, [
-            channel.broadcast("poll_closed", poll.json(state)),
+            channel.broadcast("poll_closed", poll.to_json(state)),
           ])
         store.AlreadyClosed(_) | store.RoomNotFound -> channel.stay(room)
       }
@@ -144,7 +144,7 @@ This exact excerpt comes from
 Read it from the top:
 
 - `channel.handler` pairs the pattern `poll:*` with the join function.
-- `context.params` holds the part of the topic that matched `*`. For
+- `context.parameters` holds the part of the topic that matched `*`. For
   `poll:demo`, that is `["demo"]`.
 - `context.self` is a typed sender for this channel. The timer uses it to send
   `ClosePoll` later.
@@ -219,13 +219,13 @@ element.
 A raw effect names its topic:
 
 ```gleam
-socket.BroadcastFrom(topic, "poll_state", poll.json(state))
+socket.BroadcastFrom(topic, "poll_state", poll.to_json(state))
 ```
 
 A channel action does not:
 
 ```gleam
-channel.broadcast_from("poll_state", poll.json(state))
+channel.broadcast_from("poll_state", poll.to_json(state))
 ```
 
 The channel already knows its topic. Your callback code is shorter, and an
@@ -248,8 +248,8 @@ The vote branch returns:
 ```gleam
 Ok(state) ->
   channel.next(room, [
-    channel.reply_ok(message.reply, poll.json(state)),
-    channel.broadcast_from("poll_state", poll.json(state)),
+    channel.reply_ok(message.reply, poll.to_json(state)),
+    channel.broadcast_from("poll_state", poll.to_json(state)),
   ])
 ```
 

@@ -7,10 +7,10 @@ target = "erlang"
 [dependencies]
 beryl = { path = "../../packages/beryl" }
 beryl_mist = { path = "../../packages/beryl_mist" }
-example_helpers = { path = "../example_helpers" }
-cursors = { path = "../cursors" }
-chatrooms = { path = "../chatrooms" }
-collab_docs = { path = "../collab_docs" }
+example_helper = { path = "../example_helpers" }
+cursor = { path = "../cursors" }
+chatroom = { path = "../chatrooms" }
+collab_document = { path = "../collab_docs" }
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 gleam_erlang = ">= 0.29.0 and < 2.0.0"
 gleam_otp = ">= 0.12.0 and < 2.0.0"

@@ -129,7 +129,7 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build chatrooms collab_docs cursors example_helpers showcase load_test live_poll collab_docs_client
+    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client
 
 # Build JavaScript clients used by examples
 examples-client-build:

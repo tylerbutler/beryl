@@ -164,7 +164,7 @@ fn send_heartbeats(
         socket_id,
         "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]",
       )
-      let _hb_reply = app_test_helper.recv(frames)
+      let _heartbeat_reply = app_test_helper.recv(frames)
       process.sleep(15)
       send_heartbeats(channels, frames, socket_id, remaining - 1)
     }

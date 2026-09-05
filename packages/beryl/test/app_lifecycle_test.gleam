@@ -81,7 +81,7 @@ pub fn validate_config_rejects_invalid_disabled_topic_pattern_test() -> Nil {
   case result {
     Error(beryl.InvalidTopicPattern(pattern, _reason)) ->
       pattern |> should.equal(bad)
-    _ -> should.fail()
+    Ok(_) | Error(_) -> should.fail()
   }
 }
 
@@ -100,7 +100,7 @@ pub fn child_spec_rejects_invalid_config_test() -> Nil {
 
   case result {
     Error(beryl.InvalidTopicPattern(_, _)) -> Nil
-    _ -> should.fail()
+    Ok(_) | Error(_) -> should.fail()
   }
 }
 

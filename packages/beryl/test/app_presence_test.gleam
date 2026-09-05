@@ -33,14 +33,14 @@ fn encode_users(entries: List(presence.PresenceEntry)) -> json.Json {
 /// Joins track the socket under "user:1" and broadcast an apply-time
 /// snapshot; "untrack" untracks and re-broadcasts; "who" pushes a snapshot
 /// to the requesting socket only.
-fn start_system(p: presence.Presence) -> beryl.Sockets {
+fn start_system(presence_handle: presence.Presence) -> beryl.Sockets {
   let assert Ok(channels) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
-        |> beryl.with_presence_handle(p),
+        |> beryl.with_presence_handle(presence_handle),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(topic, _payload, ref) ->
             Next(model, [
               AcceptJoin(ref, None),
@@ -58,7 +58,10 @@ fn start_system(p: presence.Presence) -> beryl.Sockets {
             ])
           Message(topic, "who", _payload, _ref) ->
             Next(model, [PushPresence(topic, "who_list", encode_users)])
-          _ -> Next(model, [])
+          Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
         }
       },
     )
@@ -66,8 +69,9 @@ fn start_system(p: presence.Presence) -> beryl.Sockets {
 }
 
 pub fn presence_track_updates_actor_and_broadcasts_diff_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("node1"))
-  let channels = start_system(p)
+  let assert Ok(presence_handle) =
+    presence.start(presence.default_config("node1"))
+  let channels = start_system(presence_handle)
   let frames = app_test_helper.connect(channels, "s1")
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
 
@@ -82,17 +86,18 @@ pub fn presence_track_updates_actor_and_broadcasts_diff_test() -> Nil {
 
   // The presence actor has the entry.
   test_helper.wait_until(
-    fn() { list.length(presence_entries(p, "room:a")) == 1 },
+    fn() { list.length(presence_entries(presence_handle, "room:a")) == 1 },
     2000,
     20,
   )
-  let assert [entry] = presence_entries(p, "room:a")
+  let assert [entry] = presence_entries(presence_handle, "room:a")
   entry.key |> should.equal("user:1")
 }
 
 pub fn broadcast_presence_snapshot_sees_same_list_track_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("node1"))
-  let channels = start_system(p)
+  let assert Ok(presence_handle) =
+    presence.start(presence.default_config("node1"))
+  let channels = start_system(presence_handle)
   let frames = app_test_helper.connect(channels, "s1")
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
 
@@ -108,8 +113,9 @@ pub fn broadcast_presence_snapshot_sees_same_list_track_test() -> Nil {
 }
 
 pub fn presence_untrack_broadcasts_leave_and_empty_snapshot_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("node1"))
-  let channels = start_system(p)
+  let assert Ok(presence_handle) =
+    presence.start(presence.default_config("node1"))
+  let channels = start_system(presence_handle)
   let frames = app_test_helper.connect(channels, "s1")
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _reply = app_test_helper.recv(frames)
@@ -128,12 +134,17 @@ pub fn presence_untrack_broadcasts_leave_and_empty_snapshot_test() -> Nil {
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("s1\":") |> should.be_false
 
-  test_helper.wait_until(fn() { presence_entries(p, "room:a") == [] }, 2000, 20)
+  test_helper.wait_until(
+    fn() { presence_entries(presence_handle, "room:a") == [] },
+    2000,
+    20,
+  )
 }
 
 pub fn push_presence_goes_only_to_requester_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("node1"))
-  let channels = start_system(p)
+  let assert Ok(presence_handle) =
+    presence.start(presence.default_config("node1"))
+  let channels = start_system(presence_handle)
   let frames1 = app_test_helper.connect(channels, "s1")
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _reply1 = app_test_helper.recv(frames1)
@@ -157,8 +168,9 @@ pub fn push_presence_goes_only_to_requester_test() -> Nil {
 }
 
 pub fn leftover_presence_is_untracked_when_topic_closes_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("node1"))
-  let channels = start_system(p)
+  let assert Ok(presence_handle) =
+    presence.start(presence.default_config("node1"))
+  let channels = start_system(presence_handle)
 
   // A second socket stays in the room to observe the leave diff.
   let frames_watcher = app_test_helper.connect(channels, "watcher")
@@ -175,7 +187,7 @@ pub fn leftover_presence_is_untracked_when_topic_closes_test() -> Nil {
   let _s1_join_snapshot = app_test_helper.recv(frames_watcher)
 
   test_helper.wait_until(
-    fn() { list.length(presence_entries(p, "room:a")) == 2 },
+    fn() { list.length(presence_entries(presence_handle, "room:a")) == 2 },
     2000,
     20,
   )
@@ -193,7 +205,7 @@ pub fn leftover_presence_is_untracked_when_topic_closes_test() -> Nil {
   leave_diff |> string.contains("leaves") |> should.be_true
 
   test_helper.wait_until(
-    fn() { list.length(presence_entries(p, "room:a")) == 1 },
+    fn() { list.length(presence_entries(presence_handle, "room:a")) == 1 },
     2000,
     20,
   )
@@ -206,15 +218,18 @@ pub fn presence_effects_without_handle_are_dropped_test() -> Nil {
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, ev: socket.Input(Nil)) {
-        case ev {
+      update: fn(model: Nil, event: socket.Input(Nil)) {
+        case event {
           Join(topic, _payload, ref) ->
             Next(model, [
               AcceptJoin(ref, Some(json.object([]))),
               PresenceTrack(topic, "user:1", json.object([])),
               BroadcastPresence(topic, "presence_list", encode_users),
             ])
-          _ -> Next(model, [])
+          socket.Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
         }
       },
     )

@@ -26,7 +26,7 @@ fn poll_channel(
   duration_ms: Int,
 ) -> channel.Handler {
   channel.handler("poll:*", fn(context) {
-    let room = case context.params {
+    let room = case context.parameters {
       [room] -> room
       _ -> ""
     }
@@ -44,7 +44,7 @@ fn poll_channel(
       case store.close(polls, room) {
         store.ClosedNow(state) ->
           channel.next(room, [
-            channel.broadcast("poll_closed", poll.json(state)),
+            channel.broadcast("poll_closed", poll.to_json(state)),
           ])
         store.AlreadyClosed(_) | store.RoomNotFound -> channel.stay(room)
       }
@@ -64,28 +64,28 @@ fn handle_message(
   case poll.command(message.event, message.payload) {
     poll.GetState ->
       channel.next(room, [
-        channel.reply_ok(message.reply, poll.json(store.get(polls, room))),
+        channel.reply_ok(message.reply, poll.to_json(store.get(polls, room))),
       ])
     poll.Vote(choice) ->
       case store.vote(polls, room, choice) {
         Ok(state) ->
           channel.next(room, [
-            channel.reply_ok(message.reply, poll.json(state)),
-            channel.broadcast_from("poll_state", poll.json(state)),
+            channel.reply_ok(message.reply, poll.to_json(state)),
+            channel.broadcast_from("poll_state", poll.to_json(state)),
           ])
         Error(error) ->
           channel.next(room, [
-            channel.reply_error(message.reply, poll.error_json(error)),
+            channel.reply_error(message.reply, poll.error_to_json(error)),
           ])
       }
     poll.Close -> {
       let actions = case store.close(polls, room) {
         store.ClosedNow(state) -> [
-          channel.reply_ok(message.reply, poll.json(state)),
-          channel.broadcast("poll_closed", poll.json(state)),
+          channel.reply_ok(message.reply, poll.to_json(state)),
+          channel.broadcast("poll_closed", poll.to_json(state)),
         ]
         store.AlreadyClosed(state) -> [
-          channel.reply_ok(message.reply, poll.json(state)),
+          channel.reply_ok(message.reply, poll.to_json(state)),
         ]
         store.RoomNotFound -> []
       }

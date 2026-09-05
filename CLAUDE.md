@@ -76,7 +76,7 @@ packages/
 │   │       ├── pubsub.gleam       # PubSub abstraction (pg-based)
 │   │       ├── rate_limit.gleam   # Rate limiting helpers (internal)
 │   │       ├── runtime.gleam      # App-dispatch socket/topic runtime (internal)
-│   │       ├── stats.gleam        # Runtime statistics API
+│   │       ├── snapshot.gleam     # Runtime snapshot API
 │   │       ├── telemetry.gleam    # Internal telemetry schema
 │   │       ├── topic.gleam        # Topic pattern matching
 │   │       ├── transport.gleam    # Public transport SPI (used by beryl_mist/beryl_ewe)

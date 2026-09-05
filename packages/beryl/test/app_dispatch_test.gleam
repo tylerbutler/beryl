@@ -17,7 +17,7 @@ import gleam/string
 import gleeunit/should
 import test_helper
 
-pub type Msg {
+pub type AppMessage {
   Note(String)
 }
 
@@ -35,8 +35,8 @@ fn start_join_race(mode: JoinRaceMode) -> beryl.Sockets {
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(JoinRaceModel(previous: None, mode: mode), []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, current_ref) ->
             case model.previous {
               None -> {
@@ -94,7 +94,8 @@ fn start_join_race(mode: JoinRaceMode) -> beryl.Sockets {
                     ])
                 }
             }
-          _ -> Next(model, [])
+          Message(..) | socket.Binary(..) | Closed(..) | Info(..) ->
+            Next(model, [])
         }
       },
     )
@@ -105,8 +106,8 @@ fn start_join_race(mode: JoinRaceMode) -> beryl.Sockets {
 /// `limbo:*` (leaving the join unanswered), replies ok/error to "echo" and
 /// "fail", pushes on `Info`, and forwards every event to an observer.
 fn start_observed(
-  events: process.Subject(socket.Input(Msg)),
-  senders: process.Subject(socket.Sender(Msg)),
+  events: process.Subject(socket.Input(AppMessage)),
+  senders: process.Subject(socket.Sender(AppMessage)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     app_test_helper.start_app(
@@ -115,9 +116,9 @@ fn start_observed(
         process.send(senders, info.self)
         #(Nil, [])
       },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
+      update: fn(model, event) {
+        process.send(events, event)
+        case event {
           Join("room:" <> _, _payload, ref) ->
             Next(model, [
               AcceptJoin(ref, Some(json.object([#("ok", json.bool(True))]))),
@@ -148,7 +149,7 @@ fn start_observed(
                 ]),
               ),
             ])
-          _ -> Next(model, [])
+          Message(..) | socket.Binary(..) | Closed(..) -> Next(model, [])
         }
       },
     )
@@ -157,8 +158,8 @@ fn start_observed(
 
 fn start_system() -> #(
   beryl.Sockets,
-  process.Subject(socket.Input(Msg)),
-  process.Subject(socket.Sender(Msg)),
+  process.Subject(socket.Input(AppMessage)),
+  process.Subject(socket.Sender(AppMessage)),
 ) {
   let events = process.new_subject()
   let senders = process.new_subject()

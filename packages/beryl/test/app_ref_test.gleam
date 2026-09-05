@@ -17,7 +17,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleeunit/should
 
-pub type Msg {
+pub type AppMessage {
   ReplyStashed
 }
 
@@ -28,7 +28,9 @@ type Model {
 /// - "double": reply to the same ref twice in one effects list (single-use).
 /// - "stash": store the ref without replying (deferred reply).
 /// - `Info(ReplyStashed)`: reply with the stored ref later.
-fn start_system(senders: process.Subject(socket.Sender(Msg))) -> beryl.Sockets {
+fn start_system(
+  senders: process.Subject(socket.Sender(AppMessage)),
+) -> beryl.Sockets {
   let assert Ok(channels) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -36,8 +38,8 @@ fn start_system(senders: process.Subject(socket.Sender(Msg))) -> beryl.Sockets {
         process.send(senders, info.self)
         #(Model(None), [])
       },
-      update: fn(model: Model, ev) {
-        case ev {
+      update: fn(model: Model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Message(_topic, "double", _payload, Some(ref)) ->
             Next(model, [
@@ -54,14 +56,14 @@ fn start_system(senders: process.Subject(socket.Sender(Msg))) -> beryl.Sockets {
                 ])
               None -> Next(model, [])
             }
-          _ -> Next(model, [])
+          Message(..) | socket.Binary(..) | socket.Closed(..) -> Next(model, [])
         }
       },
     )
   channels
 }
 
-fn start() -> #(beryl.Sockets, process.Subject(socket.Sender(Msg))) {
+fn start() -> #(beryl.Sockets, process.Subject(socket.Sender(AppMessage))) {
   let senders = process.new_subject()
   #(start_system(senders), senders)
 }

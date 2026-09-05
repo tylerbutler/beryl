@@ -6,8 +6,8 @@ import gleam/set
 import gleeunit/should
 import test_helper
 
-fn assert_crashes_within(op: fn() -> Nil, timeout_ms: Int) -> Nil {
-  let pid = process.spawn_unlinked(op)
+fn assert_crashes_within(operation: fn() -> Nil, timeout_ms: Int) -> Nil {
+  let pid = process.spawn_unlinked(operation)
   let monitor = process.monitor(pid)
   let selector =
     process.new_selector()

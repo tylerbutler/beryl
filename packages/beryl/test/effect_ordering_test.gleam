@@ -7,7 +7,8 @@
 import app_test_helper
 import beryl
 import beryl/socket.{
-  AcceptJoin, Broadcast, BroadcastFrom, Join, Message, Next, Push,
+  AcceptJoin, Binary, Broadcast, BroadcastFrom, Closed, Info, Join, Message,
+  Next, Push,
 }
 import beryl/wire
 import gleam/json
@@ -24,8 +25,8 @@ fn start_system() -> beryl.Sockets {
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join("room:ack-then-push" as topic, _payload, ref) ->
             Next(model, [
               AcceptJoin(ref, None),
@@ -45,7 +46,8 @@ fn start_system() -> beryl.Sockets {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Message(topic, "shout_others", _payload, _ref) ->
             Next(model, [BroadcastFrom(topic, "shout", json.object([]))])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )

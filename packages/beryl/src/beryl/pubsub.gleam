@@ -199,13 +199,13 @@ pub fn subscriber(pubsub_instance: PubSub(payload)) -> Subscriber(payload) {
 ///
 /// A subscriber can join many topics. All topics deliver through its one
 /// subject. Joining a topic is idempotent.
-pub fn join(sub: Subscriber(payload), topic: String) -> Nil {
-  ffi_join_group(sub.scope, topic, sub.owner)
+pub fn join(subscriber: Subscriber(payload), topic: String) -> Nil {
+  ffi_join_group(subscriber.scope, topic, subscriber.owner)
 }
 
 /// Leave a topic previously joined with `join`.
-pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
-  ffi_leave_group(sub.scope, topic, sub.owner)
+pub fn leave(subscriber: Subscriber(payload), topic: String) -> Nil {
+  ffi_leave_group(subscriber.scope, topic, subscriber.owner)
 }
 
 /// Add a subscriber's PubSub message delivery to a `Selector`, alongside a
@@ -230,10 +230,10 @@ pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
 /// ```
 pub fn selecting(
   selector: Selector(message),
-  sub: Subscriber(payload),
+  subscriber: Subscriber(payload),
   transform: fn(Message(payload)) -> message,
 ) -> Selector(message) {
-  process.select_record(selector, sub.scope, 4, fn(raw) {
+  process.select_record(selector, subscriber.scope, 4, fn(raw) {
     transform(unsafe_coerce_to_message(raw))
   })
 }

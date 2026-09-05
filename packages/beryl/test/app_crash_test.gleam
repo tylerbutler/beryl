@@ -13,7 +13,7 @@ import gleam/option.{None}
 import gleam/string
 import gleeunit/should
 
-pub type Msg {
+pub type AppMessage {
   Boom
 }
 
@@ -21,8 +21,8 @@ pub type Msg {
 /// crashes the update; `Info(Boom)` crashes; `Closed` for topics under
 /// `room:closed-crash` crashes.
 fn start_system(
-  events: process.Subject(socket.Input(Msg)),
-  senders: process.Subject(socket.Sender(Msg)),
+  events: process.Subject(socket.Input(AppMessage)),
+  senders: process.Subject(socket.Sender(AppMessage)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
     app_test_helper.start_app(
@@ -31,15 +31,15 @@ fn start_system(
         process.send(senders, info.self)
         #(Nil, [])
       },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
+      update: fn(model, event) {
+        process.send(events, event)
+        case event {
           Join("crash:" <> _, _payload, _ref) -> panic as "join crash"
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Message(_topic, "boom", _payload, _ref) -> panic as "message crash"
           Info(Boom) -> panic as "info crash"
           Closed("room:closed-crash", _reason) -> panic as "closed crash"
-          _ -> Next(model, [])
+          Message(..) | socket.Binary(..) | Closed(..) -> Next(model, [])
         }
       },
     )
@@ -48,8 +48,8 @@ fn start_system(
 
 fn start() -> #(
   beryl.Sockets,
-  process.Subject(socket.Input(Msg)),
-  process.Subject(socket.Sender(Msg)),
+  process.Subject(socket.Input(AppMessage)),
+  process.Subject(socket.Sender(AppMessage)),
 ) {
   let events = process.new_subject()
   let senders = process.new_subject()
@@ -153,7 +153,9 @@ pub fn init_crash_leaves_socket_unregistered_test() -> Nil {
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { panic as "init crash" },
-      update: fn(model: Nil, _ev: socket.Input(Msg)) { Next(model, []) },
+      update: fn(model: Nil, _event: socket.Input(AppMessage)) {
+        Next(model, [])
+      },
     )
   let frames = process.new_subject()
   let assert Ok(owner) = transport.runtime_pid(channels)

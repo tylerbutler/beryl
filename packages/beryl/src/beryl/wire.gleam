@@ -66,8 +66,8 @@ pub fn decode_message(json_string: String) -> Result(Inbound, DecodeError) {
       Error(InvalidJson("Unexpected end of input"))
     Error(json.UnexpectedByte(byte)) ->
       Error(InvalidJson("Unexpected byte: " <> byte))
-    Error(json.UnexpectedSequence(seq)) ->
-      Error(InvalidJson("Unexpected sequence: " <> seq))
+    Error(json.UnexpectedSequence(sequence)) ->
+      Error(InvalidJson("Unexpected sequence: " <> sequence))
     Error(json.UnableToDecode(_)) ->
       Error(InvalidFormat("Expected " <> expected_array_message))
   }
@@ -142,27 +142,28 @@ fn validate_inbound_depth(message: Inbound) -> Result(Inbound, DecodeError) {
 
 /// Encode an `Inbound` as a Phoenix wire JSON string.
 ///
-/// If the payload cannot be represented as JSON or exceeds the maximum
-/// nesting depth, it is encoded as `null`.
-pub fn encode(message: Inbound) -> String {
+/// Returns `Error(Nil)` when the payload contains a value JSON cannot
+/// represent or exceeds the wire protocol's maximum JSON nesting depth.
+/// Conversion failures are not replaced with JSON `null`: a successful
+/// encoding preserves the payload.
+pub fn encode(message: Inbound) -> Result(String, Nil) {
+  use payload_json <- result.try(
+    dynamic_to_json(codec.inbound_payload(message)),
+  )
   let join_ref_json = option_to_json(codec.inbound_join_ref(message))
   let ref_json = option_to_json(codec.inbound_ref(message))
-  // Decoded inbound payloads are depth-validated at `decode`, so conversion
-  // only fails for hand-built payloads deeper than the wire limit; those
-  // could not round-trip anyway and encode as null.
-  let payload_json =
-    dynamic_to_json(codec.inbound_payload(message))
-    |> result.unwrap(json.null())
   let event = phoenix_event_name(codec.inbound_kind(message))
 
-  json.to_string(
-    json.preprocessed_array([
-      join_ref_json,
-      ref_json,
-      json.string(codec.inbound_topic(message)),
-      json.string(event),
-      payload_json,
-    ]),
+  Ok(
+    json.to_string(
+      json.preprocessed_array([
+        join_ref_json,
+        ref_json,
+        json.string(codec.inbound_topic(message)),
+        json.string(event),
+        payload_json,
+      ]),
+    ),
   )
 }
 
@@ -355,10 +356,10 @@ pub fn heartbeat_reply(ref: Option(String)) -> Frame {
   )
 }
 
-fn option_to_json(opt: Option(String)) -> json.Json {
-  case opt {
+fn option_to_json(value: Option(String)) -> json.Json {
+  case value {
     None -> json.null()
-    Some(s) -> json.string(s)
+    Some(text) -> json.string(text)
   }
 }
 

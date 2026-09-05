@@ -1,7 +1,7 @@
 import app_test_helper
 import beryl
 import beryl/internal
-import beryl/socket.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/dict
 import gleam/option
@@ -18,10 +18,11 @@ fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
     app_test_helper.start_app(
       config,
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )

@@ -45,7 +45,8 @@ fn start_sockets() -> beryl.Sockets {
             socket.Next(model, [socket.AcceptJoin(ref, option.None)])
           socket.Message(topic, _, _, _) ->
             socket.Next(model, [socket.Push(topic, "echoed", json.object([]))])
-          _ -> socket.Next(model, [])
+          socket.Binary(_, _) | socket.Closed(_, _) | socket.Info(_) ->
+            socket.Next(model, [])
         }
       },
     )
