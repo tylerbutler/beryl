@@ -272,17 +272,13 @@ cost.
 ### Senders from closed or rejoined channels
 
 A sender applies only to the join that produced it. Sending is asynchronous
-and does not report failure. The receiver determines whether the channel is
-live:
+and does not report failure. If the channel has **closed** (client leave,
+`close([])`, or socket shutdown) or the same topic has since been **joined
+again** (a new worker), the layer drops the message rather than deliver it to
+the wrong instance. A live match delivers exactly one `on_info` call; sends
+are never coalesced and arrive in the order the worker receives them.
 
-- If the channel has **closed** after a client leave, `close([])`, or socket
-  shutdown, the layer drops the message.
-- If the same topic has since been **joined again**, the new join has a
-  different worker, so the message is dropped rather than handed to it.
-- A live match delivers exactly one `on_info` call. Sends are never
-  coalesced, and they arrive in the order the worker receives them.
-
-A long-lived process can keep a sender. It cannot send a message to a different
+A long-lived process can keep a sender but cannot use it to reach a different
 join. If the target join is gone, the message is dropped.
 
 Use `notify` to schedule a **later** turn, including from another process. Put
@@ -479,57 +475,30 @@ where the panic occurred:
 | `on_terminate` | The runtime logs the panic and completes the close without its actions. It still runs termination actions for sibling channels |
 
 Each topic runs in its own worker process. A panic in a callback keeps the
-state from before that callback, so `on_terminate` still sees it. After
-`on_terminate` the worker stops, so a sender for that join delivers nothing.
-
-If the worker process stops unexpectedly, the runtime closes the topic with
-`phx_error`. It cannot run `on_terminate` because the worker held the channel
-state. The client must rejoin. The runtime kills a worker that does not finish
-its queued work and `on_terminate` within five seconds. It then completes the
-close without the termination actions.
+state from before that callback, so `on_terminate` still sees it, and once
+`on_terminate` finishes the worker stops, so a sender for that join delivers
+nothing. If the worker stops unexpectedly instead, the runtime closes the
+topic with `phx_error` without running `on_terminate` (it held the channel
+state), and the client must rejoin; the runtime also kills a worker that does
+not finish its queued work and `on_terminate` within five seconds, then
+completes the close without the termination actions.
 
 Crash isolation stops at the socket for other faults: a fault in the socket
-actor loses only that socket and its workers. A router crash loses every
+actor loses only that socket and its workers, while a router crash loses every
 socket on that `beryl.Sockets` handle. See
 [Socket Processes & Restarts](/architecture/runtime/).
 
 ## Supervise the channel system
 
-`channel.child_spec` mirrors `beryl.child_spec` for applications
-that own their supervision tree:
-
-```gleam
-// src/my_app/supervised.gleam
-import beryl
-import beryl/wire
-import beryl/channel
-import gleam/otp/static_supervisor
-import my_app
-
-pub fn start_supervised() -> beryl.Sockets {
-  let assert Ok(#(sockets, channel_specification)) =
-    channel.child_spec(
-      beryl.config(wire.phoenix_codec()),
-      handlers: my_app.handlers(),
-    )
-
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(channel_specification)
-    |> static_supervisor.start()
-
-  sockets
-}
-```
-
-It reports the same validation errors as `channel.ChildSpecError`. See the
-table in
-[Starting a channel system](#starting-a-channel-system).
+`channel.child_spec` mirrors `beryl.child_spec`: it returns a `beryl.Sockets`
+handle and a child specification for applications that own their supervision
+tree, reporting the same validation errors as `channel.ChildSpecError` (see
+the table in [Starting a channel system](#starting-a-channel-system)).
 
 The channel layer uses the core child processes, restart policy, and `beryl.stop`
 behavior. See the [Supervision guide](/guides/supervision/). The application
-must start and supervise PubSub, presence, and group actors. Pass their handles
-to `beryl.Config`.
+must start and supervise PubSub, presence, and group actors, and pass their
+handles to `beryl.Config`.
 
 After a runtime crash the handle keeps working for new connections, but
 every live channel instance is gone: clients reconnect and rejoin, and
@@ -552,42 +521,37 @@ remaining old import or qualified error name.
 
 ## When to use raw dispatch or another process
 
-The layer handles one topic at a time. Note these limits:
+The layer handles one topic at a time, so each action applies only to the
+channel that returned it: a `room:general` channel cannot broadcast on
+`lobby`. Cross-topic publishing goes through the external `Sockets` APIs
+(`beryl.broadcast`, `beryl.broadcast_from`, or a `beryl/group` actor) using the
+handle `channel.child_spec` returns. Because handlers are built before that
+handle exists, a channel cannot capture it directly; instead, keep the handle
+in a small actor that exposes a `publish(topic, event, payload)` function,
+like Phoenix's `Endpoint.broadcast/3`, and bind it after `child_spec` returns
+and before the transport starts accepting connections.
+[`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
+does exactly this for its `lobby` room list. Channels do not share state with
+each other either — anything two channels both need (a document store,
+presence handle, groups actor) is a dependency you capture in the handler
+closures when you build the table.
 
-- **Each action applies to one topic.** A `room:general` channel cannot broadcast
-  on `lobby`. Cross-topic publishing goes through the external `Sockets`
-  APIs, such as `beryl.broadcast`, `beryl.broadcast_from`, or a `beryl/group`
-  actor, with the handle `channel.child_spec` returned.
-- **Handlers are built before the handle is returned.** A channel cannot
-  capture the `Sockets` handle directly while constructing its handler.
-  One option is a small actor that holds the handle and exposes a
-  `publish(topic, event, payload)` function, like Phoenix's
-  `Endpoint.broadcast/3`. Bind it after `child_spec` returns and before the
-  transport starts accepting connections.
-  [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
-  does exactly this for its `lobby` room list.
-- **Channels do not share state with each other.** Anything two channels
-  both need, such as a document store, presence handle, or groups actor, is a
-  dependency you capture in the handler closures when you build the
-  table.
-- **The layer owns the socket-level model and message type.** Pick raw
-  dispatch or the channel layer per socket endpoint; mixing hand-written
-  `update` logic into a channel system is not supported.
-- **Raw binary frames require raw dispatch.** Binary frames decoded by the
-  configured codec into normal events still reach `on_message`.
-- **`beryl/bridge` targets the core sender, not a channel's.**
-  `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
-  channel never sees. To adapt an existing actor's messages into
-  `on_info`, forward them yourself from your own process by calling
-  `channel.notify(context.self, ..)`. The typed sender is safe to hold and
-  is dropped after the join ends.
-- **A slow callback delays only its own topic.** Each channel runs in its
-  own worker, so other topics on the socket continue. The socket actor waits
-  for `join` for a maximum of five seconds. Keep `join` short. Run long work
-  in your own process and return results through `channel.notify`.
-- **beryl does not define an order between topics.** Actions for one topic
-  keep their order. Replies and pushes for different topics on one socket can
-  interleave.
+The layer owns the socket-level model and message type, so pick raw dispatch
+or the channel layer per socket endpoint; mixing hand-written `update` logic
+into a channel system is not supported. Raw binary frames require raw
+dispatch, though binary frames the configured codec decodes into normal
+events still reach `on_message`. `beryl/bridge` targets the core sender, not a
+channel's: `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
+channel never sees, so adapt an existing actor's messages into `on_info` by
+forwarding them yourself with `channel.notify(context.self, ..)` — the typed
+sender is safe to hold and is dropped after the join ends.
+
+Each channel runs in its own worker, so a slow callback delays only its own
+topic while other topics on the socket continue; the socket actor still waits
+up to five seconds for `join`, so keep it short and return long-running
+results through `channel.notify`. beryl does not define an order between
+topics: actions for one topic keep their order, but replies and pushes for
+different topics on one socket can interleave.
 
 ## Next steps
 
