@@ -1,6 +1,6 @@
 ---
 title: "beryl/wire"
-description: "Phoenix Wire Protocol: encoding/decoding helpers and the canonical `phoenix_codec()` for `beryl/wire/codec`."
+description: "Phoenix wire protocol: encoding and decoding helpers and the canonical `phoenix_codec()` for `beryl/wire/codec`."
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 2
@@ -14,7 +14,7 @@ tableOfContents:
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-Phoenix Wire Protocol: encoding/decoding helpers and the canonical
+Phoenix wire protocol: encoding and decoding helpers and the canonical
  `phoenix_codec()` for `beryl/wire/codec`.
 
  Phoenix uses a JSON array format: `[join_ref, ref, topic, event, payload]`.
@@ -198,8 +198,8 @@ pub fn decode_message(String) -> Result(codec.Inbound, codec.DecodeError)
 
 Parse a JSON string into an `Inbound`.
 
- Expected format: `[join_ref, ref, topic, event, payload]` where
- The `join_ref` and `ref` values can be `null`.
+ Expected format: `[join_ref, ref, topic, event, payload]`. The `join_ref`
+ and `ref` values can be `null`.
 
 <div class="api-entry-anchor" id="api-function-dynamic_to_json" aria-hidden="true"></div>
 
@@ -222,7 +222,7 @@ Convert a `Dynamic` value decoded from JSON back to `json.Json`.
 pub fn encode(codec.Inbound) -> Result(String, Nil)
 ```
 
-Encode an `Inbound` back to a Phoenix wire JSON string.
+Encode an `Inbound` as a Phoenix wire JSON string.
 
  Returns `Error(Nil)` when the payload contains a value JSON cannot
  represent or exceeds the wire protocol's maximum JSON nesting depth.

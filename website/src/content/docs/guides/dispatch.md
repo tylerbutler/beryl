@@ -223,7 +223,7 @@ and choose one of the two models:
   with `channel.child_spec`.
 
 Delete calls to `namespace`, `accept_only`, `unknown_topic`, and `route`; do
-do not rebuild similar routing code. `gleam check` then points to the
+not rebuild similar routing code. `gleam check` then points to the
 remaining `Match` and `Namespace` types that need direct topic values or
 `JoinContext.parameters`.
 

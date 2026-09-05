@@ -142,8 +142,6 @@ pub fn version_supported(version: option.Option(String)) -> Bool
 Check a client's requested wire protocol version (the `?vsn=` query
  parameter sent by Phoenix clients) before upgrading.
 
- beryl uses the Phoenix V2 array framing, so it accepts `vsn=2.x`. A
- missing `vsn` (`None`) is accepted for non-Phoenix clients speaking the
- configured codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`)
- is rejected. Transports fail the handshake with `403 Forbidden` instead
- of accepting a connection with frames that cannot be decoded.
+ Accept a missing `vsn` or a value beginning with `2.`. Custom-codec clients
+ must omit `vsn` unless they use that version form. Other values, such as
+ the V1 object framing's `vsn=1.0.0`, are rejected with `403 Forbidden`.

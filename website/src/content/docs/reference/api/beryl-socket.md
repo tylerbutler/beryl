@@ -333,8 +333,9 @@ Broadcast a presence snapshot for a topic to all its subscribers,
 KickTopic(topic: String)
 ```
 
-Close this socket's subscription to a topic. The topic receives a
- `Closed(topic, Shutdown)` input and the client a terminal frame.
+Close this socket's subscription to a topic. The topic receives
+ `Closed(topic, Shutdown)`. If the codec has a close encoder, the client
+ also receives its terminal frame.
 
 <div class="api-entry-anchor" id="api-type-input" aria-hidden="true"></div>
 
@@ -485,7 +486,8 @@ Stop(reason: StopReason)
 ```
 
 Tear down the socket: every joined topic receives a `Closed` input,
- terminal frames are sent, and the transport connection is closed.
+ configured terminal frames are sent, and the transport connection is
+ closed.
 
 <div class="api-entry-anchor" id="api-type-replyref" aria-hidden="true"></div>
 

@@ -1,6 +1,6 @@
 ---
 title: "beryl_mist"
-description: "Mist WebSocket Transport - Direct Mist integration for beryl"
+description: "Mist WebSocket transport for beryl"
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 2
@@ -14,7 +14,7 @@ tableOfContents:
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-Mist WebSocket Transport - Direct Mist integration for beryl
+Mist WebSocket transport for beryl
 
  This module provides the bridge between Mist's native WebSocket handling
  and the beryl runtime using Mist request and response types directly.

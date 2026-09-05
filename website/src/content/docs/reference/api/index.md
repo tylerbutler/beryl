@@ -22,11 +22,11 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 <ul class="api-module-list">
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl/"><code>beryl</code></a>
-  <p>beryl - Type-safe real-time communication</p>
+  <p>beryl: type-safe real-time communication</p>
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-bridge/"><code>beryl/bridge</code></a>
-  <p>Bridge - Forward an external OTP actor's message stream to a socket via its <code>Sender</code>.</p>
+  <p>Forward an external OTP actor's message stream to a socket through its <code>Sender</code>.</p>
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-channel/"><code>beryl/channel</code></a>
@@ -38,11 +38,11 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-group/"><code>beryl/group</code></a>
-  <p>Channel Groups - Named collections of topics for multi-topic broadcasting</p>
+  <p>Topic groups</p>
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-presence/"><code>beryl/presence</code></a>
-  <p>Presence - Distributed presence tracking backed by a CRDT</p>
+  <p>Distributed presence tracking with a CRDT</p>
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-presence-wire/"><code>beryl/presence/wire</code></a>
@@ -50,7 +50,7 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-pubsub/"><code>beryl/pubsub</code></a>
-  <p>PubSub - Distributed publish/subscribe using Erlang pg</p>
+  <p>Distributed PubSub with Erlang <code>pg</code></p>
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-snapshot/"><code>beryl/snapshot</code></a>
@@ -78,7 +78,7 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-wire/"><code>beryl/wire</code></a>
-  <p>Phoenix Wire Protocol: encoding/decoding helpers and the canonical <code>phoenix_codec()</code> for <code>beryl/wire/codec</code>.</p>
+  <p>Phoenix wire protocol: encoding and decoding helpers and the canonical <code>phoenix_codec()</code> for <code>beryl/wire/codec</code>.</p>
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-wire-codec/"><code>beryl/wire/codec</code></a>
@@ -91,7 +91,7 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 <ul class="api-module-list">
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl_ewe/"><code>beryl_ewe</code></a>
-  <p>Ewe WebSocket Transport - Direct Ewe integration for beryl</p>
+  <p>Ewe WebSocket transport for beryl</p>
 </li>
 </ul>
 
@@ -100,6 +100,6 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 <ul class="api-module-list">
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl_mist/"><code>beryl_mist</code></a>
-  <p>Mist WebSocket Transport - Direct Mist integration for beryl</p>
+  <p>Mist WebSocket transport for beryl</p>
 </li>
 </ul>

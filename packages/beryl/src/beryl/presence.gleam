@@ -1,11 +1,12 @@
-//// Presence - Distributed presence tracking backed by a CRDT
+//// Distributed presence tracking with a CRDT
 ////
-//// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
+//// This module wraps the pure `lattice_presence/presence_state` CRDT in an
+//// OTP actor that:
 //// - Handles track/update/untrack calls
 //// - Publishes an actor-owned ETS read model
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state from PubSub and merges it internally
-//// - Invokes `on_diff` callback when merges produce non-empty diffs
+//// - Invokes `on_diff` when local changes or merges produce non-empty diffs
 ////
 //// Presence is independent of the beryl runtime and runs under your
 //// application's supervision tree.
@@ -217,7 +218,8 @@ pub opaque type Config {
     /// of the same base is pruned automatically. Two *live* nodes sharing
     /// a base will continuously prune each other — do not do that.
     replica: String,
-    /// How often to broadcast state for replication (ms). 0 = disabled.
+    /// How often to broadcast state for replication (ms). Non-positive values
+    /// disable periodic broadcasts.
     broadcast_interval_ms: Int,
     /// Timeout for synchronous presence mutations (ms).
     call_timeout_ms: Int,
@@ -457,10 +459,10 @@ type ActorState {
 
 /// Default configuration (no PubSub).
 ///
-/// The broadcast interval defaults to 1500 ms. Adding `with_pubsub` therefore
-/// enables two-way replication without more configuration. Without PubSub,
-/// the interval is unused. Use `with_broadcast_interval(0)` to disable
-/// periodic broadcasts and control replication manually.
+/// The broadcast interval defaults to 1500 ms. Adding `with_pubsub` enables
+/// periodic outbound broadcasts and inbound replication. Without PubSub, the
+/// interval is unused. Use a non-positive interval to disable periodic
+/// outbound broadcasts.
 pub fn default_config(replica: String) -> Config {
   Config(
     pubsub: None,
@@ -478,7 +480,7 @@ pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
 
 /// Set how often presence state is broadcast for replication.
 ///
-/// Use `0` to disable periodic broadcasts.
+/// Use a non-positive value to disable periodic broadcasts.
 pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
   Config(..config, broadcast_interval_ms: interval_ms)
 }
@@ -495,7 +497,7 @@ pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
 /// Set the callback for diffs from local changes or remote merges.
 ///
 /// The callback runs synchronously on the presence actor, for both local
-/// mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
+/// mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
 /// mutations the runtime issues for presence effects) and remote merges,
 /// before the affected topics' read-model snapshots are (re)published and
 /// before the triggering call replies or the mutation is acknowledged.
@@ -514,8 +516,9 @@ pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
 /// the reply to (or acknowledgement of) the mutating operation, and every
 /// other message behind it in the actor's mailbox. Concurrent
 /// `list`/`get_by_key`/`count` calls from other processes do not use the
-/// mailbox and are not delayed. Only the socket with an active presence
-/// effect waits for the callback.
+/// mailbox and are not delayed. A socket with an active presence effect waits
+/// for the callback. Callers of synchronous mutations also wait for their
+/// replies.
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }

@@ -1,8 +1,8 @@
-//// PubSub - Distributed publish/subscribe using Erlang pg
+//// Distributed PubSub with Erlang `pg`
 ////
-//// Provides topic-based pub/sub messaging backed by Erlang's built-in `pg`
-//// module. Subscribers are tracked by process group, so messages are delivered
-//// to all nodes in the cluster automatically.
+//// This module provides topic-based PubSub backed by Erlang's built-in `pg`
+//// module. Subscribers are tracked by process group, so messages are
+//// delivered to all connected nodes in the cluster.
 ////
 //// The payload is generic: `PubSub(payload)` and `Message(payload)` carry
 //// whatever Gleam type a given scope is started with. A broadcast sends that
@@ -13,7 +13,7 @@
 //// browser); payloads that never leave the cluster are cheaper and safer as
 //// plain Gleam types.
 ////
-//// ## Quick Start
+//// ## Quick start
 ////
 //// ```gleam
 //// let pubsub_handle = pubsub.start(pubsub.default_config())
@@ -155,8 +155,9 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 
 /// Start a PubSub instance.
 ///
-/// This starts a pg scope. If another node or an earlier call started the
-/// scope, this function does nothing.
+/// This starts the configured `pg` scope on the current node. Repeated calls
+/// on the same node are harmless. Each participating node must start the same
+/// scope.
 ///
 /// `payload` is fixed by how the returned value is used or annotated at the
 /// call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.

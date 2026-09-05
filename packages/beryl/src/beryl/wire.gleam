@@ -1,4 +1,4 @@
-//// Phoenix Wire Protocol: encoding/decoding helpers and the canonical
+//// Phoenix wire protocol: encoding and decoding helpers and the canonical
 //// `phoenix_codec()` for `beryl/wire/codec`.
 ////
 //// Phoenix uses a JSON array format: `[join_ref, ref, topic, event, payload]`.
@@ -57,8 +57,8 @@ pub fn phoenix_codec() -> Codec {
 
 /// Parse a JSON string into an `Inbound`.
 ///
-/// Expected format: `[join_ref, ref, topic, event, payload]` where
-/// The `join_ref` and `ref` values can be `null`.
+/// Expected format: `[join_ref, ref, topic, event, payload]`. The `join_ref`
+/// and `ref` values can be `null`.
 pub fn decode_message(json_string: String) -> Result(Inbound, DecodeError) {
   case json.parse(from: json_string, using: decode.dynamic) {
     Ok(value) -> decode_inbound_value(value)
@@ -140,7 +140,7 @@ fn validate_inbound_depth(message: Inbound) -> Result(Inbound, DecodeError) {
   Ok(message)
 }
 
-/// Encode an `Inbound` back to a Phoenix wire JSON string.
+/// Encode an `Inbound` as a Phoenix wire JSON string.
 ///
 /// Returns `Error(Nil)` when the payload contains a value JSON cannot
 /// represent or exceeds the wire protocol's maximum JSON nesting depth.
