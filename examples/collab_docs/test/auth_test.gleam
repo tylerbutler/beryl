@@ -1,7 +1,7 @@
-import collab_docs/auth
+import collab_document/auth
 import gleeunit/should
 
-pub fn signed_token_round_trips_test() {
+pub fn signed_token_round_trips_test() -> Nil {
   let secret = auth.new_secret()
   let token = auth.sign_tenant("demo", secret)
 
@@ -9,7 +9,7 @@ pub fn signed_token_round_trips_test() {
   |> should.equal(Ok(Nil))
 }
 
-pub fn token_for_other_tenant_is_rejected_test() {
+pub fn token_for_other_tenant_is_rejected_test() -> Nil {
   let secret = auth.new_secret()
   let token = auth.sign_tenant("alice", secret)
 
@@ -17,7 +17,7 @@ pub fn token_for_other_tenant_is_rejected_test() {
   |> should.equal(Error(Nil))
 }
 
-pub fn token_signed_with_other_secret_is_rejected_test() {
+pub fn token_signed_with_other_secret_is_rejected_test() -> Nil {
   let secret_a = auth.new_secret()
   let secret_b = auth.new_secret()
   let token = auth.sign_tenant("demo", secret_a)
@@ -26,14 +26,14 @@ pub fn token_signed_with_other_secret_is_rejected_test() {
   |> should.equal(Error(Nil))
 }
 
-pub fn malformed_token_is_rejected_test() {
+pub fn malformed_token_is_rejected_test() -> Nil {
   let secret = auth.new_secret()
 
   auth.verify_tenant("not.a.real.token", "demo", secret)
   |> should.equal(Error(Nil))
 }
 
-pub fn empty_token_is_rejected_test() {
+pub fn empty_token_is_rejected_test() -> Nil {
   let secret = auth.new_secret()
 
   auth.verify_tenant("", "demo", secret)

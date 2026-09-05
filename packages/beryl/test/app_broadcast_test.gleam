@@ -20,14 +20,17 @@ fn start_runtime(scope: String) -> beryl.Sockets {
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(started_pubsub),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Message(topic, "cast", _payload, _ref) ->
             Next(model, [Broadcast(topic, "shout", json.object([]))])
           Message(topic, "cast_others", _payload, _ref) ->
             Next(model, [BroadcastFrom(topic, "shout", json.object([]))])
-          _ -> Next(model, [])
+          Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
         }
       },
     )

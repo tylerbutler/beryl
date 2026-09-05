@@ -31,14 +31,14 @@ pub fn room() -> channel.Handler {
 
 /// The README's `main`, compiled and run.
 pub fn readme_quick_start_compiles_and_starts_test() -> Nil {
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, child_specification)) =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       room(),
     ])
     as "the README handler table builds"
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
     as "the README supervision tree starts"
 

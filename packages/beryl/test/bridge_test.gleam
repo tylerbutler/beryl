@@ -23,13 +23,13 @@ pub fn bridge_forwards_subject_values_to_sender_test() -> Nil {
     bridge.start(to: sender, with: fn(n: Int) { "tick-" <> string.inspect(n) })
 
   process.send(bridge.subject(started), 1)
-  let assert Ok(msg1) = process.receive(received, 500)
-  msg1 |> should.equal("tick-1")
+  let assert Ok(message1) = process.receive(received, 500)
+  message1 |> should.equal("tick-1")
 
   // A second value is forwarded too — the forwarder loops.
   process.send(bridge.subject(started), 2)
-  let assert Ok(msg2) = process.receive(received, 500)
-  msg2 |> should.equal("tick-2")
+  let assert Ok(message2) = process.receive(received, 500)
+  message2 |> should.equal("tick-2")
 
   bridge.stop(started)
 }

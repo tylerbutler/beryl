@@ -11,6 +11,16 @@ import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import mist
 
+pub type HealthEndpoint {
+  HealthEndpointEnabled
+  HealthEndpointDisabled
+}
+
+pub type GuideChannel {
+  GuideChannelEnabled
+  GuideChannelDisabled
+}
+
 pub fn run(
   sockets: beryl.Sockets,
   child_specification: supervision.ChildSpecification(
@@ -18,8 +28,8 @@ pub fn run(
   ),
   title: String,
   port: Int,
-  healthz: Bool,
-  guide: Bool,
+  health_endpoint: HealthEndpoint,
+  guide_channel: GuideChannel,
 ) -> Nil {
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
@@ -33,10 +43,13 @@ pub fn run(
         sockets,
         server.default_config("/socket/websocket"),
         fn() {
-          case request.path_segments(http_request), healthz {
-            ["healthz"], True -> text(200, "ok")
-            [], _ -> html(guide)
-            _, _ -> text(404, "Not found")
+          case request.path_segments(http_request), health_endpoint {
+            ["healthz"], HealthEndpointEnabled -> text(200, "ok")
+            ["healthz"], HealthEndpointDisabled -> text(404, "Not found")
+            [], HealthEndpointEnabled | [], HealthEndpointDisabled ->
+              html(guide_channel)
+            [_, ..], HealthEndpointEnabled | [_, ..], HealthEndpointDisabled ->
+              text(404, "Not found")
           }
         },
       )
@@ -56,16 +69,18 @@ fn text(status: Int, body: String) -> response.Response(mist.ResponseData) {
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
 }
 
-fn html(guide: Bool) -> response.Response(mist.ResponseData) {
+fn html(guide_channel: GuideChannel) -> response.Response(mist.ResponseData) {
   response.new(200)
   |> response.set_header("content-type", "text/html; charset=utf-8")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string(client_html(guide))))
+  |> response.set_body(
+    mist.Bytes(bytes_tree.from_string(client_html(guide_channel))),
+  )
 }
 
-fn client_html(guide: Bool) -> String {
-  let guide_enabled = case guide {
-    True -> "true"
-    False -> "false"
+fn client_html(guide_channel: GuideChannel) -> String {
+  let guide_enabled = case guide_channel {
+    GuideChannelEnabled -> "true"
+    GuideChannelDisabled -> "false"
   }
 
   "<!doctype html>

@@ -13,10 +13,10 @@ import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
-import collab_docs/auth
-import collab_docs/doc_store
-import example_helpers/broadcast_hub as hub
-import example_helpers/session_presence
+import collab_document/auth
+import collab_document/document_store
+import example_helper/broadcast_hub as hub
+import example_helper/session_presence
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None}
@@ -47,8 +47,8 @@ pub type Frames =
 /// the limiter rather than the channels.
 pub fn start(_replica: String) -> System {
   let presence_tracker = session_presence.start()
-  let #(groups, groups_spec) = group.child_spec()
-  let assert Ok(store) = doc_store.start()
+  let #(groups, groups_specification) = group.child_spec()
+  let assert Ok(store) = document_store.start()
   let assert Ok(broadcast_hub) = hub.start()
   let secret = auth.new_secret()
 
@@ -60,10 +60,10 @@ pub fn start(_replica: String) -> System {
       include_payloads: False,
     ))
 
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, specification)) =
     channel.child_spec(
       config,
-      handlers: showcase.handlers(showcase.Deps(
+      handlers: showcase.handlers(showcase.Dependencies(
         presence: presence_tracker,
         groups: groups,
         store: store,
@@ -76,8 +76,8 @@ pub fn start(_replica: String) -> System {
   hub.bind(broadcast_hub, sockets)
   let assert Ok(_) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(groups_spec)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(groups_specification)
+    |> static_supervisor.add(specification)
     |> static_supervisor.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")

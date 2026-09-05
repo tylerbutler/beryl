@@ -59,6 +59,10 @@ pub fn describe_start_failure(StartFailure) -> String
 
 Return a human-readable description of a startup failure.
 
+ Abnormal exits retain their underlying reason internally. Their description
+ includes a depth- and length-limited rendering so large exit terms cannot
+ produce unbounded diagnostic output.
+
 <div class="api-entry-anchor" id="api-function-from_actor_start_error" aria-hidden="true"></div>
 
 ### `from_actor_start_error`

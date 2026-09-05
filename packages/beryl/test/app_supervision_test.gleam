@@ -9,8 +9,8 @@
 
 import app_test_helper
 import beryl
+import beryl/snapshot
 import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
-import beryl/stats
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
@@ -45,7 +45,7 @@ fn start_sibling(
   name: process.Name(Nil),
 ) -> Result(actor.Started(process.Subject(Nil)), actor.StartError) {
   actor.new(0)
-  |> actor.on_message(fn(state, _msg) { actor.continue(state) })
+  |> actor.on_message(fn(state, _message) { actor.continue(state) })
   |> actor.named(name)
   |> actor.start
 }
@@ -307,7 +307,7 @@ pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() -> Nil {
       case beryl.app_limiter_pid(sockets), beryl.app_runtime_pid(sockets) {
         Ok(limiter), Ok(runtime) ->
           limiter != original_limiter && runtime != runtime4
-        _, _ -> False
+        Ok(_), Error(_) | Error(_), Ok(_) | Error(_), Error(_) -> False
       }
     },
     3000,
@@ -386,7 +386,7 @@ pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() -> Nil {
       case beryl.app_limiter_pid(sockets), beryl.app_runtime_pid(sockets) {
         Ok(limiter), Ok(runtime) ->
           limiter != original_limiter && runtime != runtime4
-        _, _ -> False
+        Ok(_), Error(_) | Error(_), Ok(_) | Error(_), Error(_) -> False
       }
     },
     3000,
@@ -444,19 +444,19 @@ pub fn runtime_crash_closes_owned_connection_test() -> Nil {
 
   // Simulate a transport connection process: it monitors the runtime that
   // accepted it before registration and closes when that exact runtime dies.
-  let _conn =
+  let _connection =
     process.spawn(fn() {
       case transport.runtime_pid(sockets) {
         Ok(pid) -> {
-          let mon = process.monitor(pid)
+          let monitor = process.monitor(pid)
           let selector =
             process.new_selector()
-            |> process.select_specific_monitor(mon, fn(_down) { Nil })
+            |> process.select_specific_monitor(monitor, fn(_down) { Nil })
           process.send(ready, Nil)
           let _ = process.selector_receive(selector, 2000)
           process.send(closed, Nil)
         }
-        _ -> Nil
+        Error(_) -> Nil
       }
     })
 
@@ -479,11 +479,12 @@ fn capturing_init(
   }
 }
 
-fn crashing_update(model: Nil, ev: socket.Input(Nil)) -> socket.Next(Nil) {
-  case ev {
+fn crashing_update(model: Nil, event: socket.Input(Nil)) -> socket.Next(Nil) {
+  case event {
     Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
     socket.Info(_) -> panic as "boom"
-    _ -> Next(model, [])
+    socket.Message(..) | socket.Binary(..) | socket.Closed(..) ->
+      Next(model, [])
   }
 }
 
@@ -593,7 +594,10 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() -> Nil {
       update: fn(model, input) {
         case input {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
+          socket.Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
         }
       },
     )
@@ -817,8 +821,8 @@ fn socket_factory_pid(sockets: beryl.Sockets) -> process.Pid {
 }
 
 fn connected_sockets(sockets: beryl.Sockets) -> Int {
-  case stats.snapshot(sockets) {
-    Ok(snapshot) -> stats.connected_sockets(snapshot)
+  case snapshot.get(sockets) {
+    Ok(current_snapshot) -> snapshot.connected_sockets(current_snapshot)
     Error(_) -> -1
   }
 }
@@ -952,7 +956,8 @@ pub fn stop_drains_socket_actors_before_stopping_the_factory_test() -> Nil {
             Next(model, [])
           }
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
+          socket.Message(..) | socket.Binary(..) | socket.Info(..) ->
+            Next(model, [])
         }
       },
     )
@@ -1082,7 +1087,8 @@ pub fn stop_drains_active_and_booting_socket_actors_test() -> Nil {
             Next(model, [])
           }
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
+          socket.Message(..) | socket.Binary(..) | socket.Info(..) ->
+            Next(model, [])
         }
       },
     )

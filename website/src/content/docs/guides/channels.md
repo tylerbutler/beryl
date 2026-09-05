@@ -187,13 +187,14 @@ receive a join. It also rejects unmatched topics with
 
 `InvalidPattern` contains the core
 [`topic.TopicError`](/reference/api/beryl-topic/) instead of a string, so you
-can match on the reason. New variants may be added
-in a minor release, so use a catch-all when the exact reason does not
-change your handling:
+can match on the reason. Name each variant explicitly so the compiler
+identifies the matches that need an update when the API adds a variant:
 
 ```gleam
-Error(channel.InvalidPattern(pattern, _reason)) ->
-  panic as { "invalid channel pattern " <> pattern }
+Error(channel.InvalidPattern(pattern, topic.EmptyTopic)) ->
+  panic as { "channel pattern " <> pattern <> " is empty" }
+Error(channel.InvalidPattern(pattern, topic.InvalidFormat(detail))) ->
+  panic as { "invalid channel pattern " <> pattern <> ": " <> detail }
 ```
 
 The same rule applies to
@@ -239,7 +240,7 @@ The `join` callback receives a `channel.JoinContext(info)`:
 | `seed` | `socket.ConnectSeed` | Request data the transport assembled before the upgrade: path, query, headers, and any `on_connect` metadata |
 | `self` | `channel.Sender(info)` | This channel instance's own typed sender |
 | `topic` | `String` | Concrete topic being joined |
-| `params` | `List(String)` | Wildcard captures in pattern order; exact patterns receive `[]` |
+| `parameters` | `List(String)` | Wildcard captures in pattern order; exact patterns receive `[]` |
 | `payload` | `Dynamic` | Raw client join payload |
 
 The layer builds one `JoinContext` for each join. It is not the core

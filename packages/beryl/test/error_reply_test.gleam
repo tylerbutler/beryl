@@ -5,7 +5,9 @@
 
 import app_test_helper
 import beryl
-import beryl/socket.{AcceptJoin, Join, Message, Next, ReplyError}
+import beryl/socket.{
+  AcceptJoin, Binary, Closed, Info, Join, Message, Next, ReplyError,
+}
 import beryl/wire
 import gleam/json
 import gleam/option.{Some}
@@ -19,14 +21,15 @@ fn start_with_error_app() -> beryl.Sockets {
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
           Message(_topic, "fail", _payload, Some(ref)) ->
             Next(model, [
               ReplyError(ref, json.object([#("reason", json.string("nope"))])),
             ])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )

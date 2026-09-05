@@ -5,7 +5,9 @@
 
 import app_test_helper
 import beryl
-import beryl/socket.{AcceptJoin, Binary, Join, Message, Next, ReplyOk}
+import beryl/socket.{
+  AcceptJoin, Binary, Closed, Info, Join, Message, Next, ReplyOk,
+}
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
@@ -51,8 +53,8 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() -> Nil {
     app_test_helper.start_app(
       beryl.config(binary_test_codec.new()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_topic, payload, ref) -> {
             let user_decoder = {
               use user <- decode.field("user", decode.string)
@@ -73,7 +75,8 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() -> Nil {
             process.send(seen_payload, event_name <> ":" <> body)
             Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
           }
-          _ -> Next(model, [])
+          Message(_, _, _, None) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )
@@ -114,14 +117,15 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() -> Nil {
       beryl.config(binary_test_codec.new())
         |> beryl.with_message_rate(per_second: 100, burst: 2),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Message(_topic, event_name, _payload, Some(ref)) -> {
             let _ = event_name
             Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
           }
-          _ -> Next(model, [])
+          Message(_, _, _, None) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )
@@ -162,10 +166,11 @@ pub fn binary_codec_broadcast_uses_binary_send_test() -> Nil {
     app_test_helper.start_app(
       beryl.config(binary_test_codec.new()),
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )
@@ -211,14 +216,14 @@ pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() -> Nil {
     app_test_helper.start_app(
       beryl.config(text_only),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Binary(_topic, data) -> {
             process.send(seen_binary, data)
             Next(model, [])
           }
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Closed(_, _) | Info(_) -> Next(model, [])
         }
       },
     )

@@ -23,8 +23,8 @@ fn start_with(config: beryl.Config) -> beryl.Sockets {
     app_test_helper.start_app(
       config,
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) ->
             Next(model, [
               AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
@@ -39,7 +39,10 @@ fn start_with(config: beryl.Config) -> beryl.Sockets {
                 json.object([#("body", json.string("hello"))]),
               ),
             ])
-          _ -> Next(model, [])
+          Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
         }
       },
     )

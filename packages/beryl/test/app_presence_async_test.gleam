@@ -41,7 +41,7 @@ pub fn main() -> Nil {
 /// on `entered` and blocks the presence actor until `Release`; every other
 /// diff passes straight through. Nothing here sleeps: the test knows the
 /// mutation is genuinely in flight because `entered` fired.
-type GateMsg {
+type GateMessage {
   Arm
   Enter(reply: Subject(Nil))
   Release
@@ -51,7 +51,7 @@ type GateState {
   GateState(armed: Bool, waiting: Option(Subject(Nil)), entered: Subject(Nil))
 }
 
-fn start_gate(entered: Subject(Nil)) -> Subject(GateMsg) {
+fn start_gate(entered: Subject(Nil)) -> Subject(GateMessage) {
   let assert Ok(started) =
     actor.new(GateState(armed: False, waiting: None, entered: entered))
     |> actor.on_message(fn(state, message) {
@@ -84,7 +84,7 @@ fn start_gate(entered: Subject(Nil)) -> Subject(GateMsg) {
 }
 
 /// Prime the gate to hold the next presence diff.
-fn arm(gate: Subject(GateMsg)) -> Nil {
+fn arm(gate: Subject(GateMessage)) -> Nil {
   process.send(gate, Arm)
 }
 
@@ -93,17 +93,17 @@ fn await_entered(entered: Subject(Nil)) -> Nil {
   Nil
 }
 
-fn release(gate: Subject(GateMsg)) -> Nil {
+fn release(gate: Subject(GateMessage)) -> Nil {
   process.send(gate, Release)
 }
 
-fn start_gated_presence(gate: Subject(GateMsg)) -> presence.Presence {
-  let assert Ok(p) =
+fn start_gated_presence(gate: Subject(GateMessage)) -> presence.Presence {
+  let assert Ok(presence_handle) =
     presence.start(
       presence.default_config("node1")
       |> presence.with_on_diff(fn(_diff) { process.call(gate, 5000, Enter) }),
     )
-  p
+  presence_handle
 }
 
 /// A gated presence that also reports every `on_diff` it is handed, as the
@@ -112,10 +112,10 @@ fn start_gated_presence(gate: Subject(GateMsg)) -> presence.Presence {
 /// flight, and one message per callback — so a transition that should be
 /// one aggregate diff cannot masquerade as two.
 fn start_recording_gated_presence(
-  gate: Subject(GateMsg),
+  gate: Subject(GateMessage),
   diffs: Subject(#(List(String), List(String))),
 ) -> presence.Presence {
-  let assert Ok(p) =
+  let assert Ok(presence_handle) =
     presence.start(
       presence.default_config("node1")
       |> presence.with_on_diff(fn(diff) {
@@ -126,7 +126,7 @@ fn start_recording_gated_presence(
         process.call(gate, 5000, Enter)
       }),
     )
-  p
+  presence_handle
 }
 
 fn entry_refs(entries: List(presence.PresenceEntry)) -> List(String) {
@@ -170,7 +170,7 @@ fn app_update(
         string.starts_with(topic, "room:"),
         string.starts_with(topic, "flip:")
       {
-        True, _ ->
+        True, True | True, False ->
           Next(model, [
             AcceptJoin(ref, None),
             PresenceTrack(topic, "user:" <> model, meta("online")),
@@ -178,7 +178,7 @@ fn app_update(
           ])
         // Two mutations in one list: the socket parks twice, and nothing
         // queued behind it may slip in between them.
-        _, True ->
+        False, True ->
           Next(model, [
             AcceptJoin(ref, None),
             PresenceTrack(topic, "user:" <> model, meta("online")),
@@ -228,7 +228,7 @@ fn app_update(
         False -> Next(model, [])
       }
     }
-    _ -> Next(model, [])
+    socket.Binary(..) | socket.Info(..) -> Next(model, [])
   }
 }
 
@@ -436,7 +436,10 @@ pub fn topic_close_emits_one_aggregate_leave_diff_test() -> Nil {
               AcceptJoin(ref, None),
               ..multi_track_effects(topic, model)
             ])
-          _ -> Next(model, [])
+          socket.Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
         }
       },
     )

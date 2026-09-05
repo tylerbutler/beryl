@@ -112,10 +112,8 @@ pub type TopicError {
 
 Errors returned when validating a topic or topic pattern.
 
- A minor release can add variants as validation gets stricter. Do not treat
- this type as closed for exhaustive matching. Match exact variants only
- when you handle them differently. Otherwise, use a catch-all arm
- (`_ -> ...`) so new variants do not break your code.
+ The variants are exhaustive; match each error explicitly. Adding a
+ variant affects API compatibility and requires updating exhaustive matches.
 
 #### Constructors
 

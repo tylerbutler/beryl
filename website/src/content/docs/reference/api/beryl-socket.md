@@ -532,7 +532,8 @@ pub type StopReason {
 Why a socket or topic is stopping.
 
  The runtime delivers this reason in `Closed` inputs, and `Stop` accepts it.
- Match with a catch-all (`_`) arm. Minor releases can add stop reasons.
+ The variants are exhaustive; match each reason explicitly. Adding a
+ variant affects API compatibility and requires updating exhaustive matches.
 
 #### Constructors
 

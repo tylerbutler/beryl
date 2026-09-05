@@ -57,7 +57,7 @@ pub fn command(event: String, payload: Dynamic) -> Command {
 
 pub fn vote(poll: Poll, choice: Choice) -> Result(Poll, VoteError) {
   case poll.status, choice {
-    Closed, _ -> Error(PollClosed)
+    Closed, Gleam | Closed, Erlang -> Error(PollClosed)
     Open, Gleam -> Ok(Poll(..poll, gleam_votes: poll.gleam_votes + 1))
     Open, Erlang -> Ok(Poll(..poll, erlang_votes: poll.erlang_votes + 1))
   }
@@ -70,7 +70,7 @@ pub fn close(poll: Poll) -> CloseResult {
   }
 }
 
-pub fn json(poll: Poll) -> json.Json {
+pub fn to_json(poll: Poll) -> json.Json {
   json.object([
     #("question", json.string("Which BEAM language are you using today?")),
     #("gleam", json.int(poll.gleam_votes)),
@@ -79,7 +79,7 @@ pub fn json(poll: Poll) -> json.Json {
   ])
 }
 
-pub fn error_json(error: VoteError) -> json.Json {
+pub fn error_to_json(error: VoteError) -> json.Json {
   case error {
     PollClosed -> json.object([#("reason", json.string("poll_closed"))])
   }

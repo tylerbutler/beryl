@@ -436,7 +436,7 @@ pub fn a_blocking_terminate_is_bounded_and_the_worker_killed_test() -> Nil {
   let worker = ran_pid(reports, "join")
 
   helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
-  let _ack = helper.recv(frames)
+  let _acknowledgement = helper.recv(frames)
 
   // The close waits for the worker up to the terminate timeout (5s), then
   // kills it and still sends the terminal frame.

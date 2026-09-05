@@ -8,6 +8,9 @@ import starlightLlmsTxt from "starlight-llms-txt";
 // https://astro.build/config
 export default defineConfig({
 	site: "https://beryl.tylerbutler.com",
+	redirects: {
+		"/reference/api/beryl-stats/": "/reference/api/beryl-snapshot/",
+	},
 	prefetch: {
 		defaultStrategy: "hover",
 		prefetchAll: true,

@@ -55,12 +55,12 @@ pub fn documented_example_compiles_and_joins_test() -> Nil {
 pub fn documented_child_spec_example_compiles_and_starts_test() -> Nil {
   let handlers = [room()]
 
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, child_specification)) =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: handlers)
     as "the documented handler table builds"
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
     as "the documented supervision tree starts"
 

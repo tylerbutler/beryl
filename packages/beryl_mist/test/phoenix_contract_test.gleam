@@ -1,4 +1,4 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket
 import beryl/transport/server
@@ -18,7 +18,7 @@ import gleeunit
 import gleeunit/should
 import mist
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -128,21 +128,14 @@ fn decode_json_frame(raw: String) -> Result(Frame, Nil) {
   }
 
   json.parse(from: raw, using: decoder)
-  |> result_nil
-}
-
-fn result_nil(result: Result(a, b)) -> Result(a, Nil) {
-  case result {
-    Ok(value) -> Ok(value)
-    Error(_) -> Error(Nil)
-  }
+  |> result.replace_error(Nil)
 }
 
 fn assert_json_string(
   payload: dynamic.Dynamic,
   field: String,
   expected: String,
-) {
+) -> Nil {
   let decoder = {
     use actual <- decode.field(field, decode.string)
     decode.success(actual)
@@ -151,7 +144,11 @@ fn assert_json_string(
   actual |> should.equal(expected)
 }
 
-fn assert_json_bool(payload: dynamic.Dynamic, field: String, expected: Bool) {
+fn assert_json_bool(
+  payload: dynamic.Dynamic,
+  field: String,
+  expected: Bool,
+) -> Nil {
   let decoder = {
     use actual <- decode.field(field, decode.bool)
     decode.success(actual)
@@ -190,14 +187,14 @@ fn latest_text_message(client: WebsocketClient) -> String {
   message
 }
 
-fn drain_text_messages(client: WebsocketClient) {
+fn drain_text_messages(client: WebsocketClient) -> Nil {
   case receive_text(client, 10) {
     Ok(_) -> drain_text_messages(client)
     Error(_) -> Nil
   }
 }
 
-fn assert_no_text_message(client: WebsocketClient) {
+fn assert_no_text_message(client: WebsocketClient) -> Nil {
   receive_text(client, 50)
   |> should.equal(Error(Nil))
 }
@@ -210,8 +207,8 @@ fn assert_no_text_message(client: WebsocketClient) {
 fn contract_update(
   terminated: process.Subject(socket.StopReason),
 ) -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
-  fn(model, ev) {
-    case ev {
+  fn(model, event) {
+    case event {
       socket.Join(_topic, _payload, ref) ->
         socket.Next(model, [
           socket.AcceptJoin(
@@ -241,7 +238,8 @@ fn contract_update(
         process.send(terminated, reason)
         socket.Next(model, [])
       }
-      _ -> socket.Next(model, [])
+      socket.Message(_, _, _, _) | socket.Binary(_, _) | socket.Info(_) ->
+        socket.Next(model, [])
     }
   }
 }
@@ -272,12 +270,15 @@ fn start_mist_server(channels: beryl.Sockets) -> #(Int, process.Pid) {
   #(port, server.pid)
 }
 
-fn connect_client(port: Int) {
+fn connect_client(port: Int) -> WebsocketClient {
   let assert Ok(client) = connect_websocket(port, "/socket/websocket")
   client
 }
 
-fn join_client(serializer: Serializer, client: WebsocketClient) {
+fn join_client(
+  serializer: Serializer,
+  client: WebsocketClient,
+) -> WebsocketClient {
   let assert Ok(client) =
     send_text(
       client,
@@ -297,11 +298,11 @@ fn join_client(serializer: Serializer, client: WebsocketClient) {
   client
 }
 
-pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
+pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() -> Nil {
   let serializer = json_serializer()
   let terminated = process.new_subject()
   let assert Ok(channels) =
-    h.start(
+    app_test_helper.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
       update: contract_update(terminated),
@@ -421,16 +422,19 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() {
 
 // Socket-level connect/auth hook (on_connect) — issue #93
 
-fn auth_query(req, name: String) -> Result(String, Nil) {
-  case request.get_query(req) {
-    Ok(params) ->
-      list.find(params, fn(pair) { pair.0 == name })
+fn authentication_query(
+  request: request.Request(mist.Connection),
+  name: String,
+) -> Result(String, Nil) {
+  case request.get_query(request) {
+    Ok(parameters) ->
+      list.find(parameters, fn(pair) { pair.0 == name })
       |> result.map(fn(pair) { pair.1 })
     Error(_) -> Error(Nil)
   }
 }
 
-fn start_auth_server(
+fn start_authentication_server(
   channels: beryl.Sockets,
   config: server.TransportConfig(mist.Connection),
 ) -> #(Int, process.Pid) {
@@ -454,22 +458,22 @@ fn start_auth_server(
   #(port, server.pid)
 }
 
-pub fn on_connect_rejects_connection_without_token_test() {
+pub fn on_connect_rejects_connection_without_token_test() -> Nil {
   let assert Ok(channels) =
-    h.start(
+    app_test_helper.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, _ev) { socket.Next(model, []) },
+      update: fn(model, _event) { socket.Next(model, []) },
     )
   let config =
     server.default_config("/socket/websocket")
-    |> server.with_on_connect(fn(req) {
-      case auth_query(req, "token") {
+    |> server.with_on_connect(fn(request) {
+      case authentication_query(request, "token") {
         Ok("secret") -> Ok([])
-        _ -> Error(server.ConnectRejected)
+        Ok(_) | Error(Nil) -> Error(server.ConnectRejected)
       }
     })
-  let #(port, server_pid) = start_auth_server(channels, config)
+  let #(port, server_pid) = start_authentication_server(channels, config)
 
   // Missing/invalid token -> upgrade rejected (HTTP 403, no 101 switch).
   connect_websocket(port, "/socket/websocket")
@@ -482,29 +486,29 @@ pub fn on_connect_rejects_connection_without_token_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
+pub fn on_connect_seeds_metadata_visible_in_connect_info_test() -> Nil {
   // `with_on_connect` returns ordered string metadata (not arbitrary typed
   // assigns); it lands verbatim in `ConnectInfo.seed.metadata` for an
   // app-dispatch system's `init`, without re-authenticating.
   let seeds = process.new_subject()
   let assert Ok(channels) =
-    h.start(
+    app_test_helper.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(info: socket.ConnectInfo(Nil)) {
         process.send(seeds, info.seed)
         #(Nil, [])
       },
-      update: fn(model, _ev) { socket.Next(model, []) },
+      update: fn(model, _event) { socket.Next(model, []) },
     )
 
   let config =
     server.default_config("/socket/websocket")
-    |> server.with_on_connect(fn(req) {
-      auth_query(req, "token")
+    |> server.with_on_connect(fn(request) {
+      authentication_query(request, "token")
       |> result.map(fn(token) { [#("user", token), #("user", token)] })
       |> result.map_error(fn(_) { server.ConnectRejected })
     })
-  let #(port, server_pid) = start_auth_server(channels, config)
+  let #(port, server_pid) = start_authentication_server(channels, config)
 
   let assert Ok(client) =
     connect_websocket(port, "/socket/websocket?token=alice")
@@ -518,14 +522,14 @@ pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn runtime_death_closes_the_connection_test() {
+pub fn runtime_death_closes_the_connection_test() -> Nil {
   let serializer = json_serializer()
   let assert Ok(channels) =
-    h.start(
+    app_test_helper.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           socket.Join(_, _, ref) ->
             socket.Next(model, [
               socket.AcceptJoin(
@@ -533,7 +537,10 @@ pub fn runtime_death_closes_the_connection_test() {
                 Some(json.object([#("joined", json.bool(True))])),
               ),
             ])
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )

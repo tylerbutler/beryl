@@ -6,7 +6,7 @@ import app_test_helper
 import beryl
 import beryl/presence
 import beryl/pubsub
-import beryl/socket.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
@@ -21,10 +21,11 @@ fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
     app_test_helper.start_app(
       config,
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )
@@ -173,11 +174,11 @@ pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() -> Nil
     |> presence.with_on_diff(fn(diff) {
       beryl.broadcast_presence_diff(channels, "room:lobby", diff)
     })
-  let assert Ok(p) = presence.start(presence_config)
+  let assert Ok(presence_handle) = presence.start(presence_config)
 
   let _ =
     presence.track(
-      p,
+      presence_handle,
       "room:lobby",
       "user:1",
       "socket-1",

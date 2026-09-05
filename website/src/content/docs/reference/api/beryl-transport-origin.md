@@ -32,7 +32,7 @@ Origin and handshake-version checks for WebSocket upgrades.
   <a class="api-symbol-index__section" href="#functions">Functions</a>
   <ul>
 <li><a href="#api-function-allowed"><code>allowed</code></a></li>
-<li><a href="#api-function-vsn_supported"><code>vsn_supported</code></a></li>
+<li><a href="#api-function-version_supported"><code>version_supported</code></a></li>
   </ul>
 </section>
 </nav>
@@ -131,12 +131,12 @@ Decide whether an upgrade is allowed under the configured origin policy.
  request without an `Origin` header because non-browser clients omit it.
  `AllowList` rejects the request because it requires an explicit match.
 
-<div class="api-entry-anchor" id="api-function-vsn_supported" aria-hidden="true"></div>
+<div class="api-entry-anchor" id="api-function-version_supported" aria-hidden="true"></div>
 
-### `vsn_supported`
+### `version_supported`
 
 ```gleam
-pub fn vsn_supported(vsn: option.Option(String)) -> Bool
+pub fn version_supported(version: option.Option(String)) -> Bool
 ```
 
 Check a client's requested wire protocol version (the `?vsn=` query

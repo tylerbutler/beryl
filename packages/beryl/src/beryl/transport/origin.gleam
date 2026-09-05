@@ -124,8 +124,8 @@ fn origin_authority(origin: String) -> Result(String, Nil) {
 /// configured codec. Anything else (e.g. the V1 object framing's `vsn=1.0.0`)
 /// is rejected. Transports fail the handshake with `403 Forbidden` instead
 /// of accepting a connection with frames that cannot be decoded.
-pub fn vsn_supported(vsn vsn: Option(String)) -> Bool {
-  case vsn {
+pub fn version_supported(version version: Option(String)) -> Bool {
+  case version {
     Some(version) -> string.starts_with(version, "2.")
     None -> True
   }

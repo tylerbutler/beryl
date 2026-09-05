@@ -187,11 +187,10 @@ A per-topic-pattern rate limit used a pattern string that is not a valid
  [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
  error nested rather than flattened to a string, so it stays matchable.
 
- New
+ Match each
  [`topic.TopicError`](https://beryl.tylerbutler.com/reference/api/beryl-topic/#topicerror)
- variants may be added in a minor release. Match exact variants only
- when you act on them differently, and otherwise keep a catch-all arm
- such as `InvalidTopicPattern(pattern, _)`.
+ variant explicitly. Adding a variant affects API compatibility and
+ requires updating exhaustive matches.
 
 <div class="api-entry-anchor" id="api-type-loggingconfig" aria-hidden="true"></div>
 

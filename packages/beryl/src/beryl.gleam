@@ -620,7 +620,7 @@ pub type AppHandle {
 }
 
 /// Why an internal runtime statistics request failed. Translated to the
-/// public error type by `beryl/stats`.
+/// public error type by `beryl/snapshot`.
 @internal
 pub type StatsError {
   StatsRuntimeUnavailable
@@ -667,11 +667,10 @@ pub type ConfigError {
   /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
   /// error nested rather than flattened to a string, so it stays matchable.
   ///
-  /// New
+  /// Match each
   /// [`topic.TopicError`](https://beryl.tylerbutler.com/reference/api/beryl-topic/#topicerror)
-  /// variants may be added in a minor release. Match exact variants only
-  /// when you act on them differently, and otherwise keep a catch-all arm
-  /// such as `InvalidTopicPattern(pattern, _)`.
+  /// variant explicitly. Adding a variant affects API compatibility and
+  /// requires updating exhaustive matches.
   InvalidTopicPattern(pattern: String, reason: topic.TopicError)
 }
 
@@ -992,7 +991,7 @@ fn build_app_subtree(
 /// the factory tears the survivors down.
 fn child_spec_supervisor(
   config: Config,
-  runtime_name: process.Name(runtime.Msg(message)),
+  runtime_name: process.Name(runtime.Message(message)),
   factory_name: process.Name(runtime.SocketFactoryMessage(message)),
   limiter_name: Option(process.Name(connection_limit.Message)),
   init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
@@ -1071,7 +1070,7 @@ fn await_admission(
 }
 
 fn finish_admission(
-  started: actor.Started(Subject(runtime.Msg(message))),
+  started: actor.Started(Subject(runtime.Message(message))),
   reply: Subject(Bool),
   admission: runtime.AdmissionToken,
 ) -> Bool {
@@ -1094,11 +1093,11 @@ fn finish_admission(
 /// runtime restarts; sends are owner-guarded so use during a restart
 /// window or after `stop` degrades to a no-op instead of a crash.
 fn app_handle(
-  subject: Subject(runtime.Msg(message)),
+  subject: Subject(runtime.Message(message)),
   supervisor: Subject(app_supervisor.Message),
   factory: Subject(runtime.SocketFactoryMessage(message)),
   start_socket_actor: fn(process.Pid) ->
-    Result(actor.Started(Subject(runtime.Msg(message))), actor.StartError),
+    Result(actor.Started(Subject(runtime.Message(message))), actor.StartError),
 ) -> AppHandle {
   AppHandle(
     admit_socket: fn(
@@ -1194,12 +1193,12 @@ fn request_runtime_stop(
   process.send(supervisor, app_supervisor.StopRuntime(started, finished))
 
   case process.receive(started, 1000) {
-    Ok(False) -> internal.result_error(NotRunning)
+    Ok(app_supervisor.StopRejected) -> internal.result_error(NotRunning)
     Error(Nil) -> internal.result_error(StopTimeout)
-    Ok(True) ->
+    Ok(app_supervisor.StopAccepted) ->
       case process.receive(finished, 5000) {
-        Ok(True) -> Ok(Nil)
-        Ok(False) -> internal.result_error(StopTimeout)
+        Ok(app_supervisor.StopCompleted) -> Ok(Nil)
+        Ok(app_supervisor.StopIncomplete) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
   }
@@ -1215,8 +1214,8 @@ fn ensure_supervisor_running(
 }
 
 fn stop_runtime(
-  subject: Subject(runtime.Msg(message)),
-  finished: Subject(Bool),
+  subject: Subject(runtime.Message(message)),
+  finished: Subject(app_supervisor.StopCompletion),
 ) -> Result(process.Monitor, Nil) {
   case process.subject_owner(subject) {
     Error(Nil) -> Error(Nil)
@@ -1231,8 +1230,8 @@ fn stop_runtime(
 /// Send to the runtime only while its name is registered, so handle use
 /// during a supervised restart window or after `stop` is a quiet no-op.
 fn send_runtime(
-  subject: Subject(runtime.Msg(message)),
-  message: runtime.Msg(message),
+  subject: Subject(runtime.Message(message)),
+  message: runtime.Message(message),
 ) -> Nil {
   case process.subject_owner(subject) {
     Ok(_) -> process.send(subject, message)

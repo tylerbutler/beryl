@@ -224,7 +224,7 @@ pub fn notify(sender: Sender(info), message: info) -> Nil {
 
 /// Information about one join attempt.
 ///
-/// `params` contains wildcard captures in pattern order and is empty for
+/// `parameters` contains wildcard captures in pattern order and is empty for
 /// exact patterns. `self` is this channel's generation-scoped
 /// [`Sender`](#sender), for scheduling a later turn.
 pub type JoinContext(info) {
@@ -238,7 +238,7 @@ pub type JoinContext(info) {
     /// The concrete topic being joined.
     topic: String,
     /// Wildcard captures from the matched handler pattern.
-    params: List(String),
+    parameters: List(String),
     /// The client's raw join payload.
     payload: dynamic.Dynamic,
   )
@@ -653,7 +653,7 @@ pub fn handler(
   pattern: String,
   join: fn(JoinContext(info)) -> JoinResult(state, info),
 ) -> Handler {
-  Handler(pattern: pattern, open: fn(context: socket.WorkerContext, params) {
+  Handler(pattern: pattern, open: fn(context: socket.WorkerContext, parameters) {
     // This subject transfers typed messages for one join. It stays in this
     // closure, where `info` remains in scope. Thus, server-side messages keep
     // their type without erasure.
@@ -675,7 +675,7 @@ pub fn handler(
         seed: context.seed,
         self: sender,
         topic: context.topic,
-        params: params,
+        parameters: parameters,
         payload: context.payload,
       )
 
@@ -837,7 +837,7 @@ fn open_topic(
   fn(context: socket.WorkerContext) {
     case select(handlers, context.topic) {
       Error(Nil) -> socket.WorkerRejected(unmatched_topic())
-      Ok(#(handler, params)) -> open(handler, context, params)
+      Ok(#(handler, parameters)) -> open(handler, context, parameters)
     }
   }
 }
@@ -852,10 +852,10 @@ fn select(
       case topic.matches(registered.pattern, name) {
         False -> select(rest, name)
         True -> {
-          let params =
+          let parameters =
             topic.extract_wildcards(registered.pattern, name)
             |> result.unwrap([])
-          Ok(#(registered.handler, params))
+          Ok(#(registered.handler, parameters))
         }
       }
   }
@@ -873,7 +873,7 @@ fn unmatched_topic() -> json.Json {
 pub fn open(
   handler: Handler,
   context: socket.WorkerContext,
-  params: List(String),
+  parameters: List(String),
 ) -> socket.WorkerOutcome {
-  handler.open(context, params)
+  handler.open(context, parameters)
 }

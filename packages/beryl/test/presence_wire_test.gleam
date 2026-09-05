@@ -171,18 +171,18 @@ pub fn encode_state_groups_metas_by_presence_key_test() -> Nil {
 }
 
 pub fn tracked_metas_carry_phx_ref_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("wire-node"))
+  let assert Ok(tracker) = presence.start(presence.default_config("wire-node"))
 
   let ref =
     presence.track(
-      p,
+      tracker,
       "room:lobby",
       "user:1",
       "socket-1",
       json.object([#("status", json.string("online"))]),
     )
 
-  let assert [entry] = presence_entries(p, "room:lobby")
+  let assert [entry] = presence_entries(tracker, "room:lobby")
 
   let phx_ref_decoder = {
     use phx_ref <- decode.field("phx_ref", decode.string)
@@ -202,16 +202,17 @@ pub fn tracked_metas_carry_phx_ref_test() -> Nil {
 }
 
 pub fn tracked_multi_session_metas_have_distinct_phx_refs_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("wire-node-2"))
+  let assert Ok(tracker) =
+    presence.start(presence.default_config("wire-node-2"))
 
   let ref1 =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.object([]))
+    presence.track(tracker, "room:lobby", "user:1", "socket-1", json.object([]))
   let ref2 =
-    presence.track(p, "room:lobby", "user:1", "socket-2", json.object([]))
+    presence.track(tracker, "room:lobby", "user:1", "socket-2", json.object([]))
 
   { ref1 != ref2 } |> should.be_true
 
-  let entries = presence_entries(p, "room:lobby")
+  let entries = presence_entries(tracker, "room:lobby")
   entries |> list.length |> should.equal(2)
 
   let phx_ref_decoder = {
@@ -228,12 +229,19 @@ pub fn tracked_multi_session_metas_have_distinct_phx_refs_test() -> Nil {
 }
 
 pub fn non_object_meta_is_stored_unchanged_test() -> Nil {
-  let assert Ok(p) = presence.start(presence.default_config("wire-node-3"))
+  let assert Ok(tracker) =
+    presence.start(presence.default_config("wire-node-3"))
 
   let _ref =
-    presence.track(p, "room:lobby", "user:1", "socket-1", json.string("plain"))
+    presence.track(
+      tracker,
+      "room:lobby",
+      "user:1",
+      "socket-1",
+      json.string("plain"),
+    )
 
-  let assert [entry] = presence_entries(p, "room:lobby")
+  let assert [entry] = presence_entries(tracker, "room:lobby")
   json.to_string(entry.meta) |> should.equal("\"plain\"")
 }
 

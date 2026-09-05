@@ -66,7 +66,8 @@ fn describe(effect: socket.Effect) -> String {
       "push_presence/" <> event <> "/" <> json.to_string(encode([]))
     socket.BroadcastPresence(event: event, encode: encode, ..) ->
       "broadcast_presence/" <> event <> "/" <> json.to_string(encode([]))
-    _ -> "other"
+    socket.AcceptJoin(..) | socket.RejectJoin(..) | socket.KickTopic(..) ->
+      "other"
   }
 }
 
@@ -476,7 +477,7 @@ pub fn actions_cover_the_core_effect_capabilities_test() -> Nil {
     socket.make_message_ref(
       topic: "room:lobby",
       join_ref: option.Some("1"),
-      msg_ref: option.Some("2"),
+      message_ref: option.Some("2"),
     )
 
   let built = [
@@ -518,7 +519,7 @@ pub fn optional_reply_with_a_ref_lowers_in_order_test() -> Nil {
     socket.make_message_ref(
       topic: "room:lobby",
       join_ref: option.Some("1"),
-      msg_ref: option.Some("2"),
+      message_ref: option.Some("2"),
     )
 
   [

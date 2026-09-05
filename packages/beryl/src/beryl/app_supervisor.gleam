@@ -9,9 +9,22 @@ import gleam/erlang/process
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 
+pub type StopAcceptance {
+  StopAccepted
+  StopRejected
+}
+
+pub type StopCompletion {
+  StopCompleted
+  StopIncomplete
+}
+
 pub type Message {
-  StopRuntime(started: process.Subject(Bool), finished: process.Subject(Bool))
-  RuntimeStopped(succeeded: Bool)
+  StopRuntime(
+    started: process.Subject(StopAcceptance),
+    finished: process.Subject(StopCompletion),
+  )
+  RuntimeStopped(completion: StopCompletion)
   RuntimeDown(process.Down)
   LinkedExit(process.ExitMessage)
 }
@@ -20,7 +33,7 @@ type StopState {
   Running
   Stopping(
     monitor: process.Monitor,
-    finished: process.Subject(Bool),
+    finished: process.Subject(StopCompletion),
     progress: StopProgress,
   )
 }
@@ -38,8 +51,9 @@ type State {
     parent: process.Pid,
     supervisor: process.Pid,
     stop_state: StopState,
-    runtime_stopped: process.Subject(Bool),
-    stop_runtime: fn(process.Subject(Bool)) -> Result(process.Monitor, Nil),
+    runtime_stopped: process.Subject(StopCompletion),
+    stop_runtime: fn(process.Subject(StopCompletion)) ->
+      Result(process.Monitor, Nil),
   )
 }
 
@@ -47,7 +61,8 @@ type State {
 /// distinction between intentional shutdown and restart-intensity exhaustion.
 pub fn start(
   name: process.Name(Message),
-  stop_runtime: fn(process.Subject(Bool)) -> Result(process.Monitor, Nil),
+  stop_runtime: fn(process.Subject(StopCompletion)) ->
+    Result(process.Monitor, Nil),
   start_supervisor: fn() ->
     Result(actor.Started(static_supervisor.Supervisor), actor.StartError),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
@@ -90,17 +105,17 @@ fn handle_message(
 ) -> actor.Next(State, Message) {
   case message {
     StopRuntime(started, _) if state.stop_state != Running -> {
-      process.send(started, False)
+      process.send(started, StopRejected)
       actor.continue(state)
     }
     StopRuntime(started, finished) ->
       case state.stop_runtime(state.runtime_stopped) {
         Error(Nil) -> {
-          process.send(started, False)
+          process.send(started, StopRejected)
           actor.continue(state)
         }
         Ok(monitor) -> {
-          process.send(started, True)
+          process.send(started, StopAccepted)
           actor.continue(
             State(
               ..state,
@@ -109,14 +124,14 @@ fn handle_message(
           )
         }
       }
-    RuntimeStopped(succeeded) ->
+    RuntimeStopped(completion) ->
       case state.stop_state {
         Stopping(_, finished, SupervisorExited) -> {
-          process.send(finished, succeeded)
+          process.send(finished, completion)
           actor.stop()
         }
         Stopping(monitor, finished, AwaitingBoth) -> {
-          process.send(finished, succeeded)
+          process.send(finished, completion)
           actor.continue(
             State(
               ..state,
@@ -160,14 +175,14 @@ fn handle_runtime_down(
       Stopping(expected, finished, AwaitingBoth)
       if monitor == expected
     -> {
-      process.send(finished, False)
+      process.send(finished, StopIncomplete)
       actor.continue(State(..state, stop_state: Running))
     }
     process.ProcessDown(monitor, _, _),
       Stopping(expected, finished, SupervisorExited)
       if monitor == expected
     -> {
-      process.send(finished, False)
+      process.send(finished, StopIncomplete)
       process.trap_exits(False)
       actor.stop_abnormal("app subtree restart intensity exceeded")
     }

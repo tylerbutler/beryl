@@ -53,12 +53,12 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
   <p>PubSub - Distributed publish/subscribe using Erlang pg</p>
 </li>
 <li class="api-module-list__item">
-  <a class="api-module-list__name" href="/reference/api/beryl-socket/"><code>beryl/socket</code></a>
-  <p>Types for building app-side dispatch systems with <code>beryl.child_spec</code>.</p>
+  <a class="api-module-list__name" href="/reference/api/beryl-snapshot/"><code>beryl/snapshot</code></a>
+  <p>A point-in-time snapshot of local runtime state.</p>
 </li>
 <li class="api-module-list__item">
-  <a class="api-module-list__name" href="/reference/api/beryl-stats/"><code>beryl/stats</code></a>
-  <p>Local runtime statistics.</p>
+  <a class="api-module-list__name" href="/reference/api/beryl-socket/"><code>beryl/socket</code></a>
+  <p>Types for building app-side dispatch systems with <code>beryl.child_spec</code>.</p>
 </li>
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-topic/"><code>beryl/topic</code></a>

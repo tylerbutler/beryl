@@ -6,6 +6,9 @@ import beryl/internal
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec
+import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/json
 import gleam/option
 import gleam/otp/actor
@@ -263,12 +266,9 @@ pub fn sanitize_for_log_test() -> Nil {
 // Wire protocol tests
 
 pub fn decode_valid_message_test() -> Nil {
-  let result =
+  let assert Ok(message) =
     wire.decode_message("[\"j1\",\"r1\",\"room:lobby\",\"phx_join\",{}]")
 
-  result |> should.be_ok
-
-  let assert Ok(message) = result
   codec.inbound_join_ref(message) |> should.equal(option.Some("j1"))
   codec.inbound_ref(message) |> should.equal(option.Some("r1"))
   codec.inbound_topic(message) |> should.equal("room:lobby")
@@ -326,10 +326,8 @@ pub fn encode_roundtrip_test() -> Nil {
   let original = "[\"j1\",\"r1\",\"room:lobby\",\"message\",\"hello\"]"
   let assert Ok(message) = wire.decode_message(original)
 
-  let encoded = wire.encode(message)
-  encoded |> string.contains("room:lobby") |> should.be_true
-  encoded |> string.contains("message") |> should.be_true
-  encoded |> string.contains("hello") |> should.be_true
+  let assert Ok(encoded) = wire.encode(message)
+  encoded |> should.equal(original)
 }
 
 pub fn encode_with_object_payload_roundtrip_test() -> Nil {
@@ -337,10 +335,38 @@ pub fn encode_with_object_payload_roundtrip_test() -> Nil {
     "[null,\"ref1\",\"chat:general\",\"typing\",{\"user\":\"alice\"}]"
   let assert Ok(message) = wire.decode_message(original)
 
-  let encoded = wire.encode(message)
-  encoded |> string.contains("chat:general") |> should.be_true
-  encoded |> string.contains("typing") |> should.be_true
-  encoded |> string.contains("alice") |> should.be_true
+  let assert Ok(encoded) = wire.encode(message)
+  encoded |> should.equal(original)
+}
+
+pub fn encode_rejects_unsupported_dynamic_payload_test() -> Nil {
+  let message =
+    codec.inbound(
+      join_ref: option.None,
+      ref: option.None,
+      topic: "room:lobby",
+      kind: codec.Event("unsupported"),
+      payload: dynamic.bit_array(<<1:size(1)>>),
+    )
+
+  wire.encode(message) |> should.equal(Error(Nil))
+}
+
+pub fn encode_rejects_excessively_nested_payload_test() -> Nil {
+  let nested_payload =
+    string.repeat("[", 70) <> "null" <> string.repeat("]", 70)
+  let assert Ok(payload) =
+    json.parse(from: nested_payload, using: decode.dynamic)
+  let message =
+    codec.inbound(
+      join_ref: option.None,
+      ref: option.None,
+      topic: "room:lobby",
+      kind: codec.Event("nested"),
+      payload: payload,
+    )
+
+  wire.encode(message) |> should.equal(Error(Nil))
 }
 
 pub fn reply_json_ok_test() -> Nil {
@@ -420,6 +446,26 @@ pub fn start_failure_description_is_public_test() -> Nil {
   |> beryl_error.describe_start_failure
   |> string.is_empty
   |> should.be_false
+}
+
+pub fn start_failure_description_retains_abnormal_exit_reason_test() -> Nil {
+  actor.InitExited(process.Abnormal(dynamic.string("worker exploded")))
+  |> beryl_error.from_actor_start_error
+  |> beryl_error.describe_start_failure
+  |> string.contains("worker exploded")
+  |> should.be_true
+}
+
+pub fn start_failure_description_bounds_large_exit_reasons_test() -> Nil {
+  let description =
+    actor.InitExited(process.Abnormal(dynamic.string(string.repeat("x", 4096))))
+    |> beryl_error.from_actor_start_error
+    |> beryl_error.describe_start_failure
+  let prefix = "actor init exited: abnormal: "
+
+  string.starts_with(description, prefix) |> should.be_true
+  { string.length(description) <= string.length(prefix) + 512 }
+  |> should.be_true
 }
 
 pub fn topic_namespace_test() -> Nil {

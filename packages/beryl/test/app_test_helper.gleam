@@ -195,6 +195,6 @@ pub fn recv_none(frames: process.Subject(String)) -> Nil {
 pub fn next_event(
   events: process.Subject(socket.Input(message)),
 ) -> socket.Input(message) {
-  let assert Ok(ev) = process.receive(events, 500)
-  ev
+  let assert Ok(event) = process.receive(events, 500)
+  event
 }

@@ -225,7 +225,7 @@ and choose one of the two models:
 Delete calls to `namespace`, `accept_only`, `unknown_topic`, and `route`; do
 do not rebuild similar routing code. `gleam check` then points to the
 remaining `Match` and `Namespace` types that need direct topic values or
-`JoinContext.params`.
+`JoinContext.parameters`.
 
 ## Typed server-side messages
 

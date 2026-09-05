@@ -28,7 +28,11 @@ pub fn mailbox_length(pid: process.Pid) -> Int
 ///
 /// ```gleam
 /// // Wait until presence list has 2 entries (up to 2 seconds)
-/// wait_until(fn() { list.length(presence.list(p1, "room:lobby")) == 2 }, 2000, 20)
+/// wait_until(
+///   fn() { list.length(presence.list(tracker1, "room:lobby")) == 2 },
+///   2000,
+///   20,
+/// )
 /// ```
 pub fn wait_until(
   check: fn() -> Bool,
@@ -105,8 +109,8 @@ pub fn stop_capture() -> Nil {
 // ── Presence actor lifetime ──────────────────────────────────────────────────
 
 /// Kill a presence actor's process, simulating a crash without cleanup.
-pub fn kill_presence(p: presence.Presence) -> Nil {
-  let assert Ok(pid) = process.subject_owner(presence.subject(p))
+pub fn kill_presence(tracker: presence.Presence) -> Nil {
+  let assert Ok(pid) = process.subject_owner(presence.subject(tracker))
   // The actor is linked to this (test) process; unlink before killing so
   // the exit signal does not take the test runner down with it.
   process.unlink(pid)

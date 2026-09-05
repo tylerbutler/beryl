@@ -6,7 +6,7 @@ import gleam/io
 import load_test/app
 import load_test/ewe as http
 
-pub fn main() {
+pub fn main() -> Nil {
   let app.App(channels:) = app.start()
   let interface = app.bind_address()
   let assert Ok(_) =

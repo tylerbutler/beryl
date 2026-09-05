@@ -4,7 +4,7 @@ import beryl/socket.{
   RejectJoin, ReplyError,
 }
 import beryl/wire
-import example_helpers/session_presence
+import example_helper/session_presence
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
@@ -13,7 +13,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import load_test/bench
 
-pub fn init(_info: socket.ConnectInfo(msg)) -> #(Nil, List(Effect)) {
+pub fn init(_info: socket.ConnectInfo(message)) -> #(Nil, List(Effect)) {
   #(Nil, [])
 }
 
@@ -21,7 +21,7 @@ pub fn update(
   presence: session_presence.Tracker,
   cost_us: Int,
   model: Nil,
-  input: Input(msg),
+  input: Input(message),
 ) -> Next(Nil) {
   case input {
     Join("guardrail:forbidden", _, ref) ->

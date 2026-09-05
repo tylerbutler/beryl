@@ -53,7 +53,7 @@ pub fn child_spec_nests_the_core_config_error_verbatim_test() -> Nil {
 // --- a supervised system dispatches ----------------------------------------
 
 pub fn child_spec_dispatches_once_its_supervisor_runs_test() -> Nil {
-  let assert Ok(#(channels, spec)) =
+  let assert Ok(#(channels, child_specification)) =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       ok_handler("room:*"),
     ])
@@ -61,7 +61,7 @@ pub fn child_spec_dispatches_once_its_supervisor_runs_test() -> Nil {
 
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
     as "the supervision tree starts"
 
@@ -84,14 +84,14 @@ pub fn child_spec_runs_the_same_lifecycle_through_both_supervised_paths_test() -
       lifecycle_handler(helper_started),
     ])
 
-  let assert Ok(#(channels, spec)) =
+  let assert Ok(#(channels, child_specification)) =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
       lifecycle_handler(supervised),
     ])
     as "the handler table and config are valid"
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
     as "the supervision tree starts"
 

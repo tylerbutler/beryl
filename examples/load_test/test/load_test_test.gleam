@@ -1,12 +1,12 @@
 import beryl
 import beryl/rate_limit
+import beryl/snapshot
 import beryl/socket
-import beryl/stats
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
 import envoy
-import example_helpers/session_presence
+import example_helper/session_presence
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/static_supervisor
@@ -22,13 +22,13 @@ import load_test/mist as mist_http
 @external(erlang, "load_test_test_ffi", "run_after")
 fn run_after(run: fn() -> value, cleanup: fn() -> Nil) -> value
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
 fn start_system() -> beryl.Sockets {
   let presence_tracker = session_presence.start()
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, specification)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: channel.init,
@@ -39,7 +39,7 @@ fn start_system() -> beryl.Sockets {
   session_presence.configure(presence_tracker, sockets)
   let assert Ok(_) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(specification)
     |> static_supervisor.start()
   sockets
 }
@@ -103,26 +103,26 @@ fn recv(subject: process.Subject(String)) -> String {
   message
 }
 
-pub fn health_endpoint_test() {
+pub fn health_endpoint_test() -> Nil {
   let endpoint = http.health()
   endpoint.status |> should.equal(200)
   endpoint.body |> should.equal("{\"status\":\"ok\"}")
-  mist_http.from_endpoint(endpoint).status |> should.equal(200)
-  ewe_http.from_endpoint(endpoint).status |> should.equal(200)
+  mist_http.endpoint_to_response(endpoint).status |> should.equal(200)
+  ewe_http.endpoint_to_response(endpoint).status |> should.equal(200)
 }
 
-pub fn stats_errors_have_typed_http_statuses_test() {
-  let unavailable = http.stats_error(stats.RuntimeUnavailable)
+pub fn stats_errors_have_typed_http_statuses_test() -> Nil {
+  let unavailable = http.stats_error(snapshot.RuntimeUnavailable)
   unavailable.status |> should.equal(503)
   unavailable.body
   |> should.equal("{\"error\":\"runtime_unavailable\"}")
 
-  let timed_out = http.stats_error(stats.RequestTimedOut)
+  let timed_out = http.stats_error(snapshot.RequestTimedOut)
   timed_out.status |> should.equal(504)
   timed_out.body |> should.equal("{\"error\":\"runtime_timeout\"}")
 }
 
-pub fn stats_include_beryl_and_beam_snapshots_test() {
+pub fn stats_include_beryl_and_beam_snapshots_test() -> Nil {
   let endpoint = http.stats(start_system())
   endpoint.status |> should.equal(200)
   endpoint.body |> string.contains("\"beryl\"") |> should.be_true
@@ -132,14 +132,14 @@ pub fn stats_include_beryl_and_beam_snapshots_test() {
   |> should.be_true
 }
 
-pub fn forbidden_topic_rejects_join_test() {
+pub fn forbidden_topic_rejects_join_test() -> Nil {
   let sockets = start_system()
   let frames = connect(sockets, "forbidden")
   join(sockets, "forbidden", "guardrail:forbidden")
   recv(frames) |> string.contains("forbidden") |> should.be_true
 }
 
-pub fn echo_replies_with_unchanged_payload_test() {
+pub fn echo_replies_with_unchanged_payload_test() -> Nil {
   let sockets = start_system()
   let frames = connect(sockets, "echo")
   join(sockets, "echo", "bench:fanout")
@@ -155,7 +155,7 @@ pub fn echo_replies_with_unchanged_payload_test() {
   reply |> string.contains("\"sent_at\":123") |> should.be_true
 }
 
-pub fn broadcast_fans_out_full_payload_test() {
+pub fn broadcast_fans_out_full_payload_test() -> Nil {
   let sockets = start_system()
   let publisher = connect(sockets, "publisher")
   let peer = connect(sockets, "peer")
@@ -176,8 +176,8 @@ pub fn broadcast_fans_out_full_payload_test() {
   recv(peer) |> string.contains("fanout-1") |> should.be_true
 }
 
-pub fn app_configures_frame_rate_from_environment_test() {
-  with_env_values(
+pub fn app_configures_frame_rate_from_environment_test() -> Nil {
+  with_environment_values(
     [
       #("BERYL_HEARTBEAT_TIMEOUT_MS", None),
       #("BERYL_MAX_CONNECTIONS_PER_IP", None),
@@ -207,18 +207,24 @@ pub fn app_configures_frame_rate_from_environment_test() {
   )
 }
 
-fn with_env_values(
+fn with_environment_values(
   values: List(#(String, Option(String))),
   run: fn() -> value,
 ) -> value {
   case values {
     [] -> run()
     [#(name, value), ..rest] ->
-      with_env_value(name, value, fn() { with_env_values(rest, run) })
+      with_environment_value(name, value, fn() {
+        with_environment_values(rest, run)
+      })
   }
 }
 
-fn with_env_value(name: String, value: Option(String), run: fn() -> a) -> a {
+fn with_environment_value(
+  name: String,
+  value: Option(String),
+  run: fn() -> a,
+) -> a {
   let previous = envoy.get(name)
   case value {
     Some(value) -> envoy.set(name, value)

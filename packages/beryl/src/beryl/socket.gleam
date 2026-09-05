@@ -40,7 +40,7 @@ pub opaque type JoinRef {
   JoinRef(
     topic: String,
     join_ref: Option(String),
-    msg_ref: Option(String),
+    message_ref: Option(String),
     token: Reference,
   )
 }
@@ -52,19 +52,19 @@ pub opaque type JoinRef {
 /// asynchronous lookup. They are single-use. They remain valid only while
 /// the topic instance that received the message stays open.
 pub opaque type ReplyRef {
-  ReplyRef(topic: String, join_ref: Option(String), msg_ref: Option(String))
+  ReplyRef(topic: String, join_ref: Option(String), message_ref: Option(String))
 }
 
 @internal
 pub fn make_join_ref(
   topic topic: String,
   join_ref join_ref: Option(String),
-  msg_ref msg_ref: Option(String),
+  message_ref message_ref: Option(String),
 ) -> JoinRef {
   JoinRef(
     topic: topic,
     join_ref: join_ref,
-    msg_ref: msg_ref,
+    message_ref: message_ref,
     token: reference.new(),
   )
 }
@@ -73,9 +73,9 @@ pub fn make_join_ref(
 pub fn make_message_ref(
   topic topic: String,
   join_ref join_ref: Option(String),
-  msg_ref msg_ref: Option(String),
+  message_ref message_ref: Option(String),
 ) -> ReplyRef {
-  ReplyRef(topic: topic, join_ref: join_ref, msg_ref: msg_ref)
+  ReplyRef(topic: topic, join_ref: join_ref, message_ref: message_ref)
 }
 
 @internal
@@ -99,14 +99,15 @@ pub fn reply_ref_join_ref(ref: ReplyRef) -> Option(String) {
 }
 
 @internal
-pub fn reply_ref_msg_ref(ref: ReplyRef) -> Option(String) {
-  ref.msg_ref
+pub fn reply_ref_message_ref(ref: ReplyRef) -> Option(String) {
+  ref.message_ref
 }
 
 /// Why a socket or topic is stopping.
 ///
 /// The runtime delivers this reason in `Closed` inputs, and `Stop` accepts it.
-/// Match with a catch-all (`_`) arm. Minor releases can add stop reasons.
+/// The variants are exhaustive; match each reason explicitly. Adding a
+/// variant affects API compatibility and requires updating exhaustive matches.
 pub type StopReason {
   /// Normal shutdown (client left or disconnected cleanly).
   Normal
@@ -232,7 +233,7 @@ pub type Effect {
 /// effects when the client did not supply a ref.
 pub fn reply_ok(ref: Option(ReplyRef), payload: Json) -> List(Effect) {
   case ref {
-    Some(r) -> [ReplyOk(r, payload)]
+    Some(reply_ref) -> [ReplyOk(reply_ref, payload)]
     None -> []
   }
 }

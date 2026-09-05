@@ -19,16 +19,17 @@ fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
+      update: fn(model, event) {
+        process.send(events, event)
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Message(_topic, "kick_b", _payload, _ref) ->
             Next(model, [KickTopic("room:b")])
           Message(_topic, "stop", _payload, _ref) -> Stop(socket.Normal)
           Closed("room:b", socket.Shutdown) ->
             Next(model, [KickTopic("room:c")])
-          _ -> Next(model, [])
+          Message(..) | socket.Binary(..) | Closed(..) | socket.Info(..) ->
+            Next(model, [])
         }
       },
     )

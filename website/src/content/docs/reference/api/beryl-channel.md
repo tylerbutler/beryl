@@ -253,7 +253,7 @@ pub type JoinContext(a) {
     seed: socket.ConnectSeed,
     self: Sender(a),
     topic: String,
-    params: List(String),
+    parameters: List(String),
     payload: dynamic.Dynamic
   )
 }
@@ -261,7 +261,7 @@ pub type JoinContext(a) {
 
 Information about one join attempt.
 
- `params` contains wildcard captures in pattern order and is empty for
+ `parameters` contains wildcard captures in pattern order and is empty for
  exact patterns. `self` is this channel's generation-scoped
  [`Sender`](#sender), for scheduling a later turn.
 

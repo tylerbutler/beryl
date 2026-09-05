@@ -71,10 +71,13 @@ pub fn inbound_routing_log_omits_payload_by_default_test() -> Nil {
           include_payloads: False,
         )),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
-          _ -> Next(model, [])
+          socket.Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
         }
       },
     )

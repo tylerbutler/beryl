@@ -111,7 +111,7 @@ pub fn a_join_time_presence_track_applies_in_the_join_turn_test() -> Nil {
   let frames = helper.connect(channels, "s1")
 
   helper.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _ack = helper.recv(frames)
+  let _acknowledgement = helper.recv(frames)
   let _diff = helper.recv(frames)
 
   // The snapshot pushed by the same action list already contains the

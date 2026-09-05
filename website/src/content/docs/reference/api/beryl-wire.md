@@ -219,10 +219,15 @@ Convert a `Dynamic` value decoded from JSON back to `json.Json`.
 ### `encode`
 
 ```gleam
-pub fn encode(codec.Inbound) -> String
+pub fn encode(codec.Inbound) -> Result(String, Nil)
 ```
 
 Encode an `Inbound` back to a Phoenix wire JSON string.
+
+ Returns `Error(Nil)` when the payload contains a value JSON cannot
+ represent or exceeds the wire protocol's maximum JSON nesting depth.
+ Conversion failures are not replaced with JSON `null`: a successful
+ encoding preserves the payload.
 
 <div class="api-entry-anchor" id="api-function-format_decode_error" aria-hidden="true"></div>
 
