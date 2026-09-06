@@ -109,6 +109,8 @@ site-dev:
 # Install website dependencies
 site-deps:
     pnpm -C website install
+    cd website/interactive && gleam deps download
+    cd website/demo_server && gleam deps download
 
 # Regenerate website reference docs (delegates to `docs`, which regenerates them)
 site-reference: docs
@@ -132,6 +134,29 @@ site-check: site-reference
 # Clean website build artifacts
 site-clean:
     pnpm -C website clean
+
+# Install interactive Lustre client dependencies
+site-interactive-deps:
+    cd website/interactive && gleam deps download
+
+# Test the interactive Lustre client (JavaScript target)
+site-interactive-test:
+    cd website/interactive && gleam test --target javascript
+
+# Install demo server dependencies
+site-demo-deps:
+    cd website/demo_server && gleam deps download
+
+# Test the demo server
+site-demo-test:
+    cd website/demo_server && gleam test
+
+# Run Playwright browser tests
+site-e2e:
+    pnpm -C website test:e2e
+
+# Run all website CI checks
+site-ci: site-reference-test site-interactive-test site-demo-test site-check site-build site-e2e
 
 # === EXAMPLES ===
 

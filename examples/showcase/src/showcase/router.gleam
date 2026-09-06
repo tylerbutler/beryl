@@ -2,6 +2,8 @@
 //// first path segment to the bundled cursors / chatrooms / collab_docs
 //// routers, each pinned to its own URL prefix.
 
+import beryl_demo/config as demo_config
+import beryl_demo/router as demo_router
 import chatroom/router as chatroom_router
 import collab_document/router as document_router
 import cursor/router as cursor_router
@@ -13,6 +15,8 @@ import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
+    /// Status endpoint for the documentation site's presence lab.
+    demo: demo_config.Config,
     cursor: cursor_router.Context,
     chatroom: chatroom_router.Context,
     collab_document: document_router.Context,
@@ -26,6 +30,7 @@ pub fn handle_request(
   case request.path_segments(http_request) {
     [] -> landing_page()
     ["healthz"] -> healthz()
+    ["v1", ..] -> demo_router.handle_request(http_request, context.demo)
     ["cursors", ..] ->
       cursor_router.handle_request(http_request, context.cursor)
     ["chat", ..] ->

@@ -4,6 +4,7 @@ description: Four runnable beryl examples, including the channel showcase.
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+import PresenceLab from '../../components/PresenceLab.astro';
 
 Four runnable applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
@@ -20,6 +21,13 @@ cd beryl
 <Aside type="note" title="Pre-1.0">
 beryl is not yet version 1.0. Minor releases can change the API, and the library is not ready for production. Report problems to help define version 1.0.
 </Aside>
+
+## Live presence lab
+
+Connect a primary participant, add a second participant, and inspect the
+Phoenix-compatible presence state and diffs that beryl emits.
+
+<PresenceLab />
 
 ## Showcase
 
