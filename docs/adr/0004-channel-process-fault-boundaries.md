@@ -2,13 +2,12 @@
 
 ## Status
 
-Proposed (2026-08-17).
+Accepted (2026-08-26). Proposed 2026-08-17.
 
 This ADR records an architectural question that ADRs
 [0001](0001-type-erased-channel-registry.md),
 [0002](0002-app-side-dispatch.md), and
-[0003](0003-layered-channel-api.md) did not evaluate. It makes no runtime
-change while proposed.
+[0003](0003-layered-channel-api.md) did not evaluate.
 
 ## Context
 
@@ -170,7 +169,7 @@ current topic-scoped rescue for message and binary callbacks.
 ### 3. Use one process per socket and one process per channel
 
 Each socket gets a session actor that owns connection-level protocol state.
-Each accepted topic gets a temporary channel worker under an OTP factory
+Each accepted topic gets a temporary topic worker under an OTP factory
 supervisor. The worker owns the channel's sealed state and invokes its
 callbacks.
 
@@ -213,7 +212,7 @@ Advantages:
 - resembles Phoenix's process-per-client-and-topic model;
 - lets OTP monitors drive cleanup instead of relying only on rescued
   exceptions;
-- gives channel workers independent mailboxes for typed server messages.
+- gives topic workers independent mailboxes for typed server messages.
 
 Costs:
 
@@ -239,7 +238,7 @@ behavior with the current runtime:
 - State whether a socket session permits only one in-flight callback. This
   choice preserves current socket-wide sequencing, and it allows one slow
   channel to delay its siblings.
-- State whether channel workers can run concurrently. If so, state which
+- State whether topic workers can run concurrently. If so, state which
   ordering guarantees remain between actions from different topics on one
   WebSocket.
 - State whether `join` runs while the worker starts. As an alternative,
@@ -261,7 +260,7 @@ worker process.
 This option is not a candidate for adoption. It would copy state into another
 process for each event and require a result handshake. It would also add
 timeout and cancellation semantics. The runtime would still decide whether a
-late result is valid. Persistent socket or channel workers provide a clearer
+late result is valid. Persistent socket or topic workers provide a clearer
 ownership boundary.
 
 ## Restart policy and protocol recovery
@@ -310,7 +309,7 @@ Tracked by [#337](https://github.com/tylerbutler/beryl/issues/337).
 
 Build on a socket session actor and demonstrate:
 
-- factory-supervised temporary channel workers;
+- factory-supervised temporary topic workers;
 - join success, rejection, panic, and timeout;
 - typed `channel.Sender` delivery to the correct worker generation;
 - ordered action batches returned to the session;
@@ -330,7 +329,7 @@ focused tests for:
 - a worker exit while an action batch is in flight;
 - leave followed immediately by rejoin of the same topic;
 - a stale typed sender targeting an earlier join generation;
-- a socket disconnect while channel workers are busy;
+- a socket disconnect while topic workers are busy;
 - ordered replies, pushes, broadcasts, and presence operations;
 - `JoinRef` and `ReplyRef` use after worker failure;
 - runtime, session, and worker shutdown order;
@@ -369,20 +368,54 @@ latency.
 
 ## Decision
 
-This ADR does not accept a process topology change yet.
+beryl adopts option 2 for raw dispatch and option 3 for `beryl/channel`.
 
-Prototype options 2 and 3, gather the required correctness and performance
-evidence, then amend this ADR with one of these outcomes:
+- **Raw dispatch: one process per socket.** Landed in
+  [#343](https://github.com/tylerbutler/beryl/pull/343) (issue #334). The
+  socket actor owns the raw model and runs `init` and `update`; the router
+  stays a stable, named forwarder.
+- **Channel layer: one process per socket and one process per joined topic.**
+  [#371](https://github.com/tylerbutler/beryl/pull/371) implements issue #337.
+  Each socket actor starts a linked factory supervisor and one `Temporary`
+  worker for each accepted join. The worker owns the channel state and runs
+  `join`, `on_message`, `on_info`, and `on_terminate`. The socket actor owns
+  the protocol state, capabilities, subscriptions, presence data, and frame
+  writes.
 
-- retain the shared runtime and document callback rescue as the chosen fault
-  model;
-- move raw and channel dispatch to process-per-socket actors;
-- use process-per-socket for raw dispatch and process-per-channel for the
-  channel layer;
-- adopt another topology justified by the same evidence.
+beryl uses these sequence rules:
 
-Until that amendment, ADRs 0002 and 0003 remain authoritative and the current
-shared runtime behavior remains supported.
+- Workers on one socket run concurrently. A slow callback delays only its
+  own topic.
+- beryl does not define an order between different topics on one socket.
+  Within one topic, action order is wire order.
+- The worker runs `join` during initialization. The socket actor waits for a
+  maximum of 5 seconds. It rejects the join after this timeout. Joins on
+  different sockets do not wait for each other.
+- beryl does not limit worker mailboxes or pending reports.
+  [#249](https://github.com/tylerbutler/beryl/issues/249) tracks this work.
+- The socket actor owns presence suspension. Workers send presence actions to
+  the socket actor. The socket actor applies the existing order rules.
+- The socket actor sends a close to the worker before it drops the topic's
+  reply refs. The actor waits until the worker runs `on_terminate`. The actor
+  first applies results that the worker computed before the close. Thus, it
+  can deliver a push or reply that the worker computed before a leave. The
+  actor kills a worker that does not finish its queued work and
+  `on_terminate` in 5 seconds. It drops replies that the worker still owes.
+
+Contract changes recorded with this decision:
+
+- An `on_info` panic closes only its topic. It previously tore down the
+  socket.
+- The runtime no longer has a special case for an `on_terminate` panic. It
+  logs the panic, completes the close, and stops the worker. The sender for
+  that worker cannot deliver more messages.
+- If a worker process stops unexpectedly, the runtime closes its topic with
+  `phx_error`. The runtime cannot run `on_terminate` because the worker held
+  the channel state. The client must rejoin. This behavior matches Phoenix.
+
+[#371](https://github.com/tylerbutler/beryl/pull/371) contains the performance
+results. ADRs 0002 and 0003 remain authoritative for the raw and channel APIs.
+This ADR changes only their process topology.
 
 ## Sources
 

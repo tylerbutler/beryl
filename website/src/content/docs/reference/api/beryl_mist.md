@@ -1,6 +1,9 @@
 ---
 title: "beryl_mist"
-description: "Mist WebSocket Transport - Direct Mist integration for beryl"
+description: "Mist WebSocket transport for beryl"
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -9,7 +12,9 @@ description: "Mist WebSocket Transport - Direct Mist integration for beryl"
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
-Mist WebSocket Transport - Direct Mist integration for beryl
+<div class="api-reference-marker" aria-hidden="true"></div>
+
+Mist WebSocket transport for beryl
 
  This module provides the bridge between Mist's native WebSocket handling
  and the beryl runtime using Mist request and response types directly.
@@ -21,9 +26,29 @@ Mist WebSocket Transport - Direct Mist integration for beryl
  the Mist-specific glue: the WebSocket upgrade call, frame sending, and
  peer IP extraction.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-handler"><code>handler</code></a></li>
+<li><a href="#api-function-upgrade"><code>upgrade</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
+
 ### `handler`
+
+```gleam
+pub fn handler(
+  beryl.Sockets,
+  server.TransportConfig(http.Connection),
+  fn(request.Request(http.Connection)) -> response.Response(mist.ResponseData)
+) -> fn(request.Request(http.Connection)) -> response.Response(mist.ResponseData)
+```
 
 Build a combined request handler that serves both WebSocket upgrades and
  regular HTTP from a single Mist listener.
@@ -43,15 +68,18 @@ Build a combined request handler that serves both WebSocket upgrades and
  |> mist.start
  ```
 
-```gleam
-pub fn handler(
-  beryl.Sockets,
-  server.TransportConfig(http.Connection),
-  fn(request.Request(http.Connection)) -> response.Response(mist.ResponseData)
-) -> fn(request.Request(http.Connection)) -> response.Response(mist.ResponseData)
-```
+<div class="api-entry-anchor" id="api-function-upgrade" aria-hidden="true"></div>
 
 ### `upgrade`
+
+```gleam
+pub fn upgrade(
+  request.Request(http.Connection),
+  beryl.Sockets,
+  server.TransportConfig(http.Connection),
+  fn() -> response.Response(mist.ResponseData)
+) -> response.Response(mist.ResponseData)
+```
 
 Upgrade a request to WebSocket if it matches the configured path.
 
@@ -73,12 +101,3 @@ Upgrade a request to WebSocket if it matches the configured path.
  `beryl/transport/server.upgrade` for the full contract. Enforcement
  uses the real socket peer IP from the TCP connection; forwarded headers
  such as `X-Forwarded-For` are not trusted.
-
-```gleam
-pub fn upgrade(
-  request.Request(http.Connection),
-  beryl.Sockets,
-  server.TransportConfig(http.Connection),
-  fn() -> response.Response(mist.ResponseData)
-) -> response.Response(mist.ResponseData)
-```

@@ -19,7 +19,7 @@ pub fn main() -> Nil {
     child_specification,
     "Step 02 - raw voting",
     8102,
-    False,
-    False,
+    server.HealthEndpointDisabled,
+    server.GuideChannelDisabled,
   )
 }

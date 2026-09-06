@@ -4,7 +4,7 @@
 //// handler routes WebSocket upgrades versus plain HTTP requests. They reuse a
 //// server-agnostic raw-TCP WebSocket client FFI.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket
 import beryl/transport/server
@@ -13,7 +13,7 @@ import beryl_ewe as ewe_transport
 import ewe
 import gleam/bit_array
 import gleam/dict
-import gleam/dynamic.{type Dynamic}
+import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/atom
 import gleam/erlang/process
@@ -28,6 +28,8 @@ import gleam/string
 import gleeunit/should
 
 type WebsocketClient
+
+type TransportEventHandler
 
 @external(erlang, "beryl_ewe_transport_test_ffi", "connect_websocket")
 fn connect_websocket(port: Int, path: String) -> Result(WebsocketClient, Nil)
@@ -62,10 +64,10 @@ fn send_binary(
 ) -> Result(WebsocketClient, Nil)
 
 @external(erlang, "beryl_ewe_transport_test_ffi", "attach_transport_events")
-fn attach_transport_events() -> Dynamic
+fn attach_transport_events() -> TransportEventHandler
 
 @external(erlang, "beryl_ewe_transport_test_ffi", "detach_transport_events")
-fn detach_transport_events(handler_id: Dynamic) -> Nil
+fn detach_transport_events(handler_id: TransportEventHandler) -> Nil
 
 @external(erlang, "beryl_ewe_transport_test_ffi", "receive_upgrade_event")
 fn receive_upgrade_event(timeout: Int) -> Result(#(String, String), Nil)
@@ -207,15 +209,17 @@ fn start_channels() -> beryl.Sockets {
 /// connection-limit, frame-size, and flood-shedding behaviour, not routing.
 fn start_app_system(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start(config, init: fn(_info) { #(Nil, []) }, update: fn(model, _ev) {
-      socket.Next(model, [])
-    })
+    app_test_helper.start(
+      config,
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, _event) { socket.Next(model, []) },
+    )
   channels
 }
 
 fn start_telemetry_system() -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start(
+    app_test_helper.start(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_telemetry,
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
@@ -223,14 +227,17 @@ fn start_telemetry_system() -> beryl.Sockets {
         case socket_event {
           socket.Join(_, _, ref) ->
             socket.Next(model, [socket.AcceptJoin(ref, option.None)])
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )
   channels
 }
 
-pub fn telemetry_preserves_decoded_text_and_binary_message_kinds_test() {
+pub fn telemetry_preserves_decoded_text_and_binary_message_kinds_test() -> Nil {
   let channels = start_telemetry_system()
   let #(port, server_pid) = start_server(channels)
   let handler_id = attach_transport_events()
@@ -274,10 +281,10 @@ pub fn telemetry_preserves_decoded_text_and_binary_message_kinds_test() {
   close(client)
   detach_transport_events(handler_id)
   stop_supervisor(server_pid)
-  let assert Ok(Nil) = beryl.stop(channels)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
-pub fn handler_routes_websocket_upgrade_to_upgrade_test() {
+pub fn handler_routes_websocket_upgrade_to_upgrade_test() -> Nil {
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)
 
@@ -288,7 +295,7 @@ pub fn handler_routes_websocket_upgrade_to_upgrade_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_routes_http_request_to_fallback_test() {
+pub fn handler_routes_http_request_to_fallback_test() -> Nil {
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)
 
@@ -299,7 +306,7 @@ pub fn handler_routes_http_request_to_fallback_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_routes_non_matching_path_to_fallback_test() {
+pub fn handler_routes_non_matching_path_to_fallback_test() -> Nil {
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)
 
@@ -310,7 +317,7 @@ pub fn handler_routes_non_matching_path_to_fallback_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_routes_websocket_on_other_path_to_fallback_test() {
+pub fn handler_routes_websocket_on_other_path_to_fallback_test() -> Nil {
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)
 
@@ -322,7 +329,7 @@ pub fn handler_routes_websocket_on_other_path_to_fallback_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
+pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() -> Nil {
   let channels = start_channels()
   let config =
     server.default_config("/socket")
@@ -342,7 +349,7 @@ pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_default_rejects_cross_origin_upgrade_test() {
+pub fn handler_default_rejects_cross_origin_upgrade_test() -> Nil {
   // The default config uses the SameOrigin policy, so a browser upgrade whose
   // Origin does not match the request Host is rejected before the handshake.
   let channels = start_channels()
@@ -358,7 +365,7 @@ pub fn handler_default_rejects_cross_origin_upgrade_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_default_allows_same_origin_upgrade_test() {
+pub fn handler_default_allows_same_origin_upgrade_test() -> Nil {
   // A same-origin browser upgrade (Origin authority matches the Host authority
   // `127.0.0.1:<port>`) is admitted under the default SameOrigin policy.
   let channels = start_channels()
@@ -371,7 +378,7 @@ pub fn handler_default_allows_same_origin_upgrade_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_default_allows_absent_origin_upgrade_test() {
+pub fn handler_default_allows_absent_origin_upgrade_test() -> Nil {
   // Non-browser clients omit the Origin header entirely; the SameOrigin policy
   // admits them (they are not subject to the browser same-origin model).
   let channels = start_channels()
@@ -383,7 +390,7 @@ pub fn handler_default_allows_absent_origin_upgrade_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_allow_all_origins_admits_cross_origin_test() {
+pub fn handler_allow_all_origins_admits_cross_origin_test() -> Nil {
   // Explicit opt-out: with_allow_all_origins restores the pre-1.0 allow-all
   // behaviour for apps that intentionally accept cross-origin sockets.
   let channels = start_channels()
@@ -399,7 +406,7 @@ pub fn handler_allow_all_origins_admits_cross_origin_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_rejects_unsupported_protocol_version_test() {
+pub fn handler_rejects_unsupported_protocol_version_test() -> Nil {
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)
 
@@ -417,7 +424,7 @@ pub fn handler_rejects_unsupported_protocol_version_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_rejects_connections_over_per_ip_limit_test() {
+pub fn handler_rejects_connections_over_per_ip_limit_test() -> Nil {
   let #(port, server_pid) = start_limited_server()
 
   let assert Ok(client) = connect_websocket(port, "/socket")
@@ -433,7 +440,7 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
+pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() -> Nil {
   // The default config leaves `max_connections_per_ip` at 0 (unlimited), so
   // multiple concurrent connections from the same peer IP are all admitted.
   let channels = start_channels()
@@ -449,7 +456,7 @@ pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_sheds_frame_flood_at_the_edge_test() {
+pub fn handler_sheds_frame_flood_at_the_edge_test() -> Nil {
   let channels =
     start_app_system(
       beryl.config(wire.phoenix_codec())
@@ -471,7 +478,7 @@ pub fn handler_sheds_frame_flood_at_the_edge_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() {
+pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() -> Nil {
   // Regression: `with_message_rate` governs the runtime bucket only. A
   // heartbeat flood still gets shed (the runtime's message limiter catches
   // it after decode), but the two settings are independent — this proves
@@ -500,7 +507,7 @@ pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_frame_rate_counts_malformed_frames_test() {
+pub fn handler_frame_rate_counts_malformed_frames_test() -> Nil {
   // Regression: the frame-rate bucket counts every complete inbound frame
   // before decoding, so a malformed frame consumes a token the same as a
   // well-formed one — a single-token burst spent on garbage leaves no
@@ -541,7 +548,7 @@ fn count_replies(client: WebsocketClient, count: Int) -> Int {
   }
 }
 
-pub fn handler_closes_socket_on_oversized_text_frame_test() {
+pub fn handler_closes_socket_on_oversized_text_frame_test() -> Nil {
   let #(port, server_pid) = start_frame_limited_server()
   let assert Ok(client) = connect_websocket(port, "/socket")
 
@@ -554,13 +561,13 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() {
   stop_supervisor(server_pid)
 }
 
-pub fn runtime_death_closes_the_connection_test() {
+pub fn runtime_death_closes_the_connection_test() -> Nil {
   let assert Ok(channels) =
-    h.start(
+    app_test_helper.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           socket.Join(_, _, ref) ->
             socket.Next(model, [
               socket.AcceptJoin(
@@ -568,7 +575,10 @@ pub fn runtime_death_closes_the_connection_test() {
                 option.Some(json.object([#("joined", json.bool(True))])),
               ),
             ])
-          _ -> socket.Next(model, [])
+          socket.Message(_, _, _, _)
+          | socket.Binary(_, _)
+          | socket.Closed(_, _)
+          | socket.Info(_) -> socket.Next(model, [])
         }
       },
     )
@@ -592,32 +602,35 @@ pub fn runtime_death_closes_the_connection_test() {
 
 // Socket-level connect/auth hook — on_connect metadata reaches init
 
-fn auth_query(req, name: String) -> Result(String, Nil) {
-  case request.get_query(req) {
-    Ok(params) -> list.key_find(params, name)
+fn authentication_query(
+  request: request.Request(ewe.Connection),
+  name: String,
+) -> Result(String, Nil) {
+  case request.get_query(request) {
+    Ok(parameters) -> list.key_find(parameters, name)
     Error(_) -> Error(Nil)
   }
 }
 
-pub fn on_connect_seeds_metadata_visible_in_connect_info_test() {
+pub fn on_connect_seeds_metadata_visible_in_connect_info_test() -> Nil {
   // `with_on_connect` returns ordered string metadata; it lands verbatim in
   // `ConnectInfo.seed.metadata` for an app-dispatch system's `init`.
   // Duplicate keys must be preserved — the runtime must not deduplicate them.
   let seeds = process.new_subject()
   let assert Ok(channels) =
-    h.start(
+    app_test_helper.start(
       beryl.config(wire.phoenix_codec()),
       init: fn(info: socket.ConnectInfo(Nil)) {
         process.send(seeds, info.seed)
         #(Nil, [])
       },
-      update: fn(model, _ev) { socket.Next(model, []) },
+      update: fn(model, _event) { socket.Next(model, []) },
     )
 
   let config =
     server.default_config("/socket")
-    |> server.with_on_connect(fn(req) {
-      auth_query(req, "token")
+    |> server.with_on_connect(fn(request) {
+      authentication_query(request, "token")
       |> result.map(fn(token) { [#("user", token), #("user", token)] })
       |> result.map_error(fn(_) { server.ConnectRejected })
     })

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-22T01:35:24Z",
+  "generatedAt": "2026-08-28T21:24:04Z",
   "title": "Design System: beryl",
   "extensions": {
     "colorMeta": {
@@ -121,6 +121,7 @@
       {"name": "reduced-motion", "value": "0.001ms", "purpose": "Site-wide non-motion fallback."}
     ],
     "breakpoints": [
+      {"name": "compact-reference", "value": "38rem"},
       {"name": "content-grid", "value": "50rem"},
       {"name": "desktop-hero", "value": "68rem"}
     ]
@@ -179,6 +180,20 @@
       "description": "Compact reference data with restrained row separation.",
       "html": "<table class=\"ds-table\"><thead><tr><th>Event</th><th>Effect</th></tr></thead><tbody><tr><td>Join</td><td>AcceptJoin</td></tr><tr><td>Message</td><td>Reply</td></tr></tbody></table>",
       "css": ".ds-table { width: 100%; border: 1px solid var(--beryl-hairline); border-spacing: 0; border-radius: 12px; overflow: hidden; color: var(--sl-color-gray-2); font: 0.95rem/1.5 var(--sl-font); } .ds-table th, .ds-table td { padding: 0.6rem 0.9rem; text-align: left; border-bottom: 1px solid color-mix(in oklch, var(--beryl-hairline) 55%, transparent); } .ds-table th { background: var(--beryl-surface); color: var(--sl-color-white); font-weight: 650; } .ds-table tr:last-child td { border-bottom: 0; } .ds-table tbody tr { transition: background 0.15s ease-out; } .ds-table tbody tr:hover { background: var(--beryl-magenta-soft); }"
+    },
+    {
+      "name": "API Module Ledger",
+      "kind": "nav",
+      "description": "A responsive, border-only module directory for generated package reference pages.",
+      "html": "<ul class=\"ds-api-modules\"><li><a href=\"#\"><code>beryl/channel</code></a><p>Typed channel handlers with private state.</p></li><li><a href=\"#\"><code>beryl/presence</code></a><p>Distributed presence tracking backed by a CRDT.</p></li></ul>",
+      "css": ".ds-api-modules { display: grid; gap: 0; margin: 0; padding: 0; border-block: 1px solid var(--beryl-hairline); color: var(--sl-color-white); font-family: var(--sl-font); list-style: none; } .ds-api-modules li { display: grid; grid-template-columns: minmax(11rem, 0.7fr) minmax(0, 1.3fr); gap: 1rem 2rem; align-items: baseline; padding: 1rem 0.25rem; border-bottom: 1px solid var(--beryl-hairline); } .ds-api-modules li:last-child { border-bottom: 0; } .ds-api-modules a { color: var(--sl-color-accent-high); font-weight: 700; text-underline-offset: 0.25em; } .ds-api-modules p { max-width: 68ch; margin: 0; color: var(--sl-color-gray-2); } @media (max-width: 38rem) { .ds-api-modules li { grid-template-columns: 1fr; gap: 0.45rem; } }"
+    },
+    {
+      "name": "API Symbol Index",
+      "kind": "nav",
+      "description": "A compact map of generated types and functions that keeps long API pages scannable.",
+      "html": "<nav class=\"ds-api-index\" aria-label=\"Module contents\"><section><a class=\"ds-api-index-section\" href=\"#\">Types</a><ul><li><a href=\"#\"><code>Config</code></a></li><li><a href=\"#\"><code>Sockets</code></a></li></ul></section><section><a class=\"ds-api-index-section\" href=\"#\">Functions</a><ul><li><a href=\"#\"><code>child_spec</code></a></li><li><a href=\"#\"><code>broadcast</code></a></li><li><a href=\"#\"><code>stop</code></a></li></ul></section></nav>",
+      "css": ".ds-api-index { display: grid; gap: 1.5rem; padding-block: 1.25rem; border-block: 1px solid var(--beryl-hairline); color: var(--sl-color-white); font-family: var(--sl-font); } .ds-api-index section { display: grid; grid-template-columns: minmax(7rem, 0.22fr) minmax(0, 1fr); gap: 0.75rem 1.5rem; align-items: start; } .ds-api-index-section { color: var(--sl-color-white); font-weight: 700; text-underline-offset: 0.25em; } .ds-api-index ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 0.4rem 1rem; margin: 0; padding: 0; list-style: none; } .ds-api-index a { color: var(--sl-color-accent-high); } @media (max-width: 38rem) { .ds-api-index section { grid-template-columns: 1fr; gap: 0.45rem; } .ds-api-index ul { grid-template-columns: repeat(2, minmax(0, 1fr)); } }"
     }
   ],
   "narrative": {

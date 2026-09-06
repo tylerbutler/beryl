@@ -9,6 +9,8 @@ description: API reference generated from Gleam docs metadata.
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
+<div class="api-reference-marker" aria-hidden="true"></div>
+
 This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, and `beryl_mist`.
 
 :::note[Generated content]
@@ -17,33 +19,87 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 
 ## `beryl` `0.4.1`
 
-| Module | Description |
-|---|---|
-| [`beryl`](/reference/api/beryl/) | beryl - Type-safe real-time communication |
-| [`beryl/bridge`](/reference/api/beryl-bridge/) | Bridge - Forward an external OTP actor's message stream to a socket via |
-| [`beryl/channel`](/reference/api/beryl-channel/) | The channel composition surface: a channel is a topic pattern paired |
-| [`beryl/error`](/reference/api/beryl-error/) | Shared beryl-owned error helpers. |
-| [`beryl/group`](/reference/api/beryl-group/) | Channel Groups - Named collections of topics for multi-topic broadcasting |
-| [`beryl/presence`](/reference/api/beryl-presence/) | Presence - Distributed presence tracking backed by a CRDT |
-| [`beryl/presence/wire`](/reference/api/beryl-presence-wire/) | Phoenix-compatible wire encoding for presence diffs. |
-| [`beryl/pubsub`](/reference/api/beryl-pubsub/) | PubSub - Distributed publish/subscribe using Erlang pg |
-| [`beryl/socket`](/reference/api/beryl-socket/) | Types for building app-side dispatch systems with `beryl.child_spec`. |
-| [`beryl/stats`](/reference/api/beryl-stats/) | Local runtime statistics. |
-| [`beryl/topic`](/reference/api/beryl-topic/) | Pattern matching for topic routing. |
-| [`beryl/transport`](/reference/api/beryl-transport/) | Transport SPI: the contract between beryl core and WebSocket transport |
-| [`beryl/transport/origin`](/reference/api/beryl-transport-origin/) | Origin and handshake-version checks for WebSocket upgrades. |
-| [`beryl/transport/server`](/reference/api/beryl-transport-server/) | Server-agnostic WebSocket transport infrastructure. |
-| [`beryl/wire`](/reference/api/beryl-wire/) | Phoenix Wire Protocol: encoding/decoding helpers and the canonical |
-| [`beryl/wire/codec`](/reference/api/beryl-wire-codec/) | Pluggable wire codec for beryl. |
+<ul class="api-module-list">
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl/"><code>beryl</code></a>
+  <p>beryl: type-safe real-time communication</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-bridge/"><code>beryl/bridge</code></a>
+  <p>Forward an external OTP actor's message stream to a socket through its <code>Sender</code>.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-channel/"><code>beryl/channel</code></a>
+  <p>The channel composition surface: a channel is a topic pattern paired with a typed <code>join</code> callback and callbacks over private state.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-error/"><code>beryl/error</code></a>
+  <p>Shared beryl-owned error helpers.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-group/"><code>beryl/group</code></a>
+  <p>Topic groups</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-presence/"><code>beryl/presence</code></a>
+  <p>Distributed presence tracking with a CRDT</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-presence-wire/"><code>beryl/presence/wire</code></a>
+  <p>Phoenix-compatible wire encoding for presence diffs.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-pubsub/"><code>beryl/pubsub</code></a>
+  <p>Distributed PubSub with Erlang <code>pg</code></p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-snapshot/"><code>beryl/snapshot</code></a>
+  <p>A point-in-time snapshot of local runtime state.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-socket/"><code>beryl/socket</code></a>
+  <p>Types for building app-side dispatch systems with <code>beryl.child_spec</code>.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-topic/"><code>beryl/topic</code></a>
+  <p>Pattern matching for topic routing.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-transport/"><code>beryl/transport</code></a>
+  <p>Transport SPI: the contract between beryl core and WebSocket transport implementations such as the <code>beryl_mist</code> and <code>beryl_ewe</code> packages.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-transport-origin/"><code>beryl/transport/origin</code></a>
+  <p>Origin and handshake-version checks for WebSocket upgrades.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-transport-server/"><code>beryl/transport/server</code></a>
+  <p>Server-agnostic WebSocket transport infrastructure.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-wire/"><code>beryl/wire</code></a>
+  <p>Phoenix wire protocol: encoding and decoding helpers and the canonical <code>phoenix_codec()</code> for <code>beryl/wire/codec</code>.</p>
+</li>
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-wire-codec/"><code>beryl/wire/codec</code></a>
+  <p>Pluggable wire codec for beryl.</p>
+</li>
+</ul>
 
 ## `beryl_ewe` `0.2.2`
 
-| Module | Description |
-|---|---|
-| [`beryl_ewe`](/reference/api/beryl_ewe/) | Ewe WebSocket Transport - Direct Ewe integration for beryl |
+<ul class="api-module-list">
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl_ewe/"><code>beryl_ewe</code></a>
+  <p>Ewe WebSocket transport for beryl</p>
+</li>
+</ul>
 
 ## `beryl_mist` `0.3.2`
 
-| Module | Description |
-|---|---|
-| [`beryl_mist`](/reference/api/beryl_mist/) | Mist WebSocket Transport - Direct Mist integration for beryl |
+<ul class="api-module-list">
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl_mist/"><code>beryl_mist</code></a>
+  <p>Mist WebSocket transport for beryl</p>
+</li>
+</ul>

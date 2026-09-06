@@ -15,7 +15,7 @@ page so they can be deployed together as one Railway service:
 ## Channels
 
 This is the multi-topic app the `beryl/channel` layer exists for. Each
-namespace is a channel handler in `src/showcase/channels/`, registered as
+namespace is a channel handler in `src/showcase/channel/`, registered as
 one list in `showcase.handlers`; the layer routes every join, message, and
 close to the handler that owns the topic, and each channel keeps its own
 private state per joined topic. There is no socket-wide model, no message
@@ -32,7 +32,7 @@ announcement remains a channel termination action.
 
 The read-only `lobby` channel is mounted so the chat UI keeps receiving room
 list invalidations. A room channel cannot target that other topic directly,
-so the announcement goes through `example_helpers/broadcast_hub`, a small actor holding the
+so the announcement goes through `example_helper/broadcast_hub`, a small actor holding the
 `beryl.Sockets` handle — the equivalent of Phoenix's `Endpoint.broadcast/3`.
 
 ## Tests

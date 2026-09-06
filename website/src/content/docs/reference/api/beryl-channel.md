@@ -1,6 +1,9 @@
 ---
 title: "beryl/channel"
-description: "The channel composition surface: a channel is a topic pattern paired"
+description: "The channel composition surface: a channel is a topic pattern paired with a typed `join` callback and callbacks over private state."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "The channel composition surface: a channel is a topic pattern pair
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 The channel composition surface: a channel is a topic pattern paired
  with a typed `join` callback and callbacks over private state.
@@ -54,20 +59,29 @@ The channel composition surface: a channel is a topic pattern paired
  `info`, the type of server-side messages it accepts. Neither escapes:
  [`handler`](#handler) seals both inside its registration closure, so the
  resulting [`Handler`](#handler) is not generic and handlers with unrelated
- `state` and `info` types compose in one list. No value is
- ever erased to `Dynamic` and no unchecked coercion is involved:
- typed `info` values travel inside a closure that only the join which
- created it can open. The socket that owns the join opens it. If the join
- has ended, the socket drops it unopened.
+ `state` and `info` types compose in one list. The runtime does not erase
+ values to `Dynamic` or use unchecked coercion:
+ a closure carries each typed `info` value. Only the worker for the join
+ that created the closure can open it. After the join ends, the worker no
+ longer exists and the runtime drops the value.
 
- ## Ordering
+ ## Processes and ordering
 
- Action lists are applied strictly from left to right, and they always
- target the channel's own topic. They lower onto
- beryl's core `Effect` values, which the runtime applies in list order.
- Action order is therefore wire order. An asynchronous presence effect can
- park this socket while other sockets continue. The remaining actions
- resume only after that effect completes.
+ Each accepted topic runs in its own worker process under a supervisor
+ that its socket actor owns. The socket actor owns the protocol state,
+ refs, subscriptions, presence data, and frame writes. The worker runs
+ `join` during startup. The socket actor waits for a maximum of five
+ seconds. The worker also runs `on_message` and `on_info`, and sends its
+ actions to the socket actor.
+
+ The runtime applies action lists from left to right. Actions always target
+ the channel's own topic. The runtime converts them to beryl's core
+ `Effect` values and applies them in list order.
+ Action order is therefore wire order for one topic. beryl does not define
+ an order between different topics on one socket. Their workers run
+ concurrently, as Phoenix channel processes do. An asynchronous presence
+ effect can pause this socket while other sockets continue. The runtime
+ resumes the remaining actions after that effect completes.
 
  A join's actions (see [`with_actions`](#with_actions)) are emitted with
  the join acknowledgment, immediately after it: the socket is already
@@ -76,39 +90,86 @@ The channel composition surface: a channel is a topic pattern paired
  reservation; use application-owned synchronous state for atomic
  capacity checks.
 
- [`on_terminate`](#on_terminate) actions are lowered in the turn that
- closes the topic, after the channel instance is gone. Its closing-phase
- action type permits only operations that remain meaningful then.
+ The worker processes queued messages before a close. Thus, the runtime
+ still delivers a push or reply that the worker computed before a leave.
+ The runtime then applies [`on_terminate`](#on_terminate) actions in the
+ turn that closes the topic, after the channel instance is gone. Its
+ closing-phase action type permits only operations that remain meaningful
+ then.
+
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-action"><code>Action</code></a></li>
+<li><a href="#api-type-active"><code>Active</code></a></li>
+<li><a href="#api-type-childspecerror"><code>ChildSpecError</code></a></li>
+<li><a href="#api-type-closing"><code>Closing</code></a></li>
+<li><a href="#api-type-handler"><code>Handler</code></a></li>
+<li><a href="#api-type-joincontext"><code>JoinContext</code></a></li>
+<li><a href="#api-type-joinresult"><code>JoinResult</code></a></li>
+<li><a href="#api-type-message"><code>Message</code></a></li>
+<li><a href="#api-type-next"><code>Next</code></a></li>
+<li><a href="#api-type-sender"><code>Sender</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-accept"><code>accept</code></a></li>
+<li><a href="#api-function-broadcast"><code>broadcast</code></a></li>
+<li><a href="#api-function-broadcast_from"><code>broadcast_from</code></a></li>
+<li><a href="#api-function-broadcast_presence"><code>broadcast_presence</code></a></li>
+<li><a href="#api-function-child_spec"><code>child_spec</code></a></li>
+<li><a href="#api-function-close"><code>close</code></a></li>
+<li><a href="#api-function-handler"><code>handler</code></a></li>
+<li><a href="#api-function-next"><code>next</code></a></li>
+<li><a href="#api-function-notify"><code>notify</code></a></li>
+<li><a href="#api-function-on_info"><code>on_info</code></a></li>
+<li><a href="#api-function-on_message"><code>on_message</code></a></li>
+<li><a href="#api-function-on_terminate"><code>on_terminate</code></a></li>
+<li><a href="#api-function-presence_track"><code>presence_track</code></a></li>
+<li><a href="#api-function-presence_untrack"><code>presence_untrack</code></a></li>
+<li><a href="#api-function-push"><code>push</code></a></li>
+<li><a href="#api-function-push_presence"><code>push_presence</code></a></li>
+<li><a href="#api-function-reject"><code>reject</code></a></li>
+<li><a href="#api-function-reply_error"><code>reply_error</code></a></li>
+<li><a href="#api-function-reply_ok"><code>reply_ok</code></a></li>
+<li><a href="#api-function-stay"><code>stay</code></a></li>
+<li><a href="#api-function-with_actions"><code>with_actions</code></a></li>
+<li><a href="#api-function-with_reply"><code>with_reply</code></a></li>
+  </ul>
+</section>
+</nav>
 
 ## Types
 
+<div class="api-entry-anchor" id="api-type-action" aria-hidden="true"></div>
+
 ### `Action`
+
+```gleam
+pub type Action(a)
+```
 
 One operation on the channel's own topic.
 
  The phase parameter prevents [`on_terminate`](#on_terminate) from returning
  active-only operations. Put actions in a list in wire order.
 
-```gleam
-pub type Action(a)
-```
+<div class="api-entry-anchor" id="api-type-active" aria-hidden="true"></div>
 
 ### `Active`
-
-Marker for actions valid while a channel is active.
 
 ```gleam
 pub type Active
 ```
 
+Marker for actions valid while a channel is active.
+
+<div class="api-entry-anchor" id="api-type-childspecerror" aria-hidden="true"></div>
+
 ### `ChildSpecError`
-
-Why building a channel-system child specification failed.
-
- The function validates handler patterns before the core configuration. It
- checks each pattern's syntax in registration order. It then checks for
- exact duplicates in the same order. Overlapping patterns are allowed when
- they are not identical because routing uses the first match.
 
 ```gleam
 pub type ChildSpecError {
@@ -121,32 +182,59 @@ pub type ChildSpecError {
 }
 ```
 
+Why building a channel-system child specification failed.
+
+ The function validates handler patterns before the core configuration. It
+ checks each pattern's syntax in registration order. It then checks for
+ exact duplicates in the same order. Overlapping patterns are allowed when
+ they are not identical because routing uses the first match.
+
 #### Constructors
 
-##### `InvalidPattern(
+##### `InvalidPattern`
+
+```gleam
+InvalidPattern(
   pattern: String,
   reason: topic.TopicError
-)`
+)
+```
 
 A handler used an invalid topic pattern.
 
-##### `DuplicatePattern(pattern: String)`
+##### `DuplicatePattern`
+
+```gleam
+DuplicatePattern(pattern: String)
+```
 
 Two handlers registered the same pattern string.
 
-##### `InvalidConfig(reason: beryl.ConfigError)`
+##### `InvalidConfig`
+
+```gleam
+InvalidConfig(reason: beryl.ConfigError)
+```
 
 The core `beryl.Config` failed eager validation.
 
-### `Closing`
+<div class="api-entry-anchor" id="api-type-closing" aria-hidden="true"></div>
 
-Marker for actions valid while a channel is closing.
+### `Closing`
 
 ```gleam
 pub type Closing
 ```
 
+Marker for actions valid while a channel is closing.
+
+<div class="api-entry-anchor" id="api-type-handler" aria-hidden="true"></div>
+
 ### `Handler`
+
+```gleam
+pub type Handler
+```
 
 A registered channel: a topic pattern plus its sealed `join` callback.
 
@@ -154,17 +242,9 @@ A registered channel: a topic pattern plus its sealed `join` callback.
  and `info` types. A single `List(Handler)` can therefore hold channels
  with unrelated types.
 
-```gleam
-pub type Handler
-```
+<div class="api-entry-anchor" id="api-type-joincontext" aria-hidden="true"></div>
 
 ### `JoinContext`
-
-Information about one join attempt.
-
- `params` contains wildcard captures in pattern order and is empty for
- exact patterns. `self` is this channel's generation-scoped
- [`Sender`](#sender), for scheduling a later turn.
 
 ```gleam
 pub type JoinContext(a) {
@@ -173,13 +253,25 @@ pub type JoinContext(a) {
     seed: socket.ConnectSeed,
     self: Sender(a),
     topic: String,
-    params: List(String),
+    parameters: List(String),
     payload: dynamic.Dynamic
   )
 }
 ```
 
+Information about one join attempt.
+
+ `parameters` contains wildcard captures in pattern order and is empty for
+ exact patterns. `self` is this channel's generation-scoped
+ [`Sender`](#sender), for scheduling a later turn.
+
+<div class="api-entry-anchor" id="api-type-joinresult" aria-hidden="true"></div>
+
 ### `JoinResult`
+
+```gleam
+pub type JoinResult(a, b)
+```
 
 A `join` callback's answer: join this channel, or refuse.
 
@@ -188,16 +280,9 @@ A `join` callback's answer: join this channel, or refuse.
  inputs keep the channel joined and produce no actions. [`handler`](#handler)
  seals the private `state` and `info` types.
 
-```gleam
-pub type JoinResult(a, b)
-```
+<div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
 
 ### `Message`
-
-A client message delivered to a joined channel's `on_message` callback.
-
- `reply` is present only when the client asked for a reply; pass it to
- [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
 
 ```gleam
 pub type Message {
@@ -209,18 +294,31 @@ pub type Message {
 }
 ```
 
+A client message delivered to a joined channel's `on_message` callback.
+
+ `reply` is present only when the client asked for a reply; pass it to
+ [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
+
+<div class="api-entry-anchor" id="api-type-next" aria-hidden="true"></div>
+
 ### `Next`
+
+```gleam
+pub type Next(a)
+```
 
 What a channel callback decided to do next.
 
  Build one with [`next`](#next) or [`close`](#close). Use [`stay`](#stay)
  when the state does not change and there are no actions.
 
-```gleam
-pub type Next(a)
-```
+<div class="api-entry-anchor" id="api-type-sender" aria-hidden="true"></div>
 
 ### `Sender`
+
+```gleam
+pub type Sender(a)
+```
 
 A typed handle for sending server-side messages to one joined channel.
 
@@ -229,51 +327,36 @@ A typed handle for sending server-side messages to one joined channel.
  receives each message with its type intact.
 
  A sender is scoped to the join that produced it. Sending is asynchronous
- and never fails. It cannot report that the channel is gone. The delivery
- point checks liveness. It drops the message after a normal close, such as
- a client leave, a [`close`](#close) result, or a socket teardown. It also
- drops the message after the same topic is joined again. A different join
- never receives the message.
+ and never fails. It cannot report that the channel is gone. The message
+ goes to the worker process for that join. After the join ends, the worker
+ no longer exists and the runtime drops the message. A later join of the
+ same topic has a different worker. It cannot receive the message.
 
- The one exception is a panic inside [`on_terminate`](#on_terminate).
- Core's policy for a crash while closing a topic is to log it and keep
- the model from before the close, so the channel system keeps that
- instance: a sender created by it can still reach its `on_info` until
- the topic is joined again or the socket ends. Nothing is handed to
- another join in that window. It is the *same* instance, outliving its own
- termination.
+ #### Cost
 
- ## Cost
-
- Delivery is cast-free but not free. Each message is carried to the
- socket's runtime actor as a sealed thunk, and unsealing it does a
- selective receive on that actor's mailbox in the same turn. A
- selective receive scans the mailbox, so under a deep backlog on a busy
- socket the cost of one delivery is O(mailbox depth). It is a
- non-issue at ordinary depths; it is worth knowing before using
- `notify` as a high-rate data path.
-
-```gleam
-pub type Sender(a)
-```
+ A sealed function carries each message to the worker. The worker opens
+ the function and uses a selective receive in the same turn. One delivery
+ can scan queued work for that topic. Work for other topics does not add
+ to this cost.
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-accept" aria-hidden="true"></div>
+
 ### `accept`
+
+```gleam
+pub fn accept(a) -> JoinResult(a, b)
+```
 
 Accept the join with an empty acknowledgment.
 
  Pipe the result through `on_message`, `on_info`, and `on_terminate` to
  register the callbacks that the channel needs.
 
-```gleam
-pub fn accept(a) -> JoinResult(a, b)
-```
+<div class="api-entry-anchor" id="api-function-broadcast" aria-hidden="true"></div>
 
 ### `broadcast`
-
-Broadcast to every subscriber of this channel's topic, including this
- socket.
 
 ```gleam
 pub fn broadcast(
@@ -282,10 +365,12 @@ pub fn broadcast(
 ) -> Action(a)
 ```
 
-### `broadcast_from`
-
-Broadcast to every subscriber of this channel's topic except this
+Broadcast to every subscriber of this channel's topic, including this
  socket.
+
+<div class="api-entry-anchor" id="api-function-broadcast_from" aria-hidden="true"></div>
+
+### `broadcast_from`
 
 ```gleam
 pub fn broadcast_from(
@@ -294,11 +379,12 @@ pub fn broadcast_from(
 ) -> Action(a)
 ```
 
-### `broadcast_presence`
+Broadcast to every subscriber of this channel's topic except this
+ socket.
 
-Broadcast a presence snapshot for this channel's topic to every
- subscriber, with the same apply-time `encode` semantics as
- [`push_presence`](#push_presence).
+<div class="api-entry-anchor" id="api-function-broadcast_presence" aria-hidden="true"></div>
+
+### `broadcast_presence`
 
 ```gleam
 pub fn broadcast_presence(
@@ -307,7 +393,20 @@ pub fn broadcast_presence(
 ) -> Action(a)
 ```
 
+Broadcast a presence snapshot for this channel's topic to every
+ subscriber, with the same apply-time `encode` semantics as
+ [`push_presence`](#push_presence).
+
+<div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
+
 ### `child_spec`
+
+```gleam
+pub fn child_spec(
+  beryl.Config,
+  handlers: List(Handler)
+) -> Result(#(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ChildSpecError)
+```
 
 Build a channel system's supervision child specification for embedding
  in an application's supervision tree.
@@ -317,7 +416,7 @@ Build a channel system's supervision child specification for embedding
  then validates `beryl.Config`. You can use the returned `beryl.Sockets`
  after the owning tree starts.
 
- ## Example
+ #### Example
 
  ```gleam
  let assert Ok(#(sockets, child_specification)) =
@@ -332,25 +431,29 @@ Build a channel system's supervision child specification for embedding
    |> static_supervisor.start()
  ```
 
-```gleam
-pub fn child_spec(
-  beryl.Config,
-  handlers: List(Handler)
-) -> Result(#(beryl.Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)), ChildSpecError)
-```
+<div class="api-entry-anchor" id="api-function-close" aria-hidden="true"></div>
 
 ### `close`
+
+```gleam
+pub fn close(List(Action(Active))) -> Next(a)
+```
 
 Leave this channel after applying `actions` in order.
 
  The socket stays connected. Its other channels do not change. This
  channel's [`on_terminate`](#on_terminate) callback still runs.
 
-```gleam
-pub fn close(List(Action(Active))) -> Next(a)
-```
+<div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
 
 ### `handler`
+
+```gleam
+pub fn handler(
+  String,
+  fn(JoinContext(a)) -> JoinResult(b, a)
+) -> Handler
+```
 
 Register a channel for every topic matching `pattern`.
 
@@ -361,16 +464,9 @@ Register a channel for every topic matching `pattern`.
  `join` receives one [`JoinContext`](#joincontext) containing connection
  data, the concrete topic, wildcard captures, and the payload.
 
-```gleam
-pub fn handler(
-  String,
-  fn(JoinContext(a)) -> JoinResult(b, a)
-) -> Handler
-```
+<div class="api-entry-anchor" id="api-function-next" aria-hidden="true"></div>
 
 ### `next`
-
-Stay joined with the given state, applying `actions` in order.
 
 ```gleam
 pub fn next(
@@ -379,18 +475,11 @@ pub fn next(
 ) -> Next(a)
 ```
 
+Stay joined with the given state, applying `actions` in order.
+
+<div class="api-entry-anchor" id="api-function-notify" aria-hidden="true"></div>
+
 ### `notify`
-
-Send a typed server-side message to the channel that owns `sender`.
-
- Each call enqueues one message. Each enqueued message produces one
- `on_info` call. The runtime does not combine sends. It delivers them in
- the order that the owning socket receives them.
-
- This is a fire-and-forget send. It returns when the message is enqueued,
- whether or not the channel is still joined. The runtime discards a message
- for a channel that has ended. See [`Sender`](#sender) for delivery cost and
- the one case in which an ended channel can still receive a message.
 
 ```gleam
 pub fn notify(
@@ -399,10 +488,19 @@ pub fn notify(
 ) -> Nil
 ```
 
-### `on_info`
+Send a typed server-side message to the channel that owns `sender`.
 
-Handle typed server-side messages sent through this channel's
- [`Sender`](#sender).
+ Each call enqueues one message. Each enqueued message produces one
+ `on_info` call. The runtime does not combine sends. It delivers them in
+ the order that the worker receives them.
+
+ This is a fire-and-forget send. It returns when the message is enqueued,
+ whether or not the channel is still joined. The runtime discards a message
+ for a channel that has ended. See [`Sender`](#sender) for delivery cost.
+
+<div class="api-entry-anchor" id="api-function-on_info" aria-hidden="true"></div>
+
+### `on_info`
 
 ```gleam
 pub fn on_info(
@@ -411,9 +509,12 @@ pub fn on_info(
 ) -> JoinResult(a, b)
 ```
 
-### `on_message`
+Handle typed server-side messages sent through this channel's
+ [`Sender`](#sender).
 
-Handle client messages on this channel's topic.
+<div class="api-entry-anchor" id="api-function-on_message" aria-hidden="true"></div>
+
+### `on_message`
 
 ```gleam
 pub fn on_message(
@@ -422,7 +523,18 @@ pub fn on_message(
 ) -> JoinResult(a, b)
 ```
 
+Handle client messages on this channel's topic.
+
+<div class="api-entry-anchor" id="api-function-on_terminate" aria-hidden="true"></div>
+
 ### `on_terminate`
+
+```gleam
+pub fn on_terminate(
+  JoinResult(a, b),
+  fn(a, socket.StopReason) -> List(Action(Closing))
+) -> JoinResult(a, b)
+```
 
 Run cleanup when the channel ends for any reason: client leave, a
  [`close`](#close) result, a socket teardown, or a disconnect.
@@ -432,24 +544,13 @@ Run cleanup when the channel ends for any reason: client leave, a
  allows broadcasts, presence untracking, and presence broadcasts. It does
  not allow pushes, replies, or presence tracking.
 
- A panic here is not fatal. Core keeps the model from before the close.
- This instance stays in the channel system's map, and its
- [`Sender`](#sender) can reach it until the topic is rejoined or the socket
- ends.
+ An `on_terminate` panic does not stop the socket. The runtime logs the
+ panic and completes the close without this callback's actions. The worker
+ stops, so a [`Sender`](#sender) for this join cannot deliver more messages.
 
-```gleam
-pub fn on_terminate(
-  JoinResult(a, b),
-  fn(a, socket.StopReason) -> List(Action(Closing))
-) -> JoinResult(a, b)
-```
+<div class="api-entry-anchor" id="api-function-presence_track" aria-hidden="true"></div>
 
 ### `presence_track`
-
-Track this socket's presence under `key` on this channel's topic and
- broadcast the matching `presence_diff` join.
-
- Requires a presence handle on the `Config` (`beryl.with_presence_handle`).
 
 ```gleam
 pub fn presence_track(
@@ -458,19 +559,26 @@ pub fn presence_track(
 ) -> Action(Active)
 ```
 
-### `presence_untrack`
+Track this socket's presence under `key` on this channel's topic and
+ broadcast the matching `presence_diff` join.
 
-Untrack a presence previously tracked with
- [`presence_track`](#presence_track) and broadcast the matching
- `presence_diff` leave.
+ Requires a presence handle on the `Config` (`beryl.with_presence_handle`).
+
+<div class="api-entry-anchor" id="api-function-presence_untrack" aria-hidden="true"></div>
+
+### `presence_untrack`
 
 ```gleam
 pub fn presence_untrack(String) -> Action(a)
 ```
 
-### `push`
+Untrack a presence previously tracked with
+ [`presence_track`](#presence_track) and broadcast the matching
+ `presence_diff` leave.
 
-Push a server-initiated message to this socket on this channel's topic.
+<div class="api-entry-anchor" id="api-function-push" aria-hidden="true"></div>
+
+### `push`
 
 ```gleam
 pub fn push(
@@ -479,13 +587,11 @@ pub fn push(
 ) -> Action(Active)
 ```
 
+Push a server-initiated message to this socket on this channel's topic.
+
+<div class="api-entry-anchor" id="api-function-push_presence" aria-hidden="true"></div>
+
 ### `push_presence`
-
-Push a presence snapshot for this channel's topic to this socket.
-
- `encode` runs when the action is applied, so it already sees any
- earlier [`presence_track`](#presence_track) or
- [`presence_untrack`](#presence_untrack) in the same list.
 
 ```gleam
 pub fn push_presence(
@@ -494,20 +600,25 @@ pub fn push_presence(
 ) -> Action(Active)
 ```
 
-### `reject`
+Push a presence snapshot for this channel's topic to this socket.
 
-Refuse the join, returning `reason` to the client.
+ `encode` runs when the action is applied, so it already sees any
+ earlier [`presence_track`](#presence_track) or
+ [`presence_untrack`](#presence_untrack) in the same list.
+
+<div class="api-entry-anchor" id="api-function-reject" aria-hidden="true"></div>
+
+### `reject`
 
 ```gleam
 pub fn reject(json.Json) -> JoinResult(a, b)
 ```
 
+Refuse the join, returning `reason` to the client.
+
+<div class="api-entry-anchor" id="api-function-reply_error" aria-hidden="true"></div>
+
 ### `reply_error`
-
-Reply with an error when a client message supplied a reply handle.
-
- [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
- produces no effect.
 
 ```gleam
 pub fn reply_error(
@@ -516,12 +627,14 @@ pub fn reply_error(
 ) -> Action(Active)
 ```
 
-### `reply_ok`
-
-Reply successfully when a client message supplied a reply handle.
+Reply with an error when a client message supplied a reply handle.
 
  [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
  produces no effect.
+
+<div class="api-entry-anchor" id="api-function-reply_ok" aria-hidden="true"></div>
+
+### `reply_ok`
 
 ```gleam
 pub fn reply_ok(
@@ -530,15 +643,31 @@ pub fn reply_ok(
 ) -> Action(Active)
 ```
 
-### `stay`
+Reply successfully when a client message supplied a reply handle.
 
-Stay joined with the given state and no actions.
+ [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+ produces no effect.
+
+<div class="api-entry-anchor" id="api-function-stay" aria-hidden="true"></div>
+
+### `stay`
 
 ```gleam
 pub fn stay(a) -> Next(a)
 ```
 
+Stay joined with the given state and no actions.
+
+<div class="api-entry-anchor" id="api-function-with_actions" aria-hidden="true"></div>
+
 ### `with_actions`
+
+```gleam
+pub fn with_actions(
+  JoinResult(a, b),
+  List(Action(Active))
+) -> JoinResult(a, b)
+```
 
 Add ordered actions to an accepted join.
 
@@ -557,18 +686,9 @@ Add ordered actions to an accepted join.
  Existing actions stay before the actions added here. A refused join has no
  topic, so this function returns [`reject`](#reject) results unchanged.
 
-```gleam
-pub fn with_actions(
-  JoinResult(a, b),
-  List(Action(Active))
-) -> JoinResult(a, b)
-```
+<div class="api-entry-anchor" id="api-function-with_reply" aria-hidden="true"></div>
 
 ### `with_reply`
-
-Add a payload to an accepted join's acknowledgment.
-
- A rejected join remains rejected.
 
 ```gleam
 pub fn with_reply(
@@ -576,3 +696,7 @@ pub fn with_reply(
   json.Json
 ) -> JoinResult(a, b)
 ```
+
+Add a payload to an accepted join's acknowledgment.
+
+ A rejected join remains rejected.

@@ -1,6 +1,9 @@
 ---
 title: "beryl/transport"
-description: "Transport SPI: the contract between beryl core and WebSocket transport"
+description: "Transport SPI: the contract between beryl core and WebSocket transport implementations such as the `beryl_mist` and `beryl_ewe` packages."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Transport SPI: the contract between beryl core and WebSocket trans
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Transport SPI: the contract between beryl core and WebSocket transport
  implementations such as the `beryl_mist` and `beryl_ewe` packages.
@@ -18,9 +23,55 @@ Transport SPI: the contract between beryl core and WebSocket transport
  atomic admission, disconnect, text/binary routing, the configured codec,
  and transport telemetry.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-connectionpermit"><code>ConnectionPermit</code></a></li>
+<li><a href="#api-type-framekind"><code>FrameKind</code></a></li>
+<li><a href="#api-type-frameoutcome"><code>FrameOutcome</code></a></li>
+<li><a href="#api-type-telemetry"><code>Telemetry</code></a></li>
+<li><a href="#api-type-telemetrytransport"><code>TelemetryTransport</code></a></li>
+<li><a href="#api-type-upgradeoutcome"><code>UpgradeOutcome</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#type-aliases">Type aliases</a>
+  <ul>
+<li><a href="#api-type-alias-sockets"><code>Sockets</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-acquire_connection_slot"><code>acquire_connection_slot</code></a></li>
+<li><a href="#api-function-active_codec"><code>active_codec</code></a></li>
+<li><a href="#api-function-admit_socket"><code>admit_socket</code></a></li>
+<li><a href="#api-function-bind_connection_slot"><code>bind_connection_slot</code></a></li>
+<li><a href="#api-function-max_inbound_frame_bytes"><code>max_inbound_frame_bytes</code></a></li>
+<li><a href="#api-function-release_connection_slot"><code>release_connection_slot</code></a></li>
+<li><a href="#api-function-route_binary"><code>route_binary</code></a></li>
+<li><a href="#api-function-route_decoded"><code>route_decoded</code></a></li>
+<li><a href="#api-function-route_decoded_binary"><code>route_decoded_binary</code></a></li>
+<li><a href="#api-function-runtime_pid"><code>runtime_pid</code></a></li>
+<li><a href="#api-function-socket_disconnected"><code>socket_disconnected</code></a></li>
+<li><a href="#api-function-telemetry"><code>telemetry</code></a></li>
+<li><a href="#api-function-telemetry_frame_stop"><code>telemetry_frame_stop</code></a></li>
+<li><a href="#api-function-telemetry_start"><code>telemetry_start</code></a></li>
+<li><a href="#api-function-telemetry_upgrade_stop"><code>telemetry_upgrade_stop</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-connectionpermit" aria-hidden="true"></div>
+
 ### `ConnectionPermit`
+
+```gleam
+pub type ConnectionPermit
+```
 
 A held connection slot returned by `acquire_connection_slot`.
 
@@ -29,13 +80,9 @@ A held connection slot returned by `acquire_connection_slot`.
  limit is configured, the permit allows all connections. Releasing it does
  nothing.
 
-```gleam
-pub type ConnectionPermit
-```
+<div class="api-entry-anchor" id="api-type-framekind" aria-hidden="true"></div>
 
 ### `FrameKind`
-
-WebSocket data frame kinds.
 
 ```gleam
 pub type FrameKind {
@@ -44,9 +91,11 @@ pub type FrameKind {
 }
 ```
 
-### `FrameOutcome`
+WebSocket data frame kinds.
 
-Closed terminal outcomes for inbound frame processing.
+<div class="api-entry-anchor" id="api-type-frameoutcome" aria-hidden="true"></div>
+
+### `FrameOutcome`
 
 ```gleam
 pub type FrameOutcome {
@@ -57,20 +106,24 @@ pub type FrameOutcome {
 }
 ```
 
+Closed terminal outcomes for inbound frame processing.
+
+<div class="api-entry-anchor" id="api-type-telemetry" aria-hidden="true"></div>
+
 ### `Telemetry`
+
+```gleam
+pub type Telemetry
+```
 
 A low-cost transport telemetry context.
 
  When telemetry is disabled, operations avoid VM clock calls and event
  construction.
 
-```gleam
-pub type Telemetry
-```
+<div class="api-entry-anchor" id="api-type-telemetrytransport" aria-hidden="true"></div>
 
 ### `TelemetryTransport`
-
-WebSocket transport implementations in beryl's telemetry schema.
 
 ```gleam
 pub type TelemetryTransport {
@@ -79,40 +132,42 @@ pub type TelemetryTransport {
 }
 ```
 
-### `UpgradeOutcome`
+WebSocket transport implementations in beryl's telemetry schema.
 
-Closed terminal outcomes for a matched WebSocket upgrade.
+<div class="api-entry-anchor" id="api-type-upgradeoutcome" aria-hidden="true"></div>
+
+### `UpgradeOutcome`
 
 ```gleam
 pub type UpgradeOutcome {
   UpgradeSucceeded
   OriginRejected
   VersionRejected
-  AuthRejected
+  AuthenticationRejected
   CapacityRejected
   HandshakeFailed
 }
 ```
 
+Closed terminal outcomes for a matched WebSocket upgrade.
+
 ## Type aliases
 
-### `Sockets`
+<div class="api-entry-anchor" id="api-type-alias-sockets" aria-hidden="true"></div>
 
-A runtime handle for transport implementations.
+### `Sockets`
 
 ```gleam
 pub type Sockets = beryl.Sockets
 ```
 
+A runtime handle for transport implementations.
+
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-acquire_connection_slot" aria-hidden="true"></div>
+
 ### `acquire_connection_slot`
-
-Try to acquire a configured connection slot for a transport.
-
- Pass the real socket peer IP. Do not pass a client-supplied address such as
- `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
- node-wide limit is already reached.
 
 ```gleam
 pub fn acquire_connection_slot(
@@ -121,24 +176,27 @@ pub fn acquire_connection_slot(
 ) -> Result(ConnectionPermit, Nil)
 ```
 
+Try to acquire a configured connection slot for a transport.
+
+ Pass the real socket peer IP. Do not pass a client-supplied address such as
+ `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
+ node-wide limit is already reached.
+
+<div class="api-entry-anchor" id="api-function-active_codec" aria-hidden="true"></div>
+
 ### `active_codec`
-
-Return the wire codec configured for these sockets.
-
- Transports use it to decode inbound frames in the connection process.
 
 ```gleam
 pub fn active_codec(beryl.Sockets) -> codec.Codec
 ```
 
+Return the wire codec configured for these sockets.
+
+ Transports use it to decode inbound frames in the connection process.
+
+<div class="api-entry-anchor" id="api-function-admit_socket" aria-hidden="true"></div>
+
 ### `admit_socket`
-
-Register a socket and its closer against the captured connection owner.
-
- Install a monitor for `owner` before calling this function. Admission
- succeeds only if that runtime instance processes the registration. A
- restart cannot redirect it to the next runtime. On `Error`, this function
- closes the connection so its bound permit can be released.
 
 ```gleam
 pub fn admit_socket(
@@ -153,38 +211,49 @@ pub fn admit_socket(
 ) -> Result(Nil, Nil)
 ```
 
+Register a socket and its closer against the captured connection owner.
+
+ Install a monitor for `owner` before calling this function. Admission
+ succeeds only if that runtime instance processes the registration. A
+ restart cannot redirect it to the next runtime. On `Error`, this function
+ closes the connection so its bound permit can be released.
+
+<div class="api-entry-anchor" id="api-function-bind_connection_slot" aria-hidden="true"></div>
+
 ### `bind_connection_slot`
+
+```gleam
+pub fn bind_connection_slot(ConnectionPermit) -> Nil
+```
 
 Bind an acquired connection slot to the calling connection process.
 
  The limiter monitors the caller. It reclaims the slot if the process dies
  without running its close path.
 
-```gleam
-pub fn bind_connection_slot(ConnectionPermit) -> Nil
-```
+<div class="api-entry-anchor" id="api-function-max_inbound_frame_bytes" aria-hidden="true"></div>
 
 ### `max_inbound_frame_bytes`
-
-Return the configured inbound frame size cap for transports.
 
 ```gleam
 pub fn max_inbound_frame_bytes(beryl.Sockets) -> Int
 ```
 
-### `release_connection_slot`
+Return the configured inbound frame size cap for transports.
 
-Release a connection slot acquired by a transport.
+<div class="api-entry-anchor" id="api-function-release_connection_slot" aria-hidden="true"></div>
+
+### `release_connection_slot`
 
 ```gleam
 pub fn release_connection_slot(ConnectionPermit) -> Nil
 ```
 
+Release a connection slot acquired by a transport.
+
+<div class="api-entry-anchor" id="api-function-route_binary" aria-hidden="true"></div>
+
 ### `route_binary`
-
-Route a raw binary frame for a codec without a binary decoder.
-
- The runtime sends a `Binary` event to `update` for each joined topic.
 
 ```gleam
 pub fn route_binary(
@@ -194,7 +263,21 @@ pub fn route_binary(
 ) -> Nil
 ```
 
+Route a raw binary frame for a codec without a binary decoder.
+
+ The runtime sends a `Binary` event to `update` for each joined topic.
+
+<div class="api-entry-anchor" id="api-function-route_decoded" aria-hidden="true"></div>
+
 ### `route_decoded`
+
+```gleam
+pub fn route_decoded(
+  sockets: beryl.Sockets,
+  socket_id: String,
+  message: codec.Inbound
+) -> Nil
+```
 
 Route a transport-decoded inbound message to the runtime. Decode in
  the connection process (see `active_codec`) so parse cost and malformed
@@ -205,21 +288,9 @@ Route a transport-decoded inbound message to the runtime. Decode in
  over-rate traffic therefore leads to heartbeat eviction and a call to the
  closer registered by `admit_socket`.
 
-```gleam
-pub fn route_decoded(
-  sockets: beryl.Sockets,
-  socket_id: String,
-  message: codec.Inbound
-) -> Nil
-```
+<div class="api-entry-anchor" id="api-function-route_decoded_binary" aria-hidden="true"></div>
 
 ### `route_decoded_binary`
-
-Route a transport-decoded binary message while preserving its binary
- frame classification for runtime telemetry and rate accounting.
-
- This function supplements `route_decoded`. The text semantics of
- `route_decoded` remain unchanged for third-party transport compatibility.
 
 ```gleam
 pub fn route_decoded_binary(
@@ -229,7 +300,19 @@ pub fn route_decoded_binary(
 ) -> Nil
 ```
 
+Route a transport-decoded binary message while preserving its binary
+ frame classification for runtime telemetry and rate accounting.
+
+ This function supplements `route_decoded`. The text semantics of
+ `route_decoded` remain unchanged for third-party transport compatibility.
+
+<div class="api-entry-anchor" id="api-function-runtime_pid" aria-hidden="true"></div>
+
 ### `runtime_pid`
+
+```gleam
+pub fn runtime_pid(beryl.Sockets) -> Result(process.Pid, Nil)
+```
 
 Return the pid of the runtime that owns transport connections.
 
@@ -237,13 +320,9 @@ Return the pid of the runtime that owns transport connections.
  connection on its `Down`. `Error(Nil)` means the runtime is unavailable
  (pre-start or a restart window), so the connection must be refused.
 
-```gleam
-pub fn runtime_pid(beryl.Sockets) -> Result(process.Pid, Nil)
-```
+<div class="api-entry-anchor" id="api-function-socket_disconnected" aria-hidden="true"></div>
 
 ### `socket_disconnected`
-
-Announce that a socket's connection has closed.
 
 ```gleam
 pub fn socket_disconnected(
@@ -252,9 +331,11 @@ pub fn socket_disconnected(
 ) -> Nil
 ```
 
-### `telemetry`
+Announce that a socket's connection has closed.
 
-Create a telemetry context from the channels configuration.
+<div class="api-entry-anchor" id="api-function-telemetry" aria-hidden="true"></div>
+
+### `telemetry`
 
 ```gleam
 pub fn telemetry(
@@ -263,9 +344,11 @@ pub fn telemetry(
 ) -> Telemetry
 ```
 
-### `telemetry_frame_stop`
+Create a telemetry context from the channels configuration.
 
-Emit exactly one terminal inbound-frame event.
+<div class="api-entry-anchor" id="api-function-telemetry_frame_stop" aria-hidden="true"></div>
+
+### `telemetry_frame_stop`
 
 ```gleam
 pub fn telemetry_frame_stop(
@@ -277,19 +360,23 @@ pub fn telemetry_frame_stop(
 ) -> Nil
 ```
 
+Emit exactly one terminal inbound-frame event.
+
+<div class="api-entry-anchor" id="api-function-telemetry_start" aria-hidden="true"></div>
+
 ### `telemetry_start`
-
-Start a timed transport operation.
-
- Returns zero when telemetry is disabled.
 
 ```gleam
 pub fn telemetry_start(Telemetry) -> Int
 ```
 
-### `telemetry_upgrade_stop`
+Start a timed transport operation.
 
-Emit exactly one terminal matched-upgrade event.
+ Returns zero when telemetry is disabled.
+
+<div class="api-entry-anchor" id="api-function-telemetry_upgrade_stop" aria-hidden="true"></div>
+
+### `telemetry_upgrade_stop`
 
 ```gleam
 pub fn telemetry_upgrade_stop(
@@ -298,3 +385,5 @@ pub fn telemetry_upgrade_stop(
   UpgradeOutcome
 ) -> Nil
 ```
+
+Emit exactly one terminal matched-upgrade event.

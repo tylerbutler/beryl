@@ -6,7 +6,7 @@ description: Collect telemetry events, read runtime counts, and export applicati
 beryl provides two sources of monitoring data:
 
 - Optional `:telemetry` events report rates, outcomes, and operation durations.
-- `beryl/stats.snapshot` reports local runtime state at one time.
+- `beryl/snapshot.get` reports local runtime state at one time.
 
 beryl does not include a Prometheus or OpenTelemetry exporter. Your application
 must aggregate, label, and export the data.
@@ -128,23 +128,23 @@ and tail latency rather than individual events.
 
 ## Read runtime counts
 
-`beryl/stats.snapshot(channels)` requests a point-in-time view from the
+`beryl/snapshot.get(channels)` requests a point-in-time view from the
 socket runtime represented by `channels`:
 
 ```gleam
-import beryl/stats
+import beryl/snapshot
 
-case stats.snapshot(channels) {
-  Ok(snapshot) -> {
-    let sockets = stats.connected_sockets(snapshot)
-    let joined_pairs = stats.joined_socket_topic_pairs(snapshot)
-    let topics = stats.active_topics(snapshot)
+case snapshot.get(channels) {
+  Ok(current) -> {
+    let sockets = snapshot.connected_sockets(current)
+    let joined_pairs = snapshot.joined_socket_topic_pairs(current)
+    let topics = snapshot.active_topics(current)
     // Publish these gauges through the application's metrics system.
   }
-  Error(stats.RuntimeUnavailable) -> {
+  Error(snapshot.RuntimeUnavailable) -> {
     // Supervisor restart or shutdown: report the scrape/poll as unavailable.
   }
-  Error(stats.RequestTimedOut) -> {
+  Error(snapshot.RequestTimedOut) -> {
     // The bounded request was not serviced in approximately one second.
   }
 }

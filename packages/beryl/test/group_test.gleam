@@ -4,10 +4,10 @@ import gleam/list
 import gleam/otp/static_supervisor
 import gleam/set
 import gleeunit/should
-import test_helpers
+import test_helper
 
-fn assert_crashes_within(op: fn() -> Nil, timeout_ms: Int) -> Nil {
-  let pid = process.spawn_unlinked(op)
+fn assert_crashes_within(operation: fn() -> Nil, timeout_ms: Int) -> Nil {
+  let pid = process.spawn_unlinked(operation)
   let monitor = process.monitor(pid)
   let selector =
     process.new_selector()
@@ -21,7 +21,7 @@ fn assert_crashes_within(op: fn() -> Nil, timeout_ms: Int) -> Nil {
   }
 }
 
-pub fn group_start_test() {
+pub fn group_start_test() -> Nil {
   let #(groups, spec) = group.child_spec()
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
@@ -30,7 +30,7 @@ pub fn group_start_test() {
   group.list_groups(groups) |> should.equal([])
 }
 
-pub fn group_handle_survives_supervised_restart_test() {
+pub fn group_handle_survives_supervised_restart_test() -> Nil {
   let #(groups, spec) = group.child_spec()
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
@@ -40,7 +40,7 @@ pub fn group_handle_survives_supervised_restart_test() {
   let assert Ok(old_pid) = process.subject_owner(group.subject(groups))
 
   process.kill(old_pid)
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() {
       case process.subject_owner(group.subject(groups)) {
         Ok(pid) -> pid != old_pid
@@ -55,7 +55,7 @@ pub fn group_handle_survives_supervised_restart_test() {
   group.create(groups, "after:restart") |> should.equal(Ok(Nil))
 }
 
-pub fn configured_call_timeout_is_used_test() {
+pub fn configured_call_timeout_is_used_test() -> Nil {
   let config =
     group.default_config()
     |> group.with_call_timeout(20)
@@ -70,7 +70,7 @@ pub fn configured_call_timeout_is_used_test() {
   )
 }
 
-pub fn group_create_and_list_test() {
+pub fn group_create_and_list_test() -> Nil {
   let assert Ok(groups) = group.start()
 
   let assert Ok(Nil) = group.create(groups, "team:eng")
@@ -82,20 +82,15 @@ pub fn group_create_and_list_test() {
   list.contains(names, "team:design") |> should.be_true()
 }
 
-pub fn group_already_exists_test() {
+pub fn group_already_exists_test() -> Nil {
   let assert Ok(groups) = group.start()
 
   let assert Ok(Nil) = group.create(groups, "team:eng")
-  let result = group.create(groups, "team:eng")
-  should.be_error(result)
-
-  case result {
-    Error(group.GroupAlreadyExists) -> Nil
-    _ -> should.fail()
-  }
+  group.create(groups, "team:eng")
+  |> should.equal(Error(group.GroupAlreadyExists("team:eng")))
 }
 
-pub fn group_add_topics_test() {
+pub fn group_add_topics_test() -> Nil {
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
 
@@ -108,7 +103,7 @@ pub fn group_add_topics_test() {
   set.contains(topics, "room:backend") |> should.be_true()
 }
 
-pub fn group_add_duplicate_topic_is_idempotent_test() {
+pub fn group_add_duplicate_topic_is_idempotent_test() -> Nil {
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
 
@@ -119,7 +114,7 @@ pub fn group_add_duplicate_topic_is_idempotent_test() {
   set.size(topics) |> should.equal(1)
 }
 
-pub fn group_remove_topic_test() {
+pub fn group_remove_topic_test() -> Nil {
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
   let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
@@ -132,24 +127,21 @@ pub fn group_remove_topic_test() {
   set.contains(topics, "room:backend") |> should.be_true()
 }
 
-pub fn group_not_found_test() {
+pub fn group_not_found_test() -> Nil {
   let assert Ok(groups) = group.start()
 
-  let result = group.add(groups, "nonexistent", "room:test")
-  should.be_error(result)
-  case result {
-    Error(group.GroupNotFound) -> Nil
-    _ -> should.fail()
-  }
+  group.add(groups, "nonexistent", "room:test")
+  |> should.equal(Error(group.GroupNotFound("nonexistent")))
 
   let result2 = group.topics(groups, "nonexistent")
   should.be_error(result2)
 
   let result3 = group.remove(groups, "nonexistent", "room:test")
   should.be_error(result3)
+  Nil
 }
 
-pub fn group_delete_test() {
+pub fn group_delete_test() -> Nil {
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
   let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
@@ -162,25 +154,22 @@ pub fn group_delete_test() {
   // Operations on deleted group fail
   let result = group.topics(groups, "team:eng")
   should.be_error(result)
+  Nil
 }
 
-pub fn group_delete_nonexistent_test() {
+pub fn group_delete_nonexistent_test() -> Nil {
   let assert Ok(groups) = group.start()
 
-  let result = group.delete(groups, "nonexistent")
-  should.be_error(result)
-  case result {
-    Error(group.GroupNotFound) -> Nil
-    _ -> should.fail()
-  }
+  group.delete(groups, "nonexistent")
+  |> should.equal(Error(group.GroupNotFound("nonexistent")))
 }
 
-pub fn group_empty_on_start_test() {
+pub fn group_empty_on_start_test() -> Nil {
   let assert Ok(groups) = group.start()
   group.list_groups(groups) |> should.equal([])
 }
 
-pub fn group_new_group_has_no_topics_test() {
+pub fn group_new_group_has_no_topics_test() -> Nil {
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
 

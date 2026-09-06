@@ -1,4 +1,4 @@
-name = "example_helpers"
+name = "example_helper"
 version = "0.1.0"
 description = "Shared helpers used across the beryl example apps"
 gleam = ">= 1.4.0"

@@ -1,6 +1,9 @@
 ---
 title: "beryl/presence/wire"
 description: "Phoenix-compatible wire encoding for presence diffs."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -9,11 +12,32 @@ description: "Phoenix-compatible wire encoding for presence diffs."
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
+<div class="api-reference-marker" aria-hidden="true"></div>
+
 Phoenix-compatible wire encoding for presence diffs.
+
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-encode_diff"><code>encode_diff</code></a></li>
+<li><a href="#api-function-encode_state"><code>encode_state</code></a></li>
+  </ul>
+</section>
+</nav>
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-encode_diff" aria-hidden="true"></div>
+
 ### `encode_diff`
+
+```gleam
+pub fn encode_diff(
+  presence.Diff,
+  String
+) -> json.Json
+```
 
 Encode a presence diff for one topic as a Phoenix-compatible payload.
 
@@ -27,14 +51,13 @@ Encode a presence diff for one topic as a Phoenix-compatible payload.
  }
  ```
 
-```gleam
-pub fn encode_diff(
-  presence.Diff,
-  String
-) -> json.Json
-```
+<div class="api-entry-anchor" id="api-function-encode_state" aria-hidden="true"></div>
 
 ### `encode_state`
+
+```gleam
+pub fn encode_state(List(presence.PresenceEntry)) -> json.Json
+```
 
 Encode a topic's full presence list as a Phoenix-compatible
  `presence_state` payload.
@@ -50,7 +73,3 @@ Encode a topic's full presence list as a Phoenix-compatible
  Phoenix clients expect a `presence_state` event with this payload after
  they join a presence-enabled topic. Incremental `presence_diff` events
  follow it. Build the entry list with `presence.list`.
-
-```gleam
-pub fn encode_state(List(presence.PresenceEntry)) -> json.Json
-```

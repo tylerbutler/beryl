@@ -7,8 +7,57 @@ on:
     branches: [main]
   workflow_call:
 
+env:
+  HEXPM_READ_API_KEY: ${{ secrets.HEXPM_API_KEY }}
+
 jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    name: Dependencies
+    outputs:
+      cache-key: ${{ steps.cache.outputs.cache-primary-key }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+
+      - name: Setup environment
+        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          run-deps: false
+
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
+
+      # Cache source dependencies and resolution fingerprints, not compiled
+      # output, so both Erlang versions can use the same cache.
+      - name: Restore Gleam dependencies
+        id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: gleam-deps-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: |
+            gleam-deps-${{ runner.os }}-
+
+      - name: Install Gleam dependencies
+        run: just deps-gleam
+
+      - name: Save Gleam dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
   test:
+    needs: dependencies
     runs-on: ubuntu-latest
     name: Test (Erlang ${{ matrix.erlang }})
     strategy:
@@ -32,24 +81,16 @@ jobs:
       - name: Setup mise tools
         uses: ./.github/actions/mise
 
-      # Caches Hex tarballs plus each package's build/packages dir, which
-      # holds the config_fingerprint files Gleam uses to decide whether to
-      # re-resolve versions. Without those fingerprints every fresh checkout
-      # re-resolves repeatedly and can trip the Hex API rate limit.
-      - name: Cache Gleam dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
             ~/.cache/gleam
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
-          restore-keys: |
-            gleam-deps-${{ runner.os }}-
-
-      - name: Install Gleam dependencies
-        run: just deps-gleam
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Check formatting
         run: just format-check
@@ -64,6 +105,7 @@ jobs:
         run: just test
 
   docs:
+    needs: dependencies
     runs-on: ubuntu-latest
     name: Docs
     steps:
@@ -77,20 +119,16 @@ jobs:
       - name: Setup mise tools
         uses: ./.github/actions/mise
 
-      - name: Cache Gleam dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
             ~/.cache/gleam
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
-          restore-keys: |
-            gleam-deps-${{ runner.os }}-
-
-      - name: Install Gleam dependencies
-        run: just deps-gleam
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
@@ -145,6 +183,7 @@ jobs:
         run: just site-e2e
 
   examples:
+    needs: dependencies
     runs-on: ubuntu-latest
     name: Examples
     steps:
@@ -168,20 +207,19 @@ jobs:
       - name: Setup mise tools
         uses: ./.github/actions/mise
 
-      - name: Cache Gleam dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
             ~/.cache/gleam
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
-          restore-keys: |
-            gleam-deps-${{ runner.os }}-
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
 
-      - name: Install dependencies
-        run: just deps
+      - name: Install example dependencies
+        run: pnpm -C examples install --frozen-lockfile
 
       - name: Install Playwright browsers
         run: pnpm -C examples exec playwright install --with-deps chromium
@@ -193,6 +231,7 @@ jobs:
         run: just examples-test
 
   load-smoke:
+    needs: dependencies
     runs-on: ubuntu-latest
     timeout-minutes: 5
     name: Protocol smoke (Erlang ${{ matrix.erlang }}, ${{ matrix.transport }})
@@ -225,20 +264,16 @@ jobs:
       - name: Setup mise tools
         uses: ./.github/actions/mise
 
-      - name: Cache Gleam dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
             ~/.cache/gleam
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
-          restore-keys: |
-            gleam-deps-${{ runner.os }}-
-
-      - name: Install Gleam dependencies
-        run: just deps-gleam
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Validate pinned k6 workload
         run: just load-check protocol-smoke

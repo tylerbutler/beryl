@@ -45,7 +45,7 @@ fn start_two_sockets() -> #(beryl.Sockets, helper.Frames, helper.Frames) {
   #(channels, first, second)
 }
 
-pub fn push_reaches_only_the_socket_whose_callback_ran_test() {
+pub fn push_reaches_only_the_socket_whose_callback_ran_test() -> Nil {
   let #(channels, first, second) = start_two_sockets()
 
   helper.push(channels, "s1", "room:a", "go", "r-3")
@@ -58,7 +58,7 @@ pub fn push_reaches_only_the_socket_whose_callback_ran_test() {
   others |> string.contains("\"mine\"") |> should.be_false
 }
 
-pub fn broadcast_from_excludes_the_sender_and_reaches_the_rest_test() {
+pub fn broadcast_from_excludes_the_sender_and_reaches_the_rest_test() -> Nil {
   let #(channels, first, second) = start_two_sockets()
 
   helper.push(channels, "s1", "room:a", "go", "r-3")
@@ -76,7 +76,7 @@ pub fn broadcast_from_excludes_the_sender_and_reaches_the_rest_test() {
   helper.recv_none(second)
 }
 
-pub fn fan_out_is_scoped_to_the_channels_own_topic_test() {
+pub fn fan_out_is_scoped_to_the_channels_own_topic_test() -> Nil {
   let #(channels, first, second) = start_two_sockets()
 
   // A second socket joins a *different* topic served by the same handler.

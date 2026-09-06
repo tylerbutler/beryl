@@ -1,7 +1,6 @@
 import starlight from "@astrojs/starlight";
 import mermaid from "astro-mermaid";
 import a11yEmoji from "@fec/remark-a11y-emoji";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "astro/config";
 import starlightLinksValidator from "starlight-links-validator";
 import starlightLlmsTxt from "starlight-llms-txt";
@@ -9,6 +8,9 @@ import starlightLlmsTxt from "starlight-llms-txt";
 // https://astro.build/config
 export default defineConfig({
 	site: "https://beryl.tylerbutler.com",
+	redirects: {
+		"/reference/api/beryl-stats/": "/reference/api/beryl-snapshot/",
+	},
 	prefetch: {
 		defaultStrategy: "hover",
 		prefetchAll: true,
@@ -108,7 +110,7 @@ export default defineConfig({
 							slug: "tutorial",
 						},
 						{
-							label: "1. Elm Architecture without a DOM",
+							label: "1. Elm architecture without a DOM",
 							slug: "tutorial/the-elm-architecture-without-a-dom",
 						},
 						{
@@ -280,14 +282,5 @@ export default defineConfig({
 		remarkPlugins: [
 			a11yEmoji,
 		],
-	},
-	vite: {
-		server: {
-			fs: {
-				// PresenceLab.astro imports the Gleam-compiled Lustre client
-				// from interactive/build, outside the Astro root.
-				allow: [fileURLToPath(new URL("./interactive/build", import.meta.url))],
-			},
-		},
 	},
 });

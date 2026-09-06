@@ -1,5 +1,17 @@
 import { expect, test } from "@playwright/test";
 
+test("loads website assets alongside the interactive client", async ({ page, baseURL }) => {
+  const failedAssets = [];
+  page.on("response", (response) => {
+    if (response.url().startsWith(baseURL) && response.status() >= 400) {
+      failedAssets.push(response.url());
+    }
+  });
+  await page.goto("/examples/");
+  await expect(page.locator("beryl-presence-lab").getByTestId("connect-primary")).toBeVisible();
+  expect(failedAssets).toEqual([]);
+});
+
 test("static fallback remains readable without JavaScript", async ({ page }) => {
   await page.goto("/examples/");
   await expect(page.getByText("Enable JavaScript to run the live scenario")).toBeVisible();

@@ -1,6 +1,9 @@
 ---
 title: "beryl/socket"
 description: "Types for building app-side dispatch systems with `beryl.child_spec`."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -9,13 +12,15 @@ description: "Types for building app-side dispatch systems with `beryl.child_spe
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
+<div class="api-reference-marker" aria-hidden="true"></div>
+
 Types for building app-side dispatch systems with `beryl.child_spec`.
 
  With app-side dispatch the application owns routing: beryl delivers
  every wire event for a socket to one `update` function, and the
  function returns the next model plus a list of `Effect`s for beryl to
  apply. There are no channel modules, no registry, and no type erasure.
- Each socket has a single `model` and a single `msg` type.
+ Each socket has a single `model` and a single `message` type.
 
  ## Effect ordering guarantee
 
@@ -36,11 +41,36 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
  continue, so a broadcast from elsewhere may arrive between two effects
  from this socket.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-connectinfo"><code>ConnectInfo</code></a></li>
+<li><a href="#api-type-connectseed"><code>ConnectSeed</code></a></li>
+<li><a href="#api-type-effect"><code>Effect</code></a></li>
+<li><a href="#api-type-input"><code>Input</code></a></li>
+<li><a href="#api-type-joinref"><code>JoinRef</code></a></li>
+<li><a href="#api-type-next"><code>Next</code></a></li>
+<li><a href="#api-type-replyref"><code>ReplyRef</code></a></li>
+<li><a href="#api-type-sender"><code>Sender</code></a></li>
+<li><a href="#api-type-stopreason"><code>StopReason</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-empty_seed"><code>empty_seed</code></a></li>
+<li><a href="#api-function-notify"><code>notify</code></a></li>
+<li><a href="#api-function-reply_ok"><code>reply_ok</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
-### `ConnectInfo`
+<div class="api-entry-anchor" id="api-type-connectinfo" aria-hidden="true"></div>
 
-Everything the app's `init` receives when a socket connects.
+### `ConnectInfo`
 
 ```gleam
 pub type ConnectInfo(a) {
@@ -52,12 +82,11 @@ pub type ConnectInfo(a) {
 }
 ```
 
+Everything the app's `init` receives when a socket connects.
+
+<div class="api-entry-anchor" id="api-type-connectseed" aria-hidden="true"></div>
+
 ### `ConnectSeed`
-
-Connection metadata that the transport builds before the WebSocket
- upgrade.
-
- The app's `init` function receives it through `ConnectInfo`.
 
 ```gleam
 pub type ConnectSeed {
@@ -70,10 +99,14 @@ pub type ConnectSeed {
 }
 ```
 
-### `Effect`
+Connection metadata that the transport builds before the WebSocket
+ upgrade.
 
-One update may return several effects, applied strictly in list order
- (see the module docs for the ordering guarantee).
+ The app's `init` function receives it through `ConnectInfo`.
+
+<div class="api-entry-anchor" id="api-type-effect" aria-hidden="true"></div>
+
+### `Effect`
 
 ```gleam
 pub type Effect {
@@ -131,70 +164,105 @@ pub type Effect {
 }
 ```
 
+One update may return several effects, applied strictly in list order
+ (see the module docs for the ordering guarantee).
+
 #### Constructors
 
-##### `AcceptJoin(
+##### `AcceptJoin`
+
+```gleam
+AcceptJoin(
   ref: JoinRef,
   reply: option.Option(json.Json)
-)`
+)
+```
 
 Accept a pending join. This subscribes the socket to the topic and sends
  the join acknowledgment with an optional reply payload. The effect is
  valid only while the `Join` input's ref is pending.
 
-##### `RejectJoin(
+##### `RejectJoin`
+
+```gleam
+RejectJoin(
   ref: JoinRef,
   reason: json.Json
-)`
+)
+```
 
 Reject a pending join with an error payload.
 
-##### `ReplyOk(
+##### `ReplyOk`
+
+```gleam
+ReplyOk(
   ref: ReplyRef,
   payload: json.Json
-)`
+)
+```
 
 Reply successfully to a client message ref.
 
-##### `ReplyError(
+##### `ReplyError`
+
+```gleam
+ReplyError(
   ref: ReplyRef,
   payload: json.Json
-)`
+)
+```
 
 Reply with an error to a client message ref.
 
-##### `Push(
+##### `Push`
+
+```gleam
+Push(
   topic: String,
   event: String,
   payload: json.Json
-)`
+)
+```
 
 Push a server-initiated message to this socket on a joined topic.
  The runtime drops pushes to topics that this socket has not joined and
  logs a warning. Put a `Push` after its topic's `AcceptJoin`.
 
-##### `Broadcast(
+##### `Broadcast`
+
+```gleam
+Broadcast(
   topic: String,
   event: String,
   payload: json.Json
-)`
+)
+```
 
 Broadcast to every subscriber of a topic (including this socket, when
  joined). Distributed via PubSub when configured.
 
-##### `BroadcastFrom(
+##### `BroadcastFrom`
+
+```gleam
+BroadcastFrom(
   topic: String,
   event: String,
   payload: json.Json
-)`
+)
+```
 
 Broadcast to every subscriber of a topic except this socket.
 
-##### `PresenceTrack(
+##### `PresenceTrack`
+
+```gleam
+PresenceTrack(
   topic: String,
   key: String,
   meta: json.Json
-)`
+)
+```
 
 Track this socket's presence under a key in a topic and broadcast the
  corresponding `presence_diff` join. This effect requires a presence
@@ -206,10 +274,14 @@ Track this socket's presence under a key in a topic and broadcast the
  both the leave and the join. Later effects wait for the mutation, as
  described in the module documentation. Other sockets do not wait.
 
-##### `PresenceUntrack(
+##### `PresenceUntrack`
+
+```gleam
+PresenceUntrack(
   topic: String,
   key: String
-)`
+)
+```
 
 Untrack a presence previously tracked with `PresenceTrack` and
  broadcast the corresponding `presence_diff` leave. When the topic
@@ -219,11 +291,15 @@ Untrack a presence previously tracked with `PresenceTrack` and
  This effect requires a presence handle (`beryl.with_presence_handle`).
  Without a handle, the runtime drops the effect and logs a warning.
 
-##### `PushPresence(
+##### `PushPresence`
+
+```gleam
+PushPresence(
   topic: String,
   event: String,
   encode: fn(List(presence.PresenceEntry)) -> json.Json
-)`
+)
+```
 
 Push a presence snapshot for a topic to this socket. A payload built
  inside `update` sees presence from *before* this effects list. In
@@ -234,11 +310,15 @@ Push a presence snapshot for a topic to this socket. A payload built
  Without a handle, the runtime drops the effect and logs a warning.
  Like `Push`, the runtime drops it if the topic is not joined.
 
-##### `BroadcastPresence(
+##### `BroadcastPresence`
+
+```gleam
+BroadcastPresence(
   topic: String,
   event: String,
   encode: fn(List(presence.PresenceEntry)) -> json.Json
-)`
+)
+```
 
 Broadcast a presence snapshot for a topic to all its subscribers,
  with the same apply-time `encode` semantics as `PushPresence`.
@@ -247,14 +327,19 @@ Broadcast a presence snapshot for a topic to all its subscribers,
  (`beryl.with_presence_handle`). Without a handle, the runtime drops the
  effect and logs a warning.
 
-##### `KickTopic(topic: String)`
+##### `KickTopic`
 
-Close this socket's subscription to a topic. The topic receives a
- `Closed(topic, Shutdown)` input and the client a terminal frame.
+```gleam
+KickTopic(topic: String)
+```
+
+Close this socket's subscription to a topic. The topic receives
+ `Closed(topic, Shutdown)`. If the codec has a close encoder, the client
+ also receives its terminal frame.
+
+<div class="api-entry-anchor" id="api-type-input" aria-hidden="true"></div>
 
 ### `Input`
-
-Everything the runtime delivers to the app's `update` function.
 
 ```gleam
 pub type Input(a) {
@@ -281,52 +366,80 @@ pub type Input(a) {
 }
 ```
 
+Everything the runtime delivers to the app's `update` function.
+
 #### Constructors
 
-##### `Join(
+##### `Join`
+
+```gleam
+Join(
   topic: String,
   payload: dynamic.Dynamic,
   ref: JoinRef
-)`
+)
+```
 
 A client asked to join a topic. Return an `AcceptJoin` or `RejectJoin`
  effect. The runtime rejects a `Join` that is unanswered at the end of
  the update turn.
 
-##### `Message(
+##### `Message`
+
+```gleam
+Message(
   topic: String,
   event: String,
   payload: dynamic.Dynamic,
   ref: option.Option(ReplyRef)
-)`
+)
+```
 
 A client message on a joined topic. `ref` is present for messages
  that expect a reply.
 
-##### `Binary(
+##### `Binary`
+
+```gleam
+Binary(
   topic: String,
   data: BitArray
-)`
+)
+```
 
 A binary frame on a joined topic (codecs without a binary decoder
  deliver the raw frame once per joined topic).
 
-##### `Closed(
+##### `Closed`
+
+```gleam
+Closed(
   topic: String,
   reason: StopReason
-)`
+)
+```
 
 A joined topic ended because of a client leave, kick, crash, or socket
  close. The runtime sends this input on every exit path. Use it to remove
  per-topic state from the model. Frames pushed to the closing topic are
  dropped; broadcasts still reach the topic's remaining subscribers.
 
-##### `Info(a)`
+##### `Info`
+
+```gleam
+Info(a)
+```
 
 A typed server-side message, sent via the socket's `Sender` (see
  `ConnectInfo.self` and `notify`).
 
+<div class="api-entry-anchor" id="api-type-joinref" aria-hidden="true"></div>
+
 ### `JoinRef`
+
+```gleam
+pub type JoinRef
+```
 
 A pending join correlation handle.
 
@@ -334,16 +447,9 @@ A pending join correlation handle.
  its pending join. It carries a unique runtime token. A delayed completion
  for an older same-topic join cannot answer a replacement or retry.
 
-```gleam
-pub type JoinRef
-```
+<div class="api-entry-anchor" id="api-type-next" aria-hidden="true"></div>
 
 ### `Next`
-
-The result of one `update` call.
-
- It contains the next model and effects, or an instruction to stop the
- socket.
 
 ```gleam
 pub type Next(a) {
@@ -355,21 +461,41 @@ pub type Next(a) {
 }
 ```
 
+The result of one `update` call.
+
+ It contains the next model and effects, or an instruction to stop the
+ socket.
+
 #### Constructors
 
-##### `Next(
+##### `Next`
+
+```gleam
+Next(
   model: a,
   effects: List(Effect)
-)`
+)
+```
 
 Continue with the given model, applying the effects in order.
 
-##### `Stop(reason: StopReason)`
+##### `Stop`
+
+```gleam
+Stop(reason: StopReason)
+```
 
 Tear down the socket: every joined topic receives a `Closed` input,
- terminal frames are sent, and the transport connection is closed.
+ configured terminal frames are sent, and the transport connection is
+ closed.
+
+<div class="api-entry-anchor" id="api-type-replyref" aria-hidden="true"></div>
 
 ### `ReplyRef`
+
+```gleam
+pub type ReplyRef
+```
 
 A client message reply correlation handle.
 
@@ -378,11 +504,13 @@ A client message reply correlation handle.
  asynchronous lookup. They are single-use. They remain valid only while
  the topic instance that received the message stays open.
 
-```gleam
-pub type ReplyRef
-```
+<div class="api-entry-anchor" id="api-type-sender" aria-hidden="true"></div>
 
 ### `Sender`
+
+```gleam
+pub type Sender(a)
+```
 
 A typed handle for sending server-side messages to one socket.
 
@@ -390,16 +518,9 @@ A typed handle for sending server-side messages to one socket.
  `notify` with it. The socket's `update` function receives the message as
  an `Info` event. This typed send does not erase the message type.
 
-```gleam
-pub type Sender(a)
-```
+<div class="api-entry-anchor" id="api-type-stopreason" aria-hidden="true"></div>
 
 ### `StopReason`
-
-Why a socket or topic is stopping.
-
- The runtime delivers this reason in `Closed` inputs, and `Stop` accepts it.
- Match with a catch-all (`_`) arm. Minor releases can add stop reasons.
 
 ```gleam
 pub type StopReason {
@@ -410,21 +531,43 @@ pub type StopReason {
 }
 ```
 
+Why a socket or topic is stopping.
+
+ The runtime delivers this reason in `Closed` inputs, and `Stop` accepts it.
+ The variants are exhaustive; match each reason explicitly. Adding a
+ variant affects API compatibility and requires updating exhaustive matches.
+
 #### Constructors
 
 ##### `Normal`
+
+```gleam
+Normal
+```
 
 Normal shutdown (client left or disconnected cleanly).
 
 ##### `Shutdown`
 
+```gleam
+Shutdown
+```
+
 Server-initiated shutdown (system stop, `KickTopic`).
 
 ##### `HeartbeatTimeout`
 
+```gleam
+HeartbeatTimeout
+```
+
 The client failed to send a heartbeat within the configured timeout.
 
-##### `Errored(String)`
+##### `Errored`
+
+```gleam
+Errored(String)
+```
 
 An error stopped the socket or topic. The name `Errored` prevents an
  unqualified import from shadowing the prelude's `Result` `Error`
@@ -432,20 +575,19 @@ An error stopped the socket or topic. The name `Errored` prevents an
 
 ## Functions
 
-### `empty_seed`
+<div class="api-entry-anchor" id="api-function-empty_seed" aria-hidden="true"></div>
 
-Return an empty connect seed for tests and transports with no request data.
+### `empty_seed`
 
 ```gleam
 pub fn empty_seed() -> ConnectSeed
 ```
 
+Return an empty connect seed for tests and transports with no request data.
+
+<div class="api-entry-anchor" id="api-function-notify" aria-hidden="true"></div>
+
 ### `notify`
-
-Send a typed server-side message to a socket.
-
- The socket's `update` function receives `Info(message)`. The runtime
- ignores the message if the socket has disconnected.
 
 ```gleam
 pub fn notify(
@@ -454,14 +596,14 @@ pub fn notify(
 ) -> Nil
 ```
 
+Send a typed server-side message to a socket.
+
+ The socket's `update` function receives `Info(message)`. The runtime
+ ignores the message if the socket has disconnected.
+
+<div class="api-entry-anchor" id="api-function-reply_ok" aria-hidden="true"></div>
+
 ### `reply_ok`
-
-Return a `ReplyOk` effect when the client supplied a ref.
-
- `Message` inputs carry `Option(ReplyRef)` (refless messages expect no
- reply) while the `ReplyOk` effect demands a `ReplyRef`, so every handler
- that replies conditionally needs this check. This function returns no
- effects when the client did not supply a ref.
 
 ```gleam
 pub fn reply_ok(
@@ -469,3 +611,10 @@ pub fn reply_ok(
   json.Json
 ) -> List(Effect)
 ```
+
+Return a `ReplyOk` effect when the client supplied a ref.
+
+ `Message` inputs carry `Option(ReplyRef)` (refless messages expect no
+ reply) while the `ReplyOk` effect demands a `ReplyRef`, so every handler
+ that replies conditionally needs this check. This function returns no
+ effects when the client did not supply a ref.

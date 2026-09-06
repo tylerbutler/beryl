@@ -1,6 +1,9 @@
 ---
 title: "beryl/pubsub"
-description: "PubSub - Distributed publish/subscribe using Erlang pg"
+description: "Distributed PubSub with Erlang `pg`"
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -9,11 +12,13 @@ description: "PubSub - Distributed publish/subscribe using Erlang pg"
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
-PubSub - Distributed publish/subscribe using Erlang pg
+<div class="api-reference-marker" aria-hidden="true"></div>
 
- Provides topic-based pub/sub messaging backed by Erlang's built-in `pg`
- module. Subscribers are tracked by process group, so messages are delivered
- to all nodes in the cluster automatically.
+Distributed PubSub with Erlang `pg`
+
+ This module provides topic-based PubSub backed by Erlang's built-in `pg`
+ module. Subscribers are tracked by process group, so messages are
+ delivered to all connected nodes in the cluster.
 
  The payload is generic: `PubSub(payload)` and `Message(payload)` carry
  whatever Gleam type a given scope is started with. A broadcast sends that
@@ -24,7 +29,7 @@ PubSub - Distributed publish/subscribe using Erlang pg
  browser); payloads that never leave the cluster are cheaper and safer as
  plain Gleam types.
 
- ## Quick Start
+ ## Quick start
 
  ```gleam
  let pubsub_handle = pubsub.start(pubsub.default_config())
@@ -43,16 +48,60 @@ PubSub - Distributed publish/subscribe using Erlang pg
    |> pubsub.selecting(subscriber, RemoteBroadcast)
  ```
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-message"><code>Message</code></a></li>
+<li><a href="#api-type-pubsub"><code>PubSub</code></a></li>
+<li><a href="#api-type-pubsubconfig"><code>PubSubConfig</code></a></li>
+<li><a href="#api-type-pubsubfrom"><code>PubSubFrom</code></a></li>
+<li><a href="#api-type-subscriber"><code>Subscriber</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-broadcast"><code>broadcast</code></a></li>
+<li><a href="#api-function-broadcast_from"><code>broadcast_from</code></a></li>
+<li><a href="#api-function-broadcast_from_socket"><code>broadcast_from_socket</code></a></li>
+<li><a href="#api-function-config_with_scope"><code>config_with_scope</code></a></li>
+<li><a href="#api-function-default_config"><code>default_config</code></a></li>
+<li><a href="#api-function-join"><code>join</code></a></li>
+<li><a href="#api-function-leave"><code>leave</code></a></li>
+<li><a href="#api-function-local_broadcast"><code>local_broadcast</code></a></li>
+<li><a href="#api-function-selecting"><code>selecting</code></a></li>
+<li><a href="#api-function-start"><code>start</code></a></li>
+<li><a href="#api-function-subscriber"><code>subscriber</code></a></li>
+<li><a href="#api-function-subscriber_count"><code>subscriber_count</code></a></li>
+<li><a href="#api-function-subscribers"><code>subscribers</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
+
 ### `Message`
+
+```gleam
+pub type Message(a) {
+  Message(
+    topic: String,
+    event: String,
+    payload: a,
+    from: PubSubFrom
+  )
+}
+```
 
 A PubSub message delivered to subscribers.
 
  This type is transparent. Subscribers can inspect the topic, event,
  payload, and sender metadata in their process mailbox.
 
- ## Frozen wire contract
+ #### Frozen wire contract
 
  beryl sends broadcasts **raw between nodes** through `pg` as a five-element
  tuple. The PubSub scope atom comes first. The four message fields follow in
@@ -66,18 +115,13 @@ A PubSub message delivered to subscribers.
  `selecting`. It safely adds the subscriber's raw mailbox messages to a
  typed `Selector`. Do not match the raw process message yourself.
 
-```gleam
-pub type Message(a) {
-  Message(
-    topic: String,
-    event: String,
-    payload: a,
-    from: PubSubFrom
-  )
-}
-```
+<div class="api-entry-anchor" id="api-type-pubsub" aria-hidden="true"></div>
 
 ### `PubSub`
+
+```gleam
+pub type PubSub(a)
+```
 
 A running PubSub instance.
 
@@ -86,26 +130,22 @@ A running PubSub instance.
  sent through this instance. The scope identifies the runtime instance.
  All handles for one scope must use the same payload type.
 
-```gleam
-pub type PubSub(a)
-```
+<div class="api-entry-anchor" id="api-type-pubsubconfig" aria-hidden="true"></div>
 
 ### `PubSubConfig`
+
+```gleam
+pub type PubSubConfig
+```
 
 PubSub configuration.
 
  Build with `default_config` or `config_with_scope` so the underlying pg
  scope representation can evolve without exposing record fields.
 
-```gleam
-pub type PubSubConfig
-```
+<div class="api-entry-anchor" id="api-type-pubsubfrom" aria-hidden="true"></div>
 
 ### `PubSubFrom`
-
-Identifies the sender of a broadcast.
-
- Part of the frozen wire contract described on `Message`.
 
 ```gleam
 pub type PubSubFrom {
@@ -118,24 +158,46 @@ pub type PubSubFrom {
 }
 ```
 
+Identifies the sender of a broadcast.
+
+ Part of the frozen wire contract described on `Message`.
+
 #### Constructors
 
 ##### `System`
 
+```gleam
+System
+```
+
 The broadcast came from the system and has no sender PID.
 
-##### `FromPid(process.Pid)`
+##### `FromPid`
+
+```gleam
+FromPid(process.Pid)
+```
 
 The broadcast came from a specific process.
 
-##### `FromSocket(
+##### `FromSocket`
+
+```gleam
+FromSocket(
   process.Pid,
   String
-)`
+)
+```
 
 The broadcast came from a process and must exclude a socket ID.
 
+<div class="api-entry-anchor" id="api-type-subscriber" aria-hidden="true"></div>
+
 ### `Subscriber`
+
+```gleam
+pub type Subscriber(a)
+```
 
 A typed subscription handle owned by a single process.
 
@@ -147,15 +209,11 @@ A typed subscription handle owned by a single process.
  Create it in the receiving process, such as an actor's initializer.
  A `Subject` delivers messages only to its owner.
 
-```gleam
-pub type Subscriber(a)
-```
-
 ## Functions
 
-### `broadcast`
+<div class="api-entry-anchor" id="api-function-broadcast" aria-hidden="true"></div>
 
-Broadcast a message to all topic subscribers on all nodes.
+### `broadcast`
 
 ```gleam
 pub fn broadcast(
@@ -166,9 +224,11 @@ pub fn broadcast(
 ) -> Nil
 ```
 
-### `broadcast_from`
+Broadcast a message to all topic subscribers on all nodes.
 
-Broadcast a message to all subscribers except a specific PID.
+<div class="api-entry-anchor" id="api-function-broadcast_from" aria-hidden="true"></div>
+
+### `broadcast_from`
 
 ```gleam
 pub fn broadcast_from(
@@ -180,11 +240,11 @@ pub fn broadcast_from(
 ) -> Nil
 ```
 
+Broadcast a message to all subscribers except a specific PID.
+
+<div class="api-entry-anchor" id="api-function-broadcast_from_socket" aria-hidden="true"></div>
+
 ### `broadcast_from_socket`
-
-Broadcast a message to all subscribers except a process.
-
- Preserve a socket ID that receiving runtimes must exclude locally.
 
 ```gleam
 pub fn broadcast_from_socket(
@@ -197,7 +257,17 @@ pub fn broadcast_from_socket(
 ) -> Nil
 ```
 
+Broadcast a message to all subscribers except a process.
+
+ Preserve a socket ID that receiving runtimes must exclude locally.
+
+<div class="api-entry-anchor" id="api-function-config_with_scope" aria-hidden="true"></div>
+
 ### `config_with_scope`
+
+```gleam
+pub fn config_with_scope(String) -> PubSubConfig
+```
 
 Create a PubSub configuration with a custom scope name.
 
@@ -222,24 +292,19 @@ Create a PubSub configuration with a custom scope name.
  // pubsub.config_with_scope(database_row.name)
  ```
 
-```gleam
-pub fn config_with_scope(String) -> PubSubConfig
-```
+<div class="api-entry-anchor" id="api-function-default_config" aria-hidden="true"></div>
 
 ### `default_config`
-
-Create a default PubSub configuration with scope `beryl_pubsub`.
 
 ```gleam
 pub fn default_config() -> PubSubConfig
 ```
 
+Create a default PubSub configuration with scope `beryl_pubsub`.
+
+<div class="api-entry-anchor" id="api-function-join" aria-hidden="true"></div>
+
 ### `join`
-
-Join a topic so this subscriber receives broadcasts sent to it.
-
- A subscriber can join many topics. All topics deliver through its one
- subject. Joining a topic is idempotent.
 
 ```gleam
 pub fn join(
@@ -248,9 +313,14 @@ pub fn join(
 ) -> Nil
 ```
 
-### `leave`
+Join a topic so this subscriber receives broadcasts sent to it.
 
-Leave a topic previously joined with `join`.
+ A subscriber can join many topics. All topics deliver through its one
+ subject. Joining a topic is idempotent.
+
+<div class="api-entry-anchor" id="api-function-leave" aria-hidden="true"></div>
+
+### `leave`
 
 ```gleam
 pub fn leave(
@@ -259,9 +329,11 @@ pub fn leave(
 ) -> Nil
 ```
 
-### `local_broadcast`
+Leave a topic previously joined with `join`.
 
-Broadcast a message only to subscribers on the current node.
+<div class="api-entry-anchor" id="api-function-local_broadcast" aria-hidden="true"></div>
+
+### `local_broadcast`
 
 ```gleam
 pub fn local_broadcast(
@@ -272,7 +344,19 @@ pub fn local_broadcast(
 ) -> Nil
 ```
 
+Broadcast a message only to subscribers on the current node.
+
+<div class="api-entry-anchor" id="api-function-selecting" aria-hidden="true"></div>
+
 ### `selecting`
+
+```gleam
+pub fn selecting(
+  process.Selector(a),
+  Subscriber(b),
+  fn(Message(b)) -> a
+) -> process.Selector(a)
+```
 
 Add a subscriber's PubSub message delivery to a `Selector`, alongside a
  process's own subjects.
@@ -295,31 +379,32 @@ Add a subscriber's PubSub message delivery to a `Selector`, alongside a
    |> pubsub.selecting(subscriber, RemoteBroadcast)
  ```
 
-```gleam
-pub fn selecting(
-  process.Selector(a),
-  Subscriber(b),
-  fn(Message(b)) -> a
-) -> process.Selector(a)
-```
+<div class="api-entry-anchor" id="api-function-start" aria-hidden="true"></div>
 
 ### `start`
 
+```gleam
+pub fn start(PubSubConfig) -> PubSub(a)
+```
+
 Start a PubSub instance.
 
- This starts a pg scope. If another node or an earlier call started the
- scope, this function does nothing.
+ This starts the configured `pg` scope on the current node. Repeated calls
+ on the same node are harmless. Each participating node must start the same
+ scope.
 
  `payload` is fixed by how the returned value is used or annotated at the
  call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.
  Starting the same scope again returns another handle to the same runtime
  instance, so every use of that scope must choose the same payload type.
 
-```gleam
-pub fn start(PubSubConfig) -> PubSub(a)
-```
+<div class="api-entry-anchor" id="api-function-subscriber" aria-hidden="true"></div>
 
 ### `subscriber`
+
+```gleam
+pub fn subscriber(PubSub(a)) -> Subscriber(a)
+```
 
 Create a subscription handle owned by the current process.
 
@@ -331,13 +416,9 @@ Create a subscription handle owned by the current process.
  `selecting` uses each subscriber's scope to keep their raw mailbox messages
  separate.
 
-```gleam
-pub fn subscriber(PubSub(a)) -> Subscriber(a)
-```
+<div class="api-entry-anchor" id="api-function-subscriber_count" aria-hidden="true"></div>
 
 ### `subscriber_count`
-
-Return the number of topic subscribers on all nodes.
 
 ```gleam
 pub fn subscriber_count(
@@ -346,9 +427,11 @@ pub fn subscriber_count(
 ) -> Int
 ```
 
-### `subscribers`
+Return the number of topic subscribers on all nodes.
 
-Return all topic subscribers on all nodes.
+<div class="api-entry-anchor" id="api-function-subscribers" aria-hidden="true"></div>
+
+### `subscribers`
 
 ```gleam
 pub fn subscribers(
@@ -356,3 +439,5 @@ pub fn subscribers(
   String
 ) -> List(process.Pid)
 ```
+
+Return all topic subscribers on all nodes.

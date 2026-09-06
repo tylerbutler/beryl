@@ -130,6 +130,7 @@ test("generates an index and one page per module", async () => {
 		const index = await readFile(path.join(outputDir, "index.md"), "utf8");
 		assert.match(index, /title: API reference/);
 		assert.match(index, /`beryl` `9\.9\.9`/);
+		assert.match(index, /class="api-module-list"/);
 		// Modules are sorted alphabetically: beryl before beryl/channel.
 		assert.ok(index.indexOf("/reference/api/beryl/") < index.indexOf("/reference/api/beryl-channel/"));
 	});
@@ -161,6 +162,29 @@ test("renders types, aliases, constants, and functions", async () => {
 		assert.match(page, /coords: #\(Int, Int\)/);
 		assert.match(page, /callback: fn\(String\) -> Nil/);
 		assert.match(page, /-> HandleResult\(a\)/);
+		assert.ok(
+			page.indexOf("pub fn handle(") <
+				page.indexOf("Handle an inbound message."),
+		);
+		assert.match(page, /class="api-symbol-index"/);
+		assert.match(page, /href="#api-function-handle"/);
+		assert.match(page, /id="api-function-handle"/);
+		assert.match(page, /maxHeadingLevel: 2/);
+	});
+});
+
+test("keeps nested documentation headings below their API symbol", async () => {
+	const nestedFixture = structuredClone(fixture);
+	nestedFixture.modules["beryl/channel"].functions.handle.documentation =
+		"Handle an inbound message.\n\n## Example\n\nUse `handle`.";
+
+	await withFixture(async ({ jsonPath, outputDir }) => {
+		await writeFile(jsonPath, JSON.stringify(nestedFixture));
+		await generateReference({ docsJsonPath: jsonPath, outputDir });
+		const page = await readFile(path.join(outputDir, "beryl-channel.md"), "utf8");
+
+		assert.match(page, /#### Example/);
+		assert.doesNotMatch(page, /\n## Example/);
 	});
 });
 
@@ -205,8 +229,8 @@ test("quotes frontmatter so prose punctuation cannot break the YAML", async () =
 				version: "0.2.0",
 				modules: {
 					"beryl/channel": {
-						// A colon in the first line is bare-YAML poison, and a pipe
-						// would split the module table row on the index page.
+						// A colon in the first line is bare-YAML poison, and HTML-sensitive
+						// characters must stay literal in the generated module ledger.
 						documentation: [
 							'The channel surface: a "pattern" | a callback.',
 							"",
@@ -232,18 +256,17 @@ test("quotes frontmatter so prose punctuation cannot break the YAML", async () =
 			frontmatter,
 			/description: "The channel surface: a \\"pattern\\" \| a callback\."/,
 		);
-		// Every frontmatter value is a quoted scalar, so no bare `:` or `#`
-		// can be reinterpreted as YAML structure.
-		for (const line of frontmatter.trim().split("\n")) {
+		// Prose-bearing frontmatter values are quoted scalars, so no bare `:`
+		// or `#` can be reinterpreted as YAML structure.
+		for (const line of frontmatter.trim().split("\n").slice(0, 2)) {
 			assert.match(line, /^[a-z]+: ".*"$/);
 		}
 
 		const index = await readFile(path.join(outputDir, "index.md"), "utf8");
-		const row = index
-			.split("\n")
-			.find((line) => line.includes("/reference/api/beryl-channel/"));
-		// Escaped pipe keeps the row at exactly two cells.
-		assert.equal(row.split(/(?<!\\)\|/).length - 2, 2);
+		assert.match(
+			index,
+			/The channel surface: a &quot;pattern&quot; \| a callback\./,
+		);
 	} finally {
 		await rm(dir, { force: true, recursive: true });
 	}

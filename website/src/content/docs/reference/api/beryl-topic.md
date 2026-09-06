@@ -1,6 +1,9 @@
 ---
 title: "beryl/topic"
 description: "Pattern matching for topic routing."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -8,6 +11,8 @@ description: "Pattern matching for topic routing."
   Source: the `///` doc comments in packages/*/src. Edit those, then run
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
+
+<div class="api-reference-marker" aria-hidden="true"></div>
 
 Pattern matching for topic routing.
 
@@ -17,11 +22,37 @@ Pattern matching for topic routing.
  segment-aware wildcards where "*" occupies a complete colon-delimited
  segment.
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-extracterror"><code>ExtractError</code></a></li>
+<li><a href="#api-type-topicerror"><code>TopicError</code></a></li>
+<li><a href="#api-type-topicpattern"><code>TopicPattern</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-extract_id"><code>extract_id</code></a></li>
+<li><a href="#api-function-extract_wildcards"><code>extract_wildcards</code></a></li>
+<li><a href="#api-function-from_segments"><code>from_segments</code></a></li>
+<li><a href="#api-function-matches"><code>matches</code></a></li>
+<li><a href="#api-function-namespace"><code>namespace</code></a></li>
+<li><a href="#api-function-parse_pattern"><code>parse_pattern</code></a></li>
+<li><a href="#api-function-segments"><code>segments</code></a></li>
+<li><a href="#api-function-validate"><code>validate</code></a></li>
+<li><a href="#api-function-validate_event"><code>validate_event</code></a></li>
+<li><a href="#api-function-validate_pattern"><code>validate_pattern</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
-### `ExtractError`
+<div class="api-entry-anchor" id="api-type-extracterror" aria-hidden="true"></div>
 
-Errors from extracting wildcard values from a topic pattern.
+### `ExtractError`
 
 ```gleam
 pub type ExtractError {
@@ -32,32 +63,45 @@ pub type ExtractError {
 }
 ```
 
+Errors from extracting wildcard values from a topic pattern.
+
 #### Constructors
 
 ##### `NoWildcard`
+
+```gleam
+NoWildcard
+```
 
 The pattern has no wildcard to extract.
 
 ##### `TopicMismatch`
 
+```gleam
+TopicMismatch
+```
+
 The topic does not match the pattern.
 
-##### `ExpectedOneWildcard(Int)`
+##### `ExpectedOneWildcard`
+
+```gleam
+ExpectedOneWildcard(Int)
+```
 
 `extract_id` expected exactly one wildcard value but found this many.
 
 ##### `EmptyNamespace`
 
+```gleam
+EmptyNamespace
+```
+
 `namespace` was called with an empty topic.
 
+<div class="api-entry-anchor" id="api-type-topicerror" aria-hidden="true"></div>
+
 ### `TopicError`
-
-Errors returned when validating a topic or topic pattern.
-
- A minor release can add variants as validation gets stricter. Do not treat
- this type as closed for exhaustive matching. Match exact variants only
- when you handle them differently. Otherwise, use a catch-all arm
- (`_ -> ...`) so new variants do not break your code.
 
 ```gleam
 pub type TopicError {
@@ -66,20 +110,33 @@ pub type TopicError {
 }
 ```
 
+Errors returned when validating a topic or topic pattern.
+
+ The variants are exhaustive; match each error explicitly. Adding a
+ variant affects API compatibility and requires updating exhaustive matches.
+
 #### Constructors
 
 ##### `EmptyTopic`
 
+```gleam
+EmptyTopic
+```
+
 The topic or pattern was an empty string.
 
-##### `InvalidFormat(String)`
+##### `InvalidFormat`
+
+```gleam
+InvalidFormat(String)
+```
 
 The topic, pattern, or event was malformed; the wrapped `String`
  describes the problem (e.g. leading/trailing `:` or control characters).
 
-### `TopicPattern`
+<div class="api-entry-anchor" id="api-type-topicpattern" aria-hidden="true"></div>
 
-A topic pattern for routing.
+### `TopicPattern`
 
 ```gleam
 pub type TopicPattern {
@@ -89,36 +146,41 @@ pub type TopicPattern {
 }
 ```
 
+A topic pattern for routing.
+
 #### Constructors
 
-##### `Exact(String)`
+##### `Exact`
+
+```gleam
+Exact(String)
+```
 
 Exact match. `"room:lobby"` matches only `"room:lobby"`.
 
-##### `Wildcard(prefix: String)`
+##### `Wildcard`
+
+```gleam
+Wildcard(prefix: String)
+```
 
 Wildcard suffix. `"room:*"` matches `"room:lobby"`, `"room:123"`,
  and other values with the same prefix.
 
-##### `SegmentWildcard(segments: List(String))`
+##### `SegmentWildcard`
+
+```gleam
+SegmentWildcard(segments: List(String))
+```
 
 Segment wildcard. `"document:*:ops"` matches topics with the same
  number of `":"` segments. `"*"` occupies one complete segment.
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-extract_id" aria-hidden="true"></div>
+
 ### `extract_id`
-
-Extract the wildcard part of a topic.
-
- ## Examples
-
- ```gleam
- extract_id(Wildcard("room:"), "room:lobby") // -> Ok("lobby")
- extract_id(Wildcard("doc:"), "doc:abc:123") // -> Ok("abc:123")
- extract_id(SegmentWildcard(["doc", "*", "ops"]), "doc:abc:ops") // -> Ok("abc")
- extract_id(Exact("room:lobby"), "room:lobby") // -> Error(NoWildcard)
- ```
 
 ```gleam
 pub fn extract_id(
@@ -127,20 +189,20 @@ pub fn extract_id(
 ) -> Result(String, ExtractError)
 ```
 
-### `extract_wildcards`
+Extract the wildcard part of a topic.
 
-Extract values captured by wildcard segments.
-
- For legacy prefix wildcards, this function returns the suffix as one
- value. For segment wildcards, it returns each topic segment matched by
- `"*"`.
-
- ## Examples
+ #### Examples
 
  ```gleam
- extract_wildcards(parse_pattern("document:*:*"), "document:tenant-a:doc-42")
- // -> Ok(["tenant-a", "doc-42"])
+ extract_id(Wildcard("room:"), "room:lobby") // -> Ok("lobby")
+ extract_id(Wildcard("doc:"), "doc:abc:123") // -> Ok("abc:123")
+ extract_id(SegmentWildcard(["doc", "*", "ops"]), "doc:abc:ops") // -> Ok("abc")
+ extract_id(Exact("room:lobby"), "room:lobby") // -> Error(NoWildcard)
  ```
+
+<div class="api-entry-anchor" id="api-function-extract_wildcards" aria-hidden="true"></div>
+
+### `extract_wildcards`
 
 ```gleam
 pub fn extract_wildcards(
@@ -149,26 +211,50 @@ pub fn extract_wildcards(
 ) -> Result(List(String), ExtractError)
 ```
 
+Extract values captured by wildcard segments.
+
+ For legacy prefix wildcards, this function returns the suffix as one
+ value. For segment wildcards, it returns each topic segment matched by
+ `"*"`.
+
+ #### Examples
+
+ ```gleam
+ extract_wildcards(parse_pattern("document:*:*"), "document:tenant-a:doc-42")
+ // -> Ok(["tenant-a", "doc-42"])
+ ```
+
+<div class="api-entry-anchor" id="api-function-from_segments" aria-hidden="true"></div>
+
 ### `from_segments`
+
+```gleam
+pub fn from_segments(List(String)) -> String
+```
 
 Build a topic from segments.
 
- ## Examples
+ #### Examples
 
  ```gleam
  from_segments(["room", "lobby"]) // -> "room:lobby"
  from_segments(["doc", "tenant", "123"]) // -> "doc:tenant:123"
  ```
 
-```gleam
-pub fn from_segments(List(String)) -> String
-```
+<div class="api-entry-anchor" id="api-function-matches" aria-hidden="true"></div>
 
 ### `matches`
 
+```gleam
+pub fn matches(
+  TopicPattern,
+  String
+) -> Bool
+```
+
 Return whether a topic matches a pattern.
 
- ## Examples
+ #### Examples
 
  ```gleam
  matches(Wildcard("room:"), "room:lobby") // -> True
@@ -179,33 +265,34 @@ Return whether a topic matches a pattern.
  matches(parse_pattern("document:*:ops"), "document:tenant-a:view") // -> False
  ```
 
-```gleam
-pub fn matches(
-  TopicPattern,
-  String
-) -> Bool
-```
+<div class="api-entry-anchor" id="api-function-namespace" aria-hidden="true"></div>
 
 ### `namespace`
 
+```gleam
+pub fn namespace(String) -> Result(String, ExtractError)
+```
+
 Return the first segment (namespace) of a topic.
 
- ## Examples
+ #### Examples
 
  ```gleam
  namespace("room:lobby") // -> Ok("room")
  namespace("") // -> Error(EmptyNamespace)
  ```
 
-```gleam
-pub fn namespace(String) -> Result(String, ExtractError)
-```
+<div class="api-entry-anchor" id="api-function-parse_pattern" aria-hidden="true"></div>
 
 ### `parse_pattern`
 
+```gleam
+pub fn parse_pattern(String) -> TopicPattern
+```
+
 Parse a pattern string into `TopicPattern`.
 
- ## Examples
+ #### Examples
 
  ```gleam
  parse_pattern("room:*") // -> Wildcard("room:")
@@ -215,26 +302,30 @@ Parse a pattern string into `TopicPattern`.
  parse_pattern("document:tenant-a:*") // -> Wildcard("document:tenant-a:")
  ```
 
-```gleam
-pub fn parse_pattern(String) -> TopicPattern
-```
+<div class="api-entry-anchor" id="api-function-segments" aria-hidden="true"></div>
 
 ### `segments`
 
+```gleam
+pub fn segments(String) -> List(String)
+```
+
 Split a topic into segments at each `":"`.
 
- ## Examples
+ #### Examples
 
  ```gleam
  segments("room:lobby") // -> ["room", "lobby"]
  segments("doc:tenant:123:ops") // -> ["doc", "tenant", "123", "ops"]
  ```
 
-```gleam
-pub fn segments(String) -> List(String)
-```
+<div class="api-entry-anchor" id="api-function-validate" aria-hidden="true"></div>
 
 ### `validate`
+
+```gleam
+pub fn validate(String) -> Result(String, TopicError)
+```
 
 Validate a topic string.
 
@@ -243,11 +334,13 @@ Validate a topic string.
  - not contain control characters (codepoints 0–31 or 127); and
  - not start or end with `":"`.
 
-```gleam
-pub fn validate(String) -> Result(String, TopicError)
-```
+<div class="api-entry-anchor" id="api-function-validate_event" aria-hidden="true"></div>
 
 ### `validate_event`
+
+```gleam
+pub fn validate_event(String) -> Result(String, TopicError)
+```
 
 Validate an event name.
 
@@ -255,11 +348,13 @@ Validate an event name.
  - not be empty; and
  - not contain control characters (codepoints 0–31 or 127).
 
-```gleam
-pub fn validate_event(String) -> Result(String, TopicError)
-```
+<div class="api-entry-anchor" id="api-function-validate_pattern" aria-hidden="true"></div>
 
 ### `validate_pattern`
+
+```gleam
+pub fn validate_pattern(String) -> Result(String, TopicError)
+```
 
 Validate a topic pattern string.
 
@@ -269,7 +364,3 @@ Validate a topic pattern string.
 
  The bare pattern `"*"` is valid: it parses to a catch-all wildcard that
  matches every topic.
-
-```gleam
-pub fn validate_pattern(String) -> Result(String, TopicError)
-```

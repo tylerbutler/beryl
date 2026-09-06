@@ -1,6 +1,9 @@
 ---
 title: "beryl/presence"
-description: "Presence - Distributed presence tracking backed by a CRDT"
+description: "Distributed presence tracking with a CRDT"
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -9,14 +12,17 @@ description: "Presence - Distributed presence tracking backed by a CRDT"
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
-Presence - Distributed presence tracking backed by a CRDT
+<div class="api-reference-marker" aria-hidden="true"></div>
 
- Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
+Distributed presence tracking with a CRDT
+
+ This module wraps the pure `lattice_presence/presence_state` CRDT in an
+ OTP actor that:
  - Handles track/update/untrack calls
  - Publishes an actor-owned ETS read model
  - Periodically broadcasts state via PubSub for cross-node replication
  - Receives remote state from PubSub and merges it internally
- - Invokes `on_diff` callback when merges produce non-empty diffs
+ - Invokes `on_diff` when local changes or merges produce non-empty diffs
 
  Presence is independent of the beryl runtime and runs under your
  application's supervision tree.
@@ -58,39 +64,87 @@ Presence - Distributed presence tracking backed by a CRDT
  let assert Ok(entries) = presence.list(presence_handle, "room:lobby")
  ```
 
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-config"><code>Config</code></a></li>
+<li><a href="#api-type-diff"><code>Diff</code></a></li>
+<li><a href="#api-type-message"><code>Message</code></a></li>
+<li><a href="#api-type-presence"><code>Presence</code></a></li>
+<li><a href="#api-type-presenceentry"><code>PresenceEntry</code></a></li>
+<li><a href="#api-type-presenceupdateerror"><code>PresenceUpdateError</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-child_spec"><code>child_spec</code></a></li>
+<li><a href="#api-function-count"><code>count</code></a></li>
+<li><a href="#api-function-default_config"><code>default_config</code></a></li>
+<li><a href="#api-function-diff"><code>diff</code></a></li>
+<li><a href="#api-function-diff_joins"><code>diff_joins</code></a></li>
+<li><a href="#api-function-diff_leaves"><code>diff_leaves</code></a></li>
+<li><a href="#api-function-diff_topics"><code>diff_topics</code></a></li>
+<li><a href="#api-function-get_by_key"><code>get_by_key</code></a></li>
+<li><a href="#api-function-list"><code>list</code></a></li>
+<li><a href="#api-function-track"><code>track</code></a></li>
+<li><a href="#api-function-untrack"><code>untrack</code></a></li>
+<li><a href="#api-function-untrack_all"><code>untrack_all</code></a></li>
+<li><a href="#api-function-update"><code>update</code></a></li>
+<li><a href="#api-function-with_broadcast_interval"><code>with_broadcast_interval</code></a></li>
+<li><a href="#api-function-with_call_timeout"><code>with_call_timeout</code></a></li>
+<li><a href="#api-function-with_on_diff"><code>with_on_diff</code></a></li>
+<li><a href="#api-function-with_pubsub"><code>with_pubsub</code></a></li>
+  </ul>
+</section>
+</nav>
+
 ## Types
 
+<div class="api-entry-anchor" id="api-type-config" aria-hidden="true"></div>
+
 ### `Config`
+
+```gleam
+pub type Config
+```
 
 Configuration for starting presence.
 
  Build configurations with `default_config` and the `with_*` functions.
  beryl can then add options without exposing record fields as public API.
 
-```gleam
-pub type Config
-```
+<div class="api-entry-anchor" id="api-type-diff" aria-hidden="true"></div>
 
 ### `Diff`
+
+```gleam
+pub type Diff
+```
 
 An opaque diff representing presence joins and leaves grouped by topic.
 
  beryl passes this value to `Config.on_diff`.
  `beryl.broadcast_presence_diff` also accepts it.
 
-```gleam
-pub type Diff
-```
+<div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
 
 ### `Message`
-
-Messages that the presence actor handles.
 
 ```gleam
 pub type Message
 ```
 
+Messages that the presence actor handles.
+
+<div class="api-entry-anchor" id="api-type-presence" aria-hidden="true"></div>
+
 ### `Presence`
+
+```gleam
+pub type Presence
+```
 
 A running Presence instance.
 
@@ -98,7 +152,7 @@ A running Presence instance.
  the runtime representation. It contains the actor's stable registered
  subject and the name of its actor-owned ETS read model.
 
- ## Node affinity
+ #### Node affinity
 
  The stable registered subject and ETS read model are resolved on the
  caller's node. Keep a `Presence` handle on the node where its child
@@ -109,16 +163,9 @@ A running Presence instance.
  replication (`with_pubsub`) to share presence state across nodes instead of
  moving the handle itself.
 
-```gleam
-pub type Presence
-```
+<div class="api-entry-anchor" id="api-type-presenceentry" aria-hidden="true"></div>
 
 ### `PresenceEntry`
-
-A presence entry returned from queries and diff accessors.
-
- This type is transparent. Callers can inspect query results and construct
- entries for `diff`.
 
 ```gleam
 pub type PresenceEntry {
@@ -130,25 +177,42 @@ pub type PresenceEntry {
 }
 ```
 
-### `PresenceUpdateError`
+A presence entry returned from queries and diff accessors.
 
-Errors from an update to a tracked presence.
+ This type is transparent. Callers can inspect query results and construct
+ entries for `diff`.
+
+<div class="api-entry-anchor" id="api-type-presenceupdateerror" aria-hidden="true"></div>
+
+### `PresenceUpdateError`
 
 ```gleam
 pub type PresenceUpdateError {
-  UnknownRef
+  UnknownRef(ref: String)
 }
 ```
+
+Errors from an update to a tracked presence.
 
 #### Constructors
 
 ##### `UnknownRef`
 
+```gleam
+UnknownRef(ref: String)
+```
+
 The ref is unknown, already removed, or was not returned by `track`.
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
+
 ### `child_spec`
+
+```gleam
+pub fn child_spec(Config) -> #(Presence, supervision.ChildSpecification(process.Subject(Message)))
+```
 
 Build the supervised presence actor.
 
@@ -156,11 +220,16 @@ Build the supervised presence actor.
  The returned handle is name-backed and works again after a supervised
  restart. A restart resets the in-memory presence entries and tracking refs.
 
-```gleam
-pub fn child_spec(Config) -> #(Presence, supervision.ChildSpecification(process.Subject(Message)))
-```
+<div class="api-entry-anchor" id="api-function-count" aria-hidden="true"></div>
 
 ### `count`
+
+```gleam
+pub fn count(
+  Presence,
+  String
+) -> Result(Int, Nil)
+```
 
 Count presences in a topic.
 
@@ -179,32 +248,24 @@ Count presences in a topic.
  from a process on another BEAM node than the one it was started on (see
  the node affinity note on `Presence`).
 
-```gleam
-pub fn count(
-  Presence,
-  String
-) -> Result(Int, Nil)
-```
+<div class="api-entry-anchor" id="api-function-default_config" aria-hidden="true"></div>
 
 ### `default_config`
-
-Default configuration (no PubSub).
-
- The broadcast interval defaults to 1500 ms. Adding `with_pubsub` therefore
- enables two-way replication without more configuration. Without PubSub,
- the interval is unused. Use `with_broadcast_interval(0)` to disable
- periodic broadcasts and control replication manually.
 
 ```gleam
 pub fn default_config(String) -> Config
 ```
 
+Default configuration (no PubSub).
+
+ The broadcast interval defaults to 1500 ms. Adding `with_pubsub` enables
+ periodic outbound broadcasts and inbound replication. Without PubSub, the
+ interval is unused. Use a non-positive interval to disable periodic
+ outbound broadcasts.
+
+<div class="api-entry-anchor" id="api-function-diff" aria-hidden="true"></div>
+
 ### `diff`
-
-Build a presence diff from topic-grouped joins and leaves.
-
- Most applications receive diffs from `Config.on_diff`. Use this function
- to construct a diff for `beryl.broadcast_presence_diff`.
 
 ```gleam
 pub fn diff(
@@ -213,9 +274,14 @@ pub fn diff(
 ) -> Diff
 ```
 
-### `diff_joins`
+Build a presence diff from topic-grouped joins and leaves.
 
-Return presence joins for a topic in this diff.
+ Most applications receive diffs from `Config.on_diff`. Use this function
+ to construct a diff for `beryl.broadcast_presence_diff`.
+
+<div class="api-entry-anchor" id="api-function-diff_joins" aria-hidden="true"></div>
+
+### `diff_joins`
 
 ```gleam
 pub fn diff_joins(
@@ -224,9 +290,11 @@ pub fn diff_joins(
 ) -> List(PresenceEntry)
 ```
 
-### `diff_leaves`
+Return presence joins for a topic in this diff.
 
-Return presence leaves for a topic in this diff.
+<div class="api-entry-anchor" id="api-function-diff_leaves" aria-hidden="true"></div>
+
+### `diff_leaves`
 
 ```gleam
 pub fn diff_leaves(
@@ -235,15 +303,29 @@ pub fn diff_leaves(
 ) -> List(PresenceEntry)
 ```
 
-### `diff_topics`
+Return presence leaves for a topic in this diff.
 
-List topics touched by this diff.
+<div class="api-entry-anchor" id="api-function-diff_topics" aria-hidden="true"></div>
+
+### `diff_topics`
 
 ```gleam
 pub fn diff_topics(Diff) -> List(String)
 ```
 
+List topics touched by this diff.
+
+<div class="api-entry-anchor" id="api-function-get_by_key" aria-hidden="true"></div>
+
 ### `get_by_key`
+
+```gleam
+pub fn get_by_key(
+  Presence,
+  String,
+  String
+) -> Result(List(#(String, json.Json)), Nil)
+```
 
 Get presences for a specific key within a topic.
 
@@ -257,15 +339,16 @@ Get presences for a specific key within a topic.
  from a process on another BEAM node than the one it was started on (see
  the node affinity note on `Presence`).
 
-```gleam
-pub fn get_by_key(
-  Presence,
-  String,
-  String
-) -> Result(List(#(String, json.Json)), Nil)
-```
+<div class="api-entry-anchor" id="api-function-list" aria-hidden="true"></div>
 
 ### `list`
+
+```gleam
+pub fn list(
+  Presence,
+  String
+) -> Result(List(PresenceEntry), Nil)
+```
 
 List all presences for a topic.
 
@@ -279,14 +362,19 @@ List all presences for a topic.
  from a process on another BEAM node than the one it was started on (see
  the node affinity note on `Presence`).
 
-```gleam
-pub fn list(
-  Presence,
-  String
-) -> Result(List(PresenceEntry), Nil)
-```
+<div class="api-entry-anchor" id="api-function-track" aria-hidden="true"></div>
 
 ### `track`
+
+```gleam
+pub fn track(
+  Presence,
+  String,
+  String,
+  String,
+  json.Json
+) -> String
+```
 
 Track a presence in a topic.
 
@@ -302,24 +390,9 @@ Track a presence in a topic.
  Panics if the presence actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
-```gleam
-pub fn track(
-  Presence,
-  String,
-  String,
-  String,
-  json.Json
-) -> String
-```
+<div class="api-entry-anchor" id="api-function-untrack" aria-hidden="true"></div>
 
 ### `untrack`
-
-Untrack a specific presence using the ref returned by `track`.
-
- Removing an unknown or already-removed ref is a harmless no-op.
-
- Panics if the presence actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
 
 ```gleam
 pub fn untrack(
@@ -328,12 +401,16 @@ pub fn untrack(
 ) -> Nil
 ```
 
-### `untrack_all`
+Untrack a specific presence using the ref returned by `track`.
 
-Untrack all presences for a session, such as when a socket disconnects.
+ Removing an unknown or already-removed ref is a harmless no-op.
 
  Panics if the presence actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-untrack_all" aria-hidden="true"></div>
+
+### `untrack_all`
 
 ```gleam
 pub fn untrack_all(
@@ -342,20 +419,14 @@ pub fn untrack_all(
 ) -> Nil
 ```
 
-### `update`
-
-Replace the meta of a presence created by `track`.
-
- One diff contains the old ref's leave and the new ref's join. Subscribers
- do not observe an intermediate state without the presence key. Other
- tracked refs for the same key do not change.
-
- Returns the replacement ref, which must be used for subsequent `update`
- or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
- unknown, already removed, or belongs to the internal runtime.
+Untrack all presences for a session, such as when a socket disconnects.
 
  Panics if the presence actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-update" aria-hidden="true"></div>
+
+### `update`
 
 ```gleam
 pub fn update(
@@ -365,11 +436,22 @@ pub fn update(
 ) -> Result(String, PresenceUpdateError)
 ```
 
+Replace the meta of a presence created by `track`.
+
+ One diff contains the old ref's leave and the new ref's join. Subscribers
+ do not observe an intermediate state without the presence key. Other
+ tracked refs for the same key do not change.
+
+ Returns the replacement ref, which must be used for subsequent `update`
+ or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
+ unknown, already removed, or belongs to the internal runtime.
+
+ Panics if the presence actor is unavailable or does not reply within the
+ configured call timeout (5 seconds by default).
+
+<div class="api-entry-anchor" id="api-function-with_broadcast_interval" aria-hidden="true"></div>
+
 ### `with_broadcast_interval`
-
-Set how often presence state is broadcast for replication.
-
- Use `0` to disable periodic broadcasts.
 
 ```gleam
 pub fn with_broadcast_interval(
@@ -378,13 +460,13 @@ pub fn with_broadcast_interval(
 ) -> Config
 ```
 
+Set how often presence state is broadcast for replication.
+
+ Use a non-positive value to disable periodic broadcasts.
+
+<div class="api-entry-anchor" id="api-function-with_call_timeout" aria-hidden="true"></div>
+
 ### `with_call_timeout`
-
-Set the timeout for synchronous presence mutations, in milliseconds.
-
- This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
- functions panic if the actor does not reply before the timeout. The default
- is 5000 ms.
 
 ```gleam
 pub fn with_call_timeout(
@@ -393,12 +475,27 @@ pub fn with_call_timeout(
 ) -> Config
 ```
 
+Set the timeout for synchronous presence mutations, in milliseconds.
+
+ This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
+ functions panic if the actor does not reply before the timeout. The default
+ is 5000 ms.
+
+<div class="api-entry-anchor" id="api-function-with_on_diff" aria-hidden="true"></div>
+
 ### `with_on_diff`
+
+```gleam
+pub fn with_on_diff(
+  Config,
+  fn(Diff) -> Nil
+) -> Config
+```
 
 Set the callback for diffs from local changes or remote merges.
 
  The callback runs synchronously on the presence actor, for both local
- mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
+ mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
  mutations the runtime issues for presence effects) and remote merges,
  before the affected topics' read-model snapshots are (re)published and
  before the triggering call replies or the mutation is acknowledged.
@@ -417,19 +514,13 @@ Set the callback for diffs from local changes or remote merges.
  the reply to (or acknowledgement of) the mutating operation, and every
  other message behind it in the actor's mailbox. Concurrent
  `list`/`get_by_key`/`count` calls from other processes do not use the
- mailbox and are not delayed. Only the socket with an active presence
- effect waits for the callback.
+ mailbox and are not delayed. A socket with an active presence effect waits
+ for the callback. Callers of synchronous mutations also wait for their
+ replies.
 
-```gleam
-pub fn with_on_diff(
-  Config,
-  fn(Diff) -> Nil
-) -> Config
-```
+<div class="api-entry-anchor" id="api-function-with_pubsub" aria-hidden="true"></div>
 
 ### `with_pubsub`
-
-Enable PubSub replication for presence.
 
 ```gleam
 pub fn with_pubsub(
@@ -437,3 +528,5 @@ pub fn with_pubsub(
   pubsub.PubSub(SyncPayload)
 ) -> Config
 ```
+
+Enable PubSub replication for presence.

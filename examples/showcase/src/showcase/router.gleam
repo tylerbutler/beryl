@@ -4,10 +4,10 @@
 
 import beryl_demo/config as demo_config
 import beryl_demo/router as demo_router
-import chatrooms/router as chatrooms_router
-import collab_docs/router as collab_docs_router
-import cursors/router as cursors_router
-import example_helpers/static
+import chatroom/router as chatroom_router
+import collab_document/router as document_router
+import cursor/router as cursor_router
+import example_helper/static
 import gleam/bytes_tree
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -15,28 +15,31 @@ import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
-    cursors: cursors_router.Context,
-    chatrooms: chatrooms_router.Context,
-    collab_docs: collab_docs_router.Context,
     /// Status endpoint for the documentation site's presence lab.
     demo: demo_config.Config,
+    cursor: cursor_router.Context,
+    chatroom: chatroom_router.Context,
+    collab_document: document_router.Context,
   )
 }
 
 pub fn handle_request(
-  req: Request(Connection),
-  ctx: Context,
+  http_request: Request(Connection),
+  context: Context,
 ) -> Response(ResponseData) {
-  case request.path_segments(req) {
+  case request.path_segments(http_request) {
     [] -> landing_page()
     ["healthz"] -> healthz()
-    ["v1", ..] -> demo_router.handle_request(req, ctx.demo)
-    ["cursors", ..] -> cursors_router.handle_request(req, ctx.cursors)
-    ["chat", ..] -> chatrooms_router.handle_request(req, ctx.chatrooms)
+    ["v1", ..] -> demo_router.handle_request(http_request, context.demo)
+    ["cursors", ..] ->
+      cursor_router.handle_request(http_request, context.cursor)
+    ["chat", ..] ->
+      chatroom_router.handle_request(http_request, context.chatroom)
     // TODO: re-enable the collab_docs demo. The handler is still
     // registered in showcase.main so reinstating the route + landing
     // card is a one-line change.
-    // ["docs", ..] -> collab_docs_router.handle_request(req, ctx.collab_docs)
+    // ["docs", ..] ->
+    //   document_router.handle_request(http_request, context.collab_document)
     _ -> static.not_found()
   }
 }

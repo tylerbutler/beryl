@@ -1,6 +1,9 @@
 ---
 title: "beryl/error"
 description: "Shared beryl-owned error helpers."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
 ---
 
 <!--
@@ -9,35 +12,63 @@ description: "Shared beryl-owned error helpers."
   `just docs` (gleam docs build + cd website && pnpm run generate:reference).
 -->
 
+<div class="api-reference-marker" aria-hidden="true"></div>
+
 Shared beryl-owned error helpers.
+
+<nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-startfailure"><code>StartFailure</code></a></li>
+  </ul>
+</section>
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#functions">Functions</a>
+  <ul>
+<li><a href="#api-function-describe_start_failure"><code>describe_start_failure</code></a></li>
+<li><a href="#api-function-from_actor_start_error"><code>from_actor_start_error</code></a></li>
+  </ul>
+</section>
+</nav>
 
 ## Types
 
+<div class="api-entry-anchor" id="api-type-startfailure" aria-hidden="true"></div>
+
 ### `StartFailure`
+
+```gleam
+pub type StartFailure
+```
 
 A stable description of an internal beryl actor startup failure.
 
  This type hides OTP's `actor.StartError` so public APIs do not expose
  dependency-specific error constructors.
 
-```gleam
-pub type StartFailure
-```
-
 ## Functions
 
-### `describe_start_failure`
+<div class="api-entry-anchor" id="api-function-describe_start_failure" aria-hidden="true"></div>
 
-Return a human-readable description of a startup failure.
+### `describe_start_failure`
 
 ```gleam
 pub fn describe_start_failure(StartFailure) -> String
 ```
 
-### `from_actor_start_error`
+Return a human-readable description of a startup failure.
 
-Convert a `gleam/otp/actor.StartError` to beryl's `StartFailure`.
+ Abnormal exits retain their underlying reason internally. Their description
+ includes a depth- and length-limited rendering so large exit terms cannot
+ produce unbounded diagnostic output.
+
+<div class="api-entry-anchor" id="api-function-from_actor_start_error" aria-hidden="true"></div>
+
+### `from_actor_start_error`
 
 ```gleam
 pub fn from_actor_start_error(actor.StartError) -> StartFailure
 ```
+
+Convert a `gleam/otp/actor.StartError` to beryl's `StartFailure`.

@@ -9,7 +9,7 @@ import beryl/wire
 import gleeunit
 import gleeunit/should
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -28,11 +28,11 @@ fn validate(
   }
 }
 
-pub fn an_empty_handler_table_is_valid_test() {
+pub fn an_empty_handler_table_is_valid_test() -> Nil {
   validate([]) |> should.equal(Ok(Nil))
 }
 
-pub fn distinct_valid_patterns_are_accepted_test() {
+pub fn distinct_valid_patterns_are_accepted_test() -> Nil {
   validate([
     stub("room:*"),
     stub("document:*:ops"),
@@ -42,12 +42,12 @@ pub fn distinct_valid_patterns_are_accepted_test() {
   |> should.equal(Ok(Nil))
 }
 
-pub fn an_empty_pattern_is_rejected_test() {
+pub fn an_empty_pattern_is_rejected_test() -> Nil {
   validate([stub("room:*"), stub("")])
   |> should.equal(Error(channel.InvalidPattern("", topic.EmptyTopic)))
 }
 
-pub fn a_control_character_pattern_is_rejected_test() {
+pub fn a_control_character_pattern_is_rejected_test() -> Nil {
   validate([stub("room:\u{0001}*")])
   |> should.equal(
     Error(channel.InvalidPattern(
@@ -57,7 +57,7 @@ pub fn a_control_character_pattern_is_rejected_test() {
   )
 }
 
-pub fn exact_duplicate_patterns_are_rejected_test() {
+pub fn exact_duplicate_patterns_are_rejected_test() -> Nil {
   validate([
     stub("room:*"),
     stub("document:*"),
@@ -66,7 +66,7 @@ pub fn exact_duplicate_patterns_are_rejected_test() {
   |> should.equal(Error(channel.DuplicatePattern("room:*")))
 }
 
-pub fn non_identical_overlaps_are_allowed_test() {
+pub fn non_identical_overlaps_are_allowed_test() -> Nil {
   validate([
     stub("room:lobby"),
     stub("room:*"),
@@ -75,7 +75,7 @@ pub fn non_identical_overlaps_are_allowed_test() {
   |> should.equal(Ok(Nil))
 }
 
-pub fn validation_checks_syntax_before_duplicates_test() {
+pub fn validation_checks_syntax_before_duplicates_test() -> Nil {
   // Pattern syntax is checked for the whole table first, so the invalid
   // empty pattern wins even though a duplicate appears earlier.
   validate([stub("a"), stub("a"), stub("")])
@@ -85,12 +85,12 @@ pub fn validation_checks_syntax_before_duplicates_test() {
   |> should.equal(Error(channel.InvalidPattern("", topic.EmptyTopic)))
 }
 
-pub fn validation_reports_the_first_invalid_pattern_in_order_test() {
+pub fn validation_reports_the_first_invalid_pattern_in_order_test() -> Nil {
   validate([stub("room:*"), stub(""), stub("\u{0001}")])
   |> should.equal(Error(channel.InvalidPattern("", topic.EmptyTopic)))
 }
 
-pub fn validation_reports_the_first_repeated_pattern_in_order_test() {
+pub fn validation_reports_the_first_repeated_pattern_in_order_test() -> Nil {
   validate([
     stub("a"),
     stub("b"),

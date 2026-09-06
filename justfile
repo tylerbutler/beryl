@@ -20,7 +20,7 @@ deps: deps-gleam
 
 # Download gleam dependencies for every workspace member
 deps-gleam:
-    trellis run deps
+    trellis run deps --serial
 
 # === BUILD ===
 
@@ -59,6 +59,18 @@ lint:
 # Check workspace invariants (members, graph, versions, fragments)
 doctor:
     trellis doctor
+
+# Report locked dependency licences (defaults to the three library packages)
+audit-licences *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-licences --serial {{ PACKAGES }}
+
+# Report known vulnerabilities; findings do not fail this task
+audit-vulns *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-vulns --serial {{ PACKAGES }}
+
+# Enforce each package's licence policy and vulnerability threshold
+audit-check *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-check --serial --keep-going {{ PACKAGES }}
 
 # === DOCUMENTATION ===
 
@@ -154,7 +166,7 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build chatrooms collab_docs cursors example_helpers showcase load_test live_poll collab_docs_client
+    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
