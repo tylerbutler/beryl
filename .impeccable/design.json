@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-28T21:24:04Z",
+  "title": "Design System: beryl",
+  "extensions": {
+    "colorMeta": {
+      "page-dark": {
+        "role": "neutral",
+        "displayName": "Mineral Night",
+        "canonical": "oklch(0.165 0.022 162)",
+        "tonalRamp": ["oklch(0.15 0.022 162)", "oklch(0.25 0.022 162)", "oklch(0.35 0.022 162)", "oklch(0.47 0.022 162)", "oklch(0.59 0.022 162)", "oklch(0.71 0.022 162)", "oklch(0.83 0.022 162)", "oklch(0.95 0.022 162)"]
+      },
+      "surface-dark": {
+        "role": "neutral",
+        "displayName": "Cut-Stone Surface",
+        "canonical": "oklch(0.215 0.028 163 / 0.7)",
+        "tonalRamp": ["oklch(0.15 0.028 163)", "oklch(0.25 0.028 163)", "oklch(0.35 0.028 163)", "oklch(0.47 0.028 163)", "oklch(0.59 0.028 163)", "oklch(0.71 0.028 163)", "oklch(0.83 0.028 163)", "oklch(0.95 0.028 163)"]
+      },
+      "hairline-dark": {
+        "role": "neutral",
+        "displayName": "Dark Mineral Hairline",
+        "canonical": "oklch(0.42 0.04 161 / 0.5)",
+        "tonalRamp": ["oklch(0.15 0.04 161)", "oklch(0.25 0.04 161)", "oklch(0.35 0.04 161)", "oklch(0.47 0.04 161)", "oklch(0.59 0.04 161)", "oklch(0.71 0.04 161)", "oklch(0.83 0.04 161)", "oklch(0.95 0.04 161)"]
+      },
+      "text-bright": {
+        "role": "neutral",
+        "displayName": "Crystal Text",
+        "canonical": "oklch(0.97 0.018 152)",
+        "tonalRamp": ["oklch(0.15 0.018 152)", "oklch(0.25 0.018 152)", "oklch(0.35 0.018 152)", "oklch(0.47 0.018 152)", "oklch(0.59 0.018 152)", "oklch(0.71 0.018 152)", "oklch(0.83 0.018 152)", "oklch(0.95 0.018 152)"]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Mist Text",
+        "canonical": "oklch(0.81 0.032 157)",
+        "tonalRamp": ["oklch(0.15 0.032 157)", "oklch(0.25 0.032 157)", "oklch(0.35 0.032 157)", "oklch(0.47 0.032 157)", "oklch(0.59 0.032 157)", "oklch(0.71 0.032 157)", "oklch(0.83 0.032 157)", "oklch(0.95 0.032 157)"]
+      },
+      "emerald-low": {
+        "role": "primary",
+        "displayName": "Deep Emerald Bed",
+        "canonical": "oklch(0.31 0.07 160)",
+        "tonalRamp": ["oklch(0.15 0.07 160)", "oklch(0.25 0.07 160)", "oklch(0.35 0.07 160)", "oklch(0.47 0.07 160)", "oklch(0.59 0.07 160)", "oklch(0.71 0.07 160)", "oklch(0.83 0.07 160)", "oklch(0.95 0.07 160)"]
+      },
+      "emerald": {
+        "role": "primary",
+        "displayName": "Workbench Emerald",
+        "canonical": "oklch(0.78 0.16 158)",
+        "tonalRamp": ["oklch(0.15 0.16 158)", "oklch(0.25 0.16 158)", "oklch(0.35 0.16 158)", "oklch(0.47 0.16 158)", "oklch(0.59 0.16 158)", "oklch(0.71 0.16 158)", "oklch(0.83 0.16 158)", "oklch(0.95 0.16 158)"]
+      },
+      "emerald-high": {
+        "role": "primary",
+        "displayName": "Crystal Emerald",
+        "canonical": "oklch(0.9 0.1 154)",
+        "tonalRamp": ["oklch(0.15 0.1 154)", "oklch(0.25 0.1 154)", "oklch(0.35 0.1 154)", "oklch(0.47 0.1 154)", "oklch(0.59 0.1 154)", "oklch(0.71 0.1 154)", "oklch(0.83 0.1 154)", "oklch(0.95 0.1 154)"]
+      },
+      "morganite": {
+        "role": "secondary",
+        "displayName": "Morganite Spark",
+        "canonical": "oklch(0.72 0.2 350)",
+        "tonalRamp": ["oklch(0.15 0.2 350)", "oklch(0.25 0.2 350)", "oklch(0.35 0.2 350)", "oklch(0.47 0.2 350)", "oklch(0.59 0.2 350)", "oklch(0.71 0.2 350)", "oklch(0.83 0.2 350)", "oklch(0.95 0.2 350)"]
+      },
+      "page-light": {
+        "role": "neutral",
+        "displayName": "Green-Tinted Paper",
+        "canonical": "oklch(0.985 0.01 150)",
+        "tonalRamp": ["oklch(0.15 0.01 150)", "oklch(0.25 0.01 150)", "oklch(0.35 0.01 150)", "oklch(0.47 0.01 150)", "oklch(0.59 0.01 150)", "oklch(0.71 0.01 150)", "oklch(0.83 0.01 150)", "oklch(0.95 0.01 150)"]
+      },
+      "surface-light": {
+        "role": "neutral",
+        "displayName": "Crystal Paper Surface",
+        "canonical": "oklch(1 0 0 / 0.6)",
+        "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.25 0 0)", "oklch(0.35 0 0)", "oklch(0.47 0 0)", "oklch(0.59 0 0)", "oklch(0.71 0 0)", "oklch(0.83 0 0)", "oklch(0.95 0 0)"]
+      },
+      "hairline-light": {
+        "role": "neutral",
+        "displayName": "Light Mineral Hairline",
+        "canonical": "oklch(0.55 0.04 158 / 0.35)",
+        "tonalRamp": ["oklch(0.15 0.04 158)", "oklch(0.25 0.04 158)", "oklch(0.35 0.04 158)", "oklch(0.47 0.04 158)", "oklch(0.59 0.04 158)", "oklch(0.71 0.04 158)", "oklch(0.83 0.04 158)", "oklch(0.95 0.04 158)"]
+      },
+      "text-light": {
+        "role": "neutral",
+        "displayName": "Ink Green",
+        "canonical": "oklch(0.2 0.05 163)",
+        "tonalRamp": ["oklch(0.15 0.05 163)", "oklch(0.25 0.05 163)", "oklch(0.35 0.05 163)", "oklch(0.47 0.05 163)", "oklch(0.59 0.05 163)", "oklch(0.71 0.05 163)", "oklch(0.83 0.05 163)", "oklch(0.95 0.05 163)"]
+      },
+      "text-muted-light": {
+        "role": "neutral",
+        "displayName": "Light Mist Text",
+        "canonical": "oklch(0.38 0.05 161)",
+        "tonalRamp": ["oklch(0.15 0.05 161)", "oklch(0.25 0.05 161)", "oklch(0.35 0.05 161)", "oklch(0.47 0.05 161)", "oklch(0.59 0.05 161)", "oklch(0.71 0.05 161)", "oklch(0.83 0.05 161)", "oklch(0.95 0.05 161)"]
+      },
+      "emerald-light": {
+        "role": "primary",
+        "displayName": "Paper Emerald",
+        "canonical": "oklch(0.5 0.15 156)",
+        "tonalRamp": ["oklch(0.15 0.15 156)", "oklch(0.25 0.15 156)", "oklch(0.35 0.15 156)", "oklch(0.47 0.15 156)", "oklch(0.59 0.15 156)", "oklch(0.71 0.15 156)", "oklch(0.83 0.15 156)", "oklch(0.95 0.15 156)"]
+      },
+      "morganite-light": {
+        "role": "secondary",
+        "displayName": "Paper Morganite",
+        "canonical": "oklch(0.52 0.23 352)",
+        "tonalRamp": ["oklch(0.15 0.23 352)", "oklch(0.25 0.23 352)", "oklch(0.35 0.23 352)", "oklch(0.47 0.23 352)", "oklch(0.59 0.23 352)", "oklch(0.71 0.23 352)", "oklch(0.83 0.23 352)", "oklch(0.95 0.23 352)"]
+      }
+    },
+    "typographyMeta": {
+      "display": {"displayName": "Display", "purpose": "Homepage wordmark only."},
+      "headline": {"displayName": "Page Headline", "purpose": "Top-level documentation titles."},
+      "body": {"displayName": "Body", "purpose": "Long-form reading and interface text."},
+      "mono": {"displayName": "Code", "purpose": "Code, commands, and literal technical values."},
+      "label": {"displayName": "Compact Label", "purpose": "Status badges and short metadata."}
+    },
+    "shadows": [
+      {"name": "hero-elevation-dark", "value": "0 1px 0 0 var(--beryl-hairline) inset, 0 30px 70px -32px var(--beryl-glow)", "purpose": "Dark-theme hero code card."},
+      {"name": "hero-elevation-light", "value": "0 0 0 1px var(--beryl-hairline), 0 24px 50px -28px oklch(0.4 0.05 160 / 0.3)", "purpose": "Light-theme hero code card."},
+      {"name": "interactive-lift", "value": "0 14px 40px -18px var(--beryl-glow)", "purpose": "Cards and pagination links on hover."},
+      {"name": "primary-action-lift", "value": "0 12px 30px -10px var(--beryl-glow)", "purpose": "Primary homepage action on hover."}
+    ],
+    "motion": [
+      {"name": "ease-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Lift, reveal, and underline transitions."},
+      {"name": "state-fast", "value": "0.18s ease-out", "purpose": "Pagination and compact state changes."},
+      {"name": "state-standard", "value": "0.3s ease", "purpose": "Cards, borders, and shadows."},
+      {"name": "reduced-motion", "value": "0.001ms", "purpose": "Site-wide non-motion fallback."}
+    ],
+    "breakpoints": [
+      {"name": "compact-reference", "value": "38rem"},
+      {"name": "content-grid", "value": "50rem"},
+      {"name": "desktop-hero", "value": "68rem"}
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The main action in a focused choice set.",
+      "html": "<a class=\"ds-button-primary\" href=\"#\">QUICK START</a>",
+      "css": ".ds-button-primary { display: inline-flex; align-items: center; min-height: 44px; padding: 0.9375rem 1.25rem; border: 1px solid var(--sl-color-accent); border-radius: 999px; background: var(--sl-color-accent); color: var(--sl-color-black); font: 600 1rem/1.1875 var(--sl-font); text-decoration: none; transition: transform 0.2s ease, box-shadow 0.3s ease, filter 0.2s ease; } .ds-button-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -10px var(--beryl-glow); filter: saturate(1.08); } .ds-button-primary:focus-visible { outline: 2px solid var(--beryl-ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A visible alternative that remains subordinate to the primary action.",
+      "html": "<a class=\"ds-button-secondary\" href=\"#\">WHAT IS BERYL?</a>",
+      "css": ".ds-button-secondary { display: inline-flex; align-items: center; min-height: 44px; padding: 0.9375rem 1.25rem; border: 1px solid var(--sl-color-gray-4); border-radius: 999px; background: transparent; color: var(--sl-color-white); font: 600 1rem/1.1875 var(--sl-font); text-decoration: none; transition: transform 0.2s ease, border-color 0.2s ease, color 0.2s ease; } .ds-button-secondary:hover { transform: translateY(-2px); border-color: var(--beryl-magenta); color: var(--beryl-magenta); } .ds-button-secondary:focus-visible { outline: 2px solid var(--beryl-ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Link Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A contained navigation surface for related documentation.",
+      "html": "<a class=\"ds-card\" href=\"#\"><strong>Presence</strong><span>Track connected users across nodes.</span></a>",
+      "css": ".ds-card { display: grid; gap: 0.4rem; padding: 1rem 1.25rem; border: 1px solid var(--sl-color-gray-5); border-radius: 14px; background: var(--beryl-surface); color: var(--sl-color-white); font-family: var(--sl-font); text-decoration: none; transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s ease, box-shadow 0.3s ease; } .ds-card span { color: var(--sl-color-gray-2); } .ds-card:hover { transform: translateY(-3px); border-color: var(--sl-color-accent); box-shadow: 0 0 0 1px var(--sl-color-accent), 0 14px 40px -18px var(--beryl-glow); } .ds-card:focus-visible { outline: 2px solid var(--beryl-ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Note Aside",
+      "kind": "custom",
+      "refersTo": "aside-note",
+      "description": "A full-border callout for important documentation context.",
+      "html": "<aside class=\"ds-aside\"><strong>Pre-1.0</strong><p>Minor releases can change the API.</p></aside>",
+      "css": ".ds-aside { max-width: 75ch; padding: 1rem 1.25rem; border: 1px solid var(--sl-color-accent); border-radius: 14px; background: color-mix(in oklch, var(--sl-color-accent) 12%, var(--sl-color-black)); color: var(--sl-color-white); font-family: var(--sl-font); } .ds-aside strong { color: var(--sl-color-accent-high); } .ds-aside p { margin: 0.5rem 0 0; color: var(--sl-color-gray-2); }"
+    },
+    {
+      "name": "Inline Code",
+      "kind": "custom",
+      "refersTo": "inline-code",
+      "description": "Literal API names and commands embedded in prose.",
+      "html": "<code class=\"ds-inline-code\">beryl/channel</code>",
+      "css": ".ds-inline-code { padding: 0.15em 0.4em; border-radius: 5px; background: var(--beryl-magenta-soft); color: var(--sl-color-white); font: 0.875em/1.4 var(--sl-font-mono); }"
+    },
+    {
+      "name": "Pre-1.0 Badge",
+      "kind": "chip",
+      "description": "Persistent stability context attached to the site wordmark.",
+      "html": "<span class=\"ds-status\">pre-1.0</span>",
+      "css": ".ds-status { display: inline-block; padding: 0.3em 0.6em 0.25em; border: 1px solid color-mix(in oklch, var(--beryl-magenta) 45%, transparent); border-radius: 999px; color: var(--beryl-magenta-bright); font: 700 0.62rem/1 var(--sl-font); letter-spacing: 0.02em; }"
+    },
+    {
+      "name": "Data Table",
+      "kind": "custom",
+      "description": "Compact reference data with restrained row separation.",
+      "html": "<table class=\"ds-table\"><thead><tr><th>Event</th><th>Effect</th></tr></thead><tbody><tr><td>Join</td><td>AcceptJoin</td></tr><tr><td>Message</td><td>Reply</td></tr></tbody></table>",
+      "css": ".ds-table { width: 100%; border: 1px solid var(--beryl-hairline); border-spacing: 0; border-radius: 12px; overflow: hidden; color: var(--sl-color-gray-2); font: 0.95rem/1.5 var(--sl-font); } .ds-table th, .ds-table td { padding: 0.6rem 0.9rem; text-align: left; border-bottom: 1px solid color-mix(in oklch, var(--beryl-hairline) 55%, transparent); } .ds-table th { background: var(--beryl-surface); color: var(--sl-color-white); font-weight: 650; } .ds-table tr:last-child td { border-bottom: 0; } .ds-table tbody tr { transition: background 0.15s ease-out; } .ds-table tbody tr:hover { background: var(--beryl-magenta-soft); }"
+    },
+    {
+      "name": "API Module Ledger",
+      "kind": "nav",
+      "description": "A responsive, border-only module directory for generated package reference pages.",
+      "html": "<ul class=\"ds-api-modules\"><li><a href=\"#\"><code>beryl/channel</code></a><p>Typed channel handlers with private state.</p></li><li><a href=\"#\"><code>beryl/presence</code></a><p>Distributed presence tracking backed by a CRDT.</p></li></ul>",
+      "css": ".ds-api-modules { display: grid; gap: 0; margin: 0; padding: 0; border-block: 1px solid var(--beryl-hairline); color: var(--sl-color-white); font-family: var(--sl-font); list-style: none; } .ds-api-modules li { display: grid; grid-template-columns: minmax(11rem, 0.7fr) minmax(0, 1.3fr); gap: 1rem 2rem; align-items: baseline; padding: 1rem 0.25rem; border-bottom: 1px solid var(--beryl-hairline); } .ds-api-modules li:last-child { border-bottom: 0; } .ds-api-modules a { color: var(--sl-color-accent-high); font-weight: 700; text-underline-offset: 0.25em; } .ds-api-modules p { max-width: 68ch; margin: 0; color: var(--sl-color-gray-2); } @media (max-width: 38rem) { .ds-api-modules li { grid-template-columns: 1fr; gap: 0.45rem; } }"
+    },
+    {
+      "name": "API Symbol Index",
+      "kind": "nav",
+      "description": "A compact map of generated types and functions that keeps long API pages scannable.",
+      "html": "<nav class=\"ds-api-index\" aria-label=\"Module contents\"><section><a class=\"ds-api-index-section\" href=\"#\">Types</a><ul><li><a href=\"#\"><code>Config</code></a></li><li><a href=\"#\"><code>Sockets</code></a></li></ul></section><section><a class=\"ds-api-index-section\" href=\"#\">Functions</a><ul><li><a href=\"#\"><code>child_spec</code></a></li><li><a href=\"#\"><code>broadcast</code></a></li><li><a href=\"#\"><code>stop</code></a></li></ul></section></nav>",
+      "css": ".ds-api-index { display: grid; gap: 1.5rem; padding-block: 1.25rem; border-block: 1px solid var(--beryl-hairline); color: var(--sl-color-white); font-family: var(--sl-font); } .ds-api-index section { display: grid; grid-template-columns: minmax(7rem, 0.22fr) minmax(0, 1fr); gap: 0.75rem 1.5rem; align-items: start; } .ds-api-index-section { color: var(--sl-color-white); font-weight: 700; text-underline-offset: 0.25em; } .ds-api-index ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 0.4rem 1rem; margin: 0; padding: 0; list-style: none; } .ds-api-index a { color: var(--sl-color-accent-high); } @media (max-width: 38rem) { .ds-api-index section { grid-template-columns: 1fr; gap: 0.45rem; } .ds-api-index ul { grid-template-columns: repeat(2, minmax(0, 1fr)); } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Emerald Workbench",
+    "overview": "The system treats documentation as a carefully equipped technical workbench cut from a green gemstone. Near-black green surfaces, warm off-white light surfaces, emerald actions, and a small morganite accent make the product feel crafted without competing with code. The visual voice is tactile, precise, and quietly playful.\n\nThe interface stays familiar enough for sustained reading. Expressive moments are concentrated in the faceted hero, display headings, status details, and interaction states. Long-form documentation remains calm, legible, and structurally conventional.",
+    "keyCharacteristics": [
+      "Gemstone greens form the environment; morganite marks small moments of emphasis.",
+      "Unbounded gives the brand and page titles a wide, unmistakable silhouette.",
+      "Hanken Grotesk carries long-form reading and interface labels.",
+      "JetBrains Mono keeps code compact and developer-native.",
+      "Tonal layers define surfaces at rest; glow and lift appear during interaction.",
+      "Faceted geometry appears as a signature detail, not as repeated decoration."
+    ],
+    "rules": [
+      {"name": "The Two-Stone Rule", "body": "Emerald carries interaction and structure; morganite marks rare emphasis. Do not introduce an unrelated accent hue.", "section": "colors"},
+      {"name": "The Theme-Pair Rule", "body": "Light mode uses purpose-built darker accents and shadows. It is not the dark palette with opacity reduced.", "section": "colors"},
+      {"name": "The Wide-Type Rule", "body": "Unbounded belongs to the wordmark, page titles, and short display moments. Do not use it for paragraphs or dense navigation.", "section": "typography"},
+      {"name": "The Code-Is-Code Rule", "body": "JetBrains Mono marks executable or literal content; it is never a decorative substitute for interface typography.", "section": "typography"},
+      {"name": "The Code-First Layout Rule", "body": "Code samples can become the dominant visual object, but surrounding prose must retain a readable measure and an obvious route to the next action.", "section": "layout"},
+      {"name": "The Resting-Stone Rule", "body": "Surfaces stay tonally layered and nearly flat at rest. Glow is earned by focus, hover, or the singular hero object.", "section": "elevation"},
+      {"name": "The Facet-Sparing Rule", "body": "Use faceted geometry for brand signatures and orientation, not as a border or background treatment on every container.", "section": "shapes"}
+    ],
+    "dos": [
+      "Do keep code and technical content more visually prominent than decoration.",
+      "Do use emerald for links, focus, selection, and interactive structure.",
+      "Do reserve morganite for small, high-signal brand moments.",
+      "Do preserve the readable Hanken Grotesk body and familiar Starlight navigation model.",
+      "Do provide purpose-built dark and light treatments with WCAG AA contrast.",
+      "Do disable decorative movement under `prefers-reduced-motion`."
+    ],
+    "donts": [
+      "Don't spread Unbounded across paragraphs, dense controls, or long navigation labels.",
+      "Don't add generic blue accents, gradient text, or unrelated SaaS colors.",
+      "Don't turn the interface into a grid of identical icon cards.",
+      "Don't apply glow to every resting surface.",
+      "Don't use faceted geometry as repeated wallpaper.",
+      "Don't trade code legibility or documentation scanability for brand expression."
+    ]
+  }
+}

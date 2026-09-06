@@ -1,190 +1,245 @@
-//// Behavioural tests for per-channel rate-limit bucket accounting: buckets
-//// are only created for joined topics, are capped per socket, and are
-//// released when the channel or socket goes away.
+//// Behavioural tests for per-channel rate-limit bucket accounting on the
+//// app runtime: buckets are only created for joined topics, are capped per
+//// socket, and are released when the topic or socket goes away.
 
-import beryl/coordinator
-import beryl/rate_limit
-import beryl/topic
+import app_test_helper
+import beryl
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
-import gleam/dynamic
 import gleam/erlang/process
 import gleam/int
-import gleam/json
 import gleam/option
-import gleeunit
 import gleeunit/should
 
-pub fn main() {
-  gleeunit.main()
-}
-
-fn start_capped_coordinator(
+/// Start an app that accepts every join and forwards events to the
+/// observer, with a generous channel rate but a small bucket cap.
+fn start_capped_app(
   max_keys: Int,
-) -> process.Subject(coordinator.Message) {
-  let assert Ok(coord) =
-    coordinator.start_with_config(
-      coordinator.CoordinatorConfig(
-        ..coordinator.config(wire.phoenix_codec()),
-        channel_limits: option.Some(rate_limit.config(
-          per_second: 1000,
-          burst: 1000,
-        )),
-        channel_limiter_max_keys_per_socket: max_keys,
-      ),
-    )
-  coord
+  events: process.Subject(socket.Input(Nil)),
+) -> beryl.Sockets {
+  start_capped_app_with(max_keys, events, beryl.config(wire.phoenix_codec()))
 }
 
-/// Wait for a "handled" marker from the channel, skipping wire frames (join
-/// replies etc.) that share the same capture subject.
-fn expect_handled(sent: process.Subject(String)) -> Nil {
-  case process.receive(sent, 500) {
-    Ok("handled") -> Nil
-    Ok(_frame) -> expect_handled(sent)
+fn start_capped_app_with(
+  max_keys: Int,
+  events: process.Subject(socket.Input(Nil)),
+  base: beryl.Config,
+) -> beryl.Sockets {
+  let assert Ok(channels) =
+    app_test_helper.start_app(
+      base
+        |> beryl.with_channel_rate(per_second: 1000, burst: 1000)
+        |> beryl.with_channel_rate_max_keys_per_socket(max_keys: max_keys),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, input) {
+        process.send(events, input)
+        case input {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
+          Message(..) | Binary(..) | Closed(..) | Info(..) -> Next(model, [])
+        }
+      },
+    )
+  channels
+}
+
+/// Wait for a `Message` event on the given topic, skipping other events.
+fn expect_handled(
+  events: process.Subject(socket.Input(Nil)),
+  topic: String,
+) -> Nil {
+  case process.receive(events, 500) {
+    Ok(Message(received_topic, _, _, _)) if received_topic == topic -> Nil
+    Ok(_other) -> expect_handled(events, topic)
     Error(Nil) -> should.fail()
   }
 }
 
-/// Assert that no "handled" marker arrives, skipping wire frames.
-fn expect_dropped(sent: process.Subject(String)) -> Nil {
-  case process.receive(sent, 100) {
-    Ok("handled") -> should.fail()
-    Ok(_frame) -> expect_dropped(sent)
+/// Assert that no `Message` event for the topic arrives.
+fn expect_dropped(
+  events: process.Subject(socket.Input(Nil)),
+  topic: String,
+) -> Nil {
+  case process.receive(events, 100) {
+    Ok(Message(received_topic, _, _, _)) if received_topic == topic ->
+      should.fail()
+    Ok(_other) -> expect_dropped(events, topic)
     Error(Nil) -> Nil
   }
 }
 
-/// Discard everything currently queued on the capture subject.
-fn drain_replies(subject: process.Subject(String)) -> Nil {
-  case process.receive(subject, 0) {
-    Ok(_) -> drain_replies(subject)
+/// Discard everything currently queued on the observer.
+fn drain_events(events: process.Subject(socket.Input(Nil))) -> Nil {
+  case process.receive(events, 0) {
+    Ok(_) -> drain_events(events)
     Error(Nil) -> Nil
   }
 }
 
-pub fn unjoined_events_do_not_consume_channel_bucket_cap_test() {
-  let coord = start_capped_coordinator(1)
-  let sent = process.new_subject()
-  let assert Ok(_) = register_test_channel(coord, sent)
+fn event_frame(
+  channels: beryl.Sockets,
+  socket_id: String,
+  topic: String,
+  ref: String,
+) -> Nil {
+  app_test_helper.route(
+    channels,
+    socket_id,
+    "[null,\"" <> ref <> "\",\"" <> topic <> "\",\"client_event\",{}]",
+  )
+}
 
-  connect(coord, sent, "socket-131")
+fn leave(
+  channels: beryl.Sockets,
+  socket_id: String,
+  topic: String,
+  ref: String,
+) -> Nil {
+  app_test_helper.route(
+    channels,
+    socket_id,
+    "[\"join-"
+      <> topic
+      <> "\",\""
+      <> ref
+      <> "\",\""
+      <> topic
+      <> "\",\"phx_leave\",{}]",
+  )
+}
+
+fn join(channels: beryl.Sockets, socket_id: String, topic: String) -> Nil {
+  app_test_helper.join(
+    channels,
+    socket_id,
+    topic,
+    "join-" <> topic,
+    "join-" <> topic,
+  )
+}
+
+pub fn unjoined_events_do_not_consume_channel_bucket_cap_test() -> Nil {
+  let events = process.new_subject()
+  let channels = start_capped_app(1, events)
+
+  let _frames = app_test_helper.connect(channels, "socket-131")
 
   // A flood of events for never-joined topics must not create buckets and
   // must not consume the per-socket cap.
-  send_unjoined_events(coord, 50)
+  send_unjoined_events(channels, 50)
   process.sleep(50)
-  drain_replies(sent)
+  drain_events(events)
 
   // The single cap slot is still available for a legitimately joined topic.
-  join(coord, "socket-131", "room:one")
-  event(coord, "socket-131", "room:one", "ref-one")
-  expect_handled(sent)
+  join(channels, "socket-131", "room:one")
+  event_frame(channels, "socket-131", "room:one", "ref-one")
+  expect_handled(events, "room:one")
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() {
-  let coord = start_capped_coordinator(2)
-  let sent = process.new_subject()
-  let assert Ok(_) = register_test_channel(coord, sent)
+pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() -> Nil {
+  let events = process.new_subject()
+  let channels = start_capped_app(2, events)
 
-  connect(coord, sent, "socket-cap")
-  join(coord, "socket-cap", "room:one")
-  join(coord, "socket-cap", "room:two")
-  join(coord, "socket-cap", "room:three")
+  let _frames = app_test_helper.connect(channels, "socket-cap")
+  join(channels, "socket-cap", "room:one")
+  join(channels, "socket-cap", "room:two")
+  join(channels, "socket-cap", "room:three")
 
-  event(coord, "socket-cap", "room:one", "ref-one")
-  expect_handled(sent)
-  event(coord, "socket-cap", "room:two", "ref-two")
-  expect_handled(sent)
+  event_frame(channels, "socket-cap", "room:one", "ref-one")
+  expect_handled(events, "room:one")
+  event_frame(channels, "socket-cap", "room:two", "ref-two")
+  expect_handled(events, "room:two")
 
   // The third topic would need a third bucket, over the cap: dropped.
-  event(coord, "socket-cap", "room:three", "ref-three")
-  expect_dropped(sent)
+  event_frame(channels, "socket-cap", "room:three", "ref-three")
+  expect_dropped(events, "room:three")
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn channel_bucket_cap_is_isolated_per_socket_test() {
-  let coord = start_capped_coordinator(1)
-  let sent = process.new_subject()
-  let assert Ok(_) = register_test_channel(coord, sent)
+pub fn channel_bucket_cap_is_isolated_per_socket_test() -> Nil {
+  let events = process.new_subject()
+  let channels = start_capped_app(1, events)
 
-  connect(coord, sent, "socket-one")
-  connect(coord, sent, "socket-two")
-  join(coord, "socket-one", "room:one")
-  join(coord, "socket-two", "room:two")
-  drain_replies(sent)
+  let _frames_one = app_test_helper.connect(channels, "socket-one")
+  let _frames_two = app_test_helper.connect(channels, "socket-two")
+  join(channels, "socket-one", "room:one")
+  join(channels, "socket-two", "room:two")
+  drain_events(events)
 
-  event(coord, "socket-one", "room:one", "ref-one")
-  expect_handled(sent)
-  event(coord, "socket-two", "room:two", "ref-two")
-  expect_handled(sent)
+  event_frame(channels, "socket-one", "room:one", "ref-one")
+  expect_handled(events, "room:one")
+  event_frame(channels, "socket-two", "room:two", "ref-two")
+  expect_handled(events, "room:two")
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn heartbeat_eviction_releases_channel_buckets_test() {
-  let assert Ok(coord) =
-    coordinator.start_with_config(
-      coordinator.CoordinatorConfig(
-        ..coordinator.config(wire.phoenix_codec()),
-        heartbeat_timeout_ms: 20,
-        channel_limits: option.Some(rate_limit.config(
-          per_second: 1000,
-          burst: 1000,
-        )),
-        channel_limiter_max_keys_per_socket: 1,
-      ),
+pub fn heartbeat_eviction_releases_channel_buckets_test() -> Nil {
+  let events = process.new_subject()
+  let channels =
+    start_capped_app_with(
+      1,
+      events,
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_heartbeat(timeout_ms: 40),
     )
-  let sent = process.new_subject()
-  let assert Ok(_) = register_test_channel(coord, sent)
 
-  connect(coord, sent, "socket-heartbeat")
-  join(coord, "socket-heartbeat", "room:one")
-  event(coord, "socket-heartbeat", "room:one", "ref-one")
-  expect_handled(sent)
+  let _frames = app_test_helper.connect(channels, "socket-heartbeat")
+  join(channels, "socket-heartbeat", "room:one")
+  event_frame(channels, "socket-heartbeat", "room:one", "ref-one")
+  expect_handled(events, "room:one")
 
-  // Let the socket go stale and evict it.
-  process.sleep(30)
-  process.send(coord, coordinator.CheckHeartbeats)
-  process.sleep(20)
+  // Let the socket go stale and get evicted by the periodic check.
+  process.sleep(120)
 
   // A reconnect under the same socket id starts with a free cap: if the old
   // bucket had leaked, this event would exceed max_keys_per_socket = 1.
-  connect(coord, sent, "socket-heartbeat")
-  join(coord, "socket-heartbeat", "room:two")
-  drain_replies(sent)
-  event(coord, "socket-heartbeat", "room:two", "ref-two")
-  expect_handled(sent)
+  let _frames = app_test_helper.connect(channels, "socket-heartbeat")
+  join(channels, "socket-heartbeat", "room:two")
+  drain_events(events)
+  event_frame(channels, "socket-heartbeat", "room:two", "ref-two")
+  expect_handled(events, "room:two")
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn leave_removes_channel_bucket_so_cap_recovers_test() {
-  let coord = start_capped_coordinator(2)
-  let sent = process.new_subject()
-  let assert Ok(_) = register_test_channel(coord, sent)
+pub fn leave_removes_channel_bucket_so_cap_recovers_test() -> Nil {
+  let events = process.new_subject()
+  let channels = start_capped_app(2, events)
 
-  connect(coord, sent, "socket-leave")
-  join(coord, "socket-leave", "room:one")
-  join(coord, "socket-leave", "room:two")
-  event(coord, "socket-leave", "room:one", "ref-one")
-  expect_handled(sent)
-  event(coord, "socket-leave", "room:two", "ref-two")
-  expect_handled(sent)
+  let _frames = app_test_helper.connect(channels, "socket-leave")
+  join(channels, "socket-leave", "room:one")
+  join(channels, "socket-leave", "room:two")
+  event_frame(channels, "socket-leave", "room:one", "ref-one")
+  expect_handled(events, "room:one")
+  event_frame(channels, "socket-leave", "room:two", "ref-two")
+  expect_handled(events, "room:two")
 
   // Leaving frees room:one's bucket, so a third topic fits under the cap.
-  leave(coord, "socket-leave", "room:one", "leave-one")
-  join(coord, "socket-leave", "room:three")
+  leave(channels, "socket-leave", "room:one", "leave-one")
+  join(channels, "socket-leave", "room:three")
   process.sleep(20)
-  drain_replies(sent)
-  event(coord, "socket-leave", "room:three", "ref-three")
-  expect_handled(sent)
+  drain_events(events)
+  event_frame(channels, "socket-leave", "room:three", "ref-three")
+  expect_handled(events, "room:three")
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-fn send_unjoined_events(
-  coord: process.Subject(coordinator.Message),
-  remaining: Int,
-) -> Nil {
+fn send_unjoined_events(channels: beryl.Sockets, remaining: Int) -> Nil {
   case remaining <= 0 {
     True -> Nil
     False -> {
       let topic = "room:unjoined-" <> int.to_string(remaining)
-      coordinator.route_message(
-        coord,
+      app_test_helper.route(
+        channels,
         "socket-131",
         "[null,\"ref-"
           <> int.to_string(remaining)
@@ -192,112 +247,7 @@ fn send_unjoined_events(
           <> topic
           <> "\",\"event\",{}]",
       )
-      send_unjoined_events(coord, remaining - 1)
+      send_unjoined_events(channels, remaining - 1)
     }
-  }
-}
-
-fn connect(
-  coord: process.Subject(coordinator.Message),
-  sent: process.Subject(String),
-  socket_id: String,
-) -> Nil {
-  process.send(
-    coord,
-    coordinator.SocketConnected(
-      socket_id,
-      fn(text) {
-        process.send(sent, text)
-        Ok(Nil)
-      },
-      fn(_) { Ok(Nil) },
-      option.None,
-      dynamic.nil(),
-    ),
-  )
-  process.sleep(10)
-}
-
-fn join(
-  coord: process.Subject(coordinator.Message),
-  socket_id: String,
-  topic: String,
-) -> Nil {
-  coordinator.route_message(
-    coord,
-    socket_id,
-    "[null,\"join-" <> topic <> "\",\"" <> topic <> "\",\"phx_join\",{}]",
-  )
-}
-
-fn event(
-  coord: process.Subject(coordinator.Message),
-  socket_id: String,
-  topic: String,
-  ref: String,
-) -> Nil {
-  coordinator.route_message(
-    coord,
-    socket_id,
-    "[null,\"" <> ref <> "\",\"" <> topic <> "\",\"client_event\",{}]",
-  )
-}
-
-fn leave(
-  coord: process.Subject(coordinator.Message),
-  socket_id: String,
-  topic: String,
-  ref: String,
-) -> Nil {
-  coordinator.route_message(
-    coord,
-    socket_id,
-    "[null,\"" <> ref <> "\",\"" <> topic <> "\",\"phx_leave\",{}]",
-  )
-}
-
-fn handled_notifying_instance(
-  sent: process.Subject(String),
-) -> coordinator.JoinedChannel {
-  coordinator.JoinedChannel(
-    handle_in: fn(_event, _payload, _ctx) {
-      process.send(sent, "handled")
-      coordinator.NoReplyErased(next: handled_notifying_instance(sent))
-    },
-    handle_binary: fn(_data, _ctx) {
-      coordinator.NoReplyErased(next: handled_notifying_instance(sent))
-    },
-    handle_info: fn(_message, _ctx) {
-      coordinator.NoReplyErased(next: handled_notifying_instance(sent))
-    },
-    terminate: fn(_, _) { Nil },
-  )
-}
-
-fn register_test_channel(
-  coord: process.Subject(coordinator.Message),
-  sent: process.Subject(String),
-) -> Result(Int, coordinator.RegisterError) {
-  let reply = process.new_subject()
-  process.send(
-    coord,
-    coordinator.RegisterChannel(
-      "room:*",
-      coordinator.ChannelHandler(
-        id: 0,
-        pattern: topic.Wildcard("room:"),
-        join: fn(_topic, _payload, _connect_assigns, _ctx) {
-          coordinator.JoinOkErased(
-            option.Some(json.object([])),
-            handled_notifying_instance(sent),
-          )
-        },
-      ),
-      reply,
-    ),
-  )
-  case process.receive(reply, 500) {
-    Ok(result) -> result
-    Error(Nil) -> Error(coordinator.InvalidPattern("timeout"))
   }
 }

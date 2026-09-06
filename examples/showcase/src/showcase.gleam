@@ -1,98 +1,169 @@
+//// Showcase: all three example channels on one socket, composed with
+//// `beryl/channel`.
+////
+//// Each example's topic namespace is a channel handler here — `cursor:*`,
+//// `room:*`, and `document:` — and the layer routes every socket event
+//// to the handler that owns its topic. There is no socket-wide model, no
+//// message union, and no hand-written router: a channel keeps its own
+//// private state per joined topic and the layer prunes it when the topic
+//// closes.
+////
+//// The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay
+//// on raw `beryl.child_spec` dispatch on purpose: each serves a single
+//// topic namespace, which is the case the core API already handles well.
+//// This app is the multi-topic case the channel layer exists for.
+
 import beryl
+import beryl/channel
 import beryl/group
-import beryl/presence
-import beryl/supervisor
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
-import chatrooms/chat_channel
-import chatrooms/router as chatrooms_router
-import collab_docs/auth as docs_auth
-import collab_docs/channel as docs_channel
-import collab_docs/doc_store
-import collab_docs/router as collab_docs_router
-import cursors/cursor_channel
-import cursors/router as cursors_router
+import chatroom/router as chatroom_router
+import collab_document/auth as document_auth
+import collab_document/document_store
+import collab_document/router as document_router
+import cursor/router as cursor_router
 import envoy
+import example_helper/broadcast_hub as hub
+import example_helper/session_presence
+import example_helper/static
 import gleam/erlang/process
 import gleam/int
 import gleam/io
-import gleam/option.{Some}
 import gleam/otp/static_supervisor
 import gleam/result
 import mist
+import showcase/channel/cursor as cursor_channel
+import showcase/channel/document as document_channel
+import showcase/channel/room as room_channel
 import showcase/router
 
-pub fn main() {
-  // Single beryl instance, rate-limited using cursors' tighter knobs
-  // (cursors emits the most messages per second of the three examples).
-  // Shared presence actor — each example's handler scopes presence to its
-  // own topic namespace, so a single actor is safe.
-  let beryl_config =
-    supervisor.config(
-      beryl.config(wire.phoenix_codec())
-      |> beryl.with_message_rate(per_second: 30, burst: 60)
-      |> beryl.with_join_rate(per_second: 5, burst: 10)
-      |> beryl.with_channel_rate(per_second: 10, burst: 20),
-    )
-    |> supervisor.with_presence(presence.default_config("node1"))
-    |> supervisor.with_groups()
+/// Everything the showcase channels read. Assembled in `main` and passed
+/// to `handlers`, which is also what the tests register, so the deployed
+/// table and the tested table cannot drift.
+pub type Dependencies {
+  Dependencies(
+    presence: session_presence.Tracker,
+    groups: group.Groups,
+    store: document_store.Store,
+    secret: BitArray,
+    hub: hub.Hub,
+  )
+}
 
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(supervisor.start(beryl_config))
-    |> static_supervisor.start()
+/// The showcase's channel table: one handler per topic namespace plus the
+/// read-only lobby mounted by the standalone chat app.
+///
+/// Handlers are consulted in list order and the first matching pattern
+/// owns the topic; these patterns do not overlap, so the order is
+/// documentation rather than resolution.
+pub fn handlers(dependencies: Dependencies) -> List(channel.Handler) {
+  [
+    lobby(),
+    cursor_channel.channel(cursor_channel.Context(dependencies.presence)),
+    room_channel.channel(room_channel.Context(
+      presence: dependencies.presence,
+      groups: dependencies.groups,
+      hub: dependencies.hub,
+    )),
+    document_channel.channel(document_channel.Context(
+      store: dependencies.store,
+      secret: dependencies.secret,
+    )),
+  ]
+}
 
-  let channels = supervisor.channels(beryl_config)
-  let assert Some(presence_actor) = supervisor.presence(beryl_config)
+fn lobby() -> channel.Handler {
+  channel.handler("lobby", fn(_context) { channel.accept(Nil) })
+}
+
+pub fn main() -> Nil {
+  let assert Ok(cursor_static_directory) = static.priv_static("cursor")
+  let assert Ok(chatroom_static_directory) = static.priv_static("chatroom")
+  let assert Ok(document_static_directory) =
+    static.priv_static("collab_document")
+  // Shared example-local session presence. Mutations and capacity reads are
+  // synchronous ETS operations; snapshots publish asynchronously.
+  let presence_tracker = session_presence.start()
 
   // Chatrooms-specific state.
-  let assert Some(groups) = supervisor.groups(beryl_config)
+  let #(groups, groups_specification) = group.child_spec()
+
+  // collab_docs-specific state.
+  let document_secret = document_auth.new_secret()
+  let assert Ok(document_store_process) = document_store.start()
+
+  // The showcase's broadcast hub: bound to the running system below, and
+  // used for the one announcement no channel's own topic can carry (the
+  // `lobby` room list).
+  let assert Ok(hub) = hub.start()
+
+  // Per-topic-pattern rate limits replace the old single global
+  // channel-rate compromise: cursors stream fast, chat and docs do not.
+  // The frame budget sits modestly above the decoded-message budget to
+  // account for joins and malformed frames.
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
+    |> beryl.with_join_rate(per_second: 5, burst: 10)
+    |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
+    |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
+    |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
+
+  let dependencies =
+    Dependencies(
+      presence: presence_tracker,
+      groups: groups,
+      store: document_store_process,
+      secret: document_secret,
+      hub: hub,
+    )
+
+  let assert Ok(#(channels, beryl_specification)) =
+    channel.child_spec(config, handlers: handlers(dependencies))
+
+  session_presence.configure(presence_tracker, channels)
+  hub.bind(hub, channels)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(groups_specification)
+    |> static_supervisor.add(beryl_specification)
+    |> static_supervisor.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
   let assert Ok(_) = group.add(groups, "public", "room:random")
   let assert Ok(_) = group.add(groups, "public", "room:help")
 
-  // collab_docs-specific state.
-  let docs_secret = docs_auth.new_secret()
-  let assert Ok(docs_store) = doc_store.start()
-
-  // Register all three handlers on the single channels instance. Topic
-  // namespaces (cursor:*, room:*, document:*:*) don't collide.
-  let cursors_handler = cursor_channel.new_handler(channels, presence_actor)
-  let assert Ok(_) = beryl.register(channels, "cursor:*", cursors_handler)
-
-  let chat_handler = chat_channel.new_handler(channels, presence_actor, groups)
-  let assert Ok(_) = beryl.register(channels, "room:*", chat_handler)
-
-  let docs_handler = docs_channel.new_handler(channels, docs_store, docs_secret)
-  let assert Ok(_) = beryl.register(channels, "document:*:*", docs_handler)
-
   // Build per-example contexts pinned to their URL prefix.
-  let cursors_ctx =
-    cursors_router.Context(
+  let cursor_context =
+    cursor_router.Context(
       channels:,
-      presence: presence_actor,
       base_path: "/cursors",
+      static_directory: cursor_static_directory,
     )
-  let chatrooms_ctx =
-    chatrooms_router.Context(
+  let chatroom_context =
+    chatroom_router.Context(
       channels:,
-      presence: presence_actor,
+      presence: presence_tracker,
       groups:,
       base_path: "/chat",
+      static_directory: chatroom_static_directory,
     )
-  let collab_docs_ctx =
-    collab_docs_router.Context(
+  let collab_document_context =
+    document_router.Context(
       channels:,
-      store: docs_store,
-      secret: docs_secret,
+      store: document_store_process,
+      secret: document_secret,
       base_path: "/docs",
+      static_directory: document_static_directory,
     )
-  let showcase_ctx =
+  let showcase_context =
     router.Context(
-      cursors: cursors_ctx,
-      chatrooms: chatrooms_ctx,
-      collab_docs: collab_docs_ctx,
+      cursor: cursor_context,
+      chatroom: chatroom_context,
+      collab_document: collab_document_context,
     )
 
   let port =
@@ -103,7 +174,7 @@ pub fn main() {
     envoy.get("BIND_ADDRESS")
     |> result.unwrap("localhost")
 
-  io.println("✨ beryl examples showcase")
+  io.println("✨ beryl examples showcase (beryl/channel)")
   io.println("   Listening on " <> interface <> ":" <> int.to_string(port))
   io.println("")
 
@@ -111,12 +182,12 @@ pub fn main() {
   // is a public demo. Phoenix JS client (new Socket("/socket")) in every
   // example targets this URL out of the box.
   let assert Ok(_) =
-    fn(req) {
+    fn(http_request) {
       mist_transport.upgrade(
-        req,
+        http_request,
         channels,
-        mist_transport.default_config("/socket/websocket"),
-        fn() { router.handle_request(req, showcase_ctx) },
+        server.default_config("/socket/websocket"),
+        fn() { router.handle_request(http_request, showcase_context) },
       )
     }
     |> mist.new

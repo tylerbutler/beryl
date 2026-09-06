@@ -1,0 +1,43 @@
+{
+  "skill_name": "gleam-reference-docs",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "In this Gleam library repo, add the same generated reference docs workflow we used in Gluegun. There is an Astro/Starlight site in website/, a justfile at the root, and I want /reference/ pages generated from package-interface.json before site checks and builds.",
+      "expected_output": "The project gets a Node generator script, package script, just site-reference recipe, site-check/site-build dependencies, sidebar entries, and validation instructions.",
+      "files": [],
+      "expectations": [
+        "Discovers the package name from gleam.toml or otherwise adapts it correctly",
+        "Adds or updates a reference generator that reads build/dev/docs/<package>/package-interface.json",
+        "Wires just recipes so reference generation depends on gleam docs build and website checks/builds depend on reference generation",
+        "Updates website navigation so generated reference pages are discoverable",
+        "Runs or recommends the smallest relevant validation commands"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Our Gleam project already has a docs site and package.json scripts, but no justfile. Can you add a script that turns Gleam docs JSON into markdown API pages and make npm run build regenerate them first?",
+      "expected_output": "The project gets a generator and package scripts without inventing a justfile, and build/check scripts are adapted to regenerate reference pages.",
+      "files": [],
+      "expectations": [
+        "Does not add a justfile when the project does not use just",
+        "Adds generate:reference to the existing package scripts using the existing package manager style",
+        "Makes the existing build or check path regenerate reference docs first",
+        "Handles missing package-interface.json with a helpful gleam docs build error"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Port the Gluegun package-interface.json docs recipe into this monorepo. The Gleam package lives in packages/client and the Starlight website lives in docs/site, so the defaults probably will not work.",
+      "expected_output": "The workflow is adapted to non-root package and nonstandard website paths instead of blindly copying Gluegun paths.",
+      "files": [],
+      "expectations": [
+        "Identifies that repoRoot, websiteRoot, docsJsonPath, and outputDir need path adjustments",
+        "Avoids hardcoded Gluegun names and paths",
+        "Places scripts and generated docs in the existing docs/site structure",
+        "Explains any manual sidebar mapping needed for module slugs"
+      ]
+    }
+  ]
+}
+

@@ -8,8 +8,8 @@ import gleam/result
 
 /// Encode a presence diff for one topic as a Phoenix-compatible payload.
 ///
-/// The resulting JSON has `joins` and `leaves` maps keyed by presence key,
-/// where each value contains the tracked metadata under `metas`.
+/// The resulting JSON has `joins` and `leaves` maps. Presence keys index the
+/// maps. Each value contains the tracked metadata under `metas`.
 ///
 /// ```json
 /// {
@@ -27,17 +27,17 @@ pub fn encode_diff(diff: Diff, topic: String) -> json.Json {
 /// Encode a topic's full presence list as a Phoenix-compatible
 /// `presence_state` payload.
 ///
-/// The resulting JSON is a map keyed by presence key, where each value
-/// contains the tracked metadata under `metas` — the same shape as one side
-/// of a `presence_diff`:
+/// The resulting JSON is a map indexed by presence key. Each value contains
+/// the tracked metadata under `metas`. This is the same shape as one side of
+/// a `presence_diff`:
 ///
 /// ```json
 /// { "user:1": { "metas": [{ "status": "online", "phx_ref": "..." }] } }
 /// ```
 ///
-/// Phoenix clients expect a `presence_state` event carrying this payload
-/// after joining a presence-enabled topic (followed by incremental
-/// `presence_diff` events). Build the entry list with `presence.list`.
+/// Phoenix clients expect a `presence_state` event with this payload after
+/// they join a presence-enabled topic. Incremental `presence_diff` events
+/// follow it. Build the entry list with `presence.list`.
 pub fn encode_state(entries: List(PresenceEntry)) -> json.Json {
   encode_entries(entries)
 }

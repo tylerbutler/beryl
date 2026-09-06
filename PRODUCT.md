@@ -1,64 +1,108 @@
 # Product
 
-## Register
+<!-- impeccable:product-schema 1 -->
 
-brand
+## Platform
+
+web
 
 ## Users
 
-Gleam developers on the Erlang/BEAM target who are evaluating or learning beryl —
-a type-safe real-time channels and presence library. They arrive from Hex, the
-Gleam package index, GitHub, or word of mouth, usually to answer one of two
-questions: "is this the right tool for my real-time feature?" and "how do I wire
-up my first channel?" They are technical, skim-read, and judge a library's
-maturity partly by the quality of its docs site. The surface is the Astro +
-Starlight documentation/marketing site in `website/`.
+The primary users are Gleam developers on the Erlang/BEAM target who are
+evaluating or learning beryl. They arrive from Hex, the Gleam package index,
+GitHub, or word of mouth to decide whether beryl fits a realtime feature and
+to learn how to build their first channel. They are technical, skim-read, and
+use documentation quality as evidence of library maturity.
 
 ## Product Purpose
 
-The site is the public face of beryl. It must convert a curious developer into a
-confident first-time user: communicate what beryl does (channels, presence,
-PubSub, Phoenix-compatible wire protocol on the BEAM), prove it's credible and
-modern, and get them to a working Quick Start fast. Success looks like a
-developer landing on the splash page, immediately understanding the value, and
-reaching a running channel without friction. It is pre-1.0 software, so the site
-must be honest about stability while still feeling polished and alive.
+beryl provides type-safe realtime channels, presence, and PubSub for Gleam on
+the BEAM. It gives developers a direct path from a typed application model to
+Phoenix-compatible WebSocket behavior without requiring an Elixir or Phoenix
+application.
 
-## Brand Personality
+The website is beryl's public product surface. It must help a curious developer
+understand the library, choose an API, and reach a working first channel with
+little friction. Success means that developers can evaluate beryl accurately,
+run an example, and apply the documented model in their own supervised Gleam
+application.
 
-Playful, bold, modern. Confident without being corporate. The voice is direct,
-a little spirited, and unmistakably crafted by people who care — closer to a
-sharp indie developer tool than an enterprise product. beryl is a green gemstone;
-the brand leans into that vivid, faceted, mineral identity rather than hiding it.
-Emotional goal: a developer should feel "these people have taste, this will be a
-pleasure to use."
+## Positioning
 
-## Anti-references
+beryl combines typed app-dispatch and channel APIs with Phoenix-compatible wire
+behavior on Gleam and the Erlang/BEAM runtime. The type-safe application model,
+public transport SPI, and Phoenix protocol compatibility are one system rather
+than separate integrations.
 
-- **Cold / corporate enterprise docs.** No sterile gray-on-white, no faceless
-  enterprise tone, no committee-designed sameness. This is the explicit thing to
-  avoid.
-- Generic AI-generated SaaS landing pages (gradient blobs, hero-metric template,
-  identical card grids).
-- The bland default Starlight theme that looks like every other docs site.
+## Operating Context
 
-## Design Principles
+Developers evaluate beryl through the Astro and Starlight website in `website/`,
+the generated API reference, GitHub source, and runnable examples. They add a
+beryl package to a Gleam application, choose raw app dispatch or
+`beryl/channel`, select a wire codec and WebSocket transport, place beryl's
+child specification in an OTP supervision tree, and connect a compatible
+client.
 
-- **Show the gem.** Lean into beryl's green-mineral identity as a real point of
-  view, not a default accent. The palette is voice.
-- **Playful, but the code is the hero.** Personality lives in type, color, and
-  motion; never at the expense of legible code samples and scannable docs.
-- **Fast to first channel.** Every page should shorten the path from "what is
-  this?" to "I have it running." Reduce friction, surface the Quick Start.
-- **Honest about pre-1.0.** Communicate instability with confidence, not apology.
-  Polish signals that the instability is a choice, not neglect.
-- **Crafted, not corporate.** Every detail should read as deliberate and
-  human-made — the opposite of cold enterprise docs.
+The repository is a trellis-managed monorepo. Core behavior lives in
+`packages/beryl/`; Mist and Ewe transports live in separate packages and use
+the public `beryl/transport` SPI. Examples under `examples/` demonstrate
+complete application flows.
+
+## Capabilities and Constraints
+
+- beryl supports typed socket events and effects, channels, presence, PubSub,
+  groups, runtime statistics, wire codecs, and pluggable WebSocket transports.
+- The built-in codec implements the Phoenix wire format.
+- beryl targets Erlang/BEAM. Transport packages must depend only on the public
+  transport SPI and must not import beryl's internal runtime modules.
+- Configuration APIs are opaque and use builder functions.
+- Fallible public APIs return `Result`; public behavior must preserve exhaustive
+  matching and typed boundaries.
+- beryl is pre-1.0. The website must describe evolving APIs accurately and must
+  not imply stability guarantees that do not exist.
+- The website uses Astro and Starlight and must preserve link validation,
+  generated reference content, keyboard navigation, and screen-reader support.
+
+## Brand Commitments
+
+The product name is **beryl**, represented by the green gemstone asset at
+`website/src/assets/beryl.webp`. The voice is direct, confident, playful, and
+crafted rather than corporate. Code and technical clarity remain primary.
+
+The brand must not become cold enterprise documentation, a generic SaaS
+template, or an unmodified Starlight theme. Personality must not reduce code
+legibility, documentation scanability, or trust.
+
+## Evidence on Hand
+
+- Runnable applications under `examples/`, including the live-poll tutorial
+  checkpoints in `examples/blog_series/`.
+- Generated API documentation under
+  `website/src/content/docs/reference/api/`.
+- Integration and contract tests under each package's `test/` directory,
+  including runtime, Phoenix wire, transport, presence, and PubSub behavior.
+- Architecture decisions and technical documentation under `docs/`.
+
+Future work must use these sources as evidence and must not fabricate customers,
+testimonials, adoption metrics, benchmarks, or stability claims.
+
+## Product Principles
+
+- **Typed boundaries first.** Preserve type safety from application messages
+  through socket and channel behavior.
+- **Fast to a working channel.** Shorten the path from evaluation to a running,
+  supervised example.
+- **Show complete runtime behavior.** Explain transport, wire, actor,
+  supervision, and reconnection boundaries instead of presenting only callback
+  snippets.
+- **Use executable proof.** Keep examples, generated reference material, and
+  integration tests aligned with product claims.
+- **Be candid about pre-1.0 change.** Describe current behavior precisely
+  without overstating stability.
 
 ## Accessibility & Inclusion
 
-Target WCAG AA. Body text ≥4.5:1 contrast in both light and dark themes; verify
-the green ramp doesn't wash out muted text. Respect `prefers-reduced-motion` for
-every animation with a non-motion fallback. Keep the existing a11y-emoji and
-link-validation tooling. Keyboard-navigable and screen-reader-friendly, as
-inherited from Starlight, must be preserved through any customization.
+Target WCAG AA. Body text must reach 4.5:1 contrast in light and dark themes.
+Respect `prefers-reduced-motion` and provide a non-motion fallback. Preserve
+keyboard navigation, screen-reader support, the a11y-emoji plugin, and link
+validation through website changes.

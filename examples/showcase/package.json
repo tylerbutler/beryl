@@ -1,0 +1,13 @@
+{
+  "name": "showcase",
+  "version": "1.0.0",
+  "private": true,
+  "description": "All beryl example channels composed on one socket with app-side dispatch.",
+  "scripts": {
+    "test": "npx playwright test"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

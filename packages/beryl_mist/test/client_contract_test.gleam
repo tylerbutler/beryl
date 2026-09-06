@@ -1,16 +1,20 @@
+import app_test_helper
 import aquamarine
 import aquamarine/error as aquamarine_error
 import aquamarine/phoenix
+import aquamarine/transport
 import beryl
-import beryl/channel as bchannel
+import beryl/socket
+import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
 import gleam/bytes_tree
+import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http/response
 import gleam/json
-import gleam/option
+import gleam/option.{None, Some}
 import gleam/otp/actor
 import gleam/otp/static_supervisor.{type Supervisor}
 import gleam/result
@@ -21,9 +25,11 @@ import mist
 
 const socket_path = "/socket/websocket"
 
+const receive_timeout_ms = 1000
+
 type TestServer {
   TestServer(
-    channels: beryl.Channels,
+    channels: beryl.Sockets,
     port: Int,
     supervisor: actor.Started(Supervisor),
   )
@@ -31,29 +37,30 @@ type TestServer {
 
 type TestEvent {
   Joined(String)
-  Terminated(String, bchannel.StopReason)
+  Terminated(String, socket.StopReason)
 }
 
 @external(erlang, "beryl_mist_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
-pub fn start_test_server_uses_dynamic_port_test() {
+pub fn start_test_server_uses_dynamic_port_test() -> Nil {
   let events = process.new_subject()
-  let assert Ok(server) = start_test_server(register_lobby, events)
+  let assert Ok(server) = start_test_server(lobby_update(events))
   should.be_true(server.port > 0)
   stop_test_server(server)
 }
 
-pub fn aquamarine_client_joins_real_beryl_server_test() {
+pub fn aquamarine_client_joins_real_beryl_server_test() -> Nil {
   let events = process.new_subject()
-  let assert Ok(server) = start_test_server(register_lobby, events)
+  let assert Ok(server) = start_test_server(lobby_update(events))
 
   let assert Ok(channel) =
     aquamarine.connect(
+      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -69,18 +76,21 @@ pub fn aquamarine_client_joins_real_beryl_server_test() {
 }
 
 fn start_test_server(
-  register: fn(beryl.Channels, process.Subject(TestEvent)) -> Nil,
-  events: process.Subject(TestEvent),
+  update: fn(Nil, socket.Input(Nil)) -> socket.Next(Nil),
 ) -> Result(TestServer, Nil) {
-  let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
-  register(channels, events)
+  let assert Ok(channels) =
+    app_test_helper.start(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
+      update: update,
+    )
   let port_subject = process.new_subject()
 
-  let handler = fn(req) {
+  let handler = fn(request) {
     mist_transport.upgrade(
-      req,
+      request,
       channels,
-      mist_transport.default_config(socket_path),
+      server.default_config(socket_path),
       fn() {
         response.new(404)
         |> response.set_body(mist.Bytes(bytes_tree.new()))
@@ -109,32 +119,38 @@ fn stop_test_server(server: TestServer) -> Nil {
   stop_supervisor(server.supervisor.pid)
 }
 
-fn register_lobby(
-  channels: beryl.Channels,
+/// A `test:lobby` behaviour: accept the join (reply `{welcome: true}`),
+/// reporting join/close through the `events` observer.
+fn lobby_update(
   events: process.Subject(TestEvent),
-) -> Nil {
-  let topic = "test:lobby"
-  let lobby =
-    bchannel.new(fn(topic, _payload, socket) {
-      process.send(events, Joined(topic))
-      bchannel.JoinOk(
-        reply: option.Some(json.object([#("welcome", json.bool(True))])),
-        socket: socket,
-      )
-    })
-    |> bchannel.with_terminate(fn(reason, _socket) {
-      process.send(events, Terminated(topic, reason))
-    })
-  let assert Ok(_) = beryl.register(channels, "test:lobby", lobby)
-  Nil
+) -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
+  fn(model, event) {
+    case event {
+      socket.Join(topic, _payload, ref) -> {
+        process.send(events, Joined(topic))
+        socket.Next(model, [
+          socket.AcceptJoin(
+            ref,
+            Some(json.object([#("welcome", json.bool(True))])),
+          ),
+        ])
+      }
+      socket.Closed(topic, reason) -> {
+        process.send(events, Terminated(topic, reason))
+        socket.Next(model, [])
+      }
+      socket.Message(_, _, _, _) | socket.Binary(_, _) | socket.Info(_) ->
+        socket.Next(model, [])
+    }
+  }
 }
 
-pub fn aquamarine_client_sees_join_rejection_test() {
-  let events = process.new_subject()
-  let assert Ok(server) = start_test_server(register_rejected, events)
+pub fn aquamarine_client_sees_join_rejection_test() -> Nil {
+  let assert Ok(server) = start_test_server(rejected_update())
 
   let result =
     aquamarine.connect(
+      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -143,16 +159,18 @@ pub fn aquamarine_client_sees_join_rejection_test() {
       codec: phoenix.codec(),
     )
 
-  result |> should.equal(Error(aquamarine_error.JoinRejected("error")))
+  // The app supplies the rejection reason in the `RejectJoin` payload, which
+  // propagates verbatim to the client (aquamarine reads `response.reason`).
+  result |> should.equal(Error(aquamarine_error.JoinRejected("nope")))
   stop_test_server(server)
 }
 
-pub fn aquamarine_push_gets_server_reply_test() {
-  let events = process.new_subject()
-  let assert Ok(server) = start_test_server(register_echo, events)
+pub fn aquamarine_push_gets_server_reply_test() -> Nil {
+  let assert Ok(server) = start_test_server(echo_update())
 
   let assert Ok(channel) =
     aquamarine.connect(
+      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -161,14 +179,13 @@ pub fn aquamarine_push_gets_server_reply_test() {
       codec: phoenix.codec(),
     )
 
-  let assert Ok(Nil) =
-    aquamarine.push(
-      channel,
-      "say",
-      json.object([#("body", json.string("hello"))]),
-    )
+  aquamarine.push(
+    channel,
+    "say",
+    json.object([#("body", json.string("hello"))]),
+  )
 
-  let assert Ok(incoming) = aquamarine.receive(channel)
+  let assert Ok(incoming) = aquamarine.receive(channel, receive_timeout_ms)
   incoming.event |> should.equal(phoenix.codec().reply_event)
   incoming.topic |> should.equal("test:echo")
   decode_body(incoming.payload) |> should.equal(Ok("hello"))
@@ -177,12 +194,13 @@ pub fn aquamarine_push_gets_server_reply_test() {
   stop_test_server(server)
 }
 
-pub fn aquamarine_client_receives_server_broadcast_test() {
+pub fn aquamarine_client_receives_server_broadcast_test() -> Nil {
   let events = process.new_subject()
-  let assert Ok(server) = start_test_server(register_lobby, events)
+  let assert Ok(server) = start_test_server(lobby_update(events))
 
   let assert Ok(channel) =
     aquamarine.connect(
+      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -201,7 +219,7 @@ pub fn aquamarine_client_receives_server_broadcast_test() {
     json.object([#("n", json.int(42))]),
   )
 
-  let assert Ok(incoming) = aquamarine.receive(channel)
+  let assert Ok(incoming) = aquamarine.receive(channel, receive_timeout_ms)
   incoming.event |> should.equal("tick")
   incoming.topic |> should.equal("test:lobby")
   decode_n(incoming.payload) |> should.equal(Ok(42))
@@ -210,12 +228,13 @@ pub fn aquamarine_client_receives_server_broadcast_test() {
   stop_test_server(server)
 }
 
-pub fn aquamarine_close_terminates_joined_channel_test() {
+pub fn aquamarine_close_terminates_joined_channel_test() -> Nil {
   let events = process.new_subject()
-  let assert Ok(server) = start_test_server(register_lobby, events)
+  let assert Ok(server) = start_test_server(lobby_update(events))
 
   let assert Ok(channel) =
     aquamarine.connect(
+      scheme: transport.Ws,
       host: "127.0.0.1",
       port: server.port,
       path: socket_path,
@@ -227,14 +246,14 @@ pub fn aquamarine_close_terminates_joined_channel_test() {
   let assert Ok(Nil) = receive_joined(events, "test:lobby")
   let assert Ok(Nil) = aquamarine.close(channel)
   let assert Ok(reason) = receive_terminated(events, "test:lobby")
-  reason |> should.equal(bchannel.Normal)
+  reason |> should.equal(socket.Normal)
 
   stop_test_server(server)
 }
 
-pub fn gluegun_raw_malformed_frame_gets_error_reply_test() {
+pub fn gluegun_raw_malformed_frame_gets_error_reply_test() -> Nil {
   let events = process.new_subject()
-  let assert Ok(server) = start_test_server(register_lobby, events)
+  let assert Ok(server) = start_test_server(lobby_update(events))
 
   let result =
     websocket.with_socket(
@@ -248,52 +267,58 @@ pub fn gluegun_raw_malformed_frame_gets_error_reply_test() {
       },
     )
 
-  // Current Beryl contract: malformed text frames time out rather than reply.
+  // Current beryl contract: malformed text frames time out rather than reply.
   result |> should.be_error
 
   stop_test_server(server)
 }
 
-fn register_rejected(
-  channels: beryl.Channels,
-  _events: process.Subject(TestEvent),
-) -> Nil {
-  let rejected =
-    bchannel.new(fn(_topic, _payload, _socket) {
-      bchannel.JoinError(reason: bchannel.error("nope"))
-    })
-  let assert Ok(_) = beryl.register(channels, "test:rejected", rejected)
-  Nil
+/// A `test:rejected` behaviour: reject every join with status `error`.
+fn rejected_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
+  fn(model, event) {
+    case event {
+      socket.Join(_topic, _payload, ref) ->
+        socket.Next(model, [
+          socket.RejectJoin(
+            ref,
+            json.object([#("reason", json.string("nope"))]),
+          ),
+        ])
+      socket.Message(_, _, _, _)
+      | socket.Binary(_, _)
+      | socket.Closed(_, _)
+      | socket.Info(_) -> socket.Next(model, [])
+    }
+  }
 }
 
-fn register_echo(
-  channels: beryl.Channels,
-  _events: process.Subject(TestEvent),
-) -> Nil {
-  let echo_channel =
-    bchannel.new(fn(_topic, _payload, socket) {
-      bchannel.JoinOk(reply: option.Some(json.object([])), socket: socket)
-    })
-    |> bchannel.with_handle_in(fn(_event, payload, socket) {
-      let body =
-        bchannel.decode_payload(payload, {
-          use body <- decode.field("body", decode.string)
-          decode.success(body)
-        })
-        |> result.unwrap("")
-
-      bchannel.Reply(
-        event: "reply",
-        payload: json.object([#("body", json.string(body))]),
-        socket: socket,
-      )
-    })
-
-  let assert Ok(_) = beryl.register(channels, "test:echo", echo_channel)
-  Nil
+/// A `test:echo` behaviour: accept joins and reply to any client message
+/// with `{body: <body>}` echoed from the request payload.
+fn echo_update() -> fn(Nil, socket.Input(Nil)) -> socket.Next(Nil) {
+  fn(model, event) {
+    case event {
+      socket.Join(_topic, _payload, ref) ->
+        socket.Next(model, [socket.AcceptJoin(ref, Some(json.object([])))])
+      socket.Message(_topic, _name, payload, Some(ref)) -> {
+        let body =
+          decode.run(payload, {
+            use body <- decode.field("body", decode.string)
+            decode.success(body)
+          })
+          |> result.unwrap("")
+        socket.Next(model, [
+          socket.ReplyOk(ref, json.object([#("body", json.string(body))])),
+        ])
+      }
+      socket.Message(_, _, _, None)
+      | socket.Binary(_, _)
+      | socket.Closed(_, _)
+      | socket.Info(_) -> socket.Next(model, [])
+    }
+  }
 }
 
-fn decode_body(payload) -> Result(String, Nil) {
+fn decode_body(payload: dynamic.Dynamic) -> Result(String, Nil) {
   let decoder = {
     use body <- decode.subfield(["response", "body"], decode.string)
     decode.success(body)
@@ -303,7 +328,7 @@ fn decode_body(payload) -> Result(String, Nil) {
   |> result.map_error(fn(_) { Nil })
 }
 
-fn decode_n(payload) -> Result(Int, Nil) {
+fn decode_n(payload: dynamic.Dynamic) -> Result(Int, Nil) {
   let decoder = {
     use n <- decode.field("n", decode.int)
     decode.success(n)
@@ -319,17 +344,16 @@ fn receive_joined(
 ) -> Result(Nil, Nil) {
   case process.receive(events, 500) {
     Ok(Joined(joined_topic)) if joined_topic == topic -> Ok(Nil)
-    _ -> Error(Nil)
+    Ok(Joined(_)) | Ok(Terminated(_, _)) | Error(Nil) -> Error(Nil)
   }
 }
 
 fn receive_terminated(
   events: process.Subject(TestEvent),
   topic: String,
-) -> Result(bchannel.StopReason, Nil) {
+) -> Result(socket.StopReason, Nil) {
   case process.receive(events, 500) {
-    Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic ->
-      Ok(reason)
-    _ -> Error(Nil)
+    Ok(Terminated(stopped_topic, reason)) if stopped_topic == topic -> Ok(reason)
+    Ok(Terminated(_, _)) | Ok(Joined(_)) | Error(Nil) -> Error(Nil)
   }
 }

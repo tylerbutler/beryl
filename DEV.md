@@ -11,15 +11,16 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 0.3.0+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 0.10.3+ | Gleam workspace manager (tasks, versions, publishing) |
 
-**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew.
+**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew. Note that `.mise.toml` also pins `erlang = "28"`, so mise users build on Erlang 28 while `.tool-versions` sets the 27.2.1 floor; CI matrix-tests both.
 
-This repository is a trellis-managed workspace: the publishable packages live
-in `packages/beryl` and `packages/beryl_mist`, runnable examples in
-`examples/`, and the root `gleam.toml` holds only the `[tools.trellis]`
-configuration. `just` recipes fan out across the workspace through
-`trellis run`.
+This repository is a trellis-managed workspace: three packages live under
+`packages/` — `beryl`, `beryl_mist`, and `beryl_ewe` — with
+runnable examples in `examples/` and a root `gleam.toml` holding only the
+`[tools.trellis]` configuration. `beryl_ewe` is built, tested, and linted but
+excluded from release via the `@release` key, so the other two packages are
+publishable. `just` recipes fan out across the workspace through `trellis run`.
 
 ```bash
 # With mise
@@ -64,6 +65,41 @@ just format
 # Run full CI checks locally
 just pr
 ```
+
+### Dependency audits
+
+Local audit tasks use `licence_audit` v0.11.1, pinned in `.mise.toml`.
+Install it with `mise install github:tylerbutler/licence_audit`. mise selects
+the self-contained platform archive; the repo's Erlang version is unchanged.
+
+```bash
+just audit-licences          # Report licences and preview the existing policy
+just audit-vulns             # Report known vulnerabilities from OSV
+just audit-check             # Enforce licences and the vulnerability threshold
+just audit-check beryl_mist  # Limit the task to one package
+```
+
+These tasks default to `beryl`, `beryl_mist`, and `beryl_ewe`. Each command runs
+in the package directory and reads its locked manifest. Licence reports and
+enforcement use its existing `[tools.licence_audit]` policy.
+Examples are not included by default. To report on an example, pass its
+package name, such as `just audit-licences cursor`.
+Examples need an approved licence policy before licence enforcement is useful.
+
+The report tasks do not fail on findings; `audit-check` uses `check --vulns`
+and propagates failures. The existing policies allow Apache-2.0, ISC, and MIT.
+The default vulnerability threshold is `high`; unknown severity does not
+block. No audit task is part of CI or `just ci`.
+
+Licence reports cover locked Hex dependencies, not Git or local path sources.
+Vulnerability reports cover Hex and GitHub dependencies; other sources are
+skipped. This does not audit npm dependencies. OSV requires network access;
+an unavailable service means the audit is incomplete.
+
+Use `mise exec -- licence_audit --version` to see the installed version.
+If Hex metadata requests time out, the licence audit is incomplete. Retry the
+task without changing the policy; report-task success alone does not mean
+that all metadata was fetched.
 
 ### Before Merging to Main
 
@@ -206,9 +242,10 @@ Releases are driven by trellis changelog fragments (TOML files in
 4. After merge, the release workflow runs `trellis release pr`, which batches
    fragments into a release PR (branch `release/pending`) bumping versions
    and regenerating each package's CHANGELOG.md
-5. Merging the release PR publishes every untagged package to Hex in
-   dependency order and creates per-package tags (`beryl-v1.2.3`) and GitHub
-   releases
+5. Merging the release PR creates per-package tags (`beryl-v1.2.3`) and GitHub
+   releases. Hex.pm publishing is temporarily disabled — `trellis publish` is
+   not run; see the header comment in `.github/workflows/publish.yml` for how
+   to resume it
 
 Useful commands: `just version-plan` previews the next versions;
 `just doctor` validates workspace invariants.
@@ -217,10 +254,21 @@ Useful commands: `just version-plan` previews the next versions;
 
 One-time steps to perform in the same PR that tags `v1.0.0`:
 
-- Remove (or rewrite) the "beryl is not yet 1.0 / API is unstable" callout at
-  the top of `README.md`.
+- Remove (or rewrite) the "beryl is not yet 1.0 / API is unstable" callout.
+  The wording is identical everywhere it appears, so one find-and-replace
+  covers all of them:
+  - `README.md`, `packages/beryl/README.md`, `packages/beryl_mist/README.md`,
+    `packages/beryl_ewe/README.md`
+  - `website/src/content/docs/`: `introduction.md`, `installation.md`,
+    `quick-start.mdx`, `examples.mdx`, `reference/index.md` (the last one
+    keeps its trailing "See the Stability policy" pointer)
 - Confirm the documented Gleam version requirement in `README.md` and
-  `website/src/content/docs/installation.md` still matches `gleam.toml`.
+  `website/src/content/docs/installation.md`. Note that the documented
+  requirement (1.18+) is deliberately higher than the `gleam` constraint in each
+  package's `gleam.toml` (1.13+): 1.18 is what *consumers* need for the
+  `path` field on git dependencies, not what beryl needs to compile. If beryl is
+  published to Hex, that consumer-side requirement goes away and the docs should
+  drop back to the manifest constraint.
 - Verify the publish tarball with `gleam export hex-tarball` before tagging.
 
 ## Troubleshooting

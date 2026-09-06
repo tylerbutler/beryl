@@ -2,7 +2,8 @@
 # examples) to an erlang-shipment release.
 #
 # IMPORTANT: Build context MUST be the repository root, because the showcase
-# project references local packages via `path = "../.."` and `path = "../*"`.
+# project references the local beryl packages via `path = "../../packages/..."`
+# and the sibling examples via `path = "../*"`.
 #
 # Build from the repo root with:
 #   docker build -f examples/showcase/Dockerfile -t beryl-showcase .
@@ -16,11 +17,11 @@ RUN apk add --no-cache git
 
 WORKDIR /src
 
-# Copy the entire repo so path-based deps resolve. Verify the parent beryl
-# package is present; fail fast with a clear message if the build context
-# is wrong (e.g. someone ran `docker build .` from examples/showcase/).
+# Copy the entire repo so path-based deps resolve. Verify the beryl packages
+# are present; fail fast with a clear message if the build context is wrong
+# (e.g. someone ran `docker build .` from examples/showcase/).
 COPY . .
-RUN test -f /src/gleam.toml && grep -q '^name = "beryl"' /src/gleam.toml || ( \
+RUN test -f /src/packages/beryl/gleam.toml && test -f /src/packages/beryl_mist/gleam.toml || ( \
   echo "ERROR: build context does not contain the beryl repository root."; \
   echo "Run from the repo root: docker build -f examples/showcase/Dockerfile ."; \
   exit 1 \

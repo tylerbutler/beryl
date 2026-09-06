@@ -7,8 +7,57 @@ on:
     branches: [main]
   workflow_call:
 
+env:
+  HEXPM_READ_API_KEY: ${{ secrets.HEXPM_API_KEY }}
+
 jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    name: Dependencies
+    outputs:
+      cache-key: ${{ steps.cache.outputs.cache-primary-key }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+
+      - name: Setup environment
+        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          run-deps: false
+
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
+
+      # Cache source dependencies and resolution fingerprints, not compiled
+      # output, so both Erlang versions can use the same cache.
+      - name: Restore Gleam dependencies
+        id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: gleam-deps-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: |
+            gleam-deps-${{ runner.os }}-
+
+      - name: Install Gleam dependencies
+        run: just deps-gleam
+
+      - name: Save Gleam dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
   test:
+    needs: dependencies
     runs-on: ubuntu-latest
     name: Test (Erlang ${{ matrix.erlang }})
     strategy:
@@ -21,36 +70,27 @@ jobs:
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
-          # Providing erlang-version makes the action ignore version-file, so
-          # gleam-version must be set explicitly or Gleam won't be installed.
+          # Providing erlang-version makes the action ignore version-file and
+          # skip installing Gleam (gleam-version is left unset). Setup mise
+          # tools (below) installs the Gleam pinned in .tool-versions, which
+          # is what actually ends up on PATH and is what we want: one Gleam
+          # version, matching local dev, regardless of the Erlang matrix leg.
           erlang-version: ${{ matrix.erlang }}
-          gleam-version: "1.16.0"
           run-deps: false
 
-      - name: Install rebar3
-        uses: ./.github/actions/install-rebar3
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
-
-      # Caches Hex tarballs plus each package's build/packages dir, which
-      # holds the config_fingerprint files Gleam uses to decide whether to
-      # re-resolve versions. Without those fingerprints every fresh checkout
-      # re-resolves repeatedly and can trip the Hex API rate limit.
-      - name: Cache Gleam dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
             ~/.cache/gleam
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
-          restore-keys: |
-            gleam-deps-${{ runner.os }}-
-
-      - name: Install Gleam dependencies
-        run: just deps-gleam
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Check formatting
         run: just format-check
@@ -65,6 +105,7 @@ jobs:
         run: just test
 
   docs:
+    needs: dependencies
     runs-on: ubuntu-latest
     name: Docs
     steps:
@@ -75,23 +116,19 @@ jobs:
         with:
           run-deps: false
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
-      - name: Cache Gleam dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
             ~/.cache/gleam
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
-          restore-keys: |
-            gleam-deps-${{ runner.os }}-
-
-      - name: Install Gleam dependencies
-        run: just deps-gleam
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
@@ -112,6 +149,9 @@ jobs:
       - name: Test reference docs generator
         run: just site-reference-test
 
+      - name: Type-check documentation snippets
+        run: pnpm -C website check:snippets
+
       - name: Validate reference docs are up to date
         run: |
           just site-reference
@@ -119,6 +159,7 @@ jobs:
             || { echo "::error::Generated reference docs are out of date. Run 'just site-reference' and commit the result."; exit 1; }
 
   examples:
+    needs: dependencies
     runs-on: ubuntu-latest
     name: Examples
     steps:
@@ -139,26 +180,22 @@ jobs:
         with:
           run-deps: false
 
-      - name: Install rebar3
-        uses: ./.github/actions/install-rebar3
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
 
-      - name: Install trellis
-        uses: ./.github/actions/install-trellis
-
-      - name: Cache Gleam dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache@v4
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
             ~/.cache/gleam
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
-          restore-keys: |
-            gleam-deps-${{ runner.os }}-
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
 
-      - name: Install dependencies
-        run: just deps
+      - name: Install example dependencies
+        run: pnpm -C examples install --frozen-lockfile
 
       - name: Install Playwright browsers
         run: pnpm -C examples exec playwright install --with-deps chromium
@@ -168,3 +205,160 @@ jobs:
 
       - name: Test examples
         run: just examples-test
+
+  load-smoke:
+    needs: dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    name: Protocol smoke (Erlang ${{ matrix.erlang }}, ${{ matrix.transport }})
+    strategy:
+      fail-fast: false
+      matrix:
+        erlang: ["27", "28"]
+        transport: [mist, ewe]
+    env:
+      PORT: "8000"
+      SERVER_LOG: load/results/server-${{ matrix.erlang }}-${{ matrix.transport }}.log
+      SUMMARY_PATH: load/results/protocol-smoke-${{ matrix.erlang }}-${{ matrix.transport }}.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+
+      - name: Setup environment
+        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        with:
+          # gleam-version intentionally omitted: Setup mise tools (below)
+          # installs the Gleam pinned in .tool-versions, which is what
+          # ends up on PATH. See the Test job for the full rationale.
+          erlang-version: ${{ matrix.erlang }}
+          run-deps: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup mise tools
+        uses: ./.github/actions/mise
+
+      - name: Restore Gleam dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: ${{ needs.dependencies.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - name: Validate pinned k6 workload
+        run: just load-check protocol-smoke
+
+      - name: Build load-test server
+        run: trellis run build load_test
+
+      # protocol-smoke contains protocol/error thresholds only: this job does
+      # not enforce latency, throughput, or other hardware-dependent gates.
+      - name: Start server and run protocol correctness smoke
+        shell: bash
+        env:
+          HTTP_TARGET_URL: http://127.0.0.1:8000/health
+          GIT_SHA: ${{ github.sha }}
+          RUNTIME: erlang-${{ matrix.erlang }}
+          RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          LOAD_GENERATOR: github-actions
+        run: |
+          mkdir -p load/results
+          setsid bash -c '
+            cd examples/load_test
+            exec env PORT="$1" gleam run -m "$2"
+          ' _ "$PORT" "load_test_${{ matrix.transport }}" >"$SERVER_LOG" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            if ! kill -0 -- "-$server_pid" 2>/dev/null; then
+              wait "$server_pid" 2>/dev/null || true
+              return
+            fi
+
+            kill -TERM -- "-$server_pid" 2>/dev/null || true
+            for _ in {1..10}; do
+              if ! kill -0 -- "-$server_pid" 2>/dev/null; then
+                wait "$server_pid" 2>/dev/null || true
+                return
+              fi
+              sleep 1
+            done
+
+            kill -KILL -- "-$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "http://127.0.0.1:$PORT/health"; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "::error::Load-test server exited before becoming healthy"
+              sed -n '1,240p' "$SERVER_LOG"
+              exit 1
+            fi
+            if [[ "$attempt" -eq 30 ]]; then
+              echo "::error::Timed out waiting for the load-test server"
+              sed -n '1,240p' "$SERVER_LOG"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          just load-run protocol-smoke \
+            "ws://127.0.0.1:$PORT/socket" \
+            "${{ matrix.transport }}"
+
+      - name: Upload smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # ratchet:actions/upload-artifact@v4
+        with:
+          name: protocol-smoke-erlang-${{ matrix.erlang }}-${{ matrix.transport }}
+          path: |
+            ${{ env.SERVER_LOG }}
+            ${{ env.SUMMARY_PATH }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  load-smoke-report:
+    name: Protocol smoke report
+    needs: load-smoke
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+
+      - name: Download smoke artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p smoke-artifacts
+          gh run download "$GITHUB_RUN_ID" \
+            --pattern "protocol-smoke-*" \
+            --dir smoke-artifacts || true
+
+      - name: Render smoke report
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node load/k6/render-smoke-comment.mjs smoke-artifacts "$RUN_URL" > smoke-comment.md
+
+      - name: Update sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # ratchet:marocchino/sticky-pull-request-comment@v3
+        with:
+          header: beryl-protocol-smoke
+          path: smoke-comment.md

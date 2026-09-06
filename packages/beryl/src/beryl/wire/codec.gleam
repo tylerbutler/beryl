@@ -1,17 +1,16 @@
 //// Pluggable wire codec for beryl.
 ////
-//// A `Codec` plugs the coordinator into any over-the-wire framing. The
+//// A `Codec` plugs the runtime into any over-the-wire framing. The
 //// canonical implementation is `beryl/wire.phoenix_codec()`, which ships
 //// the Phoenix array format (`[join_ref, ref, topic, event, payload]`).
 ////
 //// To run beryl over your own framing, build a `Codec` value and pass it
-//// to `beryl.config(codec)`. The coordinator decodes inbound text via
-//// `codec.decode_text`, optionally decodes inbound binary via
-//// `codec.decode_binary`, dispatches based on the structural `InboundKind`,
-//// and produces outbound text or binary frames via `codec.encode_*` helpers.
+//// to `beryl.config(codec)`. The runtime decodes inbound frames and produces
+//// outbound frames using the configured callbacks. Codec authors can exercise
+//// those callbacks directly with the public `apply_*` functions.
 ////
 //// All codecs must normalise inbound traffic to the `Inbound` shape so
-//// the coordinator can stay framing-agnostic.
+//// the runtime can stay framing-agnostic.
 
 import gleam/dynamic.{type Dynamic}
 import gleam/json
@@ -37,11 +36,11 @@ pub type InboundKind {
   Event(String)
 }
 
-/// Normalised inbound message shape.
+/// A normalized inbound message.
 ///
 /// `Inbound` is opaque: construct it with `inbound` and read it with the
-/// `inbound_*` accessors. Keeping the record hidden lets Beryl add fields
-/// (which default sensibly) without breaking every custom codec.
+/// `inbound_*` accessors. The hidden record lets beryl add fields with
+/// defaults without breaking custom codecs.
 pub opaque type Inbound {
   Inbound(
     join_ref: Option(String),
@@ -52,7 +51,7 @@ pub opaque type Inbound {
   )
 }
 
-/// Construct a normalised inbound message.
+/// Construct a normalized inbound message.
 ///
 /// - `join_ref`: optional client-side reference assigned at join time
 ///   (used by some Phoenix replies; codecs without this concept should
@@ -60,8 +59,7 @@ pub opaque type Inbound {
 /// - `ref`: optional per-message reference for reply correlation
 /// - `topic`: subscription topic (e.g. `"room:lobby"`, `"doc:abc"`)
 /// - `kind`: structural protocol event or user event
-/// - `payload`: message body as a `Dynamic` for the channel handler to
-///   decode
+/// - `payload`: message body as a `Dynamic` for the app to decode
 pub fn inbound(
   join_ref join_ref: Option(String),
   ref ref: Option(String),
@@ -72,27 +70,27 @@ pub fn inbound(
   Inbound(join_ref:, ref:, topic:, kind:, payload:)
 }
 
-/// The inbound message's join-time client reference, if any.
+/// Return the inbound message's join-time client reference, if any.
 pub fn inbound_join_ref(inbound: Inbound) -> Option(String) {
   inbound.join_ref
 }
 
-/// The inbound message's per-message reference for reply correlation, if any.
+/// Return the inbound message's per-message reply reference, if any.
 pub fn inbound_ref(inbound: Inbound) -> Option(String) {
   inbound.ref
 }
 
-/// The inbound message's subscription topic.
+/// Return the inbound message's subscription topic.
 pub fn inbound_topic(inbound: Inbound) -> String {
   inbound.topic
 }
 
-/// The inbound message's structural kind.
+/// Return the inbound message's structural kind.
 pub fn inbound_kind(inbound: Inbound) -> InboundKind {
   inbound.kind
 }
 
-/// The inbound message's body, for the channel handler to decode.
+/// Return the inbound message body for the app to decode.
 pub fn inbound_payload(inbound: Inbound) -> Dynamic {
   inbound.payload
 }
@@ -108,7 +106,7 @@ pub type DecodeError {
   MissingField(name: String)
 }
 
-/// Status of a reply produced by a channel handler.
+/// Status of a reply produced by the app.
 pub type ReplyStatus {
   /// The handler succeeded (`"ok"` in Phoenix framing).
   StatusOk
@@ -116,8 +114,9 @@ pub type ReplyStatus {
   StatusError
 }
 
-/// Format a `DecodeError` as a human-readable string. Used by the
-/// coordinator's log messages and by `wire.format_decode_error`.
+/// Format a `DecodeError` as human-readable text.
+///
+/// The runtime log messages and `wire.format_decode_error` use this text.
 pub fn format_decode_error(error: DecodeError) -> String {
   case error {
     InvalidJson(reason) -> "Invalid JSON: " <> reason
@@ -128,9 +127,8 @@ pub fn format_decode_error(error: DecodeError) -> String {
 
 /// A wire codec.
 ///
-/// `Codec` is opaque; build one with `new` (and, for binary support,
-/// `with_binary_decoder`). The coordinator reads the codec's behaviour
-/// through the `@internal` accessors below.
+/// `Codec` is opaque. Build one with `new`. For binary support, add
+/// `with_binary_decoder`.
 pub opaque type Codec {
   Codec(
     decode_text: fn(String) -> Result(Inbound, DecodeError),
@@ -150,17 +148,17 @@ pub opaque type Codec {
   )
 }
 
-/// Build a text-only wire codec.
+/// Build a codec without an inbound binary decoder.
 ///
-/// - `decode_text`: decode raw inbound text into a normalised `Inbound`.
+/// - `decode_text`: decode raw inbound text into a normalized `Inbound`.
 /// - `encode_reply`: encode a reply to a client message:
 ///   `(join_ref, ref, topic, status, response_payload)`.
 /// - `encode_push`: encode a server-initiated push: `(topic, event, payload)`.
 /// - `encode_heartbeat_reply`: encode a heartbeat reply for a given client `ref`.
 ///
 /// The resulting codec has no binary decoder; binary WebSocket frames are
-/// routed to `channel.handle_binary` as raw data. Add a binary decoder with
-/// `with_binary_decoder`.
+/// delivered to the app's `update` as a raw `Binary` event. Add a binary
+/// decoder with `with_binary_decoder`.
 pub fn new(
   decode_text decode_text: fn(String) -> Result(Inbound, DecodeError),
   encode_reply encode_reply: fn(
@@ -185,11 +183,11 @@ pub fn new(
   )
 }
 
-/// Attach a binary decoder to a codec.
+/// Add a binary decoder to a codec.
 ///
-/// When set, binary WebSocket frames are decoded into a normalised `Inbound`
-/// via `decode_binary` instead of being routed to `channel.handle_binary` as
-/// raw data.
+/// When set, the decoder converts binary WebSocket frames to a normalized
+/// `Inbound` via `decode_binary`. The app's `update` function does not receive
+/// a raw `Binary` event.
 pub fn with_binary_decoder(
   codec: Codec,
   decode_binary: fn(BitArray) -> Result(Inbound, DecodeError),
@@ -197,10 +195,10 @@ pub fn with_binary_decoder(
   Codec(..codec, decode_binary: Some(decode_binary))
 }
 
-/// Attach a channel-close encoder to a codec.
+/// Add a topic-close encoder to a codec.
 ///
-/// When set, the coordinator emits this frame to a client whenever one of
-/// its channels terminates gracefully (leave, server shutdown, heartbeat
+/// When set, the runtime sends this frame when one of the client's topics
+/// terminates gracefully (leave, server shutdown, heartbeat
 /// eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
 /// leave the joined state instead of waiting out push timeouts.
 pub fn with_close_encoder(
@@ -210,10 +208,10 @@ pub fn with_close_encoder(
   Codec(..codec, encode_close: Some(encode_close))
 }
 
-/// Attach a channel-error encoder to a codec.
+/// Add a topic-error encoder to a codec.
 ///
-/// When set, the coordinator emits this frame to a client whenever one of
-/// its channels terminates abnormally (crashed or stopped with an error):
+/// When set, the runtime sends this frame when one of the client's topics
+/// terminates abnormally (crashed or stopped with an error):
 /// `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
 /// automatic rejoin.
 pub fn with_error_encoder(
@@ -221,6 +219,91 @@ pub fn with_error_encoder(
   encode_error: fn(Option(String), String) -> Frame,
 ) -> Codec {
   Codec(..codec, encode_error: Some(encode_error))
+}
+
+/// Decode a text frame with a codec.
+///
+/// Codec authors can use this to test the decoder supplied to `new`.
+pub fn apply_decode_text(
+  codec: Codec,
+  text text: String,
+) -> Result(Inbound, DecodeError) {
+  codec.decode_text(text)
+}
+
+/// Decode a binary frame with a codec, if it has a binary decoder.
+///
+/// Returns `None` when the codec has no decoder configured with
+/// `with_binary_decoder`.
+pub fn apply_decode_binary(
+  codec: Codec,
+  data data: BitArray,
+) -> Option(Result(Inbound, DecodeError)) {
+  case codec.decode_binary {
+    Some(decode) -> Some(decode(data))
+    None -> None
+  }
+}
+
+/// Encode a reply with a codec.
+pub fn apply_encode_reply(
+  codec: Codec,
+  join_ref join_ref: Option(String),
+  ref ref: Option(String),
+  topic topic: String,
+  status status: ReplyStatus,
+  response response: json.Json,
+) -> Frame {
+  codec.encode_reply(join_ref, ref, topic, status, response)
+}
+
+/// Encode a server-initiated push with a codec.
+pub fn apply_encode_push(
+  codec: Codec,
+  topic topic: String,
+  event event: String,
+  payload payload: json.Json,
+) -> Frame {
+  codec.encode_push(topic, event, payload)
+}
+
+/// Encode a heartbeat reply with a codec.
+pub fn apply_encode_heartbeat_reply(
+  codec: Codec,
+  ref ref: Option(String),
+) -> Frame {
+  codec.encode_heartbeat_reply(ref)
+}
+
+/// Encode a graceful topic close with a codec, if it has a close encoder.
+///
+/// Returns `None` when the codec has no encoder configured with
+/// `with_close_encoder`.
+pub fn apply_encode_close(
+  codec: Codec,
+  join_ref join_ref: Option(String),
+  topic topic: String,
+) -> Option(Frame) {
+  case codec.encode_close {
+    Some(encode) -> Some(encode(join_ref, topic))
+    None -> None
+  }
+}
+
+/// Encode an abnormal topic termination with a codec, if it has an error
+/// encoder.
+///
+/// Returns `None` when the codec has no encoder configured with
+/// `with_error_encoder`.
+pub fn apply_encode_error(
+  codec: Codec,
+  join_ref join_ref: Option(String),
+  topic topic: String,
+) -> Option(Frame) {
+  case codec.encode_error {
+    Some(encode) -> Some(encode(join_ref, topic))
+    None -> None
+  }
 }
 
 /// Accessor for the codec's text decoder.
@@ -257,7 +340,7 @@ pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
   codec.encode_heartbeat_reply
 }
 
-/// Accessor for the codec's optional channel-close encoder.
+/// Accessor for the codec's optional topic-close encoder.
 @internal
 pub fn encode_close(
   codec: Codec,
@@ -267,13 +350,21 @@ pub fn encode_close(
 
 /// Mark a codec's events as topicless.
 ///
-/// Some framings (e.g. Socket.IO-style protocols) do not carry a per-frame
+/// Some framings, such as Socket.IO-style protocols, do not carry a per-frame
 /// topic. When set, an inbound event whose topic is empty is routed to the
-/// socket's single joined topic; with zero or multiple joins it is dropped.
+/// socket's single joined topic. The runtime drops it when the socket has
+/// zero or multiple joins.
 /// Topic-carrying codecs (like the Phoenix codec) must leave this off so
-/// empty-topic frames are rejected instead of guessed at.
+/// the runtime rejects empty-topic frames instead of inferring a topic.
 pub fn with_topicless_events(codec: Codec) -> Codec {
   Codec(..codec, topicless_events: True)
+}
+
+/// Whether the codec routes events without an explicit topic.
+///
+/// Codec authors can use this to test `with_topicless_events`.
+pub fn uses_topicless_events(codec: Codec) -> Bool {
+  codec.topicless_events
 }
 
 /// Accessor for the codec's topicless-events flag.
@@ -282,7 +373,7 @@ pub fn topicless_events(codec: Codec) -> Bool {
   codec.topicless_events
 }
 
-/// Accessor for the codec's optional channel-error encoder.
+/// Accessor for the codec's optional topic-error encoder.
 @internal
 pub fn encode_error(
   codec: Codec,

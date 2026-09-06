@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Correct public API documentation for terminal frames, PubSub startup, presence replication, and log preview limits."

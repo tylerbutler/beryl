@@ -5,38 +5,53 @@
 [tools.trellis]
 # examples/ also holds a pnpm workspace (node_modules, package.json);
 # glob matches without a gleam.toml are skipped by trellis.
-# NOTE: can't use "examples/**" here — a `**` in members recurses into each
-# example's build/packages/* vendored deps and errors on duplicate members.
-# See https://github.com/tylerbutler/trellis/issues/21. Enumerate single-level
-# globs plus the nested client instead. (`**` is fine in exclude keys below.)
-members = ["packages/*", "examples/*", "examples/collab_docs/client"]
+members = ["packages/*", "examples/**"]
 
 [tools.trellis.exclude]
-# beryl_ewe is not yet ready to publish; the reserved "@release" key keeps it
-# built/tested/linted while excluding it from changelog, versioning, tagging,
-# publishing, and release CI.
-"@release" = ["examples/**", "packages/beryl_ewe"]
+"@release" = ["examples/**"]
 lint = ["examples/**"]
 docs = ["examples/**"]
-# Examples without a test/ directory (gleam test fails when the
-# <package>_test module is missing). collab_docs and its client have tests
-# and stay in.
+# Examples excluded from `trellis run test`: example_helper has no test/
+# directory (gleam test fails when the <package>_test module is missing), and
+# chatroom/cursor have tests that are not wired into the workspace run yet.
+# collab_document, its client, and showcase run here.
 test = [
   "examples/chatrooms",
   "examples/cursors",
   "examples/example_helpers",
-  "examples/showcase",
 ]
+
+# Tag individual package versions in addition to repository series tags,
+# but not package level series tags. The repository_tag_* keys publish a
+# moving series tag for the whole repo, anchored to beryl's version.
+[tools.trellis.publish]
+package_tags = ["exact"]
+repository_tag_package = "beryl"
+repository_tag_format = "v{series}"
+repository_tags = ["minor"]
+
+[tools.trellis.publish.lifecycle]
+default = "git_only"
 
 [tools.trellis.tasks.lint]
 command = "gleam run -m glinter"
-needs-deps = true
+needs_deps = true
 
-[tools.trellis.publish]
-tag-format = "{name}-v{version}"
+[tools.trellis.tasks.audit-licences]
+command = "mise exec -- licence_audit"
+
+[tools.trellis.tasks.audit-vulns]
+command = "mise exec -- licence_audit vulns"
+
+[tools.trellis.tasks.audit-check]
+command = "mise exec -- licence_audit check --vulns"
 
 [tools.trellis.changelog]
+strictness = "warn"
 kinds = [
+  # `Initial Release` is a strict major bump: it plans 1.0.0 even for an
+  # unreleased 0.x package. Pre-1.0 packages use `Added` for their first
+  # release and describe that initial release in the fragment body.
   { label = "Initial Release", bump = "major" },
   { label = "Added", bump = "minor" },
   { label = "Changed", bump = "minor" },

@@ -1,345 +1,563 @@
 ---
 title: Channels
+description: Build topic handlers with private state, typed server messages, ordered actions, and lifecycle callbacks.
 ---
 
-Channels are the core abstraction in beryl. A channel maps a topic pattern to a set of typed callback functions that handle joins, messages, and cleanup.
+`beryl/channel` is the **recommended default** for applications that serve
+more than one topic namespace on a socket. It is also the default for a Phoenix
+style design. Register a list of channel handlers. The layer routes each join,
+message, server message, and close to the correct channel.
 
-## Topics and patterns
+If you are not sure which layer you want, read
+[Choose an API](/choosing-an-api/) first. If you want one topic family and
+complete control over routing, use [Raw Dispatch](/guides/dispatch/)
+instead. It is the core API under the channel layer.
 
-Topics are colon-delimited string identifiers. Patterns can be exact matches, legacy trailing prefix wildcards, or segment-aware wildcards:
-
-```gleam
-import beryl/topic
-
-// Exact: only matches "room:lobby"
-topic.parse_pattern("room:lobby")  // -> Exact("room:lobby")
-
-// Wildcard: matches "room:lobby", "room:123", etc.
-topic.parse_pattern("room:*")  // -> Wildcard("room:")
-
-// Segment wildcard: matches one complete segment per "*"
-topic.parse_pattern("document:*:ops")
-// -> SegmentWildcard(["document", "*", "ops"])
-
-// Multi-segment wildcard: extract tenant and document IDs
-topic.parse_pattern("document:*:*")
-// -> SegmentWildcard(["document", "*", "*"])
-
-// Single trailing "*" keeps prefix wildcard behavior
-topic.parse_pattern("document:tenant-a:*")
-// -> Wildcard("document:tenant-a:")
-
-// Extract the dynamic part
-topic.extract_id(Wildcard("room:"), "room:lobby")  // -> Ok("lobby")
-
-// Extract multiple dynamic segments
-topic.extract_wildcards(
-  topic.parse_pattern("document:*:*"),
-  "document:tenant-a:doc-42",
-)
-// -> Ok(["tenant-a", "doc-42"])
-
-// Parse topic segments
-topic.segments("room:lobby")  // -> ["room", "lobby"]
-topic.namespace("room:lobby")  // -> Ok("room")
-```
-
-Use `document:tenant-a:*` to route all documents for one tenant while keeping the existing trailing-wildcard prefix semantics. Use `document:*:*` when a handler needs to extract both tenant and document IDs from a topic with the exact shape `document:{tenant_id}:{document_id}`:
-
-```gleam
-let pattern = topic.parse_pattern("document:*:*")
-
-case topic.extract_wildcards(pattern, "document:tenant-a:doc-42") {
-  Ok([tenant_id, document_id]) -> {
-    // tenant_id == "tenant-a"
-    // document_id == "doc-42"
-  }
-  _ -> {
-    // Topic did not match the expected document shape.
-  }
-}
-```
-
-## Defining a channel
-
-Channels are built using a builder pattern starting with `channel.new()`:
-
-```gleam
-import beryl/channel.{type Channel, type HandleResult, type JoinResult}
-import beryl/socket.{type Socket}
-import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
-import gleam/json.{type Json}
-import gleam/option.{type Option, None, Some}
-
-/// Typed assigns — compile-time checked socket state
-pub type RoomAssigns {
-  RoomAssigns(user_id: String, room_id: String)
-}
-
-pub fn new() -> Channel(RoomAssigns, info) {
-  channel.new(join)
-  |> channel.with_handle_in(handle_in)
-  |> channel.with_handle_binary(handle_binary)
-  |> channel.with_terminate(terminate)
-}
-```
-
-### Join callback
-
-Called when a client sends a `phx_join` message. Return `JoinOk` to accept or `JoinError` to reject:
-
-```gleam
-fn join(
-  topic: String,
-  payload: Dynamic,
-  socket: Socket(RoomAssigns),
-) -> JoinResult(RoomAssigns) {
-  // Extract room ID from topic pattern
-  let assert Ok(room_id) =
-    topic.extract_id(topic.Wildcard("room:"), topic)
-
-  let assigns = RoomAssigns(user_id: "user_123", room_id: room_id)
-  let socket = socket.set_assigns(socket, assigns)
-
-  // Optionally send a reply payload
-  let reply = json.object([#("status", json.string("joined"))])
-  channel.JoinOk(reply: Some(reply), socket: socket)
-}
-```
-
-:::tip[Authenticate once at connect time]
-If every topic needs the same per-socket auth (e.g. the same JWT), validate it
-**once** with the transport-level `on_connect` hook instead of repeating the
-check in every `join`. `on_connect` runs once per socket, can reject the whole
-connection before any join, and can seed initial assigns that this `join`
-callback reads via `socket.get_assigns`. See
-[WebSocket Transport → Authentication](/guides/websocket#authentication).
+:::note[No extra package]
+The `beryl` package includes the `beryl/channel` module. Applications need
+`beryl` and one transport. See
+[Installation](/installation/) for the dependency block.
 :::
 
-Called for each incoming text message. The `event` string identifies the message type:
+## Define a channel handler
+
+A channel is a **topic pattern** plus a typed `join` callback. The `join`
+callback receives one context value. It rejects the join or accepts it with
+private state and callbacks.
 
 ```gleam
-fn handle_in(
-  event: String,
-  payload: Dynamic,
-  socket: Socket(RoomAssigns),
-) -> HandleResult(RoomAssigns) {
-  case event {
-    "new_message" -> {
-      let text_decoder = {
-        use text <- decode.field("text", decode.string)
-        decode.success(text)
-      }
-      let reply_payload = case channel.decode_payload(payload, text_decoder) {
-        Ok(text) -> json.object([#("text", json.string(text))])
-        Error(_) -> channel.error("invalid payload")
-      }
-      // Reply to the sender — event arg is ignored, phx_reply is always sent
-      channel.Reply("ok", reply_payload, socket)
-    }
-    "typing" -> {
-      // No reply needed
-      channel.NoReply(socket)
-    }
-    "update_status" -> {
-      // Push a server-initiated message
-      let response = json.object([#("updated", json.bool(True))])
-      channel.Push("status_changed", response, socket)
-    }
-    _ -> channel.NoReply(socket)
-  }
-}
-```
+// src/my_app/room_channel.gleam
+import beryl/channel
+import gleam/json
 
-### Handle results
-
-Channel handlers return one of these results:
-
-| Result | Description |
-|--------|-------------|
-| `NoReply(socket)` | Continue without sending anything |
-| `Reply(event, payload, socket)` | Send a `phx_reply` tied to the client message ref (only meaningful from `handle_in`; see note below) |
-| `Push(event, payload, socket)` | Send a server-initiated message with no ref |
-| `Stop(reason)` | Terminate the channel |
-
-:::note[Reply vs Push from handle_info]
-`Reply` is designed for `handle_in`, where the coordinator has a client message ref to reply to. When returned from `handle_info`, there is no client ref, so the coordinator sends it as a push instead. Prefer `Push` in `handle_info` to make this intent explicit.
-:::
-
-### Binary handler
-
-Handle raw binary WebSocket frames when the configured codec does not decode binary frames:
-
-```gleam
-fn handle_binary(
-  data: BitArray,
-  socket: Socket(RoomAssigns),
-) -> HandleResult(RoomAssigns) {
-  // Process binary data (e.g., file uploads, audio chunks)
-  channel.NoReply(socket)
-}
-```
-
-### Terminate callback
-
-Called when a client leaves or disconnects. Use for cleanup:
-
-```gleam
-fn terminate(
-  reason: channel.StopReason,
-  socket: Socket(RoomAssigns),
-) -> Nil {
-  case reason {
-    channel.Normal -> Nil           // Clean disconnect
-    channel.Shutdown -> Nil         // Server-initiated
-    channel.HeartbeatTimeout -> Nil // Client went silent
-    channel.Errored(msg) -> Nil     // Something went wrong
-  }
-}
-```
-
-### Server-originated message handler
-
-Called when an OTP process sends a message directly to this channel context via `beryl.send_info`. Use this to push server-driven updates (e.g., database change notifications, timer ticks, background job results).
-
-The handler receives the **typed** message you sent — there is no `Dynamic` and no unsafe cast. Channels are parameterized as `Channel(assigns, info)`, where `info` is your server-message type:
-
-```gleam
-type ServerMessage {
-  Tick(at: Int)
-  Notify(text: String)
+/// This channel's private state. Each joined topic has one value.
+type State {
+  State(room_id: String, username: String, sent: Int)
 }
 
-fn handle_info(
-  message: ServerMessage,
-  socket: Socket(RoomAssigns),
-) -> HandleResult(RoomAssigns) {
-  case message {
-    Tick(at) ->
-      channel.Push(
-        "tick",
-        json.object([#("at", json.int(at))]),
-        socket,
+/// This channel's server-side message type.
+type Note {
+  Tick(Int)
+}
+
+pub fn room() -> channel.Handler {
+  channel.handler("room:*", fn(context: channel.JoinContext(Note)) {
+    let state =
+      State(
+        room_id: context.topic,
+        username: context.socket_id,
+        sent: 0,
       )
-    Notify(text) ->
-      channel.Push(
-        "notification",
-        json.object([#("text", json.string(text))]),
-        socket,
+
+    channel.accept(state)
+    |> channel.on_message(fn(state: State, message: channel.Message) {
+      channel.next(
+        State(..state, sent: state.sent + 1),
+        [
+          channel.broadcast_from(message.event, json.int(state.sent + 1)),
+        ],
       )
-  }
-}
-
-// Register the handler when building the channel
-channel.new(join)
-|> channel.with_handle_in(handle_in)
-|> channel.with_handle_info(handle_info)
-```
-
-Because the `info` type is recovered by the channel, you match on `message` directly with exhaustive pattern matching — no `gleam/dynamic/decode` round-trip and no identity FFI cast in application code.
-
-#### Sending messages with send_info
-
-Use `beryl.send_info` from any process to deliver a message to a specific socket/topic pair:
-
-```gleam
-// In a background process or timer callback:
-beryl.send_info(channels, socket_id, "room:lobby", Notify("hello!"))
-```
-
-If the socket is not connected, the topic is not joined, or no `handle_info` is registered, the message is silently ignored.
-
-#### Timer and background job patterns
-
-A common use case is scheduling periodic pushes to a specific client. Spawn a process when the client joins and cancel it in `terminate`:
-
-```gleam
-import gleam/erlang/process
-
-fn join(topic, _payload, socket) -> JoinResult(RoomAssigns) {
-  let socket_id = socket.id(socket)
-
-  // Spawn a timer process that sends a tick every 5 seconds
-  let _pid = process.spawn(fn() {
-    let rec = process.new_subject()
-    timer_loop(channels, socket_id, topic, rec)
+    })
+    |> channel.on_info(fn(state: State, note: Note) {
+      let Tick(at) = note
+      channel.next(state, [channel.push("tick", json.int(at))])
+    })
+    |> channel.on_terminate(fn(state: State, _reason) {
+      [channel.broadcast("left", json.string(state.username))]
+    })
+    |> channel.with_reply(
+      json.object([#("room", json.string(context.topic))]),
+    )
+    |> channel.with_actions([
+      channel.broadcast("joined", json.string(state.username)),
+    ])
   })
-
-  channel.JoinOk(reply: None, socket: socket)
-}
-
-fn timer_loop(channels, socket_id, topic, _self) {
-  process.sleep(5000)
-  beryl.send_info(channels, socket_id, topic, Tick(erlang.system_time(erlang.Millisecond)))
-  timer_loop(channels, socket_id, topic, _self)
 }
 ```
 
-For production use, prefer OTP-based timers (e.g., Erlang's `:timer.send_interval`) over bare recursion, and track the timer PID in assigns so you can cancel it in `terminate`.
+`State` and `Note` stay private. `channel.handler` returns a
+`channel.Handler`, not a generic value. Unrelated channels can therefore use
+one handler list.
 
-## Registering channels
+## Starting a channel system
 
-Register channels with the beryl system using topic patterns:
+`channel.child_spec` takes the same `beryl.Config` as `beryl.child_spec`. The
+config contains the codec, rate limits, presence handle, PubSub, and logging.
+`channel.child_spec` also takes the handler table. It returns a
+`beryl.Sockets` handle and a child specification for the application
+supervision tree.
 
 ```gleam
+// src/my_app.gleam
 import beryl
+import beryl/transport/server
 import beryl/wire
+import beryl/channel
+import beryl_mist as mist_transport
+import gleam/bytes_tree
+import gleam/erlang/process
+import gleam/http/request
+import gleam/http/response
+import gleam/otp/static_supervisor
+import mist
+import my_app/room_channel
 
-let assert Ok(channels) = beryl.start(beryl.config(wire.phoenix_codec()))
+pub fn handlers() -> List(channel.Handler) {
+  [room_channel.room()]
+}
 
-// Register handlers for different topic patterns
-let assert Ok(_) = beryl.register(channels, "room:*", room_channel.new())
-let assert Ok(_) = beryl.register(channels, "user:*", user_channel.new())
-let assert Ok(_) = beryl.register(channels, "system", system_channel.new())
+pub fn main() -> Nil {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_frame_rate(per_second: 35, burst: 70)
+    |> beryl.with_message_rate(per_second: 30, burst: 60)
+
+  let assert Ok(#(sockets, channel_specification)) =
+    channel.child_spec(config, handlers: handlers())
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(channel_specification)
+    |> static_supervisor.start()
+
+  // `sockets` is an ordinary core handle: hand it to a transport, to
+  // `beryl.broadcast`, and to `beryl.stop`.
+  let assert Ok(_) =
+    mist_transport.handler(
+      sockets,
+      server.default_config("/socket/websocket"),
+      handle_http,
+    )
+    |> mist.new
+    |> mist.port(8000)
+    |> mist.start
+
+  process.sleep_forever()
+}
+
+fn handle_http(
+  _req: request.Request(mist.Connection),
+) -> response.Response(mist.ResponseData) {
+  response.new(404)
+  |> response.set_body(mist.Bytes(bytes_tree.new()))
+}
 ```
 
-## Broadcasting
+`handle_http` is the HTTP fallback. `mist_transport.handler` routes WebSocket
+upgrades on the configured path to beryl. It sends all other requests to
+`handle_http`. The
+[Quick Start](/quick-start/#2-start-beryl-and-mist)
+shows how to serve pages from this function.
 
-Send messages to all subscribers of a topic:
+Both APIs use the same runtime, wire codec, presence, abuse controls, and
+transports. The channel layer supplies only the `init` and `update` pair.
+
+`child_spec` reports eager validation failures as
+`channel.ChildSpecError`:
+
+| Variant | Meaning |
+|---|---|
+| `InvalidPattern(pattern, reason)` | A handler pattern is invalid |
+| `DuplicatePattern(pattern)` | The same pattern was registered twice |
+| `InvalidConfig(beryl.ConfigError)` | The core's eager config validation failed |
+
+## Match topics in registration order
+
+Patterns use beryl topic syntax, such as `"room:lobby"`, `"room:*"`,
+`"document:*:ops"`, and `"*"`. The layer checks patterns in
+**registration order**. The first match owns the topic.
+
+A bigger `handlers()` returns one entry per channel module:
 
 ```gleam
-// Broadcast to everyone on a topic
-beryl.broadcast(
-  channels,
-  "room:lobby",
-  "new_message",
-  json.object([#("text", json.string("Hello!"))]),
-)
-
-// Broadcast to everyone except one socket
-beryl.broadcast_from(
-  channels,
-  socket_id,
-  "room:lobby",
-  "user_typing",
-  json.object([#("user", json.string("alice"))]),
-)
+// A fragment of `handlers()`. See "Starting a channel system" above.
+[
+  // Special-case one topic by putting it ahead of the wildcard.
+  lobby_channel.lobby(),        // "room:lobby"
+  room_channel.room(),          // "room:*"
+  document_channel.document(),  // "document:*"
+]
 ```
 
-## Socket state
+Patterns can overlap. Put `"room:lobby"` before `"room:*"` to give the lobby a
+separate channel. Put specific patterns first. If `"room:*"` comes first, the
+lobby handler cannot receive a join. The layer cannot detect this routing
+error. It rejects duplicate pattern strings because the second handler cannot
+receive a join. It also rejects unmatched topics with
+`{"reason": "unmatched topic"}`.
 
-Sockets carry typed assigns that persist across messages:
+`InvalidPattern` contains the core
+[`topic.TopicError`](/reference/api/beryl-topic/) instead of a string, so you
+can match on the reason. Name each variant explicitly so the compiler
+identifies the matches that need an update when the API adds a variant:
 
 ```gleam
-import beryl/socket
+Error(channel.InvalidPattern(pattern, topic.EmptyTopic)) ->
+  panic as { "channel pattern " <> pattern <> " is empty" }
+Error(channel.InvalidPattern(pattern, topic.InvalidFormat(detail))) ->
+  panic as { "invalid channel pattern " <> pattern <> ": " <> detail }
+```
 
-// Get current assigns
-let assigns = socket.get_assigns(socket)
+The same rule applies to
+`beryl.InvalidTopicPattern(pattern, reason)`, which nests the identical
+`topic.TopicError`.
 
-// Update assigns (returns new socket)
-let socket = socket.set_assigns(socket, RoomAssigns(..assigns, room_id: "new"))
+`child_spec` first checks pattern syntax in registration order. It then checks
+for duplicate strings in the same order. Both checks happen before it builds
+the supervised child processes.
 
-// Transform assigns to a different type
-let socket = socket.map_assigns(socket, fn(old) {
-  NewType(user_id: old.user_id)
+## Typed state instead of assigns
+
+Phoenix keeps per-channel state in `socket.assigns`, a map of atoms to
+untyped terms. A beryl channel keeps a **value of its own type**, chosen
+by the channel and known to the compiler:
+
+```gleam
+type State {
+  State(room_id: String, username: String, sent: Int)
+}
+
+// Inside the `join` callback:
+channel.accept(State(room_id: context.topic, username: name, sent: 0))
+```
+
+`channel.handler` keeps the state in its callbacks. Each `channel.next` result
+creates the next callbacks with the new state. The layer does not convert the
+state to `Dynamic` or use unchecked conversion. One `List(Handler)` can
+therefore contain channels with unrelated state types.
+
+The layer keeps **one instance per joined topic**. A socket joined to
+`room:general` and `room:random` has two independent `State` values, and
+the layer prunes an instance when its topic closes. You do not write
+cleanup code for the state itself.
+
+## Read `JoinContext` and use its typed sender
+
+The `join` callback receives a `channel.JoinContext(info)`:
+
+| Field | Type | Description |
+|---|---|---|
+| `socket_id` | `String` | Unique id of the socket that is joining |
+| `seed` | `socket.ConnectSeed` | Request data the transport assembled before the upgrade: path, query, headers, and any `on_connect` metadata |
+| `self` | `channel.Sender(info)` | This channel instance's own typed sender |
+| `topic` | `String` | Concrete topic being joined |
+| `parameters` | `List(String)` | Wildcard captures in pattern order; exact patterns receive `[]` |
+| `payload` | `Dynamic` | Raw client join payload |
+
+The layer builds one `JoinContext` for each join. It is not the core
+`socket.ConnectInfo`. The layer owns the socket model and message type. This
+lets channels keep private state and private message types. Each join receives
+the required connection data and a sender for that join.
+
+`channel.notify(sender, message)` delivers `message` to that channel's
+`on_info` callback with its type intact:
+
+```gleam
+pub type Note {
+  Tick(Int)
+}
+
+// Call from a timer, application actor, or HTTP handler:
+channel.notify(sender, Tick(1))
+```
+
+This mechanism does not use casts. `notify` keeps the value in a typed
+function and sends it to the worker process of that join. Only that join can
+read the value during delivery. No mailbox stores the typed value between
+turns.
+
+Delivery uses a selective receive on the worker's mailbox. One delivery can
+scan queued work for that topic. Work for other topics does not add to this
+cost.
+
+### Senders from closed or rejoined channels
+
+A sender applies only to the join that produced it. Sending is asynchronous
+and does not report failure. If the channel has **closed** (client leave,
+`close([])`, or socket shutdown) or the same topic has since been **joined
+again** (a new worker), the layer drops the message rather than deliver it to
+the wrong instance. A live match delivers exactly one `on_info` call; sends
+are never coalesced and arrive in the order the worker receives them.
+
+A long-lived process can keep a sender but cannot use it to reach a different
+join. If the target join is gone, the message is dropped.
+
+Use `notify` to schedule a **later** turn, including from another process. Put
+work that must occur during the join in
+[actions after a join](#run-actions-after-a-join).
+
+## Return actions from callbacks
+
+An action is one operation **on this channel's own topic**. Constructor
+functions return one action. Put actions in a list in the order clients should
+observe them:
+
+| Action | Effect |
+|---|---|
+| `push(event, payload)` | Server-initiated message to this socket on this topic |
+| `broadcast(event, payload)` | To every subscriber of this topic, including this socket |
+| `broadcast_from(event, payload)` | To every subscriber except this socket |
+| `reply_ok(reply, payload)` | Success reply when `Message.reply` is `Some`; no effect for `None` |
+| `reply_error(reply, payload)` | Error reply with the same optional-ref behavior |
+| `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
+| `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
+| `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |
+| `broadcast_presence(event, encode)` | Presence snapshot for this topic, to every subscriber |
+
+No action names a topic. Each action applies to the channel that returned it.
+To send across topics, use the external APIs described in
+[When to use raw dispatch or another process](#when-to-use-raw-dispatch-or-another-process).
+
+Presence actions need a presence handle on the config
+(`beryl.with_presence_handle`); without one they are dropped with a
+warning, exactly as the equivalent core effects are.
+
+### Clients observe action list order
+
+The runtime applies channel actions in list order. Each action maps to one core
+`socket.Effect`. An asynchronous presence effect can pause this socket while
+other sockets continue. The remaining actions resume after the effect
+completes.
+
+The `encode` callbacks of `push_presence` and `broadcast_presence` run
+**when the action is applied**, so a snapshot already reflects any
+`presence_track` or `presence_untrack` earlier in the same list:
+
+```gleam
+[
+  channel.presence_track(state.username, meta(state)),
+  channel.broadcast_presence("presence_list", presence_helpers.encode_users),
+]
+```
+
+## Run actions after a join
+
+`channel.with_actions` attaches ordered actions to an accepted join. They
+are emitted with the acknowledgment and applied strictly after it:
+
+```gleam
+channel.accept(state)
+|> channel.with_reply(reply)
+|> channel.with_actions([
+  channel.presence_track(state.username, meta(state)),
+  channel.broadcast("new_msg", joined_message(state)),
+  channel.broadcast_presence("presence_list", encode_users),
+])
+```
+
+This ordering has two consequences:
+
+- **The acknowledgment always reaches the wire first.** The socket is
+  already subscribed to the topic when the join's own actions run, so a
+  `push` cannot overtake its own join reply.
+- **Effect order is per socket, not a cross-socket transaction.** If an
+  action starts asynchronous presence work, the runtime may process other
+  sockets while this one waits. Use application-owned synchronous state for
+  an atomic capacity reservation.
+
+`with_actions` appends, so it composes with itself, and it returns
+`channel.reject` results unchanged: a refused join has no topic to act on.
+
+Use join actions instead of sending `notify` to the same channel from `join`.
+`notify` schedules a later input. Join actions stay directly after the join
+acknowledgment.
+
+## Handle client and server messages
+
+| Callback | Input | Signature |
+|---|---|---|
+| `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
+| `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
+| `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
+
+`channel.accept(state)` stays joined until you add callbacks with the `on_*`
+builders. Unhandled messages and server-side notifications have no effect.
+For raw binary frames, use [Raw Dispatch](/guides/dispatch/).
+
+A `channel.Message` has `event`, the raw `payload` as `Dynamic`, and
+`reply: Option(socket.ReplyRef)`, which is present only when the client asked for a
+reply. Store `context.topic` in channel state when a callback needs it:
+
+```gleam
+|> channel.on_message(fn(state: State, message: channel.Message) {
+  case message.event {
+    "new_msg" ->
+      channel.next(state, [
+        channel.broadcast("new_msg", body(message.payload)),
+        channel.reply_ok(message.reply, json.object([])),
+      ])
+
+    "typing" ->
+      channel.next(state, [
+        channel.broadcast_from("typing", json.object([])),
+      ])
+
+    _ -> channel.stay(state)
+  }
 })
 ```
 
+Every callback answers with a `channel.Next(state)`:
+
+| Result | Behavior |
+|---|---|
+| `next(state, actions)` | Stay joined, applying the active-phase actions in order |
+| `stay(state)` | Stay joined with no actions |
+| `close(actions)` | Apply active-phase actions, then leave this channel |
+
+`close` applies its actions first and then closes the topic, so a
+farewell broadcast still reaches the topic's subscribers.
+
+## Handle channel termination
+
+`on_terminate` runs once for each accepted join. It runs after `phx_leave`,
+`close([])`, socket disconnect, heartbeat timeout, and `beryl.stop`. A rejected
+join does not create an instance, so it does not run `on_terminate`.
+
+The runtime converts the returned actions to effects during the turn that
+closes the topic,
+right after the instance has been removed. Closing-phase lists can contain
+`broadcast`, `broadcast_from`, `presence_untrack`, and
+`broadcast_presence`. Active-only pushes, replies, presence tracking, and
+presence pushes do not type-check in `on_terminate`.
+
+Put a leave announcement and updated roster here instead of sending them from
+code outside the channel:
+
+```gleam
+|> channel.on_terminate(fn(state: State, _reason) {
+  [
+    channel.broadcast("new_msg", departure(state)),
+    channel.presence_untrack(state.username),
+    channel.broadcast_presence("presence_list", encode_users),
+  ]
+})
+```
+
+Put `presence_untrack` before `broadcast_presence`. The runtime encodes the
+snapshot after it applies the untrack, so the roster is current. The runtime
+also removes presence entries when the topic closes. That removal occurs after
+`Closed`, not before your actions.
+
+## When channel callbacks run
+
+```mermaid
+sequenceDiagram
+  participant Client
+  participant Router as beryl/channel router
+  participant Ch as your channel
+  Client->>Router: phx_join "room:lobby"
+  Router->>Router: first matching pattern wins
+  Router->>Ch: join(JoinContext)
+  Ch-->>Router: accept(state) |> on_message(..) |> with_reply(reply)
+  Router-->>Client: phx_reply ok, then the join's actions
+  Client->>Router: event on "room:lobby"
+  Router->>Ch: on_message(state, Message)
+  Ch-->>Router: next(state', actions)
+  Router-->>Client: actions, in order
+  Client->>Router: phx_leave / disconnect
+  Router->>Router: remove the instance
+  Router->>Ch: on_terminate(state, reason)
+  Ch-->>Router: closing-phase actions
+```
+
+<a id="crash-behavior"></a>
+
+## When callbacks panic
+
+An app panic does not stop the runtime. The core limits the effect based on
+where the panic occurred:
+
+| Panic in | Effect |
+|---|---|
+| `join` | That join is rejected; the socket survives |
+| `on_message` | The runtime closes that topic with `phx_error` and runs `on_terminate`. Other topics on the socket continue |
+| `on_info` | The runtime closes that topic with `phx_error` and runs `on_terminate`. Other topics on the socket continue |
+| `on_terminate` | The runtime logs the panic and completes the close without its actions. It still runs termination actions for sibling channels |
+
+Each topic runs in its own worker process. A panic in a callback keeps the
+state from before that callback, so `on_terminate` still sees it, and once
+`on_terminate` finishes the worker stops, so a sender for that join delivers
+nothing. If the worker stops unexpectedly instead, the runtime closes the
+topic with `phx_error` without running `on_terminate` (it held the channel
+state), and the client must rejoin; the runtime also kills a worker that does
+not finish its queued work and `on_terminate` within five seconds, then
+completes the close without the termination actions.
+
+Crash isolation stops at the socket for other faults: a fault in the socket
+actor loses only that socket and its workers, while a router crash loses every
+socket on that `beryl.Sockets` handle. See
+[Socket Processes & Restarts](/architecture/runtime/).
+
+## Supervise the channel system
+
+`channel.child_spec` mirrors `beryl.child_spec`: it returns a `beryl.Sockets`
+handle and a child specification for applications that own their supervision
+tree, reporting the same validation errors as `channel.ChildSpecError` (see
+the table in [Starting a channel system](#starting-a-channel-system)).
+
+The channel layer uses the core child processes, restart policy, and `beryl.stop`
+behavior. See the [Supervision guide](/guides/supervision/). The application
+must start and supervise PubSub, presence, and group actors, and pass their
+handles to `beryl.Config`.
+
+After a runtime crash the handle keeps working for new connections, but
+every live channel instance is gone: clients reconnect and rejoin, and
+each join runs afresh.
+
+## Migrating from `beryl_channels`
+
+The compiler guides the package migration:
+
+1. Remove the `beryl_channels` dependency from `gleam.toml`.
+2. Replace imports of `beryl_channels/channel` with `beryl/channel`.
+3. Remove the root `beryl_channels` import and call
+   `channel.child_spec(config, handlers:)`.
+4. Match startup errors as `channel.InvalidPattern`,
+   `channel.DuplicatePattern`, and `channel.InvalidConfig`.
+
+Handler construction, private typed state and server messages, action
+ordering, and callback behavior are unchanged. Run `gleam check` to find every
+remaining old import or qualified error name.
+
+## When to use raw dispatch or another process
+
+The layer handles one topic at a time, so each action applies only to the
+channel that returned it: a `room:general` channel cannot broadcast on
+`lobby`. Cross-topic publishing goes through the external `Sockets` APIs
+(`beryl.broadcast`, `beryl.broadcast_from`, or a `beryl/group` actor) using the
+handle `channel.child_spec` returns. Because handlers are built before that
+handle exists, a channel cannot capture it directly; instead, keep the handle
+in a small actor that exposes a `publish(topic, event, payload)` function,
+like Phoenix's `Endpoint.broadcast/3`, and bind it after `child_spec` returns
+and before the transport starts accepting connections.
+[`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
+does exactly this for its `lobby` room list. Channels do not share state with
+each other either — anything two channels both need (a document store,
+presence handle, groups actor) is a dependency you capture in the handler
+closures when you build the table.
+
+The layer owns the socket-level model and message type, so pick raw dispatch
+or the channel layer per socket endpoint; mixing hand-written `update` logic
+into a channel system is not supported. Raw binary frames require raw
+dispatch, though binary frames the configured codec decodes into normal
+events still reach `on_message`. `beryl/bridge` targets the core sender, not a
+channel's: `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
+channel never sees, so adapt an existing actor's messages into `on_info` by
+forwarding them yourself with `channel.notify(context.self, ..)` — the typed
+sender is safe to hold and is dropped after the join ends.
+
+Each channel runs in its own worker, so a slow callback delays only its own
+topic while other topics on the socket continue; the socket actor still waits
+up to five seconds for `join`, so keep it short and return long-running
+results through `channel.notify`. beryl does not define an order between
+topics: actions for one topic keep their order, but replies and pushes for
+different topics on one socket can interleave.
+
 ## Next steps
 
-- [Reference](/reference/) — module map, wire protocol details, and the broadcast/push cheatsheet
-- [Presence guide](/guides/presence/) — track who is online and broadcast presence diffs to clients
-- [Groups guide](/guides/groups/) — broadcast a single event to multiple topics at once
-- [PubSub guide](/guides/pubsub/) — distributed messaging for multi-node deployments
-- [Error Handling guide](/guides/error-handling/) — rejected joins, rate limits, and client-visible error shapes
+- [Choose an API](/choosing-an-api/): when to use channels or raw dispatch
+- [Coming from Phoenix](/guides/coming-from-phoenix/): a callback-by-callback comparison
+- [Raw Dispatch](/guides/dispatch/): the core API under the channel handlers
+- [Presence](/guides/presence/): start the presence actor required by presence actions
+- [Supervision](/guides/supervision/): child processes, restarts, and shutdown behavior
+- [`beryl/channel`](/reference/api/beryl-channel/): generated API reference

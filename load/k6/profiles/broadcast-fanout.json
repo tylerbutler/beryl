@@ -1,0 +1,34 @@
+{
+  "name": "broadcast-fanout",
+  "exec": "broadcastFanout",
+  "executor": {
+    "executor": "constant-vus",
+    "vus": 10,
+    "duration": "1m",
+    "gracefulStop": "15s"
+  },
+  "thresholds": {
+    "checks": ["rate==1"],
+    "phoenix_scenario_operation_rate": ["rate==1"],
+    "phoenix_client_errors": ["count==0"],
+    "phoenix_unexpected_client_errors": ["count==0"],
+    "phoenix_protocol_errors": ["count==0"],
+    "phoenix_decode_errors": ["count==0"],
+    "phoenix_ws_failure_rate": ["rate==0"],
+    "phoenix_join_rejection_rate": ["rate==0"],
+    "phoenix_push_timeout_rate": ["rate==0"],
+    "phoenix_broadcast_delivery_rate": ["rate==1"]
+  },
+  "parameters": {
+    "BROADCAST_TOPIC": "bench:broadcast",
+    "BROADCAST_EVENT": "broadcast",
+    "BROADCAST_DELIVERY_EVENT": "broadcast",
+    "BROADCAST_ACK_EVENT": "broadcast_ack",
+    "BROADCAST_GROUP_SIZE": 5,
+    "BROADCAST_EXPECTED_RECIPIENTS": 4,
+    "BROADCAST_WARMUP_MS": 2000,
+    "DELIVERY_TIMEOUT_MS": 5000,
+    "SESSION_DURATION_MS": 10000,
+    "OPERATION_INTERVAL_MS": 250
+  }
+}

@@ -2,7 +2,7 @@
 ////
 //// A `Bucket` is plain data refilled against the monotonic clock — there is
 //// no registry actor and no messaging. Callers own bucket storage (the
-//// coordinator keeps per-socket and per-channel buckets in its own state;
+//// runtime keeps per-socket and per-channel buckets in its own state;
 //// transports keep one per connection), so a check costs a dict update
 //// instead of a blocking cross-process call, cleanup is deleting the entry,
 //// and nothing leaks when a supervisor restarts the owner.
@@ -29,7 +29,7 @@ pub type RateLimitConfig {
 pub fn config(per_second per_second: Int, burst burst: Int) -> RateLimitConfig {
   let effective_burst = case burst {
     0 -> per_second
-    b -> b
+    configured_burst -> configured_burst
   }
   RateLimitConfig(per_second: per_second, burst: effective_burst)
 }
@@ -49,11 +49,11 @@ pub opaque type Bucket {
 const one_second_ns = 1_000_000_000
 
 /// Create a full bucket for the given config.
-pub fn new_bucket(cfg: RateLimitConfig) -> Bucket {
-  let ns_per_token = one_second_ns / int.max(cfg.per_second, 1)
+pub fn new_bucket(config: RateLimitConfig) -> Bucket {
+  let ns_per_token = one_second_ns / int.max(config.per_second, 1)
   Bucket(
-    tokens_ns: cfg.burst * ns_per_token,
-    max_tokens_ns: cfg.burst * ns_per_token,
+    tokens_ns: config.burst * ns_per_token,
+    max_tokens_ns: config.burst * ns_per_token,
     ns_per_token: ns_per_token,
     last_refill_ns: monotonic_time_ns(),
   )

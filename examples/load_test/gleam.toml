@@ -1,0 +1,22 @@
+name = "load_test"
+version = "0.1.0"
+description = "Headless benchmark target for beryl's k6 workloads"
+gleam = ">= 1.7.0"
+target = "erlang"
+
+[dependencies]
+beryl = { path = "../../packages/beryl" }
+beryl_mist = { path = "../../packages/beryl_mist" }
+beryl_ewe = { path = "../../packages/beryl_ewe" }
+example_helper = { path = "../example_helpers" }
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+gleam_erlang = ">= 0.29.0 and < 2.0.0"
+gleam_otp = ">= 0.12.0 and < 2.0.0"
+gleam_json = ">= 3.0.0 and < 4.0.0"
+gleam_http = ">= 4.3.0 and < 5.0.0"
+mist = ">= 6.0.0 and < 7.0.0"
+ewe = ">= 4.0.0 and < 5.0.0"
+envoy = ">= 1.0.0 and < 2.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"

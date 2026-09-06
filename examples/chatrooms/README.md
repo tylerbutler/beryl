@@ -1,6 +1,7 @@
 # Chat Rooms — beryl demo
 
-A multi-room chat application demonstrating beryl's real-time channels, groups, presence, and authentication features.
+A multi-room chat application demonstrating beryl's real-time channels, groups,
+and authentication features with example-local, ETS-backed session presence.
 
 ## Quick Start
 
@@ -13,6 +14,8 @@ gleam run
 ## Features
 
 - 💬 **Multi-room chat** — switch between rooms (general, random, help)
+- 🧭 **Persistent lobby channel** — one socket stays joined to `lobby` while switching between `room:*` topics
+- 🔢 **Live room counts** — lobby invalidations refresh authoritative counts from `/api/rooms`
 - 🔐 **Connection authentication** — `on_connect` hook validates auth token before WebSocket upgrade
 - 👥 **Live presence** — see who's online in each room
 - ✍️ **Typing indicators** — see when others are typing
@@ -31,15 +34,17 @@ This demo is designed to complement the [cursors demo](../cursors/) by exercisin
 |---|---|---|
 | **Groups** | `beryl/group` | Rooms organized in "public" group |
 | **on_connect auth** | `beryl_mist` | Token query param validated before WS upgrade |
-| **JoinError** | `beryl/channel` | Room capacity check rejects when full |
-| **Reply** | `beryl/channel` | Message delivery confirmed with `msg_ack` |
-| **Push** | `beryl/channel` | System join/leave messages broadcast to room |
-| **error_with_code** | `beryl/channel` | Empty message validation returns code 422 |
+| **RejectJoin** | `beryl/socket` | Room capacity check rejects when full |
+| **ReplyOk** | `beryl/socket` | Message delivery confirmed on the client's ref |
+| **Broadcast** | `beryl/socket` | System join/leave messages broadcast to room |
+| **error code** | `chatroom/app` | Empty message validation returns code 422 |
 | **Topic helpers** | `beryl/topic` | Extract room name from `room:*` pattern |
-| **Presence typing** | `beryl/presence` | Typing indicators via presence meta updates |
+| **Session presence** | `example_helper/session_presence` | ETS-backed online users and typing metadata |
 | **join_rate** | `beryl` | 5 joins/sec per socket |
 | **channel_rate** | `beryl` | 10 msg/sec per channel |
 | **Multiple topics** | `beryl` | Each room is a separate topic |
+| **Multiple channel types** | `beryl/socket` | Exact `lobby` topic plus wildcard `room:*` topics on one socket |
+| **Ordered dispatch** | `beryl/socket` | Session tracker changes happen before lobby invalidations |
 
 ## Architecture
 
@@ -49,16 +54,18 @@ Browser (vanilla JS + Phoenix client CDN)
 Gleam/BEAM server (port 8001)
   ├── Mist HTTP routing (static files, /api/rooms)
   ├── Mist WebSocket transport (on_connect auth)
-  ├── beryl channels (room:* handler)
+  ├── beryl app-side dispatch
+  │   ├── lobby (persistent room-directory invalidation channel)
+  │   └── room:* (replaceable chat-room channels)
   ├── beryl groups ("public" → general, random, help)
-  └── beryl presence (online users + typing indicators)
+  └── example session_presence (ETS-backed online users + typing indicators)
 ```
 
 ## Running Tests
 
 ```bash
 npm install           # First time only
-npx playwright test   # 35 e2e tests
+npx playwright test   # 43 e2e tests
 ```
 
 ## API
@@ -80,3 +87,8 @@ npx playwright test   # 35 e2e tests
 | Server → Client | `msg_error` | Validation error `{code, error}` |
 | Server → Client | `presence_list` | Updated online user list |
 | Server → Client | `typing` | Typing indicator update |
+| Server → Client | `rooms_changed` on `lobby` | Invalidate room counts after room membership changes `{room}` |
+
+The browser joins `lobby` once and keeps it joined while replacing its active
+`room:*` channel. `rooms_changed` invalidates the directory; the browser then
+loads the current counts from `GET /api/rooms`.

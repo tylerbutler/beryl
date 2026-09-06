@@ -1,25 +1,73 @@
 ---
 title: Examples
-description: Three runnable beryl demos — collaborative cursors, multi-room chat, and CRDT documents.
+description: Four runnable beryl examples, including the channel showcase.
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-beryl ships three fully runnable example applications in the
+Four runnable applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
-directory. They use a Gleam/BEAM backend with browser frontends that exercise
-different realtime collaboration patterns.
+directory use a Gleam/BEAM backend and a browser frontend. The repository also
+contains the live-poll tutorial, load-test server, and shared example helpers.
 
-<Aside type="caution" title="Pre-1.0 Software">
-beryl is not yet 1.0. The API is unstable and features may be removed in minor releases.
+The installed package does not include the examples. Clone the repository:
+
+```bash
+git clone https://github.com/tylerbutler/beryl.git
+cd beryl
+```
+
+<Aside type="note" title="Pre-1.0">
+beryl is not yet version 1.0. Minor releases can change the API, and the library is not ready for production. Report problems to help define version 1.0.
 </Aside>
 
-## Collaborative Cursors
+## Showcase
+
+**Source**: [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
+
+This example uses one socket runtime and three topic families. The
+`beryl/channel` API combines cursor, chat room, and shared document handlers in
+one supervised socket system. It does not need a socket-wide model or a custom
+router.
+
+```bash
+cd examples/showcase
+gleam run
+# Open http://localhost:8000
+```
+
+### Features used
+
+| beryl feature | How it's used |
+|---|---|
+| **Channel composition** | One `channel.child_spec` handler table owns `cursor:*`, `room:*`, and the `document:` prefix |
+| **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
+| **Join and close actions** | Join and termination callbacks return actions that beryl runs in list order |
+| **Per-pattern rate limits** | `with_topic_rate` gives cursor traffic a higher limit than chat and document traffic |
+| **Shared presence** | One ETS-backed session-presence tracker serves cursors and chat, publishing snapshots asynchronously |
+| **Single WebSocket endpoint** | Every embedded app shares `/socket/websocket` |
+
+### How it fits together
+
+```text
+Browser (Phoenix JS clients across /cursors, /chat, /docs)
+  │  WebSocket (Phoenix wire protocol)
+Server (Gleam)
+  ├── Mist HTTP — serves the landing page and each example UI
+  ├── beryl/channel — handler table owning cursor:*, room:*, document:
+  ├── per-channel state — private to each joined topic
+  ├── session presence — shared across cursors and chat
+  └── groups + doc store — example-specific state
+```
+
+---
+
+## Collaborative cursors
 
 **Source**: [`examples/cursors`](https://github.com/tylerbutler/beryl/tree/main/examples/cursors)
 
-Move your mouse and see everyone else's cursor in real time. Open the app in
-multiple browser tabs to try it.
+Move your mouse to send its position in real time. Open the app in multiple
+browser tabs to see other cursors.
 
 ```bash
 cd examples/cursors
@@ -27,33 +75,33 @@ gleam run
 # Open http://localhost:8000 in multiple browser tabs
 ```
 
-### What it demonstrates
+### Features used
 
 | beryl feature | How it's used |
 |---|---|
-| **Channels** | `cursor:lobby` channel handles join/leave and cursor events |
-| **Topic wildcards** | Handler registered on `cursor:*` matches any cursor room |
-| **Presence (CRDT)** | Tracks connected users with username + color metadata |
-| **`broadcast_from`** | Fans out cursor moves to all *other* clients, excluding the sender |
+| **Raw dispatch** | One socket-wide model handles the `cursor:*` topic family |
+| **Topic routing** | The update function matches `cursor:*` directly with `beryl/topic` |
+| **Session presence (ETS)** | The example-local `session_presence` tracker stores connected users and their username + color metadata in ETS |
+| **`broadcast_from`** | Sends cursor moves to all *other* clients, excluding the sender |
 | **Rate limiting** | `beryl.with_message_rate` throttles high-frequency cursor events |
 | **WebSocket transport** | `mist_transport.upgrade` handles Phoenix-compatible WebSocket requests |
 | **Phoenix JS client** | Frontend uses the official `phoenix` package over the standard wire protocol |
 
-### Architecture
+### How it fits together
 
 ```
 Browser (vanilla JS + Phoenix JS client)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves HTML + static files
-  ├── beryl channels — cursor:* topic handler
-  ├── beryl presence — CRDT-backed user tracking
+  ├── beryl app dispatch — cursor:* topics
+  ├── example session_presence — ETS-backed user tracking
   └── beryl pubsub — broadcast_from cursor positions
 ```
 
 ---
 
-## Chat Rooms
+## Chat rooms
 
 **Source**: [`examples/chatrooms`](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms)
 
@@ -66,24 +114,23 @@ gleam run
 # Open http://localhost:8001?token=beryl-demo in multiple browser tabs
 ```
 
-### What it demonstrates
+### Features used
 
-This demo is designed to complement the cursors example by covering a different
-slice of the beryl API:
+This example uses parts of the beryl API that the cursor example does not use:
 
 | beryl feature | How it's used |
 |---|---|
 | **`on_connect` auth** | Token query param validated before WebSocket upgrade is accepted |
-| **`JoinError`** | Rooms reject joins when full (20-user cap) or when room doesn't exist |
-| **`channel.Reply`** | Delivery of `new_msg` confirmed with a `msg_ack` `phx_reply` |
-| **`channel.error_with_code`** | Empty messages rejected with HTTP-style code 422 |
+| **`channel.reject`** | Rooms reject joins when full (20-user cap) or when room doesn't exist |
+| **`channel.reply_ok`** | Delivery of `new_msg` confirmed with an ok-status `phx_reply` |
+| **Coded error replies** | Empty messages rejected with HTTP-style code 422 in the reply payload |
 | **Groups** | Three rooms (`general`, `random`, `help`) organised in a named group |
-| **Presence (typing indicators)** | Typing state stored in presence meta; updated on `typing`/`stop_typing` events |
-| **System messages** | "user joined" / "user left" broadcast via `beryl.broadcast` on join/terminate |
-| **Multiple topics** | Each room is a separate `room:*` topic sharing one registered channel handler |
+| **Session presence (ETS)** | The example-local `session_presence` tracker stores online users and typing metadata in ETS |
+| **System messages** | "user joined" / "user left" broadcasts from join and termination actions |
+| **Multiple topics** | `lobby` and `room:*` handlers compose in one `channel.child_spec` table |
 | **Rate limiting** | `with_join_rate` (5/sec) and `with_channel_rate` (10/sec/channel) |
 
-### Architecture
+### How it fits together
 
 ```
 Browser (vanilla JS + Phoenix JS client, token auth)
@@ -91,9 +138,9 @@ Browser (vanilla JS + Phoenix JS client, token auth)
 Server (Gleam)
   ├── Mist HTTP — static files, /api/rooms
   ├── Mist WebSocket transport — on_connect validates token
-  ├── beryl channels — room:* handler
+  ├── beryl/channel — lobby + room:* handlers
   ├── beryl groups — "public" group → general, random, help
-  └── beryl presence — online users + typing indicators
+  └── example session_presence — ETS-backed online users + typing indicators
 ```
 
 ### Channel events
@@ -104,18 +151,18 @@ Server (Gleam)
 | Client → Server | `typing` | Start typing indicator |
 | Client → Server | `stop_typing` | Stop typing indicator |
 | Server → Client | `new_msg` | Broadcast message `{text, username, color, type, timestamp}` |
-| Server → Client | `phx_reply` (push ref) | Reply to a client push — used for both delivery acknowledgment (`status: "ok"`) and validation errors (`status: "error", response: {code, error}`). Validation errors are returned via `channel.Reply` from `handle_in`, not pushed as a separate event. |
+| Server → Client | `phx_reply` (push ref) | Reply to a client push — used for both delivery acknowledgment and validation errors. The demo returns validation failures with `channel.reply_ok`, so their wire status is still `ok`; the response payload (`{code, error}`) represents the domain validation error. |
 | Server → Client | `presence_list` | Updated online user list |
 | Server → Client | `typing` | Typing indicator update |
 
 ---
 
-## Collaborative CRDT Docs
+## Collaborative documents
 
 **Source**: [`examples/collab_docs`](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs)
 
-A collaborative document editor where clients merge block state locally with a
-CRDT and use beryl as an unordered realtime transport.
+This shared document editor merges block state in each client with a CRDT. It
+uses beryl as an unordered real-time transport.
 
 ```bash
 just deps
@@ -123,31 +170,31 @@ cd examples/collab_docs && gleam run
 # Open http://localhost:8002 in multiple browser tabs
 ```
 
-### What it demonstrates
+### Features used
 
 | beryl feature | How it's used |
 |---|---|
-| **Segment wildcard topics** | Handler registered on `document:*:*` isolates each tenant/document pair |
+| **Segment-shaped topics** | The `document:*` handler claims the prefix, then validates each `document:<tenant>:<document>` topic on join |
 | **Client-side CRDT merge** | Browser state uses `lattice_core`, `lattice_maps`, and `lattice_registers` with `ORMap(MVRegister(String))` document blocks |
-| **Unordered realtime transport** | Beryl broadcasts document updates while the CRDT handles merge convergence |
+| **Unordered realtime transport** | beryl broadcasts document updates while the CRDT handles merge convergence |
 | **Late joiner cache** | Server returns cached merged state in the join reply for new clients |
 | **Conflict resolution UI** | Concurrent edits to the same block render explicit conflict cards with all versions |
 
-### Architecture
+### How it fits together
 
 ```
 Browser (vanilla JS + Phoenix JS client + lattice CRDT packages)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves HTML + static files
-  ├── beryl channels — document:*:* handler
+  ├── beryl/channel — document:* handler with tenant/document validation
   ├── document cache — merged state for late joiners
-  └── beryl pubsub — fan-out of CRDT updates
+  └── beryl pubsub — sends CRDT updates to subscribers
 ```
 
 ---
 
-## Choosing a starting point
+## Choose an example
 
 | Starting point | Go here |
 |---|---|
@@ -155,5 +202,5 @@ Server (Gleam)
 | I want to see live presence + cursors | [examples/cursors](https://github.com/tylerbutler/beryl/tree/main/examples/cursors) |
 | I want auth, join validation, or groups | [examples/chatrooms](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms) |
 | I want collaborative documents or CRDT conflicts | [examples/collab_docs](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs) |
-| I want to understand the channel API | [Channels guide](/guides/channels/) |
+| I want to understand the dispatch API | [Channels guide](/guides/channels/) |
 | I want to add presence to my app | [Presence guide](/guides/presence/) |

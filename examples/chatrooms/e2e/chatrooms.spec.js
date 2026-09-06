@@ -7,7 +7,7 @@ async function gotoWithUsername(page, username, path = "/?token=beryl-demo") {
   await page.goto(path);
 }
 
-// Helper: wait for Phoenix channel join reply
+// Helper: wait for Phoenix channel join reply for a room topic
 async function waitForJoinReply(page) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
@@ -18,7 +18,12 @@ async function waitForJoinReply(page) {
       ws.on("framereceived", (frame) => {
         try {
           const data = JSON.parse(frame.payload);
-          if (Array.isArray(data) && data[3] === "phx_reply") {
+          if (
+            Array.isArray(data) &&
+            data[3] === "phx_reply" &&
+            typeof data[2] === "string" &&
+            data[2].startsWith("room:")
+          ) {
             clearTimeout(timeout);
             resolve(data);
           }
@@ -84,6 +89,229 @@ test.describe("Chat Rooms Demo", () => {
         "href",
         "https://github.com/tylerbutler/beryl"
       );
+    });
+  });
+
+  test.describe("Lobby channel", () => {
+    test("requests room counts from the standalone mount", async ({ page }) => {
+      const roomRequests = [];
+      page.on("request", (request) => {
+        if (request.url().includes("/api/rooms")) {
+          roomRequests.push(new URL(request.url()).pathname);
+        }
+      });
+
+      await gotoWithUsername(page, "MountUser");
+
+      await expect.poll(() => roomRequests).toContain("/api/rooms");
+    });
+
+    test("joins lobby and a room on the same socket", async ({ page }) => {
+      const joinedTopics = [];
+      page.on("websocket", (ws) => {
+        ws.on("framesent", (frame) => {
+          try {
+            const data = JSON.parse(frame.payload);
+            if (Array.isArray(data) && data[3] === "phx_join") {
+              joinedTopics.push(data[2]);
+            }
+          } catch {
+            // ignore non-JSON frames
+          }
+        });
+      });
+
+      await gotoWithUsername(page, "LobbyUser");
+
+      await expect.poll(() => joinedTopics).toContain("lobby");
+      await expect.poll(() => joinedTopics.some((topic) =>
+        topic.startsWith("room:")
+      )).toBe(true);
+    });
+
+    test("renders a count badge for every room", async ({ page }) => {
+      await gotoWithUsername(page, "CountUser");
+
+      const badges = page.locator(".room-count");
+      await expect(badges).toHaveCount(3);
+      await expect(
+        page.locator('.room-count[data-room-count="general"]')
+      ).toHaveText("1", { timeout: 10_000 });
+      await expect(
+        page.locator('.room-count[data-room-count="random"]')
+      ).toHaveText("0");
+      await expect(
+        page.locator('.room-count[data-room-count="help"]')
+      ).toHaveText("0");
+    });
+
+  });
+
+  test.describe("Live lobby updates", () => {
+    test("updates room counts when another user joins and leaves", async ({
+      browser,
+    }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+
+      try {
+        await gotoWithUsername(page1, "Observer");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+
+        await gotoWithUsername(page2, "Joiner");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("2", { timeout: 10_000 });
+
+        await context2.close();
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+      } finally {
+        await context1.close();
+        await context2.close().catch(() => {});
+      }
+    });
+
+    test("keeps lobby joined while switching rooms", async ({ page }) => {
+      const leaves = [];
+      page.on("websocket", (ws) => {
+        ws.on("framesent", (frame) => {
+          try {
+            const data = JSON.parse(frame.payload);
+            if (Array.isArray(data) && data[3] === "phx_leave") {
+              leaves.push(data[2]);
+            }
+          } catch {
+            // ignore non-JSON frames
+          }
+        });
+      });
+
+      await gotoWithUsername(page, "Switcher");
+      await expect(
+        page.locator('.room-count[data-room-count="general"]')
+      ).toHaveText("1", { timeout: 10_000 });
+
+      await page.locator('.room-item[data-room="random"]').click();
+      await expect(page.locator(".room-item.active")).toContainText("random");
+      await expect(
+        page.locator('.room-count[data-room-count="general"]')
+      ).toHaveText("0", { timeout: 10_000 });
+      await expect(
+        page.locator('.room-count[data-room-count="random"]')
+      ).toHaveText("1", { timeout: 10_000 });
+
+      expect(leaves).toContain("room:general");
+      expect(leaves).not.toContain("lobby");
+    });
+
+    test("keeps the last counts when a live refresh fails", async ({
+      browser,
+    }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+      let failRefreshes = false;
+      let failedRequests = 0;
+
+      await page1.route("**/api/rooms", async (route) => {
+        if (failRefreshes) {
+          failedRequests += 1;
+          await route.fulfill({ status: 503, body: "unavailable" });
+        } else {
+          await route.continue();
+        }
+      });
+
+      try {
+        await gotoWithUsername(page1, "FailureObserver");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+
+        failRefreshes = true;
+        await gotoWithUsername(page2, "FailureJoiner");
+        await expect.poll(() => failedRequests).toBeGreaterThan(0);
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1");
+      } finally {
+        await context1.close();
+        await context2.close();
+      }
+    });
+
+    test("ignores a stale overlapping live refresh", async ({ browser }) => {
+      const context1 = await browser.newContext();
+      const context2 = await browser.newContext();
+      const page1 = await context1.newPage();
+      const page2 = await context2.newPage();
+      let raceMode = false;
+      let delayedRequestSeen = false;
+      let delayedRequestFulfilled = false;
+
+      await page1.route("**/api/rooms", async (route) => {
+        if (!raceMode) {
+          await route.continue();
+        } else if (!delayedRequestSeen) {
+          delayedRequestSeen = true;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([
+              { topic: "room:general", name: "general", users: 9 },
+              { topic: "room:random", name: "random", users: 0 },
+              { topic: "room:help", name: "help", users: 0 },
+            ]),
+          });
+          delayedRequestFulfilled = true;
+        } else {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([
+              { topic: "room:general", name: "general", users: 1 },
+              { topic: "room:random", name: "random", users: 1 },
+              { topic: "room:help", name: "help", users: 0 },
+            ]),
+          });
+        }
+      });
+
+      try {
+        await gotoWithUsername(page1, "RaceObserver");
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+
+        raceMode = true;
+        await gotoWithUsername(page2, "RaceJoiner");
+        await expect.poll(() => delayedRequestSeen).toBe(true);
+        await page2.locator('.room-item[data-room="random"]').click();
+
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1", { timeout: 10_000 });
+        await expect(
+          page1.locator('.room-count[data-room-count="random"]')
+        ).toHaveText("1", { timeout: 10_000 });
+        // Wait for the delayed stale response to actually be delivered before
+        // asserting it did not overwrite the newer counts.
+        await expect.poll(() => delayedRequestFulfilled, { timeout: 5_000 }).toBe(true);
+        await expect(
+          page1.locator('.room-count[data-room-count="general"]')
+        ).toHaveText("1");
+      } finally {
+        await context1.close();
+        await context2.close();
+      }
     });
   });
 
