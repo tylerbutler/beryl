@@ -379,20 +379,23 @@ beryl adopts option 2 for raw dispatch and option 3 for `beryl/channel`.
   Each socket actor starts a linked factory supervisor and one `Temporary`
   worker for each accepted join. The worker owns the channel state and runs
   `join`, `on_message`, `on_info`, and `on_terminate`. The socket actor owns
-  the protocol state, capabilities, subscriptions, presence data, and frame
-  writes.
+  the protocol state, capabilities, subscriptions, presence data, and ordered
+  send requests. The transport connection process performs frame writes.
 
 beryl uses these sequence rules:
 
-- Workers on one socket run concurrently. A slow callback delays only its
-  own topic.
+- Workers on one socket run message and info callbacks concurrently. A slow
+  callback delays its worker, but joins, ordered closes, and presence
+  suspension can also delay the socket actor's effect processing.
 - beryl does not define an order between different topics on one socket.
   Within one topic, action order is wire order.
 - The worker runs `join` during initialization. The socket actor waits for a
   maximum of 5 seconds. It rejects the join after this timeout. Joins on
   different sockets do not wait for each other.
 - beryl does not limit worker mailboxes or pending reports.
-  [#249](https://github.com/tylerbutler/beryl/issues/249) tracks this work.
+  [#397](https://github.com/tylerbutler/beryl/issues/397) tracks these and other
+  runtime queue contracts. [#249](https://github.com/tylerbutler/beryl/issues/249)
+  separately tracks outbound connection queues and slow-client eviction.
 - The socket actor owns presence suspension. Workers send presence actions to
   the socket actor. The socket actor applies the existing order rules.
 - The socket actor sends a close to the worker before it drops the topic's
@@ -413,9 +416,20 @@ Contract changes recorded with this decision:
   `phx_error`. The runtime cannot run `on_terminate` because the worker held
   the channel state. The client must rejoin. This behavior matches Phoenix.
 
-[#371](https://github.com/tylerbutler/beryl/pull/371) contains the performance
-results. ADRs 0002 and 0003 remain authoritative for the raw and channel APIs.
-This ADR changes only their process topology.
+[#371](https://github.com/tylerbutler/beryl/pull/371) provides protocol-smoke
+evidence, not comparative performance evidence for this topology. The
+[ADR 0005 results](0005-socket-actor-supervision.md#results) compare direct
+and factory startup at a requested 2,000 connections per second with Mist on
+Erlang 27.2.1 and 12 schedulers, with three runs per design. That narrow
+start-rate result does not establish general capacity, queue bounds, or
+healthy-sibling latency under load.
+
+[#400](https://github.com/tylerbutler/beryl/issues/400) tracks the broader
+workload baselines. ADRs 0002 and 0003 remain authoritative for the raw and
+channel APIs. This ADR changes their process topology;
+[ADR 0005](0005-socket-actor-supervision.md) subsequently adds the shared
+factory that owns socket actors as `Temporary` children. Neither socket nor
+topic supervision reconstructs a session: clients reconnect and rejoin.
 
 ## Sources
 

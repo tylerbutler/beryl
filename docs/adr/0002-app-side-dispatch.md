@@ -106,6 +106,16 @@ the generated [API reference](https://beryl.tylerbutler.com/reference/api/);
 
 ## Scalability and post-1.0 compatibility
 
+> **Superseded topology discussion:** This appendix records the single-actor
+> implementation at the time of this decision. [ADR 0004](0004-channel-process-fault-boundaries.md)
+> subsequently adopted a shared router, one actor per socket for raw dispatch,
+> and one worker per socket/topic pair for the channel layer.
+> [ADR 0005](0005-socket-actor-supervision.md) added the shared socket factory
+> that supervises socket actors as `Temporary` children. Those changes are
+> implemented, not deferred until after 1.0. The socket actor orders protocol
+> effects; the transport connection process performs the writes. The historical
+> decision and compatibility analysis below are retained.
+
 The current implementation runs every application's callbacks in one runtime
 actor. This keeps state ownership and ordering simple, but it also serializes
 all callback work for a channel system in one BEAM process. Therefore, only one

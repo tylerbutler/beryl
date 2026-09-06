@@ -10,6 +10,10 @@ It can also pass a typed handler table to `channel.child_spec`. The runtime
 dispatches decoded messages and applies the returned effects. Separate actors
 manage presence and groups. Only PubSub sends data across nodes.
 
+Here, **runtime** means the router, socket actors, and optional channel workers
+together, not one process. A **topic worker** belongs to one socket/topic join,
+not to every subscriber of a topic name.
+
 ## Choose a page
 
 Each page describes one subsystem and lists its source files.
@@ -69,18 +73,39 @@ flowchart TB
 ```mermaid
 flowchart TB
   S["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
-  S --> RT["router actor (Transient)"]
-  RT <-. "monitor" .-> SA["socket actors<br/>one per connection"]
-  SA --> TW["topic workers<br/>one per joined channel"]
+  S --> SF["socket factory supervisor (Permanent)"]
+  SF --> SA["socket actors<br/>one per connection, Temporary"]
+  S --> RT["router actor (significant Transient)"]
+  S -. optional .-> CL["connection limiter"]
+  RT <-. "mutual monitors" .-> SA
+  SA --> TS["topic worker supervisor<br/>channel layer, linked"]
+  TS --> TW["topic workers<br/>one per socket/topic join, Temporary"]
+  SA -. "ordered send requests" .-> T["transport connection process<br/>WebSocket writes"]
   PR["presence (app-started)"]
   GR["groups (app-started)"]
   SA -. "async mutation" .-> PR
 ```
 
-`child_spec` supervises the router. Transport connections start the socket
-actors, which monitor the router and are monitored by it. The application
-starts and owns the presence and group actors. See the
+`child_spec` supervises the router and socket factory. Transport connections
+request temporary socket children from the factory. Socket actors preserve
+protocol/effect order; transport connection processes perform network writes.
+Channel workers own per-topic state and callbacks.
+
+A socket actor fault closes that socket. A worker fault closes its topic.
+A router or factory fault closes the affected runtime's connections.
+Temporary children are not restarted: clients reconnect and rejoin rather
+than recover an old session. The application starts and owns the presence and
+group actors. See the
 [Supervision guide](/guides/supervision/).
+
+Slow channel callbacks do not block sibling workers, but joins, ordered
+closes, and presence work can delay the socket's effect processing. The router
+and presence actor remain shared resources, and transport queues can grow
+behind slow readers. See [Queue limits and overload](/architecture/runtime/#queue-limits-and-overload)
+and [Performance evidence](/architecture/runtime/#performance-evidence) for
+the current limits and the work tracked in
+[#397](https://github.com/tylerbutler/beryl/issues/397) and
+[#400](https://github.com/tylerbutler/beryl/issues/400).
 
 ## Source files
 

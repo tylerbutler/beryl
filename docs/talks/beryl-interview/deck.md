@@ -130,8 +130,8 @@ familiar, and Gleam adds static typing.
 
 - Millions of tiny, isolated, share-nothing processes per node
 - No shared memory or locks; processes only send messages
-- beryl uses connection processes at the transport edge and one shared app runtime
-- Per-socket models stay isolated by ID and callback failures are contained
+- beryl uses a shared router, temporary socket actors, and per-socket/topic workers
+- Socket actors order effects; transport connection processes write frames
 
 <!--
 Give these numbers:
@@ -151,12 +151,19 @@ Isolation is the main point: share no state. The only way two
 processes interact is by copying a message into the other's mailbox.
 No shared memory means no locks or data races.
 
-Be precise about beryl's topology: it does not spawn an application actor per
-socket. Mist/Ewe own their normal WebSocket connection processes, while one
-shared runtime actor stores every socket's typed model and topic membership.
-The runtime handles app callback crashes and applies a scoped policy: reject a
-crashing join, close a topic for a crashing message, and tear down only that
-socket for a crashing `Info`. Other sockets and the runtime survive.
+Be precise about beryl's topology: the shared socket factory supervises a
+Temporary actor per socket. Raw init/update callbacks run in that actor.
+With the channel layer, a linked topic supervisor owns a Temporary worker
+for each socket/topic join. Workers own channel state and callbacks.
+The shared router owns admission, indexes, and fan-out, not app callbacks.
+Mist/Ewe connection processes own the WebSocket and perform frame writes.
+
+A raw Join panic rejects the join; a raw Message/Binary panic closes its
+topic; a raw Info panic closes the socket. A channel on_info panic closes
+only its topic. A slow raw callback delays its socket; slow channel
+message/info callbacks do not block sibling workers. Joins, ordered closes,
+presence suspension, shared router load, and transport queues can still
+delay progress. Process isolation does not guarantee bounded memory or latency.
 
 TRANSITION: "Isolation also changes the effect of a crash. Next, I will
 explain Erlang supervision."
@@ -173,7 +180,11 @@ explain Erlang supervision."
 ```
 application supervisor
  └─ beryl subtree (Transient)
-     ├─ runtime (significant Transient)
+     ├─ socket factory (Permanent)
+     │   └─ socket actors (Temporary)
+     │       └─ linked topic supervisor
+     │           └─ topic workers (Temporary)
+     ├─ router (significant Transient)
      └─ connection limiter (optional)
 
 presence · groups     application-owned sibling actors
@@ -195,9 +206,13 @@ PubSub                Erlang pg lifecycle
 Explain the actual tree:
 - `beryl.child_spec(config, init:, update:)` returns a stable `Sockets`
   handle plus the beryl subtree's child specification.
-- The runtime is the significant transient child. A genuine runtime crash is
-  restarted under the same registered name; the optional limiter is its
-  sibling.
+- The router is the significant transient child. An abnormal router exit is
+  restarted under the same registered name. The Permanent socket factory
+  and optional limiter are siblings.
+- The factory starts socket actors without running app init. The router
+  registers each actor before init runs there. A factory crash stops its
+  sockets; the router cleans their entries and closes connections, without
+  itself restarting. The replacement factory accepts new connections.
 - Transports monitor the exact runtime pid. If it dies, existing WebSockets
   close instead of becoming zombies attached to a successor.
 - `beryl.stop` drains only this subtree. Presence and groups are borrowed,
@@ -208,7 +223,9 @@ LIKELY QUESTION: "What happens to in-flight state after a restart?" Explain
 that the runtime restarts with the app's `init`/`update` closures,
 but connected-socket models and topic membership are gone. Monitored
 transports close, clients reconnect and rejoin, and anything durable belongs
-in your database. Real-time state is a cache of "now," not a ledger.
+in your database. Temporary socket and topic children are not restarted:
+supervision owns cleanup, not session reconstruction. A worker-only failure
+needs a topic rejoin; a socket failure needs reconnect and rejoin.
 -->
 
 ---
@@ -457,8 +474,8 @@ Demo script, about two minutes:
 1. Open two browser windows side by side, join the same room. Move the
    mouse. The cursor appears in the other window. Pause before you explain it.
 2. "Each tab is one WebSocket whose connection process handles edge work,
-   while beryl's shared runtime holds a separate typed model for each socket."
-   (Refer to the processes slide without claiming an app actor for each socket.)
+   while beryl's socket actor holds that connection's typed model."
+   (Refer to the shared router and temporary socket actors on the processes slide.)
 3. Point at the code. `broadcast_from` sends to everyone except the sender,
    so the sender does not receive its own cursor event.
 4. Open a third tab. The presence list grows. Close it without a clean
@@ -579,9 +596,11 @@ WebSocket transport     beryl_mist / beryl_ewe  (public transport SPI)
         │
 Configured codec        beryl/wire  (required; Phoenix is one option)
         │
-Shared runtime          per-socket models · topics · heartbeat · effects
+Shared router           admission · socket table · topic index · fan-out
         │
-App update              Join · Message · Binary · Closed · typed Info
+Socket actor            raw init/update · model · refs · heartbeat · effects
+        │
+Topic workers           channel callbacks · per-socket/topic state
         │
 PubSub                  Erlang pg — the ONLY cross-node layer
 
@@ -597,9 +616,12 @@ Describe the life of one message from top to bottom:
    frames into topic/event/payload/ref values. Decoded binary keeps binary
    telemetry classification; without a binary decoder it becomes a raw
    `Binary` event.
-3. The RUNTIME, one shared OTP actor for each app, tracks socket models, joined
-   topics, heartbeat state, and outstanding refs. There is no registry.
-4. Your app's one `update` function runs and returns an ordered effect list.
+3. The shared ROUTER forwards admitted frames to a supervised socket actor.
+   That actor owns its model, joined topics, heartbeat, and outstanding refs.
+4. Raw `update` runs in the socket actor. Channel callbacks run in per-topic
+   workers and report actions to the socket actor. It orders effects and
+   enqueues SendText/SendBinary requests. The transport connection process
+   writes them; enqueue success does not confirm client delivery.
 5. If an effect broadcasts, PUBSUB sends it over pg, including
    to subscribers on other nodes. Each node's transports push to
    their local sockets.
@@ -613,11 +635,24 @@ State these two design rules slowly:
   different HTTP server, or a non-WebSocket transport, implements the
   same contract." This design explains the two-package repository structure.
 
-LIKELY QUESTION: "Is the shared runtime actor a bottleneck?" Explain that app
-dispatch and local fan-out are serialized there. Frame
-size checks, message-rate shedding, and decoding happen in transport
-connection processes before enqueueing. The actor is per app/node, not
-per cluster; published capacity benchmarks remain important post-1.0 work.
+LIKELY QUESTION: "Is the shared router a bottleneck?" Explain that admission,
+ingress, and local fan-out are shared, while callbacks run in socket actors
+or topic workers. Frame-size checks, frame-rate shedding, and decoding happen
+in transport connection processes before routing; decoded-message limits
+run in socket actors. Do not assert a bottleneck or capacity without measurements.
+
+Queue limits are separate from input rates. Worker input, pending reports,
+socket/deferred-presence queues, router fan-out, and shared presence do not
+have finite configured budgets. Neither do generic PubSub or external
+consumer mailboxes. #397 tracks runtime overload contracts; #249 tracks
+outbound queue limits and slow-reader eviction. These are not shipped bounds.
+See https://beryl.tylerbutler.com/architecture/runtime/#queue-limits-and-overload.
+
+#371 is protocol-smoke evidence, not comparative performance evidence.
+ADR 0005 compares direct and factory startup at a requested 2,000 starts/s
+with Mist, Erlang 27.2.1, 12 schedulers, and three runs per design. It does
+not establish a general capacity or recovery envelope. #400 tracks broader
+workload baselines: https://github.com/tylerbutler/beryl/issues/400.
 -->
 
 ---
