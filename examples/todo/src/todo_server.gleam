@@ -2,6 +2,7 @@ import beryl
 import beryl/transport/server
 import beryl/wire
 import beryl_mist
+import example_helper/static
 import gleam/erlang/process
 import gleam/io
 import gleam/otp/static_supervisor
@@ -11,6 +12,7 @@ import todo_server/router
 import todo_server/store
 
 pub fn main() {
+  let assert Ok(static_directory) = static.priv_static("todo_server")
   let #(store, store_spec) = store.child_spec()
   let assert Ok(#(channels, beryl_spec)) =
     beryl.child_spec(
@@ -31,7 +33,7 @@ pub fn main() {
     beryl_mist.handler(
       channels,
       server.default_config("/socket/websocket"),
-      router.handle_request,
+      fn(request) { router.handle_request(request, static_directory) },
     )
     |> mist.new
     |> mist.port(8011)

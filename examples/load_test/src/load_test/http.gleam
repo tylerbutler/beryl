@@ -1,7 +1,7 @@
 import beryl
-import beryl/stats
+import beryl/snapshot
 import gleam/json
-import load_test/runtime_stats
+import load_test/runtime_snapshot
 
 pub type EndpointResult {
   EndpointResult(status: Int, body: String)
@@ -15,10 +15,10 @@ pub fn health() -> EndpointResult {
 }
 
 pub fn stats(channels: beryl.Sockets) -> EndpointResult {
-  case stats.snapshot(channels) {
+  case snapshot.get(channels) {
     Error(error) -> stats_error(error)
     Ok(beryl_snapshot) ->
-      case runtime_stats.snapshot() {
+      case runtime_snapshot.snapshot() {
         Error(_) -> error_response(503, "runtime_stats_unavailable")
         Ok(runtime_snapshot) ->
           EndpointResult(
@@ -29,19 +29,15 @@ pub fn stats(channels: beryl.Sockets) -> EndpointResult {
                 json.object([
                   #(
                     "connected_sockets",
-                    json.int(stats.connected_sockets(beryl_snapshot)),
+                    json.int(snapshot.connected_sockets(beryl_snapshot)),
                   ),
                   #(
                     "joined_socket_topic_pairs",
-                    json.int(stats.joined_socket_topic_pairs(beryl_snapshot)),
+                    json.int(snapshot.joined_socket_topic_pairs(beryl_snapshot)),
                   ),
                   #(
                     "active_topics",
-                    json.int(stats.active_topics(beryl_snapshot)),
-                  ),
-                  #(
-                    "runtime_mailbox_length",
-                    json.int(stats.runtime_mailbox_length(beryl_snapshot)),
+                    json.int(snapshot.active_topics(beryl_snapshot)),
                   ),
                 ]),
               ),
@@ -69,10 +65,10 @@ pub fn stats(channels: beryl.Sockets) -> EndpointResult {
   }
 }
 
-pub fn stats_error(error: stats.SnapshotError) -> EndpointResult {
+pub fn stats_error(error: snapshot.SnapshotError) -> EndpointResult {
   case error {
-    stats.RuntimeUnavailable -> error_response(503, "runtime_unavailable")
-    stats.RequestTimedOut -> error_response(504, "runtime_timeout")
+    snapshot.RuntimeUnavailable -> error_response(503, "runtime_unavailable")
+    snapshot.RequestTimedOut -> error_response(504, "runtime_timeout")
   }
 }
 

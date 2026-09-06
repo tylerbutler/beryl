@@ -1,16 +1,18 @@
 ---
-title: Error Handling
+title: Handle errors
+description: Reject invalid requests, understand callback panics, and return Phoenix-compatible errors.
 ---
 
-This guide covers how beryl surfaces errors to your app and to connected clients, and how to handle them defensively.
+This guide explains how beryl reports errors to your application and clients,
+and how your application should respond.
 
 ## Rejected joins
 
 Return a `RejectJoin` effect to reject a client. The error payload is sent back as a `phx_reply` with `status: "error"`:
 
 ```gleam
-fn update(model: Model, ev: Input(Msg)) -> Next(Model, Msg) {
-  case ev {
+fn update(model: Model, input: Input(Message)) -> Next(Model) {
+  case input {
     socket.Join(topic, payload, ref) ->
       case authenticate(payload) {
         Error(_) ->
@@ -35,13 +37,21 @@ The client sees:
 ["1", "1", "room:lobby", "phx_reply", {"status": "error", "response": {"reason": "unauthorized"}}]
 ```
 
-On rejection the client remains connected but is not subscribed to the topic. If the reject payload carries a `reason` field, Phoenix-style clients surface it directly on the `.join().receive("error", ...)` callback.
+After rejection, the client stays connected but does not join the topic. If the
+payload has a `reason` field, Phoenix clients pass it to the
+`.join().receive("error", ...)` callback.
 
-:::note[Unanswered joins fail closed]
-Every `Join` must be answered with `AcceptJoin` or `RejectJoin` in the same update's effects. A join left unanswered is rejected automatically and logged — a forgotten match arm cannot silently admit a client.
+With `beryl/channel`, return `channel.reject(reason)` from the handler's
+`join` callback. A topic no handler matches is rejected automatically with
+`{"reason": "unmatched topic"}`.
+
+:::note[Unanswered joins are rejected]
+Answer each `Join` with `AcceptJoin` or `RejectJoin` in the same update. The
+runtime rejects and logs an unanswered join. A missing match branch cannot
+admit a client.
 :::
 
-## Connection-level authentication rejection
+## Reject a connection during authentication
 
 `on_connect` in the transport config rejects the WebSocket upgrade before any topic join occurs. Return `Error(server.ConnectRejected)` to send an HTTP 403 response:
 
@@ -50,9 +60,9 @@ import beryl/transport/server
 
 let config =
   server.default_config("/socket/websocket")
-  |> server.with_on_connect(fn(req) {
-    case extract_token(req) {
-      Ok(_) -> Ok(Nil)
+  |> server.with_on_connect(fn(request) {
+    case extract_token(request) {
+      Ok(_) -> Ok([])  // Allow; no connect metadata
       Error(_) -> Error(server.ConnectRejected)  // → HTTP 403, connection refused
     }
   })
@@ -60,11 +70,15 @@ let config =
 
 The client never receives a WebSocket handshake and cannot send any messages.
 
-## Malformed wire messages
+## Handle malformed messages
 
-beryl parses incoming frames as Phoenix protocol arrays `[join_ref, ref, topic, event, payload]`. Frames that cannot be decoded are dropped silently — no error is sent to the client. This is intentional: malformed frames are treated as protocol violations and do not warrant a reply.
+When configured with `wire.phoenix_codec()`, beryl parses Phoenix protocol
+arrays: `[join_ref, ref, topic, event, payload]`. With any codec, it drops
+frames that the active codec cannot decode and does not send an error.
+Malformed frames are protocol violations.
 
-If you need to surface decode errors in your own payload handling, decode the `Dynamic` payload with `gleam/dynamic/decode` and return an explicit `ReplyOk` or `ReplyError`:
+To report payload decode errors to a client, decode the `Dynamic` payload with
+`gleam/dynamic/decode` and return an explicit `ReplyOk` or `ReplyError`:
 
 ```gleam
 socket.Message(_topic, "create_item", payload, option.Some(ref)) ->
@@ -84,15 +98,21 @@ socket.Message(_topic, "create_item", payload, option.Some(ref)) ->
   }
 ```
 
-:::note[Refless messages cannot be answered]
-`ReplyOk`/`ReplyError` need the message's `Ref`, which is `Some` only when the client expects a reply. A `Message` whose ref is `None` has nothing to correlate an answer with — the type system makes an unanswerable reply unrepresentable. Use `Push` for server-initiated messages with your own event name.
+:::note[Messages without a reply reference cannot be answered]
+`ReplyOk` and `ReplyError` need the message `ReplyRef`. It is `Some` only when
+the client expects a reply. A `Message` with `None` has no request reference.
+Use `Push` for a server message with its own event name.
 :::
 
 ## Unmatched topics
 
-If a client sends `phx_join` for a topic your `update` does not accept, reject it explicitly — typically with a catch-all `Join` arm returning `RejectJoin`. If your `update` simply ignores the join, beryl's fail-closed default rejects it for you.
+If `update` does not accept a `phx_join` topic, reject it with a catch-all
+`Join` branch that returns `RejectJoin`. If `update` ignores the join, beryl's
+fail-closed default rejects it.
 
-Messages pushed to a topic the socket never joined get an automatic error reply with `response: {"reason": "unmatched topic"}` when they carry a ref, matching Phoenix; refless pushes to unjoined topics are dropped.
+Messages pushed to a topic the socket never joined get an automatic error
+reply with `response: {"reason": "unmatched topic"}` when they include a
+reference, matching Phoenix. Messages without a reference are dropped.
 
 ## Heartbeat timeouts
 
@@ -105,7 +125,9 @@ socket.Closed(topic, reason) -> {
       // Clean up: remove from presence, release locks, etc.
       Nil
     }
-    _ -> Nil
+    socket.Normal -> Nil
+    socket.Shutdown -> Nil
+    socket.Errored(_) -> Nil
   }
   socket.Next(prune(model, topic), [])
 }
@@ -113,9 +135,10 @@ socket.Closed(topic, reason) -> {
 
 The client-visible effect is that the WebSocket connection is closed from the server side. Phoenix JS clients will attempt to reconnect automatically.
 
-## Crashes in your update function
+## When `init` or `update` panics
 
-Beryl rescues crashes in `init` and `update` rather than letting them take down the shared runtime. The blast radius depends on where the crash happens:
+beryl catches panics in `init` and `update` instead of stopping the socket's
+runtime actor. The result depends on where the panic occurs:
 
 | Crash site | Effect |
 |------------|--------|
@@ -127,13 +150,39 @@ Beryl rescues crashes in `init` and `update` rather than letting them take down 
 
 Crash descriptions are depth-limited and truncated before logging so client-triggered crashes cannot bloat log metadata.
 
-## Rate limiting
+This behavior applies only to the listed callbacks. A callback panic in the
+socket actor would close every topic on that socket. beryl discards the failed
+callback result and closes only the affected join, topic, or socket when safe.
+Other faults stop that socket actor; the router closes the connection and
+removes its entries. A router fault invokes supervision and disconnects all
+sockets. See
+[What closes after a callback panic](/architecture/runtime/#what-closes-after-a-callback-crash) for the
+trade-off.
 
-When a client exceeds a configured rate limit, the offending frame or message is **dropped**. No error is sent to the client (joins are the exception: an over-rate join gets an error reply with `reason: "rate_limited"`).
+The channel layer applies the same results to these callbacks:
 
-| Limit | Scope | Enforced | Config function |
+| Channel callback | Effect |
+|---|---|
+| `join` | Rejects only that join |
+| `on_message` | Closes only that topic; `on_terminate` still runs |
+| `on_info` | Closes only that topic; `on_terminate` still runs |
+| `on_terminate` | Logs the panic and completes the close; the callback's actions are lost |
+
+Each channel runs in its own worker process. A panic keeps the state from
+before the callback, so `on_terminate` still uses that state. If the worker
+stops unexpectedly, the runtime closes the topic with `phx_error`. It cannot
+run `on_terminate` because the worker held the channel state. See
+[When callbacks panic](/guides/channels/#when-callbacks-panic).
+
+## Rate limits and dropped traffic
+
+When a client exceeds a rate limit, beryl **drops** the frame or message. It
+does not send an error. An over-rate join is the exception. It receives an
+error reply with `reason: "rate_limited"`.
+
+| Limit | Applies to | Enforced at | Config function |
 |-------|-------|----------|-----------------|
-| `frame_rate` | Per connection, every complete frame | Transport edge | `beryl.with_frame_rate` |
+| `frame_rate` | Per connection, every complete frame | Transport, before decode | `beryl.with_frame_rate` |
 | `message_rate` | Per socket, decoded non-join traffic | Runtime | `beryl.with_message_rate` |
 | `join_rate` | Per socket, joins | Runtime | `beryl.with_join_rate` |
 | `channel_rate` | Per socket+topic | Runtime | `beryl.with_channel_rate` |
@@ -153,77 +202,96 @@ let config =
   |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
 ```
 
-`with_topic_rate` overrides the global `channel_rate` for topics matching its
-pattern — use it to give a fast-streaming namespace (like live cursors) more
-headroom than chat. A non-positive `per_second` makes matching topics unlimited,
+`with_topic_rate` overrides the global `channel_rate` for matching topics. Use
+it to give a high-rate namespace, such as live cursors, more capacity than
+chat. A non-positive `per_second` makes matching topics unlimited,
 even when a global channel limit is configured, and allocates no per-topic
 bucket. If you need to inform the client that it has been rate-limited,
 implement application-level tracking in `update` and return an explicit
 `ReplyError`.
 
-## Group errors
+## Group operation errors
 
 Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(_, GroupError)`:
 
 ```gleam
 case group.create(groups, name) {
   Ok(Nil) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // idempotent: treat as success if desired
-  Error(group.GroupNotFound) -> Nil       // shouldn't happen for create
+  Error(group.GroupAlreadyExists(_)) -> Nil  // idempotent: treat as success if desired
+  Error(group.GroupNotFound(_)) -> Nil       // shouldn't happen for create
 }
 ```
 
-`group.broadcast` is fire-and-forget and never returns an error. If the group does not exist, the call is a no-op.
+`group.broadcast` resolves the group's topics synchronously and never returns
+an error. If the group does not exist, the call does nothing. Like other group
+operations, it panics if the groups actor is unavailable or does not reply
+within 5 seconds.
 
-## Startup failures
+## Startup configuration errors
 
 `beryl.child_spec` validates configuration before returning the child spec:
 
 ```gleam
 case beryl.child_spec(config, init: init, update: update) {
-  Ok(#(sockets, spec)) -> add_to_supervisor(sockets, spec)
-  Error(beryl.HeartbeatTimeoutTooLow(2)) ->
+  Ok(#(sockets, child_specification)) ->
+    add_to_supervisor(sockets, child_specification)
+  Error(beryl.HeartbeatTimeoutTooLow(_minimum)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
-  Error(beryl.InvalidTopicPattern(pattern, reason)) ->
-    panic as pattern <> ": " <> reason
+  Error(beryl.InvalidTopicPattern(pattern, topic.EmptyTopic)) ->
+    panic as { pattern <> " is empty" }
+  Error(beryl.InvalidTopicPattern(pattern, topic.InvalidFormat(detail))) ->
+    panic as { pattern <> ": " <> detail }
 }
 ```
 
-## Sender delivery is best-effort
+`InvalidTopicPattern` contains `beryl/topic.TopicError` instead of a string.
+Match each `TopicError` variant explicitly. If an API update adds a variant,
+the compiler identifies the matches that need an additional branch.
 
-`socket.notify` delivers a typed message to a socket's `update` as an `Info` event. If the socket has disconnected, the message is **silently dropped** — no error is returned:
+`channel.child_spec` validates the handler table first and reports
+`InvalidPattern(pattern, reason)`, `DuplicatePattern(pattern)`, or
+`InvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
+`beryl/topic.TopicError`; handle its variants explicitly in the same way.
+
+## Typed sender delivery is not confirmed
+
+`socket.notify` sends a typed message to socket `update` as an `Info` event. If
+the socket disconnected, beryl drops the message and returns no error:
 
 ```gleam
-// This is always Nil — no error even if the socket is gone
+// This is always Nil, even if the socket is gone.
 socket.notify(sender, MyMessage)
 ```
 
-If delivery confirmation is important, have the `Info` arm of `update` acknowledge back to the sending process.
+If you need delivery confirmation, have the `Info` branch of `update` send an
+acknowledgment to the sending process.
 
-## Client-visible error shapes
+## Client error messages
 
-beryl uses the Phoenix wire protocol. Error responses take these shapes:
+With `wire.phoenix_codec()`, error responses take these shapes:
 
 **Join rejected:**
 ```json
 ["1", "1", "room:lobby", "phx_reply", {"status": "error", "response": {}}]
 ```
 
-**Channel error push (server-initiated):**
+**Channel error:**
 ```json
-[null, null, "room:lobby", "phx_error", {}]
+["1", "1", "room:lobby", "phx_error", {}]
 ```
 
 **Channel closed:**
 ```json
-[null, null, "room:lobby", "phx_close", {}]
+["1", "1", "room:lobby", "phx_close", {}]
 ```
 
-Phoenix client libraries handle `phx_error` and `phx_close` automatically — the channel is marked as errored or closed, and the client may attempt to rejoin.
+Terminal events repeat the topic's join ref in both reference slots. Phoenix
+client libraries handle `phx_error` and `phx_close`. The client marks the
+channel as errored or closed and can try to rejoin.
 
-## See also
+## Related guides
 
-- [Troubleshooting](/troubleshooting/) — symptom-first diagnosis for connection failures, missed messages, and auth issues
-- [WebSocket Transport guide](/guides/websocket/#authentication) — setting up `on_connect` for connection-level auth
-- [Supervision guide](/guides/supervision/) — the built-in runtime supervision and crash semantics
+- [Troubleshooting](/troubleshooting/): diagnose connection failures, missed messages, and authentication problems
+- [WebSocket Transport guide](/guides/websocket/#authenticate-before-the-upgrade): configure `on_connect` authentication
+- [Supervision guide](/guides/supervision/): understand runtime supervision and callback panics

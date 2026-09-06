@@ -1,41 +1,54 @@
 ---
 title: Supervision
+description: Add beryl processes to an OTP supervisor and understand restart and shutdown behavior.
 ---
 
-Beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
-handle and a child specification that you add to your application's OTP
-supervisor. Your `init`/`update` functions are captured in that specification.
+beryl has no unsupervised mode. `beryl.child_spec` returns a stable `Sockets`
+handle and a child specification. Add the specification to your application's
+OTP supervisor. The specification contains your `init` and `update` functions.
+`channel.child_spec` returns the same handle and specification shape. It first
+converts the handler table to a core `init` and `update` pair.
 
-## What child_spec supervises
+## Processes in the child specification
 
 ```text
 beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
-`- runtime actor (Transient)
+|- router actor (Transient)
+`- connection limiter (optional)
+
+transport connection
+`- socket actor (one per connection, monitored by the router)
+   `- topic worker supervisor (channel layer only, linked to the socket actor)
+      `- topic worker (one per joined topic, Temporary)
 ```
 
-- The **runtime actor** holds every socket's model and dispatches events to
-  your `update` function. If it crashes, the supervisor restarts it with
-  dispatch intact — the `init`/`update` closures live in the child
-  specification, so no re-registration step exists or is needed.
-- The runtime is registered under a stable name, so the `Sockets` handle
-  (and every transport connection holding it) keeps working across
-  restarts. Sends that race a restart window degrade to quiet no-ops
-  instead of crashes.
+- The **router actor** maintains the socket actor table and topic subscriber
+  index. If the router crashes, the supervisor restarts it. The child
+  specification still contains the `init` and `update` functions.
+- Each **socket actor** holds one model and sends events to your `update`
+  function. Socket actors are not supervisor children. The transport starts
+  them, and the router monitors them.
+- With the channel layer, each socket actor starts a **topic worker
+  supervisor** and one **topic worker** for each accepted join. Workers are
+  `Temporary`. The supervisor does not restart a stopped worker. The client
+  must rejoin. The workers stop with their socket actor.
+- The router uses a stable registered name. The `Sockets` handle accepts new
+  work after a restart. Existing connections close. Sends during the restart
+  window do nothing.
 - The child is `Transient`: a graceful `beryl.stop` is final and is not
   resurrected.
 
 After **3 restarts in 5 seconds** the internal supervisor gives up and the
 failure propagates through your application's supervision tree.
 
-## What a restart means for your app
+## Runtime restarts close connections
 
 A runtime restart drops **per-socket state**: models, joined topics, and
 pending joins. Transports monitor the runtime that accepted each connection,
 so those WebSockets close and clients reconnect and rejoin normally.
 
-Crashes inside `update` itself do **not** restart the runtime. Beryl
-rescues callback crashes and contains the blast radius to the socket that
-triggered them:
+Crashes inside `update` do **not** restart the runtime. beryl catches callback
+crashes and limits their effect:
 
 | Crash site | Effect |
 |------------|--------|
@@ -45,13 +58,26 @@ triggered them:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
+Raw dispatch callbacks run in the socket actor. A callback crash in that actor
+would close every topic on the socket. beryl catches a callback crash when it
+can discard the result and close only the affected topic or socket. Other socket
+actor faults close only that socket, and the router removes its entries. A
+router fault reaches the supervisor and closes all connections. See
+[What closes after a callback panic](/architecture/runtime/#what-closes-after-a-callback-crash).
+
 See the [Error Handling guide](/guides/error-handling/) for details.
 
-## Presence and groups
+Channel callbacks run in the topic's worker. A `join`, `on_message`, or
+`on_info` panic affects only that join or topic. An `on_terminate` panic
+discards that callback's actions but does not stop cleanup for sibling
+channels. See
+[When callbacks panic](/guides/channels/#when-callbacks-panic).
 
-`presence.start` and `group.start` return plain OTP actors linked to the
-calling process. Start them alongside `child_spec` from your long-lived
-application process:
+## Supervise presence and groups
+
+`presence.child_spec` and `group.child_spec` return stable handles and child
+specifications, as the socket runtime does. Add all three specifications to
+your application supervisor:
 
 ```gleam
 import beryl
@@ -60,12 +86,12 @@ import beryl/presence
 import beryl/wire
 import gleam/otp/static_supervisor
 
-pub fn main() {
-  let assert Ok(presence_actor) =
-    presence.start(presence.default_config("node1"))
-  let assert Ok(groups) = group.start()
+pub fn main() -> Nil {
+  let #(presence_actor, presence_specification) =
+    presence.child_spec(presence.default_config("node1"))
+  let #(groups, groups_specification) = group.child_spec()
 
-  let assert Ok(#(channels, spec)) =
+  let assert Ok(#(channels, beryl_specification)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
       init: init,
@@ -73,24 +99,29 @@ pub fn main() {
     )
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(presence_specification)
+    |> static_supervisor.add(groups_specification)
+    |> static_supervisor.add(beryl_specification)
     |> static_supervisor.start()
 
   // ... start the transport, run forever
+  Nil
 }
 ```
 
-Presence is a separate application-owned actor. If socket updates drive it,
-send nonblocking commands to another application worker rather than calling
-the synchronous presence API inside Beryl's shared runtime.
+Presence is a separate actor that the application owns. From socket code, use
+`socket.PresenceTrack` and `PresenceUntrack` effects or the channel actions.
+The runtime pauses only the affected socket until the mutation completes. Do
+not call the synchronous public presence API from `init`, `update`, or a
+channel callback.
 
-Both also offer `start_named` variants that register the actor under a
-`process.Name` for callers integrating them into their own supervision
-arrangements.
+Both handles are name-backed and reach the replacement actor after a supervised
+restart. Presence entries and tracking refs, and group definitions and
+memberships, are in-memory state and reset when their actor restarts.
 
 :::note[PubSub is not supervised]
-`beryl/pubsub` is backed by Erlang's `pg` module, whose lifecycle is
-managed by the BEAM runtime. Configure it with `beryl.with_pubsub`.
+`beryl/pubsub` uses Erlang's `pg` module, which the BEAM runtime manages.
+Configure it with `beryl.with_pubsub`.
 :::
 
 ## Startup errors
@@ -99,27 +130,27 @@ managed by the BEAM runtime. Configure it with `beryl.with_pubsub`.
 
 ```gleam
 case beryl.child_spec(config, init: init, update: update) {
-  Ok(#(sockets, spec)) -> add_to_supervisor(sockets, spec)
+  Ok(#(sockets, runtime_specification)) ->
+    add_to_supervisor(sockets, runtime_specification)
   Error(beryl.HeartbeatTimeoutTooLow(2)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
-  Error(beryl.InvalidTopicPattern(pattern, reason)) ->
-    panic as pattern <> ": " <> reason
+  Error(beryl.InvalidTopicPattern(pattern, _reason)) ->
+    panic as "invalid topic pattern: " <> pattern
 }
 ```
 
-## Stopping
+## Stop the runtime
 
-`beryl.stop(channels)` drains sockets gracefully: every joined topic
-receives a `Closed` event, transport connections are closed, and the
-runtime exits without being restarted. Calling `stop` again returns
-`Error(NotRunning)`. Other operations using the handle after `stop` are
-quiet no-ops.
+`beryl.stop(channels)` sends a `Closed` event to each joined topic. It closes
+transport connections and stops the runtime without a restart. A second call
+returns `Error(NotRunning)`. Other operations after `stop` do nothing.
 
 ## Production checklist
 
 - Add the returned specification to your long-lived application supervisor.
-- Start application-owned presence and group actors alongside the Beryl child.
+- Add application-owned presence and group child specifications alongside the
+  beryl child.
 - Configure PubSub when running more than one BEAM node.
-- Configure rate limits to protect against runaway clients — see
+- Configure rate limits to protect against faulty or hostile clients. See
   [Production Hardening](/guides/production-hardening/).

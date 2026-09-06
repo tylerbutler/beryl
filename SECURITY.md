@@ -19,7 +19,7 @@ coordinate a fix and disclosure timeline with you.
 
 ## Trust boundary
 
-Beryl runs on the Erlang/BEAM runtime and uses **Erlang distribution** for its
+beryl runs on the Erlang/BEAM runtime and uses **Erlang distribution** for its
 distributed features:
 
 - **PubSub** (`beryl/pubsub`) is backed by Erlang's `pg` process groups.
@@ -38,8 +38,11 @@ the standard, correct BEAM model, and it has one blunt consequence:
 Application- and socket-level authorization — `on_connect`, per-topic join
 checks in the app's `update`, rate limits — protects you against untrusted
 **WebSocket clients**. It
-does **not** protect you against a hostile **distribution peer**. A malicious or
-compromised node that has joined your cluster can:
+does **not** protect you against a hostile **distribution peer**. Distributed
+Erlang allows peers to execute arbitrary code on connected nodes, so a
+malicious or compromised peer means full node compromise that can extend
+across the cluster. Its beryl-specific capabilities are only a subset of that
+access:
 
 - Publish arbitrary internal beryl PubSub messages, including to reserved
   `beryl:*` topics that clients are never allowed to reach. Those messages are
@@ -61,31 +64,36 @@ If you run more than one node, you must secure Erlang distribution itself.
 None of the following is specific to beryl; it is the baseline for any
 distributed BEAM application, and beryl assumes you have done it.
 
-### Use a strong, protected Erlang cookie
+### Protect and randomize the Erlang cookie
 
-Nodes authenticate to one another with a shared **Erlang cookie**. Any node
-that knows the cookie can join the cluster and is then fully trusted (see the
-trust boundary above).
+Nodes compare a shared **Erlang cookie** when connecting. Erlang
+[documents this mechanism](https://www.erlang.org/doc/system/distributed.html#security)
+as protection against accidental cross-cluster connections, not as
+cryptographically secure authentication against an adversary. Any node that
+knows the cookie and can reach a distribution port can join the cluster and is
+then fully trusted (see the trust boundary above).
 
 - Generate a long, high-entropy cookie; never ship the default `~/.erlang.cookie`
   that some tooling auto-generates, and never commit a cookie to source control.
+  This prevents accidental matches and makes offline guessing harder, but does
+  not make plain Erlang distribution secure.
 - Distribute it as a secret (secrets manager, orchestrator secret, restricted
   file with `0400` permissions owned by the runtime user) — not in an image
   layer, environment dump, or log.
 - Rotate it if it may have been exposed.
 
-The cookie is an authentication token, but it is transmitted and used in a way
-that provides **no confidentiality on its own**. It is not a substitute for
-transport encryption.
+The cookie is a cluster-membership tag, not a security boundary. Network
+isolation is always required, and TLS distribution with mutual certificate
+verification provides cryptographic peer authentication, confidentiality, and
+integrity.
 
-### Use TLS distribution across untrusted networks
+### Use mutually verified TLS distribution
 
-Plain Erlang distribution traffic is unencrypted and unauthenticated at the
-transport layer. For any distribution traffic that crosses a network you do not
-fully control — between availability zones, across a cloud VPC boundary, or over
-the public internet — enable **TLS distribution** (`inet_tls_dist`) with mutual
-certificate verification. This protects cookie exchange and inter-node payloads
-from eavesdropping and tampering. See the Erlang/OTP
+Plain Erlang distribution traffic is unencrypted and its handshake is not
+cryptographically secure. Use **TLS distribution** (`inet_tls_dist`) with
+mutual certificate verification for secure multi-node deployments, including
+traffic within private networks. This protects the handshake and inter-node
+payloads from eavesdropping, tampering, and peer impersonation. See the Erlang/OTP
 [Using TLS for Erlang Distribution](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html)
 guide.
 

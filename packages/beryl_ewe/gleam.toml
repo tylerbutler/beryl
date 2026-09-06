@@ -1,5 +1,5 @@
 name = "beryl_ewe"
-version = "0.1.1"
+version = "0.2.2"
 description = "Ewe WebSocket transport for beryl real-time sockets"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl_ewe" }
@@ -21,7 +21,7 @@ gleam_otp = ">= 1.2.0 and < 2.0.0"
 glinter = ">= 2.19.0 and < 3.0.0"
 
 [tools.licence_audit]
-allow = ["Apache-2.0", "MIT"]
+allow = ["Apache-2.0", "ISC", "MIT"]
 deny = []
 
 [tools.glinter]

@@ -8,6 +8,9 @@ import starlightLlmsTxt from "starlight-llms-txt";
 // https://astro.build/config
 export default defineConfig({
 	site: "https://beryl.tylerbutler.com",
+	redirects: {
+		"/reference/api/beryl-stats/": "/reference/api/beryl-snapshot/",
+	},
 	prefetch: {
 		defaultStrategy: "hover",
 		prefetchAll: true,
@@ -75,7 +78,7 @@ export default defineConfig({
 			],
 			sidebar: [
 				{
-					label: "Start Here",
+					label: "Start here",
 					items: [
 						{
 							label: "What is beryl?",
@@ -86,7 +89,11 @@ export default defineConfig({
 							slug: "installation",
 						},
 						{
-							label: "Quick Start",
+							label: "Choose an API",
+							slug: "choosing-an-api",
+						},
+						{
+							label: "Quick start",
 							slug: "quick-start",
 						},
 						{
@@ -96,17 +103,50 @@ export default defineConfig({
 					],
 				},
 				{
+					label: "Tutorial",
+					items: [
+						{
+							label: "Build a live poll",
+							slug: "tutorial",
+						},
+						{
+							label: "1. Elm architecture without a DOM",
+							slug: "tutorial/the-elm-architecture-without-a-dom",
+						},
+						{
+							label: "2. One update function",
+							slug: "tutorial/one-update-function-many-socket-events",
+						},
+						{
+							label: "3. Typed system messages",
+							slug: "tutorial/typed-messages-from-your-gleam-system",
+						},
+						{
+							label: "4. Raw dispatch and channels",
+							slug: "tutorial/composition-raw-dispatch-and-channels",
+						},
+						{
+							label: "5. Runtime boundaries",
+							slug: "tutorial/where-the-analogy-ends",
+						},
+						{
+							label: "6. Supervision",
+							slug: "tutorial/supervising-beryl",
+						},
+					],
+				},
+				{
 					label: "Guides",
 					items: [
 						{
-							label: "Core Concepts",
+							label: "Core concepts",
 							items: [
 								{
-									label: "App-Side Dispatch",
+									label: "Raw dispatch",
 									slug: "guides/dispatch",
 								},
 								{
-									label: "Sockets and Topics",
+									label: "Channel handlers",
 									slug: "guides/channels",
 								},
 								{
@@ -128,7 +168,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{
-									label: "WebSocket Transport",
+									label: "WebSocket transport",
 									slug: "guides/websocket",
 								},
 								{
@@ -136,7 +176,7 @@ export default defineConfig({
 									slug: "guides/authentication",
 								},
 								{
-									label: "Backend Integration",
+									label: "Backend integration",
 									slug: "guides/backend-integration",
 								},
 								{
@@ -146,7 +186,7 @@ export default defineConfig({
 							],
 						},
 						{
-							label: "Running in Production",
+							label: "Running in production",
 							collapsed: true,
 							items: [
 								{
@@ -154,7 +194,7 @@ export default defineConfig({
 									slug: "guides/supervision",
 								},
 								{
-									label: "Error Handling",
+									label: "Error handling",
 									slug: "guides/error-handling",
 								},
 								{
@@ -162,7 +202,7 @@ export default defineConfig({
 									slug: "guides/observability",
 								},
 								{
-									label: "Production Hardening",
+									label: "Production hardening",
 									slug: "guides/production-hardening",
 								},
 							],
@@ -173,7 +213,7 @@ export default defineConfig({
 					label: "Reference",
 					items: [
 						{
-							label: "API Overview",
+							label: "API overview",
 							slug: "reference",
 						},
 						{
@@ -204,15 +244,15 @@ export default defineConfig({
 							slug: "architecture/overview",
 						},
 						{
-							label: "Message Lifecycle",
+							label: "How beryl handles a message",
 							slug: "architecture/message-lifecycle",
 						},
 						{
-							label: "Runtime & Supervision",
+							label: "Socket processes & restarts",
 							slug: "architecture/runtime",
 						},
 						{
-							label: "PubSub & Distribution",
+							label: "Broadcasts across nodes",
 							slug: "architecture/pubsub-and-distribution",
 						},
 						{
@@ -220,7 +260,7 @@ export default defineConfig({
 							slug: "architecture/presence",
 						},
 						{
-							label: "Wire & Transport",
+							label: "WebSocket frames & transports",
 							slug: "architecture/wire-and-transport",
 						},
 					],

@@ -7,9 +7,9 @@ Type-safe real-time channels and presence for Gleam, targeting the Erlang
 monorepo with three packages (two currently publishable — `beryl_ewe` is
 excluded from release via the `@release` key in the root `gleam.toml`):
 
-- **`packages/beryl`** — core app-dispatch library (runtime, typed
-  events/effects, presence, PubSub, wire protocol, abuse controls, transport
-  SPI)
+- **`packages/beryl`** — raw app dispatch plus `beryl/channel` (runtime,
+  typed events/effects, presence, PubSub, wire protocol, abuse controls,
+  transport SPI)
 - **`packages/beryl_mist`** — Mist WebSocket transport (module `beryl_mist`),
   built on the public `beryl/transport` SPI
 - **`packages/beryl_ewe`** — Ewe WebSocket transport (module `beryl_ewe`),
@@ -76,7 +76,7 @@ packages/
 │   │       ├── pubsub.gleam       # PubSub abstraction (pg-based)
 │   │       ├── rate_limit.gleam   # Rate limiting helpers (internal)
 │   │       ├── runtime.gleam      # App-dispatch socket/topic runtime (internal)
-│   │       ├── stats.gleam        # Runtime statistics API
+│   │       ├── snapshot.gleam     # Runtime snapshot API
 │   │       ├── telemetry.gleam    # Internal telemetry schema
 │   │       ├── topic.gleam        # Topic pattern matching
 │   │       ├── transport.gleam    # Public transport SPI (used by beryl_mist/beryl_ewe)
@@ -181,6 +181,10 @@ installed in CI via `.github/actions/mise`.
 - Follow `gleam format` output
 - Keep public API minimal
 - Document public functions with `///` comments
+- Write the product name as `beryl` in prose, including at sentence starts and
+  in headings; preserve exact code identifiers and quoted text
+- Use sentence case for website page titles, section headings, callout titles,
+  and sidebar labels
 - beryl's internal modules (`connection_limit`, `internal`, `log`,
   `rate_limit`, `runtime`, `telemetry`) must not be imported by other
   packages; transports use the `beryl/transport` SPI

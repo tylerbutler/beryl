@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Improve the generated API reference layout with symbol indexes, signature-first entries, and responsive module lists."

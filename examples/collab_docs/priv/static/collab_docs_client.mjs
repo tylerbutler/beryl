@@ -342,17 +342,6 @@ function structurallyCompatibleObjects(a, b) {
   if (nonstructural.some((c) => a instanceof c)) return false;
   return a.constructor === b.constructor;
 }
-function makeError(variant, file, module, line, fn, message, extra) {
-  let error = new globalThis.Error(message);
-  error.gleam_error = variant;
-  error.file = file;
-  error.module = module;
-  error.line = line;
-  error.function = fn;
-  error.fn = fn;
-  for (let k in extra) error[k] = extra[k];
-  return error;
-}
 
 // build/dev/javascript/gleam_stdlib/gleam/order.mjs
 var Lt = class extends CustomType {
@@ -2007,6 +1996,13 @@ function unwrap(result, default$) {
     return default$;
   }
 }
+function replace_error(result, error) {
+  if (result instanceof Ok) {
+    return result;
+  } else {
+    return new Error(error);
+  }
+}
 
 // build/dev/javascript/gleam_json/gleam_json_ffi.mjs
 function json_to_string(json) {
@@ -2693,6 +2689,15 @@ function from_json3(json_string) {
   }
 }
 
+// build/dev/javascript/gleam_stdlib/gleam/bool.mjs
+function guard(requirement, consequence, alternative) {
+  if (requirement) {
+    return consequence;
+  } else {
+    return alternative();
+  }
+}
+
 // build/dev/javascript/lattice_registers/lattice_registers/lww_register.mjs
 var LWWRegister = class extends CustomType {
   constructor(value4, timestamp, replica_id) {
@@ -2706,24 +2711,26 @@ function new$5(val, timestamp, replica_id) {
   return new LWWRegister(val, timestamp, replica_id);
 }
 function merge5(a, b) {
-  let $ = a.timestamp > b.timestamp;
-  if ($) {
-    return a;
-  } else {
-    let $1 = a.timestamp < b.timestamp;
-    if ($1) {
-      return b;
-    } else {
-      let $2 = compare3(a.replica_id, b.replica_id);
-      if ($2 instanceof Lt) {
-        return b;
-      } else if ($2 instanceof Eq) {
-        return a;
-      } else {
-        return a;
-      }
+  return guard(
+    a.timestamp > b.timestamp,
+    a,
+    () => {
+      return guard(
+        a.timestamp < b.timestamp,
+        b,
+        () => {
+          let $ = compare3(a.replica_id, b.replica_id);
+          if ($ instanceof Lt) {
+            return b;
+          } else if ($ instanceof Eq) {
+            return a;
+          } else {
+            return a;
+          }
+        }
+      );
     }
-  }
+  );
 }
 function to_json5(register) {
   return object2(
@@ -3785,6 +3792,49 @@ function default_crdt(spec, replica_id) {
     return new CrdtOrSet(new$9(replica_id));
   }
 }
+function matches_spec(value4, spec) {
+  if (spec instanceof GCounterSpec) {
+    if (value4 instanceof CrdtGCounter) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (spec instanceof PnCounterSpec) {
+    if (value4 instanceof CrdtPnCounter) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (spec instanceof LwwRegisterSpec) {
+    if (value4 instanceof CrdtLwwRegister) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (spec instanceof MvRegisterSpec) {
+    if (value4 instanceof CrdtMvRegister) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (spec instanceof GSetSpec) {
+    if (value4 instanceof CrdtGSet) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (spec instanceof TwoPSetSpec) {
+    if (value4 instanceof CrdtTwoPSet) {
+      return true;
+    } else {
+      return false;
+    }
+  } else if (value4 instanceof CrdtOrSet) {
+    return true;
+  } else {
+    return false;
+  }
+}
 function merge10(a, b) {
   if (a instanceof CrdtGCounter) {
     if (b instanceof CrdtGCounter) {
@@ -3970,7 +4020,6 @@ function from_json9(json_string) {
 }
 
 // build/dev/javascript/lattice_maps/lattice_maps/or_map.mjs
-var FILEPATH = "src/lattice_maps/or_map.gleam";
 var ORMap = class extends CustomType {
   constructor(replica_id, crdt_spec, key_set, values2, remove_bounds) {
     super();
@@ -4051,49 +4100,6 @@ function put_value(map4, key, value4) {
     key_set_delta
   ];
 }
-function matches_spec(value4, spec) {
-  if (spec instanceof GCounterSpec) {
-    if (value4 instanceof CrdtGCounter) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (spec instanceof PnCounterSpec) {
-    if (value4 instanceof CrdtPnCounter) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (spec instanceof LwwRegisterSpec) {
-    if (value4 instanceof CrdtLwwRegister) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (spec instanceof MvRegisterSpec) {
-    if (value4 instanceof CrdtMvRegister) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (spec instanceof GSetSpec) {
-    if (value4 instanceof CrdtGSet) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (spec instanceof TwoPSetSpec) {
-    if (value4 instanceof CrdtTwoPSet) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (value4 instanceof CrdtOrSet) {
-    return true;
-  } else {
-    return false;
-  }
-}
 function current_value(map4, key) {
   let $ = contains2(map4.key_set, key);
   let $1 = get(map4.values, key);
@@ -4120,17 +4126,13 @@ function update(map4, key, f) {
   return updated;
 }
 function get3(map4, key) {
-  let $ = contains2(map4.key_set, key);
-  if ($) {
-    let $1 = get(map4.values, key);
-    if ($1 instanceof Ok) {
-      return $1;
-    } else {
-      return new Error(void 0);
+  return guard(
+    !contains2(map4.key_set, key),
+    new Error(void 0),
+    () => {
+      return get(map4.values, key);
     }
-  } else {
-    return new Error(void 0);
-  }
+  );
 }
 function remove_with_delta2(map4, key) {
   let $ = remove_with_delta(map4.key_set, key);
@@ -4175,122 +4177,116 @@ function remove(map4, key) {
 function keys2(map4) {
   return to_list2(value3(map4.key_set));
 }
+function validated(map4, value4) {
+  return guard(
+    matches_spec(value4, map4.crdt_spec),
+    value4,
+    () => {
+      return default_crdt(map4.crdt_spec, map4.replica_id);
+    }
+  );
+}
 function valid_value(map4, key) {
   let $ = get(map4.values, key);
   if ($ instanceof Ok) {
     let value4 = $[0];
-    let $1 = matches_spec(value4, map4.crdt_spec);
-    if ($1) {
-      return new Ok(value4);
-    } else {
-      return new Ok(default_crdt(map4.crdt_spec, map4.replica_id));
-    }
+    return new Ok(validated(map4, value4));
   } else {
     return new Error(void 0);
   }
 }
 function merge11(a, b) {
-  let $ = isEqual(a.crdt_spec, b.crdt_spec);
-  if ($) {
-    let merged_key_set = merge8(a.key_set, b.key_set);
-    let active_keys = value3(merged_key_set);
-    let all_value_keys = to_list2(
-      union(
-        from_list2(keys(a.values)),
-        from_list2(keys(b.values))
+  return guard(
+    !isEqual(a.crdt_spec, b.crdt_spec),
+    new Error(
+      new TypeMismatch(
+        spec_to_string(a.crdt_spec),
+        spec_to_string(b.crdt_spec)
       )
-    );
-    let merged_values = fold2(
-      all_value_keys,
-      make(),
-      (acc, key) => {
-        let _block;
-        let $1 = valid_value(a, key);
-        let $2 = valid_value(b, key);
-        if ($1 instanceof Ok) {
-          if ($2 instanceof Ok) {
-            let ca = $1[0];
-            let cb = $2[0];
-            let $3 = merge10(ca, cb);
-            if ($3 instanceof Ok) {
-              let merged = $3[0];
+    ),
+    () => {
+      let merged_key_set = merge8(a.key_set, b.key_set);
+      let active_keys = value3(merged_key_set);
+      let values_from_a = fold(
+        a.values,
+        make(),
+        (acc, key, value_a) => {
+          let value_a$1 = validated(a, value_a);
+          let _block;
+          let $ = valid_value(b, key);
+          if ($ instanceof Ok) {
+            let value_b = $[0];
+            let $1 = merge10(value_a$1, value_b);
+            if ($1 instanceof Ok) {
+              let merged = $1[0];
               _block = merged;
             } else {
               _block = default_crdt(a.crdt_spec, a.replica_id);
             }
           } else {
-            let ca = $1[0];
-            _block = ca;
+            _block = value_a$1;
           }
-        } else if ($2 instanceof Ok) {
-          let cb = $2[0];
-          _block = cb;
-        } else {
-          throw makeError(
-            "panic",
-            FILEPATH,
-            "lattice_maps/or_map",
-            199,
-            "merge",
-            "unreachable: key must exist in at least one map",
-            {}
-          );
+          let merged_crdt = _block;
+          return insert(acc, key, merged_crdt);
         }
-        let merged_crdt = _block;
-        return insert(acc, key, merged_crdt);
-      }
-    );
-    let all_bound_keys = to_list2(
-      union(
-        from_list2(keys(a.remove_bounds)),
-        from_list2(keys(b.remove_bounds))
-      )
-    );
-    let merged_bounds = fold2(
-      all_bound_keys,
-      make(),
-      (acc, key) => {
-        let $1 = contains(active_keys, key);
-        if ($1) {
-          return acc;
-        } else {
-          let $2 = get(a.remove_bounds, key);
-          let $3 = get(b.remove_bounds, key);
-          if ($2 instanceof Ok) {
-            if ($3 instanceof Ok) {
-              let ba = $2[0];
-              let bb = $3[0];
-              return insert(acc, key, merge2(ba, bb));
-            } else {
-              let ba = $2[0];
-              return insert(acc, key, ba);
-            }
-          } else if ($3 instanceof Ok) {
-            let bb = $3[0];
-            return insert(acc, key, bb);
-          } else {
+      );
+      let merged_values = fold(
+        b.values,
+        values_from_a,
+        (acc, key, value_b) => {
+          let $ = has(a.values, key);
+          if ($) {
             return acc;
+          } else {
+            return insert(acc, key, validated(b, value_b));
           }
         }
-      }
-    );
-    return new Ok(
-      new ORMap(
-        a.replica_id,
-        a.crdt_spec,
-        merged_key_set,
-        merged_values,
-        merged_bounds
-      )
-    );
-  } else {
-    return new Error(
-      new TypeMismatch(
-        spec_to_string(a.crdt_spec),
-        spec_to_string(b.crdt_spec)
-      )
-    );
-  }
+      );
+      let all_bound_keys = to_list2(
+        union(
+          from_list2(keys(a.remove_bounds)),
+          from_list2(keys(b.remove_bounds))
+        )
+      );
+      let merged_bounds = fold2(
+        all_bound_keys,
+        make(),
+        (acc, key) => {
+          let $ = contains(active_keys, key);
+          if ($) {
+            return acc;
+          } else {
+            let $1 = get(a.remove_bounds, key);
+            let $2 = get(b.remove_bounds, key);
+            if ($1 instanceof Ok) {
+              if ($2 instanceof Ok) {
+                let ba = $1[0];
+                let bb = $2[0];
+                return insert(acc, key, merge2(ba, bb));
+              } else {
+                let ba = $1[0];
+                return insert(acc, key, ba);
+              }
+            } else if ($2 instanceof Ok) {
+              let bb = $2[0];
+              return insert(acc, key, bb);
+            } else {
+              return acc;
+            }
+          }
+        }
+      );
+      return new Ok(
+        new ORMap(
+          a.replica_id,
+          a.crdt_spec,
+          merged_key_set,
+          merged_values,
+          merged_bounds
+        )
+      );
+    }
+  );
 }
 function to_json11(map4) {
   let rid = map4.replica_id;
@@ -4339,80 +4335,10 @@ function to_json11(map4) {
     ])
   );
 }
-function crdt_name(value4) {
-  if (value4 instanceof CrdtGCounter) {
-    return "g_counter";
-  } else if (value4 instanceof CrdtPnCounter) {
-    return "pn_counter";
-  } else if (value4 instanceof CrdtLwwRegister) {
-    return "lww_register";
-  } else if (value4 instanceof CrdtMvRegister) {
-    return "mv_register";
-  } else if (value4 instanceof CrdtGSet) {
-    return "g_set";
-  } else if (value4 instanceof CrdtTwoPSet) {
-    return "two_p_set";
-  } else if (value4 instanceof CrdtOrSet) {
-    return "or_set";
-  } else {
-    return "version_vector";
-  }
-}
 function decode_or_map_state(replica_id_str, crdt_spec_str, key_set_str, values_list, remove_bounds) {
-  let $ = string_to_spec(crdt_spec_str);
-  if ($ instanceof Ok) {
-    let crdt_spec = $[0];
-    let $1 = from_json7(key_set_str);
-    if ($1 instanceof Ok) {
-      let key_set = $1[0];
-      let values_result = try_map(
-        values_list,
-        (pair) => {
-          let key = pair[0];
-          let crdt_str = pair[1];
-          let $2 = from_json9(crdt_str);
-          if ($2 instanceof Ok) {
-            let c = $2[0];
-            let $3 = matches_spec(c, crdt_spec);
-            if ($3) {
-              return new Ok([key, c]);
-            } else {
-              return new Error(
-                new UnableToDecode(
-                  toList([
-                    new DecodeError(
-                      spec_to_string(crdt_spec),
-                      crdt_name(c),
-                      toList(["state", "values"])
-                    )
-                  ])
-                )
-              );
-            }
-          } else {
-            return $2;
-          }
-        }
-      );
-      if (values_result instanceof Ok) {
-        let pairs = values_result[0];
-        return new Ok(
-          new ORMap(
-            new$(replica_id_str),
-            crdt_spec,
-            key_set,
-            from_list(pairs),
-            remove_bounds
-          )
-        );
-      } else {
-        return values_result;
-      }
-    } else {
-      return $1;
-    }
-  } else {
-    return new Error(
+  return try$(
+    replace_error(
+      string_to_spec(crdt_spec_str),
       new UnableToDecode(
         toList([
           new DecodeError(
@@ -4422,8 +4348,57 @@ function decode_or_map_state(replica_id_str, crdt_spec_str, key_set_str, values_
           )
         ])
       )
-    );
-  }
+    ),
+    (crdt_spec) => {
+      return try$(
+        from_json7(key_set_str),
+        (key_set) => {
+          return try$(
+            try_map(
+              values_list,
+              (pair) => {
+                let key = pair[0];
+                let crdt_str = pair[1];
+                return try$(
+                  from_json9(crdt_str),
+                  (c) => {
+                    return guard(
+                      !matches_spec(c, crdt_spec),
+                      new Error(
+                        new UnableToDecode(
+                          toList([
+                            new DecodeError(
+                              spec_to_string(crdt_spec),
+                              type_name(c),
+                              toList(["state", "values"])
+                            )
+                          ])
+                        )
+                      ),
+                      () => {
+                        return new Ok([key, c]);
+                      }
+                    );
+                  }
+                );
+              }
+            ),
+            (pairs) => {
+              return new Ok(
+                new ORMap(
+                  new$(replica_id_str),
+                  crdt_spec,
+                  key_set,
+                  from_list(pairs),
+                  remove_bounds
+                )
+              );
+            }
+          );
+        }
+      );
+    }
+  );
 }
 function from_json10(json_string) {
   let value_pair_decoder = field(
@@ -4589,13 +4564,61 @@ var RenderBlock$RenderBlock$id = (value4) => value4.id;
 var RenderBlock$RenderBlock$0 = (value4) => value4.id;
 var RenderBlock$RenderBlock$values = (value4) => value4.values;
 var RenderBlock$RenderBlock$1 = (value4) => value4.values;
+var InvalidState = class extends CustomType {
+  constructor(reason) {
+    super();
+    this.reason = reason;
+  }
+};
+var DocumentError$InvalidState = (reason) => new InvalidState(reason);
+var DocumentError$isInvalidState = (value4) => value4 instanceof InvalidState;
+var DocumentError$InvalidState$reason = (value4) => value4.reason;
+var DocumentError$InvalidState$0 = (value4) => value4.reason;
+var MergeFailed = class extends CustomType {
+  constructor(reason) {
+    super();
+    this.reason = reason;
+  }
+};
+var DocumentError$MergeFailed = (reason) => new MergeFailed(reason);
+var DocumentError$isMergeFailed = (value4) => value4 instanceof MergeFailed;
+var DocumentError$MergeFailed$reason = (value4) => value4.reason;
+var DocumentError$MergeFailed$0 = (value4) => value4.reason;
+var InvalidBlock = class extends CustomType {
+  constructor(reason) {
+    super();
+    this.reason = reason;
+  }
+};
+var DocumentError$InvalidBlock = (reason) => new InvalidBlock(reason);
+var DocumentError$isInvalidBlock = (value4) => value4 instanceof InvalidBlock;
+var DocumentError$InvalidBlock$reason = (value4) => value4.reason;
+var DocumentError$InvalidBlock$0 = (value4) => value4.reason;
+var EmptyBlockId = class extends CustomType {
+};
+var DocumentError$EmptyBlockId$const = new EmptyBlockId();
+var DocumentError$EmptyBlockId = () => DocumentError$EmptyBlockId$const;
+var DocumentError$isEmptyBlockId = (value4) => value4 instanceof EmptyBlockId;
+var BlockIdMismatch = class extends CustomType {
+  constructor(expected, actual) {
+    super();
+    this.expected = expected;
+    this.actual = actual;
+  }
+};
+var DocumentError$BlockIdMismatch = (expected, actual) => new BlockIdMismatch(expected, actual);
+var DocumentError$isBlockIdMismatch = (value4) => value4 instanceof BlockIdMismatch;
+var DocumentError$BlockIdMismatch$expected = (value4) => value4.expected;
+var DocumentError$BlockIdMismatch$0 = (value4) => value4.expected;
+var DocumentError$BlockIdMismatch$actual = (value4) => value4.actual;
+var DocumentError$BlockIdMismatch$1 = (value4) => value4.actual;
 function new_document(replica) {
   return new Document(
     replica,
     new$11(new$(replica), CrdtSpec$MvRegisterSpec$const)
   );
 }
-function from_json11(replica, encoded) {
+function json_to_document(replica, encoded) {
   let $ = from_json10(encoded);
   if ($ instanceof Ok) {
     let remote = $[0];
@@ -4606,13 +4629,15 @@ function from_json11(replica, encoded) {
       let state = $2[0];
       return new Ok(new Document(replica, state));
     } else {
-      return new Error("merge_failed");
+      let reason = $2[0];
+      return new Error(new MergeFailed(reason));
     }
   } else {
-    return new Error("invalid_state");
+    let reason = $[0];
+    return new Error(new InvalidState(reason));
   }
 }
-function to_json12(document) {
+function document_to_json(document) {
   let state = document.state;
   let _pipe = state;
   let _pipe$1 = to_json11(_pipe);
@@ -4626,7 +4651,13 @@ function put_block(document, id, block_json) {
     state,
     id,
     (value4) => {
-      if (value4 instanceof CrdtMvRegister) {
+      if (value4 instanceof CrdtGCounter) {
+        return value4;
+      } else if (value4 instanceof CrdtPnCounter) {
+        return value4;
+      } else if (value4 instanceof CrdtLwwRegister) {
+        return value4;
+      } else if (value4 instanceof CrdtMvRegister) {
         let register = value4[0];
         let _block;
         let _pipe = new$6(replica_id);
@@ -4635,6 +4666,12 @@ function put_block(document, id, block_json) {
         return new CrdtMvRegister(
           set(local_register, block_json)
         );
+      } else if (value4 instanceof CrdtGSet) {
+        return value4;
+      } else if (value4 instanceof CrdtTwoPSet) {
+        return value4;
+      } else if (value4 instanceof CrdtOrSet) {
+        return value4;
       } else {
         return value4;
       }
@@ -4647,34 +4684,35 @@ function extract_block_id(block_json) {
   if ($ instanceof Ok) {
     let $1 = $[0];
     if ($1 === "") {
-      return new Error(void 0);
+      return new Error(DocumentError$EmptyBlockId$const);
     } else {
       return $;
     }
   } else {
-    return new Error(void 0);
+    let reason = $[0];
+    return new Error(new InvalidBlock(reason));
   }
 }
 function add_block(document, block_json) {
-  let $ = extract_block_id(block_json);
-  if ($ instanceof Ok) {
-    let id = $[0];
-    return put_block(document, id, block_json);
-  } else {
-    return document;
-  }
+  return try$(
+    extract_block_id(block_json),
+    (id) => {
+      return new Ok(put_block(document, id, block_json));
+    }
+  );
 }
 function edit_block(document, expected_id, block_json) {
   let $ = extract_block_id(block_json);
   if ($ instanceof Ok) {
     let actual_id = $[0];
     if (actual_id === expected_id) {
-      return put_block(document, expected_id, block_json);
+      return new Ok(put_block(document, expected_id, block_json));
     } else {
-      return document;
+      let actual_id2 = $[0];
+      return new Error(new BlockIdMismatch(expected_id, actual_id2));
     }
   } else {
-    return document;
+    return $;
   }
 }
 function remove_block(document, block_id) {
@@ -4693,10 +4731,12 @@ function merge_json(document, remote_json) {
       let merged = $1[0];
       return new Ok(new Document(replica, merged));
     } else {
-      return new Error("merge_failed");
+      let reason = $1[0];
+      return new Error(new MergeFailed(reason));
     }
   } else {
-    return new Error("invalid_state");
+    let reason = $[0];
+    return new Error(new InvalidState(reason));
   }
 }
 function blocks(document) {
@@ -4711,11 +4751,23 @@ function blocks(document) {
       let $ = get3(state, id);
       if ($ instanceof Ok) {
         let $1 = $[0];
-        if ($1 instanceof CrdtMvRegister) {
+        if ($1 instanceof CrdtGCounter) {
+          _block = List$Empty$const;
+        } else if ($1 instanceof CrdtPnCounter) {
+          _block = List$Empty$const;
+        } else if ($1 instanceof CrdtLwwRegister) {
+          _block = List$Empty$const;
+        } else if ($1 instanceof CrdtMvRegister) {
           let register = $1[0];
           let _pipe$3 = register;
           let _pipe$4 = value2(_pipe$3);
           _block = sort(_pipe$4, compare2);
+        } else if ($1 instanceof CrdtGSet) {
+          _block = List$Empty$const;
+        } else if ($1 instanceof CrdtTwoPSet) {
+          _block = List$Empty$const;
+        } else if ($1 instanceof CrdtOrSet) {
+          _block = List$Empty$const;
         } else {
           _block = List$Empty$const;
         }
@@ -4752,7 +4804,46 @@ function merge_json_or_keep(document, remote_json) {
     return document;
   }
 }
+function document_error_to_string(error) {
+  if (error instanceof InvalidState) {
+    return "invalid_state";
+  } else if (error instanceof MergeFailed) {
+    return "merge_failed";
+  } else if (error instanceof InvalidBlock) {
+    return "invalid_block";
+  } else if (error instanceof EmptyBlockId) {
+    return "empty_block_id";
+  } else {
+    return "block_id_mismatch";
+  }
+}
 export {
+  BlockIdMismatch,
+  DocumentError$BlockIdMismatch,
+  DocumentError$BlockIdMismatch$0,
+  DocumentError$BlockIdMismatch$1,
+  DocumentError$BlockIdMismatch$actual,
+  DocumentError$BlockIdMismatch$expected,
+  DocumentError$EmptyBlockId,
+  DocumentError$EmptyBlockId$const,
+  DocumentError$InvalidBlock,
+  DocumentError$InvalidBlock$0,
+  DocumentError$InvalidBlock$reason,
+  DocumentError$InvalidState,
+  DocumentError$InvalidState$0,
+  DocumentError$InvalidState$reason,
+  DocumentError$MergeFailed,
+  DocumentError$MergeFailed$0,
+  DocumentError$MergeFailed$reason,
+  DocumentError$isBlockIdMismatch,
+  DocumentError$isEmptyBlockId,
+  DocumentError$isInvalidBlock,
+  DocumentError$isInvalidState,
+  DocumentError$isMergeFailed,
+  EmptyBlockId,
+  InvalidBlock,
+  InvalidState,
+  MergeFailed,
   RenderBlock,
   RenderBlock$RenderBlock,
   RenderBlock$RenderBlock$0,
@@ -4763,11 +4854,12 @@ export {
   add_block,
   blocks,
   blocks_json,
+  document_error_to_string,
+  document_to_json,
   edit_block,
-  from_json11 as from_json,
+  json_to_document,
   merge_json,
   merge_json_or_keep,
   new_document,
-  remove_block,
-  to_json12 as to_json
+  remove_block
 };

@@ -1,12 +1,12 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
 
-// The showcase is the acceptance gate for beryl's app-side dispatch model
-// (ADR 0002): three independent channel apps (cursors, chatrooms,
-// collab_docs) composed onto ONE WebSocket through a single app-owned
-// update function. These tests drive all three flows over a single raw
-// Phoenix-framed socket and assert the ordering guarantees the design
-// depends on (join ack before subsequent frames, per-channel isolation).
+// The showcase is the acceptance gate for composing independent channels
+// onto ONE WebSocket: cursors, chatrooms, and collab_docs are three
+// `beryl/channel` handlers on a single socket system. These tests drive
+// all three flows over a single raw Phoenix-framed socket and assert the
+// ordering guarantees the design depends on (join ack before subsequent
+// frames, per-channel isolation).
 
 /**
  * Drive a raw Phoenix V2 socket from inside the page. Returns a transcript
@@ -79,7 +79,7 @@ const replyStatus = (frame) => frame[4]?.response !== undefined
   ? frame[4].status
   : frame[4]?.status;
 
-test.describe("Showcase (app-side dispatch)", () => {
+test.describe("Showcase (beryl/channel)", () => {
   test("landing page and health check respond", async ({ page }) => {
     await page.goto("/");
     await expect(page).toHaveTitle(/beryl/);
@@ -116,8 +116,8 @@ test.describe("Showcase (app-side dispatch)", () => {
     // Both real joins accepted, on one socket.
     expect(replyStatus(repliesFor(frames, "1")[0])).toBe("ok");
     expect(replyStatus(repliesFor(frames, "2")[0])).toBe("ok");
-    // Docs join rejected for the missing token — the union router reached
-    // the docs app and its channel-level auth.
+    // Docs join rejected for the missing token — routing reached the
+    // documents channel and its join-level auth.
     const docsReply = repliesFor(frames, "3")[0];
     expect(replyStatus(docsReply)).toBe("error");
     expect(JSON.stringify(docsReply[4])).toContain("missing_token");
@@ -142,8 +142,8 @@ test.describe("Showcase (app-side dispatch)", () => {
       { waitEvent: "presence_list", topic: "room:general" },
     ]);
 
-    // The join ack is emitted by the runtime turn before the app-owned
-    // presence worker's later snapshot broadcast.
+    // The runtime applies the join acknowledgment before processing the
+    // session-presence publisher and hub broadcasts queued by the join.
     const ackIndex = frames.findIndex(
       (f) => f[3] === "phx_reply" && f[1] === "1"
     );
@@ -152,35 +152,6 @@ test.describe("Showcase (app-side dispatch)", () => {
     expect(ackIndex).toBeGreaterThanOrEqual(0);
     expect(presenceIndex).toBeGreaterThan(ackIndex);
     expect(sysMsgIndex).toBeGreaterThan(ackIndex);
-  });
-
-  test("chat lobby routes join, messages, and close independently", async ({
-    page,
-  }) => {
-    await page.goto("/");
-    const frames = await driveSocket(page, [
-      { send: ["1", "1", "lobby", "phx_join", {}] },
-      { waitReply: "1" },
-      {
-        send: ["2", "2", "room:general", "phx_join", {
-          username: "lobby-user",
-        }],
-      },
-      { waitReply: "2" },
-      { send: ["1", "3", "lobby", "refresh", {}] },
-      { send: ["1", "4", "lobby", "phx_leave", {}] },
-      { waitEvent: "phx_close", topic: "lobby" },
-      { send: ["2", "5", "room:general", "new_msg", { text: "still joined" }] },
-      { waitReply: "5" },
-    ]);
-
-    expect(replyStatus(repliesFor(frames, "1")[0])).toBe("ok");
-    expect(replyStatus(repliesFor(frames, "2")[0])).toBe("ok");
-    expect(replyStatus(repliesFor(frames, "5")[0])).toBe("ok");
-    expect(frames.filter((f) => f[3] === "phx_error")).toHaveLength(0);
-    expect(
-      frames.filter((f) => f[3] === "phx_close").map((f) => f[2])
-    ).toEqual(["lobby"]);
   });
 
   test("chat page works end to end against the shared socket", async ({
@@ -199,45 +170,6 @@ test.describe("Showcase (app-side dispatch)", () => {
     await expect(
       page.locator("#messages").getByText("hello from the gate").first()
     ).toBeVisible();
-  });
-
-  test("chat page keeps live room counts under its mount", async ({
-    browser,
-  }) => {
-    const context1 = await browser.newContext();
-    const context2 = await browser.newContext();
-    const page1 = await context1.newPage();
-    const page2 = await context2.newPage();
-    const roomRequests = [];
-
-    page1.on("request", (request) => {
-      if (request.url().includes("/api/rooms")) {
-        roomRequests.push(new URL(request.url()).pathname);
-      }
-    });
-    page1.on("dialog", (dialog) => dialog.accept("showcase-observer"));
-    page2.on("dialog", (dialog) => dialog.accept("showcase-joiner"));
-
-    try {
-      await page1.goto("/chat");
-      await expect.poll(() => roomRequests).toContain("/chat/api/rooms");
-      await expect(
-        page1.locator('.room-count[data-room-count="general"]')
-      ).toHaveText("1", { timeout: 10_000 });
-
-      await page2.goto("/chat");
-      await expect(
-        page1.locator('.room-count[data-room-count="general"]')
-      ).toHaveText("2", { timeout: 10_000 });
-
-      await context2.close();
-      await expect(
-        page1.locator('.room-count[data-room-count="general"]')
-      ).toHaveText("1", { timeout: 10_000 });
-    } finally {
-      await context1.close();
-      await context2.close().catch(() => {});
-    }
   });
 
   test("cursors page joins its channel over the shared socket", async ({

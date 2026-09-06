@@ -1,0 +1,3 @@
+package = "beryl_ewe"
+kind = "Changed"
+body = "Allow ISC-licensed dependencies in local licence audits."

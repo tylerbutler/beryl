@@ -8,20 +8,20 @@ web
 
 ## Users
 
-Gleam developers evaluating or learning Beryl's realtime collaboration
+Gleam developers evaluating or learning beryl's realtime collaboration
 capabilities. They use the demo to see the library in action and inspect a
 small, runnable implementation.
 
 ## Product Purpose
 
-Demonstrate how Beryl combines typed channel events, presence, PubSub, and a
+Demonstrate how beryl combines typed channel events, presence, PubSub, and a
 WebSocket transport to build a realtime collaborative experience. Success
 means developers can run the example quickly, understand the data flow, and
 adapt the patterns in their own applications.
 
 ## Positioning
 
-The demo is an executable reference for Beryl's type-safe Gleam APIs rather
+The demo is an executable reference for beryl's type-safe Gleam APIs rather
 than a standalone collaboration product.
 
 ## Operating Context
@@ -33,7 +33,7 @@ ephemeral room events.
 ## Capabilities and Constraints
 
 - The browser uses vanilla JavaScript, CSS, and the Phoenix JavaScript client.
-- The server uses Beryl's app-side dispatch with the Mist transport.
+- The server uses beryl's app-side dispatch with the Mist transport.
 - The example has no frontend build step and should remain dependency-light.
 - Realtime events are ephemeral; the demo does not persist room history.
 

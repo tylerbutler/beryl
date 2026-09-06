@@ -1,5 +1,5 @@
 name = "beryl_mist"
-version = "0.2.0"
+version = "0.3.2"
 description = "Mist WebSocket transport for beryl real-time sockets"
 licences = ["MIT"]
 repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl_mist" }
@@ -23,7 +23,7 @@ gluegun = { git = "https://github.com/tylerbutler/gluegun.git", ref = "532af1ac0
 glinter = ">= 2.19.0 and < 3.0.0"
 
 [tools.licence_audit]
-allow = ["Apache-2.0", "MIT"]
+allow = ["Apache-2.0", "ISC", "MIT"]
 deny = []
 
 [tools.glinter]

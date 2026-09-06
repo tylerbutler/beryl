@@ -5,7 +5,7 @@ import { Code, LinkButton } from "@astrojs/starlight/components";
 /**
  * Custom splash hero for beryl. Overrides Starlight's default Hero so the
  * first fold can carry one dominant idea — "this is what beryl code feels
- * like" — with the headline presence feature shown in real Gleam.
+ * like" — with a real channel handler shown in real Gleam.
  *
  * It still reads the frontmatter `hero:` contract (title / tagline / image /
  * actions), so editing the splash stays a content edit in `index.mdx`.
@@ -18,34 +18,33 @@ let gem: ImageMetadata | undefined;
 if (image && "file" in image) gem = image.file;
 else if (image && "dark" in image) gem = image.dark;
 
-// The presence code card, the gem, and the H1 value clause are homepage-only.
+// The code card, the gem, and the H1 value clause are homepage-only.
 // The splash 404 reuses this Hero (Starlight renders splash pages through the
 // Hero override), so gate those bits on the gem image — only the home hero
 // sets one. Without it we render a clean wordmark + tagline + actions.
 const isHome = Boolean(gem);
 
-// Real beryl: track who's online and fan changes out to the room as
-// Phoenix-compatible presence diffs. Mirrors the Presence guide exactly.
-const snippet = `import beryl
-import beryl/presence
+// Real beryl: the headline feature — one typed handler per topic pattern.
+// Type-checked against packages/beryl; mirrors the Quick Start.
+const snippet = `import beryl/channel
+import gleam/json
 
-// Track who's online and broadcast every change to the room —
-// Phoenix-compatible presence diffs, backed by a CRDT.
-let config =
-  presence.Config(
-    pubsub: Some(ps),
-    replica: "node-1",
-    broadcast_interval_ms: 1500,
-    on_diff: Some(fn(diff) {
-      beryl.broadcast_presence_diff(channels, "room:lobby", diff)
-    }),
-  )
-
-// …then, inside your channel's join callback:
-let _ref =
-  presence.track(p, "room:lobby", "user:alice", socket.id(socket), meta)
-
-// ps, channels, p and meta come from your app — see the Presence guide.
+// One handler per topic pattern, with private typed state.
+pub fn room() -> channel.Handler {
+  channel.handler("room:*", fn(ctx) {
+    channel.accept(0)
+    |> channel.on_message(fn(count, msg: channel.Message) {
+      case msg.event {
+        "new_msg" ->
+          channel.next(count + 1, [
+            channel.broadcast("new_msg", json.int(count + 1)),
+          ])
+        _ -> channel.stay(count)
+      }
+    })
+    |> channel.with_reply(json.string(ctx.topic))
+  })
+}
 `;
 ---
 
@@ -108,7 +107,7 @@ let _ref =
 					/>
 				)}
 				<div class="bh-code">
-					<Code code={snippet} lang="gleam" title="presence.gleam" />
+					<Code code={snippet} lang="gleam" title="room_channel.gleam" />
 				</div>
 			</div>
 		)

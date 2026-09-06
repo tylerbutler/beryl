@@ -1,8 +1,7 @@
 import beryl/socket.{
-  type Effect, type Input, type Next, type Ref, AcceptJoin, Broadcast,
+  type Effect, type Input, type Next, type ReplyRef, AcceptJoin, Broadcast,
   RejectJoin, ReplyError, ReplyOk,
 }
-import beryl/socket/router
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
@@ -16,32 +15,42 @@ pub fn init(_info: socket.ConnectInfo(Nil)) -> #(Nil, List(Effect)) {
   #(Nil, [])
 }
 
-pub fn update(store: store.Store) -> fn(Nil, Input(Nil)) -> Next(Nil, Nil) {
-  let namespaces = [namespace(store)]
+pub fn update(store: store.Store) -> fn(Nil, Input(Nil)) -> Next(Nil) {
   fn(model, input) {
-    router.route(namespaces, router.unknown_topic(), model, input)
-  }
-}
-
-fn namespace(store: store.Store) -> router.Namespace(Nil) {
-  router.namespace(
-    pattern: topic,
-    join: fn(model, _match, _payload, ref) {
-      case store.all(store) {
-        Ok(todos) -> #(model, [AcceptJoin(ref, Some(snapshot_json(todos)))])
-        Error(_) -> #(model, [
+    case input {
+      socket.Join(topic_name, _payload, ref) if topic_name == topic ->
+        case store.all(store) {
+          Ok(todos) ->
+            socket.Next(model, [AcceptJoin(ref, Some(snapshot_json(todos)))])
+          Error(_) ->
+            socket.Next(model, [
+              RejectJoin(
+                ref,
+                error_json(
+                  "store_unavailable",
+                  "The Todo store did not respond.",
+                ),
+              ),
+            ])
+        }
+      socket.Join(_, _, ref) ->
+        socket.Next(model, [
           RejectJoin(
             ref,
-            error_json("store_unavailable", "The Todo store did not respond."),
+            json.object([#("reason", json.string("unknown_topic"))]),
           ),
         ])
-      }
-    },
-    message: fn(model, match, event, payload, ref) {
-      #(model, handle_message(store, match.topic, event, payload, ref))
-    },
-    closed: fn(model, _match, _reason) { #(model, []) },
-  )
+      socket.Message(topic_name, event, payload, ref) if topic_name == topic ->
+        socket.Next(
+          model,
+          handle_message(store, topic_name, event, payload, ref),
+        )
+      socket.Message(..)
+      | socket.Binary(..)
+      | socket.Closed(..)
+      | socket.Info(..) -> socket.Next(model, [])
+    }
+  }
 }
 
 fn handle_message(
@@ -49,7 +58,7 @@ fn handle_message(
   topic_name: String,
   event: String,
   payload: Dynamic,
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
 ) -> List(Effect) {
   case event {
     "add_todo" -> add_todo(store, topic_name, payload, ref)
@@ -68,7 +77,7 @@ fn add_todo(
   store: store.Store,
   topic_name: String,
   payload: Dynamic,
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
 ) -> List(Effect) {
   case decode.run(payload, decode.at(["text"], decode.string)) {
     Error(_) ->
@@ -105,7 +114,7 @@ fn toggle_todo(
   store: store.Store,
   topic_name: String,
   payload: Dynamic,
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
 ) -> List(Effect) {
   case decode_id(payload) {
     Error(Nil) ->
@@ -136,7 +145,7 @@ fn delete_todo(
   store: store.Store,
   topic_name: String,
   payload: Dynamic,
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
 ) -> List(Effect) {
   case decode_id(payload) {
     Error(Nil) ->
@@ -174,7 +183,7 @@ fn decode_id(payload: Dynamic) -> Result(Int, Nil) {
 }
 
 fn mutation_effects(
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
   topic_name: String,
   event: String,
   payload: json.Json,
@@ -189,7 +198,7 @@ fn mutation_effects(
 }
 
 fn reply_error(
-  ref: Option(Ref),
+  ref: Option(ReplyRef),
   code: String,
   message: String,
 ) -> List(Effect) {

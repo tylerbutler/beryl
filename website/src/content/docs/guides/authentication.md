@@ -1,21 +1,22 @@
 ---
-title: Authentication
-description: Verify real tokens in on_connect, decode claims into your model in init, and authorize joins.
+title: Authenticate WebSocket connections
+description: Verify tokens in on_connect, store verified identity data, and authorize topic joins.
 ---
 
-beryl authenticates a connection **once**, at the transport's `on_connect` hook,
-before any topic join. This guide shows a realistic token flow: read a token
-from the handshake, verify it into typed **claims**, carry those claims in the
-socket's model, and then authorize individual topic joins in `update`.
+beryl authenticates a connection once in the transport `on_connect` hook,
+before any topic join. This guide reads a token from the WebSocket request and
+verifies it as typed **claims**, which are identity and authorization data. It
+stores the claims in the socket model. Then `update` uses them to authorize
+topic joins.
 
 For the mechanics of `with_on_connect` and rejection behavior, see the
-[WebSocket Transport guide](/guides/websocket#authentication). This page focuses
-on wiring *real* auth end to end.
+[WebSocket Transport guide](/guides/websocket#authenticate-before-the-upgrade). This page focuses
+on complete token verification.
 
-## 1. Model your claims
+## 1. Define the verified identity data
 
-Decode the token into a typed record so your app logic never touches raw token
-strings:
+Decode the token into a typed record. Do not use raw token strings in app
+logic:
 
 ```gleam
 pub type Claims {
@@ -23,16 +24,14 @@ pub type Claims {
 }
 ```
 
-The claims live in your per-socket model, so every `Join` and `Message` arm of
-`update` can read them without re-authenticating.
+Store the claims in the per-socket model. Each `Join` and `Message` branch can
+then read them without another authentication check.
 
-## 2. Read the token from the handshake
+## 2. Read the token from the WebSocket request
 
-Browsers cannot set custom headers on a WebSocket handshake, so the two common
-transports for a token are a **query parameter** (browser clients) or the
-**`Authorization` header** (server-to-server clients). Support whichever you
-need. The same helpers work on the transport request in `on_connect` and on
-the `ConnectSeed` in `init`:
+Browsers cannot set custom headers on a WebSocket handshake, so browser
+clients usually send a token in a **query parameter**; server clients can use
+the **`Authorization` header**. Support the methods your clients need.
 
 ```gleam
 import beryl/socket
@@ -43,39 +42,17 @@ import gleam/string
 import mist
 
 /// Prefer the Authorization: Bearer header, fall back to a ?token= query param.
-fn extract_token(req: Request(mist.Connection)) -> Result(String, Nil) {
-  case bearer_header(req) {
-    Ok(token) -> Ok(token)
-    Error(_) -> query_param(req, "token")
-  }
-}
-
-fn bearer_header(req: Request(mist.Connection)) -> Result(String, Nil) {
-  use header <- result.try(request.get_header(req, "authorization"))
-  case string.split(header, " ") {
-    ["Bearer", token] -> Ok(token)
-    _ -> Error(Nil)
-  }
-}
-
-fn query_param(req: Request(mist.Connection), name: String) -> Result(String, Nil) {
-  use params <- result.try(request.get_query(req))
-  list.find(params, fn(pair) { pair.0 == name })
-  |> result.map(fn(pair) { pair.1 })
-}
-
-/// The same extraction against the ConnectSeed delivered to `init`.
-fn seed_token(seed: socket.ConnectSeed) -> Result(String, Nil) {
-  case seed_bearer(seed) {
+fn extract_token(http_request: Request(mist.Connection)) -> Result(String, Nil) {
+  case bearer_token(request.get_header(http_request, "authorization")) {
     Ok(token) -> Ok(token)
     Error(_) ->
-      list.find(seed.query, fn(pair) { pair.0 == "token" })
-      |> result.map(fn(pair) { pair.1 })
+      request.get_query(http_request)
+      |> result.try(list.key_find(_, "token"))
   }
 }
 
-fn seed_bearer(seed: socket.ConnectSeed) -> Result(String, Nil) {
-  use header <- result.try(list.key_find(seed.headers, "authorization"))
+fn bearer_token(header: Result(String, Nil)) -> Result(String, Nil) {
+  use header <- result.try(header)
   case string.split(header, " ") {
     ["Bearer", token] -> Ok(token)
     _ -> Error(Nil)
@@ -83,15 +60,19 @@ fn seed_bearer(seed: socket.ConnectSeed) -> Result(String, Nil) {
 }
 ```
 
+Use the same approach for the `ConnectSeed` delivered to `init`. Read
+`seed.headers` and `seed.query` (both `List(#(String, String))`) with
+`list.key_find` instead of `request.get_header`/`request.get_query`.
+
 ## 3. Verify the token in `on_connect`
 
-`verify_token` is where you plug in your token library — for example a call to
-[`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature, or
-a JWT library to validate a signed token issued by your identity provider. It
-must validate the signature and expiry and return typed `Claims`. (The upstream
-sign-in flow that mints these tokens is a separate concern — an OAuth2 library
-such as [`vestibule`](https://vestibule.tylerbutler.com) handles social login
-and hands you an authenticated identity to build the token from.)
+Implement `verify_token` with your token library. For example, use
+[`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature.
+You can also use a JWT library for signed identity-provider tokens. The
+function must validate the signature and expiry and return typed `Claims`.
+Token creation is a separate process. An OAuth2 library such as
+[`vestibule`](https://vestibule.tylerbutler.com) can provide an authenticated
+identity for token creation.
 
 ```gleam
 import beryl_mist as mist_transport
@@ -99,30 +80,47 @@ import beryl/transport/server
 
 // let verify_token: fn(String) -> Result(Claims, Nil)
 
-let ws_config =
+let websocket_config =
   server.default_config("/socket/websocket")
   // Reject cross-site handshakes when auth relies on ambient credentials.
   |> server.with_allowed_origins(["https://app.example.com"])
-  |> server.with_on_connect(fn(req) {
-    case extract_token(req) {
+  |> server.with_on_connect(fn(http_request) {
+    case extract_token(http_request) {
       Ok(token) ->
         case verify_token(token) {
-          Ok(_claims) -> Ok(Nil)
+          Ok(claims) -> Ok(claims_metadata(claims))
           Error(_) -> Error(server.ConnectRejected)
         }
       Error(_) -> Error(server.ConnectRejected)
     }
   })
+
+/// `ConnectSeed.metadata` holds string pairs, so a list of roles becomes
+/// one comma-joined value.
+fn claims_metadata(claims: Claims) -> List(#(String, String)) {
+  [
+    #("user_id", claims.user_id),
+    #("username", claims.username),
+    #("roles", string.join(claims.roles, ",")),
+  ]
+}
 ```
 
-Returning `Error(server.ConnectRejected)` sends HTTP 403 before the
-upgrade, so an unauthenticated client never reaches your app.
+Return `Error(server.ConnectRejected)` to send HTTP 403 before the upgrade.
+The app does not receive an unauthenticated connection.
 
-## 4. Decode claims into the model in `init`
+`Ok(metadata)` accepts the connection and hands that list to the app. This passes the verified identity from the transport to the application.
+Verify the token in `on_connect`, then use the claims metadata in `init` and
+`update`. `init` still receives the
+original request headers and query through `ConnectInfo.seed`, so do not assume
+the raw token was removed. Return `Ok([])` to accept a connection with no
+metadata.
 
-`on_connect` gates the connection; `init` builds the socket's state. The same
-request data arrives in `init` as `ConnectInfo.seed`, so decode the (already
-gate-checked) token into claims there and carry them in the model:
+## 4. Build the socket model from verified data
+
+`on_connect` accepts or rejects the connection. `init` builds the socket state.
+The claims `on_connect` verified reach `init` as `ConnectInfo.seed.metadata`,
+so rebuild the record from those pairs instead of checking the token again:
 
 ```gleam
 pub type Model {
@@ -132,34 +130,52 @@ pub type Model {
 
 beryl.child_spec(
   config,
-  init: fn(info: socket.ConnectInfo(Msg)) {
-    let model = case seed_token(info.seed) {
-      Ok(token) ->
-        case verify_token(token) {
-          Ok(claims) -> Authenticated(claims)
-          Error(_) -> Anonymous
-        }
-      Error(_) -> Anonymous
-    }
-    #(model, [])
+  init: fn(info: socket.ConnectInfo(Message)) {
+    #(model_from_metadata(info.seed.metadata), [])
   },
   update: update,
 )
+
+fn model_from_metadata(metadata: List(#(String, String))) -> Model {
+  case list.key_find(metadata, "user_id"), list.key_find(metadata, "username") {
+    Ok(user_id), Ok(username) ->
+      Authenticated(Claims(
+        user_id: user_id,
+        username: username,
+        roles: decode_roles(metadata),
+      ))
+    Ok(_), Error(_) -> Anonymous
+    Error(_), Ok(_) -> Anonymous
+    Error(_), Error(_) -> Anonymous
+  }
+}
+
+fn decode_roles(metadata: List(#(String, String))) -> List(String) {
+  case list.key_find(metadata, "roles") {
+    Ok("") | Error(_) -> []
+    Ok(roles) -> string.split(roles, ",")
+  }
+}
 ```
 
-`verify_token` is a pure check, so running it in both places is cheap; the
-`Anonymous` arm exists only for defense in depth (it is unreachable when
-`on_connect` gates correctly, and every join under it rejects).
+Signature and expiry checks stay in `on_connect`, where they run once per
+socket. This `init` reads only verified metadata, so a wrong or expired token
+cannot produce an authenticated model. The `Anonymous` branch covers a socket that connected without `on_connect`
+configured. With the configuration above, the branch is unreachable and
+rejects every join.
 
-## 5. Authorize the topic at join
+The seed's `headers` and `query` remain available to `init`, for request data
+that authentication does not produce, such as a locale, client version, or room
+preselected in the URL.
 
-Because the claims are already in the model, `update` authenticates for free
-and only needs to decide **authorization** — is this user allowed on *this*
-topic?
+## 5. Authorize each topic join
+
+The model already contains the claims. `update` only decides whether the user
+can join the topic:
 
 ```gleam
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model, Msg) {
-  case ev {
+fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
+  case input {
     socket.Join(topic, _payload, ref) ->
       case model {
         Authenticated(claims) ->
@@ -190,14 +206,27 @@ fn forbidden() -> json.Json {
 }
 ```
 
-## Notes
+## Use authentication with `beryl/channel`
 
-- **Verify once, trust everywhere.** Do the expensive signature/expiry check at
-  connect time; the `Join` arms of `update` should only apply cheap
-  authorization rules against the already-decoded claims in the model.
+Transport authentication is the same for the channel layer.
+`with_on_connect` validates the handshake before the upgrade. A channel system
+has no app-level `init`. Each handler receives the same `ConnectSeed` as
+`channel.JoinContext.seed`, so read the verified identity from
+`seed.metadata` with a function like `model_from_metadata`. Apply topic
+authorization and store the typed claims with `channel.accept`.
+
+Put signature and expiry checks in `with_on_connect`. In each join callback,
+only read the metadata and apply authorization rules.
+See [Use the typed sender](/guides/channels/#read-joincontext-and-use-its-typed-sender).
+
+## Authentication rules
+
+- **Verify once per connection.** Check the signature and expiry at connect
+  time and return the result as `on_connect` metadata. The `Join` branches in
+  `update` should only apply authorization rules to the verified claims.
 - **Cookie sessions need origin checks.** If you authenticate from a cookie
   instead of a token, always pair it with `with_allowed_origins` to prevent
   Cross-Site WebSocket Hijacking. See
-  [Origin validation and CSWSH](/guides/websocket#origin-validation-and-cswsh).
-- **Rejection shape.** For the client-visible error when a join or connection is
-  refused, see [Error Handling](/guides/error-handling#connection-level-authentication-rejection).
+  [Block Cross-Site WebSocket Hijacking](/guides/websocket#block-cross-site-websocket-hijacking-cswsh).
+- **Rejection response.** For the client-visible error when a join or connection is
+  refused, see [Reject a connection during authentication](/guides/error-handling#reject-a-connection-during-authentication).

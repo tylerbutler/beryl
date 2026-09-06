@@ -1,14 +1,17 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/error as beryl_error
 import beryl/group
 import beryl/internal
-import beryl/socket
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec
+import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/json
 import gleam/option
+import gleam/otp/actor
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -18,23 +21,23 @@ fn text_frame(frame: codec.Frame) -> String {
   text
 }
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
 // Topic pattern tests
 
-pub fn parse_exact_pattern_test() {
+pub fn parse_exact_pattern_test() -> Nil {
   topic.parse_pattern("room:lobby")
   |> should.equal(topic.Exact("room:lobby"))
 }
 
-pub fn parse_wildcard_pattern_test() {
+pub fn parse_wildcard_pattern_test() -> Nil {
   topic.parse_pattern("room:*")
   |> should.equal(topic.Wildcard("room:"))
 }
 
-pub fn wildcard_matches_test() {
+pub fn wildcard_matches_test() -> Nil {
   let pattern = topic.Wildcard("room:")
 
   topic.matches(pattern, "room:lobby")
@@ -47,7 +50,7 @@ pub fn wildcard_matches_test() {
   |> should.be_false
 }
 
-pub fn exact_matches_test() {
+pub fn exact_matches_test() -> Nil {
   let pattern = topic.Exact("room:lobby")
 
   topic.matches(pattern, "room:lobby")
@@ -57,27 +60,27 @@ pub fn exact_matches_test() {
   |> should.be_false
 }
 
-pub fn parse_mid_segment_wildcard_pattern_test() {
+pub fn parse_mid_segment_wildcard_pattern_test() -> Nil {
   topic.parse_pattern("document:*:ops")
   |> should.equal(topic.SegmentWildcard(["document", "*", "ops"]))
 }
 
-pub fn parse_multi_segment_wildcard_pattern_test() {
+pub fn parse_multi_segment_wildcard_pattern_test() -> Nil {
   topic.parse_pattern("document:*:*")
   |> should.equal(topic.SegmentWildcard(["document", "*", "*"]))
 }
 
-pub fn single_trailing_wildcard_keeps_prefix_pattern_test() {
+pub fn single_trailing_wildcard_keeps_prefix_pattern_test() -> Nil {
   topic.parse_pattern("document:tenant-a:*")
   |> should.equal(topic.Wildcard("document:tenant-a:"))
 }
 
-pub fn validate_pattern_rejects_empty_test() {
+pub fn validate_pattern_rejects_empty_test() -> Nil {
   topic.validate_pattern("")
   |> should.equal(Error(topic.EmptyTopic))
 }
 
-pub fn validate_pattern_rejects_control_characters_test() {
+pub fn validate_pattern_rejects_control_characters_test() -> Nil {
   topic.validate_pattern("room:\u{0001}*")
   |> should.equal(
     Error(topic.InvalidFormat("pattern contains control characters")),
@@ -89,7 +92,7 @@ pub fn validate_pattern_rejects_control_characters_test() {
   )
 }
 
-pub fn validate_pattern_accepts_valid_patterns_test() {
+pub fn validate_pattern_accepts_valid_patterns_test() -> Nil {
   topic.validate_pattern("room:lobby")
   |> should.equal(Ok("room:lobby"))
 
@@ -100,7 +103,7 @@ pub fn validate_pattern_accepts_valid_patterns_test() {
   |> should.equal(Ok("document:*:ops"))
 }
 
-pub fn validate_pattern_accepts_bare_catch_all_test() {
+pub fn validate_pattern_accepts_bare_catch_all_test() -> Nil {
   // A bare "*" is a documented catch-all matching every topic.
   topic.validate_pattern("*")
   |> should.equal(Ok("*"))
@@ -109,7 +112,7 @@ pub fn validate_pattern_accepts_bare_catch_all_test() {
   |> should.equal(topic.Wildcard(""))
 }
 
-pub fn segment_wildcard_matches_same_shape_topics_test() {
+pub fn segment_wildcard_matches_same_shape_topics_test() -> Nil {
   let pattern = topic.parse_pattern("document:*:ops")
 
   topic.matches(pattern, "document:tenant-a:ops")
@@ -125,7 +128,7 @@ pub fn segment_wildcard_matches_same_shape_topics_test() {
   |> should.be_false
 }
 
-pub fn tenant_trailing_wildcard_matches_documents_test() {
+pub fn tenant_trailing_wildcard_matches_documents_test() -> Nil {
   let pattern = topic.parse_pattern("document:tenant-a:*")
 
   topic.matches(pattern, "document:tenant-a:doc-1")
@@ -138,7 +141,7 @@ pub fn tenant_trailing_wildcard_matches_documents_test() {
   |> should.be_false
 }
 
-pub fn extract_wildcards_from_segment_pattern_test() {
+pub fn extract_wildcards_from_segment_pattern_test() -> Nil {
   let pattern = topic.parse_pattern("document:*:*")
 
   topic.extract_wildcards(pattern, "document:tenant-a:doc-42")
@@ -148,7 +151,7 @@ pub fn extract_wildcards_from_segment_pattern_test() {
   |> should.equal(Error(topic.TopicMismatch))
 }
 
-pub fn extract_id_from_single_segment_wildcard_test() {
+pub fn extract_id_from_single_segment_wildcard_test() -> Nil {
   let pattern = topic.parse_pattern("document:*:ops")
 
   topic.extract_id(pattern, "document:tenant-a:ops")
@@ -161,7 +164,7 @@ pub fn extract_id_from_single_segment_wildcard_test() {
   |> should.equal(Error(topic.ExpectedOneWildcard(2)))
 }
 
-pub fn extract_id_test() {
+pub fn extract_id_test() -> Nil {
   let pattern = topic.Wildcard("room:")
 
   topic.extract_id(pattern, "room:lobby")
@@ -174,7 +177,7 @@ pub fn extract_id_test() {
   |> should.equal(Error(topic.NoWildcard))
 }
 
-pub fn segments_test() {
+pub fn segments_test() -> Nil {
   topic.segments("room:lobby")
   |> should.equal(["room", "lobby"])
 
@@ -182,12 +185,12 @@ pub fn segments_test() {
   |> should.equal(["doc", "tenant", "123", "ops"])
 }
 
-pub fn from_segments_test() {
+pub fn from_segments_test() -> Nil {
   topic.from_segments(["room", "lobby"])
   |> should.equal("room:lobby")
 }
 
-pub fn validate_topic_test() {
+pub fn validate_topic_test() -> Nil {
   topic.validate("room:lobby")
   |> should.equal(Ok("room:lobby"))
 
@@ -199,9 +202,10 @@ pub fn validate_topic_test() {
 
   topic.validate("invalid:")
   |> should.be_error
+  Nil
 }
 
-pub fn validate_topic_rejects_control_characters_test() {
+pub fn validate_topic_rejects_control_characters_test() -> Nil {
   // Newline
   topic.validate("room:\nlobby")
   |> should.be_error
@@ -221,9 +225,10 @@ pub fn validate_topic_rejects_control_characters_test() {
   // Control char at start
   topic.validate("\u{0001}room:lobby")
   |> should.be_error
+  Nil
 }
 
-pub fn validate_event_test() {
+pub fn validate_event_test() -> Nil {
   topic.validate_event("new_message")
   |> should.equal(Ok("new_message"))
 
@@ -238,9 +243,10 @@ pub fn validate_event_test() {
 
   topic.validate_event("event\u{0000}null")
   |> should.be_error
+  Nil
 }
 
-pub fn sanitize_for_log_test() {
+pub fn sanitize_for_log_test() -> Nil {
   topic.sanitize_for_log("room:lobby")
   |> should.equal("room:lobby")
 
@@ -259,84 +265,111 @@ pub fn sanitize_for_log_test() {
 
 // Wire protocol tests
 
-pub fn decode_valid_message_test() {
-  let result =
+pub fn decode_valid_message_test() -> Nil {
+  let assert Ok(message) =
     wire.decode_message("[\"j1\",\"r1\",\"room:lobby\",\"phx_join\",{}]")
 
-  result |> should.be_ok
-
-  let assert Ok(msg) = result
-  codec.inbound_join_ref(msg) |> should.equal(option.Some("j1"))
-  codec.inbound_ref(msg) |> should.equal(option.Some("r1"))
-  codec.inbound_topic(msg) |> should.equal("room:lobby")
-  codec.inbound_kind(msg) |> should.equal(codec.Join)
+  codec.inbound_join_ref(message) |> should.equal(option.Some("j1"))
+  codec.inbound_ref(message) |> should.equal(option.Some("r1"))
+  codec.inbound_topic(message) |> should.equal("room:lobby")
+  codec.inbound_kind(message) |> should.equal(codec.Join)
 }
 
-pub fn decode_message_with_null_refs_test() {
-  let assert Ok(msg) =
+pub fn decode_message_with_null_refs_test() -> Nil {
+  let assert Ok(message) =
     wire.decode_message("[null,\"ref\",\"topic\",\"event\",{}]")
 
-  codec.inbound_join_ref(msg) |> should.equal(option.None)
-  codec.inbound_ref(msg) |> should.equal(option.Some("ref"))
-  codec.inbound_topic(msg) |> should.equal("topic")
-  codec.inbound_kind(msg) |> should.equal(codec.Event("event"))
+  codec.inbound_join_ref(message) |> should.equal(option.None)
+  codec.inbound_ref(message) |> should.equal(option.Some("ref"))
+  codec.inbound_topic(message) |> should.equal("topic")
+  codec.inbound_kind(message) |> should.equal(codec.Event("event"))
 }
 
-pub fn decode_message_both_refs_null_test() {
-  let assert Ok(msg) =
+pub fn decode_message_both_refs_null_test() -> Nil {
+  let assert Ok(message) =
     wire.decode_message(
       "[null,null,\"room:lobby\",\"new_msg\",{\"text\":\"hi\"}]",
     )
 
-  codec.inbound_join_ref(msg) |> should.equal(option.None)
-  codec.inbound_ref(msg) |> should.equal(option.None)
-  codec.inbound_topic(msg) |> should.equal("room:lobby")
-  codec.inbound_kind(msg) |> should.equal(codec.Event("new_msg"))
+  codec.inbound_join_ref(message) |> should.equal(option.None)
+  codec.inbound_ref(message) |> should.equal(option.None)
+  codec.inbound_topic(message) |> should.equal("room:lobby")
+  codec.inbound_kind(message) |> should.equal(codec.Event("new_msg"))
 }
 
-pub fn decode_invalid_json_test() {
+pub fn decode_invalid_json_test() -> Nil {
   wire.decode_message("not json at all")
   |> should.be_error
+  Nil
 }
 
-pub fn decode_empty_string_test() {
+pub fn decode_empty_string_test() -> Nil {
   wire.decode_message("")
   |> should.be_error
+  Nil
 }
 
-pub fn decode_wrong_format_object_test() {
+pub fn decode_wrong_format_object_test() -> Nil {
   wire.decode_message("{\"topic\": \"room\"}")
   |> should.be_error
+  Nil
 }
 
-pub fn decode_wrong_format_short_array_test() {
+pub fn decode_wrong_format_short_array_test() -> Nil {
   wire.decode_message("[1,2,3]")
   |> should.be_error
+  Nil
 }
 
-pub fn encode_roundtrip_test() {
+pub fn encode_roundtrip_test() -> Nil {
   // Decode a message then re-encode it
-  let original = "[\"j1\",\"r1\",\"room:lobby\",\"msg\",\"hello\"]"
-  let assert Ok(msg) = wire.decode_message(original)
+  let original = "[\"j1\",\"r1\",\"room:lobby\",\"message\",\"hello\"]"
+  let assert Ok(message) = wire.decode_message(original)
 
-  let encoded = wire.encode(msg)
-  encoded |> string.contains("room:lobby") |> should.be_true
-  encoded |> string.contains("msg") |> should.be_true
-  encoded |> string.contains("hello") |> should.be_true
+  let assert Ok(encoded) = wire.encode(message)
+  encoded |> should.equal(original)
 }
 
-pub fn encode_with_object_payload_roundtrip_test() {
+pub fn encode_with_object_payload_roundtrip_test() -> Nil {
   let original =
     "[null,\"ref1\",\"chat:general\",\"typing\",{\"user\":\"alice\"}]"
-  let assert Ok(msg) = wire.decode_message(original)
+  let assert Ok(message) = wire.decode_message(original)
 
-  let encoded = wire.encode(msg)
-  encoded |> string.contains("chat:general") |> should.be_true
-  encoded |> string.contains("typing") |> should.be_true
-  encoded |> string.contains("alice") |> should.be_true
+  let assert Ok(encoded) = wire.encode(message)
+  encoded |> should.equal(original)
 }
 
-pub fn reply_json_ok_test() {
+pub fn encode_rejects_unsupported_dynamic_payload_test() -> Nil {
+  let message =
+    codec.inbound(
+      join_ref: option.None,
+      ref: option.None,
+      topic: "room:lobby",
+      kind: codec.Event("unsupported"),
+      payload: dynamic.bit_array(<<1:size(1)>>),
+    )
+
+  wire.encode(message) |> should.equal(Error(Nil))
+}
+
+pub fn encode_rejects_excessively_nested_payload_test() -> Nil {
+  let nested_payload =
+    string.repeat("[", 70) <> "null" <> string.repeat("]", 70)
+  let assert Ok(payload) =
+    json.parse(from: nested_payload, using: decode.dynamic)
+  let message =
+    codec.inbound(
+      join_ref: option.None,
+      ref: option.None,
+      topic: "room:lobby",
+      kind: codec.Event("nested"),
+      payload: payload,
+    )
+
+  wire.encode(message) |> should.equal(Error(Nil))
+}
+
+pub fn reply_json_ok_test() -> Nil {
   let reply =
     wire.reply_json(
       option.Some("j1"),
@@ -351,7 +384,7 @@ pub fn reply_json_ok_test() {
   text_frame(reply) |> string.contains("room:lobby") |> should.be_true
 }
 
-pub fn reply_json_error_test() {
+pub fn reply_json_error_test() -> Nil {
   let reply =
     wire.reply_json(
       option.None,
@@ -365,16 +398,16 @@ pub fn reply_json_error_test() {
   text_frame(reply) |> string.contains("unauthorized") |> should.be_true
 }
 
-pub fn push_message_test() {
-  let msg = wire.push("room:lobby", "new_message", json.string("content"))
+pub fn push_message_test() -> Nil {
+  let message = wire.push("room:lobby", "new_message", json.string("content"))
 
-  text_frame(msg) |> string.contains("room:lobby") |> should.be_true
-  text_frame(msg) |> string.contains("new_message") |> should.be_true
+  text_frame(message) |> string.contains("room:lobby") |> should.be_true
+  text_frame(message) |> string.contains("new_message") |> should.be_true
   // Push messages have null for join_ref and ref
-  text_frame(msg) |> string.starts_with("[null,null,") |> should.be_true
+  text_frame(message) |> string.starts_with("[null,null,") |> should.be_true
 }
 
-pub fn heartbeat_reply_test() {
+pub fn heartbeat_reply_test() -> Nil {
   let reply = wire.heartbeat_reply(option.Some("hb-123"))
 
   text_frame(reply) |> string.contains("phx_reply") |> should.be_true
@@ -383,19 +416,19 @@ pub fn heartbeat_reply_test() {
   text_frame(reply) |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
-pub fn format_decode_error_invalid_json_test() {
+pub fn format_decode_error_invalid_json_test() -> Nil {
   wire.format_decode_error(codec.InvalidJson("bad input"))
   |> string.contains("Invalid JSON")
   |> should.be_true
 }
 
-pub fn format_decode_error_invalid_format_test() {
+pub fn format_decode_error_invalid_format_test() -> Nil {
   wire.format_decode_error(codec.InvalidFormat("wrong structure"))
   |> string.contains("Invalid format")
   |> should.be_true
 }
 
-pub fn format_decode_error_missing_field_test() {
+pub fn format_decode_error_missing_field_test() -> Nil {
   wire.format_decode_error(codec.MissingField("topic"))
   |> string.contains("Missing required field")
   |> should.be_true
@@ -408,40 +441,89 @@ pub fn format_decode_error_missing_field_test() {
 // topic_policy_test, connection_limit_test, and the transport handler tests),
 // not by asserting that a setter stored its argument.
 
-pub fn start_failure_description_is_public_test() {
-  let describe = beryl_error.describe_start_failure
-  should.be_true(True)
-  let _ = describe
+pub fn start_failure_description_is_public_test() -> Nil {
+  beryl_error.from_actor_start_error(actor.InitTimeout)
+  |> beryl_error.describe_start_failure
+  |> string.is_empty
+  |> should.be_false
 }
 
-pub fn topic_namespace_test() {
+pub fn start_failure_description_retains_abnormal_exit_reason_test() -> Nil {
+  actor.InitExited(process.Abnormal(dynamic.string("worker exploded")))
+  |> beryl_error.from_actor_start_error
+  |> beryl_error.describe_start_failure
+  |> string.contains("worker exploded")
+  |> should.be_true
+}
+
+pub fn start_failure_description_bounds_large_exit_reasons_test() -> Nil {
+  let description =
+    actor.InitExited(process.Abnormal(dynamic.string(string.repeat("x", 4096))))
+    |> beryl_error.from_actor_start_error
+    |> beryl_error.describe_start_failure
+  let prefix = "actor init exited: abnormal: "
+
+  string.starts_with(description, prefix) |> should.be_true
+  { string.length(description) <= string.length(prefix) + 512 }
+  |> should.be_true
+}
+
+pub fn topic_namespace_test() -> Nil {
   topic.namespace("room:lobby") |> should.equal(Ok("room"))
   topic.namespace("doc:tenant:123") |> should.equal(Ok("doc"))
 }
 
-pub fn group_broadcast_is_fire_and_forget_test() {
+pub fn group_broadcast_delivers_to_members_and_missing_group_noops_test() -> Nil {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: fn(_info) { #(Nil, []) },
-      update: fn(model, _ev) { socket.Next(model, []) },
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
     )
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "team:eng")
   let assert Ok(Nil) = group.add(groups, "team:eng", "room:lobby")
 
-  // Broadcasting to a populated group returns Nil (fire and forget)
-  group.broadcast(groups, channels, "team:eng", "announce", json.object([]))
+  let member = app_test_helper.connect(channels, "member")
+  app_test_helper.join_ok(
+    channels,
+    member,
+    "member",
+    "room:lobby",
+    "jr-1",
+    "r-1",
+  )
+  let outsider = app_test_helper.connect(channels, "outsider")
+  app_test_helper.join_ok(
+    channels,
+    outsider,
+    "outsider",
+    "room:other",
+    "jr-2",
+    "r-2",
+  )
+
+  group.broadcast(
+    groups,
+    channels,
+    "team:eng",
+    "announce",
+    json.string("hello"),
+  )
   |> should.equal(Nil)
+  app_test_helper.recv(member)
+  |> should.equal("[null,null,\"room:lobby\",\"announce\",\"hello\"]")
+  app_test_helper.recv_none(outsider)
 
   // Broadcasting to a missing group is a silent no-op
   group.broadcast(groups, channels, "missing", "announce", json.object([]))
   |> should.equal(Nil)
+  app_test_helper.recv_none(member)
 }
 
 // ── Payload preview hardening ────────────────────────────────────────────────
 
-pub fn payload_preview_metadata_is_bounded_test() {
+pub fn payload_preview_metadata_is_bounded_test() -> Nil {
   let config =
     internal.LoggingConfig(
       level: internal.Info,

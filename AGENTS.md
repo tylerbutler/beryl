@@ -1,8 +1,8 @@
-# AGENTS.md — Working in the Beryl Codebase
+# AGENTS.md — Working in the beryl codebase
 
 ## Project Summary
 
-Beryl is a Gleam library for type-safe real-time channels and presence on the
+beryl is a Gleam library for type-safe real-time channels and presence on the
 Erlang/BEAM runtime. It's a trellis-managed monorepo with three packages — two
 of them currently publishable, since `beryl_ewe` is release-excluded — plus
 runnable examples and an Astro/Starlight documentation website.
@@ -52,6 +52,11 @@ and are hidden from the public API. Functions in `beryl/transport` that are
 consumed by transport packages carry `// nolint: unused_exports` annotations
 because they appear unused within beryl itself.
 
+**`beryl/channel` MUST stay layered on beryl's public core APIs.** Do not
+import `beryl/runtime` or the other internal modules listed above. Keep its
+private routing machinery behind the module's internal seam, and preserve the
+raw-dispatch/channel Phoenix parity matrix in `packages/beryl/test/`.
+
 ## Architecture (Non-Obvious)
 
 ### Typed App Dispatch
@@ -62,21 +67,23 @@ runtime stores each socket's typed model and delivers `Join`, `Message`,
 `Binary`, `Closed`, and typed `Info` events without socket-dispatch casts or
 `Dynamic` round-trips. `Dynamic` is limited to decoded wire payloads.
 
-Join `Ref` values are single-pending-join capabilities with unique runtime
+`JoinRef` values are single-pending-join capabilities with unique runtime
 identity. Never reconstruct or compare their wire fields; return the exact ref
 in `AcceptJoin` or `RejectJoin`.
 
 ### Transport SPI Contract
 
 A transport implementation must follow this lifecycle:
-1. **Admit**: call `beryl.acquire_connection_slot` + `beryl.bind_connection_slot`
+1. **Admit**: call `transport.acquire_connection_slot` +
+   `transport.bind_connection_slot`
 2. **Own**: capture `transport.connection_owner` and monitor an `OwnerAlive` pid
 3. **Register atomically**: call `transport.admit_socket` with the captured
    owner and closer; close on failure
 4. **Route**: decode inbound frames with `transport.active_codec`, route via
    `transport.route_decoded` / `transport.route_binary`, shed over-rate frames
    with `transport.new_message_limiter` / `transport.take_token`
-5. **Disconnect**: `transport.socket_disconnected` + `beryl.release_connection_slot`
+5. **Disconnect**: `transport.socket_disconnected` +
+   `transport.release_connection_slot`
 
 ### Wire Protocol
 
@@ -90,9 +97,10 @@ default.
 
 ### PubSub Wire Contract
 
-`pubsub.Message(payload)` is sent **raw between BEAM nodes** via `pg`. Its
-record tag and four fields (in order) are a frozen wire contract. A rolling
-cluster upgrade must not mis-parse a frame from an older node.
+PubSub broadcasts are sent **raw between BEAM nodes** via `pg` as the scope
+atom followed by the four `pubsub.Message(payload)` fields. This five-element
+tuple is a frozen wire contract. The scoped and previously unscoped shapes do
+not interoperate during a rolling upgrade.
 
 ### Opaque Types with Builder Pattern
 
@@ -113,7 +121,7 @@ heartbeat, or WebSocket assertions must:
 
 ### Polling Over Sleeping
 
-Use `test_helpers.wait_until(check, timeout_ms, interval_ms)` instead of
+Use `test_helper.wait_until(check, timeout_ms, interval_ms)` instead of
 `process.sleep(N)` for asynchronous assertions (presence replication, broadcast
 delivery, etc.).
 
@@ -136,6 +144,11 @@ not available in pure Gleam.
 
 - **Result types over exceptions** — all fallible APIs return `Result`
 - **Exhaustive pattern matching** — Gleam enforces this; handle all cases
+- **Sentence-case website headings** — use sentence case for page titles,
+  section headings, callout titles, and sidebar labels
+- **Lowercase product name** — write the product name as `beryl` in prose,
+  including at sentence starts and in headings; preserve exact code identifiers
+  and quoted text
 - **`///` doc comments** on all public functions
 - **`@internal` annotation** — hides functions from public docs while keeping
   them accessible to sibling modules within the same package

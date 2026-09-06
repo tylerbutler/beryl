@@ -1,16 +1,19 @@
-import example_helpers/static
+import example_helper/static
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import mist.{type Connection, type ResponseData}
 
-pub fn handle_request(req: Request(Connection)) -> Response(ResponseData) {
+pub fn handle_request(
+  req: Request(Connection),
+  static_directory: String,
+) -> Response(ResponseData) {
   case static.match_prefix(req, "") {
     Ok([]) -> static.html_response(index_html())
     _ ->
       static.serve_static(
         req,
         under: "/static",
-        from: static.priv_static("todo_server"),
+        from: static_directory,
         next: static.not_found,
       )
   }

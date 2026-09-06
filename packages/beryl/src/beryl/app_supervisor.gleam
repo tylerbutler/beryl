@@ -9,9 +9,22 @@ import gleam/erlang/process
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 
+pub type StopAcceptance {
+  StopAccepted
+  StopRejected
+}
+
+pub type StopCompletion {
+  StopCompleted
+  StopIncomplete
+}
+
 pub type Message {
-  StopRuntime(started: process.Subject(Bool), finished: process.Subject(Bool))
-  RuntimeStopped
+  StopRuntime(
+    started: process.Subject(StopAcceptance),
+    finished: process.Subject(StopCompletion),
+  )
+  RuntimeStopped(completion: StopCompletion)
   RuntimeDown(process.Down)
   LinkedExit(process.ExitMessage)
 }
@@ -20,10 +33,17 @@ type StopState {
   Running
   Stopping(
     monitor: process.Monitor,
-    finished: process.Subject(Bool),
-    acknowledged: Bool,
-    supervisor_down: Bool,
+    finished: process.Subject(StopCompletion),
+    progress: StopProgress,
   )
+}
+
+/// Which of the two stop signals (runtime drained, supervisor exited) have
+/// arrived. Both-arrived is never stored: the second signal stops the actor.
+type StopProgress {
+  AwaitingBoth
+  RuntimeStopAcknowledged
+  SupervisorExited
 }
 
 type State {
@@ -31,8 +51,9 @@ type State {
     parent: process.Pid,
     supervisor: process.Pid,
     stop_state: StopState,
-    runtime_stopped: process.Subject(Nil),
-    stop_runtime: fn(process.Subject(Nil)) -> Result(process.Monitor, Nil),
+    runtime_stopped: process.Subject(StopCompletion),
+    stop_runtime: fn(process.Subject(StopCompletion)) ->
+      Result(process.Monitor, Nil),
   )
 }
 
@@ -40,7 +61,8 @@ type State {
 /// distinction between intentional shutdown and restart-intensity exhaustion.
 pub fn start(
   name: process.Name(Message),
-  stop_runtime: fn(process.Subject(Nil)) -> Result(process.Monitor, Nil),
+  stop_runtime: fn(process.Subject(StopCompletion)) ->
+    Result(process.Monitor, Nil),
   start_supervisor: fn() ->
     Result(actor.Started(static_supervisor.Supervisor), actor.StartError),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
@@ -55,7 +77,7 @@ pub fn start(
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> process.select_map(runtime_stopped, fn(_) { RuntimeStopped })
+          |> process.select_map(runtime_stopped, RuntimeStopped)
           |> process.select_monitors(RuntimeDown)
           |> process.select_trapped_exits(LinkedExit)
 
@@ -83,48 +105,55 @@ fn handle_message(
 ) -> actor.Next(State, Message) {
   case message {
     StopRuntime(started, _) if state.stop_state != Running -> {
-      process.send(started, False)
+      process.send(started, StopRejected)
       actor.continue(state)
     }
     StopRuntime(started, finished) ->
       case state.stop_runtime(state.runtime_stopped) {
         Error(Nil) -> {
-          process.send(started, False)
+          process.send(started, StopRejected)
           actor.continue(state)
         }
         Ok(monitor) -> {
-          process.send(started, True)
+          process.send(started, StopAccepted)
           actor.continue(
             State(
               ..state,
-              stop_state: Stopping(monitor, finished, False, False),
+              stop_state: Stopping(monitor, finished, AwaitingBoth),
             ),
           )
         }
       }
-    RuntimeStopped ->
+    RuntimeStopped(completion) ->
       case state.stop_state {
-        Stopping(_, finished, False, True) -> {
-          process.send(finished, True)
+        Stopping(_, finished, SupervisorExited) -> {
+          process.send(finished, completion)
           actor.stop()
         }
-        Stopping(monitor, finished, False, False) -> {
-          process.send(finished, True)
+        Stopping(monitor, finished, AwaitingBoth) -> {
+          process.send(finished, completion)
           actor.continue(
-            State(..state, stop_state: Stopping(monitor, finished, True, False)),
+            State(
+              ..state,
+              stop_state: Stopping(monitor, finished, RuntimeStopAcknowledged),
+            ),
           )
         }
-        _ -> actor.continue(state)
+        Running | Stopping(_, _, RuntimeStopAcknowledged) ->
+          actor.continue(state)
       }
     RuntimeDown(down) -> handle_runtime_down(state, down)
     LinkedExit(process.ExitMessage(pid, _)) if pid == state.supervisor ->
       case state.stop_state {
-        Stopping(_, _, True, _) -> actor.stop()
-        Stopping(monitor, finished, False, False) ->
+        Stopping(_, _, RuntimeStopAcknowledged) -> actor.stop()
+        Stopping(monitor, finished, AwaitingBoth) ->
           actor.continue(
-            State(..state, stop_state: Stopping(monitor, finished, False, True)),
+            State(
+              ..state,
+              stop_state: Stopping(monitor, finished, SupervisorExited),
+            ),
           )
-        _ -> {
+        Running | Stopping(_, _, SupervisorExited) -> {
           process.trap_exits(False)
           actor.stop_abnormal("app subtree restart intensity exceeded")
         }
@@ -143,19 +172,27 @@ fn handle_runtime_down(
 ) -> actor.Next(State, Message) {
   case down, state.stop_state {
     process.ProcessDown(monitor, _, _),
-      Stopping(expected, finished, False, supervisor_down)
+      Stopping(expected, finished, AwaitingBoth)
       if monitor == expected
     -> {
-      process.send(finished, False)
-      case supervisor_down {
-        False -> actor.continue(State(..state, stop_state: Running))
-        True -> {
-          process.trap_exits(False)
-          actor.stop_abnormal("app subtree restart intensity exceeded")
-        }
-      }
+      process.send(finished, StopIncomplete)
+      actor.continue(State(..state, stop_state: Running))
     }
-    _, _ -> actor.continue(state)
+    process.ProcessDown(monitor, _, _),
+      Stopping(expected, finished, SupervisorExited)
+      if monitor == expected
+    -> {
+      process.send(finished, StopIncomplete)
+      process.trap_exits(False)
+      actor.stop_abnormal("app subtree restart intensity exceeded")
+    }
+    process.ProcessDown(_, _, _), Running
+    | process.ProcessDown(_, _, _), Stopping(_, _, RuntimeStopAcknowledged)
+    | process.ProcessDown(_, _, _), Stopping(_, _, AwaitingBoth)
+    | process.ProcessDown(_, _, _), Stopping(_, _, SupervisorExited)
+    | process.PortDown(_, _, _), Running
+    | process.PortDown(_, _, _), Stopping(_, _, _)
+    -> actor.continue(state)
   }
 }
 

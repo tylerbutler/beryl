@@ -6,7 +6,7 @@
     expect_join/2,
     expect_message/4,
     expect_disconnect/3,
-    expect_broadcast/4,
+    expect_broadcast/3,
     expect_none/1
 ]).
 
@@ -77,7 +77,7 @@ expect_message(HandlerId, Kind, Outcome, CallbackResult) ->
         false
     end.
 
-expect_disconnect(HandlerId, Reason, JoinedChannels) ->
+expect_disconnect(HandlerId, Reason, JoinedTopics) ->
     ExpectedReason = expected_atom(Reason),
     receive
         {
@@ -86,7 +86,7 @@ expect_disconnect(HandlerId, Reason, JoinedChannels) ->
             #{
                 count := 1,
                 duration := Duration,
-                joined_channels := JoinedChannels
+                joined_channels := JoinedTopics
             },
             #{reason := ExpectedReason}
         } when is_integer(Duration), Duration >= 0 ->
@@ -95,7 +95,7 @@ expect_disconnect(HandlerId, Reason, JoinedChannels) ->
         false
     end.
 
-expect_broadcast(HandlerId, Origin, Recipients, SendFailures) ->
+expect_broadcast(HandlerId, Origin, Recipients) ->
     ExpectedOrigin = expected_atom(Origin),
     receive
         {
@@ -104,8 +104,7 @@ expect_broadcast(HandlerId, Origin, Recipients, SendFailures) ->
             #{
                 count := 1,
                 duration := Duration,
-                recipients := Recipients,
-                send_failures := SendFailures
+                recipients := Recipients
             },
             #{origin := ExpectedOrigin}
         } when is_integer(Duration), Duration >= 0 ->

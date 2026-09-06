@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "A join to an unmatched topic is now refused before the runtime starts a worker process."

@@ -7,7 +7,7 @@ target = "erlang"
 [dependencies]
 beryl = { path = "../../packages/beryl" }
 beryl_mist = { path = "../../packages/beryl_mist" }
-example_helpers = { path = "../example_helpers" }
+example_helper = { path = "../example_helpers" }
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_erlang = ">= 1.3.0 and < 2.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"

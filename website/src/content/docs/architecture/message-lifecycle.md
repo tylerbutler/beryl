@@ -1,117 +1,174 @@
 ---
-title: Message Lifecycle
+title: How beryl handles a message
 ---
 
-This page traces every significant step a message takes from the moment a WebSocket connection opens until it is pushed back to one or more clients. Each diagram corresponds to a distinct phase; together they give you a complete mental model of how beryl processes real-time traffic.
+This page follows a message from the WebSocket connection to the client. Each
+diagram shows one phase of beryl's message processing.
 
-## Connect and init
+## Connect and initialize a socket
 
-When a client initiates a WebSocket upgrade, the Mist transport layer generates a unique socket id, assembles a `ConnectSeed` from the upgrade request (path, query, headers), and hands the socket, along with its send functions, to the runtime. The runtime calls your app's `init` with a `ConnectInfo` carrying the socket id, the seed, and a typed `Sender` for server-side messages, and stores the returned model.
+When a client requests a WebSocket upgrade, Mist creates a unique socket ID. It
+builds a `ConnectSeed` from the path, query, and headers. Mist then sends the
+socket and its send functions through the router to a new socket actor. The
+socket actor calls your app's `init` with `ConnectInfo`. This value contains
+the socket ID, seed, and typed `Sender`. The actor stores the model that `init`
+returns.
 
 ```mermaid
 sequenceDiagram
   participant Client
   participant Mist as beryl_mist
-  participant RT as runtime
+  participant Router as router
+  participant Socket as socket actor
   participant App as your init
   Client->>Mist: WebSocket upgrade
   Mist->>Mist: generate socket id, build ConnectSeed
-  Mist->>RT: capture owner pid + admit_socket(...)
-  RT->>App: init(ConnectInfo)
-  App-->>RT: #(model, effects)
+  Mist->>Socket: start one actor
+  Mist->>Router: admit_socket(actor, owner, ...)
+  Router->>Socket: admission accepted
+  Socket->>App: init(ConnectInfo)
+  App-->>Socket: #(model, effects)
 ```
 
 ## Join a topic
 
-A client joins a topic by sending a `phx_join` frame. The transport decodes the raw frame in the connection process, and the runtime delivers a `Join` event to your `update` function, which answers with an `AcceptJoin` or `RejectJoin` effect.
+A client sends a `phx_join` frame to join a topic. The connection process
+decodes the frame. The router forwards it to the socket actor, which sends a
+`Join` event to your `update` function. The function returns an `AcceptJoin` or
+`RejectJoin` effect.
 
 ```mermaid
 sequenceDiagram
   participant Client
   participant Mist as beryl_mist
   participant Wire as wire/codec
-  participant RT as runtime
+  participant Router as router
+  participant Socket as socket actor
   participant App as your update
   Client->>Mist: text frame [join_ref, ref, topic, "phx_join", payload]
   Mist->>Wire: decode_text
-  Wire-->>RT: route_decoded(join)
-  RT->>RT: validate topic (length, reserved names, rate, cap)
-  RT->>App: update(model, Join(topic, payload, ref))
-  App-->>RT: Next(model, [AcceptJoin(ref, reply)]) / [RejectJoin(ref, reason)]
-  RT->>RT: subscribe socket to topic (on accept)
-  RT-->>Client: phx_reply (ok/error)
+  Wire-->>Router: route_decoded(join)
+  Router->>Socket: forward decoded join
+  Socket->>Socket: validate topic (length, reserved names, rate, cap)
+  Socket->>App: update(model, Join(topic, payload, ref))
+  App-->>Socket: Next(model, [AcceptJoin(ref, reply)]) / [RejectJoin(ref, reason)]
+  Socket->>Router: index subscription (on accept)
+  Socket-->>Client: phx_reply (ok/error)
 ```
 
-A `Join` left unanswered by the update's effects is rejected automatically; beryl fails closed.
+The runtime automatically rejects a `Join` that has no answer.
 
-## Handle an inbound event
+## Handle a client event
 
-After a successful join, every subsequent inbound frame for that topic arrives at `update` as a `Message` event. The effects list decides what goes back on the wire: a reply correlated to the client's ref, pushes, broadcasts, presence writes, or nothing at all.
+After a successful join, `update` receives each later topic frame as a
+`Message` event. The effects list can send a reply, push, broadcast, or presence
+write. An empty list sends nothing.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant RT as runtime
+  participant Router as router
+  participant Socket as socket actor
   participant App as your update
-  Client->>RT: text frame [.., topic, event, payload]
-  RT->>App: update(model, Message(topic, event, payload, ref))
-  App-->>RT: Next(model, effects)
-  RT-->>Client: apply effects in order (ReplyOk, Push, ...)
+  Client->>Router: decoded frame [.., topic, event, payload]
+  Router->>Socket: forward frame
+  Socket->>App: update(model, Message(topic, event, payload, ref))
+  App-->>Socket: Next(model, effects)
+  Socket-->>Client: apply effects in order (ReplyOk, Push, ...)
 ```
 
-## Broadcast fan-out
+## Send one event to many sockets
 
-Broadcasting delivers a message to every socket subscribed to a topic. The `Broadcast` effect (or `beryl.broadcast` from outside `update`) reaches all subscribers; `BroadcastFrom` / `beryl.broadcast_from` excludes the originating socket. When PubSub is configured, the pg-based layer forwards the broadcast to every other node's runtime, which fans out to its local subscribers.
+A broadcast sends a message to each socket on a topic. `Broadcast` and
+`beryl.broadcast` include the source socket. `BroadcastFrom` and
+`beryl.broadcast_from` exclude it. When you configure PubSub, Erlang `pg` sends
+the broadcast to other runtime nodes. Each runtime then sends it to local
+subscribers.
 
 ```mermaid
 sequenceDiagram
   participant Origin as origin update/app
-  participant RT as runtime
+  participant Socket as origin socket actor
+  participant Router as router
   participant PS as pubsub (pg)
-  participant Subs as subscriber sockets
-  Origin->>RT: Broadcast(topic, event, payload)
-  RT-->>Subs: push via each subscriber's send fn
-  RT->>PS: broadcast_from (cluster fan-out)
-  PS-->>RT: deliver to each remote runtime
+  participant Subs as subscriber socket actors
+  Origin->>Socket: Broadcast(topic, event, payload)
+  Socket->>Router: broadcast
+  Router-->>Subs: send to local subscribers
+  Router->>PS: broadcast_from (send to other nodes)
+  PS-->>Router: deliver to each remote router
 ```
 
-## Heartbeat and eviction
+## Detect an inactive connection
 
-Clients periodically send a `heartbeat` frame on the `"phoenix"` topic to signal liveness. The runtime replies immediately and tracks the last-seen timestamp; a periodic timer evicts sockets that have not sent a heartbeat within the configured deadline. The app never sees heartbeat frames.
+Clients send a `heartbeat` frame on the `"phoenix"` topic at set intervals. The
+socket actor replies and records the time. Each socket actor has a timer that
+checks its own deadline. The app does not receive heartbeat frames.
 
 ```mermaid
 sequenceDiagram
   participant Client
-  participant RT as runtime
-  Client->>RT: [.., "phoenix", "heartbeat", {}]
-  RT-->>Client: heartbeat_reply
-  Note over RT: periodic timer checks last-seen
-  RT->>RT: evict sockets past deadline (Closed(HeartbeatTimeout) to app)
+  participant Socket as socket actor
+  Client->>Socket: [.., "phoenix", "heartbeat", {}]
+  Socket-->>Client: heartbeat_reply
+  Note over Socket: recurring timer checks last-seen
+  Socket->>Socket: close after deadline (Closed(HeartbeatTimeout) to app)
 ```
 
-## Disconnect and close
+## Disconnect a socket
 
-When a client closes the WebSocket connection, Mist notifies the runtime, which delivers a `Closed(topic, reason)` event to `update` for every joined topic and then cleans up all subscriptions and socket state.
+When a client closes the WebSocket, Mist notifies the router. The router
+forwards the close to the socket actor. The actor sends `Closed(topic, reason)`
+to `update` for each joined topic, then removes its socket state and asks the
+router to remove its subscriptions.
 
 ```mermaid
 sequenceDiagram
   participant Client
   participant Mist as beryl_mist
-  participant RT as runtime
+  participant Router as router
+  participant Socket as socket actor
   participant App as your update
   Client->>Mist: socket close
-  Mist->>RT: socket_disconnected(id)
-  RT->>App: update(model, Closed(topic, reason)) per joined topic
-  RT->>RT: unsubscribe topics, drop socket state
+  Mist->>Router: socket_disconnected(id)
+  Router->>Socket: disconnect
+  Socket->>App: update(model, Closed(topic, reason)) per joined topic
+  Socket->>Router: remove subscriptions and actor entry
 ```
 
-## Concurrency note
+The same `Closed` path is used for client leaves, heartbeat timeouts,
+`KickTopic`, and graceful `beryl.stop` shutdown.
 
-The runtime is a single OTP actor processing its mailbox sequentially; broadcasts arrive as messages, so tests must select the exact message shape and drain queued messages (BEAM mailbox gotcha).
+## How channel handlers use this path
 
-## Where this lives
+`beryl/channel` runs one worker process for each accepted topic. The socket
+actor in these diagrams keeps the connection and writes every frame; the
+worker runs the channel's callbacks and reports its actions back.
 
-- `packages/beryl_mist/src/beryl_mist.gleam`: connect/close, edge decoding, frame routing
+| Runtime input | Channel layer behavior |
+|---|---|
+| `Join(topic, payload, ref)` | First matching handler wins. Its `join` runs while the worker starts, and the socket actor waits for it. The result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` before a worker starts |
+| `Message(topic, ..)` | The socket actor sends it to the topic worker. The worker runs `on_message` and reports its actions |
+| `Binary(topic, ..)` | Ignored by the channel layer |
+| `channel.notify` mail | The sender sends it to its join worker. Mail for an ended join reaches no process |
+| `Closed(topic, reason)` | The socket actor sends it to the worker. The worker runs `on_terminate`. The socket actor applies earlier results, applies the termination actions, and sends the terminal frame |
+
+If `on_terminate` panics, the core logs it and completes the close without
+its actions. The worker stops either way, so its sender delivers nothing
+afterwards. See [Crash behavior](/guides/channels/#crash-behavior).
+
+Each channel action maps to one core effect. The runtime preserves their order.
+An asynchronous presence effect can pause one socket while other sockets
+continue.
+
+## Message order
+
+Each socket actor processes its mailbox in sequence. The router processes
+index updates and broadcasts in its own mailbox. Tests must select the exact message and clear any queued test messages.
+
+## Source files
+
+- `packages/beryl_mist/src/beryl_mist.gleam`: connect, close, decode, and route frames
 - `src/beryl/runtime.gleam`: event dispatch, effect application, heartbeat timer
 - `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam`: decode/encode frames
-- `src/beryl/pubsub.gleam`: fan-out
+- `src/beryl/pubsub.gleam`: send broadcasts to subscribers

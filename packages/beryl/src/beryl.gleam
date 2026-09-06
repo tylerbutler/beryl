@@ -1,58 +1,64 @@
-//// Beryl - Type-safe real-time communication
+//// beryl: type-safe real-time communication
 ////
-//// A standalone Gleam library for building real-time applications on the BEAM.
-//// Provides app-side WebSocket dispatch, distributed presence tracking,
-//// pub/sub messaging, and topic groups.
+//// beryl is a standalone Gleam library for building real-time applications on
+//// the BEAM. It provides app-side WebSocket dispatch, distributed presence
+//// tracking, PubSub messaging, and topic groups.
 ////
 //// ## Features
 ////
-//// - **Sockets** — App-side dispatch: topic-based WebSocket messaging
+//// - **Sockets**: App-side dispatch with topic-based WebSocket messaging
 ////   routed by your `update` function (`beryl`, `beryl/socket`)
-//// - **PubSub** — Distributed publish/subscribe via Erlang `pg`
+//// - **PubSub**: Distributed publish/subscribe via Erlang `pg`
 ////   (`beryl/pubsub`)
-//// - **Presence** — Distributed presence tracking backed by a causal-context
+//// - **Presence**: Distributed presence tracking backed by a causal-context
 ////   CRDT (add-wins observed-remove set) (`beryl/presence`)
-//// - **Groups** — Named collections of topics for multi-topic broadcasting
+//// - **Groups**: Named collections of topics for multi-topic broadcasting
 ////   (`beryl/group`)
 ////
-//// ## Quick Start
+//// ## Quick start
 ////
 //// ```gleam
 //// import beryl
-//// import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next}
+//// import beryl/socket.{
+////   AcceptJoin, Binary, Broadcast, Closed, Info, Join, Message, Next,
+//// }
 //// import beryl/pubsub
 //// import beryl/wire
+//// import gleam/json
 //// import gleam/option
 //// import gleam/otp/static_supervisor
 ////
-//// pub fn main() {
+//// pub fn main() -> Nil {
 ////   // Optional: start PubSub for distributed messaging
-////   let ps = pubsub.start(pubsub.default_config())
+////   let pubsub_handle = pubsub.start(pubsub.default_config())
 ////
 ////   // Build the supervised system. The app supplies `init` (the per-socket
 ////   // model) and `update` (which routes every event by topic).
-////   let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-////   let assert Ok(#(sockets, spec)) =
+////   let config =
+////     beryl.config(wire.phoenix_codec())
+////     |> beryl.with_pubsub(pubsub_handle)
+////   let assert Ok(#(sockets, child_specification)) =
 ////     beryl.child_spec(
 ////       config,
 ////       init: fn(_info) { #(Nil, []) },
-////       update: fn(model, ev) {
-////         case ev {
+////       update: fn(model, event) {
+////         case event {
 ////           Join("room:" <> _, _payload, ref) ->
 ////             Next(model, [AcceptJoin(ref, option.None)])
 ////           Message(topic, "new_msg", payload, _ref) ->
 ////             Next(model, [Broadcast(topic, "new_msg", payload)])
-////           _ -> Next(model, [])
+////           Join(..) | Message(..) | Binary(..) | Closed(..) | Info(..) ->
+////             Next(model, [])
 ////         }
 ////       },
 ////     )
 ////   let assert Ok(_root) =
 ////     static_supervisor.new(static_supervisor.OneForOne)
-////     |> static_supervisor.add(spec)
+////     |> static_supervisor.add(child_specification)
 ////     |> static_supervisor.start()
 ////
 ////   // Broadcast to all subscribers of a topic
-////   beryl.broadcast(sockets, "room:lobby", "announce", payload)
+////   beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
 //// }
 //// ```
 
@@ -79,7 +85,7 @@ import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
 
-/// Logging verbosity for Beryl's internal loggers.
+/// Logging verbosity for beryl's internal loggers.
 ///
 /// The variants carry a `Level` suffix so `ErrorLevel` does not shadow the
 /// prelude's `Result` `Error` constructor when imported unqualified.
@@ -90,27 +96,27 @@ pub type LogLevel {
   ErrorLevel
 }
 
-/// Logging configuration for Beryl diagnostics.
+/// Logging configuration for beryl diagnostics.
 ///
-/// This type is opaque: construct it with `logging_config` and adjust it with
-/// the `with_*` builder functions so Beryl can add logging options without a
+/// This type is opaque. Construct it with `logging_config` and adjust it with
+/// the `with_*` functions. beryl can then add logging options without a
 /// breaking change.
 pub opaque type LoggingConfig {
   LoggingConfig(
-    /// Minimum level emitted by Beryl's namespaced loggers.
+    /// Minimum level emitted by beryl's namespaced loggers.
     level: LogLevel,
     /// Whether debug diagnostics may include bounded payload/frame previews.
     include_payloads: Bool,
-    /// Maximum number of bytes/characters included in payload previews.
+    /// Maximum number of grapheme clusters included in payload previews.
     payload_preview_bytes: Int,
   )
 }
 
 /// Configuration for an app-side socket runtime.
 ///
-/// This type is opaque: construct it with `config` and adjust it with the
-/// `with_*` builder functions. Keeping it opaque lets Beryl add configuration
-/// options in the future without a breaking change.
+/// This type is opaque. Construct it with `config` and adjust it with the
+/// `with_*` functions. beryl can then add configuration options without a
+/// breaking change.
 pub opaque type Config {
   Config(
     /// Wire codec used to decode inbound text and encode replies/pushes.
@@ -124,6 +130,10 @@ pub opaque type Config {
     max_connections_per_ip: Int,
     /// Max concurrent connections node-wide across all IPs (0 = unlimited)
     max_connections: Int,
+    /// Per-IP connection attempt rate limit (connections/sec, 0 = unlimited)
+    connection_rate_per_ip: Int,
+    /// Per-IP connection attempt burst capacity (0 = defaults to rate)
+    connection_burst_per_ip: Int,
     /// Optional PubSub for distributed broadcasts across nodes
     pubsub: Option(PubSub(json.Json)),
     /// Per-connection inbound frame rate limit (frames/sec, 0 = unlimited).
@@ -164,7 +174,7 @@ pub opaque type Config {
     max_joined_topics_per_socket: Int,
     /// Whether beryl emits `:telemetry` events (default: false).
     telemetry: Bool,
-    /// Logging configuration for Beryl diagnostics
+    /// Logging configuration for beryl diagnostics
     logging: LoggingConfig,
     /// Per-topic-pattern message rate limits (app-dispatch systems only).
     /// Ordered; the first matching pattern wins. `None` is an explicit
@@ -194,17 +204,18 @@ pub fn logging_config(
   )
 }
 
-/// Build a configuration with sensible defaults.
+/// Build a configuration with the default settings.
 ///
-/// A `codec` is required — beryl no longer ships an implicit Phoenix
-/// default. Pass `wire.phoenix_codec()` to keep Phoenix wire compatibility,
-/// or your own `Codec` for a custom framing.
+/// Pass `wire.phoenix_codec()` for Phoenix framing or a custom `Codec` for
+/// another framing.
 pub fn config(codec: codec.Codec) -> Config {
   Config(
     codec: codec,
     heartbeat_timeout_ms: 60_000,
     max_connections_per_ip: 0,
     max_connections: 0,
+    connection_rate_per_ip: 0,
+    connection_burst_per_ip: 0,
     pubsub: None,
     frame_rate: 0,
     frame_burst: 0,
@@ -231,9 +242,9 @@ pub fn config(codec: codec.Codec) -> Config {
 /// runtime built with `child_spec`.
 ///
 /// Patterns use the same syntax as topic routing (`"room:*"`,
-/// `"document:*:ops"`, `"*"`). Limits are consulted in the order they were
-/// added and the first matching pattern wins; topics matching no pattern
-/// fall back to the global `with_channel_rate` limit. The limiter applies
+/// `"document:*:ops"`, `"*"`). The runtime checks limits in the order they
+/// were added. The first matching pattern wins. Topics that match no pattern
+/// use the global `with_channel_rate` limit. The limiter applies
 /// only after a socket has joined the topic. A non-positive `per_second`
 /// explicitly disables limiting for matching topics, including any global
 /// channel limit, and allocates no bucket.
@@ -251,9 +262,9 @@ pub fn with_topic_rate(
   )
 }
 
-/// Add PubSub to a configuration for distributed broadcasts
-pub fn with_pubsub(config: Config, ps: PubSub(json.Json)) -> Config {
-  Config(..config, pubsub: Some(ps))
+/// Add PubSub to a configuration for distributed broadcasts.
+pub fn with_pubsub(config: Config, pubsub: PubSub(json.Json)) -> Config {
+  Config(..config, pubsub: Some(pubsub))
 }
 
 /// Attach the presence actor used by socket presence effects.
@@ -283,8 +294,8 @@ pub fn with_telemetry(config: Config) -> Config {
 
 /// Configure the server-side heartbeat staleness window.
 ///
-/// A socket that sends no heartbeat within `timeout_ms` is evicted. The
-/// runtime checks at half this window, so values below 2 are rejected by
+/// The runtime evicts a socket that sends no heartbeat within `timeout_ms`.
+/// It checks at half this window, so values below 2 are rejected by
 /// `validate_config` with `HeartbeatTimeoutTooLow`. The default is 60000 ms.
 pub fn with_heartbeat(config: Config, timeout_ms timeout_ms: Int) -> Config {
   Config(..config, heartbeat_timeout_ms: timeout_ms)
@@ -293,24 +304,24 @@ pub fn with_heartbeat(config: Config, timeout_ms timeout_ms: Int) -> Config {
 /// Configure the maximum number of concurrent connections allowed per client
 /// IP address.
 ///
-/// A value of 0 (the default) means unlimited. When a limit is set, a transport
-/// admits a new connection only while the peer is below the limit and rejects
-/// it otherwise; the slot is freed when the connection closes.
+/// A value of 0, the default, means unlimited. When a limit is set, a
+/// transport admits a new connection only while the peer is below the limit.
+/// It rejects other connections. The transport frees the slot when the
+/// connection closes.
 ///
 /// ## Which IP is used
 ///
 /// The limit is enforced on the **real socket peer IP** as reported by the
 /// transport (for the Mist transport, the address of the TCP connection).
-/// Beryl deliberately does **not** trust or parse forwarded headers such as
-/// `X-Forwarded-For`, because a client can set them freely and would otherwise
-/// be able to spoof its address and bypass this limit.
+/// beryl does **not** trust or parse forwarded headers such as
+/// `X-Forwarded-For`. A client can set these headers and spoof its address to
+/// bypass this limit.
 ///
-/// If Beryl runs behind a trusted reverse proxy or load balancer, every
+/// If beryl runs behind a trusted reverse proxy or load balancer, every
 /// connection shares the proxy's address, so a per-IP limit throttles all
 /// clients as a single IP. In that topology you must resolve the real client
-/// IP yourself at the proxy layer (for example, by enforcing limits there). A
-/// built-in trusted-proxy opt-in may be added in a future release. See the
-/// WebSocket transport guide for deployment guidance.
+/// IP yourself at the proxy layer, for example by enforcing limits there. See
+/// the WebSocket transport guide for deployment guidance.
 pub fn with_max_connections_per_ip(
   config: Config,
   max_connections max_connections: Int,
@@ -318,25 +329,48 @@ pub fn with_max_connections_per_ip(
   Config(..config, max_connections_per_ip: max_connections)
 }
 
+/// Configure a per-IP connection-attempt rate limit.
+///
+/// Each WebSocket upgrade attempt that passes the concurrent connection
+/// ceilings consumes one token before authentication and handshake setup. A
+/// non-positive `per_second` disables the limit. A `burst` of 0 uses
+/// `per_second` as the burst capacity.
+///
+/// Unlike per-connection frame and message buckets, this allowance is keyed by
+/// the real socket peer IP and lives in beryl's supervised connection limiter.
+/// Disconnecting or restarting the app runtime therefore does not refresh it.
+/// Idle IP buckets are removed once their allowance has fully refilled.
+///
+/// This uses the same peer IP and trusted-proxy caveats as
+/// `with_max_connections_per_ip`.
+pub fn with_connection_rate_per_ip(
+  config: Config,
+  per_second rate: Int,
+  burst burst: Int,
+) -> Config {
+  Config(..config, connection_rate_per_ip: rate, connection_burst_per_ip: burst)
+}
+
 /// Configure the maximum number of concurrent connections allowed across the
 /// whole node, regardless of source IP.
 ///
-/// A value of 0 (the default) means unlimited. When a limit is set, a transport
-/// admits a new connection only while the node is below the limit and rejects
-/// it (before allocating any long-lived per-socket runtime state) otherwise;
-/// the slot is freed when the connection closes, its process dies, or its
-/// handshake/setup fails. The check-and-increment is atomic inside the limiter
-/// actor, so a burst of concurrent opens cannot materially exceed the ceiling.
+/// A value of 0, the default, means unlimited. When a limit is set, a
+/// transport admits a connection only while the node is below the limit. It
+/// rejects other connections before it allocates long-lived per-socket state.
+/// The transport frees the slot when the connection closes, its process dies,
+/// or its handshake or setup fails. The limiter actor performs the check and
+/// increment atomically. Concurrent opens cannot materially exceed the
+/// ceiling.
 ///
 /// ## Composition with per-IP limits
 ///
-/// This node-wide ceiling composes with `with_max_connections_per_ip`: when
-/// both are set a connection must be under *both* limits to be admitted. The
-/// per-IP limit throttles any single abusive peer, while this global ceiling
+/// This node-wide ceiling works with `with_max_connections_per_ip`. When both
+/// are set, a connection must be under *both* limits. The per-IP limit
+/// throttles any single abusive peer, while this global ceiling
 /// bounds the node's total resource use so that many distinct source addresses
-/// (for example a botnet or IPv6 address rotation) still cannot exhaust the
-/// node's process, socket, and runtime budget — a case a per-IP limit alone
-/// cannot stop.
+/// (for example, a botnet or IPv6 address rotation) cannot exhaust the node's
+/// process, socket, and runtime budget. A per-IP limit alone cannot stop this
+/// case.
 ///
 /// ## Composition with external load balancers
 ///
@@ -344,7 +378,7 @@ pub fn with_max_connections_per_ip(
 /// load balancer, each node enforces its own limit independently, so the
 /// cluster's effective ceiling is roughly `max_connections × node_count`
 /// (subject to how the balancer distributes connections). Size the per-node
-/// value against a single node's capacity, and use the load balancer's own
+/// value against a single node's capacity. Use the load balancer's
 /// global connection/rate controls when you need a cluster-wide cap.
 pub fn with_max_connections(
   config: Config,
@@ -353,13 +387,15 @@ pub fn with_max_connections(
   Config(..config, max_connections: max_connections)
 }
 
-/// Configure Beryl's internal logging.
+/// Configure beryl's internal logging.
 pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
   Config(..config, logging: logging)
 }
 
 // nolint: unused_exports -- public logging builder intended for downstream users
-/// Configure the maximum payload/frame preview length for logs.
+/// Configure the maximum payload and frame preview length for logs.
+///
+/// The `bytes` argument is measured in grapheme clusters.
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
   bytes bytes: Int,
@@ -372,6 +408,8 @@ pub fn with_payload_preview_bytes(
 /// Every complete inbound text or binary frame consumes this independent
 /// bucket before decoding. Configure it alongside `with_message_rate` to
 /// combine edge shedding with a runtime cap on decoded non-join traffic.
+/// An over-rate heartbeat is shed before it can refresh the socket's heartbeat
+/// deadline, so a sustained flood is eventually closed by heartbeat eviction.
 pub fn with_frame_rate(
   config: Config,
   per_second rate: Int,
@@ -384,7 +422,9 @@ pub fn with_frame_rate(
 ///
 /// Joins use `with_join_rate`; decoded leaves, heartbeats, events, decoded
 /// binary, and raw `Binary` inputs consume this bucket. It is independent of
-/// `with_frame_rate`.
+/// `with_frame_rate`. An over-rate heartbeat does not refresh the socket's
+/// heartbeat deadline, so a sustained flood is eventually closed by heartbeat
+/// eviction. Leave enough rate and burst headroom for legitimate heartbeats.
 pub fn with_message_rate(
   config: Config,
   per_second rate: Int,
@@ -393,7 +433,7 @@ pub fn with_message_rate(
   Config(..config, message_rate: rate, message_burst: burst)
 }
 
-/// Configure per-socket join rate limiting
+/// Configure per-socket join rate limiting.
 pub fn with_join_rate(
   config: Config,
   per_second rate: Int,
@@ -453,19 +493,19 @@ pub fn with_max_event_length(
 // nolint: unused_exports -- enforced in sibling transport handler tests
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
-/// The limit is enforced **post-assembly**: the transport (Mist/gramps)
-/// buffers and assembles a complete frame first, and only then does Beryl
-/// measure it and close the connection if it exceeds `max_bytes`. This bounds
+/// beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
+/// buffers and assembles a complete frame first. beryl then measures it and
+/// closes the connection if it exceeds `max_bytes`. This bounds
 /// per-message processing cost (decode, routing, rate-limit accounting), but
 /// it does **not** by itself bound transport memory. A hostile client can
 /// declare a huge payload and stream it slowly, or send many fragmented
 /// continuation frames, and the transport's receive buffer grows before this
-/// check ever runs — so this setting alone does not stop a single connection
-/// from exhausting node memory.
+/// check runs. This setting alone does not stop one connection from exhausting
+/// node memory.
 ///
 /// For a true transport memory bound you **must** place an edge proxy or load
-/// balancer in front of Beryl and configure a WebSocket frame-size limit
-/// there (and a matching request/body size limit). Beryl's connection,
+/// balancer in front of beryl and configure a WebSocket frame-size limit
+/// there (and a matching request/body size limit). beryl's connection,
 /// frame-rate, and message-rate limits all run after frame assembly and do not
 /// mitigate this vector. See the README's "Security" section.
 ///
@@ -490,7 +530,7 @@ pub fn with_max_joined_topics_per_socket(
 /// Warn when an app-side socket runtime starts with every abuse control
 /// disabled.
 ///
-/// Beryl ships with rate and connection limits off (like Phoenix) because
+/// beryl ships with rate and connection limits off (like Phoenix) because
 /// no default is right for every deployment — but running that way in
 /// production leaves the server open to trivial floods, so the choice
 /// should be a visible one. Called while building the `child_spec` subtree.
@@ -499,6 +539,7 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
   let unprotected =
     config.max_connections_per_ip <= 0
     && config.max_connections <= 0
+    && config.connection_rate_per_ip <= 0
     && config.frame_rate <= 0
     && config.message_rate <= 0
     && config.join_rate <= 0
@@ -508,10 +549,7 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
   |> log.warn("No abuse controls configured", [
     #(
       "hint",
-      "rate and connection limits are all disabled; fine for development, "
-        <> "but for production configure with_frame_rate, with_message_rate, "
-        <> "with_join_rate, with_max_connections_per_ip, and "
-        <> "with_max_connections (see the production hardening guide)",
+      "rate and connection limits are all disabled; fine for development, but for production configure with_frame_rate, with_message_rate, with_join_rate, with_connection_rate_per_ip, with_max_connections_per_ip, and with_max_connections (see the production hardening guide)",
     ),
   ])
 }
@@ -533,16 +571,15 @@ pub fn frame_limits(channels: Sockets) -> Option(rate_limit.RateLimitConfig) {
   optional_limits(channels.config.frame_rate, channels.config.frame_burst)
 }
 
-/// Runtime system handle.
+/// A runtime system handle.
 ///
-/// This opaque handle is returned with the supervised subtree from
-/// `child_spec` and passed to broadcast, group, and transport functions. Its
-/// internals are intentionally hidden so Beryl can evolve them without
-/// breaking application code.
+/// `child_spec` returns this opaque handle with the supervised subtree. Pass
+/// it to broadcast, group, and transport functions. beryl hides its internals
+/// so they can change without breaking application code.
 ///
-/// The handle is deliberately non-generic: an app-side dispatch system is
-/// generic over the application's `model`/`msg`, but those types are sealed
-/// inside the monomorphic closures captured at construction time, so they
+/// The handle is non-generic. An app-side dispatch system is
+/// generic over the application's `model`/`message`, but those types are sealed
+/// inside monomorphic closures at construction time. They
 /// never appear in this handle or in any transport signature.
 pub opaque type Sockets {
   Sockets(
@@ -576,8 +613,19 @@ pub type AppHandle {
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
     runtime_owner: fn() -> Result(process.Pid, Nil),
-    stats: fn() -> Result(#(Int, Int, Int, Int), Bool),
+    /// Current pid of the supervised socket factory, if running (used by
+    /// tests).
+    socket_factory_owner: fn() -> Result(process.Pid, Nil),
+    stats: fn() -> Result(runtime.StatsSnapshot, StatsError),
   )
+}
+
+/// Why an internal runtime statistics request failed. Translated to the
+/// public error type by `beryl/snapshot`.
+@internal
+pub type StatsError {
+  StatsRuntimeUnavailable
+  StatsRequestTimedOut
 }
 
 /// The wire codec configured for this system.
@@ -591,77 +639,43 @@ pub fn channels_telemetry_enabled(channels: Sockets) -> Bool {
   channels.config.telemetry
 }
 
-/// A held per-IP connection slot returned by `acquire_connection_slot`.
-///
-/// Opaque so Beryl can restructure the connection limiter without breaking
-/// transport authors. Hold it for the lifetime of the connection and pass it
-/// to `release_connection_slot` when the connection closes. When no per-IP
-/// limit is configured the permit is an admit-everything placeholder and
-/// releasing it is a no-op.
-pub opaque type ConnectionPermit {
-  ConnectionPermit(inner: Option(connection_limit.Permit))
-}
-
-/// Try to acquire a configured per-IP connection slot for transports.
-///
-/// Transports call this before admitting a connection, passing the **real
-/// socket peer IP**. Do not pass a client-supplied address (e.g. from
-/// `X-Forwarded-For`): a spoofed value would defeat the per-IP limit. Returns
-/// `Ok(permit)` when admitted (release the permit with
-/// `release_connection_slot` on close; when no limit is configured every
-/// connection is admitted), or `Error(Nil)` when the peer is already at its
-/// limit.
-pub fn acquire_connection_slot(
+@internal
+pub fn configured_connection_limiter(
   channels: Sockets,
-  ip: String,
-) -> Result(ConnectionPermit, Nil) {
-  connection_limit.acquire_optional(channels.connection_limiter, ip)
-  |> result.map(ConnectionPermit)
+) -> Option(connection_limit.ConnectionLimiter) {
+  channels.connection_limiter
 }
 
-/// Bind an acquired connection slot to the calling process.
-///
-/// Call this from the long-lived connection process (e.g. the WebSocket
-/// handler's init) after `acquire_connection_slot`. The limiter monitors the
-/// caller so the slot is reclaimed even if the connection process dies
-/// without running its close path — otherwise crashed connections would
-/// permanently exhaust their IP's slots.
-pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
-  connection_limit.bind_optional(permit.inner)
-}
-
-/// Release a per-IP connection slot acquired by a transport.
-///
-/// Call from the process the permit was bound to (or from an unbound
-/// process when releasing before the connection was established).
-pub fn release_connection_slot(permit: ConnectionPermit) -> Nil {
-  connection_limit.release_optional(permit.inner)
-}
-
-/// Return the configured inbound frame size cap for transports.
-pub fn max_inbound_frame_bytes(channels: Sockets) -> Int {
+@internal
+pub fn configured_max_inbound_frame_bytes(channels: Sockets) -> Int {
   channels.config.max_inbound_frame_bytes
 }
 
 /// Why an eagerly validated `Config` was rejected before any process started.
 ///
-/// `child_spec` validates the configuration before allocating names or
-/// starting the runtime, so an invalid configuration fails fast instead of
-/// crashing a supervised child at init time.
+/// `child_spec` validates the configuration before it allocates names or
+/// starts the runtime. It returns an invalid configuration instead of
+/// crashing a supervised child during initialization.
 pub type ConfigError {
   /// `heartbeat_timeout_ms` was below the minimum. The server derives its
   /// staleness check interval as `heartbeat_timeout_ms / 2` (integer
-  /// division), so a timeout of 1 would round down to a check interval of 0 —
-  /// which disables heartbeat eviction entirely. The wrapped `Int` is the
+  /// division). A timeout of 1 would round down to a check interval of 0 and
+  /// disable heartbeat eviction. The wrapped `Int` is the
   /// smallest accepted timeout.
   HeartbeatTimeoutTooLow(minimum: Int)
   /// A per-topic-pattern rate limit used a pattern string that is not a valid
-  /// topic pattern. `pattern` is the offending pattern and `reason` describes
-  /// the problem.
-  InvalidTopicPattern(pattern: String, reason: String)
+  /// topic pattern. `pattern` is the offending pattern and `reason` is the
+  /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
+  /// error nested rather than flattened to a string, so it stays matchable.
+  ///
+  /// Match each
+  /// [`topic.TopicError`](https://beryl.tylerbutler.com/reference/api/beryl-topic/#topicerror)
+  /// variant explicitly. Adding a variant affects API compatibility and
+  /// requires updating exhaustive matches.
+  InvalidTopicPattern(pattern: String, reason: topic.TopicError)
 }
 
-/// Errors when stopping a Beryl system with [`stop`](#stop).
+/// Errors when stopping a beryl system with [`stop`](#stop).
 pub type StopError {
   /// The handle referred to a system that was not running: it was never
   /// started (for example, a `child_spec` handle whose supervisor was never
@@ -673,7 +687,7 @@ pub type StopError {
   StopTimeout
 }
 
-/// Eagerly validate a [`Config`](#config) without starting anything.
+/// Validate a [`Config`](#config) without starting any process.
 ///
 /// This checks that `heartbeat_timeout_ms` is at least 2 and that every
 /// per-topic rate-limit pattern is valid.
@@ -685,43 +699,35 @@ pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   list.try_each(config.topic_rates, fn(entry) {
     let #(pattern, _limits) = entry
     topic.validate_pattern(pattern)
-    |> result.map_error(fn(error) {
-      InvalidTopicPattern(pattern, topic_error_reason(error))
-    })
+    |> result.map_error(fn(error) { InvalidTopicPattern(pattern, error) })
   })
 }
 
-fn topic_error_reason(error: topic.TopicError) -> String {
-  case error {
-    topic.EmptyTopic -> "pattern cannot be empty"
-    topic.InvalidFormat(reason) -> reason
-  }
-}
-
-/// Stop a Beryl system.
+/// Stop a beryl system.
 ///
-/// This drains the supervised runtime and stops it, delivering `Closed` to
-/// every joined topic before closing each transport connection. Presence is
-/// application-owned and is not stopped by this function. The runtime is a
-/// `Transient` child, so it is not restarted after a graceful stop.
+/// This function drains and stops the supervised runtime. It delivers
+/// `Closed` to every joined topic before it closes each transport connection.
+/// Presence is application-owned and is not stopped by this function. The
+/// runtime is a `Transient` child, so it is not restarted after a graceful
+/// stop.
 ///
-/// `stop` is safe to call more than once and on a handle whose system was
-/// never started: in those cases it returns `Error(NotRunning)` rather than
-/// crashing. It returns `Error(StopTimeout)` if the app runtime does not
+/// You can call `stop` more than once or use a handle whose system never
+/// started. In these cases, it returns `Error(NotRunning)` and does not crash.
+/// It returns `Error(StopTimeout)` if the app runtime does not
 /// acknowledge the stop within the shutdown window. After a successful stop
 /// the handle should no longer be used.
 pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
-  // The app-side dispatch limiter is supervised inside the Beryl subtree,
+  // The app-side dispatch limiter is supervised inside the beryl subtree,
   // so it is not stopped directly here; it is torn down with the subtree.
   stop_app_subtree(sockets.app, sockets.connection_limiter)
 }
 
-/// Gracefully stop only the nested Beryl subtree and wait for it to
+/// Gracefully stop only the nested beryl subtree and wait for it to
 /// terminate.
 ///
 /// The runtime is the subtree's significant transient child, so draining and
 /// stopping it (normal termination) auto-shuts down the subtree supervisor and
-/// its sibling limiter. To honour "wait for only the Beryl subtree to
+/// its sibling limiter. To honour "wait for only the beryl subtree to
 /// terminate", the runtime and the optional limiter processes are monitored
 /// before the drain and their `Down` messages are awaited afterwards; the
 /// application's parent supervisor and sibling children are never touched.
@@ -807,9 +813,10 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
 
 /// Build the app-side dispatch supervision child specification.
 ///
-/// Add the returned specification to the application's own supervision tree.
-/// The configuration is validated eagerly, before the application's supervisor
-/// starts, rather than crashing a supervised child at init time.
+/// Add the returned specification to the application's supervision tree.
+/// This function validates the configuration before the application's
+/// supervisor starts. It returns an error instead of crashing a supervised
+/// child during initialization.
 ///
 /// The returned `Sockets` handle is name-backed and usable immediately, even
 /// before the supervision tree that owns the returned child specification is
@@ -820,29 +827,68 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
 /// ## Example
 ///
 /// ```gleam
-/// let assert Ok(#(sockets, spec)) =
+/// let assert Ok(#(sockets, child_specification)) =
 ///   beryl.child_spec(beryl.config(wire.phoenix_codec()), init:, update:)
 ///
 /// let assert Ok(_root) =
 ///   static_supervisor.new(static_supervisor.OneForOne)
-///   |> static_supervisor.add(spec)
+///   |> static_supervisor.add(child_specification)
 ///   |> static_supervisor.start()
 ///
 /// // `sockets` is usable once the tree above is running.
 /// ```
 pub fn child_spec(
   config: Config,
-  init init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
+  init init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update update: fn(model, socket.Input(message)) -> socket.Next(model),
 ) -> Result(
   #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
   ConfigError,
 ) {
-  use subtree <- result.map(build_app_subtree(config, init, update))
+  child_spec_with(config, init, update, None)
+}
+
+/// Build a socket system that runs one process per accepted topic.
+///
+/// This is the package-internal entry point for `channel.child_spec`. The
+/// socket actor calls `accepts` with the topic name before it starts a
+/// worker for a join: `Error(reason)` rejects the join with that reason and
+/// spawns no process. Each new topic worker runs `open` during
+/// initialization. The socket-level `init` and `update` functions return no
+/// effects. Each worker owns its joined topic. Thus, `update` receives only
+/// `Binary` frames and `Closed` events for workers that stopped
+/// unexpectedly.
+@internal
+pub fn worker_child_spec(
+  config: Config,
+  accepts accepts: fn(String) -> Result(Nil, json.Json),
+  open open: fn(socket.WorkerContext) -> socket.WorkerOutcome,
+) -> Result(
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
+) {
+  child_spec_with(
+    config,
+    fn(_info) { #(Nil, []) },
+    fn(_model, _input) { socket.Next(Nil, []) },
+    Some(runtime.WorkerOpener(accepts:, open:)),
+  )
+}
+
+fn child_spec_with(
+  config: Config,
+  init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(message)) -> socket.Next(model),
+  open_worker: Option(runtime.WorkerOpener),
+) -> Result(
+  #(Sockets, supervision.ChildSpecification(static_supervisor.Supervisor)),
+  ConfigError,
+) {
+  use subtree <- result.map(build_app_subtree(config, init, update, open_worker))
   // The subtree is a `Transient` child of the application's supervisor: a
   // graceful `beryl.stop` auto-shuts the subtree down with reason `shutdown`,
   // which a transient child treats as normal, so the parent does not restart
-  // Beryl. A genuine crash (subtree restart intensity exceeded) still gets
+  // beryl. A genuine crash (subtree restart intensity exceeded) still gets
   // restarted by the parent.
   #(
     subtree.handle,
@@ -855,7 +901,7 @@ pub fn child_spec(
 /// started yet.
 ///
 /// `handle` is the stable, non-generic `Sockets` returned to callers before
-/// startup. `start_supervisor` starts the nested Beryl subtree; the generic
+/// startup. `start_supervisor` starts the nested beryl subtree; the generic
 /// `init`/`update` closures are captured inside it, so `AppSubtree` itself
 /// stays non-generic.
 type AppSubtree {
@@ -873,25 +919,28 @@ type AppSubtree {
 /// the subtree starts: the runtime is reached through its registered name and
 /// the limiter through `connection_limit.from_name`, so the handle keeps
 /// working across supervised runtime restarts. There is no unsupervised app
-/// runtime — the runtime always runs under the nested Beryl supervisor, with
+/// runtime — the runtime always runs under the nested beryl supervisor, with
 /// the `init`/`update` closures captured in the child specification. A runtime
 /// crash therefore restarts dispatch automatically (per-socket state is
 /// dropped). The runtime child is `Transient` so a graceful `stop` is not
 /// resurrected.
 fn build_app_subtree(
   config: Config,
-  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
+  init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(message)) -> socket.Next(model),
+  open_worker: Option(runtime.WorkerOpener),
 ) -> Result(AppSubtree, ConfigError) {
   use _ <- result.map(validate_config(config))
   warn_if_unprotected(config)
 
   let runtime_name = process.new_name("beryl_runtime")
   let supervisor_name = process.new_name("beryl_app_supervisor")
+  let factory_name = process.new_name("beryl_socket_factory")
   let limiter_name = case
     connection_limit.enabled(
       config.max_connections_per_ip,
       config.max_connections,
+      config.connection_rate_per_ip,
     )
   {
     True -> Some(process.new_name("beryl_connection_limiter"))
@@ -905,6 +954,13 @@ fn build_app_subtree(
       app: app_handle(
         process.named_subject(runtime_name),
         process.named_subject(supervisor_name),
+        process.named_subject(factory_name),
+        fn(runtime_pid) {
+          runtime.start_socket_child(
+            factory: factory_name,
+            router_pid: runtime_pid,
+          )
+        },
       ),
     )
 
@@ -913,21 +969,53 @@ fn build_app_subtree(
       supervisor_name,
       stop_runtime(process.named_subject(runtime_name), _),
       fn() {
-        child_spec_supervisor(config, runtime_name, limiter_name, init, update)
+        child_spec_supervisor(
+          config,
+          runtime_name,
+          factory_name,
+          limiter_name,
+          init,
+          update,
+          open_worker,
+        )
       },
     )
   })
 }
 
-/// Start the nested Beryl subtree: a one-for-one supervisor owning the runtime
-/// as a transient child, with the optional connection limiter as a sibling.
+/// Start the nested beryl subtree: a one-for-one supervisor owning the socket
+/// factory and the runtime, with the optional connection limiter as a sibling.
+///
+/// The socket factory is added first, so the runtime is asked to shut down
+/// before it (children terminate in reverse start order). A graceful
+/// `beryl.stop` therefore drains every socket actor through the router before
+/// the factory tears the survivors down.
 fn child_spec_supervisor(
   config: Config,
-  runtime_name: process.Name(runtime.Msg(msg)),
+  runtime_name: process.Name(runtime.Message(message)),
+  factory_name: process.Name(runtime.SocketFactoryMessage(message)),
   limiter_name: Option(process.Name(connection_limit.Message)),
-  init: fn(socket.ConnectInfo(msg)) -> #(model, List(socket.Effect)),
-  update: fn(model, socket.Input(msg)) -> socket.Next(model, msg),
+  init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
+  update: fn(model, socket.Input(message)) -> socket.Next(model),
+  open_worker: Option(runtime.WorkerOpener),
 ) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
+  // Socket actors are `Temporary` children of this factory: it owns their
+  // process lifetime and forced shutdown, but never reconstructs the
+  // connection state a stopped socket owned. A factory crash therefore takes
+  // its whole socket population with it; the router's monitors sweep the
+  // routing and presence state and close the transports, and the `Permanent`
+  // factory restarts under the same name to accept new connections.
+  let factory_child =
+    runtime.socket_factory_child(
+      config: to_runtime_config(config),
+      init: init,
+      update: update,
+      open_worker: open_worker,
+      router: process.named_subject(runtime_name),
+      name: factory_name,
+    )
+    |> supervision.restart(supervision.Permanent)
+
   let runtime_child =
     supervision.worker(fn() {
       runtime.start_named(
@@ -940,7 +1028,7 @@ fn child_spec_supervisor(
     })
     |> supervision.restart(supervision.Transient)
     // The runtime is the subtree's significant child: a graceful stop (normal
-    // termination) auto-shuts down the whole Beryl subtree — including the
+    // termination) auto-shuts down the whole beryl subtree — including the
     // sibling limiter — while an abnormal crash is restarted in place under
     // the same name (dispatch resumes with fresh per-socket state).
     |> supervision.significant(True)
@@ -949,6 +1037,7 @@ fn child_spec_supervisor(
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
     |> static_supervisor.auto_shutdown(static_supervisor.AnySignificant)
+    |> static_supervisor.add(factory_child)
     |> static_supervisor.add(runtime_child)
 
   let builder = case limiter_name {
@@ -959,6 +1048,8 @@ fn child_spec_supervisor(
           connection_limit.start_named(
             config.max_connections_per_ip,
             config.max_connections,
+            config.connection_rate_per_ip,
+            config.connection_burst_per_ip,
             name,
           )
         }),
@@ -979,15 +1070,35 @@ fn await_admission(
   }
 }
 
+fn finish_admission(
+  started: actor.Started(Subject(runtime.Message(message))),
+  reply: Subject(Bool),
+  admission: runtime.AdmissionToken,
+) -> Bool {
+  // nolint: prefer_guard_clause -- bool.guard eagerly evaluates its return value, which would stop an admitted actor
+  case await_admission(reply, admission) {
+    True -> True
+    False -> {
+      // Stopping is safe whether the runtime refused the actor or the
+      // admission timed out after the actor had already stopped.
+      process.send(started.data, runtime.StopSocketActor)
+      False
+    }
+  }
+}
+
 /// Build the monomorphic closure record over a generic runtime. This is
-/// plain closure capture by a generic function — the `model`/`msg` types
+/// plain closure capture by a generic function — the `model`/`message` types
 /// are sealed in here and never appear in any public signature. The
 /// subject is name-backed, so the closures keep working across supervised
 /// runtime restarts; sends are owner-guarded so use during a restart
 /// window or after `stop` degrades to a no-op instead of a crash.
 fn app_handle(
-  subject: Subject(runtime.Msg(msg)),
+  subject: Subject(runtime.Message(message)),
   supervisor: Subject(app_supervisor.Message),
+  factory: Subject(runtime.SocketFactoryMessage(message)),
+  start_socket_actor: fn(process.Pid) ->
+    Result(actor.Started(Subject(runtime.Message(message))), actor.StartError),
 ) -> AppHandle {
   AppHandle(
     admit_socket: fn(
@@ -999,8 +1110,18 @@ fn app_handle(
       seed,
       close,
     ) {
-      case process.subject_owner(subject) {
-        Ok(current_owner) if current_owner == owner -> {
+      let owner_matches = case process.subject_owner(subject) {
+        Ok(current_owner) -> current_owner == owner
+        Error(Nil) -> False
+      }
+      use <- bool.guard(when: !owner_matches, return: False)
+
+      // Phase one of admission starts the actor as a socket-factory child.
+      // The app `init` runs later in the actor, so registration stays O(1).
+      case start_socket_actor(owner) {
+        // nolint: thrown_away_error -- admission exposes only success or failure; actor start details are not part of this transport callback
+        Error(_) -> False
+        Ok(started) -> {
           let reply = process.new_subject()
           let admission = runtime.new_admission_token()
           process.send(
@@ -1015,21 +1136,22 @@ fn app_handle(
               close,
               admission,
               reply,
+              started.data,
+              started.pid,
             ),
           )
-          await_admission(reply, admission)
+          finish_admission(started, reply, admission)
         }
-        _ -> False
       }
     },
     socket_disconnected: fn(socket_id) {
       send_runtime(subject, runtime.SocketDisconnected(socket_id))
     },
-    route_decoded: fn(socket_id, msg) {
-      send_runtime(subject, runtime.RouteDecoded(socket_id, msg))
+    route_decoded: fn(socket_id, message) {
+      send_runtime(subject, runtime.RouteDecoded(socket_id, message))
     },
-    route_decoded_binary: fn(socket_id, msg) {
-      send_runtime(subject, runtime.RouteDecodedBinary(socket_id, msg))
+    route_decoded_binary: fn(socket_id, message) {
+      send_runtime(subject, runtime.RouteDecodedBinary(socket_id, message))
     },
     route_binary: fn(socket_id, data) {
       send_runtime(subject, runtime.HandleBinary(socket_id, data))
@@ -1044,21 +1166,16 @@ fn app_handle(
     },
     stop: fn() { request_runtime_stop(supervisor) },
     runtime_owner: fn() { process.subject_owner(subject) },
+    socket_factory_owner: fn() { process.subject_owner(factory) },
     stats: fn() {
       case process.subject_owner(subject) {
-        Error(Nil) -> Error(False)
+        Error(Nil) -> Error(StatsRuntimeUnavailable)
         Ok(_) -> {
           let reply = process.new_subject()
           send_runtime(subject, runtime.GetStats(reply))
           case process.receive(reply, 1000) {
-            Error(Nil) -> Error(True)
-            Ok(snapshot) ->
-              Ok(#(
-                snapshot.connected_sockets,
-                snapshot.joined_socket_topic_pairs,
-                snapshot.active_topics,
-                snapshot.runtime_mailbox_length,
-              ))
+            Error(Nil) -> Error(StatsRequestTimedOut)
+            Ok(snapshot) -> Ok(snapshot)
           }
         }
       }
@@ -1077,12 +1194,12 @@ fn request_runtime_stop(
   process.send(supervisor, app_supervisor.StopRuntime(started, finished))
 
   case process.receive(started, 1000) {
-    Ok(False) -> internal.result_error(NotRunning)
+    Ok(app_supervisor.StopRejected) -> internal.result_error(NotRunning)
     Error(Nil) -> internal.result_error(StopTimeout)
-    Ok(True) ->
+    Ok(app_supervisor.StopAccepted) ->
       case process.receive(finished, 5000) {
-        Ok(True) -> Ok(Nil)
-        Ok(False) -> internal.result_error(StopTimeout)
+        Ok(app_supervisor.StopCompleted) -> Ok(Nil)
+        Ok(app_supervisor.StopIncomplete) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
   }
@@ -1098,8 +1215,8 @@ fn ensure_supervisor_running(
 }
 
 fn stop_runtime(
-  subject: Subject(runtime.Msg(msg)),
-  finished: Subject(Nil),
+  subject: Subject(runtime.Message(message)),
+  finished: Subject(app_supervisor.StopCompletion),
 ) -> Result(process.Monitor, Nil) {
   case process.subject_owner(subject) {
     Error(Nil) -> Error(Nil)
@@ -1114,8 +1231,8 @@ fn stop_runtime(
 /// Send to the runtime only while its name is registered, so handle use
 /// during a supervised restart window or after `stop` is a quiet no-op.
 fn send_runtime(
-  subject: Subject(runtime.Msg(msg)),
-  message: runtime.Msg(msg),
+  subject: Subject(runtime.Message(message)),
+  message: runtime.Message(message),
 ) -> Nil {
   case process.subject_owner(subject) {
     Ok(_) -> process.send(subject, message)
@@ -1132,6 +1249,12 @@ pub fn app_runtime_pid(channels: Sockets) -> Result(process.Pid, Nil) {
 @internal
 pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
   app_limiter_owner(channels.connection_limiter)
+}
+
+/// The pid of the app subtree's socket factory supervisor, if running.
+@internal
+pub fn app_socket_factory_pid(channels: Sockets) -> Result(process.Pid, Nil) {
+  channels.app.socket_factory_owner()
 }
 
 fn to_runtime_config(config: Config) -> runtime.Config {
@@ -1162,7 +1285,7 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
       DebugLevel -> internal.Debug
       InfoLevel -> internal.Info
       WarnLevel -> internal.Warn
-      ErrorLevel -> internal.Err
+      ErrorLevel -> internal.ErrorLevel
     },
     include_payloads: logging.include_payloads,
     payload_preview_bytes: logging.payload_preview_bytes,
@@ -1179,10 +1302,10 @@ pub fn app_dispatch(sockets: Sockets) -> AppHandle {
   sockets.app
 }
 
-/// Broadcast a message to all subscribers of a topic
+/// Broadcast a message to all subscribers of a topic.
 ///
-/// This sends the message to all sockets subscribed to the topic. When the
-/// system was started with PubSub, the broadcast is also distributed to
+/// This function sends the message to all sockets subscribed to the topic.
+/// When the system was started with PubSub, it also sends the broadcast to
 /// subscribers on other nodes.
 ///
 /// ## Example
@@ -1230,7 +1353,7 @@ pub fn broadcast_presence_diff(
   )
 }
 
-/// Broadcast a message to all subscribers except one socket
+/// Broadcast a message to all subscribers except one socket.
 ///
 /// Useful for broadcasting a message to everyone except the sender.
 /// When PubSub is configured, the excluded socket ID is preserved across

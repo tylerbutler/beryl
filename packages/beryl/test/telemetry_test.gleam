@@ -1,22 +1,20 @@
 import beryl/telemetry
-import gleam/dynamic.{type Dynamic}
-import gleeunit
 import gleeunit/should
 
+/// Opaque handle to an attached :telemetry handler, produced and consumed
+/// only by the test FFI — never inspected from Gleam.
+type TelemetryHandle
+
 @external(erlang, "beryl_telemetry_test_ffi", "attach_socket_connected")
-fn attach_socket_connected() -> Dynamic
+fn attach_socket_connected() -> TelemetryHandle
 
 @external(erlang, "beryl_telemetry_test_ffi", "detach")
-fn detach(handler_id: Dynamic) -> Nil
+fn detach(handler_id: TelemetryHandle) -> Nil
 
 @external(erlang, "beryl_telemetry_test_ffi", "received_socket_connected")
 fn received_socket_connected() -> Bool
 
-pub fn main() {
-  gleeunit.main()
-}
-
-pub fn telemetry_clock_returns_non_negative_duration_test() {
+pub fn telemetry_clock_returns_non_negative_duration_test() -> Nil {
   let started_at = telemetry.start_time()
 
   telemetry.duration_since(started_at)
@@ -24,13 +22,13 @@ pub fn telemetry_clock_returns_non_negative_duration_test() {
   |> should.be_true
 }
 
-pub fn mailbox_length_is_non_negative_test() {
+pub fn mailbox_length_is_non_negative_test() -> Nil {
   telemetry.mailbox_length()
   |> fn(length) { length >= 0 }
   |> should.be_true
 }
 
-pub fn enabled_emit_executes_typed_event_test() {
+pub fn enabled_emit_executes_typed_event_test() -> Nil {
   let handler_id = attach_socket_connected()
   telemetry.emit(True, telemetry.SocketConnected)
   |> should.equal(Nil)
@@ -41,7 +39,7 @@ pub fn enabled_emit_executes_typed_event_test() {
   |> should.be_true
 }
 
-pub fn disabled_emit_does_not_execute_event_test() {
+pub fn disabled_emit_does_not_execute_event_test() -> Nil {
   let handler_id = attach_socket_connected()
   telemetry.emit(False, telemetry.SocketConnected)
   let received = received_socket_connected()

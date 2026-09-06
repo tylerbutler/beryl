@@ -1,88 +1,35 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/internal
-import beryl/socket.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/dict
-import gleam/dynamic
-import gleam/dynamic/decode
-import gleam/erlang/atom
-import gleam/erlang/process
 import gleam/option
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
-
-/// A captured palabres log forwarded by `beryl_log_capture`. The field order
-/// matches the `{captured_log, Message, Metadata}` tuple the handler sends.
-type CapturedLog {
-  CapturedLog(message: String, metadata: dict.Dict(String, String))
-}
-
-@external(erlang, "beryl_log_capture", "start")
-fn start_capture(pid: process.Pid) -> Nil
-
-@external(erlang, "beryl_log_capture", "stop")
-fn stop_capture() -> Nil
-
-fn captured_decoder() -> decode.Decoder(CapturedLog) {
-  use message <- decode.field(1, decode.string)
-  use metadata <- decode.field(2, decode.dict(decode.string, decode.string))
-  decode.success(CapturedLog(message:, metadata:))
-}
-
-fn coerce_captured(value: dynamic.Dynamic) -> CapturedLog {
-  case decode.run(value, captured_decoder()) {
-    Ok(captured) -> captured
-    Error(_) -> CapturedLog(message: "", metadata: dict.new())
-  }
-}
-
-fn captured_selector() -> process.Selector(CapturedLog) {
-  process.new_selector()
-  |> process.select_record(atom.create("captured_log"), 2, coerce_captured)
-}
+import test_helper.{type CapturedLog}
 
 fn get_metadata(captured: CapturedLog, key: String) -> Result(String, Nil) {
   dict.get(captured.metadata, key)
 }
 
-/// Begin capturing into the current process and discard any logs left in the
-/// mailbox by a previous test (gleeunit runs tests in a shared process).
-fn begin_capture() -> process.Selector(CapturedLog) {
-  start_capture(process.self())
-  let selector = captured_selector()
-  drain(selector)
-  selector
-}
-
-fn drain(selector: process.Selector(CapturedLog)) -> Nil {
-  case process.selector_receive(selector, 0) {
-    Ok(_) -> drain(selector)
-    Error(Nil) -> Nil
-  }
-}
-
 /// A start_app system that accepts every join, with the given config.
 fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       config,
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )
   channels
 }
 
-pub fn start_app_accepts_debug_logging_config_test() {
+pub fn start_app_accepts_debug_logging_config_test() -> Nil {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
@@ -92,9 +39,10 @@ pub fn start_app_accepts_debug_logging_config_test() {
 
   let channels = start_accepting_app(config)
   let _ = beryl.stop(channels)
+  Nil
 }
 
-pub fn preview_metadata_omits_payloads_by_default_test() {
+pub fn preview_metadata_omits_payloads_by_default_test() -> Nil {
   let logging =
     internal.LoggingConfig(
       level: internal.Debug,
@@ -110,7 +58,7 @@ pub fn preview_metadata_omits_payloads_by_default_test() {
   |> should.equal([])
 }
 
-pub fn preview_metadata_bounds_payloads_when_enabled_test() {
+pub fn preview_metadata_bounds_payloads_when_enabled_test() -> Nil {
   let logging =
     internal.LoggingConfig(
       level: internal.Debug,
@@ -122,8 +70,8 @@ pub fn preview_metadata_bounds_payloads_when_enabled_test() {
   |> should.equal([#("payload_preview", "abc")])
 }
 
-pub fn debug_join_log_carries_metadata_without_payload_preview_test() {
-  let selector = begin_capture()
+pub fn debug_join_log_carries_metadata_without_payload_preview_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let config =
     beryl.config(wire.phoenix_codec())
@@ -133,11 +81,12 @@ pub fn debug_join_log_carries_metadata_without_payload_preview_test() {
     ))
   let channels = start_accepting_app(config)
 
-  let frames = h.connect(channels, "logging-socket")
-  h.join(channels, "logging-socket", "room:lobby", "j1", "j1")
-  let _join_reply = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "logging-socket")
+  app_test_helper.join(channels, "logging-socket", "room:lobby", "j1", "j1")
+  let _join_reply = app_test_helper.recv(frames)
 
-  let assert Ok(captured) = receive_log(selector, "Join delivered", 20)
+  let assert Ok(captured) =
+    test_helper.receive_log(selector, "Join delivered", 20)
   get_metadata(captured, "logger")
   |> should.equal(Ok("beryl.runtime"))
   get_metadata(captured, "socket_id")
@@ -148,41 +97,42 @@ pub fn debug_join_log_carries_metadata_without_payload_preview_test() {
   |> should.equal(Error(Nil))
 
   let _ = beryl.stop(channels)
-  stop_capture()
+  test_helper.stop_capture()
 }
 
-pub fn socket_connected_is_logged_with_socket_id_test() {
-  let selector = begin_capture()
+pub fn socket_connected_is_logged_with_socket_id_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let channels =
     start_accepting_app(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_message_rate(per_second: 100, burst: 200),
     )
-  let _frames = h.connect(channels, "log-connect-socket")
+  let _frames = app_test_helper.connect(channels, "log-connect-socket")
 
-  let assert Ok(captured) = receive_log(selector, "Socket connected", 20)
+  let assert Ok(captured) =
+    test_helper.receive_log(selector, "Socket connected", 20)
   get_metadata(captured, "socket_id")
   |> should.equal(Ok("log-connect-socket"))
 
   let _ = beryl.stop(channels)
-  stop_capture()
+  test_helper.stop_capture()
 }
 
-pub fn start_app_warns_when_no_abuse_controls_configured_test() {
-  let selector = begin_capture()
+pub fn start_app_warns_when_no_abuse_controls_configured_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let channels = start_accepting_app(beryl.config(wire.phoenix_codec()))
 
-  receive_log(selector, "No abuse controls configured", 10)
+  test_helper.receive_log(selector, "No abuse controls configured", 10)
   |> should.be_ok
 
   let _ = beryl.stop(channels)
-  stop_capture()
+  test_helper.stop_capture()
 }
 
-pub fn start_app_does_not_warn_when_a_limit_is_configured_test() {
-  let selector = begin_capture()
+pub fn start_app_does_not_warn_when_a_limit_is_configured_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let channels =
     start_accepting_app(
@@ -190,28 +140,9 @@ pub fn start_app_does_not_warn_when_a_limit_is_configured_test() {
       |> beryl.with_message_rate(per_second: 100, burst: 200),
     )
 
-  receive_log(selector, "No abuse controls configured", 2)
+  test_helper.receive_log(selector, "No abuse controls configured", 2)
   |> should.be_error
 
   let _ = beryl.stop(channels)
-  stop_capture()
-}
-
-fn receive_log(
-  selector: process.Selector(CapturedLog),
-  message: String,
-  attempts: Int,
-) -> Result(CapturedLog, Nil) {
-  case attempts <= 0 {
-    True -> Error(Nil)
-    False ->
-      case process.selector_receive(selector, 500) {
-        Ok(captured) ->
-          case captured.message == message {
-            True -> Ok(captured)
-            False -> receive_log(selector, message, attempts - 1)
-          }
-        Error(Nil) -> Error(Nil)
-      }
-  }
+  test_helper.stop_capture()
 }

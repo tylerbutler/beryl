@@ -1,29 +1,53 @@
-//// Presence - Distributed presence tracking backed by a CRDT
+//// Distributed presence tracking with a CRDT
 ////
-//// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
-//// - Handles track/untrack calls
+//// This module wraps the pure `lattice_presence/presence_state` CRDT in an
+//// OTP actor that:
+//// - Handles track/update/untrack calls
+//// - Publishes an actor-owned ETS read model
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state from PubSub and merges it internally
-//// - Invokes `on_diff` callback when merges produce non-empty diffs
+//// - Invokes `on_diff` when local changes or merges produce non-empty diffs
 ////
-//// Presence is independent of the Beryl runtime. Start the actor from a
-//// long-lived application process and include it in the application's
-//// supervision arrangement as appropriate.
+//// Presence is independent of the beryl runtime and runs under your
+//// application's supervision tree.
+////
+//// ## Read consistency
+////
+//// The presence actor is the only writer to a protected ETS read model.
+//// It atomically replaces each topic's snapshot after completing a mutation,
+//// merge, or prune. Synchronous mutations publish before replying, and
+//// runtime mutations acknowledge only after publishing, so a later read
+//// observes the completed mutation without waiting on the actor mailbox.
+////
+//// A read concurrent with a queued or in-progress mutation can observe the
+//// previous or new complete snapshot. Reads of separate topics do not form
+//// one atomic view. If the actor stops, it also destroys the table, and reads
+//// return `Error(Nil)` instead of stale data.
 ////
 //// ## Example
 ////
 //// ```gleam
-//// let ps = pubsub.start(pubsub.default_config())
+//// let pubsub_handle = pubsub.start(pubsub.default_config())
 //// let config =
 ////   presence.default_config("node1")
-////   |> presence.with_pubsub(ps)
+////   |> presence.with_pubsub(pubsub_handle)
 ////   |> presence.with_broadcast_interval(1500)
-//// let assert Ok(p) = presence.start(config)
-//// let ref = presence.track(p, "room:lobby", "user:1", "socket-1", meta)
-//// let entries = presence.list(p, "room:lobby")
+//// let #(presence_handle, presence_specification) = presence.child_spec(config)
+//// let assert Ok(_root) =
+////   static_supervisor.new(static_supervisor.OneForOne)
+////   |> static_supervisor.add(presence_specification)
+////   |> static_supervisor.start()
+//// let ref =
+////   presence.track(
+////     presence_handle,
+////     "room:lobby",
+////     "user:1",
+////     "socket-1",
+////     meta,
+////   )
+//// let assert Ok(entries) = presence.list(presence_handle, "room:lobby")
 //// ```
 
-import beryl/error as beryl_error
 import beryl/internal
 import beryl/log
 import beryl/pubsub.{type PubSub}
@@ -32,14 +56,14 @@ import gleam/bit_array
 import gleam/bool
 import gleam/crypto
 import gleam/dict.{type Dict}
-import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode as gdecode
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/result
 import gleam/set.{type Set}
 import gleam/string
@@ -53,27 +77,26 @@ const sync_event = "presence_sync"
 
 /// A running Presence instance.
 ///
-/// This handle is intentionally opaque so callers cannot forge actor subjects
-/// or depend on the runtime representation. It carries both the actor's
-/// subject (for the still-synchronous `track`/`untrack`/`untrack_all`) and a
-/// reference to the actor-owned ETS read model that `list`, `get_by_key`,
-/// and `count` read directly, without going through the actor mailbox.
+/// This handle is opaque. Callers cannot forge actor subjects or depend on
+/// the runtime representation. It contains the actor's stable registered
+/// subject and the name of its actor-owned ETS read model.
 ///
 /// ## Node affinity
 ///
-/// `list`, `get_by_key`, and `count` read the ETS read model directly
-/// in-process, which only works for ETS tables local to the calling node.
-/// Do not send this handle to, or otherwise use it from, a process on a
-/// different BEAM node: `track`/`untrack`/`untrack_all` would still reach
-/// the owning actor over distribution (they go through its `Subject`), but
-/// the read functions would be looking up a table reference that names
-/// nothing on that node (or, if the identifier happens to collide with an
-/// unrelated local table, something else entirely), so they would panic or
-/// read the wrong data. Keep a Presence handle on the node where `start`
-/// created it, and use PubSub replication (`with_pubsub`) to share presence
-/// state across nodes instead.
+/// The stable registered subject and ETS read model are resolved on the
+/// caller's node. Keep a `Presence` handle on the node where its child
+/// specification runs. From another BEAM node, synchronous mutations
+/// (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
+/// actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+/// return `Error(Nil)` because the read model is unavailable. Use PubSub
+/// replication (`with_pubsub`) to share presence state across nodes instead of
+/// moving the handle itself.
 pub opaque type Presence {
-  Presence(subject: Subject(Message), read_table: Dynamic)
+  Presence(
+    subject: Subject(Message),
+    read_name: process.Name(Message),
+    call_timeout_ms: Int,
+  )
 }
 
 type State =
@@ -81,8 +104,8 @@ type State =
 
 /// An opaque diff representing presence joins and leaves grouped by topic.
 ///
-/// This is passed to `Config.on_diff` and accepted by
-/// `beryl.broadcast_presence_diff`.
+/// beryl passes this value to `Config.on_diff`.
+/// `beryl.broadcast_presence_diff` also accepts it.
 pub opaque type Diff {
   Diff(
     joins: Dict(String, List(PresenceEntry)),
@@ -92,16 +115,16 @@ pub opaque type Diff {
 
 /// A presence entry returned from queries and diff accessors.
 ///
-/// This type is intentionally transparent so callers can inspect query results
-/// and construct entries for `diff`.
+/// This type is transparent. Callers can inspect query results and construct
+/// entries for `diff`.
 pub type PresenceEntry {
   PresenceEntry(session_id: String, key: String, meta: json.Json)
 }
 
 /// Build a presence diff from topic-grouped joins and leaves.
 ///
-/// Most applications receive diffs from `Config.on_diff`; this helper is for
-/// callers that need to construct a diff to pass to `beryl.broadcast_presence_diff`.
+/// Most applications receive diffs from `Config.on_diff`. Use this function
+/// to construct a diff for `beryl.broadcast_presence_diff`.
 pub fn diff(
   joins joins: List(#(String, List(PresenceEntry))),
   leaves leaves: List(#(String, List(PresenceEntry))),
@@ -115,13 +138,13 @@ pub fn diff_topics(diff: Diff) -> List(String) {
   |> unique_strings(set.new(), [])
 }
 
-/// Get presence joins for a topic in this diff.
+/// Return presence joins for a topic in this diff.
 pub fn diff_joins(diff: Diff, topic: String) -> List(PresenceEntry) {
   dict.get(diff.joins, topic)
   |> result.unwrap([])
 }
 
-/// Get presence leaves for a topic in this diff.
+/// Return presence leaves for a topic in this diff.
 pub fn diff_leaves(diff: Diff, topic: String) -> List(PresenceEntry) {
   dict.get(diff.leaves, topic)
   |> result.unwrap([])
@@ -160,8 +183,8 @@ fn state_entries_to_presence_entries(
     #(
       topic,
       list.map(topic_entries, fn(topic_entry) {
-        let #(key, pid, meta) = topic_entry
-        PresenceEntry(session_id: pid, key: key, meta: meta)
+        let #(key, session_id, meta) = topic_entry
+        PresenceEntry(session_id: session_id, key: key, meta: meta)
       }),
     )
   })
@@ -170,19 +193,20 @@ fn state_entries_to_presence_entries(
 
 /// The replication envelope carried over PubSub between presence replicas.
 ///
-/// Sent as a native BEAM term (no JSON encoding), so `v` is presence's own
-/// version guard: a node that does not recognise `v` discards the message
+/// Sent as a native BEAM term (no JSON encoding), so `version` is presence's own
+/// version guard: a node that does not recognise `version` discards the message
 /// rather than risk interpreting a shape it wasn't built to read. Bump it if
 /// this envelope's fields ever need to change.
+/// The native tuple field order is version, sender, state.
 @internal
 pub type SyncPayload {
-  SyncPayload(v: Int, sender: String, state: state.State)
+  SyncPayload(version: Int, sender: String, state: state.State)
 }
 
 /// Configuration for starting presence.
 ///
-/// Build configs with `default_config` and the `with_*` functions so beryl can
-/// add future options without exposing record fields as public API.
+/// Build configurations with `default_config` and the `with_*` functions.
+/// beryl can then add options without exposing record fields as public API.
 pub opaque type Config {
   Config(
     /// PubSub instance for cross-node replication
@@ -194,8 +218,11 @@ pub opaque type Config {
     /// of the same base is pruned automatically. Two *live* nodes sharing
     /// a base will continuously prune each other — do not do that.
     replica: String,
-    /// How often to broadcast state for replication (ms). 0 = disabled.
+    /// How often to broadcast state for replication (ms). Non-positive values
+    /// disable periodic broadcasts.
     broadcast_interval_ms: Int,
+    /// Timeout for synchronous presence mutations (ms).
+    call_timeout_ms: Int,
     /// Optional callback invoked immediately when a merge produces a non-empty diff.
     /// This ensures no diffs are lost when multiple merges occur in rapid succession.
     /// Runs synchronously on the actor, strictly before the read model is
@@ -204,26 +231,31 @@ pub opaque type Config {
   )
 }
 
-/// Errors from presence operations
-pub type PresenceError {
-  /// The presence actor failed to start.
-  PresenceStartFailed(beryl_error.StartFailure)
+/// Errors from an update to a tracked presence.
+pub type PresenceUpdateError {
+  /// The ref is unknown, already removed, or was not returned by `track`.
+  UnknownRef(ref: String)
 }
 
-/// Messages the presence actor handles
+/// Messages that the presence actor handles.
 pub opaque type Message {
   Track(
     topic: String,
     key: String,
-    pid: String,
+    session_id: String,
     meta: json.Json,
     reply: Subject(String),
   )
+  Update(
+    ref: String,
+    meta: json.Json,
+    reply: Subject(Result(String, PresenceUpdateError)),
+  )
   Untrack(ref: String, reply: Subject(Nil))
-  UntrackAll(pid: String, reply: Subject(Nil))
+  UntrackAll(session_id: String, reply: Subject(Nil))
   /// Asynchronous track used by the runtime's effect interpreter. The new
   /// entry supersedes every runtime-owned ref this actor still holds for the
-  /// same logical `(pid, topic, key)` — `replace`, when the caller knows the
+  /// same logical `(session_id, topic, key)` — `replace`, when the caller knows the
   /// previous ref, plus any runtime ref the caller has lost track of (an
   /// earlier operation it timed out on, say). Public synchronous refs remain
   /// independently owned. All of that happens in this one actor turn, so the
@@ -232,11 +264,11 @@ pub opaque type Message {
   TrackAsync(
     topic: String,
     key: String,
-    pid: String,
+    session_id: String,
     meta: json.Json,
     replace: Option(String),
     tag: String,
-    op_id: Int,
+    operation_id: Int,
     reply: Subject(MutationAck),
   )
   /// Asynchronous batch untrack by ref, used by the runtime for both the
@@ -246,26 +278,26 @@ pub opaque type Message {
   UntrackAsync(
     refs: List(String),
     tag: String,
-    op_id: Int,
+    operation_id: Int,
     reply: Subject(MutationAck),
   )
   /// Fire-and-forget runtime-owned session sweep, used while the runtime is
   /// shutting down and unable to wait for an acknowledgement. Public refs
   /// for the same session remain independently owned.
-  UntrackRuntimeAllAsync(pid: String)
+  UntrackRuntimeAllAsync(session_id: String)
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
-  RemoteSync(pubsub_msg: pubsub.Message(SyncPayload))
+  RemoteSync(pubsub_message: pubsub.Message(SyncPayload))
 }
 
 /// Acknowledgement of an asynchronous presence mutation.
 ///
-/// `tag` and `op_id` are echoed back verbatim from the request so the
+/// `tag` and `operation_id` are echoed back verbatim from the request so the
 /// caller can route the acknowledgement to the right waiter and discard
 /// acknowledgements for operations it has already given up on.
 @internal
 pub type MutationAck {
-  MutationAck(tag: String, op_id: Int, outcome: MutationOutcome)
+  MutationAck(tag: String, operation_id: Int, outcome: MutationOutcome)
 }
 
 /// What an acknowledged mutation produced.
@@ -323,34 +355,41 @@ type CountLookup {
   CountTableGone
 }
 
+/// The actor-owned ETS read-model table reference. Opaque phantom type:
+/// values are only created and consumed by `beryl_presence_read_ffi`.
+type ReadTable
+
 @external(erlang, "beryl_presence_read_ffi", "new_table")
-fn ffi_new_read_table() -> Dynamic
+fn ffi_new_read_table(name: process.Name(Message)) -> ReadTable
 
 @external(erlang, "beryl_presence_read_ffi", "put_topic")
 fn ffi_put_topic(
-  table: Dynamic,
+  table: ReadTable,
   topic: String,
   count: Int,
   entries: List(PresenceEntry),
 ) -> Nil
 
 @external(erlang, "beryl_presence_read_ffi", "delete_topic")
-fn ffi_delete_topic(table: Dynamic, topic: String) -> Nil
+fn ffi_delete_topic(table: ReadTable, topic: String) -> Nil
 
 @external(erlang, "beryl_presence_read_ffi", "get_topic")
-fn ffi_get_topic(table: Dynamic, topic: String) -> TopicLookup
+fn ffi_get_topic(name: process.Name(Message), topic: String) -> TopicLookup
 
 @external(erlang, "beryl_presence_read_ffi", "get_count")
-fn ffi_get_count(table: Dynamic, topic: String) -> CountLookup
+fn ffi_get_count(name: process.Name(Message), topic: String) -> CountLookup
 
 /// Materialize a topic's current entries (and their count) from `crdt` into
 /// the read model, or remove its snapshot entirely once it has no entries
 /// left, so a missing topic is only ever "no snapshot recorded", never a
 /// stale empty leftover.
-fn publish_topic(table: Dynamic, crdt: State, topic: String) -> Nil {
+fn publish_topic(table: ReadTable, crdt: State, topic: String) -> Nil {
   let entries =
     state.get_by_topic(crdt, topic)
-    |> list.map(fn(t) { PresenceEntry(session_id: t.0, key: t.1, meta: t.2) })
+    |> list.map(fn(entry) {
+      let #(session_id, key, meta) = entry
+      PresenceEntry(session_id: session_id, key: key, meta: meta)
+    })
   case entries {
     [] -> ffi_delete_topic(table, topic)
     _ -> ffi_put_topic(table, topic, list.length(entries), entries)
@@ -360,24 +399,24 @@ fn publish_topic(table: Dynamic, crdt: State, topic: String) -> Nil {
 /// Republish every topic named in `topics` from `crdt`. Used after
 /// operations (remote merges, replica pruning) that can touch several
 /// topics at once.
-fn publish_topics(table: Dynamic, crdt: State, topics: List(String)) -> Nil {
+fn publish_topics(table: ReadTable, crdt: State, topics: List(String)) -> Nil {
   list.each(topics, fn(topic) { publish_topic(table, crdt, topic) })
 }
 
 /// Read a topic's materialized entries directly from the read model.
 ///
-/// Panics if the read model table is unavailable -- either because the
-/// presence actor that owns it is no longer running, or because this
-/// handle is being used from a process on a different BEAM node than the
-/// one `start` was called on (see the node affinity note on `Presence`).
-fn read_entries(presence: Presence, topic: String) -> List(PresenceEntry) {
-  case ffi_get_topic(presence.read_table, topic) {
-    Found(entries) -> entries
-    NotFound -> []
-    TableGone -> {
-      // nolint: avoid_panic -- read storage being gone means either the owning actor died or this handle is being read from another node; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
-      panic as "presence read storage is unavailable: either the presence actor is not running, or this handle was used from a process on another BEAM node than the one it was started on"
-    }
+/// Returns `Error(Nil)` if the read model table is unavailable -- either
+/// because the presence actor that owns it is no longer running, or because
+/// this handle is being used from a process on a different BEAM node than
+/// the one the child was started on (see the node affinity note on `Presence`).
+fn read_entries(
+  presence: Presence,
+  topic: String,
+) -> Result(List(PresenceEntry), Nil) {
+  case ffi_get_topic(presence.read_name, topic) {
+    Found(entries) -> Ok(entries)
+    NotFound -> Ok([])
+    TableGone -> Error(Nil)
   }
 }
 
@@ -414,21 +453,22 @@ type ActorState {
     refs: Dict(String, TrackedPresence),
     /// The ETS table backing the read model that `list`, `get_by_key`, and
     /// `count` read directly. Owned by this actor process; see `publish_topic`.
-    read_table: Dynamic,
+    read_table: ReadTable,
   )
 }
 
 /// Default configuration (no PubSub).
 ///
-/// The broadcast interval defaults to 1500 ms so that adding `with_pubsub`
-/// yields working two-way replication out of the box; without PubSub the
-/// interval is unused. Use `with_broadcast_interval(0)` to disable periodic
-/// broadcasts and control replication manually.
+/// The broadcast interval defaults to 1500 ms. Adding `with_pubsub` enables
+/// periodic outbound broadcasts and inbound replication. Without PubSub, the
+/// interval is unused. Use a non-positive interval to disable periodic
+/// outbound broadcasts.
 pub fn default_config(replica: String) -> Config {
   Config(
     pubsub: None,
     replica: replica,
     broadcast_interval_ms: 1500,
+    call_timeout_ms: 5000,
     on_diff: None,
   )
 }
@@ -440,37 +480,45 @@ pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
 
 /// Set how often presence state is broadcast for replication.
 ///
-/// Use `0` to disable periodic broadcasts.
+/// Use a non-positive value to disable periodic broadcasts.
 pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
   Config(..config, broadcast_interval_ms: interval_ms)
 }
 
-/// Set the callback invoked when local changes or remote merges produce a diff.
+/// Set the timeout for synchronous presence mutations, in milliseconds.
+///
+/// This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
+/// functions panic if the actor does not reply before the timeout. The default
+/// is 5000 ms.
+pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
+  Config(..config, call_timeout_ms: timeout_ms)
+}
+
+/// Set the callback for diffs from local changes or remote merges.
 ///
 /// The callback runs synchronously on the presence actor, for both local
-/// mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
+/// mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
 /// mutations the runtime issues for presence effects) and remote merges,
 /// before the affected topics' read-model snapshots are (re)published and
 /// before the triggering call replies or the mutation is acknowledged.
-/// This ordering is identical for local and remote diffs -- there is no
-/// divergent local-vs-remote behavior.
+/// This ordering is the same for local and remote diffs.
 ///
-/// One consequence: if the callback reads presence state through the same
+/// If the callback reads presence state through the same
 /// `Presence` handle (`list`, `get_by_key`, `count`) for a topic this diff
-/// touches, it observes the *previous* snapshot -- the one from before this
-/// diff -- not the one the diff itself is about to produce. Read the
-/// entries and counts you need directly from the `Diff` argument (via
+/// changes, it observes the *previous* snapshot. It does not observe the
+/// snapshot that the diff will produce. Read the entries and counts you need
+/// directly from the `Diff` argument (via
 /// `diff_joins`/`diff_leaves`) instead of re-reading through `presence`
 /// inside the callback.
 ///
-/// Keep the callback fast and non-blocking: it runs on the actor process,
-/// so a slow or blocking callback delays that topic's read-model publish,
+/// Keep the callback fast and non-blocking. It runs on the actor process.
+/// A slow or blocking callback delays that topic's read-model publish,
 /// the reply to (or acknowledgement of) the mutating operation, and every
-/// other message queued behind it in the actor's mailbox (though concurrent
-/// `list`/`get_by_key`/`count` reads from other processes are unaffected,
-/// since those bypass the mailbox entirely). It no longer stalls a Beryl
-/// runtime wholesale: only the socket whose presence effect is in flight
-/// waits on it.
+/// other message behind it in the actor's mailbox. Concurrent
+/// `list`/`get_by_key`/`count` calls from other processes do not use the
+/// mailbox and are not delayed. A socket with an active presence effect waits
+/// for the callback. Callers of synchronous mutations also wait for their
+/// replies.
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
@@ -480,22 +528,49 @@ pub fn subject(presence: Presence) -> Subject(Message) {
   presence.subject
 }
 
-/// Start the presence actor
-pub fn start(config: Config) -> Result(Presence, PresenceError) {
-  build_presence(config)
+/// Build the supervised presence actor.
+///
+/// Add the returned child specification to your application's supervisor.
+/// The returned handle is name-backed and works again after a supervised
+/// restart. A restart resets the in-memory presence entries and tracking refs.
+pub fn child_spec(
+  config: Config,
+) -> #(Presence, supervision.ChildSpecification(Subject(Message))) {
+  let name = process.new_name("beryl_presence")
+  #(
+    from_name(name, config.call_timeout_ms),
+    supervision.worker(fn() { start_named(config, name) }),
+  )
+}
+
+@internal
+pub fn start(config: Config) -> Result(Presence, actor.StartError) {
+  let name = process.new_name("beryl_presence")
+  start_named(config, name)
+  |> result.map(fn(_started) { from_name(name, config.call_timeout_ms) })
+}
+
+fn from_name(name: process.Name(Message), call_timeout_ms: Int) -> Presence {
+  Presence(
+    subject: process.named_subject(name),
+    read_name: name,
+    call_timeout_ms: call_timeout_ms,
+  )
+}
+
+fn start_named(
+  config: Config,
+  name: process.Name(Message),
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  build_presence(config, name)
+  |> actor.named(name)
   |> actor.start
-  |> result.map(fn(started) {
-    let #(subject, read_table) = started.data
-    Presence(subject: subject, read_table: read_table)
-  })
-  |> result.map_error(fn(error) {
-    PresenceStartFailed(beryl_error.from_actor_start_error(error))
-  })
 }
 
 fn build_presence(
   config: Config,
-) -> actor.Builder(ActorState, Message, #(Subject(Message), Dynamic)) {
+  read_name: process.Name(Message),
+) -> actor.Builder(ActorState, Message, Subject(Message)) {
   // Each actor start is a fresh CRDT incarnation. Reusing the bare replica
   // name after a restart would reset its clocks while peers still remember
   // the old ones: new joins would be silently filtered as already-seen,
@@ -509,7 +584,7 @@ fn build_presence(
     // lifetime is tied to the actor: it is destroyed automatically if this
     // process stops or crashes, matching the "actor unavailable" failure
     // mode readers already get from a dead actor.
-    let read_table = ffi_new_read_table()
+    let read_table = ffi_new_read_table(read_name)
     let initial =
       ActorState(
         crdt: crdt,
@@ -521,10 +596,10 @@ fn build_presence(
       )
 
     case config.pubsub {
-      Some(ps) -> {
+      Some(pubsub_instance) -> {
         // Subscribe to the well-known sync topic for replication
-        let sub = pubsub.subscriber(ps)
-        pubsub.join(sub, sync_topic)
+        let subscriber = pubsub.subscriber(pubsub_instance)
+        pubsub.join(subscriber, sync_topic)
         let logger = internal.logger("beryl.presence")
         logger
         |> log.debug("Subscribed to PubSub sync topic", [
@@ -536,14 +611,14 @@ fn build_presence(
         let selector =
           process.new_selector()
           |> process.select(subject)
-          |> pubsub.selecting(sub, RemoteSync)
+          |> pubsub.selecting(subscriber, RemoteSync)
 
         // Schedule the first broadcast tick if enabled
         schedule_broadcast_tick(subject, config.broadcast_interval_ms)
 
         actor.initialised(initial)
         |> actor.selecting(selector)
-        |> actor.returning(#(subject, read_table))
+        |> actor.returning(subject)
         |> Ok
       }
       None -> {
@@ -557,7 +632,7 @@ fn build_presence(
             read_table: read_table,
           )
         actor.initialised(no_pubsub_initial)
-        |> actor.returning(#(subject, read_table))
+        |> actor.returning(subject)
         |> Ok
       }
     }
@@ -570,19 +645,25 @@ fn build_presence(
 /// that branch from nesting too deeply.
 fn maybe_broadcast_state(
   actor_state: ActorState,
-  ps: PubSub(SyncPayload),
+  pubsub_instance: PubSub(SyncPayload),
 ) -> ActorState {
   use <- bool.guard(when: !actor_state.dirty, return: actor_state)
   let payload =
     SyncPayload(
-      v: 1,
+      version: 1,
       // The sender is the full incarnation name; receivers use its base to
       // prune state left behind by this node's previous incarnations.
       sender: state.replica(actor_state.crdt),
       state: actor_state.crdt,
     )
 
-  pubsub.broadcast_from(ps, process.self(), sync_topic, sync_event, payload)
+  pubsub.broadcast_from(
+    pubsub_instance,
+    process.self(),
+    sync_topic,
+    sync_event,
+    payload,
+  )
 
   ActorState(..actor_state, dirty: False)
 }
@@ -653,8 +734,8 @@ fn prune_superseded(
         && base_replica(replica) == base_replica(live_replica)
       })
     })
-  list.fold(stale, #(crdt, []), fn(acc, replica) {
-    let #(crdt, touched_topics) = acc
+  list.fold(stale, #(crdt, []), fn(pruned, replica) {
+    let #(crdt, touched_topics) = pruned
     let #(crdt, down_diff) = state.replica_down(crdt, replica)
     let diff = wrap_state_diff(down_diff)
     maybe_invoke_on_diff(config, diff)
@@ -672,33 +753,44 @@ fn prune_superseded(
 /// client-supplied `phx_ref` is replaced. Non-object metas are stored
 /// unchanged (Phoenix requires object metas for its Presence helpers).
 fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
-  json.parse(
-    from: json.to_string(meta),
-    using: gdecode.dict(gdecode.string, gdecode.dynamic),
-  )
-  |> result.map(fn(fields) {
-    fields
-    |> dict.delete("phx_ref")
-    |> dict.to_list
-    |> list.map(fn(field) { #(field.0, wire.dynamic_to_json(field.1)) })
-    |> list.append([#("phx_ref", json.string(ref))])
-    |> json.object
-  })
-  |> result.unwrap(meta)
+  case
+    json.parse(
+      from: json.to_string(meta),
+      using: decode.dict(decode.string, decode.dynamic),
+    )
+  {
+    // nolint: thrown_away_error -- a non-object meta is stored unchanged by design (see doc comment); the parse error carries no other information
+    Error(_) -> meta
+    Ok(fields) ->
+      fields
+      |> dict.delete("phx_ref")
+      |> dict.to_list
+      |> list.try_map(fn(field) {
+        wire.dynamic_to_json(field.1)
+        |> result.map(fn(value) { #(field.0, value) })
+      })
+      |> result.map(fn(converted) {
+        converted
+        |> list.append([#("phx_ref", json.string(ref))])
+        |> json.object
+      })
+      |> result.unwrap(meta)
+  }
 }
 
 /// Track a presence in a topic.
 ///
-/// `session_id` identifies the session (e.g. socket) that owns this presence
-/// and is the value `untrack_all` matches on when the session disconnects.
+/// `session_id` identifies the session, such as a socket, that owns this
+/// presence. `untrack_all` matches this value when the session disconnects.
 ///
-/// Returns a server-generated tracking ref: an opaque, unique handle for this
-/// specific presence. Pass it to `untrack` to remove exactly this entry later.
-/// The ref is not the session id — it is minted by the presence actor and is
-/// only meaningful to that actor. The ref is also merged into object metas as
-/// `phx_ref` for Phoenix client compatibility.
+/// Returns a server-generated tracking ref. It is an opaque, unique handle for
+/// this presence. Pass it to `untrack` to remove this entry. The ref is not
+/// the session ID. The presence actor creates it, and it is meaningful only
+/// to that actor. The ref is also merged into object metas as `phx_ref` for
+/// Phoenix client compatibility.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn track(
   presence: Presence,
   topic: String,
@@ -706,8 +798,30 @@ pub fn track(
   session_id: String,
   meta: json.Json,
 ) -> String {
-  process.call(presence.subject, 5000, fn(reply) {
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
     Track(topic, key, session_id, meta, reply)
+  })
+}
+
+/// Replace the meta of a presence created by `track`.
+///
+/// One diff contains the old ref's leave and the new ref's join. Subscribers
+/// do not observe an intermediate state without the presence key. Other
+/// tracked refs for the same key do not change.
+///
+/// Returns the replacement ref, which must be used for subsequent `update`
+/// or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
+/// unknown, already removed, or belongs to the internal runtime.
+///
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
+pub fn update(
+  presence: Presence,
+  ref: String,
+  meta: json.Json,
+) -> Result(String, PresenceUpdateError) {
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
+    Update(ref, meta, reply)
   })
 }
 
@@ -715,16 +829,20 @@ pub fn track(
 ///
 /// Removing an unknown or already-removed ref is a harmless no-op.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn untrack(presence: Presence, ref: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) { Untrack(ref, reply) })
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
+    Untrack(ref, reply)
+  })
 }
 
-/// Untrack all presences for a session (e.g., when a socket disconnects)
+/// Untrack all presences for a session, such as when a socket disconnects.
 ///
-/// Panics if the presence actor is unavailable or does not reply within 5 seconds.
+/// Panics if the presence actor is unavailable or does not reply within the
+/// configured call timeout (5 seconds by default).
 pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
-  process.call(presence.subject, 5000, fn(reply) {
+  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
     UntrackAll(session_id, reply)
   })
 }
@@ -754,7 +872,7 @@ pub fn track_async(
   meta meta: json.Json,
   replace replace: Option(String),
   tag tag: String,
-  op_id op_id: Int,
+  operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
 ) -> Nil {
   process.send(
@@ -762,11 +880,11 @@ pub fn track_async(
     TrackAsync(
       topic: topic,
       key: key,
-      pid: session_id,
+      session_id: session_id,
       meta: meta,
       replace: replace,
       tag: tag,
-      op_id: op_id,
+      operation_id: operation_id,
       reply: reply,
     ),
   )
@@ -780,12 +898,12 @@ pub fn untrack_async(
   presence presence: Presence,
   refs refs: List(String),
   tag tag: String,
-  op_id op_id: Int,
+  operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
 ) -> Nil {
   process.send(
     presence.subject,
-    UntrackAsync(refs: refs, tag: tag, op_id: op_id, reply: reply),
+    UntrackAsync(refs: refs, tag: tag, operation_id: operation_id, reply: reply),
   )
 }
 
@@ -815,60 +933,66 @@ pub fn is_running(presence: Presence) -> Bool {
 
 /// List all presences for a topic.
 ///
-/// Reads the actor-owned read model directly (an ETS snapshot materialized
-/// after each mutation, merge, or prune) rather than calling the actor, so
-/// this never waits on the actor mailbox.
+/// This function reads the actor-owned read model directly. The read model is
+/// an ETS snapshot created after each mutation, merge, or prune. This function
+/// does not wait on the actor mailbox. See the module's **Read consistency**
+/// section for ordering guarantees.
 ///
-/// Panics if the presence read model is unavailable -- either the presence
-/// actor is not running, or this handle is being used from a process on
-/// another BEAM node than the one it was started on (see the node affinity
-/// note on `Presence`).
-pub fn list(presence: Presence, topic: String) -> List(PresenceEntry) {
+/// Returns `Error(Nil)` when the presence read model is unavailable. This can
+/// occur when the presence actor is not running or when this handle is used
+/// from a process on another BEAM node than the one it was started on (see
+/// the node affinity note on `Presence`).
+pub fn list(
+  presence: Presence,
+  topic: String,
+) -> Result(List(PresenceEntry), Nil) {
   read_entries(presence, topic)
 }
 
 /// Get presences for a specific key within a topic.
 ///
-/// Reads the actor-owned read model directly (an ETS snapshot materialized
-/// after each mutation, merge, or prune) rather than calling the actor, so
-/// this never waits on the actor mailbox.
+/// This function reads the actor-owned read model directly. The read model is
+/// an ETS snapshot created after each mutation, merge, or prune. This function
+/// does not wait on the actor mailbox. See the module's **Read consistency**
+/// section for ordering guarantees.
 ///
-/// Panics if the presence read model is unavailable -- either the presence
-/// actor is not running, or this handle is being used from a process on
-/// another BEAM node than the one it was started on (see the node affinity
-/// note on `Presence`).
+/// Returns `Error(Nil)` when the presence read model is unavailable. This can
+/// occur when the presence actor is not running or when this handle is used
+/// from a process on another BEAM node than the one it was started on (see
+/// the node affinity note on `Presence`).
 pub fn get_by_key(
   presence: Presence,
   topic: String,
   key: String,
-) -> List(#(String, json.Json)) {
+) -> Result(List(#(String, json.Json)), Nil) {
   read_entries(presence, topic)
-  |> list.filter(fn(entry) { entry.key == key })
-  |> list.map(fn(entry) { #(entry.session_id, entry.meta) })
+  |> result.map(fn(entries) {
+    entries
+    |> list.filter(fn(entry) { entry.key == key })
+    |> list.map(fn(entry) { #(entry.session_id, entry.meta) })
+  })
 }
 
 /// Count presences in a topic.
 ///
-/// Equivalent to `list(presence, topic) |> list.length`, but O(1): it reads
-/// the materialized count directly from the read model via
+/// This is equivalent to `list(presence, topic) |> list.length`, but O(1). It
+/// reads the materialized count directly from the read model via
 /// `ets:lookup_element/4` instead of building (and copying) the entry list
 /// just to measure it.
 ///
-/// Reads the actor-owned read model directly (an ETS snapshot materialized
-/// after each mutation, merge, or prune) rather than calling the actor, so
-/// this never waits on the actor mailbox.
+/// This function reads the actor-owned read model directly. The read model is
+/// an ETS snapshot created after each mutation, merge, or prune. This function
+/// does not wait on the actor mailbox. See the module's **Read consistency**
+/// section for ordering guarantees.
 ///
-/// Panics if the presence read model is unavailable -- either the presence
-/// actor is not running, or this handle is being used from a process on
-/// another BEAM node than the one it was started on (see the node affinity
-/// note on `Presence`).
-pub fn count(presence: Presence, topic: String) -> Int {
-  case ffi_get_count(presence.read_table, topic) {
-    CountFound(count) -> count
-    CountTableGone -> {
-      // nolint: avoid_panic -- read storage being gone means either the owning actor died or this handle is being read from another node; matches the existing "actor unavailable" panic contract of track/untrack/untrack_all
-      panic as "presence read storage is unavailable: either the presence actor is not running, or this handle was used from a process on another BEAM node than the one it was started on"
-    }
+/// Returns `Error(Nil)` when the presence read model is unavailable. This can
+/// occur when the presence actor is not running or when this handle is used
+/// from a process on another BEAM node than the one it was started on (see
+/// the node affinity note on `Presence`).
+pub fn count(presence: Presence, topic: String) -> Result(Int, Nil) {
+  case ffi_get_count(presence.read_name, topic) {
+    CountFound(count) -> Ok(count)
+    CountTableGone -> Error(Nil)
   }
 }
 
@@ -880,10 +1004,10 @@ fn handle_message(
 ) -> actor.Next(ActorState, Message) {
   let logger = internal.logger("beryl.presence")
   case message {
-    Track(topic, key, pid, meta, reply) -> {
+    Track(topic, key, session_id, meta, reply) -> {
       let #(new_state, ref, _meta) =
-        do_track(actor_state, topic, key, pid, meta, SupersedeNothing)
-      log_tracked(logger, topic, key, pid, ref)
+        do_track(actor_state, topic, key, session_id, meta, SupersedeNothing)
+      log_tracked(logger, topic, key, session_id, ref)
       // The read model was published inside `do_track`, before this reply,
       // so a `track(); list()` caller always observes the entry it just
       // tracked.
@@ -891,18 +1015,44 @@ fn handle_message(
       actor.continue(new_state)
     }
 
-    TrackAsync(topic, key, pid, meta, replace, tag, op_id, reply) -> {
+    Update(ref, meta, reply) -> {
+      case dict.get(actor_state.refs, ref) {
+        Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
+          let #(new_state, new_ref, _meta) =
+            do_track(
+              actor_state,
+              topic,
+              key,
+              session_id,
+              meta,
+              SupersedePublicRef(ref),
+            )
+          log_tracked(logger, topic, key, session_id, new_ref)
+          process.send(reply, Ok(new_ref))
+          actor.continue(new_state)
+        }
+        Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner)) | Error(Nil) -> {
+          process.send(reply, Error(UnknownRef(ref)))
+          actor.continue(actor_state)
+        }
+      }
+    }
+
+    TrackAsync(topic, key, session_id, meta, replace, tag, operation_id, reply) -> {
       let #(new_state, ref, stored_meta) =
         do_track(
           actor_state,
           topic,
           key,
-          pid,
+          session_id,
           meta,
           SupersedeSameKey(explicit: replace),
         )
-      log_tracked(logger, topic, key, pid, ref)
-      process.send(reply, MutationAck(tag, op_id, Tracked(ref, stored_meta)))
+      log_tracked(logger, topic, key, session_id, ref)
+      process.send(
+        reply,
+        MutationAck(tag, operation_id, Tracked(ref, stored_meta)),
+      )
       actor.continue(new_state)
     }
 
@@ -912,40 +1062,43 @@ fn handle_message(
       actor.continue(new_state)
     }
 
-    UntrackAsync(refs, tag, op_id, reply) -> {
+    UntrackAsync(refs, tag, operation_id, reply) -> {
       let new_state = do_untrack_refs(actor_state, refs)
-      process.send(reply, MutationAck(tag, op_id, Untracked))
+      process.send(reply, MutationAck(tag, operation_id, Untracked))
       actor.continue(new_state)
     }
 
-    UntrackAll(pid, reply) -> {
-      let new_state = do_untrack_all(actor_state, pid)
+    UntrackAll(session_id, reply) -> {
+      let new_state = do_untrack_all(actor_state, session_id)
       process.send(reply, Nil)
       actor.continue(new_state)
     }
 
-    UntrackRuntimeAllAsync(pid) ->
-      actor.continue(do_untrack_runtime_all(actor_state, pid))
+    UntrackRuntimeAllAsync(session_id) ->
+      actor.continue(do_untrack_runtime_all(actor_state, session_id))
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
-        Some(ps), Some(subject) -> {
-          let new_state = maybe_broadcast_state(actor_state, ps)
+        Some(pubsub_instance), Some(subject) -> {
+          let new_state = maybe_broadcast_state(actor_state, pubsub_instance)
           schedule_broadcast_tick(
             subject,
             actor_state.config.broadcast_interval_ms,
           )
           actor.continue(new_state)
         }
-        _, _ -> actor.continue(actor_state)
+        Some(_), None | None, Some(_) | None, None ->
+          actor.continue(actor_state)
       }
     }
 
-    RemoteSync(pubsub_msg) -> {
+    RemoteSync(pubsub_message) -> {
       // Only process presence sync messages on the expected topic/event
-      case pubsub_msg.topic == sync_topic && pubsub_msg.event == sync_event {
+      case
+        pubsub_message.topic == sync_topic && pubsub_message.event == sync_event
+      {
         False -> actor.continue(actor_state)
-        True -> handle_sync_payload(actor_state, pubsub_msg.payload)
+        True -> handle_sync_payload(actor_state, pubsub_message.payload)
       }
     }
   }
@@ -955,14 +1108,14 @@ fn log_tracked(
   logger: log.Logger,
   topic: String,
   key: String,
-  pid: String,
+  session_id: String,
   ref: String,
 ) -> Nil {
   logger
   |> log.debug("Presence tracked", [
     #("topic", topic),
     #("key", key),
-    #("pid", pid),
+    #("session_id", session_id),
     #("ref", ref),
   ])
 }
@@ -1000,31 +1153,31 @@ fn remove_refs(
   list.fold(
     removing,
     RemovedRefs(crdt: crdt, leaves: dict.new(), refs: refs, topics: []),
-    fn(acc, ref) {
-      case dict.get(acc.refs, ref) {
-        Error(Nil) -> acc
+    fn(removed_refs, ref) {
+      case dict.get(removed_refs.refs, ref) {
+        Error(Nil) -> removed_refs
         Ok(TrackedPresence(topic, key, session_id, meta, tag, _owner)) -> {
-          let #(crdt, removed) = remove_tag(acc.crdt, tag)
+          let #(crdt, removed) = remove_tag(removed_refs.crdt, tag)
           let existing =
-            dict.get(acc.leaves, topic)
+            dict.get(removed_refs.leaves, topic)
             |> result.unwrap([])
           RemovedRefs(
             crdt: crdt,
             leaves: case removed {
-              False -> acc.leaves
+              False -> removed_refs.leaves
               True ->
                 dict.insert(
-                  acc.leaves,
+                  removed_refs.leaves,
                   topic,
                   list.append(existing, [
                     PresenceEntry(session_id: session_id, key: key, meta: meta),
                   ]),
                 )
             },
-            refs: dict.delete(acc.refs, ref),
+            refs: dict.delete(removed_refs.refs, ref),
             topics: case removed {
-              True -> [topic, ..acc.topics]
-              False -> acc.topics
+              True -> [topic, ..removed_refs.topics]
+              False -> removed_refs.topics
             },
           )
         }
@@ -1040,9 +1193,12 @@ type Supersede {
   /// and several refs for one key (each with its own `phx_ref` meta) is a
   /// meaningful, supported shape there.
   SupersedeNothing
+  /// The public synchronous `update`: supersede exactly the ref supplied by
+  /// its owner, leaving every other public ref for the same key unchanged.
+  SupersedePublicRef(String)
   /// The runtime's asynchronous track: supersede `explicit` (the previous
   /// runtime ref, when the caller still knows it) and every other
-  /// runtime-owned ref this actor holds for the same `(pid, topic, key)`.
+  /// runtime-owned ref this actor holds for the same `(session_id, topic, key)`.
   ///
   /// The sweep is what keeps runtime-owned presence single-valued when the
   /// caller has lost a ref — an operation it timed out on and gave up,
@@ -1054,23 +1210,24 @@ type Supersede {
 
 /// The refs a track must remove before joining: none for the public API,
 /// and for the runtime the explicit replacement plus every runtime-owned ref
-/// still held for the same logical `(pid, topic, key)`, deduplicated.
+/// still held for the same logical `(session_id, topic, key)`, deduplicated.
 fn superseded_refs(
   refs: Dict(String, TrackedPresence),
   topic: String,
   key: String,
-  pid: String,
+  session_id: String,
   supersede: Supersede,
 ) -> List(String) {
   case supersede {
     SupersedeNothing -> []
+    SupersedePublicRef(ref) -> [ref]
     SupersedeSameKey(explicit) -> {
       let same_key =
         refs
         |> dict.filter(fn(_ref, tracked) {
           tracked.topic == topic
           && tracked.key == key
-          && tracked.session_id == pid
+          && tracked.session_id == session_id
           && tracked.owner == RuntimeOwner
         })
         |> dict.keys
@@ -1095,7 +1252,7 @@ fn do_track(
   actor_state: ActorState,
   topic: String,
   key: String,
-  pid: String,
+  session_id: String,
   meta: json.Json,
   supersede: Supersede,
 ) -> #(ActorState, String, json.Json) {
@@ -1110,11 +1267,11 @@ fn do_track(
     remove_refs(
       actor_state.crdt,
       actor_state.refs,
-      superseded_refs(actor_state.refs, topic, key, pid, supersede),
+      superseded_refs(actor_state.refs, topic, key, session_id, supersede),
     )
-  let new_crdt = state.join(removed.crdt, pid, topic, key, stored_meta)
+  let new_crdt = state.join(removed.crdt, session_id, topic, key, stored_meta)
   let owner = case supersede {
-    SupersedeNothing -> PublicOwner
+    SupersedeNothing | SupersedePublicRef(_) -> PublicOwner
     SupersedeSameKey(_) -> RuntimeOwner
   }
   let replica = state.replica(new_crdt)
@@ -1123,7 +1280,9 @@ fn do_track(
     actor_state.config,
     Diff(
       joins: dict.from_list([
-        #(topic, [PresenceEntry(session_id: pid, key: key, meta: stored_meta)]),
+        #(topic, [
+          PresenceEntry(session_id: session_id, key: key, meta: stored_meta),
+        ]),
       ]),
       leaves: removed.leaves,
     ),
@@ -1135,7 +1294,7 @@ fn do_track(
       TrackedPresence(
         topic: topic,
         key: key,
-        session_id: pid,
+        session_id: session_id,
         meta: stored_meta,
         tag: state.Tag(replica: replica, clock: clock),
         owner: owner,
@@ -1179,15 +1338,15 @@ fn do_untrack_refs(actor_state: ActorState, refs: List(String)) -> ActorState {
   ActorState(..actor_state, crdt: removed.crdt, dirty: True, refs: removed.refs)
 }
 
-fn do_untrack_all(actor_state: ActorState, pid: String) -> ActorState {
-  let diff = leave_all_diff(actor_state.crdt, pid)
-  let new_crdt = state.leave_by_pid(actor_state.crdt, pid)
+fn do_untrack_all(actor_state: ActorState, session_id: String) -> ActorState {
+  let diff = leave_all_diff(actor_state.crdt, session_id)
+  let new_crdt = state.leave_by_pid(actor_state.crdt, session_id)
   maybe_invoke_on_diff(actor_state.config, diff)
   // Drop any refs that pointed at the removed session so they cannot leak
   // or later leave presences they no longer own.
   let new_refs =
     dict.filter(actor_state.refs, fn(_ref, tracked) {
-      tracked.session_id != pid
+      tracked.session_id != session_id
     })
   // A single session can hold presences in several topics; republish
   // every topic the leave touched (from the pre-mutation diff).
@@ -1195,26 +1354,29 @@ fn do_untrack_all(actor_state: ActorState, pid: String) -> ActorState {
   ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs)
 }
 
-fn do_untrack_runtime_all(actor_state: ActorState, pid: String) -> ActorState {
+fn do_untrack_runtime_all(
+  actor_state: ActorState,
+  session_id: String,
+) -> ActorState {
   actor_state.refs
   |> dict.filter(fn(_ref, tracked) {
-    tracked.session_id == pid && tracked.owner == RuntimeOwner
+    tracked.session_id == session_id && tracked.owner == RuntimeOwner
   })
   |> dict.keys
   |> do_untrack_refs(actor_state, _)
 }
 
-fn leave_all_diff(crdt: State, pid: String) -> Diff {
+fn leave_all_diff(crdt: State, session_id: String) -> Diff {
   let leaves =
     state.online_list(crdt)
-    |> list.filter(fn(entry) { entry.0 == pid })
+    |> list.filter(fn(entry) { entry.0 == session_id })
     |> list.fold(dict.new(), fn(grouped, entry) {
       let #(_, topic, key, meta) = entry
       let existing =
         dict.get(grouped, topic)
         |> result.unwrap([])
       dict.insert(grouped, topic, [
-        PresenceEntry(session_id: pid, key: key, meta: meta),
+        PresenceEntry(session_id: session_id, key: key, meta: meta),
         ..existing
       ])
     })
@@ -1241,7 +1403,7 @@ fn handle_sync_payload(
   actor_state: ActorState,
   payload: SyncPayload,
 ) -> actor.Next(ActorState, Message) {
-  case payload.v {
+  case payload.version {
     1 -> merge_remote_sync(actor_state, payload.sender, payload.state)
     version -> {
       let logger = internal.logger("beryl.presence")
@@ -1260,15 +1422,10 @@ fn merge_remote_sync(
   sender: String,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
-  // Merge, diff, on_diff, prune, and the read-model publication that follows
-  // all run inside a crash boundary. The remote state originates from
-  // another cluster node (possibly a mixed version, a compromised peer, or a
-  // malformed dynamic value coerced from the wire); an exception here must
-  // not terminate the shared presence actor. On failure we return the
-  // previous, unchanged `actor_state` so invalid sync input cannot partially
-  // mutate presence state or its read model: the read model is only
-  // republished once merge, on_diff, and prune have all completed
-  // successfully below.
+  // Crash boundary — see internal.rescue. Version skew or bugs can produce
+  // malformed sync state; Erlang distribution peers are fully trusted (see
+  // the production-hardening guide). Preserve the previous actor state unless
+  // merge, on_diff, prune, and read-model publication all complete.
   let processed =
     internal.rescue(fn() {
       let #(new_crdt, state_diff) =

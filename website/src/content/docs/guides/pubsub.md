@@ -1,8 +1,10 @@
 ---
 title: PubSub
+description: Publish typed messages to topic subscribers on one or more connected Erlang nodes.
 ---
 
-beryl's PubSub layer provides distributed publish/subscribe messaging built on Erlang's `pg` (process groups) module.
+beryl's PubSub API uses Erlang `pg` process groups. Publishers send messages
+to a topic, and each process subscribed to that topic receives them.
 
 ## Starting PubSub
 
@@ -10,47 +12,50 @@ beryl's PubSub layer provides distributed publish/subscribe messaging built on E
 import beryl/pubsub
 
 // Default scope ("beryl_pubsub")
-let ps = pubsub.start(pubsub.default_config())
+let pubsub_handle = pubsub.start(pubsub.default_config())
 
 // Custom scope (isolates process groups)
-let ps = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
+let pubsub_handle = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 ```
 
-The scope maps to a `pg` scope atom. Different scopes are completely isolated from each other.
+The scope maps to a `pg` scope atom and identifies the PubSub instance.
+Different scopes are isolated and can use different payload types in one
+process mailbox. All handles in one scope must use the same payload type.
 
-:::danger[The scope must be a static, bounded deployment value]
+:::danger[Use a fixed scope name]
 The scope name is converted to an Erlang atom. Atoms are never
 garbage-collected; exhausting the BEAM atom table crashes the VM. The scope
-must be a static, bounded deployment or configuration value — never raw
-user-derived, per-request, per-tenant, database-derived, or otherwise
-unbounded high-cardinality runtime input. A deployment-controlled value is
-acceptable only when validated or selected from a fixed bounded set.
+must be a fixed deployment or configuration value. Never use a value from a
+request, tenant, database row, or any other source that can create unlimited
+names. A deployment-controlled value is safe only when you validate it or
+select it from a fixed set.
 :::
 
 ## Subscribing
 
-Create one typed subscriber in the process that owns the mailbox, join any
-topics it needs, and fold PubSub delivery into that process's selector:
+Create one typed subscriber in the process that owns the mailbox. Join the
+required topics. Add PubSub delivery to the process selector:
 
 ```gleam
-let sub = pubsub.subscriber(ps)
-pubsub.join(sub, "room:lobby")
+let subscriber = pubsub.subscriber(pubsub_handle)
+pubsub.join(subscriber, "room:lobby")
 
 let selector =
   process.new_selector()
   |> process.select(app_subject)
-  |> pubsub.selecting(sub, RemoteBroadcast)
+  |> pubsub.selecting(subscriber, RemoteBroadcast)
 
 // Later:
-pubsub.leave(sub, "room:lobby")
+pubsub.leave(subscriber, "room:lobby")
 ```
 
-Use one `Subscriber(payload)` per payload type in a process. PubSub records
-arrive as raw BEAM messages, so `selecting` is the typed validation boundary.
+PubSub records arrive as raw BEAM messages. `selecting` validates their types
+and matches the subscriber scope. One process can select subscribers with
+different payload types if their scopes differ.
 
-## Messages
+## Message format
 
-Subscribers receive transparent `Message(payload)` records:
+Subscribers receive typed `Message(payload)` records:
 
 ```gleam
 pub type Message(payload) {
@@ -69,23 +74,33 @@ pub type PubSubFrom {
 }
 ```
 
-The raw record tag plus these four fields, in this order, are a frozen
-cross-node wire contract. Version changes to your own payload type explicitly
-when rolling upgrades must accept old and new nodes concurrently.
+On the wire, the PubSub scope atom replaces the public record tag and is
+followed by these four fields in order. This five-element tuple is a frozen
+cross-node wire contract. Nodes using the old unscoped message shape do not
+interoperate, so upgrade the cluster together when adopting this version.
+Version changes to your own payload type explicitly when rolling upgrades must
+accept old and new nodes concurrently.
 
-`FromSocket` carries both the sending process PID and a socket ID to exclude. Receiving runtimes use this to suppress delivery to the named socket, so that `beryl.broadcast_from` correctly excludes the sender across cluster nodes.
+`FromSocket` contains the sender PID and a socket ID to exclude. Receiving
+runtimes do not send the message to that socket. Thus,
+`beryl.broadcast_from` excludes the sender across cluster nodes.
 
-## Broadcasting
+## Send broadcasts
 
 ```gleam
 import gleam/json
 
 // Broadcast to all subscribers (all nodes)
-pubsub.broadcast(ps, "room:lobby", "new_message", json.string("hello"))
+pubsub.broadcast(
+  pubsub_handle,
+  "room:lobby",
+  "new_message",
+  json.string("hello"),
+)
 
 // Broadcast to all except the sender process
 pubsub.broadcast_from(
-  ps,
+  pubsub_handle,
   process.self(),
   "room:lobby",
   "new_message",
@@ -94,7 +109,7 @@ pubsub.broadcast_from(
 
 // Broadcast to all except a specific socket ID (clustered "broadcast except this socket")
 pubsub.broadcast_from_socket(
-  ps,
+  pubsub_handle,
   process.self(),   // sending runtime process
   socket_id,        // socket ID to exclude on receiving runtimes
   "room:lobby",
@@ -103,26 +118,41 @@ pubsub.broadcast_from_socket(
 )
 
 // Broadcast to local node only
-pubsub.local_broadcast(ps, "room:lobby", "new_message", json.string("hello"))
+pubsub.local_broadcast(
+  pubsub_handle,
+  "room:lobby",
+  "new_message",
+  json.string("hello"),
+)
 ```
 
-Use `broadcast_from_socket` when you need to broadcast to all subscribers across a cluster while excluding one specific socket — even if that socket's runtime is on a different node. `beryl.broadcast_from` calls this internally.
+Use `broadcast_from_socket` to send to all cluster subscribers except one
+socket. The socket can be on another node. `beryl.broadcast_from` calls this
+function.
 
-## Querying subscribers
+## List subscribers
 
 ```gleam
 // All subscribers across all nodes
-let pids = pubsub.subscribers(ps, "room:lobby")
+let pids = pubsub.subscribers(pubsub_handle, "room:lobby")
 
 // Count subscribers
-let count = pubsub.subscriber_count(ps, "room:lobby")
+let count = pubsub.subscriber_count(pubsub_handle, "room:lobby")
 ```
 
-## Distributed operation
+## Use PubSub across Erlang nodes
 
-Because PubSub is built on `pg`, it automatically works across connected Erlang nodes. When nodes join a cluster, their process groups are merged and messages are delivered to subscribers on all nodes — no configuration required.
+Erlang `pg` works across connected nodes. After your application establishes
+Erlang distribution between the nodes, `pg` merges their process groups and
+sends messages to subscribers across the cluster. beryl PubSub needs no
+additional configuration, but it does not connect the nodes for you.
 
-## Integration with beryl channels
+Automated tests currently exercise distributed behavior with multiple actors
+on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
+tracks integration coverage across separate distributed Erlang nodes for
+PubSub delivery and presence convergence.
+
+## Use PubSub with beryl
 
 The channel system uses PubSub internally for distributed broadcasts when configured:
 
@@ -130,11 +160,14 @@ The channel system uses PubSub internally for distributed broadcasts when config
 import beryl
 import beryl/wire
 
-let ps = pubsub.start(pubsub.default_config())
-let config = beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(ps)
-let assert Ok(#(channels, spec)) =
+let pubsub_handle = pubsub.start(pubsub.default_config())
+let config =
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_pubsub(pubsub_handle)
+let assert Ok(#(channels, runtime_specification)) =
   beryl.child_spec(config, init: init, update: update)
-// Add `spec` to your application supervisor before using `channels`.
+// Add `runtime_specification` to your application supervisor before using
+// `channels`.
 
 // beryl.broadcast() now sends to all nodes automatically
 beryl.broadcast(channels, "room:lobby", "event", payload)
@@ -142,6 +175,6 @@ beryl.broadcast(channels, "room:lobby", "event", payload)
 
 ## Next steps
 
-- [Supervision guide](/guides/supervision/) — supervised startup and multi-node deployment checklist
-- [Architecture overview](/architecture/overview/) — how PubSub fits into the beryl layer diagram
-- [Troubleshooting](/troubleshooting/#pubsub-cluster-issues) — diagnosing cluster broadcast failures and diverging presence state
+- [Supervision guide](/guides/supervision/): supervised startup and multi-node deployment
+- [Architecture overview](/architecture/overview/): PubSub's place in beryl
+- [Troubleshooting](/troubleshooting/#broadcasts-fail-across-erlang-nodes): diagnose cluster broadcast failures and different presence state across nodes

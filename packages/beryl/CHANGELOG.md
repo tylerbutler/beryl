@@ -1,5 +1,61 @@
 # beryl changelog
 
+## v0.4.1 - 2026-08-25
+
+### Fixed
+
+- Make presence.update honor the configured call timeout.
+
+## v0.4.0 - 2026-08-24
+
+### Changed
+
+- **Channel callback registration now starts from `channel.accept(state)`.** Pipe accepted joins through `channel.on_message`, `channel.on_binary`, `channel.on_info`, and `channel.on_terminate`; replace `channel.next(state, [])` with `channel.stay(state)`.
+- Stats snapshots are now documented as eventually consistent: counts are point-in-time values as observed by the runtime process servicing the request and may lag in-flight connect/disconnect notifications.
+- Stats snapshots succeed while an app callback is mid-flight, and socket counts are eventually consistent as documented: disconnects are reflected once the router processes the socket actor's teardown notification.
+- The runtime now runs one actor per connected socket behind a lightweight router: app init/update callbacks run in the socket's own process, so one socket's slow callback no longer stalls others, and broadcast fan-out encodes per recipient on separate schedulers (benchmarked ~7x faster delivery under fan-out load at 10ms callback cost, with no regression on point-to-point traffic). Public API and wire behavior are unchanged.
+
+### Fixed
+
+- Socket actor crashes now close their transport and sweep runtime-owned presence, and forced shutdowns return StopTimeout.
+
+### Removed
+
+- Broadcast telemetry no longer reports a send_failures measurement: the broadcast origin hands each recipient's frame to that socket's own actor and cannot observe the sends. Per-socket send failures remain visible in logs.
+- Stats snapshots no longer report `runtime_mailbox_length`, and `beryl/stats.runtime_mailbox_length` is removed. The metric assumed a single runtime mailbox, a pre-1.0 leak of the runtime process topology.
+
+## v0.3.0 - 2026-08-21
+
+### Added
+
+- Add `beryl/channel`, a supervised, typed API for routing topics to handlers and sending ordered effects and server messages.
+- Add `presence.update` to replace one presence entry atomically without briefly removing its key.
+- Add per-IP connection-attempt rate limits that persist across reconnects, app runtime restarts, and limiter restarts.
+- Add public codec operations for implementing and testing custom codecs.
+
+### Changed
+
+- BREAKING: Replace `beryl.start_app` and `beryl/event` with supervised `beryl.child_spec` and `beryl/socket`. `socket.Next` now carries only the model type, and separate `JoinRef` and `ReplyRef` values prevent join responses and message replies from being mixed.
+- BREAKING: `wire.dynamic_to_json` now returns `Result(Json, Nil)` when a value exceeds the wire depth limit instead of replacing it with `null`.
+- Beryl now processes presence mutations asynchronously, so a busy presence service does not block unrelated sockets, broadcasts, heartbeats, or shutdown. Reads remain immediately consistent, and Beryl logs timed-out mutations before resuming the waiting socket.
+- BREAKING: PubSub messages now include their scope, preventing subscribers from matching messages from another scope in the same mailbox. Nodes using the old and new message formats cannot exchange PubSub broadcasts during a rolling upgrade.
+- Phoenix wire decoding now identifies the field with an invalid format instead of returning a generic decoding error.
+- BREAKING: `beryl.ConfigError.InvalidTopicPattern` now carries a `beryl/topic.TopicError` instead of a `String`. Match unknown `TopicError` variants with a catch-all unless you handle them separately.
+- BREAKING: `with_frame_rate` limits every inbound frame before decoding, while `with_message_rate` limits successfully decoded non-join messages. The limits are independent; configure both to reject malformed-frame floods and cap decoded traffic. Rate-limited heartbeats do not extend socket deadlines.
+- Group broadcast calls now apply backpressure to senders under heavy traffic.
+- BREAKING: Start presence and groups with supervised child specifications. Handles are node-local: remote presence mutations and group calls panic, remote presence reads return `Error(Nil)`, and remote group broadcasts are not delivered. Configure synchronous call timeouts with `with_call_timeout`; the five-second default is unchanged.
+- Presence reads no longer wait on the presence process, and the new `presence.count` returns a topic's entry count. `presence.list`, `presence.get_by_key`, and `presence.count` now return `Result(_, Nil)` when presence is unavailable or a handle is used from another node.
+- BREAKING: Runtime snapshots now expose `runtime_mailbox_length` and `RuntimeUnavailable` instead of `coordinator_mailbox_length` and `CoordinatorUnavailable`. Remove uses of the deleted `registered_channel_handlers` gauge.
+- BREAKING for transport authors: Use `beryl/transport/server` and `beryl/transport/origin` for shared configuration, origin checks, admission, and routing. Replace `connection_owner` and `ConnectionOwner` with `runtime_pid`, pass an optional codec to `admit_socket`, and use the timeout-only `with_heartbeat`.
+
+### Fixed
+
+- Non-positive `with_topic_rate` overrides now disable rate limiting for matching topics without allocating limiter state. Positive overrides still take precedence over the global channel rate limit.
+
+### Removed
+
+- BREAKING: Remove the v0.2 channel registry API, including `beryl.register`, `beryl.send_info`, and `RegisteredChannel`. Use `beryl.child_spec` for raw dispatch or `beryl/channel` for typed channel handlers.
+
 ## v0.2.0 - 2026-08-07
 
 ### Added

@@ -2,23 +2,29 @@
 title: Presence
 ---
 
-## Model
+## How presence stores changes
 
-Beryl presence is an OTP actor that wraps [`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence) — an **add-wins, observed-remove CRDT**. Each node in a cluster holds its own replica of the CRDT state. Because the data structure is conflict-free, replicas merge in any order without coordination: concurrent joins and leaves from different nodes always converge to the same result.
+beryl presence uses an OTP actor and an **add-wins, observed-remove
+conflict-free replicated data type (CRDT)** from
+[`lattice_presence/presence_state`](https://hex.pm/packages/lattice_presence).
+Each cluster node keeps one copy. Nodes can merge their copies in any order.
+Joins and leaves that happen at the same time produce the same final result.
 
-Every tracked entry is stamped with a **replica name** (the `replica` argument to `default_config/1`). The replica name must be unique across the cluster; it is used as the CRDT replica identifier when merging remote state.
+Each tracked entry has a **replica name**, set by the `replica` argument to
+`default_config/1`. Use a unique name for each cluster node. The CRDT uses this
+name to identify remote state.
 
-## How Beryl apps use it
+## Add presence to an app
 
-The presence actor is a standalone process that the application starts and
-supervises, then supplies to `beryl.Config` with `with_presence_handle`.
+The application builds the presence actor with `presence.child_spec`. Add the
+child to the supervision tree. Then pass its handle to `beryl.Config` with
+`with_presence_handle`.
 
-App-side dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
-`BroadcastPresence` effects. Mutations are sent asynchronously to the presence
-actor and acknowledged only after both the CRDT and its ETS read model are
-updated. The runtime suspends the issuing socket's remaining effects and later
-inputs until that acknowledgement arrives; other sockets, broadcasts,
-heartbeats, and shutdown handling continue normally.
+Raw dispatch uses `PresenceTrack`, `PresenceUntrack`, `PushPresence`, and
+`BroadcastPresence` effects. The runtime sends mutations to the presence actor. The actor acknowledges a
+mutation after it updates the CRDT and ETS read model. Until then, the runtime
+pauses later effects and inputs for that socket. Other sockets, broadcasts,
+heartbeats, and shutdown work continue.
 
 Snapshot effects read the actor-owned ETS model directly, so they do not wait
 on the actor mailbox. Re-tracking a runtime-owned key is one atomic
@@ -32,20 +38,24 @@ application actors and other out-of-band workflows. Public `list`,
 `get_by_key`, and `count` calls read ETS directly and retain immediate
 read-after-write behavior.
 
-## API surface
+## Presence functions
 
 ### Starting presence
 
 | Function | Description |
 |---|---|
-| `start(config)` | Start an anonymous presence actor |
-| `start_named(config, name)` | Start a named presence actor |
+| `child_spec(config)` | Return a stable presence handle and its supervised child specification |
+
+The handle keeps working after an actor restart on the same node. The process
+and ETS read model use stable names. The replacement actor starts with empty
+in-memory CRDT state and tracking refs. The handle works only on its node.
+PubSub copies presence state between nodes.
 
 ### Configuration builders
 
 | Function | Description |
 |---|---|
-| `default_config(replica)` | Create a minimal config with no PubSub and no periodic broadcast |
+| `default_config(replica)` | Create a config with no PubSub and a 1500 ms interval that remains unused until PubSub is attached |
 | `with_pubsub(config, ps)` | Attach a PubSub instance for cross-node state replication |
 | `with_broadcast_interval(config, ms)` | Set how often (in ms) the actor broadcasts its CRDT state; `0` disables |
 | `with_on_diff(config, callback)` | Register a callback invoked whenever a local change or merge produces a non-empty diff |
@@ -76,17 +86,28 @@ read-after-write behavior.
 | `diff_joins(diff, topic)` | Get joined entries for a topic |
 | `diff_leaves(diff, topic)` | Get departed entries for a topic |
 
-## Replication
+## Sync between nodes
 
-When `with_pubsub` and `with_broadcast_interval` are both configured, the presence actor runs a periodic broadcast loop:
+When you configure `with_pubsub`, the presence actor runs a broadcast loop at
+the configured interval, which defaults to 1500 ms:
 
-1. On each tick, if the local CRDT has changed since the last broadcast (`dirty = true`), the actor publishes a typed `SyncPayload(v, sender, state)` term to the well-known topic `"beryl:presence:sync"` using `broadcast_from` — which excludes self-delivery at the PubSub layer.
-2. Remote replicas on other nodes receive that typed payload through PubSub, merge the incoming state with `state.merge_with_diff`, and update their CRDT replica.
-3. If the merge changes membership (new joins or leaves relative to local state), `on_diff` fires immediately with the resulting `Diff`. This ensures no diff is silently dropped when multiple merges arrive in rapid succession.
+1. On each tick, the actor checks the `dirty` value. If local state changed,
+   it sends `SyncPayload(v, sender, state)` to `"beryl:presence:sync"`.
+   `broadcast_from` prevents self-delivery.
+2. Remote replicas receive the typed payload through PubSub. They merge it with
+   `state.merge_with_diff` and update their CRDT state.
+3. If the merge changes membership, the actor calls `on_diff` with the
+   resulting `Diff`. It calls the function for each merge, so rapid merges do
+   not lose diffs.
 
-Setting `broadcast_interval_ms` to `0` (the default in `default_config`) disables periodic broadcasts entirely, which is appropriate for single-node deployments.
+Use `with_broadcast_interval(0)` to disable periodic broadcasts. Without
+PubSub, the configured interval is unused.
 
-## Diagram
+Automated tests currently exercise replication with multiple presence actors
+on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
+tracks integration coverage across separate distributed Erlang nodes.
+
+## Request and sync flow
 
 ```mermaid
 sequenceDiagram
@@ -110,7 +131,7 @@ sequenceDiagram
   Pres-->>App: on_diff(diff)
 ```
 
-## Where this lives
+## Source files
 
 | File | Role |
 |---|---|

@@ -3,51 +3,49 @@
 //// over the binary transport (never text), consumes one message-rate token
 //// per binary event, and encodes broadcasts through the binary send path.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket.{AcceptJoin, Broadcast, Join, Message, Next, ReplyOk}
 import beryl/transport
-import beryl/wire/codec
+import binary_test_codec
 import gleam/bit_array
-import gleam/dynamic.{type Dynamic}
-import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
-import gleam/option.{type Option, None, Some}
-import gleam/result
-import gleam/string
-import gleeunit
+import gleam/option.{None, Some}
 import gleeunit/should
 
-pub fn main() {
-  gleeunit.main()
-}
-
 fn start_system() -> beryl.Sockets {
-  start_with(beryl.config(binary_test_codec()))
+  start_with(beryl.config(binary_test_codec.new()))
 }
 
 fn start_with(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(config, init: fn(_info) { #(Nil, []) }, update: fn(model, ev) {
-      case ev {
-        Join(_, _, ref) ->
-          Next(model, [
-            AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
-          ])
-        Message(_topic, "ping", _payload, Some(ref)) ->
-          Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
-        Message(topic, "cast", _payload, _ref) ->
-          Next(model, [
-            Broadcast(
-              topic,
-              "announcement",
-              json.object([#("body", json.string("hello"))]),
-            ),
-          ])
-        _ -> Next(model, [])
-      }
-    })
+    app_test_helper.start_app(
+      config,
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, event) {
+        case event {
+          Join(_, _, ref) ->
+            Next(model, [
+              AcceptJoin(ref, Some(json.object([#("joined", json.bool(True))]))),
+            ])
+          Message(_topic, "ping", _payload, Some(ref)) ->
+            Next(model, [ReplyOk(ref, json.object([#("ok", json.bool(True))]))])
+          Message(topic, "cast", _payload, _ref) ->
+            Next(model, [
+              Broadcast(
+                topic,
+                "announcement",
+                json.object([#("body", json.string("hello"))]),
+              ),
+            ])
+          Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
+        }
+      },
+    )
   channels
 }
 
@@ -92,7 +90,7 @@ fn route_binary(
   transport.route_binary(channels, socket_id, bit_array.from_string(raw))
 }
 
-pub fn binary_join_and_event_route_and_reply_over_binary_test() {
+pub fn binary_join_and_event_route_and_reply_over_binary_test() -> Nil {
   let channels = start_system()
   let #(text, binary) = connect_binary(channels, "s1")
 
@@ -108,10 +106,10 @@ pub fn binary_join_and_event_route_and_reply_over_binary_test() {
   process.receive(text, 50) |> should.be_error
 }
 
-pub fn binary_event_consumes_one_message_rate_token_test() {
+pub fn binary_event_consumes_one_message_rate_token_test() -> Nil {
   let channels =
     start_with(
-      beryl.config(binary_test_codec())
+      beryl.config(binary_test_codec.new())
       |> beryl.with_message_rate(per_second: 100, burst: 1),
     )
   let #(_text, binary) = connect_binary(channels, "s1")
@@ -127,7 +125,7 @@ pub fn binary_event_consumes_one_message_rate_token_test() {
   process.receive(binary, 100) |> should.be_error
 }
 
-pub fn binary_broadcast_uses_binary_send_test() {
+pub fn binary_broadcast_uses_binary_send_test() -> Nil {
   let channels = start_system()
   let #(text, binary) = connect_binary(channels, "s1")
   route_binary(channels, "s1", "J|join-ref|join-1|room:lobby|{}")
@@ -140,7 +138,7 @@ pub fn binary_broadcast_uses_binary_send_test() {
   process.receive(text, 50) |> should.be_error
 }
 
-pub fn undecodable_binary_frame_is_dropped_test() {
+pub fn undecodable_binary_frame_is_dropped_test() -> Nil {
   let channels = start_system()
   let #(text, binary) = connect_binary(channels, "s1")
   route_binary(channels, "s1", "J|join-ref|join-1|room:lobby|{}")
@@ -156,97 +154,4 @@ pub fn undecodable_binary_frame_is_dropped_test() {
   recv_binary(binary)
   |> should.equal("R|event-1|room:lobby|ok|{\"ok\":true}")
   process.receive(text, 50) |> should.be_error
-}
-
-// ── Custom pipe-delimited binary test codec ─────────────────────────────────
-
-fn binary_test_codec() -> codec.Codec {
-  codec.new(
-    decode_text: fn(_) { Error(codec.InvalidFormat("text unsupported")) },
-    encode_reply: encode_reply,
-    encode_push: encode_push,
-    encode_heartbeat_reply: encode_heartbeat_reply,
-  )
-  |> codec.with_binary_decoder(decode_binary_frame)
-}
-
-fn decode_binary_frame(
-  data: BitArray,
-) -> Result(codec.Inbound, codec.DecodeError) {
-  case bit_array.to_string(data) {
-    Ok(raw) -> decode_binary_text(raw)
-    Error(_) -> Error(codec.InvalidFormat("Expected UTF-8 binary test frame"))
-  }
-}
-
-fn decode_binary_text(raw: String) -> Result(codec.Inbound, codec.DecodeError) {
-  case string.split(raw, "|") {
-    ["J", join_ref, ref, topic, payload_json] -> {
-      use payload <- result.try(decode_payload(payload_json))
-      Ok(codec.inbound(
-        join_ref: Some(join_ref),
-        ref: Some(ref),
-        topic: topic,
-        kind: codec.Join,
-        payload: payload,
-      ))
-    }
-    ["E", ref, topic, event, payload_json] -> {
-      use payload <- result.try(decode_payload(payload_json))
-      Ok(codec.inbound(
-        join_ref: None,
-        ref: Some(ref),
-        topic: topic,
-        kind: codec.Event(event),
-        payload: payload,
-      ))
-    }
-    _ -> Error(codec.InvalidFormat("Unknown binary test frame"))
-  }
-}
-
-fn decode_payload(payload_json: String) -> Result(Dynamic, codec.DecodeError) {
-  case json.parse(from: payload_json, using: decode.dynamic) {
-    Ok(payload) -> Ok(payload)
-    Error(_) -> Error(codec.InvalidJson("Invalid payload JSON"))
-  }
-}
-
-fn encode_reply(
-  _join_ref: Option(String),
-  ref: Option(String),
-  topic: String,
-  status: codec.ReplyStatus,
-  response: json.Json,
-) -> codec.Frame {
-  let status_string = case status {
-    codec.StatusOk -> "ok"
-    codec.StatusError -> "error"
-  }
-  {
-    "R|"
-    <> option.unwrap(ref, "null")
-    <> "|"
-    <> topic
-    <> "|"
-    <> status_string
-    <> "|"
-    <> json.to_string(response)
-  }
-  |> bit_array.from_string
-  |> codec.BinaryFrame
-}
-
-fn encode_push(
-  topic: String,
-  event: String,
-  payload: json.Json,
-) -> codec.Frame {
-  { "P|" <> topic <> "|" <> event <> "|" <> json.to_string(payload) }
-  |> bit_array.from_string
-  |> codec.BinaryFrame
-}
-
-fn encode_heartbeat_reply(ref: Option(String)) -> codec.Frame {
-  encode_reply(None, ref, "phoenix", codec.StatusOk, json.object([]))
 }

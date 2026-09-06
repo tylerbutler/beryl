@@ -2,19 +2,14 @@
 //// app runtime: buckets are only created for joined topics, are capped per
 //// socket, and are released when the topic or socket goes away.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
-import beryl/socket.{AcceptJoin, Join, Message, Next}
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/int
 import gleam/option
-import gleeunit
 import gleeunit/should
-
-pub fn main() {
-  gleeunit.main()
-}
 
 /// Start an app that accepts every join and forwards events to the
 /// observer, with a generous channel rate but a small bucket cap.
@@ -31,16 +26,16 @@ fn start_capped_app_with(
   base: beryl.Config,
 ) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       base
         |> beryl.with_channel_rate(per_second: 1000, burst: 1000)
         |> beryl.with_channel_rate_max_keys_per_socket(max_keys: max_keys),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
+      update: fn(model, input) {
+        process.send(events, input)
+        case input {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
+          Message(..) | Binary(..) | Closed(..) | Info(..) -> Next(model, [])
         }
       },
     )
@@ -53,7 +48,7 @@ fn expect_handled(
   topic: String,
 ) -> Nil {
   case process.receive(events, 500) {
-    Ok(Message(t, _, _, _)) if t == topic -> Nil
+    Ok(Message(received_topic, _, _, _)) if received_topic == topic -> Nil
     Ok(_other) -> expect_handled(events, topic)
     Error(Nil) -> should.fail()
   }
@@ -65,7 +60,8 @@ fn expect_dropped(
   topic: String,
 ) -> Nil {
   case process.receive(events, 100) {
-    Ok(Message(t, _, _, _)) if t == topic -> should.fail()
+    Ok(Message(received_topic, _, _, _)) if received_topic == topic ->
+      should.fail()
     Ok(_other) -> expect_dropped(events, topic)
     Error(Nil) -> Nil
   }
@@ -85,7 +81,7 @@ fn event_frame(
   topic: String,
   ref: String,
 ) -> Nil {
-  h.route(
+  app_test_helper.route(
     channels,
     socket_id,
     "[null,\"" <> ref <> "\",\"" <> topic <> "\",\"client_event\",{}]",
@@ -98,7 +94,7 @@ fn leave(
   topic: String,
   ref: String,
 ) -> Nil {
-  h.route(
+  app_test_helper.route(
     channels,
     socket_id,
     "[\"join-"
@@ -112,14 +108,20 @@ fn leave(
 }
 
 fn join(channels: beryl.Sockets, socket_id: String, topic: String) -> Nil {
-  h.join(channels, socket_id, topic, "join-" <> topic, "join-" <> topic)
+  app_test_helper.join(
+    channels,
+    socket_id,
+    topic,
+    "join-" <> topic,
+    "join-" <> topic,
+  )
 }
 
-pub fn unjoined_events_do_not_consume_channel_bucket_cap_test() {
+pub fn unjoined_events_do_not_consume_channel_bucket_cap_test() -> Nil {
   let events = process.new_subject()
   let channels = start_capped_app(1, events)
 
-  let _frames = h.connect(channels, "socket-131")
+  let _frames = app_test_helper.connect(channels, "socket-131")
 
   // A flood of events for never-joined topics must not create buckets and
   // must not consume the per-socket cap.
@@ -132,14 +134,15 @@ pub fn unjoined_events_do_not_consume_channel_bucket_cap_test() {
   event_frame(channels, "socket-131", "room:one", "ref-one")
   expect_handled(events, "room:one")
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() {
+pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() -> Nil {
   let events = process.new_subject()
   let channels = start_capped_app(2, events)
 
-  let _frames = h.connect(channels, "socket-cap")
+  let _frames = app_test_helper.connect(channels, "socket-cap")
   join(channels, "socket-cap", "room:one")
   join(channels, "socket-cap", "room:two")
   join(channels, "socket-cap", "room:three")
@@ -153,15 +156,16 @@ pub fn joined_topics_cannot_exceed_channel_bucket_cap_test() {
   event_frame(channels, "socket-cap", "room:three", "ref-three")
   expect_dropped(events, "room:three")
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn channel_bucket_cap_is_isolated_per_socket_test() {
+pub fn channel_bucket_cap_is_isolated_per_socket_test() -> Nil {
   let events = process.new_subject()
   let channels = start_capped_app(1, events)
 
-  let _frames_one = h.connect(channels, "socket-one")
-  let _frames_two = h.connect(channels, "socket-two")
+  let _frames_one = app_test_helper.connect(channels, "socket-one")
+  let _frames_two = app_test_helper.connect(channels, "socket-two")
   join(channels, "socket-one", "room:one")
   join(channels, "socket-two", "room:two")
   drain_events(events)
@@ -171,10 +175,11 @@ pub fn channel_bucket_cap_is_isolated_per_socket_test() {
   event_frame(channels, "socket-two", "room:two", "ref-two")
   expect_handled(events, "room:two")
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn heartbeat_eviction_releases_channel_buckets_test() {
+pub fn heartbeat_eviction_releases_channel_buckets_test() -> Nil {
   let events = process.new_subject()
   let channels =
     start_capped_app_with(
@@ -184,7 +189,7 @@ pub fn heartbeat_eviction_releases_channel_buckets_test() {
         |> beryl.with_heartbeat(timeout_ms: 40),
     )
 
-  let _frames = h.connect(channels, "socket-heartbeat")
+  let _frames = app_test_helper.connect(channels, "socket-heartbeat")
   join(channels, "socket-heartbeat", "room:one")
   event_frame(channels, "socket-heartbeat", "room:one", "ref-one")
   expect_handled(events, "room:one")
@@ -194,20 +199,21 @@ pub fn heartbeat_eviction_releases_channel_buckets_test() {
 
   // A reconnect under the same socket id starts with a free cap: if the old
   // bucket had leaked, this event would exceed max_keys_per_socket = 1.
-  let _frames = h.connect(channels, "socket-heartbeat")
+  let _frames = app_test_helper.connect(channels, "socket-heartbeat")
   join(channels, "socket-heartbeat", "room:two")
   drain_events(events)
   event_frame(channels, "socket-heartbeat", "room:two", "ref-two")
   expect_handled(events, "room:two")
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn leave_removes_channel_bucket_so_cap_recovers_test() {
+pub fn leave_removes_channel_bucket_so_cap_recovers_test() -> Nil {
   let events = process.new_subject()
   let channels = start_capped_app(2, events)
 
-  let _frames = h.connect(channels, "socket-leave")
+  let _frames = app_test_helper.connect(channels, "socket-leave")
   join(channels, "socket-leave", "room:one")
   join(channels, "socket-leave", "room:two")
   event_frame(channels, "socket-leave", "room:one", "ref-one")
@@ -223,7 +229,8 @@ pub fn leave_removes_channel_bucket_so_cap_recovers_test() {
   event_frame(channels, "socket-leave", "room:three", "ref-three")
   expect_handled(events, "room:three")
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 fn send_unjoined_events(channels: beryl.Sockets, remaining: Int) -> Nil {
@@ -231,7 +238,7 @@ fn send_unjoined_events(channels: beryl.Sockets, remaining: Int) -> Nil {
     True -> Nil
     False -> {
       let topic = "room:unjoined-" <> int.to_string(remaining)
-      h.route(
+      app_test_helper.route(
         channels,
         "socket-131",
         "[null,\"ref-"

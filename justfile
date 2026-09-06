@@ -20,23 +20,23 @@ deps: deps-gleam
 
 # Download gleam dependencies for every workspace member
 deps-gleam:
-    trellis run deps
+    trellis run deps --serial
 
 # === BUILD ===
 
 # Build all packages (Erlang target)
 build *ARGS:
-    ./scripts/gleam-each.sh build {{ ARGS }}
+    trellis run build {{ ARGS }}
 
 # Build with warnings as errors
 build-strict:
-    ./scripts/gleam-each.sh build-strict
+    trellis run build --strict
 
 # === TESTING ===
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
 test *ARGS:
-    ./scripts/gleam-each.sh test {{ ARGS }}
+    trellis run test {{ ARGS }}
 
 # === CODE QUALITY ===
 
@@ -50,7 +50,7 @@ format-check:
 
 # Type check without building
 check:
-    ./scripts/gleam-each.sh check
+    trellis run check
 
 # Run the glinter linter (packages only; examples are excluded)
 lint:
@@ -60,15 +60,27 @@ lint:
 doctor:
     trellis doctor
 
+# Report locked dependency licences (defaults to the three library packages)
+audit-licences *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-licences --serial {{ PACKAGES }}
+
+# Report known vulnerabilities; findings do not fail this task
+audit-vulns *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-vulns --serial {{ PACKAGES }}
+
+# Enforce each package's licence policy and vulnerability threshold
+audit-check *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-check --serial --keep-going {{ PACKAGES }}
+
 # === DOCUMENTATION ===
 
-# Build Gleam API documentation (HTML + docs metadata) for both packages
+# Build Gleam API documentation for publishable workspace packages
 gleam-docs:
-    ./scripts/gleam-each.sh docs
+    trellis run docs
 
 # Build documentation: Gleam docs + regenerated website reference pages
 docs: gleam-docs
-    pnpm -C website generate:reference
+    cd website && pnpm run generate:reference
 
 # Render the architecture deck to HTML
 deck:
@@ -105,6 +117,10 @@ site-reference: docs
 site-reference-test:
     pnpm -C website test:reference
 
+# Type-check every Gleam snippet in the docs against the real packages
+site-snippets: gleam-docs
+    pnpm -C website check:snippets
+
 # Build website
 site-build: site-reference
     pnpm -C website build:site
@@ -125,7 +141,7 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    ./scripts/gleam-each.sh build chatrooms collab_docs cursors example_helpers showcase load_test collab_docs_client todo_server todo_client
+    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client todo_server todo_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
@@ -169,7 +185,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check check docs test build-strict examples-test
+ci: format-check check docs site-snippets test build-strict examples-test
 
 # Alias for PR checks
 alias pr := ci
