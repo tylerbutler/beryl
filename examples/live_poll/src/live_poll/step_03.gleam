@@ -19,7 +19,7 @@ pub fn main() -> Nil {
     child_specification,
     "Step 03 - typed timer messages",
     8103,
-    False,
-    False,
+    server.HealthEndpointDisabled,
+    server.GuideChannelDisabled,
   )
 }

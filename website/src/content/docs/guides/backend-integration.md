@@ -158,13 +158,11 @@ For typed updates from a long-lived application actor, use the socket's
 `socket.Sender(message)` with `beryl/bridge`. The bridge forwards messages from
 the actor to `socket.Info(message)`.
 
-## Benefits
+## Why publish from the backend
 
-- **One source of truth:** Your backend manages authentication and the
-  database. beryl sends updates to connected clients.
-- **Publish from trusted processes:** An HTTP handler, worker, or webhook
-  consumer can publish.
-- **Cluster-wide delivery:** With PubSub, one `beryl.broadcast` reaches
-  subscribers on every connected node.
+Your backend remains the source of truth for authentication and database
+writes. Trusted HTTP handlers, workers, and webhook consumers can publish
+updates. With PubSub, one `beryl.broadcast` reaches subscribers on every
+connected node.
 
 For connect-time verification of the tokens your backend issues, see [Authentication](/guides/authentication/).

@@ -124,7 +124,7 @@ fn wait_until_dead(pid: process.Pid) -> Nil {
 
 // --- isolation ---------------------------------------------------------------
 
-pub fn each_topic_runs_in_its_own_process_test() {
+pub fn each_topic_runs_in_its_own_process_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels = helper.start(config(), [quick("room:*", reports, senders)])
@@ -144,9 +144,10 @@ pub fn each_topic_runs_in_its_own_process_test() {
   helper.push(channels, "s1", "room:a", "ping", "r-3")
   ran_pid(reports, "on_message") |> should.equal(a)
   let _ = helper.recv(frames)
+  Nil
 }
 
-pub fn a_slow_callback_on_one_topic_does_not_delay_another_test() {
+pub fn a_slow_callback_on_one_topic_does_not_delay_another_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -171,7 +172,7 @@ pub fn a_slow_callback_on_one_topic_does_not_delay_another_test() {
   second |> string.contains("\"r-3\"") |> should.be_true
 }
 
-pub fn a_slow_join_on_one_socket_does_not_block_another_test() {
+pub fn a_slow_join_on_one_socket_does_not_block_another_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let handler =
@@ -195,11 +196,12 @@ pub fn a_slow_join_on_one_socket_does_not_block_another_test() {
   // behind another socket's join.
   let assert Ok(_) = process.receive(fast, 200) as "the fast socket's join"
   let assert Ok(_) = process.receive(slow, 1000) as "the slow socket's join"
+  Nil
 }
 
 // --- leave ordering ----------------------------------------------------------
 
-pub fn a_reply_computed_before_a_leave_is_still_delivered_test() {
+pub fn a_reply_computed_before_a_leave_is_still_delivered_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -228,7 +230,7 @@ pub fn a_reply_computed_before_a_leave_is_still_delivered_test() {
   terminated(reports, "room:a", "normal")
 }
 
-pub fn a_leave_followed_immediately_by_a_rejoin_is_ordered_test() {
+pub fn a_leave_followed_immediately_by_a_rejoin_is_ordered_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -264,7 +266,7 @@ pub fn a_leave_followed_immediately_by_a_rejoin_is_ordered_test() {
   helper.recv(frames) |> string.contains("poked") |> should.be_true
 }
 
-pub fn a_ref_left_unanswered_before_a_leave_is_dropped_by_the_close_test() {
+pub fn a_ref_left_unanswered_before_a_leave_is_dropped_by_the_close_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels = helper.start(config(), [quick("room:*", reports, senders)])
@@ -293,7 +295,7 @@ pub fn a_ref_left_unanswered_before_a_leave_is_dropped_by_the_close_test() {
   reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
-pub fn a_message_behind_a_close_is_not_handled_test() {
+pub fn a_message_behind_a_close_is_not_handled_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -318,7 +320,7 @@ pub fn a_message_behind_a_close_is_not_handled_test() {
   process.receive(reports, 100) |> should.be_error
 }
 
-pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() {
+pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() -> Nil {
   let tracker = process.new_name("roster_tracker")
   let handler =
     channel.handler("room:*", fn(context) {
@@ -353,7 +355,7 @@ pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() {
 
 // --- worker death -------------------------------------------------------------
 
-pub fn a_close_of_a_dead_worker_does_not_wait_for_the_terminate_timeout_test() {
+pub fn a_close_of_a_dead_worker_does_not_wait_for_the_terminate_timeout_test() -> Nil {
   let reports = process.new_subject()
   let terminating = process.new_subject()
   let handler =
@@ -391,7 +393,7 @@ pub fn a_close_of_a_dead_worker_does_not_wait_for_the_terminate_timeout_test() {
   process.receive(terminating, 100) |> should.be_error
 }
 
-pub fn a_killed_worker_closes_only_its_topic_with_phx_error_test() {
+pub fn a_killed_worker_closes_only_its_topic_with_phx_error_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels = helper.start(config(), [quick("room:*", reports, senders)])
@@ -421,7 +423,7 @@ pub fn a_killed_worker_closes_only_its_topic_with_phx_error_test() {
   helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
-pub fn a_blocking_terminate_is_bounded_and_the_worker_killed_test() {
+pub fn a_blocking_terminate_is_bounded_and_the_worker_killed_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -434,7 +436,7 @@ pub fn a_blocking_terminate_is_bounded_and_the_worker_killed_test() {
   let worker = ran_pid(reports, "join")
 
   helper.leave(channels, "s1", "room:a", "jr-1", "r-2")
-  let _ack = helper.recv(frames)
+  let _acknowledgement = helper.recv(frames)
 
   // The close waits for the worker up to the terminate timeout (5s), then
   // kills it and still sends the terminal frame.
@@ -448,7 +450,7 @@ pub fn a_blocking_terminate_is_bounded_and_the_worker_killed_test() {
 
 // --- socket lifetime -----------------------------------------------------------
 
-pub fn a_disconnect_terminates_busy_workers_test() {
+pub fn a_disconnect_terminates_busy_workers_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -480,7 +482,7 @@ pub fn a_disconnect_terminates_busy_workers_test() {
   wait_until_dead(b)
 }
 
-pub fn stopping_beryl_runs_on_terminate_for_every_worker_test() {
+pub fn stopping_beryl_runs_on_terminate_for_every_worker_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels = helper.start(config(), [quick("room:*", reports, senders)])
@@ -500,7 +502,7 @@ pub fn stopping_beryl_runs_on_terminate_for_every_worker_test() {
   wait_until_dead(b)
 }
 
-pub fn stopping_beryl_while_a_leave_is_parked_lets_on_terminate_finish_test() {
+pub fn stopping_beryl_while_a_leave_is_parked_lets_on_terminate_finish_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -525,7 +527,7 @@ pub fn stopping_beryl_while_a_leave_is_parked_lets_on_terminate_finish_test() {
   wait_until_dead(a)
 }
 
-pub fn stopping_beryl_bounds_a_blocking_terminate_inside_the_drain_test() {
+pub fn stopping_beryl_bounds_a_blocking_terminate_inside_the_drain_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels =
@@ -539,7 +541,7 @@ pub fn stopping_beryl_bounds_a_blocking_terminate_inside_the_drain_test() {
   helper.join(channels, "s1", "room:b", "jr-2", "r-2")
   let _ = helper.recv(frames)
   let slow = ran_pid(reports, "join")
-  let b = ran_pid(reports, "join")
+  let sibling = ran_pid(reports, "join")
 
   // The slow worker's `on_terminate` outlives the stop-driven terminate
   // timeout, so the runtime kills that worker. The stop still completes
@@ -548,10 +550,10 @@ pub fn stopping_beryl_bounds_a_blocking_terminate_inside_the_drain_test() {
 
   terminated(reports, "room:b", "shutdown")
   wait_until_dead(slow)
-  wait_until_dead(b)
+  wait_until_dead(sibling)
 }
 
-pub fn many_topics_on_one_socket_each_get_a_worker_test() {
+pub fn many_topics_on_one_socket_each_get_a_worker_test() -> Nil {
   let reports = process.new_subject()
   let senders = process.new_subject()
   let channels = helper.start(config(), [quick("room:*", reports, senders)])

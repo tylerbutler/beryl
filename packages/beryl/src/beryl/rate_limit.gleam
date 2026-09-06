@@ -29,7 +29,7 @@ pub type RateLimitConfig {
 pub fn config(per_second per_second: Int, burst burst: Int) -> RateLimitConfig {
   let effective_burst = case burst {
     0 -> per_second
-    b -> b
+    configured_burst -> configured_burst
   }
   RateLimitConfig(per_second: per_second, burst: effective_burst)
 }

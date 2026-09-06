@@ -121,7 +121,7 @@ heartbeat, or WebSocket assertions must:
 
 ### Polling Over Sleeping
 
-Use `test_helpers.wait_until(check, timeout_ms, interval_ms)` instead of
+Use `test_helper.wait_until(check, timeout_ms, interval_ms)` instead of
 `process.sleep(N)` for asynchronous assertions (presence replication, broadcast
 delivery, etc.).
 

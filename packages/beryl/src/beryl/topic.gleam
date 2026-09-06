@@ -60,7 +60,7 @@ pub fn parse_pattern(pattern: String) -> TopicPattern {
 /// ```
 pub fn matches(pattern: TopicPattern, topic: String) -> Bool {
   case pattern {
-    Exact(p) -> p == topic
+    Exact(exact_topic) -> exact_topic == topic
     Wildcard(prefix) -> string.starts_with(topic, prefix)
     SegmentWildcard(pattern_parts) ->
       segment_parts_match(pattern_parts, segments(topic))
@@ -160,8 +160,8 @@ pub fn extract_wildcards(
   topic: String,
 ) -> Result(List(String), ExtractError) {
   case pattern {
-    Exact(p) ->
-      case p == topic {
+    Exact(exact_topic) ->
+      case exact_topic == topic {
         True -> Ok([])
         False -> Error(TopicMismatch)
       }
@@ -317,10 +317,8 @@ fn has_control_characters(value: String) -> Bool {
 
 /// Errors returned when validating a topic or topic pattern.
 ///
-/// A minor release can add variants as validation gets stricter. Do not treat
-/// this type as closed for exhaustive matching. Match exact variants only
-/// when you handle them differently. Otherwise, use a catch-all arm
-/// (`_ -> ...`) so new variants do not break your code.
+/// The variants are exhaustive; match each error explicitly. Adding a
+/// variant affects API compatibility and requires updating exhaustive matches.
 pub type TopicError {
   /// The topic or pattern was an empty string.
   EmptyTopic

@@ -77,7 +77,7 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
           actor.continue(
             State(..state, members: dict.insert(state.members, room, count - 1)),
           )
-        _ ->
+        Ok(_) | Error(_) ->
           actor.continue(State(
             polls: dict.delete(state.polls, room),
             members: dict.delete(state.members, room),

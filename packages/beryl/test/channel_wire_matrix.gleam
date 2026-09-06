@@ -91,7 +91,10 @@ fn raw_effects(
     socket.Message(name, "blob", payload, _ref) -> [
       socket.Push(name, binary_event, binary_payload("decoded", payload)),
     ]
-    _ -> []
+    socket.Message(..)
+    | socket.Binary(..)
+    | socket.Closed(..)
+    | socket.Info(..) -> []
   }
 }
 
@@ -265,7 +268,7 @@ pub type System {
 pub fn variants() -> List(Variant) {
   [
     Variant(name: "beryl.child_spec", start: fn(config) {
-      let assert Ok(#(sockets, spec)) =
+      let assert Ok(#(sockets, child_specification)) =
         beryl.child_spec(
           config,
           init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
@@ -274,18 +277,18 @@ pub fn variants() -> List(Variant) {
         as "the raw contract system builds"
       let assert Ok(_) =
         static_supervisor.new(static_supervisor.OneForOne)
-        |> static_supervisor.add(spec)
+        |> static_supervisor.add(child_specification)
         |> static_supervisor.start()
         as "the raw contract supervision tree starts"
       sockets
     }),
     Variant(name: "channel.child_spec", start: fn(config) {
-      let assert Ok(#(sockets, spec)) =
+      let assert Ok(#(sockets, child_specification)) =
         channel.child_spec(config, handlers: handlers())
         as "the channel contract system builds"
       let assert Ok(_) =
         static_supervisor.new(static_supervisor.OneForOne)
-        |> static_supervisor.add(spec)
+        |> static_supervisor.add(child_specification)
         |> static_supervisor.start()
         as "the channel contract supervision tree starts"
       sockets
@@ -309,8 +312,8 @@ pub fn default_config() -> beryl.Config {
 /// what that shared observation must *be* rather than only that the two
 /// agree.
 pub fn compare(
-  setup setup: fn() -> #(beryl.Config, ctx),
-  scenario scenario: fn(System, ctx) -> observation,
+  setup setup: fn() -> #(beryl.Config, context),
+  scenario scenario: fn(System, context) -> observation,
 ) -> observation {
   let observations =
     list.map(variants(), fn(variant) {

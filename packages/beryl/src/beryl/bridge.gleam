@@ -1,5 +1,5 @@
-//// Bridge - Forward an external OTP actor's message stream to a socket via
-//// its `Sender`.
+//// Forward an external OTP actor's message stream to a socket through its
+//// `Sender`.
 ////
 //// A common pattern is a long-lived domain actor (e.g. a per-document
 //// session) that emits updates which need to be pushed to a connected
@@ -94,7 +94,7 @@ type Event(message) {
 /// `socket.notify(sender, transform(value))`.
 ///
 /// Use `transform` to translate the domain message into your app's
-/// server-side `msg` type (the `Info` payload). If no translation is needed,
+/// server-side `message` type (the `Info` payload). If no translation is needed,
 /// pass the identity function `fn(value) { value }`.
 ///
 /// Always call `stop` when the owning socket or topic ends. The forwarder

@@ -78,7 +78,7 @@ pub type UpgradeOutcome {
   UpgradeSucceeded
   OriginRejected
   VersionRejected
-  AuthRejected
+  AuthenticationRejected
   CapacityRejected
   HandshakeFailed
 }
@@ -143,7 +143,7 @@ pub fn telemetry_upgrade_stop(
         UpgradeSucceeded -> telemetry.UpgradeSucceeded
         OriginRejected -> telemetry.OriginRejected
         VersionRejected -> telemetry.VersionRejected
-        AuthRejected -> telemetry.AuthRejected
+        AuthenticationRejected -> telemetry.AuthRejected
         CapacityRejected -> telemetry.CapacityRejected
         HandshakeFailed -> telemetry.HandshakeFailed
       },

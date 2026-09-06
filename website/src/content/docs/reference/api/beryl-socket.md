@@ -20,7 +20,7 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
  every wire event for a socket to one `update` function, and the
  function returns the next model plus a list of `Effect`s for beryl to
  apply. There are no channel modules, no registry, and no type erasure.
- Each socket has a single `model` and a single `msg` type.
+ Each socket has a single `model` and a single `message` type.
 
  ## Effect ordering guarantee
 
@@ -333,8 +333,9 @@ Broadcast a presence snapshot for a topic to all its subscribers,
 KickTopic(topic: String)
 ```
 
-Close this socket's subscription to a topic. The topic receives a
- `Closed(topic, Shutdown)` input and the client a terminal frame.
+Close this socket's subscription to a topic. The topic receives
+ `Closed(topic, Shutdown)`. If the codec has a close encoder, the client
+ also receives its terminal frame.
 
 <div class="api-entry-anchor" id="api-type-input" aria-hidden="true"></div>
 
@@ -485,7 +486,8 @@ Stop(reason: StopReason)
 ```
 
 Tear down the socket: every joined topic receives a `Closed` input,
- terminal frames are sent, and the transport connection is closed.
+ configured terminal frames are sent, and the transport connection is
+ closed.
 
 <div class="api-entry-anchor" id="api-type-replyref" aria-hidden="true"></div>
 
@@ -532,7 +534,8 @@ pub type StopReason {
 Why a socket or topic is stopping.
 
  The runtime delivers this reason in `Closed` inputs, and `Stop` accepts it.
- Match with a catch-all (`_`) arm. Minor releases can add stop reasons.
+ The variants are exhaustive; match each reason explicitly. Adding a
+ variant affects API compatibility and requires updating exhaustive matches.
 
 #### Constructors
 

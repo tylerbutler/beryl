@@ -1,8 +1,7 @@
-//// Channel Groups - Named collections of topics for multi-topic broadcasting
+//// Topic groups
 ////
-//// Groups let you organize topics and broadcast to all of them at once.
-//// Useful for scenarios like broadcasting to all channels in a "team" or
-//// sending a system-wide notification.
+//// Groups organize topics for broadcasts to several topics at once, such as
+//// every channel in a team or a system-wide notification.
 ////
 //// Groups are independent of the beryl runtime and run under your
 //// application's supervision tree.
@@ -40,8 +39,9 @@ import gleam/set.{type Set}
 ///
 /// The stable registered subject is resolved on the caller's node. Keep a
 /// `Groups` handle on the node where its child specification runs. Calls from
-/// another BEAM node cannot reach the owning actor; synchronous operations
-/// panic as unavailable, and fire-and-forget broadcasts are not delivered.
+/// another BEAM node cannot reach the owning actor. All public operations,
+/// including `broadcast`, panic if the actor is unavailable or the call times
+/// out.
 pub opaque type Groups {
   Groups(subject: Subject(Message), call_timeout_ms: Int)
 }
@@ -56,9 +56,9 @@ pub opaque type Config {
 /// Errors from group operations.
 pub type GroupError {
   /// The group already exists.
-  GroupAlreadyExists
+  GroupAlreadyExists(name: String)
   /// The group was not found.
-  GroupNotFound
+  GroupNotFound(name: String)
 }
 
 /// Messages that the groups actor handles.
@@ -243,8 +243,8 @@ pub fn broadcast(
 ) -> Nil {
   case topics(groups, group_name) {
     Ok(topics) -> broadcast_to_topics(topics, channels, event, payload)
-    Error(GroupAlreadyExists) -> Nil
-    Error(GroupNotFound) -> Nil
+    Error(GroupAlreadyExists(_)) -> Nil
+    Error(GroupNotFound(_)) -> Nil
   }
 }
 
@@ -258,7 +258,7 @@ fn handle_message(
     Create(name, reply) -> {
       case dict.has_key(state.groups, name) {
         True -> {
-          process.send(reply, Error(GroupAlreadyExists))
+          process.send(reply, Error(GroupAlreadyExists(name)))
           actor.continue(state)
         }
         False -> {
@@ -272,7 +272,7 @@ fn handle_message(
     Delete(name, reply) -> {
       case dict.has_key(state.groups, name) {
         False -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(name)))
           actor.continue(state)
         }
         True -> {
@@ -286,7 +286,7 @@ fn handle_message(
     Add(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(group_name)))
           actor.continue(state)
         }
         Ok(topics) -> {
@@ -301,7 +301,7 @@ fn handle_message(
     Remove(group_name, topic, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(group_name)))
           actor.continue(state)
         }
         Ok(topics) -> {
@@ -316,7 +316,7 @@ fn handle_message(
     GetTopics(group_name, reply) -> {
       case dict.get(state.groups, group_name) {
         Error(Nil) -> {
-          process.send(reply, Error(GroupNotFound))
+          process.send(reply, Error(GroupNotFound(group_name)))
           actor.continue(state)
         }
         Ok(topics) -> {

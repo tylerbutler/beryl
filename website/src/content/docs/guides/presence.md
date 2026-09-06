@@ -100,7 +100,7 @@ let assert Ok(new_ref) =
 `update` emits the old ref's leave and the new ref's join in one diff, while
 leaving other refs for the same key unchanged. Keep the returned ref for the
 next `update` or `untrack`; the previous ref becomes stale. An unknown, removed,
-or non-public ref returns `Error(presence.UnknownRef)`.
+or non-public ref returns `Error(presence.UnknownRef(ref))`.
 
 ## Remove presence entries
 

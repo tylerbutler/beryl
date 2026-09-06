@@ -19,7 +19,7 @@ pub fn main() -> Nil {
     child_specification,
     "Step 04 - composed channels",
     8104,
-    False,
-    True,
+    server.HealthEndpointDisabled,
+    server.GuideChannelEnabled,
   )
 }

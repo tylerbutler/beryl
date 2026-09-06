@@ -1,4 +1,4 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/pubsub
 import beryl/socket.{
@@ -83,7 +83,7 @@ fn update(model: Nil, input: socket.Input(AppMessage)) -> socket.Next(Nil) {
 
 fn start(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       config,
       init: fn(_info: socket.ConnectInfo(AppMessage)) { #(Nil, []) },
       update: update,
@@ -92,40 +92,40 @@ fn start(config: beryl.Config) -> beryl.Sockets {
 }
 
 fn route_heartbeat(sockets: beryl.Sockets, socket_id: String) -> Nil {
-  h.route(
+  app_test_helper.route(
     sockets,
     socket_id,
     "[null,\"heartbeat-ref\",\"phoenix\",\"heartbeat\",{}]",
   )
 }
 
-pub fn lifecycle_and_callback_results_emit_once_test() {
+pub fn lifecycle_and_callback_results_emit_once_test() -> Nil {
   let handler = attach()
   let sockets = start(telemetry_config())
-  let frames = h.connect(sockets, "socket-1")
+  let frames = app_test_helper.connect(sockets, "socket-1")
   expect_connected(handler) |> should.be_true
 
-  h.join(sockets, "socket-1", "room:lobby", "join-ref", "1")
-  let _join_reply = h.recv(frames)
+  app_test_helper.join(sockets, "socket-1", "room:lobby", "join-ref", "1")
+  let _join_reply = app_test_helper.recv(frames)
   expect_join(handler, "accepted") |> should.be_true
 
-  h.push(sockets, "socket-1", "room:lobby", "noop", "2")
+  app_test_helper.push(sockets, "socket-1", "room:lobby", "noop", "2")
   expect_message(handler, "text", "handled", "no_reply") |> should.be_true
 
-  h.push(sockets, "socket-1", "room:lobby", "reply", "3")
-  let _reply = h.recv(frames)
+  app_test_helper.push(sockets, "socket-1", "room:lobby", "reply", "3")
+  let _reply = app_test_helper.recv(frames)
   expect_message(handler, "text", "handled", "reply") |> should.be_true
 
-  h.push(sockets, "socket-1", "room:lobby", "reply_error", "4")
-  let _error_reply = h.recv(frames)
+  app_test_helper.push(sockets, "socket-1", "room:lobby", "reply_error", "4")
+  let _error_reply = app_test_helper.recv(frames)
   expect_message(handler, "text", "handled", "reply_error") |> should.be_true
 
-  h.push(sockets, "socket-1", "room:lobby", "push", "5")
-  let _push = h.recv(frames)
+  app_test_helper.push(sockets, "socket-1", "room:lobby", "push", "5")
+  let _push = app_test_helper.recv(frames)
   expect_message(handler, "text", "handled", "push") |> should.be_true
 
   route_heartbeat(sockets, "socket-1")
-  let _heartbeat_reply = h.recv(frames)
+  let _heartbeat_reply = app_test_helper.recv(frames)
   expect_message(handler, "heartbeat", "handled", "not_applicable")
   |> should.be_true
 
@@ -134,24 +134,25 @@ pub fn lifecycle_and_callback_results_emit_once_test() {
   expect_none(handler) |> should.be_true
   detach(handler)
   let assert Ok(Nil) = beryl.stop(sockets)
+  Nil
 }
 
-pub fn join_terminal_outcomes_are_reported_test() {
+pub fn join_terminal_outcomes_are_reported_test() -> Nil {
   let handler = attach()
   let sockets = start(telemetry_config())
-  let frames = h.connect(sockets, "join-outcomes")
+  let frames = app_test_helper.connect(sockets, "join-outcomes")
   expect_connected(handler) |> should.be_true
 
-  h.join(sockets, "join-outcomes", "room:reject", "jr-1", "1")
-  let _rejected = h.recv(frames)
+  app_test_helper.join(sockets, "join-outcomes", "room:reject", "jr-1", "1")
+  let _rejected = app_test_helper.recv(frames)
   expect_join(handler, "handler_rejected") |> should.be_true
 
-  h.join(sockets, "join-outcomes", "beryl:reserved", "jr-2", "2")
-  let _invalid = h.recv(frames)
+  app_test_helper.join(sockets, "join-outcomes", "beryl:reserved", "jr-2", "2")
+  let _invalid = app_test_helper.recv(frames)
   expect_join(handler, "invalid_topic") |> should.be_true
 
-  h.join(sockets, "join-outcomes", "room:crash", "jr-3", "3")
-  let _crashed = h.recv(frames)
+  app_test_helper.join(sockets, "join-outcomes", "room:crash", "jr-3", "3")
+  let _crashed = app_test_helper.recv(frames)
   expect_join(handler, "callback_error") |> should.be_true
 
   let limited =
@@ -159,44 +160,44 @@ pub fn join_terminal_outcomes_are_reported_test() {
       telemetry_config()
       |> beryl.with_join_rate(per_second: 1, burst: 1),
     )
-  let limited_frames = h.connect(limited, "limited")
+  let limited_frames = app_test_helper.connect(limited, "limited")
   expect_connected(handler) |> should.be_true
-  h.join(limited, "limited", "room:first", "jr-1", "1")
-  let _accepted = h.recv(limited_frames)
+  app_test_helper.join(limited, "limited", "room:first", "jr-1", "1")
+  let _accepted = app_test_helper.recv(limited_frames)
   expect_join(handler, "accepted") |> should.be_true
-  h.join(limited, "limited", "room:second", "jr-2", "2")
-  let _rate_limited = h.recv(limited_frames)
+  app_test_helper.join(limited, "limited", "room:second", "jr-2", "2")
+  let _rate_limited = app_test_helper.recv(limited_frames)
   expect_join(handler, "rate_limited") |> should.be_true
 
   expect_none(handler) |> should.be_true
   detach(handler)
 }
 
-pub fn message_rejection_rate_limit_and_crash_are_terminal_test() {
+pub fn message_rejection_rate_limit_and_crash_are_terminal_test() -> Nil {
   let handler = attach()
   let limited =
     start(
       telemetry_config()
       |> beryl.with_message_rate(per_second: 1, burst: 1),
     )
-  let frames = h.connect(limited, "limited")
+  let frames = app_test_helper.connect(limited, "limited")
   expect_connected(handler) |> should.be_true
 
-  h.push(limited, "limited", "room:lobby", "noop", "1")
-  let _unmatched = h.recv(frames)
+  app_test_helper.push(limited, "limited", "room:lobby", "noop", "1")
+  let _unmatched = app_test_helper.recv(frames)
   expect_message(handler, "text", "unjoined", "not_applicable")
   |> should.be_true
-  h.push(limited, "limited", "room:lobby", "noop", "2")
+  app_test_helper.push(limited, "limited", "room:lobby", "noop", "2")
   expect_message(handler, "text", "rate_limited", "not_applicable")
   |> should.be_true
 
   let crashed = start(telemetry_config())
-  let crashed_frames = h.connect(crashed, "crashed")
+  let crashed_frames = app_test_helper.connect(crashed, "crashed")
   expect_connected(handler) |> should.be_true
-  h.join(crashed, "crashed", "room:lobby", "jr-1", "1")
-  let _joined = h.recv(crashed_frames)
+  app_test_helper.join(crashed, "crashed", "room:lobby", "jr-1", "1")
+  let _joined = app_test_helper.recv(crashed_frames)
   expect_join(handler, "accepted") |> should.be_true
-  h.push(crashed, "crashed", "room:lobby", "crash", "2")
+  app_test_helper.push(crashed, "crashed", "room:lobby", "crash", "2")
   expect_message(handler, "text", "callback_error", "failed")
   |> should.be_true
 
@@ -204,14 +205,14 @@ pub fn message_rejection_rate_limit_and_crash_are_terminal_test() {
   detach(handler)
 }
 
-pub fn decoded_binary_route_preserves_message_kind_test() {
+pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
   let handler = attach()
   let sockets = start(telemetry_config())
-  let frames = h.connect(sockets, "decoded-binary")
+  let frames = app_test_helper.connect(sockets, "decoded-binary")
   expect_connected(handler) |> should.be_true
 
-  h.join(sockets, "decoded-binary", "room:lobby", "join-ref", "1")
-  let _joined = h.recv(frames)
+  app_test_helper.join(sockets, "decoded-binary", "room:lobby", "join-ref", "1")
+  let _joined = app_test_helper.recv(frames)
   expect_join(handler, "accepted") |> should.be_true
 
   let text_event = "[\"join-ref\",\"text-ref\",\"room:lobby\",\"noop\",{}]"
@@ -241,6 +242,7 @@ pub fn decoded_binary_route_preserves_message_kind_test() {
   expect_none(handler) |> should.be_true
   detach(handler)
   let assert Ok(Nil) = beryl.stop(sockets)
+  Nil
 }
 
 fn raw_binary_codec() -> codec.Codec {
@@ -254,14 +256,14 @@ fn raw_binary_codec() -> codec.Codec {
   |> codec.with_error_encoder(wire.channel_error)
 }
 
-pub fn binary_info_and_broadcast_counts_are_reported_test() {
+pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   let handler = attach()
-  let ps = pubsub.start(pubsub.default_config())
+  let pubsub_instance = pubsub.start(pubsub.default_config())
   let senders = process.new_subject()
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(raw_binary_codec())
-        |> beryl.with_pubsub(ps)
+        |> beryl.with_pubsub(pubsub_instance)
         |> beryl.with_telemetry,
       init: fn(info: socket.ConnectInfo(AppMessage)) {
         process.send(senders, info.self)
@@ -269,11 +271,11 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() {
       },
       update: update,
     )
-  let frames = h.connect(sockets, "ok")
+  let frames = app_test_helper.connect(sockets, "ok")
   let assert Ok(sender) = process.receive(senders, 500)
   expect_connected(handler) |> should.be_true
-  h.join(sockets, "ok", "room:lobby", "jr-1", "1")
-  let _joined = h.recv(frames)
+  app_test_helper.join(sockets, "ok", "room:lobby", "jr-1", "1")
+  let _joined = app_test_helper.recv(frames)
   expect_join(handler, "accepted") |> should.be_true
 
   transport.route_binary(sockets, "ok", <<1, 2, 3>>)
@@ -282,33 +284,34 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() {
   expect_message(handler, "info", "handled", "no_reply") |> should.be_true
 
   beryl.broadcast(sockets, "room:lobby", "event", json.object([]))
-  let _local = h.recv(frames)
+  let _local = app_test_helper.recv(frames)
   expect_broadcast(handler, "local", 1) |> should.be_true
 
-  pubsub.broadcast(ps, "room:lobby", "remote", json.object([]))
-  let _remote = h.recv(frames)
+  pubsub.broadcast(pubsub_instance, "room:lobby", "remote", json.object([]))
+  let _remote = app_test_helper.recv(frames)
   expect_broadcast(handler, "remote", 1) |> should.be_true
 
   expect_none(handler) |> should.be_true
   detach(handler)
 }
 
-pub fn shutdown_reason_and_disabled_runtime_are_reported_test() {
+pub fn shutdown_reason_and_disabled_runtime_are_reported_test() -> Nil {
   let handler = attach()
   let enabled = start(telemetry_config())
-  let _frames = h.connect(enabled, "shutdown")
+  let _frames = app_test_helper.connect(enabled, "shutdown")
   expect_connected(handler) |> should.be_true
   let assert Ok(Nil) = beryl.stop(enabled)
   expect_disconnect(handler, "shutdown", 0) |> should.be_true
 
   let disabled = start(beryl.config(wire.phoenix_codec()))
-  let disabled_frames = h.connect(disabled, "disabled")
-  h.join(disabled, "disabled", "room:lobby", "jr-1", "1")
-  let _reply = h.recv(disabled_frames)
+  let disabled_frames = app_test_helper.connect(disabled, "disabled")
+  app_test_helper.join(disabled, "disabled", "room:lobby", "jr-1", "1")
+  let _reply = app_test_helper.recv(disabled_frames)
   route_heartbeat(disabled, "disabled")
-  let _heartbeat = h.recv(disabled_frames)
+  let _heartbeat = app_test_helper.recv(disabled_frames)
   transport.socket_disconnected(disabled, "disabled")
   expect_none(handler) |> should.be_true
   detach(handler)
   let assert Ok(Nil) = beryl.stop(disabled)
+  Nil
 }

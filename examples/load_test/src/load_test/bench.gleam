@@ -5,7 +5,7 @@ import gleam/int
 import gleam/result
 
 /// Read an integer knob from the environment.
-pub fn env_int(name: String, default: Int) -> Int {
+pub fn environment_integer(name: String, default: Int) -> Int {
   envoy.get(name)
   |> result.try(int.parse)
   |> result.unwrap(default)
@@ -14,7 +14,7 @@ pub fn env_int(name: String, default: Int) -> Int {
 /// `BENCH_CALLBACK_COST_US`: CPU time for each message callback, in
 /// microseconds. The default is zero.
 pub fn callback_cost_us() -> Int {
-  env_int("BENCH_CALLBACK_COST_US", 0)
+  environment_integer("BENCH_CALLBACK_COST_US", 0)
 }
 
 /// `BERYL_API`: `raw` (default) runs the topics through `beryl.child_spec`;
@@ -23,6 +23,6 @@ pub fn use_channel_layer() -> Bool {
   envoy.get("BERYL_API") == Ok("channel")
 }
 
-/// Use CPU on the calling process for `micros` microseconds.
+/// Use CPU on the calling process for `microseconds` microseconds.
 @external(erlang, "load_test_bench_ffi", "busy_wait")
-pub fn burn(micros: Int) -> Nil
+pub fn burn(microseconds: Int) -> Nil

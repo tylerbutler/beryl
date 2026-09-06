@@ -30,7 +30,7 @@ pub fn main() -> Nil {
     child_specification,
     "Step 05 - production-shaped app",
     8105,
-    True,
-    True,
+    server.HealthEndpointEnabled,
+    server.GuideChannelEnabled,
   )
 }

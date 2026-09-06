@@ -1,4 +1,4 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket
 import beryl/transport
@@ -36,7 +36,7 @@ fn tagged_codec() -> codec.Codec {
 
 fn start_sockets() -> beryl.Sockets {
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info) { #(Nil, []) },
       update: fn(model, input) {
@@ -45,7 +45,8 @@ fn start_sockets() -> beryl.Sockets {
             socket.Next(model, [socket.AcceptJoin(ref, option.None)])
           socket.Message(topic, _, _, _) ->
             socket.Next(model, [socket.Push(topic, "echoed", json.object([]))])
-          _ -> socket.Next(model, [])
+          socket.Binary(_, _) | socket.Closed(_, _) | socket.Info(_) ->
+            socket.Next(model, [])
         }
       },
     )
@@ -84,7 +85,7 @@ fn route(channels: beryl.Sockets, socket_id: String, frame: String) -> Nil {
 
 // A socket announced with an explicit codec is framed with that codec,
 // not the coordinator's configured one.
-pub fn socket_codec_overrides_configured_codec_test() {
+pub fn socket_codec_overrides_configured_codec_test() -> Nil {
   let channels = start_sockets()
   let sent = connect(channels, "tagged", option.Some(tagged_codec()))
 
@@ -99,7 +100,7 @@ pub fn socket_codec_overrides_configured_codec_test() {
 
 // Runtime-cleanup replays must keep protocol replies on the socket's
 // negotiated codec rather than falling back to the app-wide codec.
-pub fn socket_codec_encodes_heartbeat_reply_test() {
+pub fn socket_codec_encodes_heartbeat_reply_test() -> Nil {
   let channels = start_sockets()
   let sent = connect(channels, "tagged-heartbeat", option.Some(tagged_codec()))
 
@@ -114,7 +115,7 @@ pub fn socket_codec_encodes_heartbeat_reply_test() {
 }
 
 // A socket announced without a codec inherits the configured one.
-pub fn socket_without_codec_inherits_configured_codec_test() {
+pub fn socket_without_codec_inherits_configured_codec_test() -> Nil {
   let channels = start_sockets()
   let sent = connect(channels, "plain", option.None)
 
@@ -131,7 +132,7 @@ pub fn socket_without_codec_inherits_configured_codec_test() {
 // The dual-mode case: sockets speaking different framings share one
 // coordinator, one channel and one topic, and each receives the same
 // broadcast in its own wire format.
-pub fn sockets_with_different_codecs_share_a_topic_test() {
+pub fn sockets_with_different_codecs_share_a_topic_test() -> Nil {
   let channels = start_sockets()
   let phoenix_sent = connect(channels, "phoenix-socket", option.None)
   let tagged_sent =
