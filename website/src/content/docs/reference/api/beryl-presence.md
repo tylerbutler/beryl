@@ -1,6 +1,6 @@
 ---
 title: "beryl/presence"
-description: "Presence - Distributed presence tracking backed by a CRDT"
+description: "Distributed presence tracking with a CRDT"
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 2
@@ -14,14 +14,15 @@ tableOfContents:
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-Presence - Distributed presence tracking backed by a CRDT
+Distributed presence tracking with a CRDT
 
- Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
+ This module wraps the pure `lattice_presence/presence_state` CRDT in an
+ OTP actor that:
  - Handles track/update/untrack calls
  - Publishes an actor-owned ETS read model
  - Periodically broadcasts state via PubSub for cross-node replication
  - Receives remote state from PubSub and merges it internally
- - Invokes `on_diff` callback when merges produce non-empty diffs
+ - Invokes `on_diff` when local changes or merges produce non-empty diffs
 
  Presence is independent of the beryl runtime and runs under your
  application's supervision tree.
@@ -187,7 +188,7 @@ A presence entry returned from queries and diff accessors.
 
 ```gleam
 pub type PresenceUpdateError {
-  UnknownRef
+  UnknownRef(ref: String)
 }
 ```
 
@@ -198,7 +199,7 @@ Errors from an update to a tracked presence.
 ##### `UnknownRef`
 
 ```gleam
-UnknownRef
+UnknownRef(ref: String)
 ```
 
 The ref is unknown, already removed, or was not returned by `track`.
@@ -257,10 +258,10 @@ pub fn default_config(String) -> Config
 
 Default configuration (no PubSub).
 
- The broadcast interval defaults to 1500 ms. Adding `with_pubsub` therefore
- enables two-way replication without more configuration. Without PubSub,
- the interval is unused. Use `with_broadcast_interval(0)` to disable
- periodic broadcasts and control replication manually.
+ The broadcast interval defaults to 1500 ms. Adding `with_pubsub` enables
+ periodic outbound broadcasts and inbound replication. Without PubSub, the
+ interval is unused. Use a non-positive interval to disable periodic
+ outbound broadcasts.
 
 <div class="api-entry-anchor" id="api-function-diff" aria-hidden="true"></div>
 
@@ -442,7 +443,7 @@ Replace the meta of a presence created by `track`.
  tracked refs for the same key do not change.
 
  Returns the replacement ref, which must be used for subsequent `update`
- or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+ or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
  unknown, already removed, or belongs to the internal runtime.
 
  Panics if the presence actor is unavailable or does not reply within the
@@ -461,7 +462,7 @@ pub fn with_broadcast_interval(
 
 Set how often presence state is broadcast for replication.
 
- Use `0` to disable periodic broadcasts.
+ Use a non-positive value to disable periodic broadcasts.
 
 <div class="api-entry-anchor" id="api-function-with_call_timeout" aria-hidden="true"></div>
 
@@ -494,7 +495,7 @@ pub fn with_on_diff(
 Set the callback for diffs from local changes or remote merges.
 
  The callback runs synchronously on the presence actor, for both local
- mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
+ mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
  mutations the runtime issues for presence effects) and remote merges,
  before the affected topics' read-model snapshots are (re)published and
  before the triggering call replies or the mutation is acknowledged.
@@ -513,8 +514,9 @@ Set the callback for diffs from local changes or remote merges.
  the reply to (or acknowledgement of) the mutating operation, and every
  other message behind it in the actor's mailbox. Concurrent
  `list`/`get_by_key`/`count` calls from other processes do not use the
- mailbox and are not delayed. Only the socket with an active presence
- effect waits for the callback.
+ mailbox and are not delayed. A socket with an active presence effect waits
+ for the callback. Callers of synchronous mutations also wait for their
+ replies.
 
 <div class="api-entry-anchor" id="api-function-with_pubsub" aria-hidden="true"></div>
 

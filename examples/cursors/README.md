@@ -63,7 +63,7 @@ Browser (vanilla JS + Phoenix client)
   └── selectable, animated reactions
 Server (Gleam)
   ├── Mist HTTP routing ── serves HTML + static files
-  ├── beryl app-side dispatch ── cursor:* topics (cursors/app)
+  ├── beryl app-side dispatch ── cursor:* topics (cursor/app)
   ├── example session_presence ── ETS-backed user tracking
   └── beryl pubsub ── broadcast cursor positions and reactions
 ```

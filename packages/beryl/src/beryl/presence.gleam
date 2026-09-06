@@ -1,11 +1,12 @@
-//// Presence - Distributed presence tracking backed by a CRDT
+//// Distributed presence tracking with a CRDT
 ////
-//// Wraps the pure `lattice_presence/presence_state` CRDT in an OTP actor that:
+//// This module wraps the pure `lattice_presence/presence_state` CRDT in an
+//// OTP actor that:
 //// - Handles track/update/untrack calls
 //// - Publishes an actor-owned ETS read model
 //// - Periodically broadcasts state via PubSub for cross-node replication
 //// - Receives remote state from PubSub and merges it internally
-//// - Invokes `on_diff` callback when merges produce non-empty diffs
+//// - Invokes `on_diff` when local changes or merges produce non-empty diffs
 ////
 //// Presence is independent of the beryl runtime and runs under your
 //// application's supervision tree.
@@ -55,7 +56,7 @@ import gleam/bit_array
 import gleam/bool
 import gleam/crypto
 import gleam/dict.{type Dict}
-import gleam/dynamic/decode as gdecode
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
@@ -192,13 +193,14 @@ fn state_entries_to_presence_entries(
 
 /// The replication envelope carried over PubSub between presence replicas.
 ///
-/// Sent as a native BEAM term (no JSON encoding), so `v` is presence's own
-/// version guard: a node that does not recognise `v` discards the message
+/// Sent as a native BEAM term (no JSON encoding), so `version` is presence's own
+/// version guard: a node that does not recognise `version` discards the message
 /// rather than risk interpreting a shape it wasn't built to read. Bump it if
 /// this envelope's fields ever need to change.
+/// The native tuple field order is version, sender, state.
 @internal
 pub type SyncPayload {
-  SyncPayload(v: Int, sender: String, state: state.State)
+  SyncPayload(version: Int, sender: String, state: state.State)
 }
 
 /// Configuration for starting presence.
@@ -216,7 +218,8 @@ pub opaque type Config {
     /// of the same base is pruned automatically. Two *live* nodes sharing
     /// a base will continuously prune each other — do not do that.
     replica: String,
-    /// How often to broadcast state for replication (ms). 0 = disabled.
+    /// How often to broadcast state for replication (ms). Non-positive values
+    /// disable periodic broadcasts.
     broadcast_interval_ms: Int,
     /// Timeout for synchronous presence mutations (ms).
     call_timeout_ms: Int,
@@ -231,7 +234,7 @@ pub opaque type Config {
 /// Errors from an update to a tracked presence.
 pub type PresenceUpdateError {
   /// The ref is unknown, already removed, or was not returned by `track`.
-  UnknownRef
+  UnknownRef(ref: String)
 }
 
 /// Messages that the presence actor handles.
@@ -265,7 +268,7 @@ pub opaque type Message {
     meta: json.Json,
     replace: Option(String),
     tag: String,
-    op_id: Int,
+    operation_id: Int,
     reply: Subject(MutationAck),
   )
   /// Asynchronous batch untrack by ref, used by the runtime for both the
@@ -275,7 +278,7 @@ pub opaque type Message {
   UntrackAsync(
     refs: List(String),
     tag: String,
-    op_id: Int,
+    operation_id: Int,
     reply: Subject(MutationAck),
   )
   /// Fire-and-forget runtime-owned session sweep, used while the runtime is
@@ -284,17 +287,17 @@ pub opaque type Message {
   UntrackRuntimeAllAsync(session_id: String)
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
-  RemoteSync(pubsub_msg: pubsub.Message(SyncPayload))
+  RemoteSync(pubsub_message: pubsub.Message(SyncPayload))
 }
 
 /// Acknowledgement of an asynchronous presence mutation.
 ///
-/// `tag` and `op_id` are echoed back verbatim from the request so the
+/// `tag` and `operation_id` are echoed back verbatim from the request so the
 /// caller can route the acknowledgement to the right waiter and discard
 /// acknowledgements for operations it has already given up on.
 @internal
 pub type MutationAck {
-  MutationAck(tag: String, op_id: Int, outcome: MutationOutcome)
+  MutationAck(tag: String, operation_id: Int, outcome: MutationOutcome)
 }
 
 /// What an acknowledged mutation produced.
@@ -383,7 +386,10 @@ fn ffi_get_count(name: process.Name(Message), topic: String) -> CountLookup
 fn publish_topic(table: ReadTable, crdt: State, topic: String) -> Nil {
   let entries =
     state.get_by_topic(crdt, topic)
-    |> list.map(fn(t) { PresenceEntry(session_id: t.0, key: t.1, meta: t.2) })
+    |> list.map(fn(entry) {
+      let #(session_id, key, meta) = entry
+      PresenceEntry(session_id: session_id, key: key, meta: meta)
+    })
   case entries {
     [] -> ffi_delete_topic(table, topic)
     _ -> ffi_put_topic(table, topic, list.length(entries), entries)
@@ -453,10 +459,10 @@ type ActorState {
 
 /// Default configuration (no PubSub).
 ///
-/// The broadcast interval defaults to 1500 ms. Adding `with_pubsub` therefore
-/// enables two-way replication without more configuration. Without PubSub,
-/// the interval is unused. Use `with_broadcast_interval(0)` to disable
-/// periodic broadcasts and control replication manually.
+/// The broadcast interval defaults to 1500 ms. Adding `with_pubsub` enables
+/// periodic outbound broadcasts and inbound replication. Without PubSub, the
+/// interval is unused. Use a non-positive interval to disable periodic
+/// outbound broadcasts.
 pub fn default_config(replica: String) -> Config {
   Config(
     pubsub: None,
@@ -474,7 +480,7 @@ pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
 
 /// Set how often presence state is broadcast for replication.
 ///
-/// Use `0` to disable periodic broadcasts.
+/// Use a non-positive value to disable periodic broadcasts.
 pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
   Config(..config, broadcast_interval_ms: interval_ms)
 }
@@ -491,7 +497,7 @@ pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
 /// Set the callback for diffs from local changes or remote merges.
 ///
 /// The callback runs synchronously on the presence actor, for both local
-/// mutations (`track`/`untrack`/`untrack_all`, and the asynchronous
+/// mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
 /// mutations the runtime issues for presence effects) and remote merges,
 /// before the affected topics' read-model snapshots are (re)published and
 /// before the triggering call replies or the mutation is acknowledged.
@@ -510,8 +516,9 @@ pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
 /// the reply to (or acknowledgement of) the mutating operation, and every
 /// other message behind it in the actor's mailbox. Concurrent
 /// `list`/`get_by_key`/`count` calls from other processes do not use the
-/// mailbox and are not delayed. Only the socket with an active presence
-/// effect waits for the callback.
+/// mailbox and are not delayed. A socket with an active presence effect waits
+/// for the callback. Callers of synchronous mutations also wait for their
+/// replies.
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
@@ -638,19 +645,25 @@ fn build_presence(
 /// that branch from nesting too deeply.
 fn maybe_broadcast_state(
   actor_state: ActorState,
-  ps: PubSub(SyncPayload),
+  pubsub_instance: PubSub(SyncPayload),
 ) -> ActorState {
   use <- bool.guard(when: !actor_state.dirty, return: actor_state)
   let payload =
     SyncPayload(
-      v: 1,
+      version: 1,
       // The sender is the full incarnation name; receivers use its base to
       // prune state left behind by this node's previous incarnations.
       sender: state.replica(actor_state.crdt),
       state: actor_state.crdt,
     )
 
-  pubsub.broadcast_from(ps, process.self(), sync_topic, sync_event, payload)
+  pubsub.broadcast_from(
+    pubsub_instance,
+    process.self(),
+    sync_topic,
+    sync_event,
+    payload,
+  )
 
   ActorState(..actor_state, dirty: False)
 }
@@ -721,8 +734,8 @@ fn prune_superseded(
         && base_replica(replica) == base_replica(live_replica)
       })
     })
-  list.fold(stale, #(crdt, []), fn(acc, replica) {
-    let #(crdt, touched_topics) = acc
+  list.fold(stale, #(crdt, []), fn(pruned, replica) {
+    let #(crdt, touched_topics) = pruned
     let #(crdt, down_diff) = state.replica_down(crdt, replica)
     let diff = wrap_state_diff(down_diff)
     maybe_invoke_on_diff(config, diff)
@@ -743,7 +756,7 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
   case
     json.parse(
       from: json.to_string(meta),
-      using: gdecode.dict(gdecode.string, gdecode.dynamic),
+      using: decode.dict(decode.string, decode.dynamic),
     )
   {
     // nolint: thrown_away_error -- a non-object meta is stored unchanged by design (see doc comment); the parse error carries no other information
@@ -797,7 +810,7 @@ pub fn track(
 /// tracked refs for the same key do not change.
 ///
 /// Returns the replacement ref, which must be used for subsequent `update`
-/// or `untrack` calls. Returns `Error(UnknownRef)` when `ref` is
+/// or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
 /// unknown, already removed, or belongs to the internal runtime.
 ///
 /// Panics if the presence actor is unavailable or does not reply within the
@@ -859,7 +872,7 @@ pub fn track_async(
   meta meta: json.Json,
   replace replace: Option(String),
   tag tag: String,
-  op_id op_id: Int,
+  operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
 ) -> Nil {
   process.send(
@@ -871,7 +884,7 @@ pub fn track_async(
       meta: meta,
       replace: replace,
       tag: tag,
-      op_id: op_id,
+      operation_id: operation_id,
       reply: reply,
     ),
   )
@@ -885,12 +898,12 @@ pub fn untrack_async(
   presence presence: Presence,
   refs refs: List(String),
   tag tag: String,
-  op_id op_id: Int,
+  operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
 ) -> Nil {
   process.send(
     presence.subject,
-    UntrackAsync(refs: refs, tag: tag, op_id: op_id, reply: reply),
+    UntrackAsync(refs: refs, tag: tag, operation_id: operation_id, reply: reply),
   )
 }
 
@@ -1018,14 +1031,14 @@ fn handle_message(
           process.send(reply, Ok(new_ref))
           actor.continue(new_state)
         }
-        _ -> {
-          process.send(reply, Error(UnknownRef))
+        Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner)) | Error(Nil) -> {
+          process.send(reply, Error(UnknownRef(ref)))
           actor.continue(actor_state)
         }
       }
     }
 
-    TrackAsync(topic, key, session_id, meta, replace, tag, op_id, reply) -> {
+    TrackAsync(topic, key, session_id, meta, replace, tag, operation_id, reply) -> {
       let #(new_state, ref, stored_meta) =
         do_track(
           actor_state,
@@ -1036,7 +1049,10 @@ fn handle_message(
           SupersedeSameKey(explicit: replace),
         )
       log_tracked(logger, topic, key, session_id, ref)
-      process.send(reply, MutationAck(tag, op_id, Tracked(ref, stored_meta)))
+      process.send(
+        reply,
+        MutationAck(tag, operation_id, Tracked(ref, stored_meta)),
+      )
       actor.continue(new_state)
     }
 
@@ -1046,9 +1062,9 @@ fn handle_message(
       actor.continue(new_state)
     }
 
-    UntrackAsync(refs, tag, op_id, reply) -> {
+    UntrackAsync(refs, tag, operation_id, reply) -> {
       let new_state = do_untrack_refs(actor_state, refs)
-      process.send(reply, MutationAck(tag, op_id, Untracked))
+      process.send(reply, MutationAck(tag, operation_id, Untracked))
       actor.continue(new_state)
     }
 
@@ -1063,23 +1079,26 @@ fn handle_message(
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
-        Some(ps), Some(subject) -> {
-          let new_state = maybe_broadcast_state(actor_state, ps)
+        Some(pubsub_instance), Some(subject) -> {
+          let new_state = maybe_broadcast_state(actor_state, pubsub_instance)
           schedule_broadcast_tick(
             subject,
             actor_state.config.broadcast_interval_ms,
           )
           actor.continue(new_state)
         }
-        _, _ -> actor.continue(actor_state)
+        Some(_), None | None, Some(_) | None, None ->
+          actor.continue(actor_state)
       }
     }
 
-    RemoteSync(pubsub_msg) -> {
+    RemoteSync(pubsub_message) -> {
       // Only process presence sync messages on the expected topic/event
-      case pubsub_msg.topic == sync_topic && pubsub_msg.event == sync_event {
+      case
+        pubsub_message.topic == sync_topic && pubsub_message.event == sync_event
+      {
         False -> actor.continue(actor_state)
-        True -> handle_sync_payload(actor_state, pubsub_msg.payload)
+        True -> handle_sync_payload(actor_state, pubsub_message.payload)
       }
     }
   }
@@ -1134,31 +1153,31 @@ fn remove_refs(
   list.fold(
     removing,
     RemovedRefs(crdt: crdt, leaves: dict.new(), refs: refs, topics: []),
-    fn(acc, ref) {
-      case dict.get(acc.refs, ref) {
-        Error(Nil) -> acc
+    fn(removed_refs, ref) {
+      case dict.get(removed_refs.refs, ref) {
+        Error(Nil) -> removed_refs
         Ok(TrackedPresence(topic, key, session_id, meta, tag, _owner)) -> {
-          let #(crdt, removed) = remove_tag(acc.crdt, tag)
+          let #(crdt, removed) = remove_tag(removed_refs.crdt, tag)
           let existing =
-            dict.get(acc.leaves, topic)
+            dict.get(removed_refs.leaves, topic)
             |> result.unwrap([])
           RemovedRefs(
             crdt: crdt,
             leaves: case removed {
-              False -> acc.leaves
+              False -> removed_refs.leaves
               True ->
                 dict.insert(
-                  acc.leaves,
+                  removed_refs.leaves,
                   topic,
                   list.append(existing, [
                     PresenceEntry(session_id: session_id, key: key, meta: meta),
                   ]),
                 )
             },
-            refs: dict.delete(acc.refs, ref),
+            refs: dict.delete(removed_refs.refs, ref),
             topics: case removed {
-              True -> [topic, ..acc.topics]
-              False -> acc.topics
+              True -> [topic, ..removed_refs.topics]
+              False -> removed_refs.topics
             },
           )
         }
@@ -1384,7 +1403,7 @@ fn handle_sync_payload(
   actor_state: ActorState,
   payload: SyncPayload,
 ) -> actor.Next(ActorState, Message) {
-  case payload.v {
+  case payload.version {
     1 -> merge_remote_sync(actor_state, payload.sender, payload.state)
     version -> {
       let logger = internal.logger("beryl.presence")

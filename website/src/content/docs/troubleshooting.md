@@ -94,7 +94,7 @@ receive a reply or push.
 
 - `InvalidPattern(pattern, reason)` means the pattern is not valid
   `beryl/topic` syntax. `reason` is the nested `TopicError` (`EmptyTopic` or
-  `InvalidFormat(detail)` today); keep a catch-all arm for future variants.
+  `InvalidFormat(detail)`). Match both variants explicitly.
 - `DuplicatePattern(pattern)` means the same pattern string appears twice.
   Overlapping but different patterns are valid; first match wins.
 
@@ -111,14 +111,14 @@ channel is still open. Capture `context.self` from each new join and install
 `presence_untrack`, or `broadcast_presence`; active-only pushes, replies, and
 presence tracking are rejected by the type checker.
 
-- If `on_terminate` panics, its actions are lost. Core still closes sibling
-  channels, but the old instance remains reachable through its own typed
-  sender until rejoin or socket teardown.
+- If `on_terminate` panics, the runtime discards its actions. The runtime still
+  closes the topic and sibling channels. The worker stops.
 
 ### One channel crash closes more than expected
 
-Crash scope follows the callback: `join` rejects one join, `on_message` closes
-one topic, and `on_info` tears down the whole socket. See
+Crash scope depends on the callback. A `join` panic rejects one join. An
+`on_message` or `on_info` panic closes one topic. Each topic runs in its own
+worker process. See
 [Crash behavior](/guides/channels/#crash-behavior).
 
 ---

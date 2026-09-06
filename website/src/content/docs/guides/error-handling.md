@@ -164,15 +164,15 @@ The channel layer applies the same results to these callbacks:
 | Channel callback | Effect |
 |---|---|
 | `join` | Rejects only that join |
-| `on_message` | Closes only that topic |
-| `on_info` | Tears down that socket |
-| `on_terminate` | Logs the panic and continues core teardown; the callback's actions are lost |
+| `on_message` | Closes only that topic; `on_terminate` still runs |
+| `on_info` | Closes only that topic; `on_terminate` still runs |
+| `on_terminate` | Logs the panic and completes the close; the callback's actions are lost |
 
-A terminate panic also discards the router model returned by that `Closed`
-turn. The old instance therefore remains reachable through its own typed
-sender until the topic is rejoined or the socket ends, even though client
-traffic cannot reach the closed topic. Keep `on_terminate` small and
-non-panicking; see [When callbacks panic](/guides/channels/#when-callbacks-panic).
+Each channel runs in its own worker process. A panic keeps the state from
+before the callback, so `on_terminate` still uses that state. If the worker
+stops unexpectedly, the runtime closes the topic with `phx_error`. It cannot
+run `on_terminate` because the worker held the channel state. See
+[When callbacks panic](/guides/channels/#when-callbacks-panic).
 
 ## Rate limits and dropped traffic
 
@@ -217,8 +217,8 @@ Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(
 ```gleam
 case group.create(groups, name) {
   Ok(Nil) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // idempotent: treat as success if desired
-  Error(group.GroupNotFound) -> Nil       // shouldn't happen for create
+  Error(group.GroupAlreadyExists(_)) -> Nil  // idempotent: treat as success if desired
+  Error(group.GroupNotFound(_)) -> Nil       // shouldn't happen for create
 }
 ```
 
@@ -235,28 +235,24 @@ within 5 seconds.
 case beryl.child_spec(config, init: init, update: update) {
   Ok(#(sockets, child_specification)) ->
     add_to_supervisor(sockets, child_specification)
-  Error(beryl.HeartbeatTimeoutTooLow(2)) ->
+  Error(beryl.HeartbeatTimeoutTooLow(_minimum)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
   Error(beryl.InvalidTopicPattern(pattern, topic.EmptyTopic)) ->
     panic as { pattern <> " is empty" }
   Error(beryl.InvalidTopicPattern(pattern, topic.InvalidFormat(detail))) ->
     panic as { pattern <> ": " <> detail }
-  Error(beryl.InvalidTopicPattern(pattern, _other)) ->
-    panic as { pattern <> " is invalid" }
 }
 ```
 
 `InvalidTopicPattern` contains `beryl/topic.TopicError` instead of a string.
-New `TopicError` variants may be added in a minor release, so
-match exact variants only when your handling differs and keep a catch-all
-otherwise.
+Match each `TopicError` variant explicitly. If an API update adds a variant,
+the compiler identifies the matches that need an additional branch.
 
 `channel.child_spec` validates the handler table first and reports
 `InvalidPattern(pattern, reason)`, `DuplicatePattern(pattern)`, or
 `InvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
-`beryl/topic.TopicError`; match a catch-all reason unless your code handles
-a specific variant differently.
+`beryl/topic.TopicError`; handle its variants explicitly in the same way.
 
 ## Typed sender delivery is not confirmed
 

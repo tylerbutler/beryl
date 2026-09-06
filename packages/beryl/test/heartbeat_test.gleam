@@ -3,34 +3,35 @@
 //// invocation on eviction, `Closed(HeartbeatTimeout)` delivery, and
 //// `child_spec` config validation.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
-import beryl/socket.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
 import gleam/option
 import gleam/string
 import gleeunit/should
-import test_helpers
+import test_helper
 
 /// Start an app system that accepts every join and forwards every event to
 /// the observer, with the given heartbeat timeout (server checks at half
 /// that interval).
-fn start_hb_app(
+fn start_heartbeat_app(
   timeout_ms: Int,
   events: process.Subject(socket.Input(Nil)),
 ) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_heartbeat(timeout_ms: timeout_ms),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model, ev) {
-        process.send(events, ev)
-        case ev {
+      update: fn(model, event) {
+        process.send(events, event)
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )
@@ -42,7 +43,7 @@ fn send_heartbeat(
   socket_id: String,
   ref: String,
 ) -> Nil {
-  h.route(
+  app_test_helper.route(
     channels,
     socket_id,
     "[null,\"" <> ref <> "\",\"phoenix\",\"heartbeat\",{}]",
@@ -78,13 +79,13 @@ fn keep_alive_until_evicted(
   frames: process.Subject(String),
   evicted: process.Subject(Nil),
 ) -> Nil {
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() {
       case process.receive(evicted, 0) {
         Ok(Nil) -> True
         Error(Nil) -> {
           send_heartbeat(channels, socket_id, "keep-alive")
-          let _reply = h.recv(frames)
+          let _reply = app_test_helper.recv(frames)
           False
         }
       }
@@ -94,142 +95,154 @@ fn keep_alive_until_evicted(
   )
 }
 
-pub fn heartbeat_reply_is_sent_test() {
+pub fn heartbeat_reply_is_sent_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(60_000, events)
-  let frames = h.connect(channels, "hb-reply")
+  let channels = start_heartbeat_app(60_000, events)
+  let frames = app_test_helper.connect(channels, "hb-reply")
 
   send_heartbeat(channels, "hb-reply", "hb-1")
 
-  let reply = h.recv(frames)
+  let reply = app_test_helper.recv(frames)
   string.contains(reply, "phx_reply") |> should.be_true
   string.contains(reply, "\"hb-1\"") |> should.be_true
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn socket_connected_initializes_heartbeat_timestamp_test() {
+pub fn socket_connected_initializes_heartbeat_timestamp_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(200, events)
-  let frames = h.connect(channels, "hb-fresh")
+  let channels = start_heartbeat_app(200, events)
+  let frames = app_test_helper.connect(channels, "hb-fresh")
 
   // A freshly connected socket is alive well within its first window.
   socket_is_connected(channels, "hb-fresh", frames) |> should.be_true
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn heartbeat_timeout_evicts_stale_socket_test() {
+pub fn heartbeat_timeout_evicts_stale_socket_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(100, events)
-  let frames = h.connect(channels, "hb-stale")
+  let channels = start_heartbeat_app(100, events)
+  let frames = app_test_helper.connect(channels, "hb-stale")
 
   // Never heartbeat; wait past the timeout plus a couple of check cycles.
   process.sleep(300)
 
   socket_is_connected(channels, "hb-stale", frames) |> should.be_false
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn heartbeat_resets_timeout_test() {
+pub fn heartbeat_resets_timeout_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(500, events)
+  let channels = start_heartbeat_app(500, events)
   let evicted = process.new_subject()
   let _stale_frames =
-    h.connect_with_close(channels, "hb-stale-control", fn() {
+    app_test_helper.connect_with_close(channels, "hb-stale-control", fn() {
       process.send(evicted, Nil)
     })
-  let frames = h.connect(channels, "hb-alive")
+  let frames = app_test_helper.connect(channels, "hb-alive")
 
   keep_alive_until_evicted(channels, "hb-alive", frames, evicted)
   socket_is_connected(channels, "hb-alive", frames) |> should.be_true
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn heartbeat_timeout_only_evicts_stale_sockets_test() {
+pub fn heartbeat_timeout_only_evicts_stale_sockets_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(500, events)
+  let channels = start_heartbeat_app(500, events)
   let evicted = process.new_subject()
   let _stale_frames =
-    h.connect_with_close(channels, "hb-idle", fn() {
+    app_test_helper.connect_with_close(channels, "hb-idle", fn() {
       process.send(evicted, Nil)
     })
-  let active_frames = h.connect(channels, "hb-busy")
+  let active_frames = app_test_helper.connect(channels, "hb-busy")
 
   keep_alive_until_evicted(channels, "hb-busy", active_frames, evicted)
   socket_is_connected(channels, "hb-busy", active_frames) |> should.be_true
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn periodic_check_runs_repeatedly_test() {
+pub fn periodic_check_runs_repeatedly_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(100, events)
+  let channels = start_heartbeat_app(100, events)
 
   // Let several check cycles pass before this socket even connects; a
   // one-shot check would miss it.
   process.sleep(150)
-  let frames = h.connect(channels, "hb-late")
+  let frames = app_test_helper.connect(channels, "hb-late")
   socket_is_connected(channels, "hb-late", frames) |> should.be_true
 
   process.sleep(300)
   socket_is_connected(channels, "hb-late", frames) |> should.be_false
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn heartbeat_eviction_closes_the_transport_connection_test() {
+pub fn heartbeat_eviction_closes_the_transport_connection_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(100, events)
+  let channels = start_heartbeat_app(100, events)
   let closed = process.new_subject()
   let _frames =
-    h.connect_with_close(channels, "hb-zombie", fn() {
+    app_test_helper.connect_with_close(channels, "hb-zombie", fn() {
       process.send(closed, Nil)
     })
 
   let assert Ok(Nil) = process.receive(closed, 1000)
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn closed_delivered_with_heartbeat_timeout_reason_test() {
+pub fn closed_delivered_with_heartbeat_timeout_reason_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(100, events)
-  let frames = h.connect(channels, "hb-member")
-  h.join(channels, "hb-member", "room:lobby", "j1", "r1")
-  let _join_reply = h.recv(frames)
+  let channels = start_heartbeat_app(100, events)
+  let frames = app_test_helper.connect(channels, "hb-member")
+  app_test_helper.join(channels, "hb-member", "room:lobby", "j1", "r1")
+  let _join_reply = app_test_helper.recv(frames)
 
   // Wait for eviction, then find the Closed event among the observed ones.
   wait_for_closed(events)
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 fn wait_for_closed(events: process.Subject(socket.Input(Nil))) -> Nil {
-  let assert Ok(ev) = process.receive(events, 1000)
-  case ev {
+  let assert Ok(event) = process.receive(events, 1000)
+  case event {
     socket.Closed("room:lobby", socket.HeartbeatTimeout) -> Nil
-    _ -> wait_for_closed(events)
+    socket.Join(_, _, _)
+    | socket.Message(_, _, _, _)
+    | socket.Binary(_, _)
+    | socket.Closed(_, _)
+    | socket.Info(_) -> wait_for_closed(events)
   }
 }
 
-pub fn eviction_cleans_topic_but_keeps_other_members_test() {
+pub fn eviction_cleans_topic_but_keeps_other_members_test() -> Nil {
   let events = process.new_subject()
-  let channels = start_hb_app(500, events)
+  let channels = start_heartbeat_app(500, events)
   let evicted = process.new_subject()
 
   let stale_frames =
-    h.connect_with_close(channels, "hb-gone", fn() {
+    app_test_helper.connect_with_close(channels, "hb-gone", fn() {
       process.send(evicted, Nil)
     })
-  h.join(channels, "hb-gone", "room:shared", "j1", "r1")
-  let _ = h.recv(stale_frames)
+  app_test_helper.join(channels, "hb-gone", "room:shared", "j1", "r1")
+  let _ = app_test_helper.recv(stale_frames)
 
-  let active_frames = h.connect(channels, "hb-here")
-  h.join(channels, "hb-here", "room:shared", "j2", "r2")
-  let _ = h.recv(active_frames)
+  let active_frames = app_test_helper.connect(channels, "hb-here")
+  app_test_helper.join(channels, "hb-here", "room:shared", "j2", "r2")
+  let _ = app_test_helper.recv(active_frames)
   keep_alive_until_evicted(channels, "hb-here", active_frames, evicted)
 
   // The surviving member still receives topic broadcasts.
@@ -240,10 +253,11 @@ pub fn eviction_cleans_topic_but_keeps_other_members_test() {
     "ping",
     json.object([#("ok", json.bool(True))]),
   )
-  let frame = h.recv(active_frames)
+  let frame = app_test_helper.recv(active_frames)
   string.contains(frame, "ping") |> should.be_true
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // ── start_app heartbeat config validation ────────────────────────────────
@@ -252,41 +266,43 @@ pub fn eviction_cleans_topic_but_keeps_other_members_test() {
 // (integer division), so a timeout of 1 would round the check interval down
 // to 0 and silently disable eviction. `child_spec` rejects timeouts below 2.
 
-pub fn start_app_rejects_timeout_of_one_test() {
+pub fn start_app_rejects_timeout_of_one_test() -> Nil {
   start_trivial(1)
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
 
-pub fn start_app_rejects_zero_timeout_test() {
+pub fn start_app_rejects_zero_timeout_test() -> Nil {
   start_trivial(0)
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
 
-pub fn start_app_rejects_negative_timeout_test() {
+pub fn start_app_rejects_negative_timeout_test() -> Nil {
   start_trivial(-5)
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
 
-pub fn start_app_accepts_timeout_of_two_test() {
+pub fn start_app_accepts_timeout_of_two_test() -> Nil {
   let assert Ok(channels) = start_trivial(2)
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
-pub fn start_app_accepts_default_timeout_test() {
+pub fn start_app_accepts_default_timeout_test() -> Nil {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, _ev) { Next(model, []) },
+      update: fn(model, _event) { Next(model, []) },
     )
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 fn start_trivial(timeout_ms: Int) -> Result(beryl.Sockets, beryl.ConfigError) {
-  h.start_app(
+  app_test_helper.start_app(
     beryl.config(wire.phoenix_codec())
       |> beryl.with_heartbeat(timeout_ms: timeout_ms),
     init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-    update: fn(model, _ev) { Next(model, []) },
+    update: fn(model, _event) { Next(model, []) },
   )
 }

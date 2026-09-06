@@ -1,4 +1,5 @@
 import beryl/socket
+import gleam/dynamic.{type Dynamic}
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -45,7 +46,7 @@ pub fn update(
                 timer.after(clock, duration_ms, fn() {
                   socket.notify(model.sender, ClosePoll(topic))
                 })
-              _ -> Nil
+              ReadOnly | Voting -> Nil
             }
             socket.Next(
               Model(..model, topics: set.insert(model.topics, topic)),
@@ -74,14 +75,15 @@ pub fn update(
               payload,
               reply,
             )
-          _, _ -> socket.Next(model, [])
+          False, Ok(_) | False, Error(_) | True, Error(_) ->
+            socket.Next(model, [])
         }
       socket.Info(ClosePoll(topic)) ->
         case room_name(topic) {
           Ok(room) -> {
             let effects = case store.close(polls, room) {
               store.ClosedNow(state) -> [
-                socket.Broadcast(topic, "poll_closed", poll.json(state)),
+                socket.Broadcast(topic, "poll_closed", poll.to_json(state)),
               ]
               store.AlreadyClosed(_) | store.RoomNotFound -> []
             }
@@ -108,14 +110,14 @@ fn handle_command(
   topic: String,
   room: String,
   event: String,
-  payload,
-  reply,
+  payload: Dynamic,
+  reply: Option(socket.ReplyRef),
 ) -> socket.Next(Model) {
   case poll.command(event, payload) {
     poll.GetState ->
       socket.Next(
         model,
-        socket.reply_ok(reply, poll.json(store.get(polls, room))),
+        socket.reply_ok(reply, poll.to_json(store.get(polls, room))),
       )
     poll.Vote(choice) ->
       case stage {
@@ -125,13 +127,17 @@ fn handle_command(
             Ok(state) ->
               socket.Next(
                 model,
-                socket.reply_ok(reply, poll.json(state))
+                socket.reply_ok(reply, poll.to_json(state))
                   |> list.append([
-                    socket.BroadcastFrom(topic, "poll_state", poll.json(state)),
+                    socket.BroadcastFrom(
+                      topic,
+                      "poll_state",
+                      poll.to_json(state),
+                    ),
                   ]),
               )
             Error(error) ->
-              socket.Next(model, reply_error(reply, poll.error_json(error)))
+              socket.Next(model, reply_error(reply, poll.error_to_json(error)))
           }
       }
     poll.Close ->
@@ -141,16 +147,16 @@ fn handle_command(
             store.ClosedNow(state) ->
               socket.Next(
                 model,
-                list.append(socket.reply_ok(reply, poll.json(state)), [
-                  socket.Broadcast(topic, "poll_closed", poll.json(state)),
+                list.append(socket.reply_ok(reply, poll.to_json(state)), [
+                  socket.Broadcast(topic, "poll_closed", poll.to_json(state)),
                 ]),
               )
             store.AlreadyClosed(state) ->
-              socket.Next(model, socket.reply_ok(reply, poll.json(state)))
+              socket.Next(model, socket.reply_ok(reply, poll.to_json(state)))
             store.RoomNotFound -> socket.Next(model, [])
           }
         }
-        _ -> socket.Next(model, [])
+        ReadOnly | Voting -> socket.Next(model, [])
       }
     poll.Unsupported -> socket.Next(model, [])
   }

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Removed"
+body = "The channel API no longer exposes handler pattern introspection, duplicate message topics, socket-wide stops, or raw binary callbacks. Use the join context or channel state for topics. Use raw dispatch for socket-wide control and raw binary frames."

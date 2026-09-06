@@ -17,7 +17,7 @@ import gleam/otp/static_supervisor
 import gleeunit
 import gleeunit/should
 
-pub fn main() {
+pub fn main() -> Nil {
   gleeunit.main()
 }
 
@@ -69,18 +69,18 @@ pub fn handlers() -> List(channel.Handler) {
 }
 
 /// The guide's `child_spec` call and config, compiled and run.
-pub fn documented_guide_child_spec_example_compiles_and_starts_test() {
+pub fn documented_guide_child_spec_example_compiles_and_starts_test() -> Nil {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_frame_rate(per_second: 35, burst: 70)
     |> beryl.with_message_rate(per_second: 30, burst: 60)
 
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, child_specification)) =
     channel.child_spec(config, handlers: handlers())
     as "the guide's handler table builds"
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
     as "the guide's supervision tree starts"
 

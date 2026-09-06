@@ -3,14 +3,13 @@ title: What is beryl?
 ---
 
 :::note[Pre-1.0]
-beryl is not yet version 1.0. Minor releases can change the API. The library is
-not ready for production. Try it and report problems. Your feedback will help
-define version 1.0.
+beryl is not yet version 1.0. Minor releases can change the API, and the
+library is not ready for production. Report problems to help define version
+1.0.
 :::
 
-beryl is a **type-safe real-time channels and presence library** for Gleam,
-for the Erlang (BEAM) runtime. It helps you add real-time features to Gleam web
-applications.
+beryl is a **type-safe library for real-time Gleam channels and presence** on
+the Erlang (BEAM) runtime.
 
 ## beryl's model in one minute
 
@@ -135,12 +134,14 @@ fn update(model: Model, input: socket.Input(Nil)) -> socket.Next(Model) {
 }
 ```
 
-### One process per socket
+### One process per socket and joined topic
 
 Each `beryl.Sockets` handle identifies one router actor and one actor for each
-connected socket. The socket actor owns that socket's model and runs its
-callbacks, while the router maintains the socket and topic indexes. A separate
-OTP actor manages the presence CRDT. PubSub uses Erlang `pg`.
+connected socket. The socket actor owns that socket's connection state and
+frame writes, while the router maintains the socket and topic indexes. With
+the channel layer, each joined topic runs its callbacks in its own worker
+process, as in Phoenix. A separate OTP actor manages the presence CRDT.
+PubSub uses Erlang `pg`.
 
 ### Presence across Erlang nodes
 

@@ -1,6 +1,6 @@
 ---
 title: "beryl/wire"
-description: "Phoenix Wire Protocol: encoding/decoding helpers and the canonical `phoenix_codec()` for `beryl/wire/codec`."
+description: "Phoenix wire protocol: encoding and decoding helpers and the canonical `phoenix_codec()` for `beryl/wire/codec`."
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 2
@@ -14,7 +14,7 @@ tableOfContents:
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-Phoenix Wire Protocol: encoding/decoding helpers and the canonical
+Phoenix wire protocol: encoding and decoding helpers and the canonical
  `phoenix_codec()` for `beryl/wire/codec`.
 
  Phoenix uses a JSON array format: `[join_ref, ref, topic, event, payload]`.
@@ -28,6 +28,12 @@ Phoenix Wire Protocol: encoding/decoding helpers and the canonical
  ```
 
 <nav class="api-symbol-index" aria-label="Module contents">
+<section class="api-symbol-index__group">
+  <a class="api-symbol-index__section" href="#types">Types</a>
+  <ul>
+<li><a href="#api-type-binaryencodeerror"><code>BinaryEncodeError</code></a></li>
+  </ul>
+</section>
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#functions">Functions</a>
   <ul>
@@ -49,6 +55,36 @@ Phoenix Wire Protocol: encoding/decoding helpers and the canonical
 </section>
 </nav>
 
+## Types
+
+<div class="api-entry-anchor" id="api-type-binaryencodeerror" aria-hidden="true"></div>
+
+### `BinaryEncodeError`
+
+```gleam
+pub type BinaryEncodeError {
+  MetadataTooLong(
+    component: String,
+    byte_size: Int
+  )
+}
+```
+
+An error returned when encoding a Phoenix binary frame.
+
+#### Constructors
+
+##### `MetadataTooLong`
+
+```gleam
+MetadataTooLong(
+  component: String,
+  byte_size: Int
+)
+```
+
+A metadata component is too large for the protocol's one-byte length.
+
 ## Functions
 
 <div class="api-entry-anchor" id="api-function-binary_broadcast" aria-hidden="true"></div>
@@ -60,13 +96,13 @@ pub fn binary_broadcast(
   topic: String,
   event: String,
   payload: BitArray
-) -> Result(codec.Frame, Nil)
+) -> Result(codec.Frame, BinaryEncodeError)
 ```
 
 Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 
- Returns `Error(Nil)` when a metadata component exceeds the framing's
- 255-byte limit.
+ Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
+ component exceeds the framing's 255-byte limit.
 
 <div class="api-entry-anchor" id="api-function-binary_push" aria-hidden="true"></div>
 
@@ -78,13 +114,13 @@ pub fn binary_push(
   topic: String,
   event: String,
   payload: BitArray
-) -> Result(codec.Frame, Nil)
+) -> Result(codec.Frame, BinaryEncodeError)
 ```
 
 Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 
- Returns `Error(Nil)` when a metadata component exceeds the framing's
- 255-byte limit.
+ Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
+ component exceeds the framing's 255-byte limit.
 
 <div class="api-entry-anchor" id="api-function-binary_reply" aria-hidden="true"></div>
 
@@ -97,13 +133,13 @@ pub fn binary_reply(
   topic: String,
   status: codec.ReplyStatus,
   payload: BitArray
-) -> Result(codec.Frame, Nil)
+) -> Result(codec.Frame, BinaryEncodeError)
 ```
 
 Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
 
- Returns `Error(Nil)` when a metadata component exceeds the framing's
- 255-byte limit.
+ Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
+ component exceeds the framing's 255-byte limit.
 
 <div class="api-entry-anchor" id="api-function-channel_close" aria-hidden="true"></div>
 
@@ -162,8 +198,8 @@ pub fn decode_message(String) -> Result(codec.Inbound, codec.DecodeError)
 
 Parse a JSON string into an `Inbound`.
 
- Expected format: `[join_ref, ref, topic, event, payload]` where
- The `join_ref` and `ref` values can be `null`.
+ Expected format: `[join_ref, ref, topic, event, payload]`. The `join_ref`
+ and `ref` values can be `null`.
 
 <div class="api-entry-anchor" id="api-function-dynamic_to_json" aria-hidden="true"></div>
 
@@ -183,10 +219,15 @@ Convert a `Dynamic` value decoded from JSON back to `json.Json`.
 ### `encode`
 
 ```gleam
-pub fn encode(codec.Inbound) -> String
+pub fn encode(codec.Inbound) -> Result(String, Nil)
 ```
 
-Encode an `Inbound` back to a Phoenix wire JSON string.
+Encode an `Inbound` as a Phoenix wire JSON string.
+
+ Returns `Error(Nil)` when the payload contains a value JSON cannot
+ represent or exceeds the wire protocol's maximum JSON nesting depth.
+ Conversion failures are not replaced with JSON `null`: a successful
+ encoding preserves the payload.
 
 <div class="api-entry-anchor" id="api-function-format_decode_error" aria-hidden="true"></div>
 

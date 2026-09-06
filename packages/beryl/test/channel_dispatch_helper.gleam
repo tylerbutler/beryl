@@ -25,12 +25,12 @@ pub fn start(
   config: beryl.Config,
   handlers handlers: List(channel.Handler),
 ) -> beryl.Sockets {
-  let assert Ok(#(sockets, spec)) =
+  let assert Ok(#(sockets, child_specification)) =
     channel.child_spec(config, handlers: handlers)
     as "the handler table and config are valid"
   let assert Ok(_) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(spec)
+    |> static_supervisor.add(child_specification)
     |> static_supervisor.start()
     as "the channel supervision tree starts"
   sockets

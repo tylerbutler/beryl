@@ -7,7 +7,7 @@
 //// that bounds concurrent connections across *all* source IPs, which a per-IP
 //// limit alone cannot enforce against distributed/rotating addresses.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/socket
 import beryl/transport
@@ -18,11 +18,13 @@ import gleeunit/should
 
 fn start_with_global_limit(max_connections: Int) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections(max_connections: max_connections),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, _ev: socket.Input(Nil)) { socket.Next(model, []) },
+      update: fn(model: Nil, _event: socket.Input(Nil)) {
+        socket.Next(model, [])
+      },
     )
   channels
 }
@@ -32,19 +34,21 @@ fn start_with_both_limits(
   max_connections: Int,
 ) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(max_connections: max_per_ip)
         |> beryl.with_max_connections(max_connections: max_connections),
       init: fn(_info) { #(Nil, []) },
-      update: fn(model: Nil, _ev: socket.Input(Nil)) { socket.Next(model, []) },
+      update: fn(model: Nil, _event: socket.Input(Nil)) {
+        socket.Next(model, [])
+      },
     )
   channels
 }
 
 // A global limit of 0 means unlimited: acquisitions from many distinct IPs all
 // succeed, and releasing a placeholder permit is a harmless no-op.
-pub fn global_zero_means_unlimited_test() {
+pub fn global_zero_means_unlimited_test() -> Nil {
   let channels = start_with_global_limit(0)
 
   let assert Ok(first) = transport.acquire_connection_slot(channels, "1.1.1.1")
@@ -54,25 +58,27 @@ pub fn global_zero_means_unlimited_test() {
   transport.release_connection_slot(first)
   |> should.equal(Nil)
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // Connections at or below the node-wide limit are admitted regardless of which
 // IP they come from.
-pub fn admits_connections_under_global_limit_test() {
+pub fn admits_connections_under_global_limit_test() -> Nil {
   let channels = start_with_global_limit(3)
 
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.0.1"))
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.0.2"))
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.0.3"))
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // A connection that would exceed the node-wide limit is rejected even though it
 // comes from a brand-new IP — this is the distributed-source case a per-IP
 // limit cannot stop.
-pub fn rejects_connection_over_global_limit_test() {
+pub fn rejects_connection_over_global_limit_test() -> Nil {
   let channels = start_with_global_limit(2)
 
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.1.1"))
@@ -82,12 +88,13 @@ pub fn rejects_connection_over_global_limit_test() {
   transport.acquire_connection_slot(channels, "10.0.1.3")
   |> should.equal(Error(Nil))
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // Releasing a slot frees node-wide capacity so a subsequent connection (from
 // any IP) succeeds. Guards against global-slot leaks on normal close.
-pub fn releasing_slot_frees_global_capacity_test() {
+pub fn releasing_slot_frees_global_capacity_test() -> Nil {
   let channels = start_with_global_limit(1)
 
   let assert Ok(permit) =
@@ -100,13 +107,14 @@ pub fn releasing_slot_frees_global_capacity_test() {
   transport.release_connection_slot(permit)
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.2.2"))
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // A global slot is reclaimed when its holder process dies without releasing —
 // crashed handlers, transport failures, and heartbeat evictions all surface as
 // the holder process exiting, so the monitor path must free node-wide capacity.
-pub fn global_slot_reclaimed_when_holder_dies_without_release_test() {
+pub fn global_slot_reclaimed_when_holder_dies_without_release_test() -> Nil {
   let channels = start_with_global_limit(1)
 
   let acquired = process.new_subject()
@@ -127,13 +135,14 @@ pub fn global_slot_reclaimed_when_holder_dies_without_release_test() {
   // The reclaimed slot admits a connection from a *different* IP, proving the
   // global count (not just the per-IP count) was decremented.
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.3.2"))
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // The per-IP and node-wide ceilings compose: a connection must be under both.
 // Here the node-wide ceiling refuses a second IP even though that IP is under
 // its own per-IP limit.
-pub fn per_ip_and_global_compose_test() {
+pub fn per_ip_and_global_compose_test() -> Nil {
   // Per-IP allows 5 each, but the node as a whole allows only 1.
   let channels = start_with_both_limits(5, 1)
 
@@ -142,12 +151,13 @@ pub fn per_ip_and_global_compose_test() {
   transport.acquire_connection_slot(channels, "10.0.4.2")
   |> should.equal(Error(Nil))
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // The per-IP limit still bites under a generous node-wide ceiling: a single IP
 // cannot exceed its per-IP allotment even when the node has global room.
-pub fn per_ip_limit_still_enforced_under_global_test() {
+pub fn per_ip_limit_still_enforced_under_global_test() -> Nil {
   let channels = start_with_both_limits(1, 10)
 
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.5.1"))
@@ -157,13 +167,14 @@ pub fn per_ip_limit_still_enforced_under_global_test() {
   // A different IP is admitted (node still under its global ceiling).
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.5.2"))
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 // Concurrent opens cannot race past the node-wide ceiling. Many processes
 // attempt to acquire at once; because the check-and-increment is serialized
 // inside the limiter actor, exactly `ceiling` of them succeed.
-pub fn concurrent_opens_do_not_exceed_global_ceiling_test() {
+pub fn concurrent_opens_do_not_exceed_global_ceiling_test() -> Nil {
   let ceiling = 5
   let attempts = 40
   let channels = start_with_global_limit(ceiling)
@@ -202,5 +213,6 @@ pub fn concurrent_opens_do_not_exceed_global_ceiling_test() {
   successes
   |> should.equal(ceiling)
 
-  beryl.stop(channels)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }

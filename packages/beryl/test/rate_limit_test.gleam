@@ -19,7 +19,7 @@ fn take_n(
   }
 }
 
-pub fn burst_allows_up_to_capacity_test() {
+pub fn burst_allows_up_to_capacity_test() -> Nil {
   let bucket = rate_limit.new_bucket(rate_limit.config(per_second: 1, burst: 3))
 
   let #(bucket, results) = take_n(bucket, 3)
@@ -30,7 +30,7 @@ pub fn burst_allows_up_to_capacity_test() {
   taken |> should.equal(Error(Nil))
 }
 
-pub fn burst_defaults_to_per_second_when_zero_test() {
+pub fn burst_defaults_to_per_second_when_zero_test() -> Nil {
   let bucket = rate_limit.new_bucket(rate_limit.config(per_second: 5, burst: 0))
 
   let #(bucket, results) = take_n(bucket, 5)
@@ -40,7 +40,7 @@ pub fn burst_defaults_to_per_second_when_zero_test() {
   taken |> should.equal(Error(Nil))
 }
 
-pub fn tokens_refill_over_time_test() {
+pub fn tokens_refill_over_time_test() -> Nil {
   // 100 tokens/second = one token every 10ms.
   let bucket =
     rate_limit.new_bucket(rate_limit.config(per_second: 100, burst: 1))
@@ -56,7 +56,7 @@ pub fn tokens_refill_over_time_test() {
   taken |> should.equal(Ok(Nil))
 }
 
-pub fn refill_never_exceeds_burst_capacity_test() {
+pub fn refill_never_exceeds_burst_capacity_test() -> Nil {
   let bucket =
     rate_limit.new_bucket(rate_limit.config(per_second: 1000, burst: 2))
 
@@ -70,7 +70,7 @@ pub fn refill_never_exceeds_burst_capacity_test() {
   taken |> should.equal(Error(Nil))
 }
 
-pub fn independent_buckets_do_not_share_tokens_test() {
+pub fn independent_buckets_do_not_share_tokens_test() -> Nil {
   let config = rate_limit.config(per_second: 1, burst: 1)
   let one = rate_limit.new_bucket(config)
   let two = rate_limit.new_bucket(config)

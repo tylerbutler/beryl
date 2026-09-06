@@ -11,8 +11,8 @@ import ewe.{type Connection}
 import gleam/http/request.{type Request}
 import gleeunit/should
 
-pub fn config_builders_instantiate_for_ewe_test() {
-  let on_connect = fn(_req: Request(Connection)) -> Result(
+pub fn config_builders_instantiate_for_ewe_test() -> Nil {
+  let on_connect = fn(_request: Request(Connection)) -> Result(
     List(#(String, String)),
     server.ConnectError,
   ) {
@@ -21,7 +21,7 @@ pub fn config_builders_instantiate_for_ewe_test() {
 
   let _typed_config: server.TransportConfig(Connection) =
     server.default_config("/socket")
-    |> server.with_on_connect(fn(_req) { Error(server.ConnectRejected) })
+    |> server.with_on_connect(fn(_request) { Error(server.ConnectRejected) })
     |> server.with_on_connect(on_connect)
     |> server.with_allowed_origins(["https://app.example.com"])
     |> server.with_allow_all_origins()
@@ -31,7 +31,7 @@ pub fn config_builders_instantiate_for_ewe_test() {
 
 // `upgrade` is the path-matching entry point used by callers that compose their
 // own request handler. Reference it here so the export stays covered.
-pub fn upgrade_is_exported_test() {
+pub fn upgrade_is_exported_test() -> Nil {
   let _upgrade = ewe_transport.upgrade
   should.be_true(True)
 }
