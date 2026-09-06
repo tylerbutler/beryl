@@ -1,11 +1,11 @@
 ---
 title: Examples
-description: Four runnable beryl examples, including the channel showcase.
+description: Five runnable beryl examples, including realtime Todo and the channel showcase.
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-Four runnable applications in the
+Five runnable applications in the
 [`examples/`](https://github.com/tylerbutler/beryl/tree/main/examples)
 directory use a Gleam/BEAM backend and a browser frontend. The repository also
 contains the live-poll tutorial, load-test server, and shared example helpers.
@@ -20,6 +20,45 @@ cd beryl
 <Aside type="note" title="Pre-1.0">
 beryl is not yet version 1.0. Minor releases can change the API, and the library is not ready for production. Report problems to help define version 1.0.
 </Aside>
+
+## Realtime todo
+
+**Source**: [`examples/todo`](https://github.com/tylerbutler/beryl/tree/main/examples/todo)
+
+A Lustre Todo app whose supervised BEAM actor is the source of truth. Open it
+in two browser windows to see additions, toggles, and deletes synchronize.
+
+```bash
+just deps
+cd examples/todo
+pnpm build
+gleam run
+# Open http://localhost:8011 in multiple browser windows
+```
+
+### What it demonstrates
+
+| beryl feature | How it's used |
+|---|---|
+| **Fixed topic routing** | Every browser joins the `todos` topic through app dispatch |
+| **Join snapshots** | The join reply replaces the client's list with the actor's current state |
+| **Canonical replies and broadcasts** | Mutations return and broadcast the server-assigned Todo or deleted ID |
+| **Server validation** | Empty text, malformed payloads, and unknown IDs receive explicit error replies |
+| **Reconnect synchronization** | The Phoenix client rejoins automatically and applies a fresh snapshot |
+| **Typed Lustre client** | Gleam decodes every dynamic Phoenix payload before updating the UI |
+
+### Architecture
+
+```text
+Browser (Lustre + official Phoenix JS client)
+  │  WebSocket (Phoenix wire protocol)
+Server (Gleam)
+  ├── Mist HTTP — serves the production Lustre assets
+  ├── beryl app dispatch — fixed "todos" topic
+  └── supervised actor — in-memory Todos and monotonic IDs
+```
+
+---
 
 ## Showcase
 
@@ -199,6 +238,7 @@ Server (Gleam)
 | Starting point | Go here |
 |---|---|
 | I want a minimal working example right now | [Quick Start](/quick-start/) |
+| I want a typed Lustre client with server-authoritative state | [examples/todo](https://github.com/tylerbutler/beryl/tree/main/examples/todo) |
 | I want to see live presence + cursors | [examples/cursors](https://github.com/tylerbutler/beryl/tree/main/examples/cursors) |
 | I want auth, join validation, or groups | [examples/chatrooms](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms) |
 | I want collaborative documents or CRDT conflicts | [examples/collab_docs](https://github.com/tylerbutler/beryl/tree/main/examples/collab_docs) |
