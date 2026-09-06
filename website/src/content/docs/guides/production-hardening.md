@@ -207,5 +207,9 @@ for the full distribution security reference.
   router does not handle every subscriber.
 - The runtime always starts supervised (`child_spec` has no unsupervised
   mode); restarts are bounded at 3 per 5 seconds, after which the crash
-  propagates to the process that called `child_spec`. See the
+  propagates through the application's supervision tree. See the
   [Supervision guide](/guides/supervision/).
+- Rate limits do not bound worker input, pending action reports, router
+  fan-out, or outbound connection queues. See
+  [Queue limits and overload](/architecture/runtime/#queue-limits-and-overload)
+  for current controls and non-guarantees.
