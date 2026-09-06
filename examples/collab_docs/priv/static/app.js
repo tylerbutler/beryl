@@ -136,7 +136,10 @@ function mergeState(remoteState) {
   if (result && typeof result.isOk === "function" && result.isOk()) {
     doc = result[0];
   } else {
-    setStatus(`State error: ${result?.[0] || "merge_failed"}`);
+    const reason = result?.[0]
+      ? crdt.document_error_to_string(result[0])
+      : "merge_failed";
+    setStatus(`State error: ${reason}`);
   }
 }
 
@@ -146,7 +149,7 @@ function pushState() {
   }
 
   channel
-    .push("sync_state", { state: crdt.to_json(doc) })
+    .push("sync_state", { state: crdt.document_to_json(doc) })
     .receive("error", (reply) => {
       setStatus(`State error: ${reply?.code || "sync_failed"}`);
     })
@@ -194,7 +197,16 @@ function currentBlockValue(id, fallback) {
 }
 
 function saveBlock(block, { rerender = true, push = "immediate" } = {}) {
-  doc = crdt.edit_block(doc, block.id, serialize(block));
+  const result = crdt.edit_block(doc, block.id, serialize(block));
+  if (!result?.isOk?.()) {
+    const reason = result?.[0]
+      ? crdt.document_error_to_string(result[0])
+      : "edit_rejected";
+    setStatus(`Edit rejected: ${reason}`);
+    return;
+  }
+
+  doc = result[0];
   if (rerender) {
     render();
   }
@@ -203,7 +215,16 @@ function saveBlock(block, { rerender = true, push = "immediate" } = {}) {
 
 function addBlock(type) {
   const block = newBlock(type);
-  doc = crdt.add_block(doc, serialize(block));
+  const result = crdt.add_block(doc, serialize(block));
+  if (!result?.isOk?.()) {
+    const reason = result?.[0]
+      ? crdt.document_error_to_string(result[0])
+      : "add_rejected";
+    setStatus(`Add rejected: ${reason}`);
+    return;
+  }
+
+  doc = result[0];
   render();
   pushState();
 }

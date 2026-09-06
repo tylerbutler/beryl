@@ -4,7 +4,7 @@
 //// every wire event for a socket to one `update` function, and the
 //// function returns the next model plus a list of `Effect`s for beryl to
 //// apply. There are no channel modules, no registry, and no type erasure.
-//// Each socket has a single `model` and a single `msg` type.
+//// Each socket has a single `model` and a single `message` type.
 ////
 //// ## Effect ordering guarantee
 ////
@@ -40,7 +40,7 @@ pub opaque type JoinRef {
   JoinRef(
     topic: String,
     join_ref: Option(String),
-    msg_ref: Option(String),
+    message_ref: Option(String),
     token: Reference,
   )
 }
@@ -52,19 +52,19 @@ pub opaque type JoinRef {
 /// asynchronous lookup. They are single-use. They remain valid only while
 /// the topic instance that received the message stays open.
 pub opaque type ReplyRef {
-  ReplyRef(topic: String, join_ref: Option(String), msg_ref: Option(String))
+  ReplyRef(topic: String, join_ref: Option(String), message_ref: Option(String))
 }
 
 @internal
 pub fn make_join_ref(
   topic topic: String,
   join_ref join_ref: Option(String),
-  msg_ref msg_ref: Option(String),
+  message_ref message_ref: Option(String),
 ) -> JoinRef {
   JoinRef(
     topic: topic,
     join_ref: join_ref,
-    msg_ref: msg_ref,
+    message_ref: message_ref,
     token: reference.new(),
   )
 }
@@ -73,9 +73,9 @@ pub fn make_join_ref(
 pub fn make_message_ref(
   topic topic: String,
   join_ref join_ref: Option(String),
-  msg_ref msg_ref: Option(String),
+  message_ref message_ref: Option(String),
 ) -> ReplyRef {
-  ReplyRef(topic: topic, join_ref: join_ref, msg_ref: msg_ref)
+  ReplyRef(topic: topic, join_ref: join_ref, message_ref: message_ref)
 }
 
 @internal
@@ -99,14 +99,15 @@ pub fn reply_ref_join_ref(ref: ReplyRef) -> Option(String) {
 }
 
 @internal
-pub fn reply_ref_msg_ref(ref: ReplyRef) -> Option(String) {
-  ref.msg_ref
+pub fn reply_ref_message_ref(ref: ReplyRef) -> Option(String) {
+  ref.message_ref
 }
 
 /// Why a socket or topic is stopping.
 ///
 /// The runtime delivers this reason in `Closed` inputs, and `Stop` accepts it.
-/// Match with a catch-all (`_`) arm. Minor releases can add stop reasons.
+/// The variants are exhaustive; match each reason explicitly. Adding a
+/// variant affects API compatibility and requires updating exhaustive matches.
 pub type StopReason {
   /// Normal shutdown (client left or disconnected cleanly).
   Normal
@@ -121,7 +122,7 @@ pub type StopReason {
 }
 
 /// Everything the runtime delivers to the app's `update` function.
-pub type Input(msg) {
+pub type Input(message) {
   /// A client asked to join a topic. Return an `AcceptJoin` or `RejectJoin`
   /// effect. The runtime rejects a `Join` that is unanswered at the end of
   /// the update turn.
@@ -139,7 +140,7 @@ pub type Input(msg) {
   Closed(topic: String, reason: StopReason)
   /// A typed server-side message, sent via the socket's `Sender` (see
   /// `ConnectInfo.self` and `notify`).
-  Info(msg)
+  Info(message)
 }
 
 /// The result of one `update` call.
@@ -150,7 +151,8 @@ pub type Next(model) {
   /// Continue with the given model, applying the effects in order.
   Next(model: model, effects: List(Effect))
   /// Tear down the socket: every joined topic receives a `Closed` input,
-  /// terminal frames are sent, and the transport connection is closed.
+  /// configured terminal frames are sent, and the transport connection is
+  /// closed.
   Stop(reason: StopReason)
 }
 
@@ -218,8 +220,9 @@ pub type Effect {
     event: String,
     encode: fn(List(PresenceEntry)) -> Json,
   )
-  /// Close this socket's subscription to a topic. The topic receives a
-  /// `Closed(topic, Shutdown)` input and the client a terminal frame.
+  /// Close this socket's subscription to a topic. The topic receives
+  /// `Closed(topic, Shutdown)`. If the codec has a close encoder, the client
+  /// also receives its terminal frame.
   KickTopic(topic: String)
 }
 
@@ -232,7 +235,7 @@ pub type Effect {
 /// effects when the client did not supply a ref.
 pub fn reply_ok(ref: Option(ReplyRef), payload: Json) -> List(Effect) {
   case ref {
-    Some(r) -> [ReplyOk(r, payload)]
+    Some(reply_ref) -> [ReplyOk(reply_ref, payload)]
     None -> []
   }
 }
@@ -265,12 +268,12 @@ pub fn empty_seed() -> ConnectSeed {
 /// Get this handle from `ConnectInfo.self` in `init`. Any process can call
 /// `notify` with it. The socket's `update` function receives the message as
 /// an `Info` event. This typed send does not erase the message type.
-pub opaque type Sender(msg) {
-  Sender(send: fn(msg) -> Nil)
+pub opaque type Sender(message) {
+  Sender(send: fn(message) -> Nil)
 }
 
 @internal
-pub fn make_sender(send: fn(msg) -> Nil) -> Sender(msg) {
+pub fn make_sender(send: fn(message) -> Nil) -> Sender(message) {
   Sender(send)
 }
 
@@ -278,19 +281,19 @@ pub fn make_sender(send: fn(msg) -> Nil) -> Sender(msg) {
 ///
 /// The socket's `update` function receives `Info(message)`. The runtime
 /// ignores the message if the socket has disconnected.
-pub fn notify(sender: Sender(msg), message: msg) -> Nil {
+pub fn notify(sender: Sender(message), message: message) -> Nil {
   sender.send(message)
 }
 
 /// Everything the app's `init` receives when a socket connects.
-pub type ConnectInfo(msg) {
+pub type ConnectInfo(message) {
   ConnectInfo(
     /// Unique id of the connecting socket.
     socket_id: String,
     /// Request data assembled by the transport.
     seed: ConnectSeed,
     /// Sender for delivering typed `Info` messages to this socket.
-    self: Sender(msg),
+    self: Sender(message),
   )
 }
 

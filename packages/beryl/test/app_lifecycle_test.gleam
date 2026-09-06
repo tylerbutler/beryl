@@ -4,7 +4,7 @@
 //// admission/dispatch that degrades to no-ops rather than crashing, and
 //// idempotent `stop`.
 
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/topic
 import beryl/transport
@@ -12,34 +12,34 @@ import beryl/wire
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
-import test_helpers
+import test_helper
 
 // A control character (U+0001) that topic-pattern validation rejects.
 const control_char = "\u{0001}"
 
 // ── validate_config ─────────────────────────────────────────────────────────
 
-pub fn validate_config_accepts_default_test() {
+pub fn validate_config_accepts_default_test() -> Nil {
   beryl.config(wire.phoenix_codec())
   |> beryl.validate_config
   |> should.equal(Ok(Nil))
 }
 
-pub fn validate_config_rejects_low_heartbeat_test() {
+pub fn validate_config_rejects_low_heartbeat_test() -> Nil {
   beryl.config(wire.phoenix_codec())
   |> beryl.with_heartbeat(timeout_ms: 1)
   |> beryl.validate_config
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
 
-pub fn validate_config_accepts_valid_topic_pattern_test() {
+pub fn validate_config_accepts_valid_topic_pattern_test() -> Nil {
   beryl.config(wire.phoenix_codec())
   |> beryl.with_topic_rate(pattern: "room:*", per_second: 5, burst: 10)
   |> beryl.validate_config
   |> should.equal(Ok(Nil))
 }
 
-pub fn validate_config_rejects_invalid_topic_pattern_test() {
+pub fn validate_config_rejects_invalid_topic_pattern_test() -> Nil {
   let bad = "room:" <> control_char
   beryl.config(wire.phoenix_codec())
   |> beryl.with_topic_rate(pattern: bad, per_second: 5, burst: 10)
@@ -52,7 +52,7 @@ pub fn validate_config_rejects_invalid_topic_pattern_test() {
   )
 }
 
-pub fn validate_config_rejects_empty_topic_pattern_test() {
+pub fn validate_config_rejects_empty_topic_pattern_test() -> Nil {
   beryl.config(wire.phoenix_codec())
   |> beryl.with_topic_rate(pattern: "", per_second: 5, burst: 10)
   |> beryl.validate_config
@@ -61,17 +61,17 @@ pub fn validate_config_rejects_empty_topic_pattern_test() {
 
 // ── start / child_spec config validation parity ────────────────────────
 
-pub fn start_rejects_invalid_config_test() {
-  h.start_app(
+pub fn start_rejects_invalid_config_test() -> Nil {
+  app_test_helper.start_app(
     beryl.config(wire.phoenix_codec())
       |> beryl.with_heartbeat(timeout_ms: 1),
-    init: h.accepting_init,
-    update: h.accepting_update,
+    init: app_test_helper.accepting_init,
+    update: app_test_helper.accepting_update,
   )
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
 
-pub fn validate_config_rejects_invalid_disabled_topic_pattern_test() {
+pub fn validate_config_rejects_invalid_disabled_topic_pattern_test() -> Nil {
   let bad = "room:" <> control_char
   let result =
     beryl.config(wire.phoenix_codec())
@@ -81,11 +81,11 @@ pub fn validate_config_rejects_invalid_disabled_topic_pattern_test() {
   case result {
     Error(beryl.InvalidTopicPattern(pattern, _reason)) ->
       pattern |> should.equal(bad)
-    _ -> should.fail()
+    Ok(_) | Error(_) -> should.fail()
   }
 }
 
-pub fn child_spec_rejects_invalid_config_test() {
+pub fn child_spec_rejects_invalid_config_test() -> Nil {
   let result =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
@@ -94,31 +94,31 @@ pub fn child_spec_rejects_invalid_config_test() {
           per_second: 5,
           burst: 10,
         ),
-      init: h.accepting_init,
-      update: h.accepting_update,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
     )
 
   case result {
     Error(beryl.InvalidTopicPattern(_, _)) -> Nil
-    _ -> should.fail()
+    Ok(_) | Error(_) -> should.fail()
   }
 }
 
 // ── child_spec handle lifecycle ────────────────────────────────────────────
 
-pub fn child_spec_handle_is_usable_before_and_after_start_test() {
+pub fn child_spec_handle_is_usable_before_and_after_start_test() -> Nil {
   let assert Ok(#(sockets, spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
-      init: h.accepting_init,
-      update: h.accepting_update,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
     )
 
   // Before the owning supervisor starts, the runtime is not running: the
   // handle reports no runtime pid and pre-start dispatch is a quiet no-op
   // (this call must not crash).
   beryl.app_runtime_pid(sockets) |> should.be_error
-  h.route(sockets, "s0", "[null,\"r-0\",\"room:a\",\"noop\",{}]")
+  app_test_helper.route(sockets, "s0", "[null,\"r-0\",\"room:a\",\"noop\",{}]")
 
   // Start the application's own supervisor with the returned child spec.
   let assert Ok(_root) =
@@ -127,7 +127,7 @@ pub fn child_spec_handle_is_usable_before_and_after_start_test() {
     |> static_supervisor.start()
 
   // The same handle is now backed by a live runtime and serves sockets.
-  test_helpers.wait_until(
+  test_helper.wait_until(
     fn() {
       case beryl.app_runtime_pid(sockets) {
         Ok(_) -> True
@@ -138,21 +138,21 @@ pub fn child_spec_handle_is_usable_before_and_after_start_test() {
     10,
   )
 
-  let frames = h.connect(sockets, "s1")
-  h.join(sockets, "s1", "room:a", "jr-1", "r-1")
-  h.recv(frames)
+  let frames = app_test_helper.connect(sockets, "s1")
+  app_test_helper.join(sockets, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
   |> string.contains("\"status\":\"ok\"")
   |> should.be_true
 }
 
 // ── stop idempotence ───────────────────────────────────────────────────────
 
-pub fn stop_is_idempotent_test() {
+pub fn stop_is_idempotent_test() -> Nil {
   let assert Ok(sockets) =
-    h.start_app(
+    app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
-      init: h.accepting_init,
-      update: h.accepting_update,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
     )
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
@@ -161,25 +161,25 @@ pub fn stop_is_idempotent_test() {
   beryl.stop(sockets) |> should.equal(Error(beryl.NotRunning))
 }
 
-pub fn stop_before_start_returns_not_running_test() {
+pub fn stop_before_start_returns_not_running_test() -> Nil {
   let assert Ok(#(sockets, _spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
-      init: h.accepting_init,
-      update: h.accepting_update,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
     )
 
   // The subtree was never started, so stop is a safe no-op.
   beryl.stop(sockets) |> should.equal(Error(beryl.NotRunning))
 }
 
-pub fn child_spec_admission_fails_before_start_test() {
+pub fn child_spec_admission_fails_before_start_test() -> Nil {
   let assert Ok(#(sockets, _spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(1),
-      init: h.accepting_init,
-      update: h.accepting_update,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
     )
 
   // The limiter is supervised inside the not-yet-started subtree, so

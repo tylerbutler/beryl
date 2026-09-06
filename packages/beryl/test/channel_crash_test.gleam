@@ -142,7 +142,7 @@ fn start(handlers: List(channel.Handler)) -> beryl.Sockets {
 
 // --- join --------------------------------------------------------------
 
-pub fn a_panic_in_join_rejects_that_join_test() {
+pub fn a_panic_in_join_rejects_that_join_test() -> Nil {
   let trace = process.new_subject()
   let channels = start([join_panics(), ok_handler(trace)])
   let frames = helper.connect(channels, "s1")
@@ -171,7 +171,7 @@ pub fn a_panic_in_join_rejects_that_join_test() {
   helper.no_trace(trace)
 }
 
-pub fn a_panic_in_join_leaves_the_socket_usable_test() {
+pub fn a_panic_in_join_leaves_the_socket_usable_test() -> Nil {
   let trace = process.new_subject()
   let channels = start([join_panics(), ok_handler(trace)])
   let frames = helper.connect(channels, "s1")
@@ -192,7 +192,7 @@ pub fn a_panic_in_join_leaves_the_socket_usable_test() {
 
 // --- message ---------------------------------------------------------------
 
-pub fn a_panic_handling_a_message_closes_only_that_topic_test() {
+pub fn a_panic_handling_a_message_closes_only_that_topic_test() -> Nil {
   let trace = process.new_subject()
   let channels = start([callback_panics(trace), ok_handler(trace)])
   let frames = helper.connect(channels, "s1")
@@ -232,7 +232,7 @@ pub fn a_panic_handling_a_message_closes_only_that_topic_test() {
 
 // --- info ------------------------------------------------------------------
 
-pub fn a_panic_handling_info_closes_only_that_topic_test() {
+pub fn a_panic_handling_info_closes_only_that_topic_test() -> Nil {
   let trace = process.new_subject()
   let senders = process.new_subject()
   let channels = start([info_panics(trace, senders), ok_handler(trace)])
@@ -266,7 +266,7 @@ pub fn a_panic_handling_info_closes_only_that_topic_test() {
 
 // --- terminate -------------------------------------------------------------
 
-pub fn a_panic_while_terminating_does_not_prevent_teardown_test() {
+pub fn a_panic_while_terminating_does_not_prevent_teardown_test() -> Nil {
   let trace = process.new_subject()
   let channels = start([terminate_panics(trace), ok_handler(trace)])
   let frames = helper.connect(channels, "s1")
@@ -286,7 +286,7 @@ pub fn a_panic_while_terminating_does_not_prevent_teardown_test() {
   helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
 }
 
-pub fn a_terminate_panic_does_not_swallow_a_siblings_farewell_test() {
+pub fn a_terminate_panic_does_not_swallow_a_siblings_farewell_test() -> Nil {
   let trace = process.new_subject()
   let channels = start([terminate_panics(trace), ok_handler(trace)])
   let leaving = helper.connect(channels, "s1")
@@ -308,7 +308,7 @@ pub fn a_terminate_panic_does_not_swallow_a_siblings_farewell_test() {
   helper.recv(peer) |> string.contains("farewell") |> should.be_true
 }
 
-pub fn a_panic_while_terminating_does_not_stop_other_channels_closing_test() {
+pub fn a_panic_while_terminating_does_not_stop_other_channels_closing_test() -> Nil {
   let trace = process.new_subject()
   let channels = start([terminate_panics(trace), ok_handler(trace)])
   let frames = helper.connect(channels, "s1")
@@ -333,7 +333,7 @@ pub fn a_panic_while_terminating_does_not_stop_other_channels_closing_test() {
 // addresses a process that no longer exists, so a terminated join can
 // never be re-entered, and a rejoin gets a fresh worker and sender.
 
-pub fn a_terminate_panic_ends_the_channel_for_its_sender_test() {
+pub fn a_terminate_panic_ends_the_channel_for_its_sender_test() -> Nil {
   let trace = process.new_subject()
   let senders = process.new_subject()
   let channels = start([terminate_panics_with_sender(trace, senders)])

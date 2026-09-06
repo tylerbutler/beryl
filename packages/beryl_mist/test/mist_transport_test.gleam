@@ -9,8 +9,8 @@ import gleam/http/request.{type Request}
 import gleeunit/should
 import mist.{type Connection}
 
-pub fn config_builders_instantiate_for_mist_test() {
-  let on_connect = fn(_req: Request(Connection)) -> Result(
+pub fn config_builders_instantiate_for_mist_test() -> Nil {
+  let on_connect = fn(_request: Request(Connection)) -> Result(
     List(#(String, String)),
     server.ConnectError,
   ) {
@@ -19,7 +19,7 @@ pub fn config_builders_instantiate_for_mist_test() {
 
   let _typed_config: server.TransportConfig(Connection) =
     server.default_config("/socket")
-    |> server.with_on_connect(fn(_req) { Error(server.ConnectRejected) })
+    |> server.with_on_connect(fn(_request) { Error(server.ConnectRejected) })
     |> server.with_on_connect(on_connect)
     |> server.with_allowed_origins(["https://app.example.com"])
     |> server.with_allow_all_origins()

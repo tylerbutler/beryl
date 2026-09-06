@@ -143,7 +143,7 @@ pub type UpgradeOutcome {
   UpgradeSucceeded
   OriginRejected
   VersionRejected
-  AuthRejected
+  AuthenticationRejected
   CapacityRejected
   HandshakeFailed
 }

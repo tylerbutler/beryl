@@ -217,8 +217,8 @@ Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(
 ```gleam
 case group.create(groups, name) {
   Ok(Nil) -> Nil
-  Error(group.GroupAlreadyExists) -> Nil  // idempotent: treat as success if desired
-  Error(group.GroupNotFound) -> Nil       // shouldn't happen for create
+  Error(group.GroupAlreadyExists(_)) -> Nil  // idempotent: treat as success if desired
+  Error(group.GroupNotFound(_)) -> Nil       // shouldn't happen for create
 }
 ```
 
@@ -235,28 +235,24 @@ within 5 seconds.
 case beryl.child_spec(config, init: init, update: update) {
   Ok(#(sockets, child_specification)) ->
     add_to_supervisor(sockets, child_specification)
-  Error(beryl.HeartbeatTimeoutTooLow(2)) ->
+  Error(beryl.HeartbeatTimeoutTooLow(_minimum)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
   Error(beryl.InvalidTopicPattern(pattern, topic.EmptyTopic)) ->
     panic as { pattern <> " is empty" }
   Error(beryl.InvalidTopicPattern(pattern, topic.InvalidFormat(detail))) ->
     panic as { pattern <> ": " <> detail }
-  Error(beryl.InvalidTopicPattern(pattern, _other)) ->
-    panic as { pattern <> " is invalid" }
 }
 ```
 
 `InvalidTopicPattern` contains `beryl/topic.TopicError` instead of a string.
-New `TopicError` variants may be added in a minor release, so
-match exact variants only when your handling differs and keep a catch-all
-otherwise.
+Match each `TopicError` variant explicitly. If an API update adds a variant,
+the compiler identifies the matches that need an additional branch.
 
 `channel.child_spec` validates the handler table first and reports
 `InvalidPattern(pattern, reason)`, `DuplicatePattern(pattern)`, or
 `InvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
-`beryl/topic.TopicError`; match a catch-all reason unless your code handles
-a specific variant differently.
+`beryl/topic.TopicError`; handle its variants explicitly in the same way.
 
 ## Typed sender delivery is not confirmed
 

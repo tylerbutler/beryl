@@ -1,5 +1,5 @@
 ---
-title: The Elm Architecture, without a DOM
+title: The Elm architecture, without a DOM
 description: Learn beryl's model-update architecture by building the first read-only stage of a live poll.
 ---
 

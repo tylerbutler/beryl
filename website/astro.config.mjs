@@ -8,6 +8,9 @@ import starlightLlmsTxt from "starlight-llms-txt";
 // https://astro.build/config
 export default defineConfig({
 	site: "https://beryl.tylerbutler.com",
+	redirects: {
+		"/reference/api/beryl-stats/": "/reference/api/beryl-snapshot/",
+	},
 	prefetch: {
 		defaultStrategy: "hover",
 		prefetchAll: true,
@@ -107,7 +110,7 @@ export default defineConfig({
 							slug: "tutorial",
 						},
 						{
-							label: "1. Elm Architecture without a DOM",
+							label: "1. Elm architecture without a DOM",
 							slug: "tutorial/the-elm-architecture-without-a-dom",
 						},
 						{

@@ -19,7 +19,7 @@ pub fn main() -> Nil {
     child_specification,
     "Step 01 - raw joins and state",
     8101,
-    False,
-    False,
+    server.HealthEndpointDisabled,
+    server.GuideChannelDisabled,
   )
 }

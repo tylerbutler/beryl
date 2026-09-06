@@ -1,8 +1,8 @@
-//// PubSub - Distributed publish/subscribe using Erlang pg
+//// Distributed PubSub with Erlang `pg`
 ////
-//// Provides topic-based pub/sub messaging backed by Erlang's built-in `pg`
-//// module. Subscribers are tracked by process group, so messages are delivered
-//// to all nodes in the cluster automatically.
+//// This module provides topic-based PubSub backed by Erlang's built-in `pg`
+//// module. Subscribers are tracked by process group, so messages are
+//// delivered to all connected nodes in the cluster.
 ////
 //// The payload is generic: `PubSub(payload)` and `Message(payload)` carry
 //// whatever Gleam type a given scope is started with. A broadcast sends that
@@ -13,7 +13,7 @@
 //// browser); payloads that never leave the cluster are cheaper and safer as
 //// plain Gleam types.
 ////
-//// ## Quick Start
+//// ## Quick start
 ////
 //// ```gleam
 //// let pubsub_handle = pubsub.start(pubsub.default_config())
@@ -111,7 +111,7 @@ fn ffi_get_members(scope: atom.Atom, group: String) -> List(Pid)
 fn ffi_get_local_members(scope: atom.Atom, group: String) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "send_to_pid")
-fn ffi_send_to_pid(pid: Pid, scope: atom.Atom, msg: Message(payload)) -> Nil
+fn ffi_send_to_pid(pid: Pid, scope: atom.Atom, message: Message(payload)) -> Nil
 
 /// Recover a `Message(payload)` from the raw process message `selecting`
 /// matched on. Safe only because `selecting` first confirms the message has the
@@ -155,8 +155,9 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 
 /// Start a PubSub instance.
 ///
-/// This starts a pg scope. If another node or an earlier call started the
-/// scope, this function does nothing.
+/// This starts the configured `pg` scope on the current node. Repeated calls
+/// on the same node are harmless. Each participating node must start the same
+/// scope.
 ///
 /// `payload` is fixed by how the returned value is used or annotated at the
 /// call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.
@@ -190,21 +191,21 @@ pub opaque type Subscriber(payload) {
 /// A process may create subscribers for multiple scopes and payload types.
 /// `selecting` uses each subscriber's scope to keep their raw mailbox messages
 /// separate.
-pub fn subscriber(ps: PubSub(payload)) -> Subscriber(payload) {
-  Subscriber(scope: ps.scope, owner: process.self())
+pub fn subscriber(pubsub_instance: PubSub(payload)) -> Subscriber(payload) {
+  Subscriber(scope: pubsub_instance.scope, owner: process.self())
 }
 
 /// Join a topic so this subscriber receives broadcasts sent to it.
 ///
 /// A subscriber can join many topics. All topics deliver through its one
 /// subject. Joining a topic is idempotent.
-pub fn join(sub: Subscriber(payload), topic: String) -> Nil {
-  ffi_join_group(sub.scope, topic, sub.owner)
+pub fn join(subscriber: Subscriber(payload), topic: String) -> Nil {
+  ffi_join_group(subscriber.scope, topic, subscriber.owner)
 }
 
 /// Leave a topic previously joined with `join`.
-pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
-  ffi_leave_group(sub.scope, topic, sub.owner)
+pub fn leave(subscriber: Subscriber(payload), topic: String) -> Nil {
+  ffi_leave_group(subscriber.scope, topic, subscriber.owner)
 }
 
 /// Add a subscriber's PubSub message delivery to a `Selector`, alongside a
@@ -229,83 +230,95 @@ pub fn leave(sub: Subscriber(payload), topic: String) -> Nil {
 /// ```
 pub fn selecting(
   selector: Selector(message),
-  sub: Subscriber(payload),
+  subscriber: Subscriber(payload),
   transform: fn(Message(payload)) -> message,
 ) -> Selector(message) {
-  process.select_record(selector, sub.scope, 4, fn(raw) {
+  process.select_record(selector, subscriber.scope, 4, fn(raw) {
     transform(unsafe_coerce_to_message(raw))
   })
 }
 
 /// Broadcast a message to all topic subscribers on all nodes.
 pub fn broadcast(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg = Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_members(ps.scope, topic)
-  list.each(members, fn(pid) { ffi_send_to_pid(pid, ps.scope, msg) })
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_members(pubsub_instance.scope, topic)
+  list.each(members, fn(pid) {
+    ffi_send_to_pid(pid, pubsub_instance.scope, message)
+  })
 }
 
 /// Broadcast a message to all subscribers except a specific PID.
 pub fn broadcast_from(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   from: Pid,
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg =
+  let message =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
-  ffi_get_members(ps.scope, topic)
+  ffi_get_members(pubsub_instance.scope, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, ps.scope, msg))
+  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
 /// Broadcast a message to all subscribers except a process.
 ///
 /// Preserve a socket ID that receiving runtimes must exclude locally.
 pub fn broadcast_from_socket(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   from: Pid,
   except_socket_id: String,
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg =
+  let message =
     Message(
       topic: topic,
       event: event,
       payload: payload,
       from: FromSocket(from, except_socket_id),
     )
-  ffi_get_members(ps.scope, topic)
+  ffi_get_members(pubsub_instance.scope, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, ps.scope, msg))
+  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
 // nolint: unused_exports -- public PubSub API intended for downstream consumers
 /// Broadcast a message only to subscribers on the current node.
 pub fn local_broadcast(
-  ps: PubSub(payload),
+  pubsub_instance: PubSub(payload),
   topic: String,
   event: String,
   payload: payload,
 ) -> Nil {
-  let msg = Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_local_members(ps.scope, topic)
-  list.each(members, fn(pid) { ffi_send_to_pid(pid, ps.scope, msg) })
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: System)
+  let members = ffi_get_local_members(pubsub_instance.scope, topic)
+  list.each(members, fn(pid) {
+    ffi_send_to_pid(pid, pubsub_instance.scope, message)
+  })
 }
 
 /// Return all topic subscribers on all nodes.
-pub fn subscribers(ps: PubSub(payload), topic: String) -> List(Pid) {
-  ffi_get_members(ps.scope, topic)
+pub fn subscribers(
+  pubsub_instance: PubSub(payload),
+  topic: String,
+) -> List(Pid) {
+  ffi_get_members(pubsub_instance.scope, topic)
 }
 
 /// Return the number of topic subscribers on all nodes.
-pub fn subscriber_count(ps: PubSub(payload), topic: String) -> Int {
-  list.length(ffi_get_members(ps.scope, topic))
+pub fn subscriber_count(
+  pubsub_instance: PubSub(payload),
+  topic: String,
+) -> Int {
+  list.length(ffi_get_members(pubsub_instance.scope, topic))
 }

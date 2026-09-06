@@ -1,12 +1,12 @@
-import app_test_helpers as h
+import app_test_helper
 import beryl
 import beryl/internal
-import beryl/socket.{AcceptJoin, Join, Next}
+import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/dict
 import gleam/option
 import gleeunit/should
-import test_helpers.{type CapturedLog}
+import test_helper.{type CapturedLog}
 
 fn get_metadata(captured: CapturedLog, key: String) -> Result(String, Nil) {
   dict.get(captured.metadata, key)
@@ -15,20 +15,21 @@ fn get_metadata(captured: CapturedLog, key: String) -> Result(String, Nil) {
 /// A start_app system that accepts every join, with the given config.
 fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
-    h.start_app(
+    app_test_helper.start_app(
       config,
       init: fn(_info: socket.ConnectInfo(Nil)) { #(Nil, []) },
-      update: fn(model, ev) {
-        case ev {
+      update: fn(model, event) {
+        case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, option.None)])
-          _ -> Next(model, [])
+          Message(_, _, _, _) | Binary(_, _) | Closed(_, _) | Info(_) ->
+            Next(model, [])
         }
       },
     )
   channels
 }
 
-pub fn start_app_accepts_debug_logging_config_test() {
+pub fn start_app_accepts_debug_logging_config_test() -> Nil {
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
@@ -38,9 +39,10 @@ pub fn start_app_accepts_debug_logging_config_test() {
 
   let channels = start_accepting_app(config)
   let _ = beryl.stop(channels)
+  Nil
 }
 
-pub fn preview_metadata_omits_payloads_by_default_test() {
+pub fn preview_metadata_omits_payloads_by_default_test() -> Nil {
   let logging =
     internal.LoggingConfig(
       level: internal.Debug,
@@ -56,7 +58,7 @@ pub fn preview_metadata_omits_payloads_by_default_test() {
   |> should.equal([])
 }
 
-pub fn preview_metadata_bounds_payloads_when_enabled_test() {
+pub fn preview_metadata_bounds_payloads_when_enabled_test() -> Nil {
   let logging =
     internal.LoggingConfig(
       level: internal.Debug,
@@ -68,8 +70,8 @@ pub fn preview_metadata_bounds_payloads_when_enabled_test() {
   |> should.equal([#("payload_preview", "abc")])
 }
 
-pub fn debug_join_log_carries_metadata_without_payload_preview_test() {
-  let selector = test_helpers.begin_capture()
+pub fn debug_join_log_carries_metadata_without_payload_preview_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let config =
     beryl.config(wire.phoenix_codec())
@@ -79,12 +81,12 @@ pub fn debug_join_log_carries_metadata_without_payload_preview_test() {
     ))
   let channels = start_accepting_app(config)
 
-  let frames = h.connect(channels, "logging-socket")
-  h.join(channels, "logging-socket", "room:lobby", "j1", "j1")
-  let _join_reply = h.recv(frames)
+  let frames = app_test_helper.connect(channels, "logging-socket")
+  app_test_helper.join(channels, "logging-socket", "room:lobby", "j1", "j1")
+  let _join_reply = app_test_helper.recv(frames)
 
   let assert Ok(captured) =
-    test_helpers.receive_log(selector, "Join delivered", 20)
+    test_helper.receive_log(selector, "Join delivered", 20)
   get_metadata(captured, "logger")
   |> should.equal(Ok("beryl.runtime"))
   get_metadata(captured, "socket_id")
@@ -95,42 +97,42 @@ pub fn debug_join_log_carries_metadata_without_payload_preview_test() {
   |> should.equal(Error(Nil))
 
   let _ = beryl.stop(channels)
-  test_helpers.stop_capture()
+  test_helper.stop_capture()
 }
 
-pub fn socket_connected_is_logged_with_socket_id_test() {
-  let selector = test_helpers.begin_capture()
+pub fn socket_connected_is_logged_with_socket_id_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let channels =
     start_accepting_app(
       beryl.config(wire.phoenix_codec())
       |> beryl.with_message_rate(per_second: 100, burst: 200),
     )
-  let _frames = h.connect(channels, "log-connect-socket")
+  let _frames = app_test_helper.connect(channels, "log-connect-socket")
 
   let assert Ok(captured) =
-    test_helpers.receive_log(selector, "Socket connected", 20)
+    test_helper.receive_log(selector, "Socket connected", 20)
   get_metadata(captured, "socket_id")
   |> should.equal(Ok("log-connect-socket"))
 
   let _ = beryl.stop(channels)
-  test_helpers.stop_capture()
+  test_helper.stop_capture()
 }
 
-pub fn start_app_warns_when_no_abuse_controls_configured_test() {
-  let selector = test_helpers.begin_capture()
+pub fn start_app_warns_when_no_abuse_controls_configured_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let channels = start_accepting_app(beryl.config(wire.phoenix_codec()))
 
-  test_helpers.receive_log(selector, "No abuse controls configured", 10)
+  test_helper.receive_log(selector, "No abuse controls configured", 10)
   |> should.be_ok
 
   let _ = beryl.stop(channels)
-  test_helpers.stop_capture()
+  test_helper.stop_capture()
 }
 
-pub fn start_app_does_not_warn_when_a_limit_is_configured_test() {
-  let selector = test_helpers.begin_capture()
+pub fn start_app_does_not_warn_when_a_limit_is_configured_test() -> Nil {
+  let selector = test_helper.begin_capture()
 
   let channels =
     start_accepting_app(
@@ -138,9 +140,9 @@ pub fn start_app_does_not_warn_when_a_limit_is_configured_test() {
       |> beryl.with_message_rate(per_second: 100, burst: 200),
     )
 
-  test_helpers.receive_log(selector, "No abuse controls configured", 2)
+  test_helper.receive_log(selector, "No abuse controls configured", 2)
   |> should.be_error
 
   let _ = beryl.stop(channels)
-  test_helpers.stop_capture()
+  test_helper.stop_capture()
 }

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Return group, presence update, and binary encoding errors with the offending name, ref, or metadata component."

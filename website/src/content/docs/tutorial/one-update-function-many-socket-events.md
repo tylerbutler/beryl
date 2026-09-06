@@ -101,7 +101,7 @@ an empty effect list:
 poll.GetState ->
   socket.Next(
     model,
-    socket.reply_ok(reply, poll.json(store.get(polls, room))),
+    socket.reply_ok(reply, poll.to_json(store.get(polls, room))),
   )
 ```
 
@@ -160,9 +160,9 @@ The vote branch shows why an update returns a list:
 Ok(state) ->
   socket.Next(
     model,
-    socket.reply_ok(reply, poll.json(state))
+    socket.reply_ok(reply, poll.to_json(state))
       |> list.append([
-        socket.BroadcastFrom(topic, "poll_state", poll.json(state)),
+        socket.BroadcastFrom(topic, "poll_state", poll.to_json(state)),
       ]),
   )
 ```

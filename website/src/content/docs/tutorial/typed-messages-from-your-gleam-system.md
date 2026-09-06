@@ -122,7 +122,7 @@ socket.Info(ClosePoll(topic)) ->
     Ok(room) -> {
       let effects = case store.close(polls, room) {
         store.ClosedNow(state) ->
-          [socket.Broadcast(topic, "poll_closed", poll.json(state))]
+          [socket.Broadcast(topic, "poll_closed", poll.to_json(state))]
         store.AlreadyClosed(_) | store.RoomNotFound -> []
       }
       socket.Next(model, effects)
@@ -245,12 +245,12 @@ Timed -> {
       socket.Next(
         model,
         list.append(
-          socket.reply_ok(reply, poll.json(state)),
-          [socket.Broadcast(topic, "poll_closed", poll.json(state))],
+          socket.reply_ok(reply, poll.to_json(state)),
+          [socket.Broadcast(topic, "poll_closed", poll.to_json(state))],
         ),
       )
     store.AlreadyClosed(state) ->
-      socket.Next(model, socket.reply_ok(reply, poll.json(state)))
+      socket.Next(model, socket.reply_ok(reply, poll.to_json(state)))
     store.RoomNotFound -> socket.Next(model, [])
   }
 }

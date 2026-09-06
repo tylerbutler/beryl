@@ -1,6 +1,8 @@
 [tools]
-"github:tylerbutler/trellis" = "0.11.2"
+"github:tylerbutler/trellis" = "0.13.0"
 "github:erlang/rebar3" = "3.24.0"
+# Auto-select the platform archive with bundled Erlang, not the OTP 28 escript.
+"github:tylerbutler/licence_audit" = "v0.11.1"
 
 [env]
 LC_ALL = "en_US.UTF-8"

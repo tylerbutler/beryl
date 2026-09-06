@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Make wire.encode return Result(String, Nil). Rename beryl/stats.snapshot to beryl/snapshot.get, JoinContext.params to parameters, socket msg_ref labels to message_ref, reply_ref_msg_ref to reply_ref_message_ref, presence op_id to operation_id, SyncPayload.v to version, and transport AuthRejected/vsn_supported to AuthenticationRejected/version_supported. Document exhaustive public error matching."

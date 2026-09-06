@@ -1,4 +1,4 @@
-//// Mist WebSocket Transport - Direct Mist integration for beryl
+//// Mist WebSocket transport for beryl
 ////
 //// This module provides the bridge between Mist's native WebSocket handling
 //// and the beryl runtime using Mist request and response types directly.
