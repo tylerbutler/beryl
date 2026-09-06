@@ -336,6 +336,20 @@ type WorkerRef {
 // and heartbeats continue.
 
 /// A socket parked on one asynchronous operation.
+/// A parked socket's wait, reified so the actor keeps taking turns.
+///
+/// This cannot be a bounded synchronous receive inside the turn (evaluated
+/// in #344). Two constraints require the reified form:
+///
+/// - A parked socket actor must still answer `FinalizeForStop`, so
+///   `beryl.stop` can settle an in-flight mutation as `PresenceStopping`
+///   and finish inside its drain even when the presence actor is wedged
+///   (the `shutdown_while_*_pending` tests). A turn blocked for up to
+///   `presence_op_timeout_ms` overruns the stop drain instead.
+/// - A closing worker's in-flight `WorkerRan` reports arrive on the same
+///   subject as every other socket message. Completing the close in order
+///   requires deferring the unmatched messages — the `queued`/`drain`
+///   machinery — which a selective receive on one subject cannot express.
 type Suspension(message) {
   Suspension(
     waiting: Waiting,
