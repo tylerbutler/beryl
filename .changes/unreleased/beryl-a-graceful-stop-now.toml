@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "A graceful stop now bounds each worker's on_terminate to fit inside the shutdown drain. A slow on_terminate no longer makes beryl.stop fail or skip the remaining topics' cleanup. Closes outside beryl.stop keep the five-second bound."
