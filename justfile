@@ -60,6 +60,18 @@ lint:
 doctor:
     trellis doctor
 
+# Report locked dependency licences (defaults to the three library packages)
+audit-licences *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-licences --serial {{ PACKAGES }}
+
+# Report known vulnerabilities; findings do not fail this task
+audit-vulns *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-vulns --serial {{ PACKAGES }}
+
+# Enforce each package's licence policy and vulnerability threshold
+audit-check *PACKAGES="beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run audit-check --serial --keep-going {{ PACKAGES }}
+
 # === DOCUMENTATION ===
 
 # Build Gleam API documentation for publishable workspace packages

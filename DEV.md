@@ -66,6 +66,41 @@ just format
 just pr
 ```
 
+### Dependency audits
+
+Local audit tasks use `licence_audit` v0.11.1, pinned in `.mise.toml`.
+Install it with `mise install github:tylerbutler/licence_audit`. mise selects
+the self-contained platform archive; the repo's Erlang version is unchanged.
+
+```bash
+just audit-licences          # Report licences and preview the existing policy
+just audit-vulns             # Report known vulnerabilities from OSV
+just audit-check             # Enforce licences and the vulnerability threshold
+just audit-check beryl_mist  # Limit the task to one package
+```
+
+These tasks default to `beryl`, `beryl_mist`, and `beryl_ewe`. Each command runs
+in the package directory and reads its locked manifest. Licence reports and
+enforcement use its existing `[tools.licence_audit]` policy.
+Examples are not included by default. To report on an example, pass its
+package name, such as `just audit-licences cursor`.
+Examples need an approved licence policy before licence enforcement is useful.
+
+The report tasks do not fail on findings; `audit-check` uses `check --vulns`
+and propagates failures. The existing policies allow Apache-2.0, ISC, and MIT.
+The default vulnerability threshold is `high`; unknown severity does not
+block. No audit task is part of CI or `just ci`.
+
+Licence reports cover locked Hex dependencies, not Git or local path sources.
+Vulnerability reports cover Hex and GitHub dependencies; other sources are
+skipped. This does not audit npm dependencies. OSV requires network access;
+an unavailable service means the audit is incomplete.
+
+Use `mise exec -- licence_audit --version` to see the installed version.
+If Hex metadata requests time out, the licence audit is incomplete. Retry the
+task without changing the policy; report-task success alone does not mean
+that all metadata was fetched.
+
 ### Before Merging to Main
 
 ```bash
