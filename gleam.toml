@@ -37,6 +37,15 @@ default = "git_only"
 command = "gleam run -m glinter"
 needs_deps = true
 
+[tools.trellis.tasks.audit-licences]
+command = "mise exec -- licence_audit"
+
+[tools.trellis.tasks.audit-vulns]
+command = "mise exec -- licence_audit vulns"
+
+[tools.trellis.tasks.audit-check]
+command = "mise exec -- licence_audit check --vulns"
+
 [tools.trellis.changelog]
 strictness = "warn"
 kinds = [
