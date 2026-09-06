@@ -1,5 +1,15 @@
 # beryl changelog
 
+## v0.5.0 - 2026-08-28
+
+### Changed
+
+- Improve the generated API reference layout with symbol indexes, signature-first entries, and responsive module lists.
+
+### Fixed
+
+- Corrected documentation examples to follow Gleam naming and exhaustive matching conventions.
+
 ## v0.4.1 - 2026-08-25
 
 ### Fixed
