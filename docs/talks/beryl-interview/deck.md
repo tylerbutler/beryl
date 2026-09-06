@@ -232,7 +232,9 @@ mesh when they know each other's names and share a secret cookie.
 - This is pub/sub, the function that slide 3 used Redis to provide. It is in
   Erlang's standard library and uses the same mechanism that WhatsApp scaled.
 
-beryl's PubSub module is a thin, typed wrapper over pg. State the
+beryl's PubSub module is a thin, typed wrapper over pg, generic over its
+payload type. Broadcasts carry native Gleam values across nodes without an
+application encoding step; Erlang distribution serializes the terms. State the
 architectural rule slowly: "PubSub is the ONLY cross-node
 primitive in beryl. The app runtime, presence actors, groups, and rate
 limiters are node-local. Scaling out means starting more nodes and letting
@@ -637,13 +639,15 @@ Introduce the slide with this security boundary: "Each real-time endpoint is
 an open TCP connection. beryl supplies abuse controls and documents their
 limits."
 
-BUILT IN (config on the transport, name the real APIs):
-- `with_max_connections_per_ip`: per-IP connection caps, plus a
+BUILT IN (caps and rate limits are on `beryl.Config`; the origin policy
+is on the transport config):
+- `with_max_connections_per_ip`: per-IP connection caps, plus
+  `with_max_connections`, a
   node-wide total connection ceiling so one node
   cannot be socket-flooded past its capacity.
 - `with_message_rate`: token-bucket rate limiting per socket. This is
   what tamed the cursor firehose in the demo.
-- Origin checking defaults to SAME-ORIGIN. Browsers can open
+- Origin checking on the transport defaults to SAME-ORIGIN. Browsers can open
   cross-site WebSockets, so this closes cross-site hijacking by
   default rather than by remembering to configure it.
 
@@ -671,12 +675,9 @@ the library safely.
 
 ## Earde
 
-### Earde combines live communication with durable, searchable forums.
+### Earde is the community network for open source communities.
 
-Technical communities can chat in real time and save useful parts of a
-conversation as durable, searchable discussions.
-
-They can also decide if their knowledge must be indexed by search engines or kept private.
+It lets maintainers connect a project through GitHub and give it a verified community home, or connect it to a broader existing community or ecosystem. Each community combines Discord-like live interaction with the structure, searchability, and long-term memory of traditional forums.
 
 https://earde.com/
 
@@ -725,10 +726,6 @@ on the server and phoenix.js in the browser from the first day.
 <!-- _class: lead -->
 
 ## Try it and challenge the design
-
-`gleam add beryl beryl_mist`
-
-(`beryl_ewe` coming soon!)
 
 **Docs**: [beryl.tylerbutler.com](https://beryl.tylerbutler.com)
 **Discuss**: [earde.com/c/beryl/s/general](https://earde.com/c/beryl/s/general)
