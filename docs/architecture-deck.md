@@ -32,7 +32,7 @@ to start contributing.
 - App-side dispatch on OTP actors and Erlang `pg`: one `init`/`update` pair per app
 - Pluggable wire codec + WebSocket transport (Mist, Ewe)
 - Presence and groups are independent, app-owned OTP actors
-- One runtime actor per app dispatches events and applies effects
+- One shared router, a temporary actor per socket, and optional per-topic workers
 - PubSub is the only cross-node primitive
 
 ```mermaid
@@ -51,11 +51,11 @@ flowchart TB
 <!--
 Speaker notes:
 Read the diagram from top to bottom. A raw WebSocket frame enters the
-transport. The wire codec converts bytes into typed messages. One OTP runtime
-actor for each app sends typed `Input` values to the app's `update` function
-and applies the returned `Effect` list. beryl has no channel registry or
-per-channel callback modules. One `update` function handles all relevant
-topics and routes them by matching the topic string. PubSub is the only
+transport. The wire codec converts bytes into typed messages. The shared
+router forwards them to the socket actor. Raw dispatch runs `init` and
+`update` there; the channel layer runs callbacks in a worker for each
+socket/topic join. The socket actor applies effects in order and enqueues
+outbound frames for the transport connection process to write. PubSub is the only
 primitive that crosses node boundaries. All layers above PubSub are local to
 one node. Each box is an independent layer that you can inspect and test. The
 runtime connects these layers.
@@ -69,7 +69,8 @@ runtime connects these layers.
 |---|---|
 | `beryl` | Public entry-point: `config`, `child_spec`, `stop`, `broadcast` |
 | `beryl/socket` | App dispatch contract: `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
-| `beryl/runtime` | Internal OTP actor: socket tracking, dispatch, effect interpretation, heartbeat |
+| `beryl/runtime` | Router, supervised socket actors, topic workers, effects, heartbeat |
+| `beryl/channel` | Typed handlers and per-topic state, run in topic workers |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` |
 | `beryl/presence` | Add-wins OR-set CRDT; track/untrack, dirty full-state replication |
 | `beryl/wire` | Pluggable codec; ships `phoenix_codec()` |
@@ -95,31 +96,30 @@ match a `Join` or `Message` topic against an application pattern.
 
 ## The runtime: effect interpreter at the center
 
-The runtime is a **single OTP actor**, one for each `Sockets` handle. It tracks:
+The runtime divides work between **a shared router and per-socket actors**:
 
-- **Socket state**: `socket_id → {model, send_fn, joined topics, last_heartbeat}`
-- **App contract**: calls `init`/`update` and applies the returned `Effect`s
-- **PubSub subscriptions**: one pg group for each joined topic
-- **Heartbeat timer**: removes stale sockets at the deadline
+- **Router**: admission, socket table, topic subscriber index, PubSub fan-out
+- **Socket actor**: raw model, `init`/`update`, refs, effects, heartbeat timer
+- **Topic worker**: channel state and callbacks for one socket/topic join
+- **Transport connection process**: WebSocket state and frame writes
 
-All inbound frames, PubSub deliveries, and `Info` messages pass through its
-mailbox in sequence. Effects apply in strict list order within one turn.
+The socket actor orders effects and enqueues frames. The connection process
+writes them. Topic workers can run concurrently; raw callbacks on one socket
+remain sequential.
 
 <!--
 Speaker notes:
-This slide replaces the former coordinator and channel registry model. beryl
-does not need a registry because it does not look up per-topic handlers. One
-`update` function handles each event for each socket on this runtime.
+Runtime names the whole process arrangement, not one actor. The router does
+not run application callbacks. Each socket actor owns its raw model and
+protocol state. With channel.child_spec, each accepted socket/topic join
+also has a worker that owns its private channel state.
 
-The runtime owns four types of state. Socket state contains the app's `model`,
-not a beryl `assigns` record. The app contract contains `init`, `update`, and
-the `Effect` list that `update` returns. PubSub subscriptions receive
-broadcasts. The heartbeat timer removes dead sockets.
-
-One actor processes each mailbox message in sequence. This design avoids
-mutexes and races in socket or topic state. Effect order equals wire order.
-The actor performs bookkeeping, dispatch, and effect application. Applications
-scale across nodes through `pg`.
+The socket actor applies ordered effect lists, including worker reports.
+Presence mutations can suspend a list. Send functions enqueue requests for
+Mist or Ewe; they do not confirm a completed network write. Workers on
+different topics can run concurrently, but their effects still pass through
+the socket actor. Shared router work and connection writes remain possible
+sources of delay.
 -->
 
 ---
@@ -130,25 +130,38 @@ scale across nodes through `pg`.
 flowchart LR
   subgraph App["your application supervision tree"]
     AppSup["application supervisor"] --> Sup["beryl subtree supervisor<br/>OneForOne"]
-    Sup --> Rt["runtime<br/>Transient · significant"]
+    Sup --> Factory["socket factory<br/>Permanent"]
+    Factory --> Socket["socket actors<br/>Temporary"]
+    Socket --> Topics["linked topic supervisor (channel layer)<br/>Temporary topic workers"]
+    Sup --> Rt["router<br/>Transient · significant"]
     Sup --> Lim["connection limiter (optional)"]
   end
 ```
 
 - `child_spec` returns a child specification for the runtime subtree and a stable handle
 - Add the subtree to *your* application supervisor
+- Temporary children do not restart sessions: clients reconnect and rejoin
 - beryl **borrows** PubSub, presence, and groups. They are not children of this subtree.
 
 <!--
 Speaker notes:
 `beryl.child_spec` provides one supervised entry point. It validates and builds the
-OneForOne subtree (runtime as the significant, transient child, plus an
-optional connection limiter sibling), then hands back a
+OneForOne subtree (socket factory, significant transient router, and an
+optional connection limiter), then hands back a
 `ChildSpecification` that the caller passes to `static_supervisor.add`. The
 application supervisor owns the lifecycle. Presence, PubSub, and groups are
 not part of this tree. The application starts and owns them, and the runtime
 borrows their handles. `beryl.stop` terminates only beryl's subtree. It does
 not terminate the PubSub instance, presence actor, or group actors.
+
+The transport requests a temporary socket child from the shared factory.
+The router registers that child before init runs in the socket actor, so
+slow init does not block the factory's start operation. Router and socket
+actors retain mutual monitors. A socket fault closes one connection; a
+topic-worker fault closes one topic. A router or factory fault closes all
+connections in that runtime. A factory restart does not restart the router.
+The factory starts before the router so graceful shutdown drains the router
+and sockets before the factory terminates remaining children.
 -->
 
 ---
@@ -260,8 +273,9 @@ runtime delivers a `Message` event to `update`, and the returned `Effect`
 list controls the next operations. `ReplyOk` and `ReplyError` answer the
 message ref. `Push` sends an unsolicited message to this socket.
 `Broadcast` and `BroadcastFrom` send an event to a topic's subscribers.
-`Stop` in `Next` closes the complete socket. Effects run in list order during
-one actor turn, so list order is wire order. This rule matters when an
+`Stop` in `Next` closes the complete socket. The socket actor applies effects
+and enqueues frames in list order. A presence mutation pauses the remaining
+list until its acknowledgement or timeout. This rule matters when an
 `AcceptJoin` precedes a `Push` in the same list.
 
 The bottom diagram shows fan-out. A broadcast effect enters PubSub (`pg`),
@@ -302,9 +316,9 @@ sequenceDiagram
 <!--
 Speaker notes:
 Both diagrams show liveness and cleanup. In the top flow, Phoenix clients send
-a periodic `heartbeat` on the special `"phoenix"` topic. The runtime replies
-and records the last-seen time. A separate timer checks tracked sockets and
-removes each socket that passes its deadline. This process detects clients
+a periodic `heartbeat` on the special `"phoenix"` topic. The socket actor replies
+and records the last-seen time. Each socket actor has its own timer and
+removes its socket if it passes the deadline. This process detects clients
 that lose their network connection or close without a clean disconnect.
 
 The bottom flow covers clean closes, crashes, kicks, and timeouts. When a
@@ -364,14 +378,15 @@ garbage-collect atoms.
 ```mermaid
 sequenceDiagram
   participant App as app update
-  participant Worker as app presence worker
-  participant Runtime as runtime
+  participant Socket as socket actor
   participant Pres as presence actor
   participant PS as pubsub
   participant Remote as remote replica
-  App->>Worker: nonblocking track / untrack command
-  Worker->>Pres: track / untrack / list
-  Worker->>Runtime: broadcast after completion
+  App->>Socket: PresenceTrack / PresenceUntrack effect
+  Socket->>Pres: asynchronous mutation
+  Note over Socket: pause this socket's ordered effects
+  Pres-->>Socket: acknowledgement
+  Socket->>Socket: broadcast diff, resume effects
   loop every broadcast_interval
     Pres->>PS: broadcast CRDT state
   end
@@ -383,7 +398,7 @@ sequenceDiagram
 
 - Add-wins OR-set CRDT via `lattice_presence/presence_state`
 - App-owned actor: started and supervised separately
-- Synchronous presence calls stay outside the shared runtime
+- Presence effects pause one socket; the presence actor remains shared
 
 <!--
 Speaker notes:
@@ -392,17 +407,19 @@ without a central coordinator or database. Each node runs a presence actor
 that holds one replica of an add-wins OR-set CRDT from `lattice_presence`.
 The application starts and supervises this actor outside beryl's subtree.
 
-Public presence calls are synchronous. An application-owned worker performs
-them outside the shared socket runtime and then broadcasts the result. On a
+Public mutation calls are synchronous; do not call them from app callbacks.
+Use presence effects or channel actions. The socket actor sends a mutation,
+parks its ordered work, and resumes after acknowledgement or timeout.
+Snapshot effects read the published ETS read model. On a
 timer, the presence actor broadcasts its state through PubSub. It also merges
 states from remote replicas. CRDT merges are commutative and idempotent.
 Therefore, replicas converge when messages arrive in different orders or more
 than once. The system does not need locks, a leader, or application conflict
 resolution.
 
-The design defers the asynchronous presence read-model and effect work as one
-bundle. It does not expose a partial runtime feature that blocks the shared
-actor.
+A slow presence callback can delay mutations from multiple sockets because
+they share the presence actor. The per-socket deferred queues are not bounded
+by the acknowledgement timeout.
 -->
 
 ---
@@ -417,7 +434,7 @@ flowchart LR
   MI -->|binary, no decoder| RB["raw Binary event fan-out"]
   CD -->|route_decoded / route_decoded_binary| RT["runtime"]
   RB -->|route_binary| RT
-  RT --> EN["encode reply/push"] --> SF["socket send fn"] --> CL["client"]
+  RT --> EN["encode reply/push"] --> SF["enqueue send request"] --> CP["connection process writes"] --> CL["client"]
 ```
 
 - Phoenix wire format: `[join_ref, ref, topic, event, payload]`
@@ -433,7 +450,9 @@ codec's text decoder. Binary frames use its binary decoder when one exists and
 retain binary telemetry classification through `route_decoded_binary`. A
 codec without a binary decoder uses the raw `Binary` event path. For outbound
 data, the same codec encodes runtime replies and pushes. The runtime then gives
-them to the socket's send function.
+them to the socket's send function. That function enqueues SendText or
+SendBinary for the connection process. The connection process calls the
+transport's frame-write function. Enqueue success is not delivery confirmation.
 
 `Codec` is a data value, not fixed runtime logic. An application can change
 framing without changing the runtime or application code. beryl has no
@@ -450,9 +469,11 @@ socket to the replacement runtime.
 
 ## Concurrency note
 
-The runtime uses a **single OTP mailbox**. It processes messages in sequence
-and does not need locks.
+Each actor processes its own mailbox in sequence. There is **no shared
+callback mailbox** for all sockets.
 
+- Slow raw callbacks delay one socket; channel message/info callbacks run per topic
+- Joins, ordered closes, and presence work can delay other work on the same socket
 - Broadcasts arrive as Erlang messages; tests must **select the exact message shape**
 - Stale queued messages can cause nondeterministic test failures
 - Drain messages that your tests create. Do not use broad "any message"
@@ -461,8 +482,12 @@ and does not need locks.
 
 <!--
 Speaker notes:
-This slide gives architecture information and test guidance. One mailbox
-processes messages in sequence without locks. Effect order equals wire order.
+This slide gives architecture information and test guidance. Per-socket
+effect order is preserved through the connection writer. There is no total
+callback order between sockets or between channel workers on different topics.
+This isolates callback execution, not all resource use or latency: the router,
+presence actor, socket effect interpreter, and transport queues can still
+accumulate work.
 
 Broadcasts and pushes arrive as ordinary Erlang messages in a process
 mailbox. A test must select the exact expected message shape. A broad
@@ -474,20 +499,47 @@ common source of intermittent test failures in this codebase.
 
 ---
 
+## Queue limits and evidence
+
+- Rate limits control admission, not end-to-end queued messages or bytes
+- Worker input, reports, socket queues, router fan-out, and presence remain unbounded
+- Outbound send queues have no configured slow-reader eviction policy
+- [#397](https://github.com/tylerbutler/beryl/issues/397): runtime queue contracts; [#249](https://github.com/tylerbutler/beryl/issues/249): outbound backpressure
+- [#371](https://github.com/tylerbutler/beryl/pull/371) is protocol smoke, not comparative performance evidence
+- ADR 0005 compares startup at 2,000 connections/s; [#400](https://github.com/tylerbutler/beryl/issues/400) tracks broader baselines
+
+<!--
+Speaker notes:
+Do not infer bounded memory or healthy-client latency from process isolation.
+The runtime guide lists current controls, defaults, and overflow behavior:
+https://beryl.tylerbutler.com/architecture/runtime/#queue-limits-and-overload
+Generic PubSub and external consumer mailboxes have no global beryl budget.
+Queue units, reservation release paths, overload ordering, and occupancy/age
+telemetry are pending contracts in #397, not shipped guarantees.
+
+ADR 0005 used Mist, Erlang 27.2.1, 12 schedulers, and three runs per design at
+a requested 2,000 starts/s. It compares direct and factory startup at that
+rate; it does not establish a general throughput, memory, or recovery bound.
+#400 covers slow readers, hot workers, slow presence, combined router
+pressure, and crash/reconnect workloads.
+-->
+
+---
+
 ## Where to start contributing
 
 | Start here | Module | Purpose |
 |---|---|---|
 | 💡 Public surface | `src/beryl.gleam` | `config`, `child_spec`, `stop`, broadcast helpers |
 | 🔌 Dispatch contract | `src/beryl/socket.gleam` | `Input`, `Next`, `Effect`, `Sender`, `ConnectInfo` |
-| ⚙️ Heart of beryl | `src/beryl/runtime.gleam` | Actor, dispatch, effect interpreter, heartbeat (internal) |
+| ⚙️ Heart of beryl | `src/beryl/runtime.gleam` | Router, socket actors, workers, effects, heartbeat (internal) |
 | 📨 Message flow | `packages/beryl_mist/src/beryl_mist.gleam` | Connect → decode → route |
 | 📡 Fan-out | `src/beryl/pubsub.gleam` | pg-based broadcast, typed `Subscriber` |
 | 👥 Presence | `src/beryl/presence.gleam` | CRDT actor, track/untrack, diffs |
 | 🔤 Framing | `src/beryl/wire.gleam` | Phoenix codec, encode/decode |
 
 Start with `beryl.gleam` and `beryl/socket.gleam` for the public contract.
-Then read `runtime.gleam`. This single process connects all components.
+Then read `runtime.gleam`. It implements the router, socket actors, and topic workers.
 The website contains architecture documents under `/architecture/`.
 
 <!--
