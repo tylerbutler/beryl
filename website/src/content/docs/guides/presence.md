@@ -246,6 +246,49 @@ Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process th
 
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
+## Add presence to a channel
+
+Start and supervise a presence actor as shown above, then attach its handle to
+the channel system's config with `beryl.with_presence_handle`. Use
+`channel.with_presence` on an accepted join:
+
+```gleam
+import beryl/channel
+import gleam/json
+
+pub fn room() -> channel.Handler {
+  channel.handler("room:*", fn(context) {
+    channel.accept(Nil)
+    |> channel.with_presence(
+      key: context.socket_id,
+      meta: json.object([#("status", json.string("online"))]),
+    )
+  })
+}
+```
+
+The builder tracks this connection on the joined topic, then sends it a
+Phoenix-compatible `presence_state` snapshot. Use an authenticated user ID as
+the key to group that user's connections under one roster entry. Each
+connection has its own metadata and tracking ref.
+
+The runtime sends the join acknowledgment first. Tracking emits a
+`presence_diff`, which can arrive before the snapshot; Phoenix Presence
+clients buffer these diffs until `presence_state`. The runtime removes this
+connection's tracked entries when the topic closes or the socket disconnects.
+No `on_terminate` callback is needed for presence cleanup.
+
+To change metadata, return `channel.presence_track(key, new_meta)` from a
+callback with the same key. To stop tracking while the channel stays joined,
+return `channel.presence_untrack(key)`. State changes alone do not update
+presence.
+
+`with_presence` appends to existing join actions and leaves rejected joins
+unchanged. It requires the same presence handle as other presence actions;
+without one, the runtime logs warnings and skips tracking and the snapshot.
+It does not reserve capacity: a presence count followed by a track is not an
+atomic room-limit check.
+
 ## Use presence from raw dispatch
 
 Start and supervise the standalone presence actor, then attach its handle with

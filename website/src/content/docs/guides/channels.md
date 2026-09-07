@@ -311,6 +311,18 @@ Presence actions need a presence handle on the config
 (`beryl.with_presence_handle`); without one they are dropped with a
 warning, exactly as the equivalent core effects are.
 
+For the standard Phoenix presence flow, add `channel.with_presence` to an
+accepted join instead of assembling the track and snapshot actions yourself:
+
+```gleam
+channel.accept(state)
+|> channel.with_presence(key: state.username, meta: meta(state))
+```
+
+This tracks the connection, sends it a `presence_state` snapshot, and uses the
+runtime's existing diff delivery and cleanup. See
+[Add presence to a channel](/guides/presence/#add-presence-to-a-channel).
+
 ### Clients observe action list order
 
 The runtime applies channel actions in list order. Each action maps to one core

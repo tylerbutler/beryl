@@ -137,6 +137,7 @@ The channel composition surface: a channel is a topic pattern paired
 <li><a href="#api-function-reply_ok"><code>reply_ok</code></a></li>
 <li><a href="#api-function-stay"><code>stay</code></a></li>
 <li><a href="#api-function-with_actions"><code>with_actions</code></a></li>
+<li><a href="#api-function-with_presence"><code>with_presence</code></a></li>
 <li><a href="#api-function-with_reply"><code>with_reply</code></a></li>
   </ul>
 </section>
@@ -685,6 +686,48 @@ Add ordered actions to an accepted join.
 
  Existing actions stay before the actions added here. A refused join has no
  topic, so this function returns [`reject`](#reject) results unchanged.
+
+<div class="api-entry-anchor" id="api-function-with_presence" aria-hidden="true"></div>
+
+### `with_presence`
+
+```gleam
+pub fn with_presence(
+  JoinResult(a, b),
+  key: String,
+  meta: json.Json
+) -> JoinResult(a, b)
+```
+
+Track this connection and send a Phoenix-compatible presence snapshot
+ after an accepted join.
+
+ Requires a running presence actor attached with `beryl.with_presence_handle`.
+ Without a handle, the runtime logs warnings and drops the presence actions;
+ it does not reject the join.
+
+ Appends [`presence_track`](#presence_track), then
+ [`push_presence`](#push_presence) with event `presence_state` and
+ `beryl/presence/wire.encode_state`. The snapshot includes the new entry
+ after tracking succeeds. Existing join actions stay before these actions.
+ A rejected join remains unchanged.
+
+ Tracking broadcasts a `presence_diff`, which can arrive before the initial
+ snapshot. Phoenix Presence clients buffer diffs until `presence_state`.
+ The runtime removes this connection's entries when the topic closes.
+ Connections with the same key remain separate entries under that key.
+
+ To replace metadata later, return [`presence_track`](#presence_track) with
+ the same key from a callback. This builder does not observe state changes
+ or reserve room capacity.
+
+ ```gleam
+ channel.accept(state)
+ |> channel.with_presence(
+   key: "user:alice",
+   meta: json.object([#("status", json.string("online"))]),
+ )
+ ```
 
 <div class="api-entry-anchor" id="api-function-with_reply" aria-hidden="true"></div>
 
