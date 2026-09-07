@@ -5279,14 +5279,14 @@ fn send_frame_logged(
   case send_result {
     Ok(Nil) ->
       state.logger
-      |> log.debug("Outbound frame sent", [
+      |> log.debug("Outbound frame enqueued", [
         #("socket_id", socket.id),
         #("topic", topic_name),
         #("frame_kind", frame_kind(frame)),
       ])
     Error(Nil) ->
       state.logger
-      |> log.warn("Outbound frame failed", [
+      |> log.warn("Outbound frame rejected", [
         #("socket_id", socket.id),
         #("topic", topic_name),
         #("frame_kind", frame_kind(frame)),

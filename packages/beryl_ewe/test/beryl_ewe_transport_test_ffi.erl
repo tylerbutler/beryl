@@ -3,6 +3,7 @@
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, send_binary/2, receive_text/2, receive_binary/2,
          close/1, http_get/2, stop_supervisor/1,
+         suspend_server_peer/1, resume_process/1, outbound_queue_usage/1,
          attach_transport_events/0, detach_transport_events/1,
          receive_upgrade_event/1, receive_frame_event/1,
          receive_message_event/1]).
@@ -262,6 +263,44 @@ close(Socket) ->
     _ = gen_tcp:send(Socket, <<16#88, 16#80, 0, 0, 0, 0>>),
     gen_tcp:close(Socket),
     nil.
+
+suspend_server_peer(Socket) ->
+    {ok, Peer} = inet:sockname(Socket),
+    case find_server_peer(erlang:ports(), Peer) of
+        {ok, Pid} ->
+            true = erlang:suspend_process(Pid),
+            {ok, Pid};
+        error ->
+            {error, nil}
+    end.
+
+find_server_peer([], _Peer) ->
+    error;
+find_server_peer([Port | Rest], Peer) ->
+    case inet:peername(Port) of
+        {ok, Peer} ->
+            case erlang:port_info(Port, connected) of
+                {connected, Pid} -> {ok, Pid};
+                _ -> find_server_peer(Rest, Peer)
+            end;
+        _ ->
+            find_server_peer(Rest, Peer)
+    end.
+
+resume_process(Pid) ->
+    true = erlang:resume_process(Pid),
+    nil.
+
+outbound_queue_usage(Pid) ->
+    {messages, Messages} = erlang:process_info(Pid, messages),
+    lists:foldl(fun
+        ({_Tag, {send_text, _Payload, Bytes}}, {Frames, TotalBytes}) ->
+            {Frames + 1, TotalBytes + Bytes};
+        ({_Tag, {send_binary, _Payload, Bytes}}, {Frames, TotalBytes}) ->
+            {Frames + 1, TotalBytes + Bytes};
+        (_, Usage) ->
+            Usage
+    end, {0, 0}, Messages).
 
 read_headers(Socket, Acc) ->
     case binary:match(Acc, <<"\r\n\r\n">>) of
