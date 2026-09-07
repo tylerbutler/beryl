@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Added"
+body = "Add channel.with_presence to track a joined connection, send its Phoenix presence_state snapshot, and reuse automatic presence cleanup."
