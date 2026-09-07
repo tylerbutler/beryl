@@ -296,10 +296,12 @@ Initialize a new WebSocket connection in its connection process.
 
  Returns the connection state and a selector (extending `base_selector`)
  that delivers `SendRequest` values from the runtime; the transport must
- select on it and act on each request. Call `close_connection` when the
- connection closes, and `logger_name` names the transport in decode
- warnings (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this
- socket; `None` inherits the app-wide codec.
+ select on it and act on each request. If the request owner died before the
+ transfer, the reservation bind fails, runtime admission is skipped, and
+ the selector immediately delivers `Close`. Call `close_connection` when
+ the connection closes. `logger_name` names the transport in decode warnings
+ (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this socket;
+ `None` inherits the app-wide codec.
 
 <div class="api-entry-anchor" id="api-function-is_websocket_request" aria-hidden="true"></div>
 
