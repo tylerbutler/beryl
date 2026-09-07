@@ -38,6 +38,24 @@ application actors and other out-of-band workflows. Public `list`,
 `get_by_key`, and `count` calls read ETS directly and retain immediate
 read-after-write behavior.
 
+## Channel observers
+
+`channel.on_presence` subscribes a topic's existing worker to the presence
+actor. Registration and the initial snapshot happen in one actor turn.
+Committed changes are sent after read-model publication, separately from the
+legacy `with_on_diff` callback. Remote merge and replica pruning produce one
+net observer change per affected topic after processing succeeds.
+
+The socket actor monitors the source incarnation. The presence actor monitors
+the worker. Topic close removes the subscription; abrupt worker death removes
+it through the monitor. A source restart closes observing topics rather than
+silently attaching them to a new, empty actor.
+
+Each subscription has one outstanding event and a FIFO of at most 64 pending
+change batches. Credit returns when the callback's effects finish. Overflow
+notifies the socket actor directly so it can close the topic even if the
+worker is blocked. No observer process or JSON round-trip is added.
+
 ## Presence functions
 
 ### Starting presence

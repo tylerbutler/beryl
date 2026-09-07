@@ -799,7 +799,8 @@ pub fn with_presence_handle(
 ) -> Config
 ```
 
-Attach the presence actor used by socket presence effects.
+Attach the presence actor used by socket presence effects and
+ `channel.on_presence` callbacks.
 
 <div class="api-entry-anchor" id="api-function-with_pubsub" aria-hidden="true"></div>
 

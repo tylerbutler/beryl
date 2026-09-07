@@ -424,6 +424,7 @@ type Callbacks(state, info) {
   Callbacks(
     message: fn(state, Message) -> Next(state),
     info: fn(state, info) -> Next(state),
+    presence: option.Option(fn(state, presence.Event) -> Next(state)),
     terminate: fn(state, socket.StopReason) -> List(Action(Closing)),
   )
 }
@@ -432,6 +433,7 @@ fn callbacks() -> Callbacks(state, info) {
   Callbacks(
     message: fn(state, _message) { stay(state) },
     info: fn(state, _message) { stay(state) },
+    presence: option.None,
     terminate: fn(_state, _reason) { no_closing_actions() },
   )
 }
@@ -446,6 +448,7 @@ type SealedChannel(info) {
   SealedChannel(
     on_message: fn(Message) -> Continuation(info),
     on_info: fn(info) -> Continuation(info),
+    on_presence: option.Option(fn(presence.Event) -> Continuation(info)),
     on_terminate: fn(socket.StopReason) -> List(Action(Closing)),
   )
 }
@@ -467,6 +470,9 @@ fn seal(
     on_info: fn(message) {
       continuation(callbacks, callbacks.info(state, message))
     },
+    on_presence: option.map(callbacks.presence, fn(handle) {
+      fn(event) { continuation(callbacks, handle(state, event)) }
+    }),
     on_terminate: fn(reason) { callbacks.terminate(state, reason) },
   )
 }
@@ -537,6 +543,56 @@ pub fn on_info(
     JoinRejected(_) -> result
     JoinAccepted(callbacks: callbacks, ..) ->
       JoinAccepted(..result, callbacks: Callbacks(..callbacks, info: handle))
+  }
+}
+
+/// Observe this topic's initial presence roster and later changes.
+///
+/// The callback runs in this channel's worker with its private state. It
+/// receives `presence.Snapshot` first, then `presence.Changed` events,
+/// including this connection's changes. Ordinary message and info callbacks
+/// wait for the initial callback. The stream reflects the local presence
+/// replica, not a globally consistent cluster snapshot.
+///
+/// Observation does not track this connection. Add
+/// [`with_presence`](#with_presence) to track it as well. Its initial track
+/// may be in the snapshot or a later change, depending on actor ordering.
+///
+/// A missing presence handle rejects the join. Source failure, subscription
+/// timeout, callback panic, or more than 64 pending change batches closes
+/// only this topic with an error. Rejoin to obtain a fresh snapshot.
+/// One large snapshot or metadata value is not bounded by that batch limit.
+/// Subscription startup waits up to five seconds by default.
+///
+/// Apply leaves before joins when maintaining a roster. A callback that
+/// changes presence can trigger itself again; avoid unconditional updates.
+/// Repeated calls replace the callback. A rejected result stays rejected.
+///
+/// ```gleam
+/// import beryl/presence
+/// import gleam/list
+///
+/// channel.accept(0)
+/// |> channel.on_presence(fn(online_sessions, event) {
+///   let next = case event {
+///     presence.Snapshot(entries) -> list.length(entries)
+///     presence.Changed(joins, leaves) ->
+///       online_sessions + list.length(joins) - list.length(leaves)
+///   }
+///   channel.stay(next)
+/// })
+/// ```
+pub fn on_presence(
+  result: JoinResult(state, info),
+  handle: fn(state, presence.Event) -> Next(state),
+) -> JoinResult(state, info) {
+  case result {
+    JoinRejected(_) -> result
+    JoinAccepted(callbacks: callbacks, ..) ->
+      JoinAccepted(
+        ..result,
+        callbacks: Callbacks(..callbacks, presence: option.Some(handle)),
+      )
   }
 }
 
@@ -645,7 +701,8 @@ pub fn with_actions(
 ///
 /// To replace metadata later, return [`presence_track`](#presence_track) with
 /// the same key from a callback. This builder does not observe state changes
-/// or register server-side callbacks for presence changes. Use the actions
+/// or register server-side callbacks for presence changes; use
+/// [`on_presence`](#on_presence) for those callbacks. Use the actions
 /// directly for a custom snapshot event name or encoder. Neither approach
 /// reserves room capacity.
 ///
@@ -778,6 +835,9 @@ fn live(
           )
       }
     },
+    on_presence: option.map(channel.on_presence, fn(handle) {
+      fn(event) { step(handle(event), handoff, topic) }
+    }),
     on_terminate: fn(reason) { effects(topic, channel.on_terminate(reason)) },
   )
 }

@@ -65,6 +65,7 @@ pub type MessageKind {
   TextMessage
   BinaryMessage
   InfoMessage
+  PresenceMessage
   HeartbeatMessage
 }
 

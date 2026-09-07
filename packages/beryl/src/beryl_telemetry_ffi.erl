@@ -106,6 +106,7 @@ frame_kind(binary_frame) -> binary.
 message_kind(text_message) -> text;
 message_kind(binary_message) -> binary;
 message_kind(info_message) -> info;
+message_kind(presence_message) -> presence;
 message_kind(heartbeat_message) -> heartbeat.
 
 callback_result(no_reply) -> no_reply;

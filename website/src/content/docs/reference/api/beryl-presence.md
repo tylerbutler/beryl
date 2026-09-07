@@ -70,6 +70,7 @@ Distributed presence tracking with a CRDT
   <ul>
 <li><a href="#api-type-config"><code>Config</code></a></li>
 <li><a href="#api-type-diff"><code>Diff</code></a></li>
+<li><a href="#api-type-event"><code>Event</code></a></li>
 <li><a href="#api-type-message"><code>Message</code></a></li>
 <li><a href="#api-type-presence"><code>Presence</code></a></li>
 <li><a href="#api-type-presenceentry"><code>PresenceEntry</code></a></li>
@@ -127,6 +128,27 @@ An opaque diff representing presence joins and leaves grouped by topic.
 
  beryl passes this value to `Config.on_diff`.
  `beryl.broadcast_presence_diff` also accepts it.
+
+<div class="api-entry-anchor" id="api-type-event" aria-hidden="true"></div>
+
+### `Event`
+
+```gleam
+pub type Event {
+  Snapshot(entries: List(PresenceEntry))
+  Changed(
+    joins: List(PresenceEntry),
+    leaves: List(PresenceEntry)
+  )
+}
+```
+
+One topic's presence stream, delivered by `channel.on_presence`.
+
+ A subscription starts with one snapshot, including an empty list for an
+ empty topic. Later changes include this connection's own changes and
+ changes merged from other nodes. Apply leaves before joins; a metadata
+ update contains both the old entry's leave and the new entry's join.
 
 <div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
 

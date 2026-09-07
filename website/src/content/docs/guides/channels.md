@@ -325,6 +325,12 @@ and automatic cleanup also work with the explicit actions. See the
 equivalent code in
 [Add presence to a channel](/guides/presence/#add-presence-to-a-channel).
 
+To react on the server, register `channel.on_presence`. It receives a
+`presence.Snapshot` first, then topic-scoped `presence.Changed` events, and
+returns the same `Next(state)` as other callbacks. Observation is independent
+of tracking. See [React to presence changes](/guides/presence/#react-to-presence-changes-in-a-channel)
+for the initial roster, update, and failure contracts.
+
 ### Clients observe action list order
 
 The runtime applies channel actions in list order. Each action maps to one core
@@ -381,6 +387,7 @@ acknowledgment.
 |---|---|---|
 | `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
 | `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
+| `on_presence` | This topic's initial roster and later changes | `fn(state, presence.Event) -> Next(state)` |
 | `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
 
 `channel.accept(state)` stays joined until you add callbacks with the `on_*`

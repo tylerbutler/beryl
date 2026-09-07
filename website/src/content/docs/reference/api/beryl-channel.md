@@ -127,6 +127,7 @@ The channel composition surface: a channel is a topic pattern paired
 <li><a href="#api-function-notify"><code>notify</code></a></li>
 <li><a href="#api-function-on_info"><code>on_info</code></a></li>
 <li><a href="#api-function-on_message"><code>on_message</code></a></li>
+<li><a href="#api-function-on_presence"><code>on_presence</code></a></li>
 <li><a href="#api-function-on_terminate"><code>on_terminate</code></a></li>
 <li><a href="#api-function-presence_track"><code>presence_track</code></a></li>
 <li><a href="#api-function-presence_untrack"><code>presence_untrack</code></a></li>
@@ -526,6 +527,54 @@ pub fn on_message(
 
 Handle client messages on this channel's topic.
 
+<div class="api-entry-anchor" id="api-function-on_presence" aria-hidden="true"></div>
+
+### `on_presence`
+
+```gleam
+pub fn on_presence(
+  JoinResult(a, b),
+  fn(a, presence.Event) -> Next(a)
+) -> JoinResult(a, b)
+```
+
+Observe this topic's initial presence roster and later changes.
+
+ The callback runs in this channel's worker with its private state. It
+ receives `presence.Snapshot` first, then `presence.Changed` events,
+ including this connection's changes. Ordinary message and info callbacks
+ wait for the initial callback. The stream reflects the local presence
+ replica, not a globally consistent cluster snapshot.
+
+ Observation does not track this connection. Add
+ [`with_presence`](#with_presence) to track it as well. Its initial track
+ may be in the snapshot or a later change, depending on actor ordering.
+
+ A missing presence handle rejects the join. Source failure, subscription
+ timeout, callback panic, or more than 64 pending change batches closes
+ only this topic with an error. Rejoin to obtain a fresh snapshot.
+ One large snapshot or metadata value is not bounded by that batch limit.
+ Subscription startup waits up to five seconds by default.
+
+ Apply leaves before joins when maintaining a roster. A callback that
+ changes presence can trigger itself again; avoid unconditional updates.
+ Repeated calls replace the callback. A rejected result stays rejected.
+
+ ```gleam
+ import beryl/presence
+ import gleam/list
+
+ channel.accept(0)
+ |> channel.on_presence(fn(online_sessions, event) {
+   let next = case event {
+     presence.Snapshot(entries) -> list.length(entries)
+     presence.Changed(joins, leaves) ->
+       online_sessions + list.length(joins) - list.length(leaves)
+   }
+   channel.stay(next)
+ })
+ ```
+
 <div class="api-entry-anchor" id="api-function-on_terminate" aria-hidden="true"></div>
 
 ### `on_terminate`
@@ -723,7 +772,8 @@ Track this connection and send a Phoenix-compatible presence snapshot
 
  To replace metadata later, return [`presence_track`](#presence_track) with
  the same key from a callback. This builder does not observe state changes
- or register server-side callbacks for presence changes. Use the actions
+ or register server-side callbacks for presence changes; use
+ [`on_presence`](#on_presence) for those callbacks. Use the actions
  directly for a custom snapshot event name or encoder. Neither approach
  reserves room capacity.
 

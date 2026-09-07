@@ -343,6 +343,7 @@ pub type Worker {
   Worker(
     on_message: fn(String, Dynamic, Option(ReplyRef)) -> WorkerStep,
     on_info: fn(Mail) -> WorkerStep,
+    on_presence: Option(fn(presence.Event) -> WorkerStep),
     on_terminate: fn(StopReason) -> List(Effect),
   )
 }

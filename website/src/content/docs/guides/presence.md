@@ -305,14 +305,99 @@ No `on_terminate` callback is needed for presence cleanup.
 To change metadata, return `channel.presence_track(key, new_meta)` from a
 callback with the same key. To stop tracking while the channel stays joined,
 return `channel.presence_untrack(key)`. State changes alone do not update
-presence. The builder does not register server-side callbacks for other
-users' presence changes; clients receive the existing presence events.
+presence. Add `channel.on_presence` to react to changes on the server.
 
 `with_presence` appends to existing join actions and leaves rejected joins
 unchanged. It requires the same presence handle as other presence actions;
 without one, the runtime logs warnings and skips tracking and the snapshot.
 It does not reserve capacity: a presence count followed by a track is not an
 atomic room-limit check.
+
+## React to presence changes in a channel
+
+`channel.on_presence` gives a channel its topic's initial roster, then sends
+joins, leaves, and metadata changes to the same callback. It runs in the
+channel worker with the channel's private state, not in the shared presence
+actor.
+
+```gleam
+import beryl/presence
+import gleam/list
+
+pub fn observed_room() -> channel.Handler {
+  channel.handler("room:*", fn(_context) {
+    channel.accept(0)
+    |> channel.on_presence(fn(online_sessions, event) {
+      let next = case event {
+        presence.Snapshot(entries) -> list.length(entries)
+        presence.Changed(joins, leaves) ->
+          online_sessions + list.length(joins) - list.length(leaves)
+      }
+      channel.next(next, [
+        channel.push("online_sessions", json.int(next)),
+      ])
+    })
+  })
+}
+```
+
+This example counts connections, not distinct users. It observes without
+tracking itself. Add `with_presence` to track the connection as well; either
+builder order works. Neither builder creates an extra process.
+
+### Snapshot and change ordering
+
+The actor registers the subscription and captures its snapshot in one turn.
+The callback receives one `Snapshot`, even when the topic is empty, followed
+by non-empty `Changed` events. Changes cannot fall between registration and
+the snapshot. Ordinary message and info callbacks wait until the initial
+callback's effects finish. The join reply and existing join actions keep
+their wire order.
+
+Events contain only this topic's entries, including changes from this
+connection. When combined with `with_presence`, the connection's initial
+track can be in the snapshot or a later change, depending on actor ordering.
+It is not counted twice.
+
+A metadata update is one change with the old entry in `leaves` and the new
+entry in `joins`. Apply leaves before joins when maintaining a roster. A user
+key can have several sessions, and each session retains its own metadata.
+
+The stream includes standalone presence mutations and committed remote
+merges. It reflects the local replica, not a globally consistent cluster
+roster or every intermediate mutation on a remote node. Separate calls to
+`presence.list` can see a newer state than the current callback event.
+
+:::caution[Avoid update loops]
+A callback that returns `presence_track` can trigger another presence
+callback. Change metadata only when needed; do not write it unconditionally
+in response to every presence event.
+:::
+
+### Failure and cleanup
+
+`on_presence` requires a configured presence handle. Without one, the join is
+rejected. A source exit, subscription timeout, callback panic, or full pending
+queue closes only the affected topic with `phx_error`. Rejoin to obtain a
+fresh snapshot. A stable handle does not reconnect an existing observer to a
+replacement presence actor.
+
+The runtime allows one outstanding callback event and up to 64 pending change
+batches per observer. It returns credit after the callback's effects finish,
+including asynchronous presence effects. It does not silently drop changes
+when the queue fills. This limit bounds batches, not bytes: applications must
+still limit large rosters and metadata values.
+
+Subscription startup has a five-second timeout. This is not a callback
+execution timeout. Callback failures use the existing topic termination path.
+
+The runtime removes subscriptions on topic close and monitors workers to
+clean up after abrupt exits. Events from an old join cannot reach a later
+join. No `on_terminate` cleanup is needed for the subscription.
+
+This API does not replace `presence.with_on_diff`. That callback still runs
+in the presence actor before read-model publication; `channel.on_presence`
+receives committed changes asynchronously in each observing worker.
 
 ## Use presence from raw dispatch
 
