@@ -26,7 +26,8 @@ pub type Sockets =
 /// Hold it for the connection's lifetime. Pass it to
 /// `release_connection_slot` when the connection closes. When no connection
 /// limit is configured, the permit allows all connections. Releasing it does
-/// nothing.
+/// nothing. A configured permit belongs to the acquiring process until
+/// `bind_connection_slot` transfers it to the connection process.
 pub opaque type ConnectionPermit {
   ConnectionPermit(inner: Option(connection_limit.Permit))
 }
@@ -47,11 +48,14 @@ pub fn acquire_connection_slot(
   |> result.map(ConnectionPermit)
 }
 
-/// Bind an acquired connection slot to the calling connection process.
+/// Transfer an acquired connection slot to the calling connection process.
 ///
-/// The limiter monitors the caller. It reclaims the slot if the process dies
-/// without running its close path.
-pub fn bind_connection_slot(permit: ConnectionPermit) -> Nil {
+/// Acquisition already monitors the requesting process. This function replaces
+/// that monitor without leaving the reservation unowned, so either process
+/// dying reclaims the slot at the correct lifecycle stage. Returns
+/// `Error(Nil)` when the reservation was already reclaimed or the limiter
+/// cannot acknowledge the transfer. The connection must close on error.
+pub fn bind_connection_slot(permit: ConnectionPermit) -> Result(Nil, Nil) {
   connection_limit.bind_optional(permit.inner)
 }
 

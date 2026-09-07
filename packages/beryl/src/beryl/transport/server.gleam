@@ -477,10 +477,12 @@ pub fn connect_seed(
 ///
 /// Returns the connection state and a selector (extending `base_selector`)
 /// that delivers `SendRequest` values from the runtime; the transport must
-/// select on it and act on each request. Call `close_connection` when the
-/// connection closes, and `logger_name` names the transport in decode
-/// warnings (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this
-/// socket; `None` inherits the app-wide codec.
+/// select on it and act on each request. If the request owner died before the
+/// transfer, the reservation bind fails, runtime admission is skipped, and
+/// the selector immediately delivers `Close`. Call `close_connection` when
+/// the connection closes. `logger_name` names the transport in decode warnings
+/// (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this socket;
+/// `None` inherits the app-wide codec.
 pub fn init_connection(
   sockets sockets: Sockets,
   seed seed: ConnectSeed,
@@ -490,9 +492,7 @@ pub fn init_connection(
   telemetry telemetry: transport.Telemetry,
   codec socket_codec: Option(Codec),
 ) -> #(ConnectionState, Selector(SendRequest)) {
-  // Bind the connection slot to this WebSocket process so it is reclaimed
-  // even if the process dies without running the transport's close callback.
-  transport.bind_connection_slot(connection_permit)
+  let bind_result = transport.bind_connection_slot(connection_permit)
 
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
@@ -512,8 +512,15 @@ pub fn init_connection(
   // Capture and monitor the exact runtime before registration. Admission is
   // atomic: a restart between capture and registration rejects the socket
   // instead of redirecting it into the successor runtime.
-  let selector = case transport.runtime_pid(sockets) {
-    Ok(runtime_pid) -> {
+  let selector = case bind_result, transport.runtime_pid(sockets) {
+    Error(Nil), _ -> {
+      // A timed-out bind may still be queued. Release follows it from this
+      // process, so the limiter cannot retain a late transfer.
+      transport.release_connection_slot(connection_permit)
+      process.send(send_subject, Close)
+      selector
+    }
+    Ok(Nil), Ok(runtime_pid) -> {
       let monitor = process.monitor(runtime_pid)
       let selector =
         process.select_specific_monitor(selector, monitor, fn(_down) { Close })
@@ -530,7 +537,7 @@ pub fn init_connection(
         )
       selector
     }
-    Error(Nil) -> {
+    Ok(Nil), Error(Nil) -> {
       process.send(send_subject, Close)
       selector
     }
