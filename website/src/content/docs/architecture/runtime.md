@@ -21,15 +21,16 @@ A slow raw callback delays that socket, not callbacks on other sockets.
 With the channel layer, each joined topic has a worker under a supervisor
 that the socket actor starts and links. The worker runs `join` during startup,
 and the socket actor waits for the result. The worker also runs `on_message`
-and `on_info`. It sends effects to the socket actor. The socket actor applies
-them in arrival order and enqueues each frame for the transport. Thus, effects
+and `on_info`, plus `on_presence` when registered. It sends effects to the socket
+actor. The socket actor applies them in arrival order and enqueues each frame
+for the transport. Thus, effects
 for one topic keep their order. Effects for different topics can interleave.
 Before it drops the topic's reply refs, the socket actor tells the worker to
 close. This lets the socket actor deliver a push or reply that the worker
 computed before the leave.
 
-Channel `on_message` and `on_info` callbacks on different topics can run
-concurrently. This is not complete latency isolation: worker startup during a
+Channel `on_message`, `on_info`, and `on_presence` callbacks on different topics
+can run concurrently. This is not complete latency isolation: worker startup during a
 join and ordered worker shutdown can make the socket actor wait. Worker join
 and termination each have a 5-second timeout. A slow raw callback blocks all
 topics on its socket. Presence suspension also delays
@@ -122,9 +123,9 @@ topic, or socket. It never continues with a partial result. Other faults can
 still stop the socket actor, which closes that socket. A router fault invokes
 supervision.
 
-For the channel layer, a `join` panic rejects that join. An `on_message` or
-`on_info` panic closes only that topic. The worker keeps its previous state,
-so `on_terminate` still runs. An `on_terminate` panic discards its actions and
+For the channel layer, a `join` panic rejects that join. An `on_message`,
+`on_info`, or `on_presence` panic closes only that topic. The worker keeps its
+previous state, so `on_terminate` still runs. An `on_terminate` panic discards its actions and
 stops the worker. If a worker stops unexpectedly, the runtime closes its topic
 with `phx_error`. It cannot run `on_terminate` because the worker held the
 channel state. The runtime still closes the topic and continues to close
