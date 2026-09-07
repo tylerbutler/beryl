@@ -4617,6 +4617,7 @@ fn start_presence_track(
             replace: option.from_result(
               result.map(previous, fn(entry) { entry.0 }),
             ),
+            owner: process.self(),
             tag: socket_id,
             operation_id: operation_id,
             reply: reply,

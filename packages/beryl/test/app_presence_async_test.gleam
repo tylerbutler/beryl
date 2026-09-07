@@ -11,6 +11,7 @@
 import app_test_helper
 import beryl
 import beryl/presence
+import beryl/snapshot
 import beryl/socket.{
   type Effect, type Next, AcceptJoin, BroadcastPresence, Closed, Join, Message,
   Next, PresenceTrack, PresenceUntrack,
@@ -237,12 +238,27 @@ fn start_system(
   events: Subject(String),
   configure: fn(beryl.Config) -> beryl.Config,
 ) -> beryl.Sockets {
+  start_system_reporting_actor(handle, events, configure, None)
+}
+
+fn start_system_reporting_actor(
+  handle: presence.Presence,
+  events: Subject(String),
+  configure: fn(beryl.Config) -> beryl.Config,
+  actor_pids: Option(Subject(process.Pid)),
+) -> beryl.Sockets {
   let assert Ok(channels) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(handle)
         |> configure,
-      init: fn(info: socket.ConnectInfo(Nil)) { #(info.socket_id, []) },
+      init: fn(info: socket.ConnectInfo(Nil)) {
+        case actor_pids {
+          Some(pids) -> process.send(pids, process.self())
+          None -> Nil
+        }
+        #(info.socket_id, [])
+      },
       update: fn(model, event) { app_update(model, event, events) },
     )
   channels
@@ -569,6 +585,263 @@ pub fn late_tracked_ack_after_timeout_is_compensated_test() -> Nil {
     20,
   )
   presence_entries(handle, "room:a") |> should.equal([])
+}
+
+/// A socket can disconnect after a track times out but before presence
+/// finishes it. Its actor must die normally, and presence's owner monitor
+/// must remove only the late runtime ref.
+pub fn timed_out_track_is_cleaned_after_socket_disconnect_test() -> Nil {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let diffs = process.new_subject()
+  let handle = start_recording_gated_presence(gate, diffs)
+  let public_ref =
+    presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+  next_diff(diffs) |> should.equal(#([public_ref], []))
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      beryl.with_presence_op_timeout(_, 150),
+      Some(actor_pids),
+    )
+
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(socket_actor) = process.receive(actor_pids, 1000)
+  arm(gate)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  await_entered(entered)
+  let #(runtime_joins, runtime_leaves) = next_diff(diffs)
+  runtime_leaves |> should.equal([])
+  let assert [runtime_ref] = runtime_joins
+
+  // The timeout resumes the remaining effects before disconnect is handled.
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(socket_actor) }, 2000, 10)
+  process.is_alive(socket_actor) |> should.be_false
+
+  release(gate)
+  // The owner monitor's cleanup follows the blocked track in presence's
+  // mailbox, so the late runtime ref is removed after it materializes.
+  next_diff(diffs) |> should.equal(#([], [runtime_ref]))
+  // Barrier: the leave has also reached the read model.
+  presence.untrack(handle, "no-such-ref")
+  presence_count(handle, "room:a") |> should.equal(1)
+  let assert [entry] = presence_entries(handle, "room:a")
+  meta_phx_ref(entry.meta) |> should.equal(public_ref)
+  json.to_string(entry.meta) |> string.contains("public") |> should.be_true
+  let assert Ok(Nil) = beryl.stop(channels)
+  presence.untrack(handle, public_ref)
+}
+
+/// If a track is still queued when its socket owner dies, presence must skip
+/// it rather than create a ref with no live owner. A fresh socket reusing the
+/// same id and key can then track normally; the dead owner's work must not
+/// remove that newer runtime ref or an unrelated public ref.
+pub fn queued_track_from_dead_owner_preserves_fresh_replacement_test() -> Nil {
+  let diffs = process.new_subject()
+  let pass_through = start_gate(process.new_subject())
+  let handle = start_recording_gated_presence(pass_through, diffs)
+  let public_ref =
+    presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+  next_diff(diffs) |> should.equal(#([public_ref], []))
+  let assert Ok(presence_pid) = process.subject_owner(presence.subject(handle))
+  test_helper.suspend_process(presence_pid)
+
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      beryl.with_presence_op_timeout(_, 150),
+      Some(actor_pids),
+    )
+
+  let old_frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(old_owner) = process.receive(actor_pids, 1000)
+  app_test_helper.join(channels, "s1", "room:a", "jr-old", "r-old")
+  app_test_helper.recv(old_frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  test_helper.wait_until(
+    fn() { test_helper.mailbox_length(presence_pid) >= 1 },
+    1000,
+    5,
+  )
+  // The timeout runs while TrackAsync is still queued, then disconnect
+  // removes the old socket actor before presence sees the request.
+  app_test_helper.recv(old_frames)
+  |> string.contains("presence_list")
+  |> should.be_true
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(old_owner) }, 2000, 10)
+  test_helper.wait_until(
+    fn() {
+      case snapshot.get(channels) {
+        Ok(current) -> snapshot.connected_sockets(current) == 0
+        Error(_) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  let fresh_frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(fresh_owner) = process.receive(actor_pids, 1000)
+  fresh_owner |> should.not_equal(old_owner)
+  app_test_helper.join(channels, "s1", "room:a", "jr-new", "r-new")
+  app_test_helper.recv(fresh_frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  test_helper.wait_until(
+    fn() { test_helper.mailbox_length(presence_pid) >= 2 },
+    1000,
+    5,
+  )
+
+  test_helper.resume_process(presence_pid)
+  let fresh_diff = app_test_helper.recv(fresh_frames)
+  let fresh_ref = phx_ref_of(fresh_diff, "joins")
+  fresh_ref |> should.not_equal(public_ref)
+  app_test_helper.recv(fresh_frames)
+  |> string.contains("presence_list")
+  |> should.be_true
+  // The dead owner's queued track produced no diff.
+  process.receive(diffs, 200) |> should.equal(Ok(#([fresh_ref], [])))
+  process.receive(diffs, 100) |> should.be_error
+
+  presence.untrack(handle, "no-such-ref")
+  presence_count(handle, "room:a") |> should.equal(2)
+  presence_entries(handle, "room:a")
+  |> entry_refs
+  |> list.sort(string.compare)
+  |> should.equal(list.sort([public_ref, fresh_ref], string.compare))
+
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(fresh_owner) }, 2000, 10)
+  test_helper.wait_until(
+    fn() { presence_count(handle, "room:a") == 1 },
+    2000,
+    10,
+  )
+  let assert [public_entry] = presence_entries(handle, "room:a")
+  meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
+  let assert Ok(Nil) = beryl.stop(channels)
+  presence.untrack(handle, public_ref)
+}
+
+/// When the router dies, its replacement cannot know the old socket index.
+/// Presence's owner monitor cleans the old actor's runtime entries without
+/// requiring the replacement router's lost socket index or deleting public
+/// refs.
+pub fn router_crash_cleans_old_socket_presence_test() -> Nil {
+  let assert Ok(handle) = presence.start(presence.default_config("node1"))
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      identity_config,
+      Some(actor_pids),
+    )
+
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(socket_actor) = process.receive(actor_pids, 1000)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let runtime_diff = app_test_helper.recv(frames)
+  let runtime_ref = phx_ref_of(runtime_diff, "joins")
+  let _snapshot = app_test_helper.recv(frames)
+  let public_ref =
+    presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+  presence_count(handle, "room:a") |> should.equal(2)
+
+  let assert Ok(old_router) = transport.runtime_pid(channels)
+  process.kill(old_router)
+  test_helper.wait_until(fn() { !process.is_alive(socket_actor) }, 2000, 10)
+  process.is_alive(socket_actor) |> should.be_false
+  test_helper.wait_until(
+    fn() {
+      case transport.runtime_pid(channels) {
+        Ok(new_router) ->
+          new_router != old_router && process.is_alive(new_router)
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  test_helper.wait_until(
+    fn() { presence_count(handle, "room:a") == 1 },
+    2000,
+    10,
+  )
+  presence_count(handle, "room:a") |> should.equal(1)
+  let assert [entry] = presence_entries(handle, "room:a")
+  meta_phx_ref(entry.meta) |> should.equal(public_ref)
+  meta_phx_ref(entry.meta) |> should.not_equal(runtime_ref)
+  json.to_string(entry.meta) |> string.contains("public") |> should.be_true
+  let assert Ok(Nil) = beryl.stop(channels)
+  presence.untrack(handle, public_ref)
+}
+
+/// Presence owns each socket-owner watcher. If presence itself dies while
+/// the socket stays live, that watcher must stop instead of surviving every
+/// supervised presence restart.
+pub fn presence_death_stops_live_socket_owner_watcher_test() -> Nil {
+  let assert Ok(handle) = presence.start(presence.default_config("node1"))
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      identity_config,
+      Some(actor_pids),
+    )
+
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(socket_actor) = process.receive(actor_pids, 1000)
+  let monitors_before_track = test_helper.monitored_by_count(socket_actor)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let _diff = app_test_helper.recv(frames)
+  let _snapshot = app_test_helper.recv(frames)
+  test_helper.wait_until(
+    fn() {
+      test_helper.monitored_by_count(socket_actor) == monitors_before_track + 1
+    },
+    1000,
+    10,
+  )
+
+  test_helper.kill_presence(handle)
+  process.is_alive(socket_actor) |> should.be_true
+  test_helper.wait_until(
+    fn() {
+      test_helper.monitored_by_count(socket_actor) == monitors_before_track
+    },
+    1000,
+    10,
+  )
+  test_helper.monitored_by_count(socket_actor)
+  |> should.equal(monitors_before_track)
+
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(socket_actor) }, 2000, 10)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
 }
 
 /// After a track times out, the app may reasonably retry it. The first
