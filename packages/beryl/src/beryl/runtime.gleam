@@ -956,7 +956,7 @@ fn handle_message(
           actor.continue(state)
         }
       }
-    CheckHeartbeats -> actor.continue(handle_check_heartbeats(state))
+    CheckHeartbeats -> after_socket_turn(state, handle_check_heartbeats(state))
     PresenceAcknowledged(acknowledgement) ->
       after_socket_turn(
         state,

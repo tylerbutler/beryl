@@ -1,5 +1,6 @@
 -module(beryl_supervisor_test_ffi).
 -export([get_subject_pid/1, crash_reason/0, active_child_count/1,
+         only_active_child/1,
          gate_new/0, gate_wait/1, gate_release/1]).
 
 %% Extract the process that will receive messages for a subject.
@@ -28,6 +29,12 @@ active_child_count(Pid) ->
         Counts -> proplists:get_value(active, Counts, 0)
     catch
         _:_ -> 0
+    end.
+
+only_active_child(Pid) ->
+    case supervisor:which_children(Pid) of
+        [{_, Child, _, _}] when is_pid(Child) -> {ok, Child};
+        _ -> {error, nil}
     end.
 
 gate_new() ->
