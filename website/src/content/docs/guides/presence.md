@@ -248,6 +248,10 @@ The underlying CRDT state is intentionally internal. Applications should use Pub
 
 ## Add presence to a channel
 
+`channel.with_presence` is a shorthand for the existing track and snapshot
+actions. It saves you from choosing the Phoenix event name and encoder for
+each channel. It does not add a new presence lifecycle or component system.
+
 Start and supervise a presence actor as shown above, then attach its handle to
 the channel system's config with `beryl.with_presence_handle`. Use
 `channel.with_presence` on an accepted join:
@@ -272,6 +276,26 @@ Phoenix-compatible `presence_state` snapshot. Use an authenticated user ID as
 the key to group that user's connections under one roster entry. Each
 connection has its own metadata and tracking ref.
 
+### Equivalent actions
+
+`channel.with_presence(key: key, meta: meta)` adds exactly these actions:
+
+```gleam
+import beryl/presence/wire as presence_wire
+
+channel.accept(state)
+|> channel.with_actions([
+  channel.presence_track(key, meta),
+  channel.push_presence("presence_state", presence_wire.encode_state),
+])
+```
+
+Both forms use the same tracking, diff delivery, and automatic cleanup.
+Existing channels that assemble these actions do not need to change. Keep
+the explicit actions when you need a custom snapshot event name or encoder.
+
+### Lifecycle and updates
+
 The runtime sends the join acknowledgment first. Tracking emits a
 `presence_diff`, which can arrive before the snapshot; Phoenix Presence
 clients buffer these diffs until `presence_state`. The runtime removes this
@@ -281,7 +305,8 @@ No `on_terminate` callback is needed for presence cleanup.
 To change metadata, return `channel.presence_track(key, new_meta)` from a
 callback with the same key. To stop tracking while the channel stays joined,
 return `channel.presence_untrack(key)`. State changes alone do not update
-presence.
+presence. The builder does not register server-side callbacks for other
+users' presence changes; clients receive the existing presence events.
 
 `with_presence` appends to existing join actions and leaves rejected joins
 unchanged. It requires the same presence handle as other presence actions;

@@ -319,8 +319,10 @@ channel.accept(state)
 |> channel.with_presence(key: state.username, meta: meta(state))
 ```
 
-This tracks the connection, sends it a `presence_state` snapshot, and uses the
-runtime's existing diff delivery and cleanup. See
+This is shorthand for `presence_track` followed by `push_presence` with the
+Phoenix event name and encoder. It adds no new lifecycle behavior: diff delivery
+and automatic cleanup also work with the explicit actions. See the
+equivalent code in
 [Add presence to a channel](/guides/presence/#add-presence-to-a-channel).
 
 ### Clients observe action list order

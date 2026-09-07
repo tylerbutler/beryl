@@ -624,6 +624,10 @@ pub fn with_actions(
 /// Track this connection and send a Phoenix-compatible presence snapshot
 /// after an accepted join.
 ///
+/// A shorthand for existing presence actions, not a new presence lifecycle.
+/// Diff delivery and automatic cleanup also apply when using those actions
+/// directly.
+///
 /// Requires a running presence actor attached with `beryl.with_presence_handle`.
 /// Without a handle, the runtime logs warnings and drops the presence actions;
 /// it does not reject the join.
@@ -641,7 +645,9 @@ pub fn with_actions(
 ///
 /// To replace metadata later, return [`presence_track`](#presence_track) with
 /// the same key from a callback. This builder does not observe state changes
-/// or reserve room capacity.
+/// or register server-side callbacks for presence changes. Use the actions
+/// directly for a custom snapshot event name or encoder. Neither approach
+/// reserves room capacity.
 ///
 /// ```gleam
 /// channel.accept(state)
