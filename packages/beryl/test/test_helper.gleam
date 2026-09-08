@@ -18,6 +18,15 @@ import gleeunit/should
 @external(erlang, "beryl_test_process_ffi", "mailbox_length")
 pub fn mailbox_length(pid: process.Pid) -> Int
 
+@external(erlang, "beryl_test_process_ffi", "monitored_by_count")
+pub fn monitored_by_count(pid: process.Pid) -> Int
+
+@external(erlang, "beryl_test_process_ffi", "suspend_process")
+pub fn suspend_process(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_test_process_ffi", "resume_process")
+pub fn resume_process(pid: process.Pid) -> Nil
+
 /// Poll a condition function until it returns True, or fail after timeout.
 ///
 /// Replaces fragile `process.sleep(N)` calls in tests with a deterministic

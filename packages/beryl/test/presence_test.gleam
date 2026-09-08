@@ -273,6 +273,7 @@ pub fn presence_update_rejects_runtime_owned_ref_test() -> Nil {
     "socket-1",
     json.object([#("status", json.string("online"))]),
     None,
+    process.self(),
     "test",
     1,
     reply,

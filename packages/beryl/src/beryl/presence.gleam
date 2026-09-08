@@ -258,15 +258,16 @@ pub opaque type Message {
   /// same logical `(session_id, topic, key)` — `replace`, when the caller knows the
   /// previous ref, plus any runtime ref the caller has lost track of (an
   /// earlier operation it timed out on, say). Public synchronous refs remain
-  /// independently owned. All of that happens in this one actor turn, so the
-  /// topic never materializes an intermediate snapshot without the runtime
-  /// entry.
+  /// independently owned. The owner is monitored so all runtime refs for its
+  /// session are removed when it exits. All of that happens in actor order, so
+  /// cleanup cannot race ahead of an in-flight mutation.
   TrackAsync(
     topic: String,
     key: String,
     session_id: String,
     meta: json.Json,
     replace: Option(String),
+    owner: process.Pid,
     tag: String,
     operation_id: Int,
     reply: Subject(MutationAck),
@@ -285,6 +286,7 @@ pub opaque type Message {
   /// shutting down and unable to wait for an acknowledgement. Public refs
   /// for the same session remain independently owned.
   UntrackRuntimeAllAsync(session_id: String)
+  RuntimeOwnerDown(owner: process.Pid)
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
   RemoteSync(pubsub_message: pubsub.Message(SyncPayload))
@@ -309,6 +311,11 @@ pub type MutationOutcome {
   Tracked(ref: String, meta: json.Json)
   /// An untrack batch completed.
   Untracked
+}
+
+type RuntimeOwnerWatch {
+  RuntimeOwnerExited
+  PresenceExited
 }
 
 // ── Read model (ETS) ─────────────────────────────────────────────────────────
@@ -423,7 +430,7 @@ fn read_entries(
 /// A tracked presence's location within the CRDT, keyed by tracking ref.
 type RefOwner {
   PublicOwner
-  RuntimeOwner
+  RuntimeOwner(process.Pid)
 }
 
 type TrackedPresence {
@@ -442,7 +449,7 @@ type ActorState {
   ActorState(
     crdt: State,
     config: Config,
-    /// The actor's own subject, needed for scheduling BroadcastTick
+    /// The actor's own subject, used by timers and owner monitors.
     self_subject: Option(Subject(Message)),
     /// Set whenever the local CRDT mutates; cleared after a broadcast tick.
     /// Skips the encode+broadcast when there is nothing new to gossip.
@@ -451,6 +458,8 @@ type ActorState {
     /// `untrack` can locate the correct CRDT entry to leave. Populated on
     /// `Track` and pruned on `Untrack`/`UntrackAll`.
     refs: Dict(String, TrackedPresence),
+    /// Socket actors with runtime-owned presence and a live monitor process.
+    runtime_owners: Set(process.Pid),
     /// The ETS table backing the read model that `list`, `get_by_key`, and
     /// `count` read directly. Owned by this actor process; see `publish_topic`.
     read_table: ReadTable,
@@ -592,6 +601,7 @@ fn build_presence(
         self_subject: Some(subject),
         dirty: False,
         refs: dict.new(),
+        runtime_owners: set.new(),
         read_table: read_table,
       )
 
@@ -626,9 +636,10 @@ fn build_presence(
           ActorState(
             crdt: crdt,
             config: config,
-            self_subject: None,
+            self_subject: Some(subject),
             dirty: False,
             refs: dict.new(),
+            runtime_owners: set.new(),
             read_table: read_table,
           )
         actor.initialised(no_pubsub_initial)
@@ -861,7 +872,8 @@ pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
 /// the same actor turn, both `replace` (a runtime ref from a previous track
 /// of this key, when the caller still knows it) and any other runtime-owned
 /// ref for the same `(session_id, topic, key)`. Public synchronous refs for
-/// that tuple remain independent. The acknowledgement carries the generated
+/// that tuple remain independent. The owner is monitored and all its runtime
+/// refs are removed after it exits. The acknowledgement carries the generated
 /// ref and the stored meta.
 @internal
 pub fn track_async(
@@ -871,6 +883,7 @@ pub fn track_async(
   session_id session_id: String,
   meta meta: json.Json,
   replace replace: Option(String),
+  owner owner: process.Pid,
   tag tag: String,
   operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
@@ -883,6 +896,7 @@ pub fn track_async(
       session_id: session_id,
       meta: meta,
       replace: replace,
+      owner: owner,
       tag: tag,
       operation_id: operation_id,
       reply: reply,
@@ -1031,30 +1045,48 @@ fn handle_message(
           process.send(reply, Ok(new_ref))
           actor.continue(new_state)
         }
-        Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner)) | Error(Nil) -> {
+        Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner(_))) | Error(Nil) -> {
           process.send(reply, Error(UnknownRef(ref)))
           actor.continue(actor_state)
         }
       }
     }
 
-    TrackAsync(topic, key, session_id, meta, replace, tag, operation_id, reply) -> {
-      let #(new_state, ref, stored_meta) =
-        do_track(
-          actor_state,
-          topic,
-          key,
-          session_id,
-          meta,
-          SupersedeSameKey(explicit: replace),
-        )
-      log_tracked(logger, topic, key, session_id, ref)
-      process.send(
-        reply,
-        MutationAck(tag, operation_id, Tracked(ref, stored_meta)),
-      )
-      actor.continue(new_state)
-    }
+    TrackAsync(
+      topic,
+      key,
+      session_id,
+      meta,
+      replace,
+      owner,
+      tag,
+      operation_id,
+      reply,
+    ) ->
+      case process.is_alive(owner) {
+        False -> {
+          process.send(reply, MutationAck(tag, operation_id, Untracked))
+          actor.continue(do_untrack_runtime_owner(actor_state, owner))
+        }
+        True -> {
+          let actor_state = monitor_runtime_owner(actor_state, owner)
+          let #(new_state, ref, stored_meta) =
+            do_track(
+              actor_state,
+              topic,
+              key,
+              session_id,
+              meta,
+              SupersedeSameKey(explicit: replace, owner: owner),
+            )
+          log_tracked(logger, topic, key, session_id, ref)
+          process.send(
+            reply,
+            MutationAck(tag, operation_id, Tracked(ref, stored_meta)),
+          )
+          actor.continue(new_state)
+        }
+      }
 
     Untrack(ref, reply) -> {
       let new_state = do_untrack_refs(actor_state, [ref])
@@ -1076,6 +1108,17 @@ fn handle_message(
 
     UntrackRuntimeAllAsync(session_id) ->
       actor.continue(do_untrack_runtime_all(actor_state, session_id))
+
+    RuntimeOwnerDown(owner) ->
+      actor.continue(
+        do_untrack_runtime_owner(actor_state, owner)
+        |> fn(state) {
+          ActorState(
+            ..state,
+            runtime_owners: set.delete(state.runtime_owners, owner),
+          )
+        },
+      )
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
@@ -1102,6 +1145,40 @@ fn handle_message(
       }
     }
   }
+}
+
+fn monitor_runtime_owner(
+  actor_state: ActorState,
+  owner: process.Pid,
+) -> ActorState {
+  use <- bool.guard(
+    when: set.contains(actor_state.runtime_owners, owner),
+    return: actor_state,
+  )
+  let assert Some(subject) = actor_state.self_subject
+  let presence_actor = process.self()
+  let _watcher =
+    process.spawn_unlinked(fn() {
+      let owner_monitor = process.monitor(owner)
+      let presence_monitor = process.monitor(presence_actor)
+      let exited =
+        process.new_selector()
+        |> process.select_specific_monitor(owner_monitor, fn(_) {
+          RuntimeOwnerExited
+        })
+        |> process.select_specific_monitor(presence_monitor, fn(_) {
+          PresenceExited
+        })
+        |> process.selector_receive_forever
+      case exited {
+        RuntimeOwnerExited -> process.send(subject, RuntimeOwnerDown(owner))
+        PresenceExited -> Nil
+      }
+    })
+  ActorState(
+    ..actor_state,
+    runtime_owners: set.insert(actor_state.runtime_owners, owner),
+  )
 }
 
 fn log_tracked(
@@ -1205,7 +1282,7 @@ type Supersede {
   /// whose acknowledgement is still in flight. Public refs are deliberately
   /// excluded: exact tag removal keeps their independently owned entries
   /// safe from runtime replacement and compensation.
-  SupersedeSameKey(explicit: Option(String))
+  SupersedeSameKey(explicit: Option(String), owner: process.Pid)
 }
 
 /// The refs a track must remove before joining: none for the public API,
@@ -1221,14 +1298,17 @@ fn superseded_refs(
   case supersede {
     SupersedeNothing -> []
     SupersedePublicRef(ref) -> [ref]
-    SupersedeSameKey(explicit) -> {
+    SupersedeSameKey(explicit:, owner: _) -> {
       let same_key =
         refs
         |> dict.filter(fn(_ref, tracked) {
           tracked.topic == topic
           && tracked.key == key
           && tracked.session_id == session_id
-          && tracked.owner == RuntimeOwner
+          && case tracked.owner {
+            RuntimeOwner(_) -> True
+            PublicOwner -> False
+          }
         })
         |> dict.keys
       case explicit {
@@ -1272,7 +1352,7 @@ fn do_track(
   let new_crdt = state.join(removed.crdt, session_id, topic, key, stored_meta)
   let owner = case supersede {
     SupersedeNothing | SupersedePublicRef(_) -> PublicOwner
-    SupersedeSameKey(_) -> RuntimeOwner
+    SupersedeSameKey(owner:, ..) -> RuntimeOwner(owner)
   }
   let replica = state.replica(new_crdt)
   let assert Ok(clock) = dict.get(state.compacted_clocks(new_crdt), replica)
@@ -1360,8 +1440,22 @@ fn do_untrack_runtime_all(
 ) -> ActorState {
   actor_state.refs
   |> dict.filter(fn(_ref, tracked) {
-    tracked.session_id == session_id && tracked.owner == RuntimeOwner
+    tracked.session_id == session_id
+    && case tracked.owner {
+      RuntimeOwner(_) -> True
+      PublicOwner -> False
+    }
   })
+  |> dict.keys
+  |> do_untrack_refs(actor_state, _)
+}
+
+fn do_untrack_runtime_owner(
+  actor_state: ActorState,
+  owner: process.Pid,
+) -> ActorState {
+  actor_state.refs
+  |> dict.filter(fn(_ref, tracked) { tracked.owner == RuntimeOwner(owner) })
   |> dict.keys
   |> do_untrack_refs(actor_state, _)
 }
