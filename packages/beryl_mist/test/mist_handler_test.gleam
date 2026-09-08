@@ -16,6 +16,7 @@ import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/atom
 import gleam/erlang/process
+import gleam/http/request
 import gleam/http/response
 import gleam/int
 import gleam/option.{None}
@@ -433,6 +434,30 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() -> Nil {
 
   let assert Ok(next_client) = connect_websocket(port, "/socket")
   close(next_client)
+  stop_supervisor(server_pid)
+}
+
+pub fn crashing_authentication_releases_connection_slot_test() -> Nil {
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_connections(max_connections: 1),
+    )
+  let config =
+    server.default_config("/socket")
+    |> server.with_on_connect(fn(http_request) {
+      case request.get_query(http_request) {
+        Ok([#("crash", "true")]) -> panic as "authentication crashed"
+        Ok(_) | Error(Nil) -> Ok([])
+      }
+    })
+  let #(port, server_pid) = start_server_with_config(channels, config)
+
+  websocket_upgrade_status(port, "/socket?crash=true")
+  |> should.equal(Ok(500))
+
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  close(client)
   stop_supervisor(server_pid)
 }
 
