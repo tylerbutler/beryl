@@ -64,14 +64,11 @@ three.
 ## Start with the familiar Lustre loop
 
 The standard Lustre example has four pieces. Here is the counter from the
-Lustre overview, with full type annotations (see 
+Lustre overview, with full type annotations (see
 [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)):
 
 ```gleam
-type Model =
-  Int
-
-fn init(_flags: Nil) -> Model {
+fn init(_flags: Nil) -> Int {
   0
 }
 
@@ -80,7 +77,7 @@ type Message {
   Decr
 }
 
-fn update(model: Model, message: Message) -> Model {
+fn update(model: Int, message: Message) -> Int {
   case message {
     Incr -> model + 1
     Decr -> model - 1
@@ -91,7 +88,7 @@ fn update(model: Model, message: Message) -> Model {
 The view calls each module by name:
 
 ```gleam
-fn view(model: Model) -> element.Element(Message) {
+fn view(model: Int) -> element.Element(Message) {
   let count = int.to_string(model)
 
   html.div([], [
