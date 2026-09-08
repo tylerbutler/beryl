@@ -28,6 +28,10 @@ Even with no configuration, beryl enforces:
   and messages carrying a stale `join_ref` are dropped.
 - **Heartbeat eviction**: sockets that stop sending heartbeats are evicted
   and their connections closed (60 s window by default, `with_heartbeat`).
+- **Outbound queue budget**: each connection may reserve at most 256 frames
+  and 1 MiB of payload data while writes are pending. beryl closes a slow
+  connection instead of dropping frames. Use `with_outbound_limits` on the
+  transport config to adjust both limits.
 
 The frame-size check limits decoding and routing work. It does **not** limit
 transport memory because buffering and reassembly occur before beryl receives
@@ -57,6 +61,10 @@ let config =
   // Node-wide ceiling on concurrent connections across all IPs. Size to a
   // single node's process/socket/runtime budget; see below.
   |> beryl.with_max_connections(max_connections: 10_000)
+
+let assert Ok(websocket_config) =
+  server.default_config("/socket/websocket")
+  |> server.with_outbound_limits(max_frames: 256, max_bytes: 1_048_576)
 ```
 
 `with_frame_rate` and `with_message_rate` are independent. Joins use frame and
@@ -70,6 +78,18 @@ Size both rate and burst allowances with enough headroom for legitimate client
 traffic **plus heartbeats**. A limit that admits an application's normal events
 but leaves no heartbeat capacity can evict healthy clients during ordinary
 bursts.
+
+The outbound budget is enforced before a frame enters the connection
+mailbox. `Ok` from the runtime send callback means that the frame was
+enqueued; it does not mean that the transport wrote it or that the peer
+received it. Successful writes release their frame and byte reservations.
+Write errors and connection close release all remaining reservations. If a
+connection exceeds either limit, beryl closes it so the client can reconnect
+and resynchronize instead of receiving a stream with silently dropped frames.
+
+Set the byte budget above the largest legitimate encoded outbound frame. Size
+the frame budget for short write stalls, not sustained client outages. The
+defaults allow 256 frames and 1 MiB per connection.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not

@@ -315,8 +315,11 @@ pub fn join(
 
 Join a topic so this subscriber receives broadcasts sent to it.
 
- A subscriber can join many topics. All topics deliver through its one
- subject. Joining a topic is idempotent.
+ A subscriber can join many topics. All topics deliver to its owner's
+ mailbox. Repeated or concurrent joins create one membership per owner
+ process, scope, and topic, including joins through different handles.
+ Each broadcast delivers once to that owner, and subscriber counts include
+ it once.
 
 <div class="api-entry-anchor" id="api-function-leave" aria-hidden="true"></div>
 
@@ -330,6 +333,10 @@ pub fn leave(
 ```
 
 Leave a topic previously joined with `join`.
+
+ One call removes the owner's membership for this scope and topic, even
+ after repeated joins through different handles. Repeated leaves are
+ harmless. Other owners, scopes, and topics are unaffected.
 
 <div class="api-entry-anchor" id="api-function-local_broadcast" aria-hidden="true"></div>
 

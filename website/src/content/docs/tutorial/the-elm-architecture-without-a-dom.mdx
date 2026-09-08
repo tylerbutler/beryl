@@ -3,6 +3,10 @@ title: The Elm architecture, without a DOM
 description: Learn beryl's model-update architecture by building the first read-only stage of a live poll.
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import SocketLoopDemo from '../../../components/SocketLoopDemo.astro';
+import counterSource from '../../../../../examples/live_poll/test/tutorial_counter.gleam?raw';
+
 Lustre and Gleam OTP actors use the same programming model. Each one starts
 with some state. Each one receives a typed message. Each one runs one function
 that returns the next state and any work to do. Lustre uses this model to run
@@ -60,10 +64,14 @@ three.
 ## Start with the familiar Lustre loop
 
 The standard Lustre example has four pieces. Here is the counter from the
-Lustre overview, with full type annotations:
+Lustre overview, with full type annotations (see
+[Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)):
 
 ```gleam
-fn init(_flags: Nil) -> Int {
+type CounterModel =
+  Int
+
+fn init(_flags: Nil) -> CounterModel {
   0
 }
 
@@ -72,27 +80,18 @@ type Message {
   Decr
 }
 
-fn update(model: Int, message: Message) -> Int {
+fn update(model: CounterModel, message: Message) -> CounterModel {
   case message {
     Incr -> model + 1
     Decr -> model - 1
   }
 }
-
-```
-
-The [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)
-guide names the model type:
-
-```gleam
-type Model =
-  Int
 ```
 
 The view calls each module by name:
 
 ```gleam
-fn view(model: Int) -> element.Element(Message) {
+fn view(model: CounterModel) -> element.Element(Message) {
   let count = int.to_string(model)
 
   html.div([], [
@@ -103,9 +102,10 @@ fn view(model: Int) -> element.Element(Message) {
 }
 ```
 
-`init` creates the first model. `Message` lists every event that can change
-the state. `update` computes the next model. `view` turns the model into
-elements. Those elements can send more messages.
+- `init` creates the first model.
+- `Message` lists every event that can change the state.
+- `update` computes the next model.
+- `view` turns the model into elements. Those elements can send more messages.
 
 Some work cannot happen inside `update`. A browser may need to send an HTTP
 request, start a timer, or call JavaScript. Lustre calls this work an
@@ -272,6 +272,22 @@ Without `view`, you think about output in a new way. A change to the model
 does not send a wire frame. A wire frame goes out only when an effect asks for
 one. The model can also hold facts that never leave the server. The set of
 topics this socket has joined is one example.
+
+Try that difference with the counter. Increment its private state three times
+before you request the count. Then increment again while the reply travels.
+The client receives the value captured when the effect was created.
+
+<SocketLoopDemo />
+
+**Increment model** represents an application-originated `Info(Increment)`.
+**Request count** represents a client `get_count` request on an accepted topic.
+The reply uses the reference from that request.
+
+The counter handler below comes from
+[`tutorial_counter.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/test/tutorial_counter.gleam).
+It is not a complete server.
+
+<Code code={counterSource} lang="gleam" title="Counter handler" />
 
 ## Initialization belongs to the socket
 

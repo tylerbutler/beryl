@@ -129,6 +129,12 @@ site-build: site-reference
 site-check: site-reference
     pnpm -C website check:astro
 
+# Check, build, and exercise the browser-only tutorial demos
+site-demos-test:
+    pnpm -C website check:astro
+    CI=1 pnpm -C website build:site
+    pnpm -C website test:demos
+
 # Clean website build artifacts
 site-clean:
     pnpm -C website clean
@@ -183,7 +189,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check check docs site-snippets test build-strict examples-test
+ci: format-check check docs site-snippets test build-strict examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci

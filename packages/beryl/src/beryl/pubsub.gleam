@@ -197,13 +197,20 @@ pub fn subscriber(pubsub_instance: PubSub(payload)) -> Subscriber(payload) {
 
 /// Join a topic so this subscriber receives broadcasts sent to it.
 ///
-/// A subscriber can join many topics. All topics deliver through its one
-/// subject. Joining a topic is idempotent.
+/// A subscriber can join many topics. All topics deliver to its owner's
+/// mailbox. Repeated or concurrent joins create one membership per owner
+/// process, scope, and topic, including joins through different handles.
+/// Each broadcast delivers once to that owner, and subscriber counts include
+/// it once.
 pub fn join(subscriber: Subscriber(payload), topic: String) -> Nil {
   ffi_join_group(subscriber.scope, topic, subscriber.owner)
 }
 
 /// Leave a topic previously joined with `join`.
+///
+/// One call removes the owner's membership for this scope and topic, even
+/// after repeated joins through different handles. Repeated leaves are
+/// harmless. Other owners, scopes, and topics are unaffected.
 pub fn leave(subscriber: Subscriber(payload), topic: String) -> Nil {
   ffi_leave_group(subscriber.scope, topic, subscriber.owner)
 }
@@ -291,7 +298,6 @@ pub fn broadcast_from_socket(
   |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
-// nolint: unused_exports -- public PubSub API intended for downstream consumers
 /// Broadcast a message only to subscribers on the current node.
 pub fn local_broadcast(
   pubsub_instance: PubSub(payload),

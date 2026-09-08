@@ -3,6 +3,8 @@ title: One update function, many socket events
 description: Handle joins, messages, binary frames, closes, replies, and ordered effects in one typed update function.
 ---
 
+import SharedPollDemo from '../../../components/SharedPollDemo.astro';
+
 A WebSocket connection does more than carry app commands. A client joins
 topics. It sends text events and binary frames. It leaves, or it disconnects.
 It expects a reply to some of the frames it sent. Your server processes also
@@ -177,6 +179,10 @@ The socket actor runs the effects in list order and writes the frames in the
 same order. For one socket, list order is wire order. This is a beryl
 guarantee. Lustre makes no such promise for its effects.
 
+Across two connections, this does not guarantee which browser observes its
+frame first. The [two-socket experiment](#compare-replies-and-broadcasts-with-two-tabs)
+labels effect execution separately from the recipients' deliveries.
+
 The same rule applies to a join. If one update returns
 `[AcceptJoin(ref, None), Push(topic, "ready", payload)]`, the join
 acknowledgment reaches the wire before the push. This matters. The runtime
@@ -236,6 +242,27 @@ With one tab, a reply and a broadcast look the same. With two tabs in the same
 room, they do not. The tab that voted gets its reply. The other tab gets
 `BroadcastFrom`. Both tabs show the same new poll state. They receive it
 through two different Phoenix paths.
+
+<SharedPollDemo />
+
+The demo starts after both clients have joined and fetched `get_state`.
+`AcceptJoin(ref, None)` acknowledges a join without totals. The reply to
+`get_state` supplies them. Each displayed private model is a subset of
+`Model(sender, topics)`, with the sender omitted; the client display and shared
+poll totals are separate state.
+
+Vote as each client. The [ordered effect list](#effects-run-in-list-order)
+replies to the voter, then broadcasts to the other subscribed socket.
+Disconnect one client and reconnect it while the other remains. Its new
+socket model fetches the existing totals. Disconnect both, then reconnect:
+the last-member cleanup removed the old room, so the new poll starts at zero.
+The store actor remains alive throughout. This cleanup is application policy,
+not a beryl persistence guarantee.
+
+The controls disconnect a whole socket. Leaving only `poll:demo` would end
+that subscription without closing its connection. Chapter 4 demonstrates
+that difference. The local simulation prepares you for the two real browser
+tabs in the checkpoint below; it does not replace them.
 
 This split helps when you design a larger protocol. A reply answers one client
 request. A push is a server-sent frame to one socket. A broadcast goes to every
