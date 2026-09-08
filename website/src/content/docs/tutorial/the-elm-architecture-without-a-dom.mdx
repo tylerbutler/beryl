@@ -68,7 +68,10 @@ Lustre overview, with full type annotations (see
 [Lustre for Elm developers](https://lustre.hexdocs.pm/cheatsheets/elm.html)):
 
 ```gleam
-fn init(_flags: Nil) -> Int {
+type CounterModel =
+  Int
+
+fn init(_flags: Nil) -> CounterModel {
   0
 }
 
@@ -77,7 +80,7 @@ type Message {
   Decr
 }
 
-fn update(model: Int, message: Message) -> Int {
+fn update(model: CounterModel, message: Message) -> CounterModel {
   case message {
     Incr -> model + 1
     Decr -> model - 1
@@ -88,7 +91,7 @@ fn update(model: Int, message: Message) -> Int {
 The view calls each module by name:
 
 ```gleam
-fn view(model: Int) -> element.Element(Message) {
+fn view(model: CounterModel) -> element.Element(Message) {
   let count = int.to_string(model)
 
   html.div([], [
