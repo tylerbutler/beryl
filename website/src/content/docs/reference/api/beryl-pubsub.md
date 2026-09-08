@@ -29,6 +29,24 @@ Distributed PubSub with Erlang `pg`
  browser); payloads that never leave the cluster are cheaper and safer as
  plain Gleam types.
 
+ ## Scope recovery and delivery
+
+ Each node runs a shared beryl PubSub supervisor. Each scope has its own
+ supervisor, membership registry, and `pg` process. The service outlives
+ the process that calls `start`. A `pg` restart preserves the registry,
+ which restores the topics of live local subscriber owners. Existing
+ handles remain valid, and repeated joins still create one membership.
+
+ Broadcasts are best-effort. During recovery, broadcasts and subscriber
+ queries can see empty or partial membership. Broadcasts are not buffered
+ or replayed, and a `Nil` return does not confirm delivery. Each node must
+ start its own scope; local recovery is not a cluster-wide readiness barrier.
+
+ Startup and membership operations can exit with an OTP error during
+ service failure or recovery. A failed or timed-out join or leave may have
+ recorded its intent; failure does not roll it back. Retrying is idempotent.
+ See `start` for startup conflicts and loss of the membership registry.
+
  ## Quick start
 
  ```gleam
@@ -321,6 +339,11 @@ Join a topic so this subscriber receives broadcasts sent to it.
  Each broadcast delivers once to that owner, and subscriber counts include
  it once.
 
+ The registry retains the membership through `pg` restarts and removes it
+ when its owner exits. During recovery this call can exit with an OTP error.
+ The call uses a five-second registry timeout; an error or timeout does not
+ roll back intent already recorded by the registry. Retrying is idempotent.
+
 <div class="api-entry-anchor" id="api-function-leave" aria-hidden="true"></div>
 
 ### `leave`
@@ -337,6 +360,10 @@ Leave a topic previously joined with `join`.
  One call removes the owner's membership for this scope and topic, even
  after repeated joins through different handles. Repeated leaves are
  harmless. Other owners, scopes, and topics are unaffected.
+
+ A leave removes recovery intent as well as live membership. Like `join`,
+ it can exit during recovery or after a five-second registry timeout.
+ A failed call may still take effect; retrying is idempotent.
 
 <div class="api-entry-anchor" id="api-function-local_broadcast" aria-hidden="true"></div>
 
@@ -396,9 +423,21 @@ pub fn start(PubSubConfig) -> PubSub(a)
 
 Start a PubSub instance.
 
- This starts the configured `pg` scope on the current node. Repeated calls
- on the same node are harmless. Each participating node must start the same
- scope.
+ This starts or attaches to a node-owned supervised scope. Repeated calls
+ share its membership registry; the first caller does not own its lifetime.
+ The registry restores live local subscriptions after a `pg` process restart.
+ Each participating node must start the same scope.
+
+ Startup errors cause an OTP exit instead of returning a handle. A scope
+ already owned by an external `pg` process is a startup conflict; beryl does
+ not adopt or stop it. Startup waits for supervision and local membership
+ reconciliation, but can fail if the service is recovering.
+
+ Loss of the registry itself, including supervisor restart-intensity
+ exhaustion, invalidates existing handles. Their membership, broadcast, and
+ subscriber-query calls exit rather than silently using an empty replacement.
+ Call `start` again, create new subscribers, and rejoin their topics.
+ This is not persistent storage across service or node failure.
 
  `payload` is fixed by how the returned value is used or annotated at the
  call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.
