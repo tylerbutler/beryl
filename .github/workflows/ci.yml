@@ -158,6 +158,12 @@ jobs:
           git diff --exit-code -- website/src/content/docs/reference/api \
             || { echo "::error::Generated reference docs are out of date. Run 'just site-reference' and commit the result."; exit 1; }
 
+      - name: Install tutorial test browser
+        run: pnpm -C website exec playwright install --with-deps chromium
+
+      - name: Check and build website and test tutorial demos
+        run: just site-demos-test
+
   examples:
     needs: dependencies
     runs-on: ubuntu-latest
