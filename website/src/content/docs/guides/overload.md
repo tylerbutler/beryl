@@ -27,10 +27,11 @@ Join and termination results also need socket capacity. The runtime checks a
 callback's complete result before applying its first effect, including join
 success. Your callback still allocates that result before beryl can reject it.
 
-Each runtime-owned presence session reserves one cleanup item in addition to
-its mutation work. Closing the socket activates this item even when the
-presence queue is full. Idle cleanup reservations consume capacity until the
-session ends.
+Each socket owner with runtime presence reserves one cleanup item in addition
+to its mutation work. Socket close or owner exit activates this item even when
+the presence queue is full. Cleanup uses the owner's process identity, so an
+old socket cannot remove a replacement socket's reservation or presence refs.
+Idle cleanup reservations consume capacity until the session ends.
 
 The supervisor admits one stop request at a time. Repeated disconnects and
 terminal stop requests do not create repeated socket control work. A timeout

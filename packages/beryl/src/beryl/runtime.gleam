@@ -1283,12 +1283,7 @@ fn handle_message(
           handle_router_socket_actor_down(state, down, socket_actors)
       }
     RouterDown -> {
-      case state.config.presence {
-        Some(handle) ->
-          dict.keys(state.sockets)
-          |> list.each(presence.untrack_runtime_all_async(handle, _))
-        None -> Nil
-      }
+      sweep_runtime_presence(state.config.presence, process.self())
       actor.stop()
     }
     BootTimedOut ->
@@ -1344,7 +1339,7 @@ fn handle_router_socket_actor_down(
             #("socket_id", socket_id),
           ])
           let _closer = process.spawn_unlinked(ref.close)
-          sweep_runtime_presence(state.config.presence, socket_id)
+          sweep_runtime_presence(state.config.presence, ref.pid)
           remove_socket_actor(state, socket_id)
         }
         // Already removed via `SocketClosed`, or never admitted.
@@ -1377,7 +1372,7 @@ fn remove_socket_actor(
         Ok(ref) -> {
           process.demonitor_process(ref.monitor)
           process.demonitor_process(ref.admission_monitor)
-          sweep_runtime_presence(state.config.presence, socket_id)
+          sweep_runtime_presence(state.config.presence, ref.pid)
         }
         Error(Nil) -> Nil
       }
@@ -1813,10 +1808,10 @@ fn forward_socket_work(
 
 fn sweep_runtime_presence(
   handle: Option(presence.Presence),
-  socket_id: String,
+  owner: process.Pid,
 ) -> Nil {
   case handle {
-    Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
+    Some(handle) -> presence.untrack_runtime_owner_async(handle, owner)
     None -> Nil
   }
 }
@@ -2283,7 +2278,8 @@ fn finalize_suspension(
           finalize_worker_wait(state, socket_id, suspension, worker, cancelled)
       }
       case state.config.presence {
-        Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
+        Some(handle) ->
+          presence.untrack_runtime_owner_async(handle, process.self())
         None -> Nil
       }
       state
@@ -2492,7 +2488,7 @@ fn sweep_unacknowledged_track(
     #("socket_id", socket_id),
   ])
   case state.config.presence {
-    Some(handle) -> presence.untrack_runtime_all_async(handle, socket_id)
+    Some(handle) -> presence.untrack_runtime_owner_async(handle, process.self())
     None -> Nil
   }
   State(
@@ -5090,7 +5086,7 @@ fn send_stopping_presence(
           |> log.warn("Presence cleanup using reserved session sweep", [
             #("reason", overload.describe(error)),
           ])
-          presence.untrack_runtime_all_async(handle, socket_id)
+          presence.untrack_runtime_owner_async(handle, process.self())
         }
       }
   }
@@ -5107,7 +5103,7 @@ fn fail_presence_admission(
     #("socket_id", socket_id),
     #("reason", overload.describe(error)),
   ])
-  presence.untrack_runtime_all_async(handle, socket_id)
+  presence.untrack_runtime_owner_async(handle, process.self())
   run(State(..state, stopping: True), socket_id, [
     StepTeardown(socket.AdmissionRejected(error)),
   ])
@@ -5575,6 +5571,7 @@ fn start_presence_track(
             replace: option.from_result(
               result.map(previous, fn(entry) { entry.0 }),
             ),
+            owner: process.self(),
             tag: socket_id,
             operation_id: operation_id,
             reply: reply,

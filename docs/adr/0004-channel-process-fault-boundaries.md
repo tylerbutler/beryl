@@ -446,7 +446,7 @@ accounting.
 | Socket | 1024 items / 8 MiB | Include deferred work, active effects, reports, and unanswered refs. Release after completion, reply, cancellation, or close. |
 | Worker | 256 inputs / 8 MiB | Retain through callback execution and report acknowledgement. |
 | Callback result | 256 effects / 8 MiB | Validate the complete batch before its first effect; reject the whole batch on excess. |
-| Presence | 4096 items / 32 MiB | Include queued/running mutations and one cleanup credit per runtime session. Activate cleanup under saturation. |
+| Presence | 4096 items / 32 MiB | Include queued/running mutations and one cleanup credit per socket owner. Activate cleanup under saturation, including owner exit. |
 | Lifecycle control | One stop request per supervisor; one terminal request per socket; one completion per admitted operation | Reject duplicate stop admission, coalesce disconnects, and tag index/close signals with actor identity. |
 
 Worker acknowledgement follows effect completion, including presence waits.

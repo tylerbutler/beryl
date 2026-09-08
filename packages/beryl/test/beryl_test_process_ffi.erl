@@ -1,7 +1,8 @@
 -module(beryl_test_process_ffi).
 -export([mailbox_length/1, queue_memory_evidence/0, with_suspended/2,
          queue_call_lifecycle/0, publication_cleanup_races/0,
-         stale_lifecycle_signals/3]).
+         stale_lifecycle_signals/3, monitored_by_count/1,
+         suspend_process/1, resume_process/1]).
 
 stale_lifecycle_signals(Router, SocketId, OldActor) ->
     {registered_name, Name} = process_info(Router, registered_name),
@@ -163,3 +164,17 @@ queue_diagnostics({Table, Owner, _, _, _, _, _}) when Owner =:= self() ->
       mailbox_length => mailbox_length(Owner),
       process_binary_bytes => lists:sum([Size || {_, Size, _} <- Binaries]),
       queued_binary_bytes => QueuedBytes}.
+
+monitored_by_count(Pid) ->
+    case erlang:process_info(Pid, monitored_by) of
+        {monitored_by, Monitors} -> length(Monitors);
+        undefined -> 0
+    end.
+
+suspend_process(Pid) ->
+    true = erlang:suspend_process(Pid),
+    nil.
+
+resume_process(Pid) ->
+    erlang:resume_process(Pid),
+    nil.

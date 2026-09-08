@@ -177,7 +177,7 @@ pub fn release_producer(queue: Queue(message), producer: process.Pid) -> Nil
 @external(erlang, "beryl_work_queue_ffi", "publish_with_cleanup")
 pub fn publish_with_cleanup(
   queue: Queue(message),
-  key: String,
+  key: key,
   message: message,
   cleanup: message,
 ) -> Result(Reservation, AdmissionError)
@@ -186,7 +186,7 @@ pub fn publish_with_cleanup(
 @external(erlang, "beryl_work_queue_ffi", "activate_cleanup")
 pub fn activate_cleanup(
   queue: Queue(message),
-  key: String,
+  key: key,
 ) -> Result(Nil, AdmissionError)
 
 /// Take the oldest item, retaining its reservation until `release`.

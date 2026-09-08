@@ -20,6 +20,7 @@ import beryl/rate_limit
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
+import gleam/erlang/reference
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -36,6 +37,17 @@ const one_second_ns = 1_000_000_000
 @external(erlang, "beryl_ffi", "monotonic_time_ns")
 fn monotonic_time_ns() -> Int
 
+type ReservationToken
+
+@external(erlang, "beryl_ffi", "admission_token_new")
+fn new_reservation_token() -> ReservationToken
+
+@external(erlang, "beryl_ffi", "admission_token_cancel")
+fn cancel_reservation_token(token: ReservationToken) -> Bool
+
+@external(erlang, "beryl_ffi", "reservation_token_pending")
+fn reservation_token_pending(token: ReservationToken) -> Bool
+
 /// Opaque connection limiter registry.
 pub opaque type ConnectionLimiter {
   ConnectionLimiter(subject: Subject(Message))
@@ -43,11 +55,19 @@ pub opaque type ConnectionLimiter {
 
 /// A checked-out connection slot. Release it when the socket closes.
 pub opaque type Permit {
-  Permit(limiter: ConnectionLimiter, ip: String)
+  Permit(
+    limiter: ConnectionLimiter,
+    reservation: reference.Reference,
+    token: ReservationToken,
+  )
 }
 
 type RateBucket {
   RateBucket(bucket: rate_limit.Bucket, last_seen_ns: Int)
+}
+
+type Reservation {
+  Reservation(ip: String, owner: Pid, monitor: Monitor, token: ReservationToken)
 }
 
 type State {
@@ -66,23 +86,30 @@ type State {
     total: Int,
     counts: Dict(String, Int),
     rate_buckets: Dict(String, RateBucket),
-    /// Monitors on bound permit-holder processes, so slots self-release when
-    /// the holder dies without running its close path (crash, brutal kill).
-    monitors: Dict(Monitor, #(Pid, String)),
-    /// Reverse index from holder pid to its monitor, so an explicit release
-    /// can drop the monitor and never double-decrement.
-    holders: Dict(Pid, Monitor),
+    /// Every acquired reservation has an owner and monitor. The unique
+    /// reservation identity keeps release, cancellation, and transfer
+    /// idempotent when their messages race.
+    reservations: Dict(reference.Reference, Reservation),
+    monitors: Dict(Monitor, reference.Reference),
   )
 }
 
 pub opaque type Message {
   Acquire(
+    reservation: reference.Reference,
     ip: String,
     limiter: ConnectionLimiter,
+    owner: Pid,
+    token: ReservationToken,
     reply: Subject(Result(Permit, Nil)),
   )
-  Bind(ip: String, owner: Pid)
-  Release(ip: String, owner: Pid)
+  Bind(
+    reservation: reference.Reference,
+    owner: Pid,
+    reply: Subject(Result(Nil, Nil)),
+  )
+  Cancel(reservation: reference.Reference)
+  Release(reservation: reference.Reference)
   HolderDown(down: process.Down)
   Sweep(subject: Subject(Message))
   Stop(reply: Subject(Nil))
@@ -104,42 +131,27 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
-    Acquire(ip, limiter, reply) -> {
-      let #(state, outcome) = acquire_slot(state, ip, limiter)
+    Acquire(reservation, ip, limiter, owner, token, reply) -> {
+      let #(state, outcome) =
+        acquire_slot(state, reservation, ip, limiter, owner, token)
       let state = persist(state)
       process.send(reply, outcome)
       actor.continue(state)
     }
-    Bind(ip, owner) -> actor.continue(bind_holder(state, ip, owner) |> persist)
-    Release(ip, owner) -> {
-      // Drop the holder's monitor (when bound) before decrementing, so a
-      // later exit of the same process cannot decrement this IP twice.
-      let state = case dict.get(state.holders, owner) {
-        Ok(monitor) -> {
-          process.demonitor_process(monitor)
-          State(
-            ..state,
-            monitors: dict.delete(state.monitors, monitor),
-            holders: dict.delete(state.holders, owner),
-          )
-        }
-        Error(Nil) -> state
-      }
-      actor.continue(release_slot(state, ip) |> persist)
+    Bind(reservation, owner, reply) -> {
+      let #(state, outcome) = bind_holder(state, reservation, owner)
+      let state = persist(state)
+      process.send(reply, outcome)
+      actor.continue(state)
     }
+    Cancel(reservation) | Release(reservation) ->
+      actor.continue(release_reservation(state, reservation) |> persist)
     HolderDown(down) ->
       case down {
-        process.ProcessDown(monitor, pid, _reason) ->
+        process.ProcessDown(monitor, _pid, _reason) ->
           case dict.get(state.monitors, monitor) {
-            Ok(#(_owner, ip)) -> {
-              let state =
-                State(
-                  ..state,
-                  monitors: dict.delete(state.monitors, monitor),
-                  holders: dict.delete(state.holders, pid),
-                )
-              actor.continue(release_slot(state, ip) |> persist)
-            }
+            Ok(reservation) ->
+              actor.continue(release_reservation(state, reservation) |> persist)
             // Already explicitly released (or an unrelated monitor).
             Error(Nil) -> actor.continue(state)
           }
@@ -158,9 +170,17 @@ fn handle_message(
 
 fn acquire_slot(
   state: State,
+  reservation: reference.Reference,
   ip: String,
   limiter: ConnectionLimiter,
+  owner: Pid,
+  reservation_token: ReservationToken,
 ) -> #(State, Result(Permit, Nil)) {
+  use <- bool.guard(
+    when: !process.is_alive(owner)
+      || !reservation_token_pending(reservation_token),
+    return: #(state, Error(Nil)),
+  )
   let current =
     dict.get(state.counts, ip)
     |> result.unwrap(0)
@@ -168,17 +188,34 @@ fn acquire_slot(
   let total_full = state.max_total > 0 && state.total >= state.max_total
   use <- bool.guard(when: ip_full || total_full, return: #(state, Error(Nil)))
 
-  let #(state, token) = take_connection_token(state, ip)
-  case token {
+  let #(state, connection_token) = take_connection_token(state, ip)
+  case connection_token {
     Error(Nil) -> #(state, Error(Nil))
-    Ok(Nil) -> #(
-      State(
-        ..state,
-        total: state.total + 1,
-        counts: dict.insert(state.counts, ip, current + 1),
-      ),
-      Ok(Permit(limiter: limiter, ip: ip)),
-    )
+    Ok(Nil) -> {
+      use <- bool.guard(
+        when: !reservation_token_pending(reservation_token),
+        return: #(state, Error(Nil)),
+      )
+      let monitor = process.monitor(owner)
+      #(
+        State(
+          ..state,
+          total: state.total + 1,
+          counts: dict.insert(state.counts, ip, current + 1),
+          reservations: dict.insert(
+            state.reservations,
+            reservation,
+            Reservation(ip:, owner:, monitor:, token: reservation_token),
+          ),
+          monitors: dict.insert(state.monitors, monitor, reservation),
+        ),
+        Ok(Permit(
+          limiter: limiter,
+          reservation: reservation,
+          token: reservation_token,
+        )),
+      )
+    }
   }
 }
 
@@ -228,16 +265,56 @@ fn schedule_sweep(
   }
 }
 
-/// Monitor a permit holder so its slot is reclaimed if the process dies
-/// without releasing. Rebinding the same pid is a no-op.
-fn bind_holder(state: State, ip: String, owner: Pid) -> State {
-  use <- bool.guard(when: dict.has_key(state.holders, owner), return: state)
-  let monitor = process.monitor(owner)
-  State(
-    ..state,
-    monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
-    holders: dict.insert(state.holders, owner, monitor),
-  )
+/// Transfer a reservation to the connection process. Monitor the new owner
+/// before dropping the old monitor so the reservation is never unowned.
+fn bind_holder(
+  state: State,
+  reservation: reference.Reference,
+  owner: Pid,
+) -> #(State, Result(Nil, Nil)) {
+  case dict.get(state.reservations, reservation) {
+    Error(Nil) -> #(state, Error(Nil))
+    Ok(Reservation(ip, current_owner, current_monitor, token)) ->
+      case reservation_token_pending(token), current_owner == owner {
+        False, _ -> #(release_reservation(state, reservation), Error(Nil))
+        True, True -> #(state, Ok(Nil))
+        True, False -> {
+          let monitor = process.monitor(owner)
+          process.demonitor_process(current_monitor)
+          #(
+            State(
+              ..state,
+              reservations: dict.insert(
+                state.reservations,
+                reservation,
+                Reservation(ip:, owner:, monitor:, token:),
+              ),
+              monitors: state.monitors
+                |> dict.delete(current_monitor)
+                |> dict.insert(monitor, reservation),
+            ),
+            Ok(Nil),
+          )
+        }
+      }
+  }
+}
+
+fn release_reservation(
+  state: State,
+  reservation: reference.Reference,
+) -> State {
+  case dict.get(state.reservations, reservation) {
+    Error(Nil) -> state
+    Ok(Reservation(ip, _owner, monitor, _token)) -> {
+      process.demonitor_process(monitor)
+      State(
+        ..release_slot(state, ip),
+        reservations: dict.delete(state.reservations, reservation),
+        monitors: dict.delete(state.monitors, monitor),
+      )
+    }
+  }
 }
 
 /// Reclaim a slot in both dimensions: decrement the node-wide total and the
@@ -258,17 +335,21 @@ fn release_slot(state: State, ip: String) -> State {
 }
 
 fn recover_holders(state: State) -> State {
-  let holders = dict.values(state.monitors)
-  let state = State(..state, monitors: dict.new(), holders: dict.new())
-  list.fold(holders, state, fn(state, holder) {
-    let #(owner, ip) = holder
-    case process.is_alive(owner) {
+  let reservations = dict.to_list(state.reservations)
+  let state = State(..state, reservations: dict.new(), monitors: dict.new())
+  list.fold(reservations, state, fn(state, entry) {
+    let #(reservation, Reservation(ip, owner, _old_monitor, token)) = entry
+    case process.is_alive(owner) && reservation_token_pending(token) {
       True -> {
         let monitor = process.monitor(owner)
         State(
           ..state,
-          monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
-          holders: dict.insert(state.holders, owner, monitor),
+          reservations: dict.insert(
+            state.reservations,
+            reservation,
+            Reservation(ip:, owner:, monitor:, token:),
+          ),
+          monitors: dict.insert(state.monitors, monitor, reservation),
         )
       }
       False -> release_slot(state, ip)
@@ -277,17 +358,36 @@ fn recover_holders(state: State) -> State {
 }
 
 fn request(
+  limiter: ConnectionLimiter,
+  ip: String,
   subject: Subject(Message),
-  build_message: fn(Subject(Result(Permit, Nil))) -> Message,
 ) -> Result(Permit, Nil) {
   case process.subject_owner(subject) {
     Error(Nil) -> Error(Nil)
     Ok(_) -> {
+      let reservation = reference.new()
+      let token = new_reservation_token()
       let reply_subject = process.new_subject()
-      process.send(subject, build_message(reply_subject))
+      process.send(
+        subject,
+        Acquire(
+          reservation: reservation,
+          ip: ip,
+          limiter: limiter,
+          owner: process.self(),
+          token: token,
+          reply: reply_subject,
+        ),
+      )
       case process.receive(reply_subject, registry_call_timeout_ms) {
         Ok(value) -> value
-        Error(Nil) -> Error(Nil)
+        Error(Nil) -> {
+          let _cancelled = cancel_reservation_token(token)
+          // Signals from one process arrive in order. If Acquire is still
+          // queued, this cancellation follows it and reclaims any late slot.
+          process.send(subject, Cancel(reservation))
+          Error(Nil)
+        }
       }
     }
   }
@@ -325,8 +425,8 @@ fn build(
       total: 0,
       counts: dict.new(),
       rate_buckets: dict.new(),
+      reservations: dict.new(),
       monitors: dict.new(),
-      holders: dict.new(),
     )
   actor.new_with_initialiser(1000, fn(subject) {
     schedule_sweep(subject, rate_config)
@@ -375,9 +475,7 @@ pub fn enabled(max_per_ip: Int, max_total: Int, connection_rate: Int) -> Bool {
 
 /// Acquire a connection slot, failing when the IP already has too many sockets.
 fn acquire(limiter: ConnectionLimiter, ip: String) -> Result(Permit, Nil) {
-  request(limiter.subject, fn(reply) {
-    Acquire(ip: ip, limiter: limiter, reply: reply)
-  })
+  request(limiter, ip, limiter.subject)
 }
 
 /// Acquire from an optional limiter. `None` means unlimited.
@@ -393,24 +491,33 @@ pub fn acquire_optional(
 
 /// Bind a permit to the calling process (the long-lived connection process),
 /// so its slot is reclaimed if that process dies without releasing.
-fn bind(permit: Permit) -> Nil {
-  process.send(permit.limiter.subject, Bind(permit.ip, process.self()))
+fn bind(permit: Permit) -> Result(Nil, Nil) {
+  case process.subject_owner(permit.limiter.subject) {
+    Error(Nil) -> Error(Nil)
+    Ok(_) -> {
+      let reply = process.new_subject()
+      process.send(
+        permit.limiter.subject,
+        Bind(permit.reservation, process.self(), reply),
+      )
+      process.receive(reply, registry_call_timeout_ms)
+      |> result.flatten
+    }
+  }
 }
 
 /// Bind a slot to the calling process if one was acquired.
-pub fn bind_optional(permit: Option(Permit)) -> Nil {
+pub fn bind_optional(permit: Option(Permit)) -> Result(Nil, Nil) {
   case permit {
     Some(permit) -> bind(permit)
-    None -> Nil
+    None -> Ok(Nil)
   }
 }
 
 /// Release a previously acquired slot.
-///
-/// Call from the process the permit was bound to (or from an unbound
-/// process, e.g. when the handshake fails before binding).
 fn release(permit: Permit) -> Nil {
-  process.send(permit.limiter.subject, Release(permit.ip, process.self()))
+  let _cancelled = cancel_reservation_token(permit.token)
+  process.send(permit.limiter.subject, Release(permit.reservation))
 }
 
 /// Release a slot if one was acquired.

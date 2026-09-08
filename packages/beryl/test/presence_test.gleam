@@ -277,6 +277,7 @@ pub fn presence_update_rejects_runtime_owned_ref_test() -> Nil {
       "socket-1",
       json.object([#("status", json.string("online"))]),
       None,
+      process.self(),
       "test",
       1,
       reply,
@@ -313,6 +314,64 @@ pub fn presence_untrack_all_test() -> Nil {
   |> should.equal(0)
   list.length(presence_entries(tracker, "room:general"))
   |> should.equal(0)
+}
+
+pub fn dead_owner_cleanup_reclaims_capacity_when_presence_is_full_test() -> Nil {
+  let assert Ok(limits) = overload.limits(items: 2, bytes: 8192)
+  let assert Ok(tracker) =
+    presence.start(test_config("node1") |> presence.with_queue_limits(limits))
+  let owner =
+    process.spawn_unlinked(fn() {
+      let stop: process.Subject(Nil) = process.new_subject()
+      process.receive_forever(stop)
+    })
+  let reply = process.new_subject()
+  presence.track_async(
+    tracker,
+    "room:lobby",
+    "user:1",
+    "socket-1",
+    json.null(),
+    None,
+    owner,
+    "track",
+    1,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+  let assert Ok(presence.MutationAck(outcome: presence.Tracked(..), ..)) =
+    process.receive(reply, 1000)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(tracker)
+      current.items == 1 && test_helper.monitored_by_count(owner) == 1
+    },
+    1000,
+    10,
+  )
+
+  let assert Ok(presence_pid) = process.subject_owner(presence.subject(tracker))
+  test_helper.suspend_process(presence_pid)
+  presence.untrack_async(tracker, [], "untrack", 2, reply)
+  |> should.equal(Ok(Nil))
+  let assert Ok(full) = presence.queue_snapshot(tracker)
+  full.items |> should.equal(2)
+  process.kill(owner)
+  test_helper.resume_process(presence_pid)
+  let assert Ok(presence.MutationAck(outcome: presence.Untracked, ..)) =
+    process.receive(reply, 1000)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(tracker)
+      current.items == 0 && current.bytes == 0
+    },
+    1000,
+    10,
+  )
+  presence.list(tracker, "room:lobby") |> should.equal(Ok([]))
+  let assert Ok(drained) = presence.queue_snapshot(tracker)
+  drained.high_items |> should.equal(2)
+  test_helper.kill_presence(tracker)
 }
 
 pub fn presence_untrack_all_leaves_no_dangling_refs_test() -> Nil {
