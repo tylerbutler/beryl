@@ -2,6 +2,7 @@
 	"name": "beryl-docs",
 	"version": "0.0.1",
 	"private": true,
+	"packageManager": "pnpm@10.6.5",
 	"bugs": "https://github.com/tylerbutler/beryl/issues",
 	"repository": {
 		"type": "git",
