@@ -8,11 +8,54 @@ import beryl
 import beryl/pubsub
 import beryl/socket.{AcceptJoin, Broadcast, BroadcastFrom, Join, Message, Next}
 import beryl/wire
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None}
 import gleam/string
 import gleeunit/should
+import test_helper
+
+@external(erlang, "beryl_pubsub_test_ffi", "kill_scope")
+fn kill_scope(scope: atom.Atom) -> process.Pid
+
+@external(erlang, "beryl_pubsub_test_ffi", "recovered")
+fn recovered(
+  scope: atom.Atom,
+  old_pid: process.Pid,
+  topic: String,
+  count: Int,
+) -> Bool
+
+pub fn pubsub_scope_recovery_preserves_runtime_broadcasts_test() -> Nil {
+  let scope = "app_bcast_scope_recovery"
+  let node_a = start_runtime(scope)
+  let node_b = start_runtime(scope)
+  let sender = join_lobby(node_a, "recovery-sender", "jr-a")
+  let observer = join_lobby(node_b, "recovery-observer", "jr-b")
+  let instance = pubsub.start(pubsub.config_with_scope(scope))
+  test_helper.wait_until(
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == 2 },
+    5000,
+    10,
+  )
+  let old_pid = kill_scope(atom.create(scope))
+  test_helper.wait_until(
+    fn() { recovered(atom.create(scope), old_pid, "room:lobby", 2) },
+    5000,
+    10,
+  )
+  let newcomer = join_lobby(node_b, "recovery-newcomer", "jr-new")
+  app_test_helper.push(node_a, "recovery-sender", "room:lobby", "cast", "r-2")
+  app_test_helper.recv(sender) |> string.contains("shout") |> should.be_true
+  app_test_helper.recv(observer) |> string.contains("shout") |> should.be_true
+  app_test_helper.recv(newcomer) |> string.contains("shout") |> should.be_true
+  app_test_helper.recv_none(sender)
+  app_test_helper.recv_none(observer)
+  app_test_helper.recv_none(newcomer)
+  beryl.stop(node_a) |> should.equal(Ok(Nil))
+  beryl.stop(node_b) |> should.equal(Ok(Nil))
+}
 
 fn start_runtime(scope: String) -> beryl.Sockets {
   let started_pubsub = pubsub.start(pubsub.config_with_scope(scope))

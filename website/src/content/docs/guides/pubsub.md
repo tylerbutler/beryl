@@ -22,6 +22,14 @@ The scope maps to a `pg` scope atom and identifies the PubSub instance.
 Different scopes are isolated and can use different payload types in one
 process mailbox. All handles in one scope must use the same payload type.
 
+beryl starts a node-owned supervisor with a separate subtree for each scope.
+The subtree owns a membership registry and the `pg` process. Repeated `start`
+calls share that registry; the service outlives its first caller. Start the
+scope on each participating node rather than sending a handle between nodes.
+
+Startup errors cause an OTP exit. beryl rejects a scope name already owned by
+an external `pg` process; it does not adopt or stop that process.
+
 :::danger[Use a fixed scope name]
 The scope name is converted to an Erlang atom. Atoms are never
 garbage-collected; exhausting the BEAM atom table crashes the VM. The scope
@@ -58,6 +66,34 @@ owner process and scope, even when you use multiple subscriber handles.
 The owner receives each broadcast once and counts as one subscriber.
 One `leave` removes that membership; further leaves are harmless. Leaving
 does not affect other owners, scopes, or topics.
+
+## Scope recovery
+
+After a `pg` process crash, the scope supervisor restarts it. The surviving
+membership registry restores the topics of live local subscriber owners.
+You can keep existing handles. New joins and repeated joins use the same
+registry, and one leave removes the owner's membership and recovery intent.
+The registry monitors subscriber owners and drops their topics when they exit.
+An ordinary `pg` crash does not restart another scope.
+
+During recovery, a broadcast or subscriber query can see empty or partial
+membership. A broadcast returns `Nil` without confirming delivery. beryl does
+not buffer or replay broadcasts, and local recovery does not wait for
+cluster-wide convergence.
+
+Startup, joins, and leaves can exit with an OTP error during recovery or
+service failure. Membership calls use a five-second registry timeout.
+A failed or timed-out join or leave may have recorded its intent; failure does
+not roll it back. Retrying the operation is idempotent. Handle these exits at
+your application's OTP supervision boundary.
+
+The registry is in-memory state. If the registry itself is lost, including
+when repeated failures exhaust the supervisor's restart budget, old handles
+become invalid. Their membership, broadcast, and subscriber-query calls exit
+instead of silently using a replacement with no subscriptions. Call `start`
+again, create new subscribers, and rejoin. Selector-only receivers do not get a
+separate recovery notification. Service and node failures do not preserve
+subscriptions.
 
 ## Message format
 
