@@ -53,6 +53,12 @@ PubSub records arrive as raw BEAM messages. `selecting` validates their types
 and matches the subscriber scope. One process can select subscribers with
 different payload types if their scopes differ.
 
+Repeated or concurrent joins to the same topic create one membership per
+owner process and scope, even when you use multiple subscriber handles.
+The owner receives each broadcast once and counts as one subscriber.
+One `leave` removes that membership; further leaves are harmless. Leaving
+does not affect other owners, scopes, or topics.
+
 ## Message format
 
 Subscribers receive typed `Message(payload)` records:
