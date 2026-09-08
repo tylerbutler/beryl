@@ -1,4 +1,6 @@
 import beryl/channel
+import beryl/overload
+import gleam/io
 import gleam/json
 import live_poll/poll
 import live_poll/store
@@ -32,7 +34,14 @@ fn poll_channel(
     }
     store.join(polls, room)
     timer.after(clock, duration_ms, fn() {
-      channel.notify(context.self, ClosePoll)
+      case channel.notify(context.self, ClosePoll) {
+        Ok(Nil) -> Nil
+        Error(error) ->
+          io.println_error(
+            "[live_poll] timer notification rejected: "
+            <> overload.describe(error),
+          )
+      }
     })
 
     channel.accept(room)
@@ -115,8 +124,16 @@ fn guide_channel() -> channel.Handler {
 }
 
 fn timer_message(sender: channel.Sender(GuideInfo)) -> Nil {
-  channel.notify(
-    sender,
-    Ready("A second handler owns this private message type."),
-  )
+  case
+    channel.notify(
+      sender,
+      Ready("A second handler owns this private message type."),
+    )
+  {
+    Ok(Nil) -> Nil
+    Error(error) ->
+      io.println_error(
+        "[live_poll] guide notification rejected: " <> overload.describe(error),
+      )
+  }
 }

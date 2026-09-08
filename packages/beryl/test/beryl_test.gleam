@@ -473,7 +473,7 @@ pub fn topic_namespace_test() -> Nil {
   topic.namespace("doc:tenant:123") |> should.equal(Ok("doc"))
 }
 
-pub fn group_broadcast_delivers_to_members_and_missing_group_noops_test() -> Nil {
+pub fn group_broadcast_delivers_to_members_and_reports_missing_group_test() -> Nil {
   let assert Ok(channels) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -510,14 +510,15 @@ pub fn group_broadcast_delivers_to_members_and_missing_group_noops_test() -> Nil
     "announce",
     json.string("hello"),
   )
-  |> should.equal(Nil)
+  |> should.equal(Ok(Nil))
   app_test_helper.recv(member)
   |> should.equal("[null,null,\"room:lobby\",\"announce\",\"hello\"]")
   app_test_helper.recv_none(outsider)
 
-  // Broadcasting to a missing group is a silent no-op
   group.broadcast(groups, channels, "missing", "announce", json.object([]))
-  |> should.equal(Nil)
+  |> should.equal(
+    Error(group.GroupLookupFailed(group.GroupNotFound("missing"))),
+  )
   app_test_helper.recv_none(member)
 }
 

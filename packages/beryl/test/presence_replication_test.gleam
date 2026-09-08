@@ -40,7 +40,7 @@ pub fn broadcast_tick_sends_state_test() -> Nil {
   let assert Ok(tracker) = presence.start(config)
 
   // Track an entry
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker,
       "room:lobby",
@@ -87,9 +87,9 @@ pub fn two_replicas_converge_via_pubsub_test() -> Nil {
   let assert Ok(tracker1) = presence.start(config1)
   let assert Ok(tracker2) = presence.start(config2)
 
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker1, "room:lobby", "user:1", "socket-1", json.null())
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker2, "room:lobby", "user:2", "socket-2", json.null())
 
   // Wait for broadcast ticks to fire and replicate
@@ -119,7 +119,7 @@ pub fn self_broadcast_ignored_test() -> Nil {
   let config = test_config(pubsub_instance, "node1", 50)
   let assert Ok(tracker) = presence.start(config)
 
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
 
   // Wait for several broadcast ticks to ensure self-broadcast doesn't duplicate.
@@ -149,7 +149,7 @@ pub fn remote_state_triggers_merge_via_pubsub_test() -> Nil {
   let assert Ok(tracker2) = presence.start(config2)
 
   // Track on node2
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker2, "room:lobby", "user:2", "socket-2", json.null())
 
   // Wait for node2's broadcast to reach node1
@@ -181,7 +181,7 @@ pub fn remote_merge_updates_read_model_count_test() -> Nil {
 
   presence_count(tracker1, "room:lobby") |> should.equal(0)
 
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker2, "room:lobby", "user:2", "socket-2", json.null())
 
   // `count` is served from the read model too -- confirm the merge
@@ -207,11 +207,11 @@ pub fn three_replicas_converge_test() -> Nil {
   let assert Ok(tracker2) = presence.start(config2)
   let assert Ok(tracker3) = presence.start(config3)
 
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker1, "room:lobby", "user:1", "socket-1", json.null())
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker2, "room:lobby", "user:2", "socket-2", json.null())
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker3, "room:lobby", "user:3", "socket-3", json.null())
 
   // Wait for convergence (all replicas see all 3 entries)
@@ -246,7 +246,7 @@ pub fn presence_without_pubsub_still_works_test() -> Nil {
   let config = presence.default_config("standalone")
   let assert Ok(tracker) = presence.start(config)
 
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
 
   let entries = presence_entries(tracker, "room:lobby")
@@ -265,7 +265,7 @@ pub fn untrack_propagates_via_pubsub_test() -> Nil {
   let assert Ok(tracker2) = presence.start(config2)
 
   // Track on node1
-  let ref =
+  let assert Ok(ref) =
     presence.track(tracker1, "room:lobby", "user:1", "socket-1", json.null())
 
   // Wait for convergence -- both should see the entry
@@ -276,7 +276,7 @@ pub fn untrack_propagates_via_pubsub_test() -> Nil {
   )
 
   // Untrack on node1
-  presence.untrack(tracker1, ref)
+  let assert Ok(_) = presence.untrack(tracker1, ref)
 
   // Wait for the untrack to propagate via next broadcast tick
   test_helper.wait_until(
@@ -307,7 +307,8 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
   let assert Ok(tracker) = presence.start(config)
 
   // Track an entry to prove the actor is alive
-  let _ = presence.track(tracker, "room:lobby", "user:1", "s1", json.null())
+  let assert Ok(_) =
+    presence.track(tracker, "room:lobby", "user:1", "s1", json.null())
   list.length(presence_entries(tracker, "room:lobby"))
   |> should.equal(1)
 
@@ -327,7 +328,8 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
   process.sleep(50)
 
   // Track another entry and verify the actor is still alive
-  let _ = presence.track(tracker, "room:lobby", "user:2", "s2", json.null())
+  let assert Ok(_) =
+    presence.track(tracker, "room:lobby", "user:2", "s2", json.null())
   list.length(presence_entries(tracker, "room:lobby"))
   |> should.equal(2)
 }
@@ -356,7 +358,7 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
   let assert Ok(tracker1) = presence.start(config1)
 
   // Prove the actor is alive and record its state before the poisoned sync.
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker1,
       "room:lobby",
@@ -371,7 +373,7 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
   // merge/processing path.
   let config2 = test_config(pubsub_instance, "node2", 50)
   let assert Ok(tracker2) = presence.start(config2)
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker2,
       "room:poison",
@@ -384,7 +386,7 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
   process.sleep(200)
 
   // The actor is still alive: a fresh local track succeeds.
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker1,
       "room:lobby",
@@ -414,7 +416,7 @@ pub fn merge_failure_leaves_read_model_unchanged_test() -> Nil {
   let assert Ok(tracker1) = presence.start(config1)
 
   // Snapshot the read model for an unrelated topic before the poisoned sync.
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker1,
       "room:lobby",
@@ -427,7 +429,7 @@ pub fn merge_failure_leaves_read_model_unchanged_test() -> Nil {
 
   let config2 = test_config(pubsub_instance, "node2", 50)
   let assert Ok(tracker2) = presence.start(config2)
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker2,
       "room:poison",
@@ -472,7 +474,7 @@ pub fn restarted_node_presences_replicate_to_peers_test() -> Nil {
     presence.start(test_config(pubsub_instance, "node2", 30))
 
   // Seed replication both ways so node2's context covers node1's clocks.
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker1,
       "room:lobby",
@@ -494,7 +496,7 @@ pub fn restarted_node_presences_replicate_to_peers_test() -> Nil {
   // A presence tracked by the restarted incarnation must become visible on
   // node2. Without incarnation-unique replicas, node2's causal context
   // already covered the reused clocks and silently dropped this join.
-  let _ =
+  let assert Ok(_) =
     presence.track(
       restarted_tracker1,
       "room:lobby",
@@ -523,7 +525,7 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() -> Nil {
     presence.start(test_config(pubsub_instance, "node2", 30))
 
   // node1 tracks a presence whose session dies with the node.
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker1,
       "room:lobby",
@@ -541,7 +543,7 @@ pub fn restart_prunes_previous_incarnations_ghosts_test() -> Nil {
   let assert Ok(restarted_tracker1) =
     presence.start(test_config(pubsub_instance, "node1", 30))
   // Give the new incarnation something to gossip so peers observe it.
-  let _ =
+  let assert Ok(_) =
     presence.track(
       restarted_tracker1,
       "room:lobby",
@@ -581,7 +583,7 @@ pub fn restart_prune_updates_read_model_count_test() -> Nil {
   let assert Ok(tracker2) =
     presence.start(test_config(pubsub_instance, "node2", 30))
 
-  let _ =
+  let assert Ok(_) =
     presence.track(
       tracker1,
       "room:lobby",
@@ -598,7 +600,7 @@ pub fn restart_prune_updates_read_model_count_test() -> Nil {
   test_helper.kill_presence(tracker1)
   let assert Ok(restarted_tracker1) =
     presence.start(test_config(pubsub_instance, "node1", 30))
-  let _ =
+  let assert Ok(_) =
     presence.track(
       restarted_tracker1,
       "room:lobby",
@@ -651,14 +653,14 @@ pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() -> Nil {
       }
     })
   let assert Ok(tracker) = presence.start(config)
-  let _ =
+  let assert Ok(_) =
     presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
 
   // Track user:2 from another process: this call blocks (behind on_diff)
   // until we release it below, so it must not run on the test process.
   let track_done = process.new_subject()
   process.spawn_unlinked(fn() {
-    let _ =
+    let assert Ok(_) =
       presence.track(tracker, "room:lobby", "user:2", "socket-2", json.null())
     process.send(track_done, Nil)
   })
@@ -707,7 +709,7 @@ pub fn actor_reply_is_ordered_after_read_model_publication_test() -> Nil {
   // on another process while the test drives the synchronization.
   let track_done = process.new_subject()
   process.spawn_unlinked(fn() {
-    let ref =
+    let assert Ok(ref) =
       presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
     process.send(track_done, ref)
   })

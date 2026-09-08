@@ -392,10 +392,11 @@ beryl uses these sequence rules:
 - The worker runs `join` during initialization. The socket actor waits for a
   maximum of 5 seconds. It rejects the join after this timeout. Joins on
   different sockets do not wait for each other.
-- beryl does not limit worker mailboxes or pending reports.
-  [#397](https://github.com/tylerbutler/beryl/issues/397) tracks these and other
-  runtime queue contracts. [#249](https://github.com/tylerbutler/beryl/issues/249)
-  separately tracks outbound connection queues and slow-client eviction.
+- Local worker input has a 256-item / 8 MiB default budget. Each worker waits
+  for acknowledgement of its normal report before running the next callback.
+  Reports also consume the socket's shared 1024-item / 8 MiB budget.
+  [#249](https://github.com/tylerbutler/beryl/issues/249) remains separate for
+  outbound connection queues and slow-client eviction.
 - The socket actor owns presence suspension. Workers send presence actions to
   the socket actor. The socket actor applies the existing order rules.
 - The socket actor sends a close to the worker before it drops the topic's
@@ -430,6 +431,55 @@ channel APIs. This ADR changes their process topology;
 [ADR 0005](0005-socket-actor-supervision.md) subsequently adds the shared
 factory that owns socket actors as `Temporary` children. Neither socket nor
 topic supervision reconstructs a session: clients reconnect and rejoin.
+
+## Local admission contract (#397)
+
+The router, socket, worker, and presence processes retain their topology.
+Owner-owned ETS ledgers reserve local work before publication. A coalesced
+wake and periodic recovery cover a producer dying before it sends the wake.
+The ledgers use atomic compare-and-replace; mailbox length is not admission
+accounting.
+
+| Boundary | Default | Release or terminal action |
+|---|---|---|
+| Router | 4096 items / 32 MiB | Release after destination admission or rejection. Reserve before socket-child startup. |
+| Socket | 1024 items / 8 MiB | Include deferred work, active effects, reports, and unanswered refs. Release after completion, reply, cancellation, or close. |
+| Worker | 256 inputs / 8 MiB | Retain through callback execution and report acknowledgement. |
+| Callback result | 256 effects / 8 MiB | Validate the complete batch before its first effect; reject the whole batch on excess. |
+| Presence | 4096 items / 32 MiB | Include queued/running mutations and one cleanup credit per runtime session. Activate cleanup under saturation. |
+| Lifecycle control | One stop request per supervisor; one terminal request per socket; one completion per admitted operation | Reject duplicate stop admission, coalesce disconnects, and tag index/close signals with actor identity. |
+
+Worker acknowledgement follows effect completion, including presence waits.
+Close and shutdown paths apply and acknowledge earlier reports while waiting
+for termination. A published report survives producer cleanup; unpublished
+credits from dead producers are reclaimed. A timed-out pending call cannot
+execute later. Running work remains charged. Reply aliases discard late
+responses.
+
+Connection cancellation kills an initializer that has not committed.
+The router monitors the admission caller so caller death cannot leave an
+initializer blocked forever. OTP supervisor/bootstrap RPC mailboxes remain
+outside the ledger protocol; this contract does not cover an externally
+suspended supervisor or arbitrary system traffic.
+
+Notify and broadcast APIs return admission Results. Presence mutations
+distinguish admission rejection, timeout, and owner exit. Group fan-out reports
+partial admission. Transport rejection closes the connection. The runtime
+closes saturated destinations and continues healthy fan-out.
+
+Accounted bytes cover inspectable term structure and binary backing storage,
+not opaque function environments or application heaps. Generic PubSub and
+remote sync have no pre-receipt bound. Retained CRDT/group state, application
+queues, transport pre-assembly buffers, and outbound connection queues are
+outside this guarantee. Finite connection/topic populations remain necessary
+for a node-wide memory estimate.
+
+The 1.0 decision is to ship finite supported local admission, not an
+end-to-end memory guarantee. Outbound limits remain #249; broad capacity
+measurements remain #400. Queue tests include fixed-population retained-memory
+evidence in `load/results/admission-bounds.json`. The
+[overload guide](../../website/src/content/docs/guides/overload.md) documents
+configuration and migration.
 
 ## Sources
 

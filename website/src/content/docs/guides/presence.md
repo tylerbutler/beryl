@@ -57,9 +57,10 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-`track`, `update`, `untrack`, and `untrack_all` panic if the actor is
-unavailable or does not reply within this timeout. Presence reads bypass the
-actor mailbox and do not use it.
+Mutations return typed admission, owner-exit, or timeout errors. `update`
+wraps call failures in `RequestFailed`; it also reports `UnknownRef`.
+A timeout cancels pending work, but a running mutation may still complete.
+Reads bypass the mutation queue. See [overload handling](/guides/overload/).
 
 ## Track connected users
 
@@ -69,7 +70,7 @@ Track a user's presence when they join a channel:
 import gleam/json
 
 // Track a user in a topic
-let ref = presence.track(
+let assert Ok(ref) = presence.track(
   presence_handle,
   "room:lobby",   // topic
   "user:alice",    // key (groups multiple connections)
@@ -106,10 +107,10 @@ or non-public ref returns `Error(presence.UnknownRef(ref))`.
 
 ```gleam
 // Remove a specific presence, using the ref returned by `track`
-presence.untrack(presence_handle, new_ref)
+let assert Ok(Nil) = presence.untrack(presence_handle, new_ref)
 
 // Remove all presences for a session ID / socket (e.g., on disconnect)
-presence.untrack_all(presence_handle, socket_id)
+let assert Ok(Nil) = presence.untrack_all(presence_handle, socket_id)
 ```
 
 `track` returns a ref for the new presence entry. Keep the ref if you must
@@ -147,7 +148,7 @@ unaffected.
 Both the stable actor name and the read model's ETS table are node-local, so a
 `Presence` handle must stay on the node where its child specification runs.
 From another BEAM node, `track`/`update`/`untrack`/`untrack_all` cannot reach
-the owning actor and panic as unavailable, while `list`/`get_by_key`/`count`
+the owning actor and return a call error, while `list`/`get_by_key`/`count`
 return `Error(Nil)`. Use PubSub replication (`with_pubsub`) to share presence
 state across nodes instead of moving the handle itself.
 
@@ -195,13 +196,18 @@ on the changed topic:
 
 ```gleam
 import beryl
+import beryl/overload
+import gleam/io
 
 let config =
   presence.default_config("node1")
   |> presence.with_pubsub(pubsub_handle)
   |> presence.with_broadcast_interval(1500)
   |> presence.with_on_diff(fn(diff) {
-    beryl.broadcast_presence_diff(channels, "room:lobby", diff)
+    case beryl.broadcast_presence_diff(channels, "room:lobby", diff) {
+      Ok(Nil) -> Nil
+      Error(reason) -> io.println(overload.describe(reason))
+    }
   })
 ```
 
@@ -212,7 +218,10 @@ let config =
   diff
   |> presence.diff_topics
   |> list.each(fn(topic) {
-    beryl.broadcast_presence_diff(channels, topic, diff)
+    case beryl.broadcast_presence_diff(channels, topic, diff) {
+      Ok(Nil) -> Nil
+      Error(reason) -> io.println(overload.describe(reason))
+    }
   })
 })
 ```

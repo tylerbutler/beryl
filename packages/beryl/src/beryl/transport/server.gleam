@@ -16,6 +16,7 @@
 import beryl.{type Sockets}
 import beryl/internal
 import beryl/log
+import beryl/overload
 import beryl/rate_limit
 import beryl/socket.{type ConnectSeed}
 import beryl/transport.{type ConnectionPermit}
@@ -588,15 +589,13 @@ pub fn handle_text_frame(
     fn(state, started_at) {
       case codec.decode_text(state.codec)(text) {
         Ok(message) -> {
-          transport.route_decoded(state.sockets, state.socket_id, message)
-          emit_frame_stop(
+          finish_route(
             state,
             started_at,
             string.byte_size(text),
             transport.TextFrame,
-            transport.FrameRouted,
+            transport.route_decoded(state.sockets, state.socket_id, message),
           )
-          Continue(state)
         }
         Error(error) -> {
           log.warn(state.logger, "Failed to decode wire protocol message", [
@@ -617,7 +616,6 @@ pub fn handle_text_frame(
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by sibling transports
 /// Check the size and rate of an inbound binary frame, then decode it in the
 /// connection process. A codec without a binary decoder keeps the raw
 /// `transport.route_binary` fan-out through the runtime.
@@ -629,33 +627,30 @@ pub fn handle_binary_frame(
   admit_frame(state, bytes, transport.BinaryFrame, fn(state, started_at) {
     case codec.decode_binary(state.codec) {
       None -> {
-        transport.route_binary(state.sockets, state.socket_id, data)
-        emit_frame_stop(
+        finish_route(
           state,
           started_at,
           bytes,
           transport.BinaryFrame,
-          transport.FrameRouted,
+          transport.route_binary(state.sockets, state.socket_id, data),
         )
-        Continue(state)
       }
       Some(decode_binary) ->
         case decode_binary(data) {
           Ok(message) -> {
-            transport.route_decoded_binary(
-              state.sockets,
-              state.socket_id,
-              message,
-            )
-            emit_frame_stop(
+            finish_route(
               state,
               started_at,
               bytes,
               transport.BinaryFrame,
-              transport.FrameRouted,
+              transport.route_decoded_binary(
+                state.sockets,
+                state.socket_id,
+                message,
+              ),
             )
-            Continue(state)
           }
+
           Error(error) -> {
             log.warn(
               state.logger,
@@ -677,6 +672,35 @@ pub fn handle_binary_frame(
         }
     }
   })
+}
+
+fn finish_route(
+  state: ConnectionState,
+  started_at: Int,
+  bytes: Int,
+  kind: transport.FrameKind,
+  admission: Result(Nil, overload.AdmissionError),
+) -> FrameDisposition {
+  case admission {
+    Ok(Nil) -> {
+      emit_frame_stop(state, started_at, bytes, kind, transport.FrameRouted)
+      Continue(state)
+    }
+    Error(error) -> {
+      log.warn(state.logger, "Connection closing: runtime admission rejected", [
+        #("socket_id", state.socket_id),
+        #("reason", overload.describe(error)),
+      ])
+      emit_frame_stop(
+        state,
+        started_at,
+        bytes,
+        kind,
+        transport.FrameAdmissionRejected,
+      )
+      Stop
+    }
+  }
 }
 
 fn admit_frame(

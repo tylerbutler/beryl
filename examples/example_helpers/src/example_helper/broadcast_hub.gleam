@@ -15,6 +15,7 @@
 //// is calling them.
 
 import beryl
+import beryl/overload
 import gleam/erlang/process.{type Subject}
 import gleam/io
 import gleam/json.{type Json}
@@ -69,7 +70,13 @@ fn handle_message(
       actor.continue(State(sockets: Some(sockets)))
 
     Publish(topic, event, payload), Some(sockets) -> {
-      beryl.broadcast(sockets, topic, event, payload)
+      case beryl.broadcast(sockets, topic, event, payload) {
+        Ok(Nil) -> Nil
+        Error(error) ->
+          io.println_error(
+            "[broadcast_hub] broadcast rejected: " <> overload.describe(error),
+          )
+      }
       actor.continue(state)
     }
 

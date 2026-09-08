@@ -7,6 +7,7 @@
 
 import beryl
 import beryl/channel
+import beryl/overload
 import beryl/socket
 import beryl/transport
 import beryl/wire
@@ -85,6 +86,8 @@ pub fn reason_name(reason: socket.StopReason) -> String {
     socket.Shutdown -> "shutdown"
     socket.HeartbeatTimeout -> "heartbeat_timeout"
     socket.Errored(detail) -> "errored:" <> detail
+    socket.AdmissionRejected(error) ->
+      "admission_rejected:" <> overload.describe(error)
   }
 }
 
@@ -100,6 +103,7 @@ pub fn route(channels: beryl.Sockets, socket_id: String, raw: String) -> Nil {
     codec.decode_text(transport.active_codec(channels))(raw)
     as "the test frame is valid phoenix wire format"
   transport.route_decoded(channels, socket_id, decoded)
+  |> should.equal(Ok(Nil))
 }
 
 /// Route a raw binary frame.
@@ -109,6 +113,7 @@ pub fn route_binary(
   data: BitArray,
 ) -> Nil {
   transport.route_binary(channels, socket_id, data)
+  |> should.equal(Ok(Nil))
 }
 
 /// Send a `phx_join` for a topic with the given join_ref/ref.

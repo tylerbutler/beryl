@@ -8,6 +8,30 @@ not capacity.
 
 ## Local setup
 
+### Admission safety fixture
+
+`results/admission-bounds.json` records a local queue-safety fixture, not a
+capacity benchmark. Eight 4096-byte binary publications fill the queue.
+After 10, 1010, and 11010 rejected attempts, queue storage remains 648 words
+and retained queued binaries remain 32768 bytes. Cancellation returns storage
+to the empty fixture's 463 words and queued binary bytes to zero.
+
+The fixture records the VM version, process memory after GC, mailbox length,
+referenced binaries, and its predeclared structural limits. These measurements
+do not cover application state, transport buffers, outbound queues, or RSS.
+The core `work_queue_test` suite runs the assertions. To regenerate the raw
+measurement from the repository root:
+
+```sh
+cd packages/beryl
+gleam build
+erl -noshell -pa build/dev/erlang/*/ebin \
+  -eval 'code:add_patha("build/dev/erlang/beryl/ebin"), io:format("~s~n", [beryl_test_process_ffi:queue_memory_evidence()]), halt().' \
+  > ../../load/results/admission-bounds.json
+```
+
+### k6 setup
+
 Install Erlang 27+, Gleam 1.16+, `rebar3`, `just`, `trellis`, `pnpm`,
 Node.js 22, and Docker. Then, from the repository root:
 

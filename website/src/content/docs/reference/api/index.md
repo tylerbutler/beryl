@@ -41,6 +41,10 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
   <p>Topic groups</p>
 </li>
 <li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl-overload/"><code>beryl/overload</code></a>
+  <p>Admission limits for local beryl work.</p>
+</li>
+<li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-presence/"><code>beryl/presence</code></a>
   <p>Distributed presence tracking with a CRDT</p>
 </li>

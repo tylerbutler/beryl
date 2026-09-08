@@ -9,6 +9,7 @@
 
 import beryl
 import beryl/connection_limit
+import beryl/overload
 import beryl/socket
 import beryl/telemetry
 import beryl/wire/codec
@@ -95,6 +96,7 @@ pub type FrameOutcome {
   FrameOversized
   FrameRateLimited
   FrameDecodeFailed
+  FrameAdmissionRejected
 }
 
 /// A low-cost transport telemetry context.
@@ -175,6 +177,7 @@ pub fn telemetry_frame_stop(
         FrameOversized -> telemetry.FrameOversized
         FrameRateLimited -> telemetry.FrameRateLimited
         FrameDecodeFailed -> telemetry.FrameDecodeFailed
+        FrameAdmissionRejected -> telemetry.FrameAdmissionRejected
       },
     ),
   )
@@ -202,7 +205,7 @@ pub fn route_decoded(
   sockets sockets: Sockets,
   socket_id socket_id: String,
   message message: codec.Inbound,
-) -> Nil {
+) -> Result(Nil, overload.AdmissionError) {
   beryl.app_dispatch(sockets).route_decoded(socket_id, message)
 }
 
@@ -215,7 +218,7 @@ pub fn route_decoded_binary(
   sockets sockets: Sockets,
   socket_id socket_id: String,
   message message: codec.Inbound,
-) -> Nil {
+) -> Result(Nil, overload.AdmissionError) {
   beryl.app_dispatch(sockets).route_decoded_binary(socket_id, message)
 }
 
@@ -226,7 +229,7 @@ pub fn route_binary(
   sockets sockets: Sockets,
   socket_id socket_id: String,
   data data: BitArray,
-) -> Nil {
+) -> Result(Nil, overload.AdmissionError) {
   beryl.app_dispatch(sockets).route_binary(socket_id, data)
 }
 

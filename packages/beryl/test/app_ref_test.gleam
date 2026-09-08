@@ -97,7 +97,7 @@ pub fn deferred_reply_from_info_is_delivered_test() -> Nil {
   app_test_helper.recv_none(frames)
 
   // A later turn answers the stored ref — still valid.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   let reply = app_test_helper.recv(frames)
   reply |> string.contains("phx_reply") |> should.be_true
   reply |> string.contains("r-2") |> should.be_true
@@ -125,14 +125,14 @@ pub fn duplicate_outstanding_ref_is_rejected_then_reusable_test() -> Nil {
   duplicate |> string.contains("duplicate_ref") |> should.be_true
 
   // Completing the original request frees the key.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   let first_reply = app_test_helper.recv(frames)
   first_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 
   // The same effective key can be used again after completion.
   app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
   app_test_helper.recv_none(frames)
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   let reused_reply = app_test_helper.recv(frames)
   reused_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
   reused_reply |> string.contains("\"late\":true") |> should.be_true
@@ -159,7 +159,7 @@ pub fn reply_after_topic_close_is_dropped_test() -> Nil {
 
   // The stored ref is stale now that its topic closed: the late reply is
   // dropped rather than sent.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   app_test_helper.recv_none(frames)
 }
 
@@ -187,6 +187,6 @@ pub fn reply_after_rejoin_is_dropped_test() -> Nil {
   // The socket is joined again, but the ref stashed under the previous
   // instance is stale: replying with it is dropped, not delivered against
   // the new join.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   app_test_helper.recv_none(frames)
 }

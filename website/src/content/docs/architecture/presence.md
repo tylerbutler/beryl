@@ -38,6 +38,11 @@ application actors and other out-of-band workflows. Public `list`,
 `get_by_key`, and `count` calls read ETS directly and retain immediate
 read-after-write behavior.
 
+Local mutations share a finite item/byte budget. Each runtime-owned session
+also retains a cleanup reservation until it ends. Pending call timeouts
+cancel work; running calls can still complete. Generic PubSub sync has no
+pre-receipt admission bound. See [overload handling](/guides/overload/).
+
 ## Presence functions
 
 ### Starting presence
@@ -59,6 +64,8 @@ PubSub copies presence state between nodes.
 | `with_pubsub(config, ps)` | Attach a PubSub instance for cross-node state replication |
 | `with_broadcast_interval(config, ms)` | Set how often (in ms) the actor broadcasts its CRDT state; `0` disables |
 | `with_on_diff(config, callback)` | Register a callback invoked whenever a local change or merge produces a non-empty diff |
+| `with_queue_limits(config, limits)` | Set positive local mutation and cleanup budgets |
+| `with_telemetry(config)` | Enable queue occupancy events |
 
 ### Tracking
 

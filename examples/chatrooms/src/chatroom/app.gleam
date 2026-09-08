@@ -5,6 +5,7 @@
 
 import beryl/channel
 import beryl/group.{type Groups}
+import beryl/overload
 import beryl/socket.{type ReplyRef}
 import example_helper/broadcast_hub
 import example_helper/color
@@ -12,6 +13,7 @@ import example_helper/payload
 import example_helper/session_presence
 import gleam/dynamic.{type Dynamic}
 import gleam/int
+import gleam/io
 import gleam/json
 import gleam/option.{type Option}
 import gleam/set
@@ -96,7 +98,14 @@ fn accept_room(
       ))
     Ok(Nil) -> {
       announce_rooms_changed(application_context, state.room_name)
-      channel.notify(join_context.self, PublishRoster)
+      case channel.notify(join_context.self, PublishRoster) {
+        Ok(Nil) -> Nil
+        Error(error) ->
+          io.println_error(
+            "[chatroom] roster notification rejected: "
+            <> overload.describe(error),
+          )
+      }
 
       channel.accept(state)
       |> channel.on_message(fn(state, message) {

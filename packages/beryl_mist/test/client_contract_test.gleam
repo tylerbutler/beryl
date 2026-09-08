@@ -212,12 +212,13 @@ pub fn aquamarine_client_receives_server_broadcast_test() -> Nil {
   let assert Ok(Nil) = receive_joined(events, "test:lobby")
   process.sleep(25)
 
-  beryl.broadcast(
-    server.channels,
-    "test:lobby",
-    "tick",
-    json.object([#("n", json.int(42))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast(
+      server.channels,
+      "test:lobby",
+      "tick",
+      json.object([#("n", json.int(42))]),
+    )
 
   let assert Ok(incoming) = aquamarine.receive(channel, receive_timeout_ms)
   incoming.event |> should.equal("tick")

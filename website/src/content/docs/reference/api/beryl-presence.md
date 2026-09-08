@@ -88,6 +88,7 @@ Distributed presence tracking with a CRDT
 <li><a href="#api-function-diff_topics"><code>diff_topics</code></a></li>
 <li><a href="#api-function-get_by_key"><code>get_by_key</code></a></li>
 <li><a href="#api-function-list"><code>list</code></a></li>
+<li><a href="#api-function-queue_snapshot"><code>queue_snapshot</code></a></li>
 <li><a href="#api-function-track"><code>track</code></a></li>
 <li><a href="#api-function-untrack"><code>untrack</code></a></li>
 <li><a href="#api-function-untrack_all"><code>untrack_all</code></a></li>
@@ -96,6 +97,8 @@ Distributed presence tracking with a CRDT
 <li><a href="#api-function-with_call_timeout"><code>with_call_timeout</code></a></li>
 <li><a href="#api-function-with_on_diff"><code>with_on_diff</code></a></li>
 <li><a href="#api-function-with_pubsub"><code>with_pubsub</code></a></li>
+<li><a href="#api-function-with_queue_limits"><code>with_queue_limits</code></a></li>
+<li><a href="#api-function-with_telemetry"><code>with_telemetry</code></a></li>
   </ul>
 </section>
 </nav>
@@ -189,6 +192,7 @@ A presence entry returned from queries and diff accessors.
 ```gleam
 pub type PresenceUpdateError {
   UnknownRef(ref: String)
+  RequestFailed(overload.CallError)
 }
 ```
 
@@ -362,6 +366,16 @@ List all presences for a topic.
  from a process on another BEAM node than the one it was started on (see
  the node affinity note on `Presence`).
 
+<div class="api-entry-anchor" id="api-function-queue_snapshot" aria-hidden="true"></div>
+
+### `queue_snapshot`
+
+```gleam
+pub fn queue_snapshot(Presence) -> Result(overload.Occupancy, overload.AdmissionError)
+```
+
+Read mutation and reserved-cleanup accounting without waiting for the actor.
+
 <div class="api-entry-anchor" id="api-function-track" aria-hidden="true"></div>
 
 ### `track`
@@ -373,7 +387,7 @@ pub fn track(
   String,
   String,
   json.Json
-) -> String
+) -> Result(String, overload.CallError)
 ```
 
 Track a presence in a topic.
@@ -387,8 +401,9 @@ Track a presence in a topic.
  to that actor. The ref is also merged into object metas as `phx_ref` for
  Phoenix client compatibility.
 
- Panics if the presence actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
+ Returns a typed call error on admission failure, owner exit, or timeout
+ (5 seconds by default). A timeout cancels pending work, but a running
+ mutation may still complete.
 
 <div class="api-entry-anchor" id="api-function-untrack" aria-hidden="true"></div>
 
@@ -398,15 +413,15 @@ Track a presence in a topic.
 pub fn untrack(
   Presence,
   String
-) -> Nil
+) -> Result(Nil, overload.CallError)
 ```
 
 Untrack a specific presence using the ref returned by `track`.
 
  Removing an unknown or already-removed ref is a harmless no-op.
 
- Panics if the presence actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
+ Returns a typed call error on admission failure, owner exit, or timeout.
+ A timeout cancels pending work, but a running mutation may still complete.
 
 <div class="api-entry-anchor" id="api-function-untrack_all" aria-hidden="true"></div>
 
@@ -416,13 +431,13 @@ Untrack a specific presence using the ref returned by `track`.
 pub fn untrack_all(
   Presence,
   String
-) -> Nil
+) -> Result(Nil, overload.CallError)
 ```
 
 Untrack all presences for a session, such as when a socket disconnects.
 
- Panics if the presence actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
+ Returns a typed call error on admission failure, owner exit, or timeout.
+ A timeout cancels pending work, but a running mutation may still complete.
 
 <div class="api-entry-anchor" id="api-function-update" aria-hidden="true"></div>
 
@@ -446,8 +461,8 @@ Replace the meta of a presence created by `track`.
  or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
  unknown, already removed, or belongs to the internal runtime.
 
- Panics if the presence actor is unavailable or does not reply within the
- configured call timeout (5 seconds by default).
+ `RequestFailed` wraps admission, owner-exit, and timeout errors. A timeout
+ cancels pending work, but a running mutation may still complete.
 
 <div class="api-entry-anchor" id="api-function-with_broadcast_interval" aria-hidden="true"></div>
 
@@ -530,3 +545,26 @@ pub fn with_pubsub(
 ```
 
 Enable PubSub replication for presence.
+
+<div class="api-entry-anchor" id="api-function-with_queue_limits" aria-hidden="true"></div>
+
+### `with_queue_limits`
+
+```gleam
+pub fn with_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound queued and executing local mutations. Replication is not admitted here.
+
+<div class="api-entry-anchor" id="api-function-with_telemetry" aria-hidden="true"></div>
+
+### `with_telemetry`
+
+```gleam
+pub fn with_telemetry(Config) -> Config
+```
+
+Emit local mutation queue occupancy and overload events.

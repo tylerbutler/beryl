@@ -505,7 +505,7 @@ pub fn update_crash_runs_socket_close_callback_test() -> Nil {
 
   // Drive an app-info event into the crashing update; the runtime rescues the
   // crash, tears the socket down, and runs its registered close callback.
-  socket.notify(sender, Nil)
+  let assert Ok(_) = socket.notify(sender, Nil)
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   // The runtime itself survives the rescued crash and keeps serving.

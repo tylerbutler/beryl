@@ -103,6 +103,7 @@ pub type FrameOutcome {
   FrameOversized
   FrameRateLimited
   FrameDecodeFailed
+  FrameAdmissionRejected
 }
 ```
 
@@ -260,7 +261,7 @@ pub fn route_binary(
   sockets: beryl.Sockets,
   socket_id: String,
   data: BitArray
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Route a raw binary frame for a codec without a binary decoder.
@@ -276,7 +277,7 @@ pub fn route_decoded(
   sockets: beryl.Sockets,
   socket_id: String,
   message: codec.Inbound
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Route a transport-decoded inbound message to the runtime. Decode in
@@ -297,7 +298,7 @@ pub fn route_decoded_binary(
   sockets: beryl.Sockets,
   socket_id: String,
   message: codec.Inbound
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Route a transport-decoded binary message while preserving its binary

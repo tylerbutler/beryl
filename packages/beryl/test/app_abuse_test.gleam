@@ -175,7 +175,7 @@ pub fn direct_route_decoded_enforces_message_rate_test() -> Nil {
     codec.decode_text(transport.active_codec(channels))(
       "[null,\"r-1\",\"room:a\",\"message\",{}]",
     )
-  transport.route_decoded(channels, "s1", first)
+  let assert Ok(_) = transport.route_decoded(channels, "s1", first)
   let assert Ok(Message("room:a", "message", _, _)) =
     process.receive(events, 500)
 
@@ -183,7 +183,7 @@ pub fn direct_route_decoded_enforces_message_rate_test() -> Nil {
     codec.decode_text(transport.active_codec(channels))(
       "[null,\"r-2\",\"room:a\",\"message\",{}]",
     )
-  transport.route_decoded(channels, "s1", second)
+  let assert Ok(_) = transport.route_decoded(channels, "s1", second)
   process.receive(events, 100) |> should.be_error
 }
 

@@ -77,13 +77,14 @@ pub fn broadcast_from_local_only_excludes_socket_test() -> Nil {
   drain(sender)
   drain(other)
 
-  beryl.broadcast_from(
-    channels,
-    "sender-socket",
-    "room:lobby",
-    "typing",
-    json.object([#("user", json.string("alice"))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast_from(
+      channels,
+      "sender-socket",
+      "room:lobby",
+      "typing",
+      json.object([#("user", json.string("alice"))]),
+    )
 
   let assert Ok(message) = process.receive(other, 500)
   message
@@ -117,13 +118,14 @@ pub fn broadcast_from_with_pubsub_excludes_socket_on_remote_runtime_test() -> Ni
     10,
   )
 
-  beryl.broadcast_from(
-    origin_channels,
-    "sender-socket",
-    "room:lobby",
-    "typing",
-    json.object([#("user", json.string("alice"))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast_from(
+      origin_channels,
+      "sender-socket",
+      "room:lobby",
+      "typing",
+      json.object([#("user", json.string("alice"))]),
+    )
 
   let assert Ok(message) = process.receive(remote_other, 500)
   message
@@ -145,7 +147,8 @@ pub fn broadcast_presence_diff_local_delivers_phoenix_event_test() -> Nil {
   join_topic(channels, "socket-1", "room:lobby", socket)
   drain(socket)
 
-  beryl.broadcast_presence_diff(channels, "room:lobby", presence_diff())
+  let assert Ok(_) =
+    beryl.broadcast_presence_diff(channels, "room:lobby", presence_diff())
 
   let assert Ok(message) = process.receive(socket, 500)
   message
@@ -173,10 +176,11 @@ pub fn presence_track_can_broadcast_presence_diff_to_joined_socket_test() -> Nil
     presence.default_config("node1")
     |> presence.with_on_diff(fn(diff) {
       beryl.broadcast_presence_diff(channels, "room:lobby", diff)
+      |> should.equal(Ok(Nil))
     })
   let assert Ok(presence_handle) = presence.start(presence_config)
 
-  let _ =
+  let assert Ok(_) =
     presence.track(
       presence_handle,
       "room:lobby",
@@ -217,7 +221,12 @@ pub fn broadcast_presence_diff_with_pubsub_delivers_to_remote_runtime_test() -> 
     10,
   )
 
-  beryl.broadcast_presence_diff(origin_channels, "room:lobby", presence_diff())
+  let assert Ok(_) =
+    beryl.broadcast_presence_diff(
+      origin_channels,
+      "room:lobby",
+      presence_diff(),
+    )
 
   let assert Ok(message) = process.receive(remote_socket, 500)
   message

@@ -195,12 +195,13 @@ pub fn a_server_side_broadcast_reaches_both_systems_identically_test() -> Nil {
   let received =
     matrix.compare_with(config: matrix.default_config, scenario: fn(system) {
       let #(client, _join) = join(system)
-      beryl.broadcast(
-        system.sockets,
-        lobby,
-        "announcement",
-        json.object([#("body", json.string("hello"))]),
-      )
+      let assert Ok(_) =
+        beryl.broadcast(
+          system.sockets,
+          lobby,
+          "announcement",
+          json.object([#("body", json.string("hello"))]),
+        )
       let assert [received] = matrix.take_exactly(client, 1)
       matrix.close(client)
       received
@@ -237,7 +238,8 @@ pub fn a_leave_ends_the_channel_identically_test() -> Nil {
       let frames = matrix.take_exactly(client, 2)
 
       // The topic is gone: a later broadcast reaches nobody on this socket.
-      beryl.broadcast(system.sockets, lobby, "after_leave", json.object([]))
+      let assert Ok(_) =
+        beryl.broadcast(system.sockets, lobby, "after_leave", json.object([]))
       matrix.expect_silence(client)
       matrix.close(client)
       frames

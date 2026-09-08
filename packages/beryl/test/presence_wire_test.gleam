@@ -173,7 +173,7 @@ pub fn encode_state_groups_metas_by_presence_key_test() -> Nil {
 pub fn tracked_metas_carry_phx_ref_test() -> Nil {
   let assert Ok(tracker) = presence.start(presence.default_config("wire-node"))
 
-  let ref =
+  let assert Ok(ref) =
     presence.track(
       tracker,
       "room:lobby",
@@ -205,9 +205,9 @@ pub fn tracked_multi_session_metas_have_distinct_phx_refs_test() -> Nil {
   let assert Ok(tracker) =
     presence.start(presence.default_config("wire-node-2"))
 
-  let ref1 =
+  let assert Ok(ref1) =
     presence.track(tracker, "room:lobby", "user:1", "socket-1", json.object([]))
-  let ref2 =
+  let assert Ok(ref2) =
     presence.track(tracker, "room:lobby", "user:1", "socket-2", json.object([]))
 
   { ref1 != ref2 } |> should.be_true
@@ -232,7 +232,7 @@ pub fn non_object_meta_is_stored_unchanged_test() -> Nil {
   let assert Ok(tracker) =
     presence.start(presence.default_config("wire-node-3"))
 
-  let _ref =
+  let assert Ok(_ref) =
     presence.track(
       tracker,
       "room:lobby",

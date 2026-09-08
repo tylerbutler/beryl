@@ -15,6 +15,7 @@
 ////   `cursor_rooms_update` wrappers that drive the standalone cursors server
 ////   through a `beryl.child_spec` runtime, reusing that per-topic surface.
 
+import beryl/overload
 import beryl/socket.{type Effect, type JoinRef}
 import beryl/topic
 import example_helper/color
@@ -22,6 +23,7 @@ import example_helper/payload
 import example_helper/session_presence
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{Some}
@@ -165,7 +167,14 @@ pub fn cursor_rooms_update(
           True -> {
             let #(model, effects) =
               join(context, state.socket_id, topic_name, payload, ref)
-            socket.notify(state.self, PublishRoster(topic_name))
+            case socket.notify(state.self, PublishRoster(topic_name)) {
+              Ok(Nil) -> Nil
+              Error(error) ->
+                io.println_error(
+                  "[cursor] roster notification rejected: "
+                  <> overload.describe(error),
+                )
+            }
             socket.Next(
               CursorRooms(
                 ..state,
