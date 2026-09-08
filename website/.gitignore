@@ -4,3 +4,4 @@ dist/
 node_modules/
 *.tsbuildinfo
 *.done.build.log
+interactive/build/

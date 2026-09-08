@@ -17,8 +17,9 @@
 	},
 	"scripts": {
 		"astro": "astro",
-		"build:site": "astro build",
-		"check:astro": "astro check",
+		"build:interactive": "cd interactive && gleam build --target javascript",
+		"build:site": "pnpm run generate:og && pnpm run build:interactive && astro build",
+		"check:astro": "pnpm run build:interactive && astro check",
 		"check:snippets": "node scripts/check-snippets.mjs",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
 		"dev": "astro dev",
@@ -26,7 +27,9 @@
 		"generate:reference": "node scripts/generate-reference.mjs",
 		"preview": "astro preview",
 		"start": "astro dev",
-		"test:reference": "node --test scripts/generate-reference.test.mjs"
+		"test:interactive": "cd interactive && gleam test --target javascript",
+		"test:reference": "node --test scripts/generate-reference.test.mjs",
+		"test:e2e": "playwright test"
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.10",
@@ -38,6 +41,7 @@
 		"astro-mermaid": "^2.1.0",
 		"astro-tinylytics": "^0.1.0",
 		"mermaid": "^11.16.1",
+		"phoenix": "^1.8.9",
 		"sharp": "^0.35.3",
 		"starlight-links-validator": "^0.24.1",
 		"starlight-llms-txt": "^0.11.0",
@@ -45,6 +49,7 @@
 	},
 	"devDependencies": {
 		"@fec/remark-a11y-emoji": "^4.0.2",
+		"@playwright/test": "^1.61.1",
 		"rimraf": "^6.1.3"
 	}
 }
