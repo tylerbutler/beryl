@@ -174,6 +174,18 @@ just test
 gleam test -- --verbose
 ```
 
+### Tutorial browser demos
+
+Run `just site-demos-test` to build the documentation site and test its three
+tutorial simulations with Playwright. After a site build, run
+`pnpm --dir website test:demos` to repeat only the browser tests. To select
+one demo, append its test file, such as `e2e/socket-loop.spec.ts`.
+
+The tests start a local preview on port 4329. Stop any other service on that
+port before running them. Install Chromium with
+`pnpm --dir website exec playwright install chromium` if Playwright reports
+a missing browser. Test reports and traces stay in ignored website directories.
+
 ### Writing Tests
 
 Tests use the `gleeunit` framework:
