@@ -48,3 +48,4 @@ gleam_otp = { version = ">= 1.2.0 and < 2.0.0" }
 gleam_stdlib = { version = ">= 1.0.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 glinter = { version = ">= 2.19.0 and < 3.0.0" }
+glisten = { version = ">= 9.0.1 and < 10.0.0" }
