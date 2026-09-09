@@ -252,6 +252,22 @@ test: add edge case tests for topic matching
 Releases are driven by trellis changelog fragments (TOML files in
 `.changes/unreleased/` with `project`, `kind`, and `body` fields).
 
+### When a fragment is required
+
+A fragment applies only to what a released package ships — its `src/`,
+`gleam.toml`, or `manifest.toml`. It describes what a consumer of the
+published package receives. Add a fragment when you change a package's public
+API, its observable behavior, its dependency requirements, or its `///` doc
+comments (these ship in the API reference).
+
+Do not add a fragment for anything a package does not ship. The `website/`,
+`docs/`, and `examples/` directories and the dev tooling reach no consumer, so
+a fragment for them bumps a version that nobody sees. Test files, internal
+refactors, and formatting that keep the consumer-visible behavior the same
+also need no fragment.
+
+### Steps
+
 1. Make changes following the commit message convention
 2. Add a changelog entry: `just change <package> <kind> "<body>"`
    (e.g. `just change beryl Fixed "handle concurrent leave/join"`); PR CI
