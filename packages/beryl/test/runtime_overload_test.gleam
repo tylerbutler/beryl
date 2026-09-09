@@ -367,6 +367,8 @@ pub fn saturated_router_rejects_admission_and_both_transport_frame_kinds_test() 
           seed: socket.empty_seed(),
           connection_permit: permit,
           base_selector: process.new_selector(),
+          config: server.default_config("/socket"),
+          force_close: fn() { Ok(Nil) },
           logger_name: "overload.test",
           telemetry: transport.telemetry(sockets, kind),
           codec: option.None,

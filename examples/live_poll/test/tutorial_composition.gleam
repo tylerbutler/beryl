@@ -52,7 +52,8 @@ pub fn update(
   case input {
     socket.Join("guide", _, ref) -> {
       let generation = model.guide_generation + 1
-      socket.notify(model.sender, GuideReady(generation, initial_tip))
+      let assert Ok(Nil) =
+        socket.notify(model.sender, GuideReady(generation, initial_tip))
       socket.Next(
         Model(
           ..model,
@@ -193,7 +194,7 @@ pub fn handlers(
     }),
     channel.handler("guide", fn(context) {
       guide_sender(context.self)
-      channel.notify(context.self, Ready(initial_tip))
+      let assert Ok(Nil) = channel.notify(context.self, Ready(initial_tip))
       channel.accept(0)
       |> channel.on_info(fn(count, message) {
         let Ready(text) = message
