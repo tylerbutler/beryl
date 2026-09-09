@@ -33,6 +33,12 @@ jobs:
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           run-deps: false
+          cache: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        with:
+          node-version: 22
 
       - name: Restore Gleam dependencies
         id: cache
@@ -43,9 +49,11 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml') }}
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: gleam-deps-v2-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml', 'scripts/prepare-gleam-deps.mjs', 'website/scripts/check-snippets.mjs', '!**/build/**', '!**/node_modules/**') }}
           restore-keys: |
-            gleam-deps-${{ runner.os }}-
+            gleam-deps-v2-${{ runner.os }}-
 
       - name: Install Gleam dependencies
         run: just deps-gleam
@@ -59,12 +67,9 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ steps.cache.outputs.cache-primary-key }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
-        with:
-          node-version: 22
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # ratchet:pnpm/action-setup@v6
