@@ -2,6 +2,8 @@
 title: Installation
 ---
 
+import InstallDependencies from '../../components/InstallDependencies.astro';
+
 :::note[Pre-1.0]
 beryl is not yet version 1.0. Minor releases can change the API, and the
 library is not ready for production. Report problems to help define version
@@ -12,11 +14,7 @@ Install beryl packages from
 [GitHub](https://github.com/tylerbutler/beryl). They are not on Hex. Add them
 as Git dependencies in `gleam.toml`:
 
-```toml
-[dependencies]
-beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
-```
+<InstallDependencies />
 
 Download the dependencies:
 
@@ -77,7 +75,7 @@ An error occurred while trying to parse this file:
     gleam.toml
 
   |
-7 | beryl = { git = "...", ref = "main", path = "packages/beryl" }
+7 | beryl = { git = "...", ref = "...", path = "packages/beryl" }
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 data did not match any variant of untagged enum Requirement
 ```
@@ -87,9 +85,15 @@ upgrade Gleam.
 
 ## Pin a Git ref
 
-The example uses `main`, which matches these docs. The branch can change without
-warning. Check [GitHub Releases](https://github.com/tylerbutler/beryl/releases).
-When one tag contains all required packages, replace `main` with that tag.
+The install example uses the highest published minor-series tag (`vMAJOR.MINOR`)
+at the time of the website build. Use this tag to stay on one API series rather
+than follow `main`. Check
+[repository tags](https://github.com/tylerbutler/beryl/tags) before you move to
+a newer minor release.
+
+Minor-series tags can move to newer patch releases. For an immutable pin, use
+the commit SHA that the tag points to. These docs follow `main` and can describe
+features that are not in a release yet.
 
 Gleam resolves Git dependencies at the specified ref. Use the same ref for
 `beryl` and its transport package. Do not mix versions.

@@ -144,6 +144,12 @@ case result {
 
 ### Documentation
 
+The website installation example selects the highest published `vMAJOR.MINOR`
+tag with `git ls-remote` during rendering. Website builds need Git and network
+access to GitHub; they fail if the lookup fails or no minor tag exists. Local
+tags and shallow clone depth do not affect the selected ref. Rebuild the
+website after publishing a new minor tag to update the example.
+
 Document all public functions with `///` comments:
 
 ```gleam
