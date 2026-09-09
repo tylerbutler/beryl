@@ -3,6 +3,7 @@
 //// and typed server-side sends through the layer-owned `Sender`.
 
 import beryl/channel
+import beryl/overload
 import beryl/presence
 import beryl/socket
 import gleam/dynamic
@@ -39,7 +40,11 @@ fn context(
     seed: socket.empty_seed(),
     topic: topic,
     payload: payload,
-    deliver: deliver,
+    deliver: fn(mail) {
+      deliver(mail)
+      Ok(Nil)
+    },
+    queue_snapshot: fn() { Error(overload.Unavailable) },
   )
 }
 
@@ -306,8 +311,8 @@ pub fn sender_seals_typed_info_into_one_mail_per_send_test() -> Nil {
     |> accepted_channel
 
   let assert Ok(sender) = process.receive(senders, 100)
-  channel.notify(sender, Note("hi"))
-  channel.notify(sender, Note("again"))
+  let assert Ok(_) = channel.notify(sender, Note("hi"))
+  let assert Ok(_) = channel.notify(sender, Note("again"))
 
   // One send, one mail: no coalescing.
   let assert Ok(first) = process.receive(outbox, 100)
@@ -351,8 +356,8 @@ pub fn an_unrun_mail_delivers_nothing_test() -> Nil {
     |> accepted_channel
 
   let assert Ok(sender) = process.receive(senders, 100)
-  channel.notify(sender, Note("dropped"))
-  channel.notify(sender, Note("kept"))
+  let assert Ok(_) = channel.notify(sender, Note("dropped"))
+  let assert Ok(_) = channel.notify(sender, Note("kept"))
 
   // The router drops the first mail instead of running it — as it does for
   // a stale generation — so its payload reaches nothing at all, and the
@@ -393,7 +398,7 @@ pub fn a_mail_addressed_to_another_join_delivers_nothing_test() -> Nil {
 
   let assert Ok(sender_of_first) = process.receive(senders, 100)
   let assert Ok(_sender_of_second) = process.receive(senders, 100)
-  channel.notify(sender_of_first, Note("mine"))
+  let assert Ok(_) = channel.notify(sender_of_first, Note("mine"))
   let assert Ok(mail) = process.receive(outbox, 100)
 
   // Handing one join's mail to another join delivers nothing and leaves
@@ -437,7 +442,7 @@ pub fn info_can_close_the_channel_test() -> Nil {
     )
     |> accepted_channel
   let assert Ok(sender) = process.receive(senders, 100)
-  channel.notify(sender, Bye)
+  let assert Ok(_) = channel.notify(sender, Bye)
   let assert Ok(mail) = process.receive(outbox, 100)
 
   case live.on_info(mail) {

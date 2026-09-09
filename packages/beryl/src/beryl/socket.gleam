@@ -25,6 +25,7 @@
 //// continue, so a broadcast from elsewhere may arrive between two effects
 //// from this socket.
 
+import beryl/overload.{type AdmissionError}
 import beryl/presence.{type PresenceEntry}
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/reference.{type Reference}
@@ -119,6 +120,8 @@ pub type StopReason {
   /// unqualified import from shadowing the prelude's `Result` `Error`
   /// constructor.
   Errored(String)
+  /// A local queue or callback result exceeded its admission budget.
+  AdmissionRejected(AdmissionError)
 }
 
 /// Everything the runtime delivers to the app's `update` function.
@@ -269,19 +272,36 @@ pub fn empty_seed() -> ConnectSeed {
 /// `notify` with it. The socket's `update` function receives the message as
 /// an `Info` event. This typed send does not erase the message type.
 pub opaque type Sender(message) {
-  Sender(send: fn(message) -> Nil)
+  Sender(
+    send: fn(message) -> Result(Nil, AdmissionError),
+    snapshot: fn() -> Result(overload.Occupancy, AdmissionError),
+  )
 }
 
 @internal
-pub fn make_sender(send: fn(message) -> Nil) -> Sender(message) {
-  Sender(send)
+pub fn make_sender(
+  send: fn(message) -> Result(Nil, AdmissionError),
+  snapshot: fn() -> Result(overload.Occupancy, AdmissionError),
+) -> Sender(message) {
+  Sender(send, snapshot)
+}
+
+/// Read socket queue accounting without waiting for its callback.
+pub fn queue_snapshot(
+  sender: Sender(message),
+) -> Result(overload.Occupancy, AdmissionError) {
+  sender.snapshot()
 }
 
 /// Send a typed server-side message to a socket.
 ///
 /// The socket's `update` function receives `Info(message)`. The runtime
-/// ignores the message if the socket has disconnected.
-pub fn notify(sender: Sender(message), message: message) -> Nil {
+/// reports an admission error if the socket is closed or its queue is full.
+/// `Ok` means admitted, not handled by the application's callback.
+pub fn notify(
+  sender: Sender(message),
+  message: message,
+) -> Result(Nil, AdmissionError) {
   sender.send(message)
 }
 
@@ -330,7 +350,8 @@ pub type WorkerContext {
     seed: ConnectSeed,
     topic: String,
     payload: Dynamic,
-    deliver: fn(Mail) -> Nil,
+    deliver: fn(Mail) -> Result(Nil, AdmissionError),
+    queue_snapshot: fn() -> Result(overload.Occupancy, AdmissionError),
   )
 }
 

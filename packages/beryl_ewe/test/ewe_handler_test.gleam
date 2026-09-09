@@ -656,10 +656,12 @@ fn send_mixed_broadcasts(
     False -> {
       let text_event = "text-" <> int.to_string(index)
       beryl.broadcast(channels, "room:lobby", text_event, json.object([]))
+      |> should.equal(Ok(Nil))
       receive_text(healthy_client, 1000) |> should.equal(Ok(text_event))
 
       let binary_event = "binary-" <> int.to_string(index)
       beryl.broadcast(channels, "room:lobby", binary_event, json.object([]))
+      |> should.equal(Ok(Nil))
       receive_binary(healthy_client, 1000)
       |> should.equal(Ok(bit_array.from_string(binary_event)))
 

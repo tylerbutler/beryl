@@ -88,6 +88,7 @@ fn route_binary(
   raw: String,
 ) -> Nil {
   transport.route_binary(channels, socket_id, bit_array.from_string(raw))
+  |> should.equal(Ok(Nil))
 }
 
 pub fn binary_join_and_event_route_and_reply_over_binary_test() -> Nil {

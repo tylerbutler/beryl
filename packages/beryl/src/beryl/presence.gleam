@@ -50,8 +50,10 @@
 
 import beryl/internal
 import beryl/log
+import beryl/overload
 import beryl/pubsub.{type PubSub}
 import beryl/wire
+import beryl/work_queue
 import gleam/bit_array
 import gleam/bool
 import gleam/crypto
@@ -228,6 +230,8 @@ pub opaque type Config {
     /// Runs synchronously on the actor, strictly before the read model is
     /// republished for the topics the diff touches -- see `with_on_diff`.
     on_diff: Option(fn(Diff) -> Nil),
+    queue_limits: overload.Limits,
+    telemetry: Bool,
   )
 }
 
@@ -235,24 +239,27 @@ pub opaque type Config {
 pub type PresenceUpdateError {
   /// The ref is unknown, already removed, or was not returned by `track`.
   UnknownRef(ref: String)
+  RequestFailed(overload.CallError)
 }
 
 /// Messages that the presence actor handles.
 pub opaque type Message {
+  WorkAvailable
+  WorkRecoveryTick
   Track(
     topic: String,
     key: String,
     session_id: String,
     meta: json.Json,
-    reply: Subject(String),
+    reply: fn(String) -> Nil,
   )
   Update(
     ref: String,
     meta: json.Json,
-    reply: Subject(Result(String, PresenceUpdateError)),
+    reply: fn(Result(String, PresenceUpdateError)) -> Nil,
   )
-  Untrack(ref: String, reply: Subject(Nil))
-  UntrackAll(session_id: String, reply: Subject(Nil))
+  Untrack(ref: String, reply: fn(Nil) -> Nil)
+  UntrackAll(session_id: String, reply: fn(Nil) -> Nil)
   /// Asynchronous track used by the runtime's effect interpreter. The new
   /// entry supersedes every runtime-owned ref this actor still holds for the
   /// same logical `(session_id, topic, key)` — `replace`, when the caller knows the
@@ -282,11 +289,10 @@ pub opaque type Message {
     operation_id: Int,
     reply: Subject(MutationAck),
   )
-  /// Fire-and-forget runtime-owned session sweep, used while the runtime is
+  /// Fire-and-forget runtime-owned socket sweep, used while the runtime is
   /// shutting down and unable to wait for an acknowledgement. Public refs
-  /// for the same session remain independently owned.
-  UntrackRuntimeAllAsync(session_id: String)
-  RuntimeOwnerDown(owner: process.Pid)
+  /// and refs from replacement socket owners remain independently owned.
+  UntrackRuntimeOwner(owner: process.Pid)
   BroadcastTick
   /// Incoming PubSub sync message from a remote replica
   RemoteSync(pubsub_message: pubsub.Message(SyncPayload))
@@ -463,6 +469,7 @@ type ActorState {
     /// The ETS table backing the read model that `list`, `get_by_key`, and
     /// `count` read directly. Owned by this actor process; see `publish_topic`.
     read_table: ReadTable,
+    inbox: work_queue.Queue(Message),
   )
 }
 
@@ -479,12 +486,24 @@ pub fn default_config(replica: String) -> Config {
     broadcast_interval_ms: 1500,
     call_timeout_ms: 5000,
     on_diff: None,
+    queue_limits: overload.shared_limits(),
+    telemetry: False,
   )
 }
 
 /// Enable PubSub replication for presence.
 pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
   Config(..config, pubsub: Some(pubsub))
+}
+
+/// Bound queued and executing local mutations. Replication is not admitted here.
+pub fn with_queue_limits(config: Config, limits: overload.Limits) -> Config {
+  Config(..config, queue_limits: limits)
+}
+
+/// Emit local mutation queue occupancy and overload events.
+pub fn with_telemetry(config: Config) -> Config {
+  Config(..config, telemetry: True)
 }
 
 /// Set how often presence state is broadcast for replication.
@@ -559,6 +578,14 @@ pub fn start(config: Config) -> Result(Presence, actor.StartError) {
   |> result.map(fn(_started) { from_name(name, config.call_timeout_ms) })
 }
 
+/// Read mutation and reserved-cleanup accounting without waiting for the actor.
+pub fn queue_snapshot(
+  presence: Presence,
+) -> Result(overload.Occupancy, overload.AdmissionError) {
+  use queue <- result.try(work_queue.lookup(presence.read_name))
+  work_queue.snapshot(queue)
+}
+
 fn from_name(name: process.Name(Message), call_timeout_ms: Int) -> Presence {
   Presence(
     subject: process.named_subject(name),
@@ -594,6 +621,15 @@ fn build_presence(
     // process stops or crashes, matching the "actor unavailable" failure
     // mode readers already get from a dead actor.
     let read_table = ffi_new_read_table(read_name)
+    let inbox =
+      work_queue.new(
+        config.queue_limits,
+        overload.PresenceQueue,
+        config.telemetry,
+        fn() { process.send(subject, WorkAvailable) },
+      )
+    work_queue.name(inbox, read_name)
+    schedule_work_recovery(subject)
     let initial =
       ActorState(
         crdt: crdt,
@@ -603,6 +639,7 @@ fn build_presence(
         refs: dict.new(),
         runtime_owners: set.new(),
         read_table: read_table,
+        inbox: inbox,
       )
 
     case config.pubsub {
@@ -632,17 +669,7 @@ fn build_presence(
         |> Ok
       }
       None -> {
-        let no_pubsub_initial =
-          ActorState(
-            crdt: crdt,
-            config: config,
-            self_subject: Some(subject),
-            dirty: False,
-            refs: dict.new(),
-            runtime_owners: set.new(),
-            read_table: read_table,
-          )
-        actor.initialised(no_pubsub_initial)
+        actor.initialised(initial)
         |> actor.returning(subject)
         |> Ok
       }
@@ -800,18 +827,17 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
 /// to that actor. The ref is also merged into object metas as `phx_ref` for
 /// Phoenix client compatibility.
 ///
-/// Panics if the presence actor is unavailable or does not reply within the
-/// configured call timeout (5 seconds by default).
+/// Returns a typed call error on admission failure, owner exit, or timeout
+/// (5 seconds by default). A timeout cancels pending work, but a running
+/// mutation may still complete.
 pub fn track(
   presence: Presence,
   topic: String,
   key: String,
   session_id: String,
   meta: json.Json,
-) -> String {
-  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
-    Track(topic, key, session_id, meta, reply)
-  })
+) -> Result(String, overload.CallError) {
+  call(presence, fn(reply) { Track(topic, key, session_id, meta, reply) })
 }
 
 /// Replace the meta of a presence created by `track`.
@@ -824,38 +850,40 @@ pub fn track(
 /// or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
 /// unknown, already removed, or belongs to the internal runtime.
 ///
-/// Panics if the presence actor is unavailable or does not reply within the
-/// configured call timeout (5 seconds by default).
+/// `RequestFailed` wraps admission, owner-exit, and timeout errors. A timeout
+/// cancels pending work, but a running mutation may still complete.
 pub fn update(
   presence: Presence,
   ref: String,
   meta: json.Json,
 ) -> Result(String, PresenceUpdateError) {
-  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
-    Update(ref, meta, reply)
-  })
+  call(presence, fn(reply) { Update(ref, meta, reply) })
+  |> result.map_error(RequestFailed)
+  |> result.flatten
 }
 
 /// Untrack a specific presence using the ref returned by `track`.
 ///
 /// Removing an unknown or already-removed ref is a harmless no-op.
 ///
-/// Panics if the presence actor is unavailable or does not reply within the
-/// configured call timeout (5 seconds by default).
-pub fn untrack(presence: Presence, ref: String) -> Nil {
-  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
-    Untrack(ref, reply)
-  })
+/// Returns a typed call error on admission failure, owner exit, or timeout.
+/// A timeout cancels pending work, but a running mutation may still complete.
+pub fn untrack(
+  presence: Presence,
+  ref: String,
+) -> Result(Nil, overload.CallError) {
+  call(presence, fn(reply) { Untrack(ref, reply) })
 }
 
 /// Untrack all presences for a session, such as when a socket disconnects.
 ///
-/// Panics if the presence actor is unavailable or does not reply within the
-/// configured call timeout (5 seconds by default).
-pub fn untrack_all(presence: Presence, session_id: String) -> Nil {
-  process.call(presence.subject, presence.call_timeout_ms, fn(reply) {
-    UntrackAll(session_id, reply)
-  })
+/// Returns a typed call error on admission failure, owner exit, or timeout.
+/// A timeout cancels pending work, but a running mutation may still complete.
+pub fn untrack_all(
+  presence: Presence,
+  session_id: String,
+) -> Result(Nil, overload.CallError) {
+  call(presence, fn(reply) { UntrackAll(session_id, reply) })
 }
 
 // ── Asynchronous mutation protocol (package-internal) ───────────────────────
@@ -887,9 +915,11 @@ pub fn track_async(
   tag tag: String,
   operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
-) -> Nil {
-  process.send(
-    presence.subject,
+) -> Result(Nil, overload.AdmissionError) {
+  use queue <- result.try(work_queue.lookup(presence.read_name))
+  work_queue.publish_with_cleanup(
+    queue,
+    owner,
     TrackAsync(
       topic: topic,
       key: key,
@@ -901,7 +931,9 @@ pub fn track_async(
       operation_id: operation_id,
       reply: reply,
     ),
+    UntrackRuntimeOwner(owner),
   )
+  |> result.map(fn(_) { Nil })
 }
 
 /// Untrack a batch of refs asynchronously. Unknown or already-removed refs
@@ -914,22 +946,37 @@ pub fn untrack_async(
   tag tag: String,
   operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
-) -> Nil {
-  process.send(
-    presence.subject,
+) -> Result(Nil, overload.AdmissionError) {
+  use queue <- result.try(work_queue.lookup(presence.read_name))
+  work_queue.send(
+    queue,
     UntrackAsync(refs: refs, tag: tag, operation_id: operation_id, reply: reply),
   )
 }
 
-/// Sweep every runtime-owned presence a session still holds, without
+/// Sweep every presence a socket owner still holds, without
 /// acknowledgement. Used while the runtime is shutting down, when it can no
-/// longer wait. Public synchronous refs for the same session are untouched.
+/// longer wait. Public refs and replacement socket owners are untouched.
 @internal
-pub fn untrack_runtime_all_async(
+pub fn untrack_runtime_owner_async(
   presence: Presence,
-  session_id: String,
+  owner: process.Pid,
 ) -> Nil {
-  process.send(presence.subject, UntrackRuntimeAllAsync(session_id))
+  let result = {
+    use queue <- result.try(work_queue.lookup(presence.read_name))
+    work_queue.activate_cleanup(queue, owner)
+  }
+  case result {
+    Ok(Nil) -> Nil
+    Error(error) ->
+      log.warn(
+        internal.logger("beryl.presence"),
+        "Presence cleanup owner unavailable",
+        [
+          #("reason", overload.describe(error)),
+        ],
+      )
+  }
 }
 
 /// Whether the presence actor is still running.
@@ -1012,12 +1059,51 @@ pub fn count(presence: Presence, topic: String) -> Result(Int, Nil) {
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
 
+fn call(
+  presence: Presence,
+  request: fn(fn(reply) -> Nil) -> Message,
+) -> Result(reply, overload.CallError) {
+  use queue <- result.try(
+    work_queue.lookup(presence.read_name)
+    |> result.map_error(overload.AdmissionRejected),
+  )
+  work_queue.call(queue, presence.call_timeout_ms, request)
+}
+
+fn schedule_work_recovery(subject: Subject(Message)) -> Nil {
+  let _timer = process.send_after(subject, 100, WorkRecoveryTick)
+  Nil
+}
+
+fn handle_available_work(state: ActorState) -> actor.Next(ActorState, Message) {
+  case work_queue.take(state.inbox) {
+    Error(Nil) -> actor.continue(state)
+    Ok(#(reservation, message)) -> {
+      case state.self_subject {
+        Some(subject) -> process.send(subject, WorkAvailable)
+        None -> Nil
+      }
+      let next = handle_message(state, message)
+      work_queue.release(state.inbox, reservation)
+      next
+    }
+  }
+}
+
 fn handle_message(
   actor_state: ActorState,
   message: Message,
 ) -> actor.Next(ActorState, Message) {
   let logger = internal.logger("beryl.presence")
   case message {
+    WorkAvailable -> handle_available_work(actor_state)
+    WorkRecoveryTick -> {
+      case actor_state.self_subject {
+        Some(subject) -> schedule_work_recovery(subject)
+        None -> Nil
+      }
+      handle_available_work(actor_state)
+    }
     Track(topic, key, session_id, meta, reply) -> {
       let #(new_state, ref, _meta) =
         do_track(actor_state, topic, key, session_id, meta, SupersedeNothing)
@@ -1025,7 +1111,7 @@ fn handle_message(
       // The read model was published inside `do_track`, before this reply,
       // so a `track(); list()` caller always observes the entry it just
       // tracked.
-      process.send(reply, ref)
+      reply(ref)
       actor.continue(new_state)
     }
 
@@ -1042,11 +1128,11 @@ fn handle_message(
               SupersedePublicRef(ref),
             )
           log_tracked(logger, topic, key, session_id, new_ref)
-          process.send(reply, Ok(new_ref))
+          reply(Ok(new_ref))
           actor.continue(new_state)
         }
         Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner(_))) | Error(Nil) -> {
-          process.send(reply, Error(UnknownRef(ref)))
+          reply(Error(UnknownRef(ref)))
           actor.continue(actor_state)
         }
       }
@@ -1065,8 +1151,10 @@ fn handle_message(
     ) ->
       case process.is_alive(owner) {
         False -> {
+          let assert Ok(Nil) =
+            work_queue.activate_cleanup(actor_state.inbox, owner)
           process.send(reply, MutationAck(tag, operation_id, Untracked))
-          actor.continue(do_untrack_runtime_owner(actor_state, owner))
+          actor.continue(actor_state)
         }
         True -> {
           let actor_state = monitor_runtime_owner(actor_state, owner)
@@ -1090,7 +1178,7 @@ fn handle_message(
 
     Untrack(ref, reply) -> {
       let new_state = do_untrack_refs(actor_state, [ref])
-      process.send(reply, Nil)
+      reply(Nil)
       actor.continue(new_state)
     }
 
@@ -1102,14 +1190,11 @@ fn handle_message(
 
     UntrackAll(session_id, reply) -> {
       let new_state = do_untrack_all(actor_state, session_id)
-      process.send(reply, Nil)
+      reply(Nil)
       actor.continue(new_state)
     }
 
-    UntrackRuntimeAllAsync(session_id) ->
-      actor.continue(do_untrack_runtime_all(actor_state, session_id))
-
-    RuntimeOwnerDown(owner) ->
+    UntrackRuntimeOwner(owner) ->
       actor.continue(
         do_untrack_runtime_owner(actor_state, owner)
         |> fn(state) {
@@ -1155,7 +1240,7 @@ fn monitor_runtime_owner(
     when: set.contains(actor_state.runtime_owners, owner),
     return: actor_state,
   )
-  let assert Some(subject) = actor_state.self_subject
+  let inbox = actor_state.inbox
   let presence_actor = process.self()
   let _watcher =
     process.spawn_unlinked(fn() {
@@ -1171,7 +1256,19 @@ fn monitor_runtime_owner(
         })
         |> process.selector_receive_forever
       case exited {
-        RuntimeOwnerExited -> process.send(subject, RuntimeOwnerDown(owner))
+        RuntimeOwnerExited -> {
+          // The obligation was reserved with the track, so saturation cannot
+          // prevent cleanup or add an unaccounted message to the actor mailbox.
+          case work_queue.activate_cleanup(inbox, owner) {
+            Ok(Nil) | Error(overload.Unavailable) -> Nil
+            Error(error) ->
+              log.warn(
+                internal.logger("beryl.presence"),
+                "Presence owner cleanup failed",
+                [#("reason", overload.describe(error))],
+              )
+          }
+        }
         PresenceExited -> Nil
       }
     })
@@ -1432,22 +1529,6 @@ fn do_untrack_all(actor_state: ActorState, session_id: String) -> ActorState {
   // every topic the leave touched (from the pre-mutation diff).
   publish_topics(actor_state.read_table, new_crdt, dict.keys(diff.leaves))
   ActorState(..actor_state, crdt: new_crdt, dirty: True, refs: new_refs)
-}
-
-fn do_untrack_runtime_all(
-  actor_state: ActorState,
-  session_id: String,
-) -> ActorState {
-  actor_state.refs
-  |> dict.filter(fn(_ref, tracked) {
-    tracked.session_id == session_id
-    && case tracked.owner {
-      RuntimeOwner(_) -> True
-      PublicOwner -> False
-    }
-  })
-  |> dict.keys
-  |> do_untrack_refs(actor_state, _)
 }
 
 fn do_untrack_runtime_owner(

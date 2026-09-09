@@ -13,6 +13,9 @@ guide explains which controls to configure.
 
 Even with no configuration, beryl enforces:
 
+- **Local work admission**: finite router, socket, worker, and presence budgets,
+  plus callback-result limits. See [overload handling](/guides/overload/) for
+  defaults, Result APIs, and memory exclusions.
 - **Post-receipt frame size**: once the transport has assembled a complete
   inbound WebSocket frame, beryl closes the connection if it exceeds 1 MiB
   (`with_max_inbound_frame_bytes` to adjust).

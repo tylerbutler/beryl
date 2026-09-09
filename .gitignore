@@ -29,7 +29,8 @@ Thumbs.db
 docs/architecture-deck.html
 
 # Local k6 load-test summaries
-/load/results/
+/load/results/*
+!/load/results/admission-bounds.json
 
 
 # APM dependencies

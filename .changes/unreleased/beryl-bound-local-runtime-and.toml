@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Bound local runtime and presence work with finite item and byte limits, callback-result limits, and queue snapshots. Notifications, broadcasts, and presence mutations now return typed errors; handle admission rejection and timeouts that may leave running work."

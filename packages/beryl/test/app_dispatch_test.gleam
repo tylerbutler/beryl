@@ -230,7 +230,7 @@ pub fn sender_delivers_typed_info_test() -> Nil {
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _join_reply = app_test_helper.recv(frames)
 
-  socket.notify(sender, Note("hello"))
+  let assert Ok(_) = socket.notify(sender, Note("hello"))
 
   // The observer sees the typed Info event...
   let assert Join(_, _, _) = app_test_helper.next_event(events)

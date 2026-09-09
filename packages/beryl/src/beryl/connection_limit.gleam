@@ -45,7 +45,7 @@ fn new_reservation_token() -> ReservationToken
 @external(erlang, "beryl_ffi", "admission_token_cancel")
 fn cancel_reservation_token(token: ReservationToken) -> Bool
 
-@external(erlang, "beryl_ffi", "admission_token_pending")
+@external(erlang, "beryl_ffi", "reservation_token_pending")
 fn reservation_token_pending(token: ReservationToken) -> Bool
 
 /// Opaque connection limiter registry.

@@ -255,6 +255,44 @@ pub fn transfer_fails_after_request_owner_dies_test() -> Nil {
   Nil
 }
 
+pub fn transferred_slot_survives_requester_exit_and_restart_test() -> Nil {
+  let channels = start_with_limit(1)
+  let acquired = process.new_subject()
+  let requester =
+    process.spawn_unlinked(fn() {
+      let exit = process.new_subject()
+      let assert Ok(permit) =
+        transport.acquire_connection_slot(channels, "10.0.0.13")
+      process.send(acquired, #(permit, exit))
+      let assert Ok(Nil) = process.receive(exit, 2000)
+    })
+  let assert Ok(#(permit, exit)) = process.receive(acquired, 500)
+  transport.bind_connection_slot(permit) |> should.equal(Ok(Nil))
+  process.send(exit, Nil)
+  test_helper.wait_until(fn() { !process.is_alive(requester) }, 1000, 10)
+
+  transport.bind_connection_slot(permit) |> should.equal(Ok(Nil))
+  let assert Ok(old_limiter) = beryl.app_limiter_pid(channels)
+  process.kill(old_limiter)
+  test_helper.wait_until(
+    fn() {
+      case beryl.app_limiter_pid(channels) {
+        Ok(limiter) -> limiter != old_limiter
+        Error(Nil) -> False
+      }
+    },
+    1000,
+    10,
+  )
+  transport.acquire_connection_slot(channels, "10.0.0.13")
+  |> should.be_error
+  transport.bind_connection_slot(permit) |> should.equal(Ok(Nil))
+  transport.release_connection_slot(permit)
+  let assert Ok(next) = transport.acquire_connection_slot(channels, "10.0.0.13")
+  transport.release_connection_slot(next)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
 pub fn cancellation_survives_limiter_restart_test() -> Nil {
   let channels = start_with_limit(1)
   let assert Ok(permit) =

@@ -1,11 +1,13 @@
 import beryl
 import beryl/channel
+import beryl/overload
 import beryl/socket
 import beryl/transport
 import beryl/wire
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/json
+import gleam/list
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
@@ -70,6 +72,7 @@ fn send(
     |> json.to_string
   let assert Ok(decoded) = wire.decode_message(encoded)
   transport.route_decoded(sockets, id, decoded)
+  |> should.equal(Ok(Nil))
 }
 
 fn empty() -> json.Json {
@@ -109,13 +112,13 @@ pub fn tutorial_counter_request_and_state_test() -> Nil {
   recv(frames) |> contains("\"status\":\"ok\"")
   send(sockets, "counter", "counter:demo", "get_count", empty())
   recv(frames) |> contains("\"response\":0")
-  socket.notify(sender, counter.Increment)
-  socket.notify(sender, counter.Increment)
-  socket.notify(sender, counter.Increment)
+  socket.notify(sender, counter.Increment) |> should.equal(Ok(Nil))
+  socket.notify(sender, counter.Increment) |> should.equal(Ok(Nil))
+  socket.notify(sender, counter.Increment) |> should.equal(Ok(Nil))
   no_frame(frames)
   send(sockets, "counter", "counter:demo", "get_count", empty())
   recv(frames) |> contains("\"response\":3")
-  socket.notify(sender, counter.Increment)
+  socket.notify(sender, counter.Increment) |> should.equal(Ok(Nil))
   no_frame(frames)
   send(sockets, "counter", "counter:demo", "get_count", empty())
   recv(frames) |> contains("\"response\":4")
@@ -147,7 +150,10 @@ type GuideAccess {
   ChannelGuide(process.Subject(channel.Sender(composition.GuideInfo)))
 }
 
-fn guide_delivery(access: GuideAccess, generation: Int) -> fn(String) -> Nil {
+fn guide_delivery(
+  access: GuideAccess,
+  generation: Int,
+) -> fn(String) -> Result(Nil, overload.AdmissionError) {
   case access {
     RawGuide(sender) -> fn(text) {
       socket.notify(sender, composition.GuideReady(generation, text))
@@ -203,7 +209,7 @@ fn composition_scenario(mode: Mode) -> List(String) {
   let initial = recv(frames)
   initial |> contains("\"delivery\":1")
   let old_delivery = guide_delivery(access, 1)
-  old_delivery("another tip")
+  old_delivery("another tip") |> should.equal(Ok(Nil))
   let second_tip = recv(frames)
   second_tip |> contains("\"delivery\":2")
 
@@ -219,7 +225,7 @@ fn composition_scenario(mode: Mode) -> List(String) {
   send(sockets, "client", "poll:demo", "phx_leave", empty())
   recv(frames) |> contains("\"status\":\"ok\"")
   recv(frames) |> contains("\"phx_close\"")
-  old_delivery("guide remains")
+  old_delivery("guide remains") |> should.equal(Ok(Nil))
   let after_leave = recv(frames)
   after_leave |> contains("\"delivery\":3")
   send(sockets, "client", "poll:demo", "phx_join", empty())
@@ -232,15 +238,24 @@ fn composition_scenario(mode: Mode) -> List(String) {
   send(sockets, "client", "guide", "phx_leave", empty())
   recv(frames) |> contains("\"status\":\"ok\"")
   recv(frames) |> contains("\"phx_close\"")
-  old_delivery("must not arrive after leave")
+  // The worker may have closed its queue or exited and removed it.
+  let stale_outcomes = case mode {
+    Raw -> [Ok(Nil)]
+    Channels -> [Error(overload.Closed), Error(overload.Unavailable)]
+  }
+  stale_outcomes
+  |> list.contains(old_delivery("must not arrive after leave"))
+  |> should.be_true
   no_frame(frames)
   send(sockets, "client", "guide", "phx_join", empty())
   recv(frames) |> contains("\"status\":\"ok\"")
   let new_guide = recv(frames)
   new_guide |> contains("\"delivery\":1")
   let new_delivery = guide_delivery(access, 2)
-  old_delivery("must not arrive in replacement")
-  new_delivery("fresh tip")
+  stale_outcomes
+  |> list.contains(old_delivery("must not arrive in replacement"))
+  |> should.be_true
+  new_delivery("fresh tip") |> should.equal(Ok(Nil))
   let fresh_tip = recv(frames)
   fresh_tip |> contains("\"delivery\":2")
   fresh_tip |> contains("fresh tip")

@@ -66,6 +66,7 @@ import beryl/app_supervisor
 import beryl/connection_limit
 import beryl/internal
 import beryl/log
+import beryl/overload
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
@@ -74,6 +75,7 @@ import beryl/runtime
 import beryl/socket
 import beryl/topic
 import beryl/wire/codec
+import beryl/work_queue
 import gleam/bool
 import gleam/erlang/process.{type Subject}
 import gleam/int
@@ -185,6 +187,10 @@ pub opaque type Config {
     /// How long a socket waits for a presence mutation to be applied
     /// before the runtime gives up on it (app-dispatch systems only).
     presence_op_timeout_ms: Int,
+    router_queue_limits: overload.Limits,
+    socket_queue_limits: overload.Limits,
+    worker_queue_limits: overload.Limits,
+    effect_limits: overload.Limits,
   )
 }
 
@@ -235,7 +241,40 @@ pub fn config(codec: codec.Codec) -> Config {
     topic_rates: [],
     presence: None,
     presence_op_timeout_ms: 5000,
+    router_queue_limits: overload.shared_limits(),
+    socket_queue_limits: overload.socket_limits(),
+    worker_queue_limits: overload.worker_limits(),
+    effect_limits: overload.worker_limits(),
   )
+}
+
+/// Bound outstanding local router requests.
+pub fn with_router_queue_limits(
+  config: Config,
+  limits: overload.Limits,
+) -> Config {
+  Config(..config, router_queue_limits: limits)
+}
+
+/// Bound outstanding socket work, including presence-suspended continuations.
+pub fn with_socket_queue_limits(
+  config: Config,
+  limits: overload.Limits,
+) -> Config {
+  Config(..config, socket_queue_limits: limits)
+}
+
+/// Bound outstanding input for each topic-worker incarnation.
+pub fn with_worker_queue_limits(
+  config: Config,
+  limits: overload.Limits,
+) -> Config {
+  Config(..config, worker_queue_limits: limits)
+}
+
+/// Bound each callback's effect count and inspectable result bytes.
+pub fn with_effect_limits(config: Config, limits: overload.Limits) -> Config {
+  Config(..config, effect_limits: limits)
 }
 
 /// Configure a per-topic-pattern message rate limit for an app-dispatch
@@ -605,10 +644,13 @@ pub type AppHandle {
       fn() -> Nil,
     ) -> Bool,
     socket_disconnected: fn(String) -> Nil,
-    route_decoded: fn(String, codec.Inbound) -> Nil,
-    route_decoded_binary: fn(String, codec.Inbound) -> Nil,
-    route_binary: fn(String, BitArray) -> Nil,
-    broadcast: fn(String, String, json.Json, Option(String)) -> Nil,
+    route_decoded: fn(String, codec.Inbound) ->
+      Result(Nil, overload.AdmissionError),
+    route_decoded_binary: fn(String, codec.Inbound) ->
+      Result(Nil, overload.AdmissionError),
+    route_binary: fn(String, BitArray) -> Result(Nil, overload.AdmissionError),
+    broadcast: fn(String, String, json.Json, Option(String)) ->
+      Result(Nil, overload.AdmissionError),
     stop: fn() -> Result(Nil, StopError),
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
@@ -617,6 +659,7 @@ pub type AppHandle {
     /// tests).
     socket_factory_owner: fn() -> Result(process.Pid, Nil),
     stats: fn() -> Result(runtime.StatsSnapshot, StatsError),
+    queue_snapshot: fn() -> Result(overload.Occupancy, overload.AdmissionError),
   )
 }
 
@@ -626,6 +669,7 @@ pub type AppHandle {
 pub type StatsError {
   StatsRuntimeUnavailable
   StatsRequestTimedOut
+  StatsAdmissionRejected(overload.AdmissionError)
 }
 
 /// The wire codec configured for this system.
@@ -728,8 +772,8 @@ pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
 /// The runtime is the subtree's significant transient child, so draining and
 /// stopping it (normal termination) auto-shuts down the subtree supervisor and
 /// its sibling limiter. To honour "wait for only the beryl subtree to
-/// terminate", the runtime and the optional limiter processes are monitored
-/// before the drain and their `Down` messages are awaited afterwards; the
+/// terminate", their pids are captured before the drain and monitored after
+/// admission succeeds. A monitor also reports an already-exited pid; the
 /// application's parent supervisor and sibling children are never touched.
 ///
 /// Idempotent: `Error(NotRunning)` when the runtime is already down (pre-start,
@@ -742,25 +786,17 @@ fn stop_app_subtree(
   case app.runtime_owner() {
     Error(Nil) -> internal.result_error(NotRunning)
     Ok(runtime_pid) -> {
-      let runtime_monitor = process.monitor(runtime_pid)
-      let limiter_monitor =
+      let limiter_owner =
         option.from_result(app_limiter_owner(connection_limiter))
-        |> option.map(process.monitor)
-      // Drain sockets (deliver `Closed` and close transports) and stop the
-      // runtime; this triggers the subtree auto-shutdown.
-      case app.stop() {
-        Error(error) -> {
-          drop_subtree_monitors(runtime_monitor, limiter_monitor)
-          Error(error)
-        }
-        Ok(Nil) -> await_subtree_down(runtime_monitor, limiter_monitor)
-      }
+      use _ <- result.try(app.stop())
+      let runtime_monitor = process.monitor(runtime_pid)
+      let limiter_monitor = option.map(limiter_owner, process.monitor)
+      await_subtree_down(runtime_monitor, limiter_monitor)
     }
   }
 }
 
-/// Release the subtree monitors taken before a drain that failed, so the
-/// caller's mailbox does not collect their later `Down` messages.
+/// Release subtree monitors after waiting, including when a wait times out.
 fn drop_subtree_monitors(
   runtime_monitor: process.Monitor,
   limiter_monitor: Option(process.Monitor),
@@ -786,6 +822,7 @@ fn await_subtree_down(
         None -> Ok(Nil)
       }
     })
+  drop_subtree_monitors(runtime_monitor, limiter_monitor)
   case awaited {
     Ok(Nil) -> Ok(Nil)
     Error(Nil) -> internal.result_error(StopTimeout)
@@ -821,8 +858,7 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
 /// The returned `Sockets` handle is name-backed and usable immediately, even
 /// before the supervision tree that owns the returned child specification is
 /// started. Before startup, during a runtime restart window, and after
-/// shutdown, fire-and-forget handle operations are no-ops and connection
-/// admission fails cleanly rather than panicking.
+/// shutdown, sends return admission errors and connection admission fails.
 ///
 /// ## Example
 ///
@@ -952,14 +988,11 @@ fn build_app_subtree(
       config: config,
       connection_limiter: option.map(limiter_name, connection_limit.from_name),
       app: app_handle(
-        process.named_subject(runtime_name),
-        process.named_subject(supervisor_name),
+        runtime_name,
+        supervisor_name,
         process.named_subject(factory_name),
-        fn(runtime_pid) {
-          runtime.start_socket_child(
-            factory: factory_name,
-            router_pid: runtime_pid,
-          )
+        fn(spawn) {
+          runtime.start_socket_child(factory: factory_name, spawn: spawn)
         },
       ),
     )
@@ -1011,7 +1044,7 @@ fn child_spec_supervisor(
       init: init,
       update: update,
       open_worker: open_worker,
-      router: process.named_subject(runtime_name),
+      router: runtime_name,
       name: factory_name,
     )
     |> supervision.restart(supervision.Permanent)
@@ -1060,46 +1093,76 @@ fn child_spec_supervisor(
   static_supervisor.start(builder)
 }
 
-fn await_admission(
-  reply: Subject(Bool),
-  admission: runtime.AdmissionToken,
+fn reserve_socket_start(
+  name: process.Name(runtime.Message(message)),
+  socket_id: String,
+  seed: socket.ConnectSeed,
+  start: fn(work_queue.Queue(runtime.Message(message)), work_queue.Reservation) ->
+    Bool,
 ) -> Bool {
-  case process.receive(reply, 1000) {
-    Ok(admitted) -> admitted
-    Error(Nil) -> !runtime.cancel_admission(admission)
-  }
-}
-
-fn finish_admission(
-  started: actor.Started(Subject(runtime.Message(message))),
-  reply: Subject(Bool),
-  admission: runtime.AdmissionToken,
-) -> Bool {
-  // nolint: prefer_guard_clause -- bool.guard eagerly evaluates its return value, which would stop an admitted actor
-  case await_admission(reply, admission) {
-    True -> True
-    False -> {
-      // Stopping is safe whether the runtime refused the actor or the
-      // admission timed out after the actor had already stopped.
-      process.send(started.data, runtime.StopSocketActor)
+  let reserved =
+    work_queue.lookup(name)
+    |> result.try(fn(queue) {
+      work_queue.retain(queue, #(socket_id, seed))
+      |> result.map(fn(reservation) { #(queue, reservation) })
+    })
+  case reserved {
+    Ok(#(queue, reservation)) -> start(queue, reservation)
+    Error(error) -> {
+      log.new("beryl.runtime")
+      |> log.warn("Socket admission rejected", [
+        #("reason", overload.describe(error)),
+      ])
       False
     }
   }
 }
 
-/// Build the monomorphic closure record over a generic runtime. This is
-/// plain closure capture by a generic function — the `model`/`message` types
-/// are sealed in here and never appear in any public signature. The
-/// subject is name-backed, so the closures keep working across supervised
-/// runtime restarts; sends are owner-guarded so use during a restart
-/// window or after `stop` degrades to a no-op instead of a crash.
+fn finish_socket_admission(
+  queue: work_queue.Queue(runtime.Message(message)),
+  reservation: work_queue.Reservation,
+  child: process.Pid,
+  request: fn(runtime.AdmissionToken, fn(Bool) -> Nil) ->
+    runtime.Message(message),
+) -> Bool {
+  let admission = runtime.new_admission_token()
+  case
+    work_queue.call_reserved(queue, reservation, 1000, request(admission, _))
+  {
+    Ok(admitted) -> admitted
+    Error(overload.RequestTimedOut) ->
+      case runtime.cancel_admission(admission) {
+        True -> {
+          process.kill(child)
+          False
+        }
+        False -> True
+      }
+    Error(error) -> {
+      let reason = case error {
+        overload.AdmissionRejected(reason) -> overload.describe(reason)
+        overload.OwnerUnavailable -> "runtime owner exited"
+        overload.RequestTimedOut -> "request timed out"
+      }
+      log.new("beryl.runtime")
+      |> log.warn("Socket admission failed", [#("reason", reason)])
+      work_queue.release(queue, reservation)
+      process.kill(child)
+      False
+    }
+  }
+}
+
+/// Seal the generic runtime behind name-backed closures. Sends return
+/// admission errors while the current owner is unavailable.
 fn app_handle(
-  subject: Subject(runtime.Message(message)),
-  supervisor: Subject(app_supervisor.Message),
+  name: process.Name(runtime.Message(message)),
+  supervisor: process.Name(app_supervisor.Message),
   factory: Subject(runtime.SocketFactoryMessage(message)),
-  start_socket_actor: fn(process.Pid) ->
-    Result(actor.Started(Subject(runtime.Message(message))), actor.StartError),
+  start_socket_actor: fn(runtime.SocketSpawn(message)) ->
+    Result(actor.Started(runtime.Inbox(message)), actor.StartError),
 ) -> AppHandle {
+  let subject = process.named_subject(name)
   AppHandle(
     admit_socket: fn(
       owner,
@@ -1116,68 +1179,83 @@ fn app_handle(
       }
       use <- bool.guard(when: !owner_matches, return: False)
 
-      // Phase one of admission starts the actor as a socket-factory child.
-      // The app `init` runs later in the actor, so registration stays O(1).
-      case start_socket_actor(owner) {
+      use queue, reservation <- reserve_socket_start(name, socket_id, seed)
+      // Reserve before starting a child; its initialiser binds orphan cleanup.
+      case start_socket_actor(runtime.SocketSpawn(owner, queue, reservation)) {
         // nolint: thrown_away_error -- admission exposes only success or failure; actor start details are not part of this transport callback
-        Error(_) -> False
-        Ok(started) -> {
-          let reply = process.new_subject()
-          let admission = runtime.new_admission_token()
-          process.send(
-            subject,
-            runtime.AdmitSocket(
-              owner,
-              socket_id,
-              send,
-              send_binary,
-              socket_codec,
-              seed,
-              close,
-              admission,
-              reply,
-              started.data,
-              started.pid,
-            ),
-          )
-          finish_admission(started, reply, admission)
+        Error(_) -> {
+          work_queue.release(queue, reservation)
+          False
         }
+        Ok(started) ->
+          finish_socket_admission(
+            queue,
+            reservation,
+            started.pid,
+            fn(admission, reply) {
+              runtime.AdmitSocket(
+                owner,
+                socket_id,
+                send,
+                send_binary,
+                socket_codec,
+                seed,
+                close,
+                admission,
+                reply,
+                started.data.subject,
+                started.pid,
+                started.data.queue,
+              )
+            },
+          )
       }
     },
     socket_disconnected: fn(socket_id) {
-      send_runtime(subject, runtime.SocketDisconnected(socket_id))
+      case work_queue.lookup(name) {
+        Ok(queue) -> work_queue.close_target(queue, socket_id)
+        Error(error) ->
+          log.new("beryl.runtime")
+          |> log.debug("Socket disconnect target unavailable", [
+            #("reason", overload.describe(error)),
+          ])
+      }
     },
     route_decoded: fn(socket_id, message) {
-      send_runtime(subject, runtime.RouteDecoded(socket_id, message))
+      send_runtime(name, runtime.RouteDecoded(socket_id, message))
     },
     route_decoded_binary: fn(socket_id, message) {
-      send_runtime(subject, runtime.RouteDecodedBinary(socket_id, message))
+      send_runtime(name, runtime.RouteDecodedBinary(socket_id, message))
     },
     route_binary: fn(socket_id, data) {
-      send_runtime(subject, runtime.HandleBinary(socket_id, data))
+      send_runtime(name, runtime.HandleBinary(socket_id, data))
     },
     broadcast: fn(topic_name, event_name, payload, except) {
       // The runtime owns local and distributed fan-out so every sender uses
       // one ordered path and PubSub attribution always uses the runtime pid.
       send_runtime(
-        subject,
+        name,
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
     },
     stop: fn() { request_runtime_stop(supervisor) },
     runtime_owner: fn() { process.subject_owner(subject) },
     socket_factory_owner: fn() { process.subject_owner(factory) },
+    queue_snapshot: fn() {
+      use queue <- result.try(work_queue.lookup(name))
+      work_queue.snapshot(queue)
+    },
     stats: fn() {
-      case process.subject_owner(subject) {
-        Error(Nil) -> Error(StatsRuntimeUnavailable)
-        Ok(_) -> {
-          let reply = process.new_subject()
-          send_runtime(subject, runtime.GetStats(reply))
-          case process.receive(reply, 1000) {
-            Error(Nil) -> Error(StatsRequestTimedOut)
-            Ok(snapshot) -> Ok(snapshot)
+      case work_queue.lookup(name) {
+        Error(error) -> Error(StatsAdmissionRejected(error))
+        Ok(queue) ->
+          case work_queue.call(queue, 1000, runtime.GetStats) {
+            Ok(stats) -> Ok(stats)
+            Error(overload.AdmissionRejected(error)) ->
+              Error(StatsAdmissionRejected(error))
+            Error(overload.RequestTimedOut) -> Error(StatsRequestTimedOut)
+            Error(overload.OwnerUnavailable) -> Error(StatsRuntimeUnavailable)
           }
-        }
       }
     },
   )
@@ -1186,31 +1264,21 @@ fn app_handle(
 // Record the intentional stop before asking the runtime to drain, so
 // restart-intensity exhaustion remains distinguishable from shutdown.
 fn request_runtime_stop(
-  supervisor: Subject(app_supervisor.Message),
+  supervisor: process.Name(app_supervisor.Message),
 ) -> Result(Nil, StopError) {
-  use _ <- result.try(ensure_supervisor_running(supervisor))
-  let started = process.new_subject()
   let finished = process.new_subject()
-  process.send(supervisor, app_supervisor.StopRuntime(started, finished))
 
-  case process.receive(started, 1000) {
+  case app_supervisor.request_stop(supervisor, finished) {
     Ok(app_supervisor.StopRejected) -> internal.result_error(NotRunning)
-    Error(Nil) -> internal.result_error(StopTimeout)
+    Error(overload.AdmissionRejected(_)) | Error(overload.OwnerUnavailable) ->
+      internal.result_error(NotRunning)
+    Error(overload.RequestTimedOut) -> internal.result_error(StopTimeout)
     Ok(app_supervisor.StopAccepted) ->
       case process.receive(finished, 5000) {
         Ok(app_supervisor.StopCompleted) -> Ok(Nil)
         Ok(app_supervisor.StopIncomplete) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
-  }
-}
-
-fn ensure_supervisor_running(
-  supervisor: Subject(app_supervisor.Message),
-) -> Result(Nil, StopError) {
-  case process.subject_owner(supervisor) {
-    Ok(_) -> Ok(Nil)
-    Error(Nil) -> internal.result_error(NotRunning)
   }
 }
 
@@ -1228,16 +1296,13 @@ fn stop_runtime(
   }
 }
 
-/// Send to the runtime only while its name is registered, so handle use
-/// during a supervised restart window or after `stop` is a quiet no-op.
+/// Reserve work on the current runtime owner, or return an admission error.
 fn send_runtime(
-  subject: Subject(runtime.Message(message)),
+  name: process.Name(runtime.Message(message)),
   message: runtime.Message(message),
-) -> Nil {
-  case process.subject_owner(subject) {
-    Ok(_) -> process.send(subject, message)
-    Error(Nil) -> Nil
-  }
+) -> Result(Nil, overload.AdmissionError) {
+  use queue <- result.try(work_queue.lookup(name))
+  work_queue.send(queue, message)
 }
 
 @internal
@@ -1276,6 +1341,10 @@ fn to_runtime_config(config: Config) -> runtime.Config {
     logging: internal_logging_config(config.logging),
     presence: config.presence,
     presence_op_timeout_ms: config.presence_op_timeout_ms,
+    router_queue_limits: config.router_queue_limits,
+    socket_queue_limits: config.socket_queue_limits,
+    worker_queue_limits: config.worker_queue_limits,
+    effect_limits: config.effect_limits,
   )
 }
 
@@ -1323,7 +1392,7 @@ pub fn broadcast(
   topic_name: String,
   event: String,
   payload: json.Json,
-) -> Nil {
+) -> Result(Nil, overload.AdmissionError) {
   channels.app.broadcast(topic_name, event, payload, None)
 }
 
@@ -1344,7 +1413,7 @@ pub fn broadcast_presence_diff(
   channels: Sockets,
   topic_name: String,
   diff: Diff,
-) -> Nil {
+) -> Result(Nil, overload.AdmissionError) {
   broadcast(
     channels,
     topic_name,
@@ -1377,6 +1446,6 @@ pub fn broadcast_from(
   topic_name: String,
   event: String,
   payload: json.Json,
-) -> Nil {
+) -> Result(Nil, overload.AdmissionError) {
   channels.app.broadcast(topic_name, event, payload, Some(except_socket_id))
 }

@@ -259,9 +259,9 @@ pub fn a_leave_followed_immediately_by_a_rejoin_is_ordered_test() -> Nil {
   let assert Ok(fresh) = process.receive(senders, 500)
 
   // The old join's sender reaches nothing; the new one works.
-  channel.notify(stale, Poke)
+  let assert Error(_) = channel.notify(stale, Poke)
   process.receive(reports, 100) |> should.be_error
-  channel.notify(fresh, Poke)
+  let assert Ok(_) = channel.notify(fresh, Poke)
   ran_pid(reports, "on_info") |> should.equal(second)
   helper.recv(frames) |> string.contains("poked") |> should.be_true
 }
@@ -326,7 +326,7 @@ pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() -> Nil {
     channel.handler("room:*", fn(context) {
       // As a presence tracker would: the join asks itself to publish the
       // roster, and the publish goes through a third process.
-      channel.notify(context.self, Poke)
+      let assert Ok(_) = channel.notify(context.self, Poke)
       channel.accept(Nil)
       |> channel.on_info(fn(_state, _poke) {
         process.send(process.named_subject(tracker), context.topic)
