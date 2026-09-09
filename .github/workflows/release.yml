@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  HEXPM_READ_API_KEY: ${{ secrets.HEXPM_API_KEY }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
