@@ -34,8 +34,32 @@ jobs:
         with:
           run-deps: false
 
+      - name: Restore Gleam dependencies
+        id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: gleam-deps-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: |
+            gleam-deps-${{ runner.os }}-
+
       - name: Install Gleam dependencies
         run: just deps-gleam
+
+      - name: Save Gleam dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
