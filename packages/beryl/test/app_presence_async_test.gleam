@@ -13,6 +13,7 @@ import beryl
 import beryl/channel
 import beryl/overload
 import beryl/presence
+import beryl/runtime
 import beryl/snapshot
 import beryl/socket.{
   type Effect, type Next, AcceptJoin, BroadcastPresence, Closed, Join, Message,
@@ -20,6 +21,8 @@ import beryl/socket.{
 }
 import beryl/transport
 import beryl/wire
+import beryl/wire/codec
+import beryl/work_queue
 import channel_dispatch_helper
 import gleam/dict
 import gleam/dynamic/decode
@@ -35,6 +38,270 @@ import test_helper
 
 pub fn main() -> Nil {
   gleeunit.main()
+}
+
+type LoopMessage {
+  Park
+  Tick(Int)
+}
+
+type ResumedLoop {
+  ResumedLoop(
+    sockets: beryl.Sockets,
+    sender: socket.Sender(LoopMessage),
+    frames: Subject(String),
+    closed: Subject(socket.StopReason),
+    pid: process.Pid,
+  )
+}
+
+fn start_resumed_loop(heartbeat_ms: Int, continuous: Bool) -> ResumedLoop {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let ready = process.new_subject()
+  let progress = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(limits) = overload.limits(items: 3, bytes: 8192)
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(handle)
+        |> beryl.with_socket_queue_limits(limits)
+        |> beryl.with_heartbeat(timeout_ms: heartbeat_ms),
+      init: fn(info) {
+        process.send(ready, #(info.self, process.self()))
+        #(info.self, [])
+      },
+      update: fn(model, input) {
+        let sender = model
+        case input {
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, None)])
+          socket.Info(Park) ->
+            socket.Next(model, [
+              socket.PresenceTrack("room:a", "user", json.null()),
+              socket.PresenceUntrack("room:a", "user"),
+              socket.Push("room:a", "resumed", json.null()),
+            ])
+          socket.Info(Tick(count)) -> {
+            case continuous || count < 256 {
+              True ->
+                socket.notify(sender, Tick(count + 1)) |> should.equal(Ok(Nil))
+              False -> Nil
+            }
+            case count {
+              128 -> process.send(progress, socket.queue_snapshot(sender))
+              _ -> Nil
+            }
+            socket.Next(model, [])
+          }
+          socket.Closed(_, reason) -> {
+            process.send(closed, reason)
+            socket.Next(model, [])
+          }
+          socket.Message(..) | socket.Binary(..) -> socket.Next(model, [])
+        }
+      },
+    )
+  let frames = app_test_helper.connect(sockets, "resumed")
+  let assert Ok(#(sender, pid)) = process.receive(ready, 1000)
+  app_test_helper.join_ok(sockets, frames, "resumed", "room:a", "j", "r")
+  arm(gate)
+  socket.notify(sender, Park) |> should.equal(Ok(Nil))
+  await_entered(entered)
+  socket.notify(sender, Tick(0)) |> should.equal(Ok(Nil))
+  let assert Ok(parked) = socket.queue_snapshot(sender)
+  parked.items |> should.equal(3)
+  socket.notify(sender, Tick(-1))
+  |> should.equal(Error(overload.Overloaded(overload.SocketQueue)))
+
+  // The same effect stack parks twice; neither its input nor its output
+  // reservation can be released between these two acknowledgements.
+  arm(gate)
+  release(gate)
+  await_entered(entered)
+  let assert Ok(parked_again) = socket.queue_snapshot(sender)
+  parked_again.items |> should.equal(3)
+  process.receive(progress, 0) |> should.equal(Error(Nil))
+  release(gate)
+  let assert Ok(Ok(running)) = process.receive(progress, 1000)
+  running.items |> should.equal(2)
+  running.high_items |> should.equal(3)
+  running.rejected |> should.equal(1)
+  running.cancelled |> should.equal(0)
+  // Ignore only the two known presence diffs, not arbitrary mailbox traffic.
+  list.each(["presence_diff", "presence_diff", "resumed"], fn(event) {
+    app_test_helper.recv(frames) |> string.contains(event) |> should.be_true
+  })
+  ResumedLoop(sockets, sender, frames, closed, pid)
+}
+
+fn await_normal_exit(monitor: process.Monitor) -> Nil {
+  let assert Ok(process.ProcessDown(reason: process.Normal, ..)) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(3000)
+  Nil
+}
+
+pub fn resumed_work_allows_shutdown_test() -> Nil {
+  let loop = start_resumed_loop(60_000, True)
+  let monitor = process.monitor(loop.pid)
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+  process.receive(loop.closed, 1000) |> should.equal(Ok(socket.Shutdown))
+  app_test_helper.recv(loop.frames)
+  |> string.contains("phx_close")
+  |> should.be_true
+  await_normal_exit(monitor)
+  socket.queue_snapshot(loop.sender)
+  |> should.equal(Error(overload.Unavailable))
+}
+
+pub fn resumed_work_allows_heartbeat_eviction_test() -> Nil {
+  let loop = start_resumed_loop(2000, True)
+  let monitor = process.monitor(loop.pid)
+  process.receive(loop.closed, 4000)
+  |> should.equal(Ok(socket.HeartbeatTimeout))
+  app_test_helper.recv(loop.frames)
+  |> string.contains("phx_close")
+  |> should.be_true
+  await_normal_exit(monitor)
+  socket.queue_snapshot(loop.sender)
+  |> should.equal(Error(overload.Unavailable))
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn resumed_work_allows_owner_monitor_test() -> Nil {
+  let loop = start_resumed_loop(60_000, True)
+  let monitor = process.monitor(loop.pid)
+  let owner = app_test_helper.runtime_pid(loop.sockets)
+  process.kill(owner)
+  await_normal_exit(monitor)
+  socket.queue_snapshot(loop.sender)
+  |> should.equal(Error(overload.Unavailable))
+  test_helper.wait_until(
+    fn() {
+      case transport.runtime_pid(loop.sockets) {
+        Ok(current) -> current != owner
+        Error(Nil) -> False
+      }
+    },
+    1000,
+    5,
+  )
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn resumed_work_releases_reservations_test() -> Nil {
+  let loop = start_resumed_loop(60_000, False)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = socket.queue_snapshot(loop.sender)
+      current.items == 0 && current.bytes == 0
+    },
+    1000,
+    5,
+  )
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+  process.receive(loop.closed, 1000) |> should.equal(Ok(socket.Shutdown))
+  app_test_helper.recv(loop.frames)
+  |> string.contains("phx_close")
+  |> should.be_true
+}
+
+@external(erlang, "beryl_test_process_ffi", "socket_queue")
+fn socket_queue(
+  router: process.Pid,
+  socket_id: String,
+) -> work_queue.Queue(runtime.Message(Nil))
+
+pub fn resumed_work_allows_worker_monitor_test() -> Nil {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let worker_ready = process.new_subject()
+  let progress = process.new_subject()
+  let frames = process.new_subject()
+  let assert Ok(limits) = overload.limits(items: 3, bytes: 8192)
+  let sockets =
+    channel_dispatch_helper.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(handle)
+        |> beryl.with_socket_queue_limits(limits)
+        |> beryl.with_heartbeat(timeout_ms: 60_000),
+      [
+        channel.handler("room:*", fn(context) {
+          process.send(worker_ready, #(context.self, process.self()))
+          channel.accept(Nil)
+          |> channel.on_info(fn(_, _: Nil) {
+            channel.next(Nil, [
+              channel.presence_track("user", json.null()),
+              channel.presence_untrack("user"),
+              channel.push("resumed", json.int(0)),
+            ])
+          })
+        }),
+      ],
+    )
+  let owner = app_test_helper.runtime_pid(sockets)
+  transport.admit_socket(
+    sockets: sockets,
+    owner: owner,
+    socket_id: "worker",
+    send: fn(frame) {
+      let assert Ok(message) = wire.decode_message(frame)
+      case codec.inbound_kind(message) {
+        codec.Event("resumed") | codec.Event("tick") -> {
+          let assert Ok(count) =
+            decode.run(codec.inbound_payload(message), decode.int)
+          let queue = socket_queue(owner, "worker")
+          // Replenish synchronously in the socket's send callback, so the
+          // inbox cannot become empty while waiting for a worker's result.
+          work_queue.send(
+            queue,
+            runtime.Broadcast("room:a", "tick", json.int(count + 1), None),
+          )
+          |> should.equal(Ok(Nil))
+          case count {
+            128 -> process.send(progress, work_queue.snapshot(queue))
+            _ -> Nil
+          }
+        }
+        _ -> process.send(frames, frame)
+      }
+      Ok(Nil)
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: None,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.equal(Ok(Nil))
+  app_test_helper.join_ok(sockets, frames, "worker", "room:a", "j", "r")
+  let assert Ok(#(sender, worker)) = process.receive(worker_ready, 1000)
+  arm(gate)
+  channel.notify(sender, Nil) |> should.equal(Ok(Nil))
+  await_entered(entered)
+  release(gate)
+  let assert Ok(Ok(running)) = process.receive(progress, 1000)
+  running.items |> should.equal(2)
+  { running.high_items <= 3 } |> should.be_true
+  running.rejected |> should.equal(0)
+  let queue = socket_queue(owner, "worker")
+  process.kill(worker)
+  list.each(["presence_diff", "presence_diff", "phx_error"], fn(event) {
+    app_test_helper.recv(frames) |> string.contains(event) |> should.be_true
+  })
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = work_queue.snapshot(queue)
+      current.items == 0 && current.bytes == 0
+    },
+    1000,
+    5,
+  )
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
 pub fn presence_suspension_bounds_reports_and_holds_worker_inputs_test() -> Nil {
