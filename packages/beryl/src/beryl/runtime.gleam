@@ -551,11 +551,11 @@ type SocketState(model, message) {
     join_refs: Dict(String, Option(String)),
     /// Presence refs tracked through socket effects, grouped by topic and key.
     presence_refs: Dict(String, Dict(String, #(String, Json))),
-    /// Message reply refs still awaiting a reply. A ref is added when its
-    /// `Message` is delivered, removed when answered (so a reply is
-    /// single-use), and pruned when its topic closes (so a stale ref stored
-    /// across a leave/rejoin is not replied to).
-    pending_reply_refs: Set(ReplyRef),
+    /// Wire keys reject duplicate outstanding requests, but are reusable
+    /// after a reply or topic close.
+    pending_reply_keys: Set(#(String, Option(String), Option(String))),
+    /// Unique reply capabilities and their reservations. Answering or closing
+    /// the receiving topic removes the capability permanently.
     reply_reservations: Dict(ReplyRef, work_queue.Reservation),
     /// The worker for each joined topic when the layer uses one process per
     /// topic. The runtime removes it when the topic starts to close.
@@ -1693,6 +1693,10 @@ fn enqueue_socket_msg(
 
 /// Deliver everything queued for a socket, in arrival order, stopping if
 /// another presence mutation suspends it again.
+///
+/// Leave admitted inbox work to `WorkAvailable`, which `after_socket_turn`
+/// schedules when the suspension ends. That path releases `current_work`
+/// and returns to the actor selector between items.
 fn drain_queue(
   state: State(model, message),
   socket_id: String,
@@ -1704,7 +1708,7 @@ fn drain_queue(
     return: state,
   )
   case dict.get(state.queued, socket_id) {
-    Error(Nil) -> drain_inbox(state, socket_id)
+    Error(Nil) -> state
     Ok(queue) ->
       drain_messages(
         State(..state, queued: dict.delete(state.queued, socket_id)),
@@ -1720,7 +1724,7 @@ fn drain_messages(
   messages: List(Message(message)),
 ) -> State(model, message) {
   case messages {
-    [] -> drain_inbox(state, socket_id)
+    [] -> state
     [message, ..rest] -> {
       let state = dispatch_socket_msg(state, socket_id, message)
       case dict.has_key(state.suspended, socket_id) {
@@ -1731,40 +1735,6 @@ fn drain_messages(
           )
         False -> drain_messages(state, socket_id, rest)
       }
-    }
-  }
-}
-
-fn drain_inbox(
-  state: State(model, message),
-  socket_id: String,
-) -> State(model, message) {
-  use <- bool.guard(
-    when: dict.has_key(state.suspended, socket_id)
-      || !dict.has_key(state.sockets, socket_id),
-    return: state,
-  )
-  case state.current_work {
-    Some(reservation) -> work_queue.release(state.inbox, reservation)
-    None -> Nil
-  }
-  let state = State(..state, current_work: None)
-  case work_queue.take(state.inbox) {
-    Error(Nil) -> state
-    Ok(#(reservation, message)) -> {
-      let current = case message {
-        WorkerReport(..) -> None
-        _ -> Some(reservation)
-      }
-      let state = State(..state, current_work: current)
-      let state = case message {
-        Broadcast(topic, event, payload, except) -> {
-          let _count = local_broadcast(state, topic, event, payload, except)
-          state
-        }
-        _ -> dispatch_socket_msg(state, socket_id, message)
-      }
-      drain_inbox(state, socket_id)
     }
   }
 }
@@ -2023,7 +1993,7 @@ fn register_socket(
           subscribed_topics: set.new(),
           join_refs: dict.new(),
           presence_refs: dict.new(),
-          pending_reply_refs: set.new(),
+          pending_reply_keys: set.new(),
           reply_reservations: dict.new(),
           workers: dict.new(),
           last_heartbeat: monotonic_time_ms(),
@@ -3237,7 +3207,12 @@ fn route_message_with_ref(
   started_at: Int,
   kind: telemetry.MessageKind,
 ) -> State(model, message) {
-  case set.contains(socket.pending_reply_refs, message_ref) {
+  case
+    set.contains(
+      socket.pending_reply_keys,
+      socket.reply_ref_wire_key(message_ref),
+    )
+  {
     True -> {
       state.logger
       |> log.warn("Inbound message rejected: reply ref already outstanding", [
@@ -4837,8 +4812,8 @@ fn apply_reply(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
-      case set.contains(socket.pending_reply_refs, ref) {
-        False -> {
+      case dict.get(socket.reply_reservations, ref) {
+        Error(Nil) -> {
           state.logger
           |> log.warn("Reply ignored: unknown or already-answered ref", [
             #("socket_id", socket_id),
@@ -4846,7 +4821,7 @@ fn apply_reply(
           ])
           state
         }
-        True -> {
+        Ok(reservation) -> {
           let frame =
             codec.encode_reply(socket.codec)(
               socket.reply_ref_join_ref(ref),
@@ -4857,14 +4832,15 @@ fn apply_reply(
             )
           let _send_result =
             send_frame_logged(state, socket, socket.reply_ref_topic(ref), frame)
-          dict.get(socket.reply_reservations, ref)
-          |> result.map(work_queue.release(state.inbox, _))
-          |> result.unwrap(Nil)
+          work_queue.release(state.inbox, reservation)
           store_socket(
             state,
             SocketState(
               ..socket,
-              pending_reply_refs: set.delete(socket.pending_reply_refs, ref),
+              pending_reply_keys: set.delete(
+                socket.pending_reply_keys,
+                socket.reply_ref_wire_key(ref),
+              ),
               reply_reservations: dict.delete(socket.reply_reservations, ref),
             ),
           )
@@ -4898,8 +4874,8 @@ fn unsubscribe_topic(
         SocketState(
           ..socket,
           subscribed_topics: set.delete(socket.subscribed_topics, topic_name),
-          pending_reply_refs: set.filter(socket.pending_reply_refs, fn(ref) {
-            socket.reply_ref_topic(ref) != topic_name
+          pending_reply_keys: set.filter(socket.pending_reply_keys, fn(key) {
+            key.0 != topic_name
           }),
           reply_reservations: kept,
         ),
@@ -4922,7 +4898,10 @@ fn register_reply_ref(
         state,
         SocketState(
           ..socket,
-          pending_reply_refs: set.insert(socket.pending_reply_refs, ref),
+          pending_reply_keys: set.insert(
+            socket.pending_reply_keys,
+            socket.reply_ref_wire_key(ref),
+          ),
           reply_reservations: dict.insert(
             socket.reply_reservations,
             ref,
