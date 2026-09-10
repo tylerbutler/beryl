@@ -1693,6 +1693,10 @@ fn enqueue_socket_msg(
 
 /// Deliver everything queued for a socket, in arrival order, stopping if
 /// another presence mutation suspends it again.
+///
+/// Leave admitted inbox work to `WorkAvailable`, which `after_socket_turn`
+/// schedules when the suspension ends. That path releases `current_work`
+/// and returns to the actor selector between items.
 fn drain_queue(
   state: State(model, message),
   socket_id: String,
@@ -1704,7 +1708,7 @@ fn drain_queue(
     return: state,
   )
   case dict.get(state.queued, socket_id) {
-    Error(Nil) -> drain_inbox(state, socket_id)
+    Error(Nil) -> state
     Ok(queue) ->
       drain_messages(
         State(..state, queued: dict.delete(state.queued, socket_id)),
@@ -1720,7 +1724,7 @@ fn drain_messages(
   messages: List(Message(message)),
 ) -> State(model, message) {
   case messages {
-    [] -> drain_inbox(state, socket_id)
+    [] -> state
     [message, ..rest] -> {
       let state = dispatch_socket_msg(state, socket_id, message)
       case dict.has_key(state.suspended, socket_id) {
@@ -1731,40 +1735,6 @@ fn drain_messages(
           )
         False -> drain_messages(state, socket_id, rest)
       }
-    }
-  }
-}
-
-fn drain_inbox(
-  state: State(model, message),
-  socket_id: String,
-) -> State(model, message) {
-  use <- bool.guard(
-    when: dict.has_key(state.suspended, socket_id)
-      || !dict.has_key(state.sockets, socket_id),
-    return: state,
-  )
-  case state.current_work {
-    Some(reservation) -> work_queue.release(state.inbox, reservation)
-    None -> Nil
-  }
-  let state = State(..state, current_work: None)
-  case work_queue.take(state.inbox) {
-    Error(Nil) -> state
-    Ok(#(reservation, message)) -> {
-      let current = case message {
-        WorkerReport(..) -> None
-        _ -> Some(reservation)
-      }
-      let state = State(..state, current_work: current)
-      let state = case message {
-        Broadcast(topic, event, payload, except) -> {
-          let _count = local_broadcast(state, topic, event, payload, except)
-          state
-        }
-        _ -> dispatch_socket_msg(state, socket_id, message)
-      }
-      drain_inbox(state, socket_id)
     }
   }
 }
