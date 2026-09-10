@@ -62,7 +62,7 @@ PubSub copies presence state between nodes.
 |---|---|
 | `default_config(replica)` | Create a config with no PubSub and a 1500 ms interval that remains unused until PubSub is attached |
 | `with_pubsub(config, ps)` | Attach a PubSub instance for cross-node state replication |
-| `with_broadcast_interval(config, ms)` | Set how often (in ms) the actor broadcasts its CRDT state; `0` disables |
+| `with_broadcast_interval(config, ms)` | Set the snapshot repair cadence in ms; `0` disables periodic requests |
 | `with_on_diff(config, callback)` | Register a callback invoked whenever a local change or merge produces a non-empty diff |
 | `with_queue_limits(config, limits)` | Set positive local mutation and cleanup budgets |
 | `with_telemetry(config)` | Enable queue occupancy events |
@@ -95,24 +95,39 @@ PubSub copies presence state between nodes.
 
 ## Sync between nodes
 
-When you configure `with_pubsub`, the presence actor runs a broadcast loop at
-the configured interval, which defaults to 1500 ms:
+When you configure `with_pubsub`, the presence actor requests snapshots once
+at startup and then at the configured interval, which defaults to 1500 ms:
 
-1. On each tick, the actor checks the `dirty` value. If local state changed,
-   it sends `SyncPayload(v, sender, state)` to `"beryl:presence:sync"`.
-   `broadcast_from` prevents self-delivery.
-2. Remote replicas receive the typed payload through PubSub. They merge it with
-   `state.merge_with_diff` and update their CRDT state.
+1. Each tick reads the current `pg` membership of `"beryl:presence:sync"`.
+   The actor sends each other member a request with a unique ref and a reply
+   subject. It keeps one outstanding ref per member and retries unanswered
+   requests, so a slow reply can span multiple ticks.
+2. Each member replies directly with its full CRDT state, even when it has no
+   new mutations. The requester accepts only a reply to that member's current
+   request, merges it with `state.merge_with_diff`, and updates its read model.
+   A request permits one reciprocal request, so a replica with its periodic
+   timer disabled can still receive updates. Reciprocal requests do not repeat.
 3. If the merge changes membership, the actor calls `on_diff` with the
    resulting `Diff`. It calls the function for each merge, so rapid merges do
    not lose diffs.
 
-Use `with_broadcast_interval(0)` to disable periodic broadcasts. Without
-PubSub, the configured interval is unused.
+This repairs late joins, missed delivery, and restored `pg` membership without
+an unrelated application mutation. The interval is a retry cadence, not a
+convergence deadline: membership propagation, network delivery, and actor work
+can take longer. Repair requires continued successful exchanges.
 
-Automated tests currently exercise replication with multiple presence actors
-on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
-tracks integration coverage across separate distributed Erlang nodes.
+Use `with_broadcast_interval(0)` to disable periodic requests. The initial
+request and replies to peers still run, but quiet recovery is not guaranteed.
+Without PubSub, the configured interval is unused.
+
+Presence uses version 2 of its internal sync envelope. Version 1 unsolicited
+snapshots and version 2 requests do not interoperate; upgrade the replicas in
+a presence scope together. The frozen five-element PubSub tuple is unchanged.
+
+Automated tests cover quiet bootstrap, partition repair, empty restart, and
+`pg` recovery across separate BEAM nodes, as well as same-node replication.
+[Issue #365](https://github.com/tylerbutler/beryl/issues/365) tracks the broader
+distributed PubSub and presence matrix.
 
 ## Request and sync flow
 
@@ -130,10 +145,10 @@ sequenceDiagram
   Pres-->>Runtime: mutation ack
   Runtime->>Read: list / count (direct read)
   loop every broadcast_interval
-    Pres->>PS: broadcast CRDT state
+    Pres->>PS: request snapshots from current members
+    PS-->>Remote: snapshot request
+    Remote-->>Pres: requested CRDT snapshot
   end
-  Remote->>PS: its state
-  PS-->>Pres: remote state
   Pres->>Pres: merge -> diff
   Pres-->>App: on_diff(diff)
 ```

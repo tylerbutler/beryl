@@ -72,7 +72,7 @@ runtime connects these layers.
 | `beryl/runtime` | Router, supervised socket actors, topic workers, effects, heartbeat |
 | `beryl/channel` | Typed handlers and per-topic state, run in topic workers |
 | `beryl/pubsub` | Distributed pub-sub via Erlang `pg`; typed `Subscriber(payload)` |
-| `beryl/presence` | Add-wins OR-set CRDT; track/untrack, dirty full-state replication |
+| `beryl/presence` | Add-wins OR-set CRDT; track/untrack, periodic snapshot repair |
 | `beryl/wire` | Pluggable codec; ships `phoenix_codec()` |
 | `beryl_mist` / `beryl_ewe` | WebSocket adapters; assign socket ids, route frames |
 | `beryl/group` | Named topic collections; supports grouped broadcast |

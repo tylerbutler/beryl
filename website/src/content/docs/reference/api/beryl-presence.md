@@ -20,8 +20,8 @@ Distributed presence tracking with a CRDT
  OTP actor that:
  - Handles track/update/untrack calls
  - Publishes an actor-owned ETS read model
- - Periodically broadcasts state via PubSub for cross-node replication
- - Receives remote state from PubSub and merges it internally
+ - Requests snapshots at startup and periodically through PubSub
+ - Receives remote snapshots and merges them internally
  - Invokes `on_diff` when local changes or merges produce non-empty diffs
 
  Presence is independent of the beryl runtime and runs under your
@@ -262,10 +262,10 @@ pub fn default_config(String) -> Config
 
 Default configuration (no PubSub).
 
- The broadcast interval defaults to 1500 ms. Adding `with_pubsub` enables
- periodic outbound broadcasts and inbound replication. Without PubSub, the
- interval is unused. Use a non-positive interval to disable periodic
- outbound broadcasts.
+ The repair interval defaults to 1500 ms. Adding `with_pubsub` enables an
+ initial snapshot request and periodic repair, even without local changes.
+ Without PubSub, the interval is unused. A non-positive interval disables
+ periodic requests, but the initial exchange and replies remain enabled.
 
 <div class="api-entry-anchor" id="api-function-diff" aria-hidden="true"></div>
 
@@ -475,9 +475,15 @@ pub fn with_broadcast_interval(
 ) -> Config
 ```
 
-Set how often presence state is broadcast for replication.
+Set how often presence requests full snapshots from its PubSub peers.
 
- Use a non-positive value to disable periodic broadcasts.
+ Requests run at startup and every `interval_ms` thereafter, including when
+ no application state changes. Lost requests or replies are retried on later
+ ticks. The default is 1500 ms; this is a repair cadence, not a convergence
+ deadline. Delivery, membership propagation, and actor work can delay repair.
+
+ A non-positive value disables periodic requests, not the initial request or
+ replies to peers. Without periodic requests, quiet recovery is not guaranteed.
 
 <div class="api-entry-anchor" id="api-function-with_call_timeout" aria-hidden="true"></div>
 
