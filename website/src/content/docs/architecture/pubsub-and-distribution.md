@@ -96,6 +96,10 @@ the message to members on Node 2. You do not need another message bus.
 
 ## Secure cluster connections
 
+Configure network isolation and mutually verified TLS before enabling Erlang
+distribution, even on a single node or in development. These requirements
+apply whether or not the node runs beryl.
+
 Treat all Erlang distribution traffic as **trusted cluster input**. A peer can
 run arbitrary code on connected nodes. The beryl capabilities below are only
 part of that access. Use network isolation and mutual TLS verification for the

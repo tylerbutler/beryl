@@ -64,7 +64,7 @@ crashes and limits their effect:
 
 | Crash site | Effect |
 |------------|--------|
-| `init` | The connecting socket is not registered; others unaffected |
+| `init` | The connecting socket closes and the runtime removes its routing state; others unaffected |
 | `update` on `Join` | The join is rejected; the socket survives |
 | `update` on `Message`/`Binary` | Only that topic is closed |
 | `update` on `Info` | The socket is torn down |
@@ -76,6 +76,12 @@ can discard the result and close only the affected topic or socket. Other socket
 actor faults close only that socket, and the router removes its entries. A
 router fault reaches the supervisor and closes all connections. See
 [What closes after a callback panic](/architecture/runtime/#what-closes-after-a-callback-crash).
+
+Use typed results and effects for expected failures. Crash boundaries let beryl
+complete protocol replies and cleanup after an unexpected callback exception;
+they do not replace supervision for faults outside those boundaries. They also
+do not undo database writes, messages, or other side effects that your callback
+completed before it crashed.
 
 See the [Error Handling guide](/guides/error-handling/) for details.
 
@@ -147,9 +153,12 @@ Both handles are name-backed and reach the replacement actor after a supervised
 restart. Presence entries and tracking refs, and group definitions and
 memberships, are in-memory state and reset when their actor restarts.
 
-:::note[PubSub is not supervised]
-`beryl/pubsub` uses Erlang's `pg` module, which the BEAM runtime manages.
-Configure it with `beryl.with_pubsub`.
+:::note[PubSub has separate supervision]
+`beryl/pubsub` starts a node-owned supervisor with a membership registry and
+`pg` process for each scope. A `pg` restart restores live local subscriptions
+from that registry. If the registry exits, existing handles become invalid;
+start the scope again and rejoin. Configure the runtime's PubSub handle with
+`beryl.with_pubsub`.
 :::
 
 ## Startup errors

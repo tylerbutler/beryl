@@ -1138,8 +1138,9 @@ fn handle_message(
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_message) ->
-      // Crash boundary — see internal.rescue. The payload's own shape is a
-      // frozen wire contract; drop malformed frames from mismatched peers.
+      // Crash boundary for processing exceptions, not payload validation or
+      // protection against hostile peers. The payload relies on a shared wire
+      // contract between trusted peers. See internal.rescue.
       case
         internal.rescue(fn() { handle_remote_broadcast(state, pubsub_message) })
       {

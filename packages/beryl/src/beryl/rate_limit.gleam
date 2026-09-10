@@ -2,10 +2,13 @@
 ////
 //// A `Bucket` is plain data refilled against the monotonic clock — there is
 //// no registry actor and no messaging. Callers own bucket storage (the
-//// runtime keeps per-socket and per-channel buckets in its own state;
-//// transports keep one per connection), so a check costs a dict update
-//// instead of a blocking cross-process call, cleanup is deleting the entry,
-//// and nothing leaks when a supervisor restarts the owner.
+//// socket actors keep per-socket and per-channel buckets in their state;
+//// transports keep one per connection). These buckets disappear when their
+//// owner exits. A new connection starts with a fresh allowance.
+////
+//// The separate connection limiter checkpoints per-IP admission buckets in
+//// ETS so they survive limiter-worker restarts. See `beryl/connection_limit`
+//// for that storage lifetime; this module does not persist buckets.
 
 import gleam/int
 

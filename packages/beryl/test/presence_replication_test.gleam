@@ -336,11 +336,10 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
 
 // ── Resilience: exception raised inside the merge/processing path ─────
 
-/// A valid remote sync can decode successfully yet still crash while the
-/// merge result is processed — for example, a user-supplied `on_diff`
-/// callback that panics, a mixed-version peer, or a compromised node. The
-/// exception must be contained: the shared presence actor stays alive and its
-/// state is not partially mutated by the poisoned sync.
+/// A valid remote sync triggers an `on_diff` callback exception before
+/// read-model publication. The presence actor stays alive and retains its
+/// previous CRDT. This does not test rollback after partial publication or
+/// protection against a hostile distribution peer.
 pub fn survives_exception_in_processing_path_test() -> Nil {
   let pubsub_instance = test_pubsub("processing_crash")
 
@@ -396,8 +395,8 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
     )
   list.length(presence_entries(tracker1, "room:lobby")) |> should.equal(2)
 
-  // State was not partially mutated: the poisoned sync never merged, so
-  // "room:poison" remains empty on node1.
+  // The callback failed before publication and the actor kept its previous
+  // CRDT, so "room:poison" remains empty on node1.
   presence_entries(tracker1, "room:poison") |> should.equal([])
 }
 

@@ -1597,10 +1597,10 @@ fn merge_remote_sync(
   sender: String,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
-  // Crash boundary — see internal.rescue. Version skew or bugs can produce
-  // malformed sync state; Erlang distribution peers are fully trusted (see
-  // the production-hardening guide). Preserve the previous actor state unless
-  // merge, on_diff, prune, and read-model publication all complete.
+  // Crash boundary for processing failures from bugs or version skew, not
+  // protection against hostile distribution peers: those peers are fully
+  // trusted. On failure, retain the previous actor state, but do not undo
+  // completed callback side effects or read-model writes. See internal.rescue.
   let processed =
     internal.rescue(fn() {
       let #(new_crdt, state_diff) =
@@ -1617,9 +1617,9 @@ fn merge_remote_sync(
           sender,
           state.replica(new_crdt),
         ])
-      // Republish every topic touched by either the merge or the prune,
-      // from the final crdt, in one pass — readers only ever see the
-      // fully-merged-and-pruned snapshot, never an intermediate one.
+      // Publish each touched topic from the final merged and pruned CRDT.
+      // These are separate ETS writes, not an atomic cross-topic snapshot;
+      // a later failure does not roll back topics already published.
       let touched_topics =
         list.append(dict.keys(diff.joins), dict.keys(diff.leaves))
         |> list.append(pruned_topics)
