@@ -262,6 +262,14 @@ or replies. Keep a positive interval for quiet recovery. Presence sync
 version 2 does not interoperate with version 1; upgrade all replicas in one
 presence scope together. The outer PubSub wire format has not changed.
 
+Remote entries disappear, with leave diffs, when beryl detects their actor
+exit, node disconnection, or loss of sync-group membership. This also applies
+to temporary partitions: your local sessions remain available, but peers can
+show them as offline. beryl retains causal history while they are unavailable.
+A fresh snapshot after reconnect restores the source actor's current entries,
+without first exposing obsolete retained entries. See
+[replica availability](/architecture/presence/#replica-availability).
+
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
 ## Use presence from raw dispatch

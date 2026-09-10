@@ -22,6 +22,7 @@ Distributed presence tracking with a CRDT
  - Publishes an actor-owned ETS read model
  - Requests snapshots at startup and periodically through PubSub
  - Receives remote snapshots and merges them internally
+ - Hides unavailable remote replicas without forgetting their causal state
  - Invokes `on_diff` when local changes or merges produce non-empty diffs
 
  Presence is independent of the beryl runtime and runs under your
@@ -513,7 +514,8 @@ pub fn with_on_diff(
 ) -> Config
 ```
 
-Set the callback for diffs from local changes or remote merges.
+Set the callback for diffs from local changes, remote merges, or replica
+ availability changes.
 
  The callback runs synchronously on the presence actor, for both local
  mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
@@ -551,6 +553,13 @@ pub fn with_pubsub(
 ```
 
 Enable PubSub replication for presence.
+
+ Remote visibility follows monitored actor ownership and the local `pg`
+ membership view. Actor exit, node disconnection, or membership loss hides
+ that replica and emits leaves. Its causal state remains available for repair.
+ A fresh snapshot from the same actor restores its current entries; a
+ replacement actor starts a new incarnation. A partition can therefore hide
+ sessions that remain connected to their local node.
 
 <div class="api-entry-anchor" id="api-function-with_queue_limits" aria-hidden="true"></div>
 

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Hide unavailable presence replicas and emit leave diffs after actor, node, or membership loss while preserving causal state for reconnect."
