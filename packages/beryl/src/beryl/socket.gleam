@@ -53,7 +53,12 @@ pub opaque type JoinRef {
 /// asynchronous lookup. They are single-use. They remain valid only while
 /// the topic instance that received the message stays open.
 pub opaque type ReplyRef {
-  ReplyRef(topic: String, join_ref: Option(String), message_ref: Option(String))
+  ReplyRef(
+    topic: String,
+    join_ref: Option(String),
+    message_ref: Option(String),
+    token: Reference,
+  )
 }
 
 @internal
@@ -76,7 +81,12 @@ pub fn make_message_ref(
   join_ref join_ref: Option(String),
   message_ref message_ref: Option(String),
 ) -> ReplyRef {
-  ReplyRef(topic: topic, join_ref: join_ref, message_ref: message_ref)
+  ReplyRef(
+    topic: topic,
+    join_ref: join_ref,
+    message_ref: message_ref,
+    token: reference.new(),
+  )
 }
 
 @internal
@@ -102,6 +112,13 @@ pub fn reply_ref_join_ref(ref: ReplyRef) -> Option(String) {
 @internal
 pub fn reply_ref_message_ref(ref: ReplyRef) -> Option(String) {
   ref.message_ref
+}
+
+@internal
+pub fn reply_ref_wire_key(
+  ref: ReplyRef,
+) -> #(String, Option(String), Option(String)) {
+  #(ref.topic, ref.join_ref, ref.message_ref)
 }
 
 /// Why a socket or topic is stopping.
