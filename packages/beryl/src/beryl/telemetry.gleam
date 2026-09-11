@@ -105,16 +105,6 @@ pub type QueueOutcome {
   QueueRejected
 }
 
-/// Why a replicated presence snapshot was refused.
-///
-/// `SameReplicaRejection` means a peer sent state that claims this node's
-/// replica identity, or echoed local causal history this node has not seen.
-/// It indicates two live nodes configured with the same identity, or stale
-/// state from an earlier run.
-pub type PresenceSyncRejection {
-  SameReplicaRejection
-}
-
 /// Stable, low-cardinality beryl telemetry events.
 pub type Event {
   QueueOccupancy(occupancy: overload.Occupancy, outcome: QueueOutcome)
@@ -144,7 +134,7 @@ pub type Event {
     callback_result: CallbackResult,
   )
   BroadcastStop(duration: Int, recipients: Int, origin: BroadcastOrigin)
-  PresenceSyncRejected(reason: PresenceSyncRejection)
+  PresenceSyncRejected
 }
 
 @external(erlang, "beryl_telemetry_ffi", "execute")

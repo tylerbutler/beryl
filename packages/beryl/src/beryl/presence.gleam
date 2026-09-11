@@ -2039,7 +2039,10 @@ fn merged_snapshot(
   sender: String,
   remote_state: State,
 ) -> Option(#(ActorState, String)) {
-  let crdt = retire_predecessor(actor_state, sender)
+  // accepts_snapshot rejects same-base senders, which is the only supersede
+  // error. This assertion is inside rescue, so an invariant violation drops
+  // the sync without crashing the presence actor.
+  let assert Ok(#(crdt, _diff)) = state.supersede(actor_state.crdt, sender)
   case state.merge(crdt, owner_snapshot(remote_state)) {
     Ok(crdt) -> {
       let #(crdt, _diff) = state.replica_up(crdt, sender)
@@ -2048,7 +2051,7 @@ fn merged_snapshot(
     Error(state.SameReplica(replica)) -> {
       telemetry.emit(
         actor_state.config.telemetry,
-        telemetry.PresenceSyncRejected(telemetry.SameReplicaRejection),
+        telemetry.PresenceSyncRejected,
       )
       internal.logger("beryl.presence")
       |> log.error("Dropped presence sync that claims this replica identity", [
@@ -2057,26 +2060,6 @@ fn merged_snapshot(
         #("conflicting_replica", replica),
       ])
       None
-    }
-  }
-}
-
-/// Retire every other incarnation of the sender's replica name.
-///
-/// The dependency keeps the causal history needed to reject stale updates
-/// from the incarnations it removes. `CannotSupersedeLocalReplica` cannot
-/// happen here because `accepts_snapshot` already rejects a sender that
-/// shares this replica's base name; keep the state unchanged if it does.
-fn retire_predecessor(actor_state: ActorState, sender: String) -> State {
-  case state.supersede(actor_state.crdt, sender) {
-    Ok(#(crdt, _diff)) -> crdt
-    Error(state.CannotSupersedeLocalReplica(local_replica, current_replica)) -> {
-      internal.logger("beryl.presence")
-      |> log.error("Refused to retire the local presence replica", [
-        #("local_replica", local_replica),
-        #("remote_replica", current_replica),
-      ])
-      actor_state.crdt
     }
   }
 }
