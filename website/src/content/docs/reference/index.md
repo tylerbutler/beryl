@@ -3,10 +3,9 @@ title: Reference
 description: Find beryl modules, message-sending APIs, Phoenix frame formats, and compatible clients.
 ---
 
-:::note[Pre-1.0]
-beryl is not yet version 1.0. Minor releases can change the API. The library is
-not ready for production. See the
-[stability policy](#versioning-before-10).
+:::note[Stability]
+beryl is pre-1.0. Minor releases can change the API. Review the
+[stability policy](#versioning-before-10) before you adopt it.
 :::
 
 The site generates the function-level API reference from Gleam docs metadata.

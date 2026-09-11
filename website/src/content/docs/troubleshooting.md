@@ -224,8 +224,9 @@ recent joins or leaves.
 
 1. **Client heartbeat interval vs. server timeout.** The Phoenix JS client
    sends heartbeats every 30 s by default. The beryl default server timeout is
-   60 s, which gives a safe margin. If you lower `heartbeat_timeout_ms`, keep
-   the client interval at or below half the server timeout.
+   60 s, which leaves time for a delayed heartbeat reply. If you lower
+   `heartbeat_timeout_ms`, keep the client interval at or below half the server
+   timeout.
 
 2. **Load balancer idle timeout.** Some load balancers (AWS ALB, nginx) have their own WebSocket idle timeouts. Set the load balancer timeout to be longer than the client heartbeat interval, or configure load-balancer-level keepalives.
 

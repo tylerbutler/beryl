@@ -11,7 +11,7 @@ It does not bring your socket state back after a crash. One router actor keeps
 the list of sockets and sends broadcasts to them. Each socket actor calls your
 update function and runs the effects it returns, in order.
 
-The frontend analogy does not cover beryl's production behavior.
+The frontend analogy does not cover beryl's runtime and failure behavior.
 
 ## Follow one frame
 
@@ -138,9 +138,9 @@ beryl.config(wire.phoenix_codec())
 
 This exact excerpt comes from
 [`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_05.gleam).
-These values make the example look like a production app. They are not correct
-for every app. Choose your limits from the traffic you expect and the capacity
-you have.
+These values make the example look like a deployed app. They are illustrative,
+not production-validated defaults. Choose your limits from the traffic you
+expect and the capacity you have, then test the result.
 
 ## PubSub and presence follow different rules
 
@@ -193,8 +193,8 @@ normal app code.
 
 ## Rules to remember
 
-The earlier chapters started with a familiar update loop. In production, keep
-these differences in view:
+The earlier chapters started with a familiar update loop. In a deployed app,
+keep these differences in view:
 
 - beryl has no `view`.
 - Raw `init` runs once per socket.

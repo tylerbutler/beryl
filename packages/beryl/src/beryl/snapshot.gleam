@@ -4,9 +4,9 @@
 //// servicing the request. Counts may lag in-flight connect and disconnect
 //// notifications that have not yet reached that process, so they are
 //// eventually consistent rather than exact at the instant of the call. They
-//// are intended for operational polling, not as an event stream. Poll no
-//// more frequently than roughly once per second so observation does not add
-//// meaningful runtime load.
+//// are intended for operational polling, not as an event stream. Start with
+//// roughly once-per-second polling or less, then measure the observation load
+//// for your workload.
 
 import beryl
 import beryl/overload
@@ -45,7 +45,8 @@ pub type SnapshotError {
 /// Neither condition panics. This API reports only the node represented by
 /// `sockets`; aggregate multi-node statistics outside beryl.
 ///
-/// Poll no more frequently than roughly once per second.
+/// Start with roughly once-per-second polling or less, then measure the
+/// observation load for your workload.
 pub fn get(sockets: beryl.Sockets) -> Result(Snapshot, SnapshotError) {
   case beryl.app_dispatch(sockets).stats() {
     Error(beryl.StatsRuntimeUnavailable) -> Error(RuntimeUnavailable)

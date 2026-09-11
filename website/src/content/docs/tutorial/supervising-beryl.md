@@ -178,7 +178,7 @@ rest of the tree.
 
 ## Start processes before the WebSocket listener
 
-A production startup path makes four decisions, in this order:
+A recommended startup order makes four decisions, in this order:
 
 1. Build beryl's handle and child specification.
 2. Start your domain actors from a long-lived application process, or under

@@ -174,11 +174,11 @@ case beryl.child_spec(config, init: init, update: update) {
 transport connections and stops the runtime without a restart. A second call
 returns `Error(NotRunning)`. Other operations after `stop` do nothing.
 
-## Production checklist
+## Deployment checklist
 
 - Add the returned specification to your long-lived application supervisor.
 - Add application-owned presence and group child specifications alongside the
   beryl child.
 - Configure PubSub when running more than one BEAM node.
 - Configure rate limits to protect against faulty or hostile clients. See
-  [Production Hardening](/guides/production-hardening/).
+  [deployment hardening](/guides/production-hardening/).
