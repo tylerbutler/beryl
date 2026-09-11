@@ -25,6 +25,11 @@ Distributed presence tracking with a CRDT
  - Hides unavailable remote replicas without forgetting their causal state
  - Invokes `on_diff` when local changes or merges produce non-empty diffs
 
+ Each actor owns its local entries. Remote snapshots are accepted only from
+ a live owner answering an outstanding request, never through a relay.
+ Unavailable state is retained for 60 seconds before safe compaction; see
+ `with_pubsub` for the recovery and incarnation rules.
+
  Presence is independent of the beryl runtime and runs under your
  application's supervision tree.
 
@@ -622,6 +627,18 @@ Enable PubSub replication for presence.
  A fresh snapshot from the same actor restores its current entries; a
  replacement actor starts a new incarnation. A partition can therefore hide
  sessions that remain connected to their local node.
+
+ Each snapshot contains only its sender's authoritative state. A receiver's
+ request order, not a random suffix or message arrival order, determines
+ whether a new incarnation can replace its known owner. Concurrent live
+ actors sharing a replica base in one scope are unsupported.
+
+ A confirmed replacement retires its predecessor. Otherwise, unavailable
+ state remains for 60 seconds, checked every second while the actor runs.
+ Compaction invalidates outstanding requests. A returning actor must answer
+ a new request with its current full local snapshot, so delayed replies and
+ lagging peers cannot reintroduce compacted history. The retention check also
+ runs when periodic snapshot requests are disabled. Actor work can delay it.
 
 <div class="api-entry-anchor" id="api-function-with_queue_limits" aria-hidden="true"></div>
 

@@ -9,6 +9,11 @@
 //// - Hides unavailable remote replicas without forgetting their causal state
 //// - Invokes `on_diff` when local changes or merges produce non-empty diffs
 ////
+//// Each actor owns its local entries. Remote snapshots are accepted only from
+//// a live owner answering an outstanding request, never through a relay.
+//// Unavailable state is retained for 60 seconds before safe compaction; see
+//// `with_pubsub` for the recovery and incarnation rules.
+////
 //// Presence is independent of the beryl runtime and runs under your
 //// application's supervision tree.
 ////
@@ -78,6 +83,13 @@ const sync_topic = "beryl:presence:sync"
 
 /// PubSub event name for presence sync messages
 const sync_event = "presence_sync"
+
+const replica_retention_ms = 60_000
+
+const retirement_check_interval_ms = 1000
+
+@external(erlang, "beryl_ffi", "monotonic_time_ms")
+fn monotonic_time_ms() -> Int
 
 /// A running Presence instance.
 ///
@@ -277,7 +289,7 @@ pub opaque type Config {
     /// from it (`base@suffix`), so restarting a node never reuses the
     /// previous incarnation's CRDT clocks; state from older incarnations
     /// of the same base is pruned automatically. Two *live* nodes sharing
-    /// a base will continuously prune each other — do not do that.
+    /// a base violate the ownership contract; concurrent reuse is unsupported.
     replica: String,
     /// How often to request snapshots for replication (ms). Non-positive
     /// values disable periodic requests, but not the initial exchange or replies.
@@ -357,6 +369,7 @@ pub opaque type Message {
   RemoteSync(pubsub_message: pubsub.Message(SyncPayload))
   RemoteSnapshot(reply: SyncReply)
   RemoteReplicaDown(down: process.Down)
+  RetirementTick
 }
 
 /// Acknowledgement of an asynchronous presence mutation.
@@ -512,11 +525,21 @@ type TrackedPresence {
 }
 
 type PendingSync {
-  PendingSync(request: Reference, round: Int)
+  PendingSync(request: Reference, round: Int, requested_at: Int)
+}
+
+type ReplicaAvailability {
+  Available(monitor: process.Monitor)
+  Unavailable(since: Int)
 }
 
 type ReplicaOwner {
-  ReplicaOwner(pid: process.Pid, monitor: Option(process.Monitor))
+  ReplicaOwner(
+    replica: String,
+    pid: process.Pid,
+    availability: ReplicaAvailability,
+    confirmed_round: Int,
+  )
 }
 
 type SyncState {
@@ -524,6 +547,7 @@ type SyncState {
     reply: Subject(SyncReply),
     requests: Dict(process.Pid, PendingSync),
     round: Int,
+    /// One confirmed incarnation per configured replica base.
     owners: Dict(String, ReplicaOwner),
   )
 }
@@ -575,6 +599,18 @@ pub fn default_config(replica: String) -> Config {
 /// A fresh snapshot from the same actor restores its current entries; a
 /// replacement actor starts a new incarnation. A partition can therefore hide
 /// sessions that remain connected to their local node.
+///
+/// Each snapshot contains only its sender's authoritative state. A receiver's
+/// request order, not a random suffix or message arrival order, determines
+/// whether a new incarnation can replace its known owner. Concurrent live
+/// actors sharing a replica base in one scope are unsupported.
+///
+/// A confirmed replacement retires its predecessor. Otherwise, unavailable
+/// state remains for 60 seconds, checked every second while the actor runs.
+/// Compaction invalidates outstanding requests. A returning actor must answer
+/// a new request with its current full local snapshot, so delayed replies and
+/// lagging peers cannot reintroduce compacted history. The retention check also
+/// runs when periodic snapshot requests are disabled. Actor work can delay it.
 pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
   Config(..config, pubsub: Some(pubsub))
 }
@@ -708,8 +744,8 @@ fn build_presence(
   // name after a restart would reset its clocks while peers still remember
   // the old ones: new joins would be silently filtered as already-seen,
   // and the previous incarnation's entries would resurrect via merges.
-  // A unique per-start suffix makes every incarnation a distinct replica;
-  // `prune_superseded` cleans up the dead predecessors.
+  // A unique suffix separates clocks. Receiver-issued requests establish
+  // incarnation freshness; the suffix itself does not order actor starts.
   let crdt = state.new(incarnate_replica(config.replica))
 
   actor.new_with_initialiser(5000, fn(subject) {
@@ -771,6 +807,7 @@ fn build_presence(
           |> pubsub.selecting(subscriber, RemoteSync)
 
         process.send(subject, BroadcastTick)
+        schedule_retirement_tick(subject)
 
         actor.initialised(initial)
         |> actor.selecting(selector)
@@ -825,22 +862,22 @@ fn reconcile_membership(
   case actor_state.sync {
     None -> actor_state
     Some(sync) ->
-      dict.fold(sync.owners, actor_state, fn(actor_state, replica, owner) {
+      dict.fold(sync.owners, actor_state, fn(actor_state, base, owner) {
         case set.contains(members, owner.pid) {
           True -> actor_state
-          False -> hide_replica(actor_state, replica)
+          False -> hide_replica(actor_state, base)
         }
       })
   }
 }
 
-fn hide_replica(actor_state: ActorState, replica: String) -> ActorState {
+fn hide_replica(actor_state: ActorState, base: String) -> ActorState {
   case actor_state.sync {
     None -> actor_state
     Some(sync) ->
-      case dict.get(sync.owners, replica) {
-        Error(Nil) | Ok(ReplicaOwner(_, None)) -> actor_state
-        Ok(ReplicaOwner(pid, Some(monitor))) -> {
+      case dict.get(sync.owners, base) {
+        Error(Nil) | Ok(ReplicaOwner(_, _, Unavailable(_), _)) -> actor_state
+        Ok(ReplicaOwner(replica, pid, Available(monitor), round)) -> {
           process.demonitor_process(monitor)
           let #(crdt, _diff) = state.replica_down(actor_state.crdt, replica)
           commit_replication(
@@ -852,8 +889,13 @@ fn hide_replica(actor_state: ActorState, replica: String) -> ActorState {
                   requests: dict.delete(sync.requests, pid),
                   owners: dict.insert(
                     sync.owners,
-                    replica,
-                    ReplicaOwner(pid, None),
+                    base,
+                    ReplicaOwner(
+                      replica,
+                      pid,
+                      Unavailable(monotonic_time_ms()),
+                      round,
+                    ),
                   ),
                 ),
               ),
@@ -871,9 +913,9 @@ fn handle_replica_down(
 ) -> ActorState {
   case actor_state.sync, down {
     Some(sync), process.ProcessDown(monitor, pid, _) ->
-      dict.fold(sync.owners, actor_state, fn(actor_state, replica, owner) {
-        case owner.pid == pid && owner.monitor == Some(monitor) {
-          True -> hide_replica(actor_state, replica)
+      dict.fold(sync.owners, actor_state, fn(actor_state, base, owner) {
+        case owner.pid == pid && owner.availability == Available(monitor) {
+          True -> hide_replica(actor_state, base)
           False -> actor_state
         }
       })
@@ -885,30 +927,96 @@ fn watch_replica(
   actor_state: ActorState,
   replica: String,
   pid: process.Pid,
+  round: Int,
 ) -> ActorState {
   case actor_state.sync {
     None -> actor_state
-    Some(sync) ->
-      case dict.get(sync.owners, replica) {
-        Ok(ReplicaOwner(owner, Some(_))) if owner == pid -> actor_state
-        previous -> {
-          case previous {
-            Ok(ReplicaOwner(_, Some(monitor))) ->
-              process.demonitor_process(monitor)
-            Ok(ReplicaOwner(_, None)) | Error(Nil) -> Nil
-          }
-          let owner = ReplicaOwner(pid, Some(process.monitor(pid)))
-          ActorState(
-            ..actor_state,
-            sync: Some(
-              SyncState(
-                ..sync,
-                owners: dict.insert(sync.owners, replica, owner),
-              ),
-            ),
-          )
+    Some(sync) -> {
+      let base = base_replica(replica)
+      let previous = dict.get(sync.owners, base)
+      let monitor = case previous {
+        Ok(ReplicaOwner(_, old_pid, Available(monitor), _)) if old_pid == pid ->
+          monitor
+        Ok(ReplicaOwner(_, _, Available(monitor), _)) -> {
+          process.demonitor_process(monitor)
+          process.monitor(pid)
         }
+        Ok(ReplicaOwner(_, _, Unavailable(_), _)) | Error(Nil) ->
+          process.monitor(pid)
       }
+      let requests = case previous {
+        Ok(previous) if previous.pid != pid ->
+          dict.delete(sync.requests, previous.pid)
+        Ok(_) | Error(Nil) -> sync.requests
+      }
+      ActorState(
+        ..actor_state,
+        sync: Some(
+          SyncState(
+            ..sync,
+            requests: requests,
+            owners: dict.insert(
+              sync.owners,
+              base,
+              ReplicaOwner(replica, pid, Available(monitor), round),
+            ),
+          ),
+        ),
+      )
+    }
+  }
+}
+
+fn schedule_retirement_tick(subject: Subject(Message)) -> Nil {
+  let _timer =
+    process.send_after(subject, retirement_check_interval_ms, RetirementTick)
+  Nil
+}
+
+fn retire_unavailable(actor_state: ActorState) -> ActorState {
+  let members = case actor_state.config.pubsub {
+    Some(pubsub_instance) ->
+      pubsub.subscribers(pubsub_instance, sync_topic) |> set.from_list
+    None -> set.new()
+  }
+  let actor_state = reconcile_membership(actor_state, members)
+  case actor_state.sync {
+    None -> actor_state
+    Some(sync) -> {
+      let now = monotonic_time_ms()
+      let sync =
+        SyncState(
+          ..sync,
+          requests: dict.filter(sync.requests, fn(pid, pending) {
+            set.contains(members, pid)
+            || now - pending.requested_at < replica_retention_ms
+          }),
+        )
+      let actor_state = ActorState(..actor_state, sync: Some(sync))
+      let retired =
+        dict.filter(sync.owners, fn(_base, owner) {
+          case owner.availability {
+            Available(_) -> False
+            Unavailable(since) -> now - since >= replica_retention_ms
+          }
+        })
+      use <- bool.guard(when: dict.is_empty(retired), return: actor_state)
+      let crdt =
+        dict.fold(retired, actor_state.crdt, fn(crdt, _base, owner) {
+          compact_replica(crdt, owner.replica)
+        })
+      let owners =
+        dict.fold(retired, sync.owners, fn(owners, base, _) {
+          dict.delete(owners, base)
+        })
+      // Dropping a base's freshness record is safe only after revoking every
+      // pre-compaction reply, including requests to unconfirmed old owners.
+      ActorState(
+        ..actor_state,
+        crdt: crdt,
+        sync: Some(SyncState(..sync, owners: owners, requests: dict.new())),
+      )
+    }
   }
 }
 
@@ -921,7 +1029,9 @@ fn request_snapshot(
   let round = sync.round + 1
   let pending =
     dict.get(sync.requests, member)
-    |> result.lazy_unwrap(fn() { PendingSync(reference.new(), round) })
+    |> result.lazy_unwrap(fn() {
+      PendingSync(reference.new(), round, monotonic_time_ms())
+    })
   pubsub.send_to(
     pubsub_instance,
     member,
@@ -962,9 +1072,7 @@ const incarnation_separator = "@"
 
 /// Derive a unique incarnation name for this actor start.
 fn incarnate_replica(base: String) -> String {
-  base
-  <> incarnation_separator
-  <> bit_array.base16_encode(crypto.strong_random_bytes(4))
+  base <> incarnation_separator <> generate_ref()
 }
 
 /// Recover the configured base from an incarnation-qualified replica name.
@@ -981,20 +1089,20 @@ fn base_replica(replica: String) -> String {
   }
 }
 
-/// Replacement handling is separate from liveness-only replica_down changes,
-/// which hide entries without deleting causal history.
-fn prune_superseded(crdt: State, live: List(String)) -> State {
-  let stale =
-    dict.keys(state.compacted_clocks(crdt))
-    |> list.filter(fn(replica) {
-      list.any(live, fn(live_replica) {
-        replica != live_replica
-        && base_replica(replica) == base_replica(live_replica)
-      })
-    })
-  list.fold(stale, crdt, fn(crdt, replica) {
-    let #(crdt, _diff) = state.replica_down(crdt, replica)
-    state.remove_down_replica(crdt, replica)
+fn compact_replica(crdt: State, replica: String) -> State {
+  let #(crdt, _diff) = state.replica_down(crdt, replica)
+  state.remove_down_replica(crdt, replica)
+}
+
+/// Full-state beryl snapshots have a compacted clock for every entry owner.
+/// Use the dependency's lifecycle API rather than its opaque representation.
+fn owner_snapshot(crdt: State) -> State {
+  dict.keys(state.compacted_clocks(crdt))
+  |> list.fold(crdt, fn(crdt, replica) {
+    case replica == state.replica(crdt) {
+      True -> crdt
+      False -> compact_replica(crdt, replica)
+    }
   })
 }
 
@@ -1447,6 +1555,13 @@ fn handle_message(
     RemoteSnapshot(reply) -> handle_snapshot(actor_state, reply)
     RemoteReplicaDown(down) ->
       actor.continue(handle_replica_down(actor_state, down))
+    RetirementTick -> {
+      case actor_state.self_subject {
+        Some(subject) -> schedule_retirement_tick(subject)
+        None -> Nil
+      }
+      actor.continue(retire_unavailable(actor_state))
+    }
   }
 }
 
@@ -1800,7 +1915,7 @@ fn handle_sync_payload(
         SyncReply(
           request: payload.request,
           owner: process.self(),
-          state: actor_state.crdt,
+          state: owner_snapshot(actor_state.crdt),
         ),
       )
       case payload.request_back {
@@ -1866,6 +1981,7 @@ fn handle_snapshot(
               ),
             ),
             reply.owner,
+            pending.round,
             reply.state,
           )
         // Duplicates and replies to requests cancelled by membership loss.
@@ -1877,6 +1993,7 @@ fn handle_snapshot(
 fn merge_remote_sync(
   actor_state: ActorState,
   owner: process.Pid,
+  round: Int,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
   // Crash boundary — see internal.rescue. Version skew or bugs can produce
@@ -1886,15 +2003,29 @@ fn merge_remote_sync(
   let processed =
     internal.rescue(fn() {
       let sender = state.replica(remote_state)
-      let new_crdt =
-        state.merge(actor_state.crdt, remote_state)
-        |> apply_replica_visibility(actor_state.sync, sender)
-        |> prune_superseded([sender, state.replica(actor_state.crdt)])
-      #(commit_replication(actor_state, new_crdt), sender)
+      case accepts_snapshot(actor_state, sender, owner, round) {
+        False -> {
+          log.debug(
+            internal.logger("beryl.presence"),
+            "Ignored stale presence incarnation",
+            [
+              #("replica", sender),
+            ],
+          )
+          None
+        }
+        True -> {
+          let crdt = retire_predecessor(actor_state, sender)
+          let crdt = state.merge(crdt, owner_snapshot(remote_state))
+          let #(crdt, _diff) = state.replica_up(crdt, sender)
+          Some(#(commit_replication(actor_state, crdt), sender))
+        }
+      }
     })
   case processed {
-    Ok(#(next_state, sender)) ->
-      actor.continue(watch_replica(next_state, sender, owner))
+    Ok(Some(#(next_state, sender))) ->
+      actor.continue(watch_replica(next_state, sender, owner, round))
+    Ok(None) -> actor.continue(actor_state)
     Error(crash) -> {
       let logger = internal.logger("beryl.presence")
       logger
@@ -1906,30 +2037,36 @@ fn merge_remote_sync(
   }
 }
 
-fn apply_replica_visibility(
-  crdt: State,
-  sync: Option(SyncState),
+fn accepts_snapshot(
+  actor_state: ActorState,
   sender: String,
-) -> State {
-  dict.keys(state.compacted_clocks(crdt))
-  |> list.fold(crdt, fn(crdt, replica) {
-    let available =
-      replica == state.replica(crdt)
-      || replica == sender
-      || case sync {
-        None -> False
-        Some(sync) ->
-          case dict.get(sync.owners, replica) {
-            Ok(ReplicaOwner(_, Some(_))) -> True
-            Ok(ReplicaOwner(_, None)) | Error(Nil) -> False
-          }
+  owner: process.Pid,
+  round: Int,
+) -> Bool {
+  let base = base_replica(sender)
+  base != base_replica(state.replica(actor_state.crdt))
+  && case actor_state.sync {
+    None -> False
+    Some(sync) ->
+      case dict.get(sync.owners, base) {
+        Error(Nil) -> True
+        Ok(current) ->
+          { current.replica == sender && current.pid == owner }
+          || round > current.confirmed_round
       }
-    let #(crdt, _diff) = case available {
-      True -> state.replica_up(crdt, replica)
-      False -> state.replica_down(crdt, replica)
-    }
-    crdt
-  })
+  }
+}
+
+fn retire_predecessor(actor_state: ActorState, sender: String) -> State {
+  case actor_state.sync {
+    None -> actor_state.crdt
+    Some(sync) ->
+      case dict.get(sync.owners, base_replica(sender)) {
+        Ok(previous) if previous.replica != sender ->
+          compact_replica(actor_state.crdt, previous.replica)
+        Ok(_) | Error(Nil) -> actor_state.crdt
+      }
+  }
 }
 
 fn commit_replication(actor_state: ActorState, crdt: State) -> ActorState {

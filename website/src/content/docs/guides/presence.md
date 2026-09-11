@@ -272,7 +272,7 @@ global publisher must move application-change publishing to the source.
 
 When you configure PubSub, the presence actor:
 
-1. Requests full CRDT snapshots from the current `pg` members at startup and
+1. Requests full owner snapshots from the current `pg` members at startup and
    every configured interval (1500 ms by default).
 2. Replies to peer requests even when local state has not changed.
 3. Merges remote state with the AWORSet merge algorithm.
@@ -291,10 +291,19 @@ presence scope together. The outer PubSub wire format has not changed.
 Remote entries disappear, with leave diffs, when beryl detects their actor
 exit, node disconnection, or loss of sync-group membership. This also applies
 to temporary partitions: your local sessions remain available, but peers can
-show them as offline. beryl retains causal history while they are unavailable.
+show them as offline. beryl retains their causal history for 60 seconds.
 A fresh snapshot after reconnect restores the source actor's current entries,
 without first exposing obsolete retained entries. See
 [replica availability](/architecture/presence/#replica-availability).
+
+Use one live actor per replica base. beryl orders receiver-issued requests to
+reject delayed old-incarnation replies, and accepts only the answering
+owner's entries and clocks. A confirmed replacement retires its predecessor.
+After the retention window, beryl invalidates outstanding requests before
+compacting unavailable history; a returning actor must provide a new full
+snapshot. See [safe retirement](/architecture/presence/#incarnation-freshness-and-retirement)
+for the conditions and bounds. Remote visibility requires a direct node
+connection, not a snapshot relayed by another peer.
 
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
