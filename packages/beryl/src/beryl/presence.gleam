@@ -58,6 +58,7 @@ import beryl/internal
 import beryl/log
 import beryl/overload
 import beryl/pubsub.{type PubSub}
+import beryl/telemetry
 import beryl/wire
 import beryl/work_queue
 import gleam/bit_array
@@ -286,9 +287,9 @@ pub opaque type Config {
     pubsub: Option(PubSub(SyncPayload)),
     /// This node's replica base name. Must identify at most one live node
     /// in the cluster. Each actor start derives a unique incarnation name
-    /// from it (`base@suffix`), so restarting a node never reuses the
-    /// previous incarnation's CRDT clocks; state from older incarnations
-    /// of the same base is pruned automatically. Two *live* nodes sharing
+    /// from it, so restarting a node never reuses the previous
+    /// incarnation's CRDT clocks; state from older incarnations of the
+    /// same base is pruned automatically. Two *live* nodes sharing
     /// a base violate the ownership contract; concurrent reuse is unsupported.
     replica: String,
     /// How often to request snapshots for replication (ms). Non-positive
@@ -744,9 +745,10 @@ fn build_presence(
   // name after a restart would reset its clocks while peers still remember
   // the old ones: new joins would be silently filtered as already-seen,
   // and the previous incarnation's entries would resurrect via merges.
-  // A unique suffix separates clocks. Receiver-issued requests establish
-  // incarnation freshness; the suffix itself does not order actor starts.
-  let crdt = state.new(incarnate_replica(config.replica))
+  // The library mints an identity that is unique per start and keeps the
+  // configured name recoverable. Receiver-issued requests establish
+  // incarnation freshness; the identity itself does not order actor starts.
+  let crdt = state.new_incarnation(config.replica)
 
   actor.new_with_initialiser(5000, fn(subject) {
     // Created here, in the actor process itself, so the read model's
@@ -932,7 +934,7 @@ fn watch_replica(
   case actor_state.sync {
     None -> actor_state
     Some(sync) -> {
-      let base = base_replica(replica)
+      let base = state.base_replica(replica)
       let previous = dict.get(sync.owners, base)
       let monitor = case previous {
         Ok(ReplicaOwner(_, old_pid, Available(monitor), _)) if old_pid == pid ->
@@ -1067,44 +1069,19 @@ fn generate_ref() -> String {
   |> bit_array.base16_encode()
 }
 
-/// Separates a replica base name from its per-start incarnation suffix.
-const incarnation_separator = "@"
-
-/// Derive a unique incarnation name for this actor start.
-fn incarnate_replica(base: String) -> String {
-  base <> incarnation_separator <> generate_ref()
-}
-
-/// Recover the configured base from an incarnation-qualified replica name.
-///
-/// The suffix we mint never contains the separator, so everything before
-/// the last separator is the base — even when the base itself contains one
-/// (e.g. Erlang-style `app@host` names). Names without a separator (from
-/// nodes running older beryl versions) are their own base.
-fn base_replica(replica: String) -> String {
-  case list.reverse(string.split(replica, incarnation_separator)) {
-    [_suffix, ..rest] if rest != [] ->
-      string.join(list.reverse(rest), incarnation_separator)
-    _ -> replica
-  }
-}
-
 fn compact_replica(crdt: State, replica: String) -> State {
   let #(crdt, _diff) = state.replica_down(crdt, replica)
   state.remove_down_replica(crdt, replica)
 }
 
-/// Full-state beryl snapshots have a compacted clock for every entry owner.
-/// Use the dependency's lifecycle API rather than its opaque representation.
-fn owner_snapshot(crdt: State) -> State {
-  dict.keys(state.compacted_clocks(crdt))
-  |> list.fold(crdt, fn(crdt, replica) {
-    case replica == state.replica(crdt) {
-      True -> crdt
-      False -> compact_replica(crdt, replica)
-    }
-  })
-}
+/// Reduce a state to the data its own replica owns.
+///
+/// beryl replicates one full state per owner. The dependency's lifecycle API
+/// keeps a high-water clock for every replica it removes, which is correct for
+/// local state but wrong to relay: a receiver that adopted a peer's clocks for
+/// a third replica would treat that replica's later entries as already seen.
+@external(erlang, "beryl_presence_state_ffi", "owner_snapshot")
+fn owner_snapshot(crdt: State) -> State
 
 /// Merge the server-generated tracking ref into the tracked meta as
 /// `phx_ref`, matching Phoenix behaviour. Phoenix client `Presence` helpers
@@ -2014,12 +1991,7 @@ fn merge_remote_sync(
           )
           None
         }
-        True -> {
-          let crdt = retire_predecessor(actor_state, sender)
-          let crdt = state.merge(crdt, owner_snapshot(remote_state))
-          let #(crdt, _diff) = state.replica_up(crdt, sender)
-          Some(#(commit_replication(actor_state, crdt), sender))
-        }
+        True -> merged_snapshot(actor_state, sender, remote_state)
       }
     })
   case processed {
@@ -2043,8 +2015,8 @@ fn accepts_snapshot(
   owner: process.Pid,
   round: Int,
 ) -> Bool {
-  let base = base_replica(sender)
-  base != base_replica(state.replica(actor_state.crdt))
+  let base = state.base_replica(sender)
+  !state.same_base(sender, state.replica(actor_state.crdt))
   && case actor_state.sync {
     None -> False
     Some(sync) ->
@@ -2057,15 +2029,55 @@ fn accepts_snapshot(
   }
 }
 
+/// Merge an accepted snapshot after retiring the sender's predecessors.
+///
+/// Returns `None` when the sender claims this replica's identity, which
+/// means two live actors share one base name or the peer relayed stale
+/// local history. Dropping the round keeps local state authoritative.
+fn merged_snapshot(
+  actor_state: ActorState,
+  sender: String,
+  remote_state: State,
+) -> Option(#(ActorState, String)) {
+  let crdt = retire_predecessor(actor_state, sender)
+  case state.merge(crdt, owner_snapshot(remote_state)) {
+    Ok(crdt) -> {
+      let #(crdt, _diff) = state.replica_up(crdt, sender)
+      Some(#(commit_replication(actor_state, crdt), sender))
+    }
+    Error(state.SameReplica(replica)) -> {
+      telemetry.emit(
+        actor_state.config.telemetry,
+        telemetry.PresenceSyncRejected(telemetry.SameReplicaRejection),
+      )
+      internal.logger("beryl.presence")
+      |> log.error("Dropped presence sync that claims this replica identity", [
+        #("local_replica", state.replica(actor_state.crdt)),
+        #("remote_replica", sender),
+        #("conflicting_replica", replica),
+      ])
+      None
+    }
+  }
+}
+
+/// Retire every other incarnation of the sender's replica name.
+///
+/// The dependency keeps the causal history needed to reject stale updates
+/// from the incarnations it removes. `CannotSupersedeLocalReplica` cannot
+/// happen here because `accepts_snapshot` already rejects a sender that
+/// shares this replica's base name; keep the state unchanged if it does.
 fn retire_predecessor(actor_state: ActorState, sender: String) -> State {
-  case actor_state.sync {
-    None -> actor_state.crdt
-    Some(sync) ->
-      case dict.get(sync.owners, base_replica(sender)) {
-        Ok(previous) if previous.replica != sender ->
-          compact_replica(actor_state.crdt, previous.replica)
-        Ok(_) | Error(Nil) -> actor_state.crdt
-      }
+  case state.supersede(actor_state.crdt, sender) {
+    Ok(#(crdt, _diff)) -> crdt
+    Error(state.CannotSupersedeLocalReplica(local_replica, current_replica)) -> {
+      internal.logger("beryl.presence")
+      |> log.error("Refused to retire the local presence replica", [
+        #("local_replica", local_replica),
+        #("remote_replica", current_replica),
+      ])
+      actor_state.crdt
+    }
   }
 }
 
