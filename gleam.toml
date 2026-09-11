@@ -11,14 +11,12 @@ members = ["packages/*", "examples/**"]
 "@release" = ["examples/**"]
 lint = ["examples/**"]
 docs = ["examples/**"]
-# Examples excluded from `trellis run test`: example_helper has no test/
-# directory (gleam test fails when the <package>_test module is missing), and
-# chatroom/cursor have tests that are not wired into the workspace run yet.
-# collab_document, its client, and showcase run here.
+# Examples excluded from `trellis run test`: chatroom/cursor have tests that
+# are not wired into the workspace run yet. collab_document, its client,
+# example_helper, and showcase run here.
 test = [
   "examples/chatrooms",
   "examples/cursors",
-  "examples/example_helpers",
 ]
 
 # Tag individual package versions in addition to repository series tags,

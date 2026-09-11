@@ -7,6 +7,7 @@
 
 import beryl
 import beryl/overload
+import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Pid, type Selector, type Subject}
 import gleam/io
 import gleam/json
@@ -25,6 +26,7 @@ type Store
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
   TrackIfBelow(
+    owner: Pid,
     topic: String,
     session_id: String,
     meta: json.Json,
@@ -38,10 +40,11 @@ type Command {
 type Event {
   Message(Command)
   OwnerDown
+  SessionOwnerDown(owner: Pid, topic: String, session_id: String)
 }
 
 type State {
-  State(sockets: Option(beryl.Sockets))
+  State(sockets: Option(beryl.Sockets), owners: Dict(#(String, String), Pid))
 }
 
 @external(erlang, "example_session_presence_ffi", "new_store")
@@ -77,7 +80,7 @@ pub fn start() -> Tracker {
         |> process.select_map(subject, Message)
         |> process.select_specific_monitor(owner_monitor, fn(_) { OwnerDown })
       process.send(ready, subject)
-      loop(selector, table, State(sockets: None))
+      loop(selector, table, State(sockets: None, owners: dict.new()))
     })
   let assert Ok(subject) = process.receive(ready, start_timeout_ms)
   Tracker(pid, subject, table)
@@ -108,6 +111,11 @@ pub fn is_running(tracker: Tracker) -> Bool {
   process.is_alive(tracker.pid)
 }
 
+@internal
+pub fn process_id(tracker: Tracker) -> Pid {
+  tracker.pid
+}
+
 pub fn track(
   tracker: Tracker,
   topic: String,
@@ -135,7 +143,8 @@ pub fn track_without_publish(
 /// Atomically track a session when the topic is below `maximum`.
 ///
 /// The tracker actor serializes the count and insert so concurrent socket
-/// joins cannot oversubscribe a bounded room.
+/// joins cannot oversubscribe a bounded room. It also monitors the calling
+/// process and removes the session if that owner exits.
 pub fn track_if_below(
   tracker: Tracker,
   topic: String,
@@ -143,8 +152,9 @@ pub fn track_if_below(
   meta: json.Json,
   maximum: Int,
 ) -> Result(Nil, Nil) {
+  let owner = process.self()
   process.call(tracker.subject, call_timeout_ms, fn(reply) {
-    TrackIfBelow(topic, session_id, meta, maximum, reply)
+    TrackIfBelow(owner, topic, session_id, meta, maximum, reply)
   })
 }
 
@@ -170,18 +180,36 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
   case process.selector_receive_forever(selector) {
     Message(Configure(sockets, reply)) -> {
       process.send(reply, Nil)
-      loop(selector, table, State(sockets: Some(sockets)))
+      loop(selector, table, State(..state, sockets: Some(sockets)))
     }
-    Message(TrackIfBelow(topic, session_id, meta, maximum, reply)) -> {
-      let result = case store_count(table, topic) < maximum {
-        True -> {
-          store_track(table, topic, session_id, meta)
-          Ok(Nil)
+    Message(TrackIfBelow(owner, topic, session_id, meta, maximum, reply)) -> {
+      case store_count(table, topic) < maximum {
+        False -> {
+          process.send(reply, Error(Nil))
+          loop(selector, table, state)
         }
-        False -> Error(Nil)
+        True -> {
+          let monitor = process.monitor(owner)
+          case process.is_alive(owner) {
+            False -> {
+              process.demonitor_process(monitor)
+              process.send(reply, Error(Nil))
+              loop(selector, table, state)
+            }
+            True -> {
+              store_track(table, topic, session_id, meta)
+              let selector =
+                process.select_specific_monitor(selector, monitor, fn(_) {
+                  SessionOwnerDown(owner, topic, session_id)
+                })
+              let owners =
+                dict.insert(state.owners, #(topic, session_id), owner)
+              process.send(reply, Ok(Nil))
+              loop(selector, table, State(..state, owners: owners))
+            }
+          }
+        }
       }
-      process.send(reply, result)
-      loop(selector, table, state)
     }
     Message(Publish(topic)) -> {
       broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
@@ -192,6 +220,23 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
     }
     OwnerDown -> {
       Nil
+    }
+    SessionOwnerDown(owner, topic, session_id) -> {
+      case dict.get(state.owners, #(topic, session_id)) {
+        Ok(current_owner) if current_owner == owner -> {
+          store_untrack(table, topic, session_id)
+          broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
+          loop(
+            selector,
+            table,
+            State(
+              ..state,
+              owners: dict.delete(state.owners, #(topic, session_id)),
+            ),
+          )
+        }
+        Ok(_) | Error(Nil) -> loop(selector, table, state)
+      }
     }
   }
 }
