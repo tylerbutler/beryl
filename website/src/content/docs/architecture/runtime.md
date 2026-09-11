@@ -196,7 +196,7 @@ do not establish an end-to-end or node-wide memory bound. See
 
 | Boundary | Current control and overload behavior |
 |---|---|
-| Connection admission | Optional per-IP attempt-rate and concurrent connection limits, plus a node-wide concurrent connection limit. All default to disabled. The limiter owns accounting; a rejected upgrade receives HTTP `429`. |
+| Connection admission | Optional per-IP attempt-rate and concurrent connection limits, plus a per-system concurrent connection limit on each node. All default to disabled. Each beryl system owns its limiter; a rejected upgrade receives HTTP `429`. |
 | Complete inbound frames | The connection process closes the connection for frames over 1 MiB by default, after assembly. Optional frame-rate limiting drops over-rate frames before decoding. Neither bounds pre-assembly buffers or router queues. |
 | Decoded socket input | Socket actors own optional message, join, and channel/topic rate buckets. Rates default to disabled. Over-rate messages are dropped; over-rate joins receive an error reply. These are not worker queue limits. |
 | Topic-worker input | 256 outstanding inputs and 8 MiB per worker. Client input rejection closes the topic; server notifications return errors. |
