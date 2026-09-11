@@ -682,6 +682,49 @@ pub fn on_diff_callback_receives_all_rapid_diffs_test() -> Nil {
   list.length(joins2) |> should.equal(1)
 }
 
+pub fn on_diff_panic_is_reported_without_blocking_ack_or_owner_test() -> Nil {
+  let selector = test_helper.begin_capture()
+  let assert Ok(tracker) =
+    presence.start(
+      presence.default_config("callback-panic")
+      |> presence.with_on_diff(fn(_) { panic as "expected on_diff failure" }),
+    )
+  let assert Ok(owner_before) = process.subject_owner(presence.subject(tracker))
+  let reply = process.new_subject()
+
+  presence.track_async(
+    tracker,
+    "room:panic",
+    "user:1",
+    "socket-1",
+    json.null(),
+    None,
+    process.self(),
+    "track",
+    1,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+
+  let assert Ok(presence.MutationAck(
+    outcome: presence.Tracked(..),
+    tag: "track",
+    operation_id: 1,
+  )) = process.receive(reply, 1000)
+  presence_count(tracker, "room:panic") |> should.equal(1)
+  test_helper.receive_log(selector, "Presence on_diff callback failed", 5)
+  |> should.be_ok
+
+  let assert Ok(_) =
+    presence.track(tracker, "room:unrelated", "user:2", "socket-2", json.null())
+  presence_count(tracker, "room:unrelated") |> should.equal(1)
+  process.subject_owner(presence.subject(tracker))
+  |> should.equal(Ok(owner_before))
+
+  test_helper.stop_capture()
+  test_helper.kill_presence(tracker)
+}
+
 pub fn diff_accessors_return_empty_lists_for_unmentioned_topics_test() -> Nil {
   let diff =
     presence.diff(

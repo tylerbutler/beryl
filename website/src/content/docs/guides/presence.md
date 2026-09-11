@@ -165,9 +165,26 @@ The presence actor calls the callback for local changes and remote merges. It
 calls the function before it publishes new read-model snapshots and before it
 replies to the source call. If the callback calls `list`, `get_by_key`, or
 `count` for an affected topic, it reads the previous snapshot. Read the change
-from the `Diff` argument with `diff_joins` and `diff_leaves`. Keep the callback
-short. A slow callback delays snapshot publication, the source call reply, and
-later actor messages.
+from the `Diff` argument with `diff_joins` and `diff_leaves`.
+
+Keep the callback bounded and non-blocking. Enqueue a small message to a
+bounded application-owned worker and return. Do not make network calls or
+synchronously mutate the same presence actor. A slow callback delays snapshot
+publication, the source call reply or runtime mutation acknowledgement, and
+all later actor messages, including mutations for unrelated topics.
+
+beryl catches and logs callback exceptions, exits, and throws. The callback is
+a notification, not a veto: an otherwise successful local mutation or remote
+merge still publishes its snapshot and replies or acknowledges. beryl does not
+retry the callback and cannot roll back effects that completed before it
+failed. Treat delivery as a notification, not exactly-once application
+processing.
+
+Presence queue snapshots and `[beryl, queue, occupancy]` telemetry show an
+admitted local mutation while its callback runs. These controls do not set a
+callback deadline, apply to remote sync, or bound an application worker's
+mailbox. See [Handle overload](/guides/overload/#observe-capacity) and the
+[queue contract in #397](https://github.com/tylerbutler/beryl/issues/397).
 
 ```gleam
 let config =

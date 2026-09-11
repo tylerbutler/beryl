@@ -606,7 +606,20 @@ Set the callback for diffs from local changes, remote merges, or replica
  `list`/`get_by_key`/`count` calls from other processes do not use the
  mailbox and are not delayed. A socket with an active presence effect waits
  for the callback. Callers of synchronous mutations also wait for their
- replies.
+ replies. Enqueue a small message to a bounded application-owned worker and
+ return. Do not make network calls or synchronously mutate the same presence
+ actor from this callback.
+
+ beryl catches and logs callback exceptions, exits, and throws. A callback
+ failure does not veto an otherwise successful local mutation or remote
+ merge: beryl still publishes the snapshot and replies or acknowledges.
+ beryl does not retry the callback, and it cannot roll back callback effects
+ that completed before the failure. Treat delivery as a notification, not
+ exactly-once application processing.
+
+ Presence queue snapshots and occupancy telemetry retain an admitted local
+ mutation while its callback runs. They do not impose a callback deadline,
+ apply to remote sync, or bound an application worker's mailbox.
 
 <div class="api-entry-anchor" id="api-function-with_pubsub" aria-hidden="true"></div>
 
