@@ -88,11 +88,13 @@ fn accept_room(
       max_room_users,
     )
   {
-    Error(Nil) ->
+    Error(session_presence.AtCapacity) ->
       channel.reject(error_with_code(
         403,
         "Room is full (max " <> int.to_string(max_room_users) <> ")",
       ))
+    Error(session_presence.OwnerExited) ->
+      channel.reject(error_with_code(503, "Room admission failed"))
     Ok(Nil) -> {
       // The room list lives on another topic, so it is the one thing here
       // that goes through the hub.
