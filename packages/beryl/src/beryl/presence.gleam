@@ -1174,7 +1174,11 @@ pub fn untrack(
   call(presence, fn(reply) { Untrack(ref, reply) })
 }
 
-/// Untrack all presences for a session, such as when a socket disconnects.
+/// Untrack all presences locally tracked for a session, such as when a socket
+/// disconnects.
+///
+/// Replicated entries owned by another presence actor are not removed, even
+/// when they use the same session ID.
 ///
 /// Returns a typed call error on admission failure, owner exit, or timeout.
 /// A timeout cancels pending work, but a running mutation may still complete.
@@ -1881,19 +1885,10 @@ fn do_untrack_refs(actor_state: ActorState, refs: List(String)) -> ActorState {
 }
 
 fn do_untrack_all(actor_state: ActorState, session_id: String) -> ActorState {
-  let diff = leave_all_diff(actor_state.crdt, session_id)
-  let new_crdt = state.leave_by_pid(actor_state.crdt, session_id)
-  maybe_invoke_on_diff(actor_state.config, diff)
-  // Drop any refs that pointed at the removed session so they cannot leak
-  // or later leave presences they no longer own.
-  let new_refs =
-    dict.filter(actor_state.refs, fn(_ref, tracked) {
-      tracked.session_id != session_id
-    })
-  // A single session can hold presences in several topics; republish
-  // every topic the leave touched (from the pre-mutation diff).
-  publish_topics(actor_state.read_table, new_crdt, dict.keys(diff.leaves))
-  ActorState(..actor_state, crdt: new_crdt, refs: new_refs)
+  actor_state.refs
+  |> dict.filter(fn(_ref, tracked) { tracked.session_id == session_id })
+  |> dict.keys
+  |> do_untrack_refs(actor_state, _)
 }
 
 fn do_untrack_runtime_owner(
@@ -1904,24 +1899,6 @@ fn do_untrack_runtime_owner(
   |> dict.filter(fn(_ref, tracked) { tracked.owner == RuntimeOwner(owner) })
   |> dict.keys
   |> do_untrack_refs(actor_state, _)
-}
-
-fn leave_all_diff(crdt: State, session_id: String) -> Diff {
-  let leaves =
-    state.online_list(crdt)
-    |> list.filter(fn(entry) { entry.0 == session_id })
-    |> list.fold(dict.new(), fn(grouped, entry) {
-      let #(_, topic, key, meta) = entry
-      let existing =
-        dict.get(grouped, topic)
-        |> result.unwrap([])
-      dict.insert(grouped, topic, [
-        PresenceEntry(session_id: session_id, key: key, meta: meta),
-        ..existing
-      ])
-    })
-
-  Diff(joins: dict.new(), leaves: leaves, scope: Cluster)
 }
 
 /// Invoke the on_diff callback if configured and the diff is non-empty
