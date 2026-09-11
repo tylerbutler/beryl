@@ -4,6 +4,7 @@
          admission_token_new/0, admission_token_cancel/1,
          admission_token_pending/1, admission_token_claim/1, admission_token_owner/1,
          reservation_token_pending/1,
+         connection_limit_call/3, connection_limit_send/2,
          connection_limit_state_open/2, connection_limit_state_put/2,
          connection_limit_state_heir_start/2]).
 
@@ -49,6 +50,55 @@ reservation_token_pending({Token, _Owner}) ->
 
 admission_token_claim({Token, Owner}) ->
     is_process_alive(Owner) andalso atomics:compare_exchange(Token, 1, 0, 1) =:= ok.
+
+%% Deactivating the reply alias drops responses that arrive after this call
+%% returns, while the monitor reports limiter death without waiting for timeout.
+connection_limit_call(Subject, Timeout, Request) ->
+    case connection_limit_subject_owner(Subject) of
+        undefined ->
+            {error, call_owner_unavailable};
+        Owner ->
+            Alias = erlang:alias([reply]),
+            Tag = make_ref(),
+            Reply = {subject, Alias, Tag},
+            Monitor = erlang:monitor(process, Owner),
+            try
+                Owner ! connection_limit_subject_message(
+                    Subject, Request(Reply)),
+                receive
+                    {Tag, Value} -> {ok, Value};
+                    {'DOWN', Monitor, process, Owner, _Reason} ->
+                        {error, call_owner_unavailable}
+                after max(0, Timeout) ->
+                    {error, call_timed_out}
+                end
+            after
+                erlang:demonitor(Monitor, [flush]),
+                erlang:unalias(Alias),
+                receive {Tag, _} -> ok after 0 -> ok end
+            end
+    end.
+
+connection_limit_send(Subject, Message) ->
+    case connection_limit_subject_owner(Subject) of
+        undefined -> false;
+        Owner ->
+            Owner ! connection_limit_subject_message(Subject, Message),
+            true
+    end.
+
+connection_limit_subject_owner({subject, Owner, _Tag}) ->
+    case is_process_alive(Owner) of
+        true -> Owner;
+        false -> undefined
+    end;
+connection_limit_subject_owner({named_subject, Name}) ->
+    whereis(Name).
+
+connection_limit_subject_message({subject, _Owner, Tag}, Message) ->
+    {Tag, Message};
+connection_limit_subject_message({named_subject, Name}, Message) ->
+    {Name, Message}.
 
 %% Keep admission state in ETS across limiter worker replacement. The
 %% supervisor pid scopes the checkpoint to one subtree incarnation, and the
