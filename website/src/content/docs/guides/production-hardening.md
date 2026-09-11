@@ -1,13 +1,21 @@
 ---
-title: Prepare beryl for production
+title: Evaluate deployment hardening
 description: Configure traffic limits, authentication, and Erlang distribution security.
 ---
 
 beryl disables rate and connection limits by default because each deployment
-needs different values. These defaults are suitable for development. In
-production, one hostile or faulty client can degrade a server that has no
-traffic controls. beryl logs a startup warning when all controls are off. This
-guide explains which controls to configure.
+needs different values. These defaults are suitable for development. A hostile
+or faulty client can degrade a server that has no traffic controls. beryl logs
+a startup warning when all controls are off. This guide describes defensive
+controls and testable starting points; it does not provide production-validated
+capacity recommendations.
+
+:::caution[Validate these settings]
+beryl is a new project. The values in this guide are examples, not settings
+validated by long-running production deployments. Measure your workload, test
+failure and recovery paths, and adjust the limits for your application and
+infrastructure.
+:::
 
 ## Controls enabled by default
 
@@ -35,22 +43,20 @@ Even with no configuration, beryl enforces:
 
 The frame-size check limits decoding and routing work. It does **not** limit
 transport memory because buffering and reassembly occur before beryl receives
-the frame. In production, set a WebSocket frame or message limit in the reverse
+the frame. At deployment, set a WebSocket frame or message limit in the reverse
 proxy or load balancer. Set it at or below beryl's limit. Also set a matching
 HTTP request or body limit for the upgrade.
 
-## Configure production limits
+## Choose initial limits
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
   // Drop over-rate complete frames before decoding them.
   |> beryl.with_frame_rate(per_second: 150, burst: 300)
-  // Cap messages per socket. Size to your chattiest legitimate client:
-  // for most interactive apps 50-100 msg/s with 2x burst is generous.
+  // Example only. Measure your busiest legitimate client and tune this value.
   |> beryl.with_message_rate(per_second: 100, burst: 200)
-  // Joins are much rarer than messages. 10/s per socket tolerates
-  // aggressive reconnect/rejoin loops while stopping join floods.
+  // Example only. Tune this for your reconnect and rejoin behavior.
   |> beryl.with_join_rate(per_second: 10, burst: 20)
   // Cap connection attempts per client IP. This allowance survives
   // disconnects and app runtime restarts.
@@ -89,7 +95,8 @@ and resynchronize instead of receiving a stream with silently dropped frames.
 
 Set the byte budget above the largest legitimate encoded outbound frame. Size
 the frame budget for short write stalls, not sustained client outages. The
-defaults allow 256 frames and 1 MiB per connection.
+current defaults allow 256 frames and 1 MiB per connection. Validate whether
+those defaults fit your workload.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
@@ -144,10 +151,11 @@ addresses.
 
 ## Check origins and authenticate
 
-- `with_allowed_origins` on the Mist transport rejects browser connections
-  from unexpected origins before the WebSocket handshake.
-- `with_on_connect` authenticates the connection once, before upgrade.
-  reject unauthenticated clients with a 403 rather than at join time.
+- `server.default_config` uses same-origin checks by default. Use
+  `with_allowed_origins` when you need an explicit list of browser origins;
+  unexpected origins are rejected before the WebSocket handshake.
+- `with_on_connect` authenticates the connection once, before upgrade. Reject
+  unauthenticated clients with a 403 rather than at join time.
 - Authorize each topic in your update's `Join` arm; clients cannot
   send events to topics they have not joined.
 

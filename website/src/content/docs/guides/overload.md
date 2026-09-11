@@ -177,8 +177,8 @@ OTP supervisor/bootstrap RPC mailboxes and arbitrary system traffic remain
 outside the ledger protocol. Do not infer a bound for an externally suspended
 socket factory from the router's admission limit.
 
-Outbound connection queues remain outside this contract; follow
-[issue #249](https://github.com/tylerbutler/beryl/issues/249). Per-owner limits
-also need finite connection and topic populations before they can support a
-node-wide memory estimate. The existing unlimited connection defaults have
-not changed. See [production controls](/guides/production-hardening/).
+Transport connection queues have their own per-connection outbound budget.
+That budget limits queued frames and payload bytes, but it does not bound
+transport buffering before a complete inbound frame reaches beryl. Per-owner
+limits also need finite connection and topic populations before they can support
+a node-wide memory estimate. See [deployment hardening](/guides/production-hardening/).

@@ -115,7 +115,7 @@ A process on any peer node can:
 applies only to inbound WebSocket frames. It does not screen messages that
 arrive via distribution.
 
-Refer to the [Production Hardening guide](/guides/production-hardening/#erlang-cluster-security-boundary)
+Refer to the [deployment hardening guide](/guides/production-hardening/#erlang-cluster-security-boundary)
 for the full cluster security requirements (network isolation, mutually
 verified TLS distribution, EPMD port restrictions, and cookie handling).
 
