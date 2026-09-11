@@ -7,6 +7,82 @@
 -define(TOPIC, <<"room:distributed">>).
 -define(SYNC_TOPIC, <<"beryl:presence:sync">>).
 -define(SCOPE, <<"beryl_presence_distributed_test">>).
+-define(SOCKET_SCOPE, <<"beryl_presence_socket_frames_test">>).
+
+presence_scope_outage_diffs_stay_on_observing_node_test_() ->
+    {timeout, 30, fun() ->
+        with_peers(2, fun([A, B]) ->
+            connect(A, B),
+            Source = start_socket_replica(A, <<"source">>),
+            Receiver = start_socket_replica(B, <<"receiver">>),
+            OtherLocal = call(B, presence_socket_test_helper, start_client, [?SOCKET_SCOPE]),
+            ClientA = maps:get(client, Source),
+            ClientB = maps:get(client, Receiver),
+            Clients = [{A, ClientA}, {B, ClientB}, {B, OtherLocal}],
+            lists:foreach(fun({Peer, Client}) -> await_client(Peer, Client) end, Clients),
+            lists:foreach(fun(Peer) ->
+                Config = call(Peer, 'beryl@pubsub', config_with_scope, [?SOCKET_SCOPE]),
+                PubSub = call(Peer, 'beryl@pubsub', start, [Config]),
+                await({socket_members, element(2, Peer)}, fun() ->
+                    call(Peer, 'beryl@pubsub', subscriber_count, [PubSub, ?TOPIC]) =:= 3
+                end)
+            end, [A, B]),
+            Ref = track_socket_presence(A, Source, <<"healthy-a">>),
+            await_view(B, Receiver, [<<"healthy-a">>]),
+            lists:foreach(fun({Peer, Client}) ->
+                await_frame_barrier(Peer, Client, <<"receiver">>, <<"joins">>,
+                    <<"healthy-a">>, Ref, 1)
+            end, Clients),
+            OriginalJoins = length(diff_frames(client_frames(A, ClientA),
+                <<"joins">>, <<"healthy-a">>, Ref)),
+            Outage = call(B, ?MODULE, begin_outage, [?SCOPE]),
+            try
+                await_members(A, 1),
+                await_view(B, Receiver, []),
+                lists:foreach(fun({Peer, Client}) ->
+                    await_frame_barrier(Peer, Client, <<"receiver">>, <<"leaves">>,
+                        <<"healthy-a">>, Ref, 1)
+                end, Clients),
+                %% The healthy source still owns this entry. A receiver's
+                %% local pg outage must not send its clients a false leave.
+                await_view(A, Source, [<<"healthy-a">>]),
+                ?assertEqual([], diff_frames(client_frames(A, ClientA),
+                    <<"leaves">>, <<"healthy-a">>, Ref)),
+                lists:foreach(fun(Client) ->
+                    ?assertEqual(1, length(diff_frames(client_frames(B, Client),
+                        <<"leaves">>, <<"healthy-a">>, Ref)))
+                end, [ClientB, OtherLocal]),
+                %% Application diffs must still cross the healthy socket
+                %% PubSub scope while presence replication on B is unavailable.
+                NormalRef = track_socket_presence(A, Source, <<"normal">>),
+                lists:foreach(fun({Peer, Client}) ->
+                    await_frame_barrier(Peer, Client, <<"source">>, <<"joins">>,
+                        <<"normal">>, NormalRef, 1),
+                    ?assertEqual(1, length(diff_frames(client_frames(Peer, Client),
+                        <<"joins">>, <<"normal">>, NormalRef)))
+                end, Clients),
+                await_view(B, Receiver, []),
+                {ok, nil} = presence_call(A, untrack, [handle(Source), NormalRef]),
+                lists:foreach(fun({Peer, Client}) ->
+                    await_frame_barrier(Peer, Client, <<"source">>, <<"leaves">>,
+                        <<"normal">>, NormalRef, 1),
+                    ?assertEqual(1, length(diff_frames(client_frames(Peer, Client),
+                        <<"leaves">>, <<"normal">>, NormalRef)))
+                end, Clients)
+            after
+                nil = call(B, ?MODULE, end_outage, [Outage])
+            end,
+            await_view(B, Receiver, [<<"healthy-a">>]),
+            lists:foreach(fun({Peer, Client}) ->
+                await_frame_barrier(Peer, Client, <<"receiver">>, <<"joins">>,
+                    <<"healthy-a">>, Ref, 2)
+            end, Clients),
+            ?assertEqual(OriginalJoins, length(diff_frames(client_frames(A, ClientA),
+                <<"joins">>, <<"healthy-a">>, Ref))),
+            ?assertEqual([], diff_frames(client_frames(A, ClientA),
+                <<"leaves">>, <<"healthy-a">>, Ref))
+        end)
+    end}.
 
 late_joiner_gets_quiet_snapshot_test_() ->
     {timeout, 30, fun() ->
@@ -210,6 +286,51 @@ disconnect(A, {_Controller, Node} = B) ->
 
 start(Peer, Replica, Interval) ->
     call(Peer, ?MODULE, start_replica, [?SCOPE, Replica, Interval]).
+
+start_socket_replica(Peer, Replica) ->
+    Client = call(Peer, presence_socket_test_helper, start_client, [?SOCKET_SCOPE]),
+    {Presence, Pid} = call(Peer, presence_socket_test_helper, start_presence,
+        [Client, ?SCOPE, Replica]),
+    #{handle => Presence, pid => Pid, client => Client}.
+
+track_socket_presence(Peer, Instance, Key) ->
+    {ok, Ref} = presence_call(Peer, track,
+        [handle(Instance), ?TOPIC, Key, Key, 'gleam@json':object([])]),
+    Ref.
+
+client_frames(Peer, Client) ->
+    [json:decode(Frame) || Frame <-
+        call(Peer, presence_socket_test_helper, frames, [Client])].
+
+await_client(Peer, Client) ->
+    await({socket_join, element(2, Peer)}, fun() ->
+        lists:any(fun
+            ([<<"join">>, <<"join">>, ?TOPIC, <<"phx_reply">>,
+              #{<<"status">> := <<"ok">>}]) -> true;
+            (_) -> false
+        end, client_frames(Peer, Client))
+    end).
+
+diff_frames(Frames, Side, Key, Ref) ->
+    [Payload || [null, null, ?TOPIC, <<"presence_diff">>, Payload] <- Frames,
+        diff_contains_ref(Payload, Side, Key, Ref)].
+
+diff_contains_ref(Payload, Side, Key, Ref) ->
+    case maps:find(Key, maps:get(Side, Payload)) of
+        {ok, #{<<"metas">> := Metas}} ->
+            lists:any(fun(Meta) -> maps:get(<<"phx_ref">>, Meta) =:= Ref end, Metas);
+        error -> false
+    end.
+
+await_frame_barrier(Peer, Client, Replica, Side, Key, Ref, Count) ->
+    await({socket_diff_barrier, element(2, Peer), Replica, Side, Key}, fun() ->
+        Markers = [ok ||
+            [null, null, ?TOPIC, <<"presence_diff_barrier">>, Marker] <-
+                client_frames(Peer, Client),
+            maps:get(<<"replica">>, Marker) =:= Replica,
+            diff_contains_ref(maps:get(<<"diff">>, Marker), Side, Key, Ref)],
+        length(Markers) >= Count
+    end).
 
 start_replica(Scope, Replica, Interval) ->
     PubSub = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),

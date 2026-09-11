@@ -88,7 +88,8 @@ PubSub copies presence state between nodes.
 
 | Function | Description |
 |---|---|
-| `diff(joins, leaves)` | Construct a diff from topic-grouped join and leave lists |
+| `diff(joins, leaves)` | Construct a `Cluster` application diff from topic-grouped join and leave lists |
+| `diff_scope(diff)` | Read `Cluster` or `LocalNode` delivery scope |
 | `diff_topics(diff)` | List every topic touched by this diff |
 | `diff_joins(diff, topic)` | Get joined entries for a topic |
 | `diff_leaves(diff, topic)` | Get departed entries for a topic |
@@ -142,6 +143,18 @@ It retains the entries and causal context. Peer snapshots cannot make an
 unavailable or unconfirmed replica visible. Diffs compare the visible state
 before and after the complete transition, so removing a hidden entry does
 not emit a second leave.
+
+Replica-view diffs have `LocalNode` scope. This includes remote merges,
+failure detection, and reconnects, even when one commit also contains causal
+data changes. `beryl.broadcast_presence_diff` keeps them on the observing node
+instead of publishing its availability decision to healthy peers. Application
+mutations and explicitly constructed diffs retain `Cluster` delivery.
+
+The runtime admits both kinds through its queue. Local-view delivery uses
+the same per-socket encoding path and forwards only to other local runtimes
+in the application PubSub scope. Phoenix frames and the PubSub wire tuple
+do not change. Custom callbacks must preserve `diff_scope`; see
+[sending presence diffs](/guides/presence/#send-phoenix-compatible-presence_diff-events).
 
 A temporary partition can make a remote session appear offline while its
 source node still lists it. Local tracking and local reads remain available.

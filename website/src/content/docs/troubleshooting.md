@@ -197,6 +197,12 @@ recent joins or leaves.
 
 3. **`on_diff` not broadcasting.** If clients rely on receiving `presence_diff` events, confirm `on_diff` is configured and calls `beryl.broadcast_presence_diff`. See the [Presence guide](/guides/presence).
 
+4. **Healthy clients receive false leaves.** Pass the original callback diff to
+   `beryl.broadcast_presence_diff`. Encoding it and calling a generic broadcast
+   loses its delivery scope. Replica-view diffs, including failure and recovery
+   decisions, must stay on the observing node; application mutations retain
+   cluster-wide delivery.
+
 ---
 
 ## Authentication failures
