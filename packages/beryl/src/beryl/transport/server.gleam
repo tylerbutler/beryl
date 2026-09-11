@@ -238,7 +238,7 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// 1. Applies the configured origin policy and the `?vsn` version check,
 ///    rejecting failures with `reject(403)`.
 /// 2. Acquires a connection slot for `request_ip(request)` (per-IP and
-///    node-wide ceilings), rejecting with `reject(429)` when at a limit.
+///    per-system ceilings), rejecting with `reject(429)` when at a limit.
 /// 3. Runs any `on_connect` callback; on `Error(ConnectRejected)` the slot is
 ///    released and the request is rejected with `reject(403)`.
 /// 4. Hands admitted requests to `accept` with the callback's connect
@@ -269,15 +269,14 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// exhausted. Its state survives disconnects and app runtime restarts, so
 /// reconnecting does not refresh the configured burst.
 ///
-/// When `beryl.with_max_connections` is configured, a node-wide ceiling on
-/// concurrent connections across all IPs is likewise enforced with
-/// `reject(429)` before allocating any long-lived socket/runtime state. The
-/// two limits compose: a connection must be under both to be admitted. The
-/// node-wide ceiling bounds total resource use when a per-IP limit alone
-/// cannot (many distributed source addresses / IPv6 rotation). It is enforced
-/// per BEAM node, so across a load-balanced cluster the effective ceiling
-/// scales with the node count. Use the load balancer's controls for a
-/// cluster-wide cap.
+/// When `beryl.with_max_connections` is configured, a ceiling on concurrent
+/// connections across all IPs for the supplied `Sockets` system is likewise
+/// enforced with `reject(429)` before allocating any long-lived socket/runtime
+/// state. The two limits compose: a connection must be under both to be
+/// admitted. The total ceiling bounds resource use when a per-IP limit alone
+/// cannot (many distributed source addresses / IPv6 rotation). Each
+/// independently constructed system has a separate limiter on its BEAM node.
+/// Use the load balancer's controls for a cluster-wide cap.
 pub fn upgrade(
   request request: Request(body),
   sockets sockets: Sockets,
