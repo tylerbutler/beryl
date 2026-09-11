@@ -680,7 +680,20 @@ pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
 /// `list`/`get_by_key`/`count` calls from other processes do not use the
 /// mailbox and are not delayed. A socket with an active presence effect waits
 /// for the callback. Callers of synchronous mutations also wait for their
-/// replies.
+/// replies. Enqueue a small message to a bounded application-owned worker and
+/// return. Do not make network calls or synchronously mutate the same presence
+/// actor from this callback.
+///
+/// beryl catches and logs callback exceptions, exits, and throws. A callback
+/// failure does not veto an otherwise successful local mutation or remote
+/// merge: beryl still publishes the snapshot and replies or acknowledges.
+/// beryl does not retry the callback, and it cannot roll back callback effects
+/// that completed before the failure. Treat delivery as a notification, not
+/// exactly-once application processing.
+///
+/// Presence queue snapshots and occupancy telemetry retain an admitted local
+/// mutation while its callback runs. They do not impose a callback deadline,
+/// apply to remote sync, or bound an application worker's mailbox.
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
@@ -1924,16 +1937,26 @@ fn leave_all_diff(crdt: State, session_id: String) -> Diff {
   Diff(joins: dict.new(), leaves: leaves, scope: Cluster)
 }
 
-/// Invoke the on_diff callback if configured and the diff is non-empty
+/// Invoke the on_diff callback if configured and the diff is non-empty.
 fn maybe_invoke_on_diff(config: Config, diff: Diff) -> Nil {
   case config.on_diff {
     None -> Nil
-    Some(callback) -> {
-      case dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) {
-        True -> Nil
-        False -> callback(diff)
-      }
-    }
+    Some(callback) -> invoke_on_diff(callback, diff)
+  }
+}
+
+fn invoke_on_diff(callback: fn(Diff) -> Nil, diff: Diff) -> Nil {
+  use <- bool.guard(
+    when: dict.is_empty(diff.joins) && dict.is_empty(diff.leaves),
+    return: Nil,
+  )
+  case internal.rescue(fn() { callback(diff) }) {
+    Ok(Nil) -> Nil
+    Error(crash) ->
+      internal.logger("beryl.presence")
+      |> log.error("Presence on_diff callback failed", [
+        #("crash", crash),
+      ])
   }
 }
 
@@ -2034,7 +2057,8 @@ fn merge_remote_sync(
   // Crash boundary — see internal.rescue. Version skew or bugs can produce
   // malformed sync state; Erlang distribution peers are fully trusted (see
   // the production-hardening guide). Preserve the previous actor state unless
-  // merge, on_diff, prune, and read-model publication all complete.
+  // merge, prune, and read-model publication all complete. `on_diff` has its
+  // own callback-only boundary, so its failure cannot discard a valid merge.
   let processed =
     internal.rescue(fn() {
       let sender = state.replica(remote_state)
