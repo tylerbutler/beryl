@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Scope connection-limit checkpoints to each supervised app incarnation so replacement subtrees cannot inherit or lose admission state from predecessors."

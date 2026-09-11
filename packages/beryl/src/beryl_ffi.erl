@@ -49,29 +49,34 @@ reservation_token_pending({Token, _Owner}) ->
 admission_token_claim({Token, Owner}) ->
     is_process_alive(Owner) andalso atomics:compare_exchange(Token, 1, 0, 1) =:= ok.
 
-%% Keep admission state in ETS across limiter worker replacement. The heir
-%% owns an inherited table only until the surrounding supervisor exits.
+%% Keep admission state in ETS across limiter worker replacement. The
+%% supervisor pid scopes the checkpoint to one subtree incarnation, and the
+%% heir owns an inherited table only until that supervisor exits.
 connection_limit_state_open(Key, InitialState) ->
-    PersistentKey = {?MODULE, connection_limit_state, Key},
+    Supervisor = connection_limit_supervisor(),
+    PersistentKey = {?MODULE, connection_limit_state, Supervisor, Key},
     case persistent_term:get(PersistentKey, undefined) of
         undefined ->
-            connection_limit_state_new(PersistentKey, Key, InitialState);
+            connection_limit_state_new(
+                Supervisor, PersistentKey, Key, InitialState);
         Table ->
             case ets:info(Table) of
                 undefined ->
                     connection_limit_state_new(
-                        PersistentKey, Key, InitialState);
+                        Supervisor, PersistentKey, Key, InitialState);
                 _ ->
                     [{state, State}] = ets:lookup(Table, state),
                     State
             end
     end.
 
-connection_limit_state_new(PersistentKey, Key, InitialState) ->
-    Supervisor = case erlang:get('$ancestors') of
+connection_limit_supervisor() ->
+    case erlang:get('$ancestors') of
         [Pid | _] when is_pid(Pid) -> Pid;
         _ -> erlang:error(connection_limit_supervisor_missing)
-    end,
+    end.
+
+connection_limit_state_new(Supervisor, PersistentKey, Key, InitialState) ->
     Heir = spawn(fun() ->
         connection_limit_state_heir(Supervisor, PersistentKey)
     end),
@@ -106,7 +111,8 @@ connection_limit_state_heir_wait(Supervisor, Monitor, PersistentKey, Table) ->
     end.
 
 connection_limit_state_put(Key, State) ->
-    PersistentKey = {?MODULE, connection_limit_state, Key},
+    Supervisor = connection_limit_supervisor(),
+    PersistentKey = {?MODULE, connection_limit_state, Supervisor, Key},
     Table = persistent_term:get(PersistentKey),
     true = ets:insert(Table, {state, State}),
     nil.
