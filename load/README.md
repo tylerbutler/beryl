@@ -152,6 +152,13 @@ non-negative integer. Profile files accept only `constant-vus`,
 `per-vu-iterations`, or `constant-arrival-rate`, require a non-empty `exec`
 and threshold arrays, and require positive VUs or arrival-rate allocation.
 
+The benchmark server's `BENCH_CALLBACK_ELAPSED_US` setting models elapsed
+callback delay. Its preemptible loop uses CPU only while scheduled; contention
+or suspension counts toward the deadline. It is not a calibrated CPU workload.
+Keep it at zero for CPU-capacity comparisons unless this elapsed-delay model
+is part of the workload. Record the exact value and this assumption with the
+target's hardware, OTP version, and scheduler settings.
+
 The benchmark contract is explicit: `echo` returns the submitted marker;
 `broadcast` and `broadcast_ack` fan out unchanged payloads;
 `presence_track`/`presence_untrack` produce matching `presence_diff` entries;
@@ -310,7 +317,8 @@ repeats from overwriting one another.
 ## Controlled baselines
 
 1. Pin the commit, k6 image digest, target image digest, OS and OTP settings,
-   topology, profile, and effective environment.
+   topology, profile, and effective client and server environment, including
+   `BENCH_CALLBACK_ELAPSED_US`.
 2. Pass `protocol-smoke`, then run an unrecorded whole-system warmup long
    enough for code loading, pools, and caches. `BROADCAST_WARMUP_MS` only
    coordinates group membership.

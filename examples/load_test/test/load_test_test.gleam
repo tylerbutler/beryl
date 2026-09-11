@@ -14,6 +14,7 @@ import gleam/string
 import gleeunit
 import gleeunit/should
 import load_test/app as load_app
+import load_test/bench
 import load_test/channel
 import load_test/ewe as ewe_http
 import load_test/http
@@ -21,6 +22,9 @@ import load_test/mist as mist_http
 
 @external(erlang, "load_test_test_ffi", "run_after")
 fn run_after(run: fn() -> value, cleanup: fn() -> Nil) -> value
+
+@external(erlang, "load_test_test_ffi", "elapsed_wait_advances_while_suspended")
+fn elapsed_wait_advances_while_suspended() -> Bool
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -175,6 +179,16 @@ pub fn broadcast_fans_out_full_payload_test() -> Nil {
   let publisher_messages = recv(publisher) <> recv(publisher)
   publisher_messages |> string.contains("fanout-1") |> should.be_true
   recv(peer) |> string.contains("fanout-1") |> should.be_true
+}
+
+pub fn callback_elapsed_knob_uses_elapsed_time_name_test() -> Nil {
+  with_environment_value("BENCH_CALLBACK_ELAPSED_US", Some("123"), fn() {
+    bench.callback_elapsed_us() |> should.equal(123)
+  })
+}
+
+pub fn callback_elapsed_wait_includes_suspension_test() -> Nil {
+  elapsed_wait_advances_while_suspended() |> should.be_true
 }
 
 pub fn app_configures_frame_rate_from_environment_test() -> Nil {
