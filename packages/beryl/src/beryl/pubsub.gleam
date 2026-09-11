@@ -337,6 +337,24 @@ pub fn broadcast_from(
   |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
+/// Send an internal message to one member obtained from `subscribers`.
+///
+/// Uses the same scoped wire tuple as broadcasts and records the calling PID.
+@internal
+pub fn send_to(
+  pubsub_instance: PubSub(payload),
+  member: Pid,
+  topic: String,
+  event: String,
+  payload: payload,
+) -> Nil {
+  ffi_send_to_pid(
+    member,
+    pubsub_instance.scope,
+    Message(topic:, event:, payload:, from: FromPid(process.self())),
+  )
+}
+
 /// Broadcast a message to all subscribers except a process.
 ///
 /// Preserve a socket ID that receiving runtimes must exclude locally.
@@ -378,6 +396,22 @@ pub fn local_broadcast(
   list.each(members, fn(pid) {
     ffi_send_to_pid(pid, pubsub_instance.scope, message)
   })
+}
+
+/// Broadcast to other local subscribers using the unchanged scoped wire tuple.
+@internal
+pub fn local_broadcast_from(
+  pubsub_instance: PubSub(payload),
+  from: Pid,
+  topic: String,
+  event: String,
+  payload: payload,
+) -> Nil {
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: FromPid(from))
+  ffi_get_local_members(pubsub_instance.scope, pubsub_instance.registry, topic)
+  |> list.filter(fn(pid) { pid != from })
+  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
 /// Return all topic subscribers on all nodes.

@@ -20,9 +20,15 @@ Distributed presence tracking with a CRDT
  OTP actor that:
  - Handles track/update/untrack calls
  - Publishes an actor-owned ETS read model
- - Periodically broadcasts state via PubSub for cross-node replication
- - Receives remote state from PubSub and merges it internally
+ - Requests snapshots at startup and periodically through PubSub
+ - Receives remote snapshots and merges them internally
+ - Hides unavailable remote replicas without forgetting their causal state
  - Invokes `on_diff` when local changes or merges produce non-empty diffs
+
+ Each actor owns its local entries. Remote snapshots are accepted only from
+ a live owner answering an outstanding request, never through a relay.
+ Unavailable state is retained for 60 seconds before safe compaction; see
+ `with_pubsub` for the recovery and incarnation rules.
 
  Presence is independent of the beryl runtime and runs under your
  application's supervision tree.
@@ -70,6 +76,7 @@ Distributed presence tracking with a CRDT
   <ul>
 <li><a href="#api-type-config"><code>Config</code></a></li>
 <li><a href="#api-type-diff"><code>Diff</code></a></li>
+<li><a href="#api-type-diffscope"><code>DiffScope</code></a></li>
 <li><a href="#api-type-message"><code>Message</code></a></li>
 <li><a href="#api-type-presence"><code>Presence</code></a></li>
 <li><a href="#api-type-presenceentry"><code>PresenceEntry</code></a></li>
@@ -85,6 +92,7 @@ Distributed presence tracking with a CRDT
 <li><a href="#api-function-diff"><code>diff</code></a></li>
 <li><a href="#api-function-diff_joins"><code>diff_joins</code></a></li>
 <li><a href="#api-function-diff_leaves"><code>diff_leaves</code></a></li>
+<li><a href="#api-function-diff_scope"><code>diff_scope</code></a></li>
 <li><a href="#api-function-diff_topics"><code>diff_topics</code></a></li>
 <li><a href="#api-function-get_by_key"><code>get_by_key</code></a></li>
 <li><a href="#api-function-list"><code>list</code></a></li>
@@ -129,7 +137,40 @@ pub type Diff
 An opaque diff representing presence joins and leaves grouped by topic.
 
  beryl passes this value to `Config.on_diff`.
- `beryl.broadcast_presence_diff` also accepts it.
+ `beryl.broadcast_presence_diff` preserves its delivery scope automatically.
+
+<div class="api-entry-anchor" id="api-type-diffscope" aria-hidden="true"></div>
+
+### `DiffScope`
+
+```gleam
+pub type DiffScope {
+  Cluster
+  LocalNode
+}
+```
+
+The audience for a presence diff.
+
+#### Constructors
+
+##### `Cluster`
+
+```gleam
+Cluster
+```
+
+Application mutations and explicitly constructed diffs may be broadcast
+ to the cluster.
+
+##### `LocalNode`
+
+```gleam
+LocalNode
+```
+
+Replication, failure detection, and recovery describe this node's view.
+ Deliver these diffs only to socket subscribers on the observing node.
 
 <div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
 
@@ -262,10 +303,10 @@ pub fn default_config(String) -> Config
 
 Default configuration (no PubSub).
 
- The broadcast interval defaults to 1500 ms. Adding `with_pubsub` enables
- periodic outbound broadcasts and inbound replication. Without PubSub, the
- interval is unused. Use a non-positive interval to disable periodic
- outbound broadcasts.
+ The repair interval defaults to 1500 ms. Adding `with_pubsub` enables an
+ initial snapshot request and periodic repair, even without local changes.
+ Without PubSub, the interval is unused. A non-positive interval disables
+ periodic requests, but the initial exchange and replies remain enabled.
 
 <div class="api-entry-anchor" id="api-function-diff" aria-hidden="true"></div>
 
@@ -281,7 +322,9 @@ pub fn diff(
 Build a presence diff from topic-grouped joins and leaves.
 
  Most applications receive diffs from `Config.on_diff`. Use this function
- to construct a diff for `beryl.broadcast_presence_diff`.
+ to construct an application diff with `Cluster` scope for
+ `beryl.broadcast_presence_diff`. Do not rebuild a replica-view diff with
+ this function: that would discard its `LocalNode` scope.
 
 <div class="api-entry-anchor" id="api-function-diff_joins" aria-hidden="true"></div>
 
@@ -308,6 +351,24 @@ pub fn diff_leaves(
 ```
 
 Return presence leaves for a topic in this diff.
+
+<div class="api-entry-anchor" id="api-function-diff_scope" aria-hidden="true"></div>
+
+### `diff_scope`
+
+```gleam
+pub fn diff_scope(Diff) -> DiffScope
+```
+
+Return where this diff may be delivered.
+
+ Local application mutations produce `Cluster` diffs. Remote snapshots and
+ replica availability changes produce `LocalNode` diffs, even when one
+ update contains both causal changes and liveness changes. They repair the
+ observing node's view and must not be rebroadcast to other nodes.
+
+ Prefer `beryl.broadcast_presence_diff`, which handles this distinction.
+ Custom publishers must preserve it; the Phoenix JSON payload has no scope.
 
 <div class="api-entry-anchor" id="api-function-diff_topics" aria-hidden="true"></div>
 
@@ -475,9 +536,15 @@ pub fn with_broadcast_interval(
 ) -> Config
 ```
 
-Set how often presence state is broadcast for replication.
+Set how often presence requests full snapshots from its PubSub peers.
 
- Use a non-positive value to disable periodic broadcasts.
+ Requests run at startup and every `interval_ms` thereafter, including when
+ no application state changes. Lost requests or replies are retried on later
+ ticks. The default is 1500 ms; this is a repair cadence, not a convergence
+ deadline. Delivery, membership propagation, and actor work can delay repair.
+
+ A non-positive value disables periodic requests, not the initial request or
+ replies to peers. Without periodic requests, quiet recovery is not guaranteed.
 
 <div class="api-entry-anchor" id="api-function-with_call_timeout" aria-hidden="true"></div>
 
@@ -507,7 +574,15 @@ pub fn with_on_diff(
 ) -> Config
 ```
 
-Set the callback for diffs from local changes or remote merges.
+Set the callback for diffs from local changes, remote merges, or replica
+ availability changes.
+
+ Pass the original diff to `beryl.broadcast_presence_diff` to preserve its
+ delivery scope. Application mutations publish cluster-wide at their source.
+ Replication and availability callbacks repair local clients only. A custom
+ publisher must inspect `diff_scope` rather than broadcast encoded JSON
+ unconditionally. A local worker may handle the callback; do not move a
+ `LocalNode` diff to another node for publication.
 
  The callback runs synchronously on the presence actor, for both local
  mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
@@ -545,6 +620,25 @@ pub fn with_pubsub(
 ```
 
 Enable PubSub replication for presence.
+
+ Remote visibility follows monitored actor ownership and the local `pg`
+ membership view. Actor exit, node disconnection, or membership loss hides
+ that replica and emits leaves. Its causal state remains available for repair.
+ A fresh snapshot from the same actor restores its current entries; a
+ replacement actor starts a new incarnation. A partition can therefore hide
+ sessions that remain connected to their local node.
+
+ Each snapshot contains only its sender's authoritative state. A receiver's
+ request order, not a random suffix or message arrival order, determines
+ whether a new incarnation can replace its known owner. Concurrent live
+ actors sharing a replica base in one scope are unsupported.
+
+ A confirmed replacement retires its predecessor. Otherwise, unavailable
+ state remains for 60 seconds, checked every second while the actor runs.
+ Compaction invalidates outstanding requests. A returning actor must answer
+ a new request with its current full local snapshot, so delayed replies and
+ lagging peers cannot reintroduce compacted history. The retention check also
+ runs when periodic snapshot requests are disabled. Actor work can delay it.
 
 <div class="api-entry-anchor" id="api-function-with_queue_limits" aria-hidden="true"></div>
 

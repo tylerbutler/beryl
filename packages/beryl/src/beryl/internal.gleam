@@ -74,14 +74,6 @@ pub fn logger(name: String) -> Logger {
   log.new(name)
 }
 
-/// Build a named logger using the supplied beryl logging configuration.
-///
-/// The level is applied globally via `configure`; the returned logger only
-/// carries its name.
-pub fn logger_with_config(name: String, _config: LoggingConfig) -> Logger {
-  log.new(name)
-}
-
 /// Safely truncate a text value for log metadata.
 fn safe_preview(text: String, max_length: Int) -> String {
   let safe_length = int.max(max_length, 0)

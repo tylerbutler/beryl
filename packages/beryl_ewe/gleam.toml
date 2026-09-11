@@ -10,7 +10,6 @@ target = "erlang"
 beryl = { path = "../beryl" }
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_erlang = ">= 1.3.0 and < 2.0.0"
-gleam_crypto = ">= 1.6.0 and < 2.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"
 ewe = ">= 4.0.0 and < 5.0.0"
 glisten = ">= 9.0.1 and < 10.0.0"

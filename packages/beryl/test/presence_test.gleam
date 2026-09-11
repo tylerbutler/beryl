@@ -18,6 +18,35 @@ fn test_config(replica: String) -> presence.Config {
   presence.default_config(replica)
 }
 
+pub fn explicitly_constructed_diffs_have_cluster_scope_test() -> Nil {
+  presence.diff(joins: [], leaves: [])
+  |> presence.diff_scope
+  |> should.equal(presence.Cluster)
+}
+
+pub fn application_mutation_diffs_have_cluster_scope_test() -> Nil {
+  let scopes = process.new_subject()
+  let assert Ok(tracker) =
+    presence.start(
+      test_config("application-diffs")
+      |> presence.with_on_diff(fn(diff) {
+        process.send(scopes, presence.diff_scope(diff))
+      }),
+    )
+  let assert Ok(ref) =
+    presence.track(tracker, "room:lobby", "user", "session", json.object([]))
+  let assert Ok(updated) = presence.update(tracker, ref, json.object([]))
+  let assert Ok(Nil) = presence.untrack(tracker, updated)
+  let assert Ok(_) =
+    presence.track(tracker, "room:lobby", "user", "session", json.object([]))
+  let assert Ok(Nil) = presence.untrack_all(tracker, "session")
+  list.each(list.repeat(presence.Cluster, 5), fn(scope) {
+    process.receive(scopes, 1000) |> should.equal(Ok(scope))
+  })
+  process.receive(scopes, 0) |> should.equal(Error(Nil))
+  test_helper.kill_presence(tracker)
+}
+
 pub fn presence_start_test() -> Nil {
   let #(tracker, spec) = presence.child_spec(test_config("node1"))
   let assert Ok(_root) =

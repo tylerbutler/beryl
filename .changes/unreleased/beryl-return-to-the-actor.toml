@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Return to the actor selector between resumed inbox items so sustained work cannot starve shutdown, heartbeats, or monitor messages."

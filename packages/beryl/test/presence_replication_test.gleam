@@ -1,11 +1,11 @@
 import beryl/presence
 import beryl/pubsub
 import gleam/erlang/process
+import gleam/erlang/reference
 import gleam/json
 import gleam/list
 import gleeunit
 import gleeunit/should
-import lattice_presence/presence_state
 import test_helper
 
 pub fn main() -> Nil {
@@ -32,12 +32,13 @@ fn test_config(
 
 // ── BroadcastTick sends state via PubSub ────────────────────────────
 
-pub fn broadcast_tick_sends_state_test() -> Nil {
+pub fn broadcast_tick_requests_state_test() -> Nil {
   let pubsub_instance = test_pubsub("bcast_tick")
 
   // Start presence with a short broadcast interval
   let config = test_config(pubsub_instance, "node1", 50)
   let assert Ok(tracker) = presence.start(config)
+  let assert Ok(owner) = process.subject_owner(presence.subject(tracker))
 
   // Track an entry
   let assert Ok(_) =
@@ -56,12 +57,17 @@ pub fn broadcast_tick_sends_state_test() -> Nil {
   // Poll until a PubSub message arrives from the broadcast tick
   let selector =
     process.new_selector()
-    |> pubsub.selecting(subscriber, fn(_message) { True })
+    |> pubsub.selecting(subscriber, fn(message) {
+      message.topic == "beryl:presence:sync"
+      && message.event == "presence_sync"
+      && message.from == pubsub.FromPid(owner)
+      && message.payload.version == 2
+    })
 
   test_helper.wait_until(
     fn() {
       case process.selector_receive(from: selector, within: 0) {
-        Ok(_) -> True
+        Ok(matches) -> matches
         Error(_) -> False
       }
     },
@@ -73,7 +79,7 @@ pub fn broadcast_tick_sends_state_test() -> Nil {
   pubsub.leave(subscriber, "beryl:presence:sync")
 
   // Drain any remaining messages from the mailbox
-  drain_mailbox()
+  drain_sync(subscriber)
 }
 
 // ── Two presence actors converge via PubSub ─────────────────────────
@@ -148,7 +154,8 @@ pub fn remote_state_triggers_merge_via_pubsub_test() -> Nil {
   let config2 = test_config(pubsub_instance, "node2", 50)
   let assert Ok(tracker2) = presence.start(config2)
 
-  // Track on node2
+  // Periodic requests from node2 include one reciprocal request, so node1
+  // still receives updates even though its own periodic repair is disabled.
   let assert Ok(_) =
     presence.track(tracker2, "room:lobby", "user:2", "socket-2", json.null())
 
@@ -319,8 +326,9 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
     "presence_sync",
     presence.SyncPayload(
       version: 99,
-      sender: "node2@ghost",
-      state: presence_state.new("node2@ghost"),
+      request: reference.new(),
+      reply: process.new_subject(),
+      request_back: False,
     ),
   )
 
@@ -452,13 +460,13 @@ pub fn merge_failure_leaves_read_model_unchanged_test() -> Nil {
 
 // ── Helper to drain stray messages ──────────────────────────────────
 
-fn drain_mailbox() -> Nil {
+fn drain_sync(subscriber: pubsub.Subscriber(presence.SyncPayload)) -> Nil {
   let selector =
     process.new_selector()
-    |> process.select_other(fn(_message) { True })
+    |> pubsub.selecting(subscriber, fn(message) { message })
 
   case process.selector_receive(from: selector, within: 10) {
-    Ok(_) -> drain_mailbox()
+    Ok(_) -> drain_sync(subscriber)
     Error(_) -> Nil
   }
 }
@@ -611,11 +619,20 @@ pub fn restart_prune_updates_read_model_count_test() -> Nil {
   // The pruned ghost must not inflate the peer's count once it converges
   // on the restarted incarnation.
   test_helper.wait_until(
-    fn() { presence_count(tracker2, "room:lobby") == 1 },
+    fn() {
+      let identities =
+        presence_entries(tracker2, "room:lobby")
+        |> list.map(fn(entry) { #(entry.session_id, entry.key) })
+      presence_count(tracker2, "room:lobby") == 1
+      && identities == [#("socket-live", "user:live")]
+    },
     3000,
     10,
   )
   presence_count(tracker2, "room:lobby") |> should.equal(1)
+  presence_entries(tracker2, "room:lobby")
+  |> list.map(fn(entry) { #(entry.session_id, entry.key) })
+  |> should.equal([#("socket-live", "user:live")])
 }
 
 // ── Reads stay responsive while the actor mailbox is busy ────────────

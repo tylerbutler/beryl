@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Fence stale presence incarnations and compact unavailable replica history safely after 60 seconds using fresh owner-only snapshots."

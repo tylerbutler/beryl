@@ -134,6 +134,7 @@ pub type Event {
     callback_result: CallbackResult,
   )
   BroadcastStop(duration: Int, recipients: Int, origin: BroadcastOrigin)
+  PresenceSyncRejected
 }
 
 @external(erlang, "beryl_telemetry_ffi", "execute")
