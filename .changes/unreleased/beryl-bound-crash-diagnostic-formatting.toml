@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Bound crash diagnostic formatting and retained memory for large exception reasons."
