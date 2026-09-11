@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Repair quiet presence replication with initial and periodic snapshots. All replicas in a presence scope must use sync version 2."

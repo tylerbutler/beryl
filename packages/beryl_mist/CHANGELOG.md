@@ -1,5 +1,21 @@
 # beryl_mist changelog
 
+## v0.4.0 - 2026-09-11
+
+### Changed
+
+- Close text and binary WebSocket connections when runtime admission is rejected.
+
+### Fixed
+
+- Clarify the Mist transport API documentation.
+- Handle outbound write failures and slow-client eviction with the shared finite connection budget.
+
+### Dependencies
+
+- Remove the unused direct gleam_crypto dependency.
+- Updated beryl to 0.5.0
+
 ## v0.3.2 - 2026-08-25
 
 ### Dependencies

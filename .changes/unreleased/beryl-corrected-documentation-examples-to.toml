@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Corrected documentation examples to follow Gleam naming and exhaustive matching conventions."

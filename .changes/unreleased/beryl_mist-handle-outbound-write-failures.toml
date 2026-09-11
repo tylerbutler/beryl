@@ -1,3 +1,0 @@
-package = "beryl_mist"
-kind = "Fixed"
-body = "Handle outbound write failures and slow-client eviction with the shared finite connection budget."

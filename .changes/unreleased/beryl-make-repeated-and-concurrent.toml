@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Make repeated and concurrent PubSub topic joins idempotent per owner process and scope, including multiple handles. Deliver and count each owner once, and remove membership with one leave."
