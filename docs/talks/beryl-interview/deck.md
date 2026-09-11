@@ -575,7 +575,7 @@ result.
 
 Implementation notes (brief): the CRDT comes from the `lattice_presence`
 package. beryl wraps it in an OTP actor on each node. Initial and periodic
-requests exchange versioned **full CRDT snapshots**, including while replicas
+requests exchange versioned **full owner snapshots**, including while replicas
 are quiet. Peers merge them and report local/merge diffs through `with_on_diff`.
 Those replication payloads are not the client wire format. The app separately
 emits Phoenix-compatible `presence_state` / `presence_diff` joins/leaves maps,
