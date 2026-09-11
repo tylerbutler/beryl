@@ -2031,10 +2031,10 @@ fn merge_remote_sync(
   round: Int,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
-  // Crash boundary — see internal.rescue. Version skew or bugs can produce
-  // malformed sync state; Erlang distribution peers are fully trusted (see
-  // the production-hardening guide). Preserve the previous actor state unless
-  // merge, on_diff, prune, and read-model publication all complete.
+  // Crash boundary for processing failures from bugs or version skew, not
+  // protection against hostile distribution peers: those peers are fully
+  // trusted. On failure, retain the previous actor state, but do not undo
+  // completed callback side effects or read-model writes. See internal.rescue.
   let processed =
     internal.rescue(fn() {
       let sender = state.replica(remote_state)

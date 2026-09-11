@@ -9,10 +9,10 @@
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
 
-%% Run a callback, converting any crash (error/exit/throw) into an
-%% {error, Description} result so a crashing callback cannot take down the
-%% runtime actor running it. The description is depth-limited and truncated so
-%% client-triggered crashes cannot bloat log metadata.
+%% Return synchronous callback exceptions (error/exit/throw) as
+%% {error, Description}. The caller handles recovery; completed side effects
+%% are not rolled back. Bound the diagnostic depth and length so repeated
+%% callback failures cannot produce oversized log metadata.
 rescue(Fun) ->
     try
         {ok, Fun()}
