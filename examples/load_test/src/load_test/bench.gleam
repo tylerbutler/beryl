@@ -11,10 +11,11 @@ pub fn environment_integer(name: String, default: Int) -> Int {
   |> result.unwrap(default)
 }
 
-/// `BENCH_CALLBACK_COST_US`: CPU time for each message callback, in
-/// microseconds. The default is zero.
-pub fn callback_cost_us() -> Int {
-  environment_integer("BENCH_CALLBACK_COST_US", 0)
+/// `BENCH_CALLBACK_ELAPSED_US`: minimum elapsed time for each message
+/// callback, in microseconds. The default is zero. The wait uses CPU while
+/// scheduled, but preemption and suspension count toward the elapsed time.
+pub fn callback_elapsed_us() -> Int {
+  environment_integer("BENCH_CALLBACK_ELAPSED_US", 0)
 }
 
 /// `BERYL_API`: `raw` (default) runs the topics through `beryl.child_spec`;
@@ -23,6 +24,8 @@ pub fn use_channel_layer() -> Bool {
   envoy.get("BERYL_API") == Ok("channel")
 }
 
-/// Use CPU on the calling process for `microseconds` microseconds.
-@external(erlang, "load_test_bench_ffi", "busy_wait")
-pub fn burn(microseconds: Int) -> Nil
+/// Busy-wait until `microseconds` have elapsed.
+///
+/// This is preemptible elapsed-time behavior, not fixed or calibrated CPU work.
+@external(erlang, "load_test_bench_ffi", "wait_elapsed")
+pub fn wait_elapsed(microseconds: Int) -> Nil
