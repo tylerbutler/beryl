@@ -246,12 +246,21 @@ PubSub, `broadcast_presence_diff` uses the same cross-node delivery as
 
 When you configure PubSub, the presence actor:
 
-1. Sends its full CRDT state to `beryl:presence:sync` at set intervals.
-2. Receives remote state from other nodes through PubSub.
+1. Requests full CRDT snapshots from the current `pg` members at startup and
+   every configured interval (1500 ms by default).
+2. Replies to peer requests even when local state has not changed.
 3. Merges remote state with the AWORSet merge algorithm.
 4. Calls `on_diff` for changes from the merge.
 
-Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process their own sync messages.
+Requests exclude the actor itself and carry a unique reply ref. Periodic
+requests repair missed delivery and late joins without a new `track`. The
+interval is a repair cadence, not a maximum convergence time; membership and
+delivery must recover, and actors must finish processing their work.
+
+A non-positive interval disables periodic requests, not the initial exchange
+or replies. Keep a positive interval for quiet recovery. Presence sync
+version 2 does not interoperate with version 1; upgrade all replicas in one
+presence scope together. The outer PubSub wire format has not changed.
 
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 
