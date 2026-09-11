@@ -16,6 +16,15 @@ import gleam/string
 import gleeunit
 import gleeunit/should
 
+@external(erlang, "beryl_diagnostic_test_ffi", "rescue_description")
+fn rescue_description(class: String, shape: String) -> String
+
+@external(erlang, "beryl_diagnostic_test_ffi", "abnormal_exit_description")
+fn abnormal_exit_description(shape: String) -> String
+
+@external(erlang, "beryl_diagnostic_test_ffi", "referenced_byte_size")
+fn referenced_byte_size(value: String) -> Int
+
 fn text_frame(frame: codec.Frame) -> String {
   let assert codec.TextFrame(text) = frame
   text
@@ -466,6 +475,36 @@ pub fn start_failure_description_bounds_large_exit_reasons_test() -> Nil {
   string.starts_with(description, prefix) |> should.be_true
   { string.length(description) <= string.length(prefix) + 512 }
   |> should.be_true
+}
+
+pub fn rescued_crash_description_preserves_exception_classes_test() -> Nil {
+  rescue_description("error", "small")
+  |> string.starts_with("error:")
+  |> should.be_true
+  rescue_description("exit", "small")
+  |> string.starts_with("exit:")
+  |> should.be_true
+  rescue_description("throw", "small")
+  |> string.starts_with("throw:")
+  |> should.be_true
+}
+
+pub fn rescued_crash_description_preserves_unicode_test() -> Nil {
+  let description = rescue_description("throw", "unicode")
+
+  string.starts_with(description, "throw:") |> should.be_true
+  string.contains(description, "å") |> should.be_true
+  { string.length(description) <= 512 } |> should.be_true
+}
+
+pub fn crash_descriptions_bound_formatting_and_retained_memory_test() -> Nil {
+  let rescued = rescue_description("error", "flat")
+  { string.length(rescued) <= 512 } |> should.be_true
+  { referenced_byte_size(rescued) <= 4096 } |> should.be_true
+
+  let abnormal_exit = abnormal_exit_description("nested")
+  { string.length(abnormal_exit) <= 512 } |> should.be_true
+  { referenced_byte_size(abnormal_exit) <= 4096 } |> should.be_true
 }
 
 pub fn topic_namespace_test() -> Nil {
