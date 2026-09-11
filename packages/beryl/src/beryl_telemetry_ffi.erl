@@ -71,6 +71,13 @@ execute({broadcast_stop, Duration, Recipients, Origin}) ->
         },
         #{origin => broadcast_origin(Origin)}
     ),
+    nil;
+execute(presence_sync_rejected) ->
+    telemetry:execute(
+        [beryl, presence, sync, rejected],
+        #{count => 1},
+        #{reason => same_replica}
+    ),
     nil.
 
 monotonic_time() ->

@@ -270,15 +270,18 @@ lagging_peer_cannot_restore_retired_history_test_() ->
             {ok, _} = track(A, Current, <<"current">>),
             await_view(B, Receiver, [<<"current">>]),
             #{clocks := Before} = call(B, ?MODULE, retained, [Receiver]),
-            ?assertNot(maps:is_key(OldReplica, Before)),
+            %% Retirement keeps the retired incarnation's watermark clock.
+            %% That watermark is what rejects a replay of its history.
+            ?assert(maps:is_key(OldReplica, Before)),
             %% A third BEAM node speaks the original v2 full-state protocol.
             %% Its valid reply includes a retired replica's values and clocks.
             _LegacyPid = call(C, ?MODULE, start_lagging_replica, [?SCOPE, OldState]),
             connect(B, C),
             await_view(B, Receiver, [<<"current">>, <<"lagging">>]),
-            #{clocks := After, entries := 2} =
+            #{clocks := After, entries := 2, entry_replicas := EntryReplicas} =
                 call(B, ?MODULE, retained, [Receiver]),
-            ?assertNot(maps:is_key(OldReplica, After)),
+            ?assert(maps:is_key(OldReplica, After)),
+            ?assertNot(lists:member(OldReplica, EntryReplicas)),
             await_diff(B, Receiver, leaves, [<<"old">>])
         end)
     end}.
@@ -316,9 +319,9 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
             %% Exercise the real 60-second policy, including with periodic
             %% requests disabled. No clock rewriting or shortened test TTL.
             await({retirement, element(2, B)}, fun() ->
-                #{clocks := Clocks, owners := Owners} =
+                #{owners := Owners, entry_replicas := EntryReplicas} =
                     call(B, ?MODULE, retained, [Receiver]),
-                Owners =:= 0 andalso not maps:is_key(CurrentReplica, Clocks)
+                Owners =:= 0 andalso not lists:member(CurrentReplica, EntryReplicas)
             end, 70000),
             Elapsed = call(B, erlang, monotonic_time, [millisecond]) - Started,
             ?assert(Elapsed >= 60000),
@@ -358,7 +361,9 @@ restart_churn_keeps_one_incarnation_per_base_test_() ->
                 await_view(B, Receiver, [Key]),
                 #{clocks := Clocks, entries := 1, owners := 1} =
                     call(B, ?MODULE, retained, [Receiver]),
-                ?assertEqual(1, map_size(Clocks)),
+                %% One live incarnation, plus one watermark clock per
+                %% retired incarnation. Growth stays bounded by restarts.
+                ?assertEqual(Index + 1, map_size(Clocks)),
                 Current
             end, Source, lists:seq(1, 8))
         end)
@@ -532,8 +537,11 @@ retained(#{pid := Pid}) ->
     Actor = sys:get_state(Pid),
     Crdt = element(2, Actor),
     {some, Sync} = element(5, Actor),
+    Values = 'lattice_presence@presence_state':internal_values(Crdt),
     #{clocks => 'lattice_presence@presence_state':compacted_clocks(Crdt),
       entries => 'lattice_presence@presence_state':entry_count(Crdt),
+      entry_replicas => lists:usort([Replica ||
+                                     {tag, Replica, _Clock} <- maps:keys(Values)]),
       owners => map_size(element(5, Sync))}.
 
 request_round(#{handle := Presence, pid := Pid}) ->
@@ -577,14 +585,14 @@ proxy_call(Proxy, Operation) ->
     end.
 
 start_lagging_replica(Scope, RemoteState) ->
-    Local = 'lattice_presence@presence_state':new(<<"lagging@legacy">>),
-    Merged = 'lattice_presence@presence_state':merge(Local, RemoteState),
+    Local = 'lattice_presence@presence_state':new_incarnation(<<"lagging">>),
+    {ok, Merged} = 'lattice_presence@presence_state':merge(Local, RemoteState),
     State = 'lattice_presence@presence_state':join(
         Merged, <<"lagging">>, ?TOPIC, <<"lagging">>, 'gleam@json':null()),
     start_snapshot_replica(Scope, State, direct).
 
 start_held_replica(Scope, Gate) ->
-    Local = 'lattice_presence@presence_state':new(<<"source@held">>),
+    Local = 'lattice_presence@presence_state':new_incarnation(<<"source">>),
     State = 'lattice_presence@presence_state':join(
         Local, <<"old">>, ?TOPIC, <<"old">>, 'gleam@json':null()),
     #{pid => start_snapshot_replica(Scope, State, {held, Gate})}.
@@ -616,13 +624,14 @@ snapshot_replica(Scope, State, Delivery) ->
     end.
 
 legacy_snapshot(#{pid := Pid}) ->
-    State = 'lattice_presence@presence_state':new(<<"source@legacy">>),
+    State = 'lattice_presence@presence_state':new_incarnation(<<"source">>),
     Snapshot = 'lattice_presence@presence_state':join(
         State, <<"legacy">>, ?TOPIC, <<"legacy">>, 'gleam@json':null()),
     nil = beryl_pubsub_ffi:send_to_pid(
         Pid, binary_to_existing_atom(?SCOPE, utf8),
         {message, ?SYNC_TOPIC, <<"presence_sync">>,
-         {sync_payload, 1, <<"source@legacy">>, Snapshot}, system}),
+         {sync_payload, 1, 'lattice_presence@presence_state':replica(State),
+          Snapshot}, system}),
     _ = sys:get_state(Pid),
     nil.
 

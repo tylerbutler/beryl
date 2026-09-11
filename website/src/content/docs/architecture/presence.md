@@ -177,8 +177,8 @@ interval does not bound node-failure detection time.
 
 ## Incarnation freshness and retirement
 
-Use one live actor per replica base in a scope. The per-start random suffix
-separates CRDT clocks; it does not prove which incarnation is newer.
+Use one live actor per replica base in a scope. The per-start incarnation
+identity separates CRDT clocks; it does not prove which incarnation is newer.
 
 The receiver orders its own snapshot requests and keeps one confirmed owner
 per base. A different incarnation can replace that owner only by answering a
@@ -187,12 +187,13 @@ replacement started. A delayed answer to an older request cannot displace the
 confirmed replacement, even if the receiver had never confirmed the old
 process. Concurrent live actors with one base violate this ownership rule.
 
-beryl uses the CRDT's `replica_down` and `remove_down_replica` operations with
-these compaction conditions:
+beryl uses the CRDT's `supersede`, `replica_down`, and `remove_down_replica`
+operations with these compaction conditions:
 
-1. A confirmed replacement retires the previous incarnation's values and
-   causal context. The receiver also removes its owner monitor and pending
-   request.
+1. A confirmed replacement retires the previous incarnation's values. The
+   CRDT keeps that incarnation's high-water clock, which is what rejects a
+   later replay of its history. The receiver also removes its owner monitor
+   and pending request.
 2. Without a replacement, beryl retains an unavailable owner's state for
    **60 seconds**. A separate **one-second** tick checks retention, even with
    periodic snapshot requests disabled. Unanswered requests to missing members
@@ -211,7 +212,8 @@ them through a fresh exchange on reconnect.
 
 This policy retains at most one confirmed incarnation per base, and keeps
 unavailable history only for the retention window plus the next runnable
-check. It does not impose a global memory bound on peer count, entry count,
+check. A retired incarnation still leaves one high-water clock behind, so
+clock storage grows with the number of retired incarnations. It does not impose a global memory bound on peer count, entry count,
 metadata size, or work blocked in callbacks. Each reply copies the source's
 owned entries; projecting a snapshot with the dependency's lifecycle API also
 scans retained state. See [#400](https://github.com/tylerbutler/beryl/issues/400)

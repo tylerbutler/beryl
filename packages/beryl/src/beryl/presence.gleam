@@ -58,6 +58,7 @@ import beryl/internal
 import beryl/log
 import beryl/overload
 import beryl/pubsub.{type PubSub}
+import beryl/telemetry
 import beryl/wire
 import beryl/work_queue
 import gleam/bit_array
@@ -286,9 +287,9 @@ pub opaque type Config {
     pubsub: Option(PubSub(SyncPayload)),
     /// This node's replica base name. Must identify at most one live node
     /// in the cluster. Each actor start derives a unique incarnation name
-    /// from it (`base@suffix`), so restarting a node never reuses the
-    /// previous incarnation's CRDT clocks; state from older incarnations
-    /// of the same base is pruned automatically. Two *live* nodes sharing
+    /// from it, so restarting a node never reuses the previous
+    /// incarnation's CRDT clocks; state from older incarnations of the
+    /// same base is pruned automatically. Two *live* nodes sharing
     /// a base violate the ownership contract; concurrent reuse is unsupported.
     replica: String,
     /// How often to request snapshots for replication (ms). Non-positive
@@ -744,9 +745,10 @@ fn build_presence(
   // name after a restart would reset its clocks while peers still remember
   // the old ones: new joins would be silently filtered as already-seen,
   // and the previous incarnation's entries would resurrect via merges.
-  // A unique suffix separates clocks. Receiver-issued requests establish
-  // incarnation freshness; the suffix itself does not order actor starts.
-  let crdt = state.new(incarnate_replica(config.replica))
+  // The library mints an identity that is unique per start and keeps the
+  // configured name recoverable. Receiver-issued requests establish
+  // incarnation freshness; the identity itself does not order actor starts.
+  let crdt = state.new_incarnation(config.replica)
 
   actor.new_with_initialiser(5000, fn(subject) {
     // Created here, in the actor process itself, so the read model's
@@ -932,7 +934,7 @@ fn watch_replica(
   case actor_state.sync {
     None -> actor_state
     Some(sync) -> {
-      let base = base_replica(replica)
+      let base = state.base_replica(replica)
       let previous = dict.get(sync.owners, base)
       let monitor = case previous {
         Ok(ReplicaOwner(_, old_pid, Available(monitor), _)) if old_pid == pid ->
@@ -1067,44 +1069,19 @@ fn generate_ref() -> String {
   |> bit_array.base16_encode()
 }
 
-/// Separates a replica base name from its per-start incarnation suffix.
-const incarnation_separator = "@"
-
-/// Derive a unique incarnation name for this actor start.
-fn incarnate_replica(base: String) -> String {
-  base <> incarnation_separator <> generate_ref()
-}
-
-/// Recover the configured base from an incarnation-qualified replica name.
-///
-/// The suffix we mint never contains the separator, so everything before
-/// the last separator is the base — even when the base itself contains one
-/// (e.g. Erlang-style `app@host` names). Names without a separator (from
-/// nodes running older beryl versions) are their own base.
-fn base_replica(replica: String) -> String {
-  case list.reverse(string.split(replica, incarnation_separator)) {
-    [_suffix, ..rest] if rest != [] ->
-      string.join(list.reverse(rest), incarnation_separator)
-    _ -> replica
-  }
-}
-
 fn compact_replica(crdt: State, replica: String) -> State {
   let #(crdt, _diff) = state.replica_down(crdt, replica)
   state.remove_down_replica(crdt, replica)
 }
 
-/// Full-state beryl snapshots have a compacted clock for every entry owner.
-/// Use the dependency's lifecycle API rather than its opaque representation.
-fn owner_snapshot(crdt: State) -> State {
-  dict.keys(state.compacted_clocks(crdt))
-  |> list.fold(crdt, fn(crdt, replica) {
-    case replica == state.replica(crdt) {
-      True -> crdt
-      False -> compact_replica(crdt, replica)
-    }
-  })
-}
+/// Reduce a state to the data its own replica owns.
+///
+/// beryl replicates one full state per owner. The dependency's lifecycle API
+/// keeps a high-water clock for every replica it removes, which is correct for
+/// local state but wrong to relay: a receiver that adopted a peer's clocks for
+/// a third replica would treat that replica's later entries as already seen.
+@external(erlang, "beryl_presence_state_ffi", "owner_snapshot")
+fn owner_snapshot(crdt: State) -> State
 
 /// Merge the server-generated tracking ref into the tracked meta as
 /// `phx_ref`, matching Phoenix behaviour. Phoenix client `Presence` helpers
@@ -1427,8 +1404,10 @@ fn handle_message(
       handle_available_work(actor_state)
     }
     Track(topic, key, session_id, meta, reply) -> {
-      let #(new_state, ref, _meta) =
-        do_track(actor_state, topic, key, session_id, meta, SupersedeNothing)
+      use #(new_state, ref, _meta) <- continue_with_track(
+        actor_state,
+        do_track(actor_state, topic, key, session_id, meta, SupersedeNothing),
+      )
       log_tracked(logger, topic, key, session_id, ref)
       // The read model was published inside `do_track`, before this reply,
       // so a `track(); list()` caller always observes the entry it just
@@ -1440,7 +1419,8 @@ fn handle_message(
     Update(ref, meta, reply) -> {
       case dict.get(actor_state.refs, ref) {
         Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
-          let #(new_state, new_ref, _meta) =
+          use #(new_state, new_ref, _meta) <- continue_with_track(
+            actor_state,
             do_track(
               actor_state,
               topic,
@@ -1448,7 +1428,8 @@ fn handle_message(
               session_id,
               meta,
               SupersedePublicRef(ref),
-            )
+            ),
+          )
           log_tracked(logger, topic, key, session_id, new_ref)
           reply(Ok(new_ref))
           actor.continue(new_state)
@@ -1472,15 +1453,19 @@ fn handle_message(
       reply,
     ) ->
       case process.is_alive(owner) {
-        False -> {
-          let assert Ok(Nil) =
-            work_queue.activate_cleanup(actor_state.inbox, owner)
-          process.send(reply, MutationAck(tag, operation_id, Untracked))
-          actor.continue(actor_state)
-        }
+        False ->
+          handle_dead_track_owner(
+            actor_state,
+            owner,
+            tag,
+            operation_id,
+            reply,
+            logger,
+          )
         True -> {
           let actor_state = monitor_runtime_owner(actor_state, owner)
-          let #(new_state, ref, stored_meta) =
+          use #(new_state, ref, stored_meta) <- continue_with_track(
+            actor_state,
             do_track(
               actor_state,
               topic,
@@ -1488,7 +1473,8 @@ fn handle_message(
               session_id,
               meta,
               SupersedeSameKey(explicit: replace, owner: owner),
-            )
+            ),
+          )
           log_tracked(logger, topic, key, session_id, ref)
           process.send(
             reply,
@@ -1562,6 +1548,40 @@ fn handle_message(
       }
       actor.continue(retire_unavailable(actor_state))
     }
+  }
+}
+
+fn handle_dead_track_owner(
+  actor_state: ActorState,
+  owner: process.Pid,
+  tag: String,
+  operation_id: Int,
+  reply: Subject(MutationAck),
+  logger: log.Logger,
+) -> actor.Next(ActorState, Message) {
+  let actor_state = case work_queue.activate_cleanup(actor_state.inbox, owner) {
+    Ok(Nil) -> actor_state
+    Error(error) -> {
+      log.warn(logger, "Presence cleanup activation failed", [
+        #("reason", overload.describe(error)),
+      ])
+      // This actor owns the state, so direct cleanup is the safe fallback
+      // when its queue cannot schedule the obligation.
+      do_untrack_runtime_owner(actor_state, owner)
+    }
+  }
+  process.send(reply, MutationAck(tag, operation_id, Untracked))
+  actor.continue(actor_state)
+}
+
+fn continue_with_track(
+  actor_state: ActorState,
+  tracked: Result(value, Nil),
+  next: fn(value) -> actor.Next(ActorState, Message),
+) -> actor.Next(ActorState, Message) {
+  case tracked {
+    Ok(value) -> next(value)
+    Error(Nil) -> actor.continue(actor_state)
   }
 }
 
@@ -1757,7 +1777,8 @@ fn superseded_refs(
 
 /// Track one key, superseding previous refs for it (see `Supersede`) in the
 /// same turn. Returns the new actor state, the generated ref, and the meta
-/// as stored (the caller's meta with `phx_ref` merged in).
+/// as stored (the caller's meta with `phx_ref` merged in). Returns an error
+/// if the CRDT does not expose the local clock that `state.join` must create.
 fn do_track(
   actor_state: ActorState,
   topic: String,
@@ -1765,7 +1786,7 @@ fn do_track(
   session_id: String,
   meta: json.Json,
   supersede: Supersede,
-) -> #(ActorState, String, json.Json) {
+) -> Result(#(ActorState, String, json.Json), Nil) {
   let ref = generate_ref()
   let stored_meta = meta_with_phx_ref(meta, ref)
   // Superseding removes the old entries and adds the new one before
@@ -1785,7 +1806,17 @@ fn do_track(
     SupersedeSameKey(owner:, ..) -> RuntimeOwner(owner)
   }
   let replica = state.replica(new_crdt)
-  let assert Ok(clock) = dict.get(state.compacted_clocks(new_crdt), replica)
+  // state.join inserts this clock. Keep the lookup fallible so a dependency
+  // contract regression rejects the mutation instead of crashing the library.
+  use clock <- result.try(
+    dict.get(state.compacted_clocks(new_crdt), replica)
+    |> result.map_error(fn(error) {
+      log.error(internal.logger("beryl.presence"), "Local CRDT clock missing", [
+        #("replica", replica),
+      ])
+      error
+    }),
+  )
   maybe_invoke_on_diff(
     actor_state.config,
     Diff(
@@ -1816,7 +1847,11 @@ fn do_track(
     new_crdt,
     unique_strings([topic, ..removed.topics], set.new(), []),
   )
-  #(ActorState(..actor_state, crdt: new_crdt, refs: new_refs), ref, stored_meta)
+  Ok(#(
+    ActorState(..actor_state, crdt: new_crdt, refs: new_refs),
+    ref,
+    stored_meta,
+  ))
 }
 
 /// Remove every named ref in one turn. Unknown or already-removed refs are
@@ -2012,20 +2047,15 @@ fn merge_remote_sync(
               #("replica", sender),
             ],
           )
-          None
+          Error(Nil)
         }
-        True -> {
-          let crdt = retire_predecessor(actor_state, sender)
-          let crdt = state.merge(crdt, owner_snapshot(remote_state))
-          let #(crdt, _diff) = state.replica_up(crdt, sender)
-          Some(#(commit_replication(actor_state, crdt), sender))
-        }
+        True -> merged_snapshot(actor_state, sender, remote_state)
       }
     })
   case processed {
-    Ok(Some(#(next_state, sender))) ->
+    Ok(Ok(#(next_state, sender))) ->
       actor.continue(watch_replica(next_state, sender, owner, round))
-    Ok(None) -> actor.continue(actor_state)
+    Ok(Error(Nil)) -> actor.continue(actor_state)
     Error(crash) -> {
       let logger = internal.logger("beryl.presence")
       logger
@@ -2043,8 +2073,8 @@ fn accepts_snapshot(
   owner: process.Pid,
   round: Int,
 ) -> Bool {
-  let base = base_replica(sender)
-  base != base_replica(state.replica(actor_state.crdt))
+  let base = state.base_replica(sender)
+  !state.same_base(sender, state.replica(actor_state.crdt))
   && case actor_state.sync {
     None -> False
     Some(sync) ->
@@ -2057,15 +2087,47 @@ fn accepts_snapshot(
   }
 }
 
-fn retire_predecessor(actor_state: ActorState, sender: String) -> State {
-  case actor_state.sync {
-    None -> actor_state.crdt
-    Some(sync) ->
-      case dict.get(sync.owners, base_replica(sender)) {
-        Ok(previous) if previous.replica != sender ->
-          compact_replica(actor_state.crdt, previous.replica)
-        Ok(_) | Error(Nil) -> actor_state.crdt
-      }
+/// Merge an accepted snapshot after retiring the sender's predecessors.
+///
+/// Returns an error when the sender conflicts with this replica's identity.
+/// Dropping the round keeps local state authoritative.
+fn merged_snapshot(
+  actor_state: ActorState,
+  sender: String,
+  remote_state: State,
+) -> Result(#(ActorState, String), Nil) {
+  // accepts_snapshot rejects local-base senders first. Match the dependency
+  // error too, so this library remains total if either contract changes.
+  use #(crdt, _diff) <- result.try(
+    state.supersede(actor_state.crdt, sender)
+    |> result.map_error(fn(error) {
+      let state.CannotSupersedeLocalReplica(local_replica, remote_replica) =
+        error
+      internal.logger("beryl.presence")
+      |> log.error("Refused to retire the local presence replica", [
+        #("local_replica", local_replica),
+        #("remote_replica", remote_replica),
+      ])
+    }),
+  )
+  case state.merge(crdt, owner_snapshot(remote_state)) {
+    Ok(crdt) -> {
+      let #(crdt, _diff) = state.replica_up(crdt, sender)
+      Ok(#(commit_replication(actor_state, crdt), sender))
+    }
+    Error(state.SameReplica(replica)) -> {
+      telemetry.emit(
+        actor_state.config.telemetry,
+        telemetry.PresenceSyncRejected,
+      )
+      internal.logger("beryl.presence")
+      |> log.error("Dropped presence sync that claims this replica identity", [
+        #("local_replica", state.replica(actor_state.crdt)),
+        #("remote_replica", sender),
+        #("conflicting_replica", replica),
+      ])
+      Error(Nil)
+    }
   }
 }
 

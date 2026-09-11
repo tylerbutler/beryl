@@ -27,7 +27,7 @@ packages = [
   { name = "glexer", version = "2.5.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "splitter"], otp_app = "glexer", source = "hex", outer_checksum = "D423CF63B8D4F9654EF53D0AF4904B249EB0679BD41C63440170AC508C9CC65E" },
   { name = "glinter", version = "2.19.2", build_tools = ["gleam"], requirements = ["argv", "glance", "gleam_json", "gleam_stdlib", "simplifile", "tom"], otp_app = "glinter", source = "hex", outer_checksum = "19CBB4D78E58E54D6B0E8554C389DC01071334FB11E9140C9487C9A4BBCA6158" },
   { name = "glisten", version = "9.0.1", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_otp", "gleam_stdlib", "logging"], otp_app = "glisten", source = "hex", outer_checksum = "7795AA50830656F3A0316A6B26595F893C83272DA901B3405E31339CAA31A10B" },
-  { name = "lattice_presence", version = "1.0.1", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib"], otp_app = "lattice_presence", source = "hex", outer_checksum = "4528FFC4B4DFCA076FAA0FA22D98CE4DF1B05BD0E9B4B90581DEA8799642C8B7" },
+  { name = "lattice_presence", version = "2.0.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "youid"], otp_app = "lattice_presence", source = "hex", outer_checksum = "3E59B585A4E536A8BF2FC71BCEBCDABAD33A6475915CDD10CFAC112D64D6E764" },
   { name = "logging", version = "1.5.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "logging", source = "hex", outer_checksum = "BC5F18CE5DD9686100229FE5409BDC3DD5C46D5A7DF2F804AD2D8F0DD6C5060E" },
   { name = "palabres", version = "1.0.4", build_tools = ["gleam"], requirements = ["envoy", "gleam_stdlib"], otp_app = "palabres", source = "hex", outer_checksum = "2809B7C10AE929E82454B4A6A0FB7D02073C5A509F9A63EE9F7B268A75D98965" },
   { name = "simplifile", version = "2.7.0", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], otp_app = "simplifile", source = "hex", outer_checksum = "A2727627B063E87351934C7F7F008F2D1FDB16F6DE0B8C79F9E46459CFC9C164" },
@@ -35,6 +35,7 @@ packages = [
   { name = "telemetry", version = "1.4.2", build_tools = ["rebar3"], requirements = [], otp_app = "telemetry", source = "hex", outer_checksum = "928F6495066506077862C0D1646609EED891A4326BEE3126BA54B60AF61FEBB1" },
   { name = "tom", version = "2.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "gleam_time"], otp_app = "tom", source = "hex", outer_checksum = "DCF04CB7AB35D58CFC598C66EA2E1816D160759802C89B2BA6238780D59BC256" },
   { name = "websocks", version = "3.0.1", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_stdlib"], otp_app = "websocks", source = "hex", outer_checksum = "C70340E5B6C3390383ADA17029DCA6F8903863A7AD8CD8E1520EDCC4FE70D6FD" },
+  { name = "youid", version = "1.6.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_stdlib", "gleam_time"], otp_app = "youid", source = "hex", outer_checksum = "7A3ABA44B1B38BC2BDCB5474C5317AA372BE58DFBC649815EE08B03526DDA18D" },
 ]
 
 [requirements]
