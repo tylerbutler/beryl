@@ -21,6 +21,11 @@ pub opaque type Tracker {
   Tracker(pid: Pid, subject: Subject(Command), table: Store)
 }
 
+pub type TrackError {
+  AtCapacity
+  OwnerExited
+}
+
 type Store
 
 type Command {
@@ -31,7 +36,7 @@ type Command {
     session_id: String,
     meta: json.Json,
     maximum: Int,
-    reply: Subject(Result(Nil, Nil)),
+    reply: Subject(Result(Nil, TrackError)),
   )
   Publish(topic: String)
   Stop(reply: Subject(Nil))
@@ -151,7 +156,7 @@ pub fn track_if_below(
   session_id: String,
   meta: json.Json,
   maximum: Int,
-) -> Result(Nil, Nil) {
+) -> Result(Nil, TrackError) {
   let owner = process.self()
   process.call(tracker.subject, call_timeout_ms, fn(reply) {
     TrackIfBelow(owner, topic, session_id, meta, maximum, reply)
@@ -185,7 +190,7 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
     Message(TrackIfBelow(owner, topic, session_id, meta, maximum, reply)) -> {
       case store_count(table, topic) < maximum {
         False -> {
-          process.send(reply, Error(Nil))
+          process.send(reply, Error(AtCapacity))
           loop(selector, table, state)
         }
         True -> {
@@ -193,7 +198,7 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
           case process.is_alive(owner) {
             False -> {
               process.demonitor_process(monitor)
-              process.send(reply, Error(Nil))
+              process.send(reply, Error(OwnerExited))
               loop(selector, table, state)
             }
             True -> {
