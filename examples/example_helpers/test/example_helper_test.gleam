@@ -116,3 +116,49 @@ pub fn owner_death_reclaims_admitted_capacity_test() -> Nil {
   |> should.equal(Ok(Nil))
   session_presence.stop(tracker)
 }
+
+pub fn stop_releases_the_populated_store_test() -> Nil {
+  let tracker = session_presence.start()
+  session_presence.track(tracker, "room:stop", "session", json.object([]))
+
+  session_presence.store_is_alive(tracker) |> should.be_true
+  session_presence.count(tracker, "room:stop") |> should.equal(1)
+  session_presence.stop(tracker)
+  session_presence.store_is_alive(tracker) |> should.be_false
+}
+
+pub fn tracker_failure_releases_the_store_test() -> Nil {
+  let tracker = session_presence.start()
+  session_presence.track(
+    tracker,
+    "room:tracker-failure",
+    "session",
+    json.object([]),
+  )
+  let monitor = process.monitor(session_presence.process_id(tracker))
+
+  process.kill(session_presence.process_id(tracker))
+  await_down(monitor)
+
+  session_presence.store_is_alive(tracker) |> should.be_false
+}
+
+pub fn starter_failure_releases_the_store_test() -> Nil {
+  let started = process.new_subject()
+  let starter =
+    process.spawn_unlinked(fn() {
+      let tracker = session_presence.start()
+      process.send(started, tracker)
+      process.receive_forever(process.new_subject())
+    })
+  let assert Ok(tracker) = process.receive(started, 1000)
+  let starter_monitor = process.monitor(starter)
+  let tracker_monitor = process.monitor(session_presence.process_id(tracker))
+
+  session_presence.store_is_alive(tracker) |> should.be_true
+  process.kill(starter)
+  await_down(starter_monitor)
+  await_down(tracker_monitor)
+
+  session_presence.store_is_alive(tracker) |> should.be_false
+}

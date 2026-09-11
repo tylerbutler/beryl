@@ -1,5 +1,5 @@
 -module(example_session_presence_ffi).
--export([new_store/0, track/4, untrack/3, count/2, snapshot/2]).
+-export([new_store/0, track/4, untrack/3, count/2, snapshot/2, exists/1]).
 
 new_store() ->
     ets:new(?MODULE, [
@@ -26,3 +26,6 @@ snapshot(Table, Topic) ->
      || {{StoredTopic, SessionId}, Meta} <- ets:tab2list(Table),
         StoredTopic =:= Topic
     ].
+
+exists(Table) ->
+    ets:info(Table) =/= undefined.

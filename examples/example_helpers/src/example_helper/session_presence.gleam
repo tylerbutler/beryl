@@ -72,22 +72,25 @@ fn store_count(table: Store, topic: String) -> Int
 @external(erlang, "example_session_presence_ffi", "snapshot")
 fn store_snapshot(table: Store, topic: String) -> List(#(String, json.Json))
 
+@external(erlang, "example_session_presence_ffi", "exists")
+fn store_exists(table: Store) -> Bool
+
 pub fn start() -> Tracker {
-  let table = new_store()
   let ready = process.new_subject()
   let owner = process.self()
   let pid =
     process.spawn_unlinked(fn() {
+      let table = new_store()
       let subject = process.new_subject()
       let owner_monitor = process.monitor(owner)
       let selector =
         process.new_selector()
         |> process.select_map(subject, Message)
         |> process.select_specific_monitor(owner_monitor, fn(_) { OwnerDown })
-      process.send(ready, subject)
+      process.send(ready, #(subject, table))
       loop(selector, table, State(sockets: None, owners: dict.new()))
     })
-  let assert Ok(subject) = process.receive(ready, start_timeout_ms)
+  let assert Ok(#(subject, table)) = process.receive(ready, start_timeout_ms)
   Tracker(pid, subject, table)
 }
 
@@ -101,6 +104,9 @@ pub fn configure(tracker: Tracker, sockets: beryl.Sockets) -> Nil {
 ///
 /// The publisher also monitors the process that called [`start`](#start), so
 /// it cannot outlive an owner that exits without an explicit stop.
+///
+/// Do not use the tracker after this function returns. Its ETS store is
+/// released with the publisher process.
 pub fn stop(tracker: Tracker) -> Nil {
   let monitor = process.monitor(tracker.pid)
   process.call(tracker.subject, call_timeout_ms, fn(reply) { Stop(reply) })
@@ -119,6 +125,11 @@ pub fn is_running(tracker: Tracker) -> Bool {
 @internal
 pub fn process_id(tracker: Tracker) -> Pid {
   tracker.pid
+}
+
+@internal
+pub fn store_is_alive(tracker: Tracker) -> Bool {
+  store_exists(tracker.table)
 }
 
 pub fn track(
