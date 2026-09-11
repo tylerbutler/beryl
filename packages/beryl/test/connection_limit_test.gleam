@@ -152,41 +152,129 @@ pub fn slot_reclaimed_when_requester_dies_before_bind_test() -> Nil {
   Nil
 }
 
-// A timed-out request sends a cancellation behind its queued acquire. When
-// the limiter resumes, it cannot leave a reservation without a caller.
+// A timed-out request suppresses its late reply and sends a cancellation
+// behind its queued acquire, so no mailbox message or reservation remains.
 pub fn timed_out_queued_acquire_is_cancelled_test() -> Nil {
   let channels = start_with_limit(1)
   let assert Ok(limiter) = beryl.app_limiter_pid(channels)
   test_helper.suspend_process(limiter)
 
   let outcome = process.new_subject()
+  let finished = process.new_subject()
   let _pid =
     process.spawn_unlinked(fn() {
-      let exit = process.new_subject()
+      let continue = process.new_subject()
       process.send(outcome, #(
         transport.acquire_connection_slot(channels, "10.0.0.8"),
-        exit,
+        continue,
       ))
-      let assert Ok(Nil) = process.receive(exit, 2000)
-    })
-  let assert Ok(#(Error(Nil), exit)) = process.receive(outcome, 500)
-
-  test_helper.resume_process(limiter)
-  test_helper.wait_until(
-    fn() {
-      case transport.acquire_connection_slot(channels, "10.0.0.8") {
+      let assert Ok(Nil) = process.receive(continue, 2000)
+      let barrier = case
+        transport.acquire_connection_slot(channels, "10.0.0.8")
+      {
         Ok(permit) -> {
           transport.release_connection_slot(permit)
           True
         }
         Error(Nil) -> False
       }
+      process.send(finished, #(
+        barrier,
+        test_helper.mailbox_length(process.self()),
+      ))
+    })
+  let assert Ok(#(Error(Nil), continue)) = process.receive(outcome, 500)
+
+  test_helper.resume_process(limiter)
+  process.send(continue, Nil)
+  process.receive(finished, 1000) |> should.equal(Ok(#(True, 0)))
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
+}
+
+pub fn timed_out_bind_suppresses_late_reply_test() -> Nil {
+  let channels = start_with_limit(1)
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(channels, "10.0.0.14")
+  let assert Ok(limiter) = beryl.app_limiter_pid(channels)
+  test_helper.suspend_process(limiter)
+
+  let outcome = process.new_subject()
+  let finished = process.new_subject()
+  let _owner =
+    process.spawn_unlinked(fn() {
+      let continue = process.new_subject()
+      process.send(outcome, #(transport.bind_connection_slot(permit), continue))
+      let assert Ok(Nil) = process.receive(continue, 2000)
+      let barrier = case
+        transport.acquire_connection_slot(channels, "10.0.0.15")
+      {
+        Ok(next) -> {
+          transport.release_connection_slot(next)
+          True
+        }
+        Error(Nil) -> False
+      }
+      process.send(finished, #(
+        barrier,
+        test_helper.mailbox_length(process.self()),
+      ))
+    })
+  let assert Ok(#(Error(Nil), continue)) = process.receive(outcome, 500)
+
+  test_helper.resume_process(limiter)
+  process.send(continue, Nil)
+  process.receive(finished, 1000) |> should.equal(Ok(#(True, 0)))
+  test_helper.wait_until(
+    fn() {
+      case transport.acquire_connection_slot(channels, "10.0.0.14") {
+        Ok(next) -> {
+          transport.release_connection_slot(next)
+          True
+        }
+        Error(Nil) -> False
+      }
     },
+    1000,
+    10,
+  )
+
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
+}
+
+pub fn acquire_returns_error_when_limiter_dies_while_waiting_test() -> Nil {
+  let channels = start_with_limit(1)
+  let assert Ok(limiter) = beryl.app_limiter_pid(channels)
+  test_helper.suspend_process(limiter)
+
+  let outcome = process.new_subject()
+  let _caller =
+    process.spawn_unlinked(fn() {
+      process.send(outcome, #(
+        transport.acquire_connection_slot(channels, "10.0.0.16"),
+        test_helper.mailbox_length(process.self()),
+      ))
+    })
+  test_helper.wait_until(
+    fn() { test_helper.mailbox_length(limiter) == 1 },
     500,
     10,
   )
-  process.send(exit, Nil)
+  process.kill(limiter)
 
+  process.receive(outcome, 500) |> should.equal(Ok(#(Error(Nil), 0)))
+  test_helper.wait_until(
+    fn() {
+      case beryl.app_limiter_pid(channels) {
+        Ok(replacement) -> replacement != limiter
+        Error(Nil) -> False
+      }
+    },
+    1000,
+    10,
+  )
   let assert Ok(Nil) = beryl.stop(channels)
   Nil
 }
