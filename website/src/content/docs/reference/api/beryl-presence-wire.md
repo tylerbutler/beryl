@@ -44,6 +44,10 @@ Encode a presence diff for one topic as a Phoenix-compatible payload.
  The resulting JSON has `joins` and `leaves` maps. Presence keys index the
  maps. Each value contains the tracked metadata under `metas`.
 
+ Encoding does not include the diff's delivery scope. Prefer
+ `beryl.broadcast_presence_diff` for socket delivery; a custom publisher must
+ honor `presence.diff_scope` before sending this payload to other nodes.
+
  ```json
  {
    "joins": { "user:1": { "metas": [{ "status": "online" }] } },

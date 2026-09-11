@@ -144,6 +144,8 @@ pub type Message(message) {
   /// Broadcast fan-out: local subscribers plus PubSub forwarding to other
   /// runtimes when PubSub is configured.
   Broadcast(topic: String, event: String, payload: Json, except: Option(String))
+  /// Originated here, but restricted to socket subscribers on this node.
+  LocalBroadcast(topic: String, event: String, payload: Json)
   RemoteBroadcast(pubsub.Message(Json))
   CheckHeartbeats
   GetStats(reply: fn(StatsSnapshot) -> Nil)
@@ -1028,7 +1030,7 @@ fn handle_suspended_work(
   let next =
     work_queue.take_matching(state.inbox, fn(message) {
       case message {
-        Broadcast(..) -> True
+        Broadcast(..) | LocalBroadcast(..) -> True
         WorkerReport(socket_id, _, pid, _, _) ->
           case dict.get(state.suspended, socket_id) {
             Ok(Suspension(waiting: WorkerWait(worker: worker, ..), ..)) ->
@@ -1135,6 +1137,10 @@ fn handle_message(
         RouterRole(..) ->
           broadcast_with_pubsub(state, topic_name, event_name, payload, except)
       }
+      actor.continue(state)
+    }
+    LocalBroadcast(topic_name, event_name, payload) -> {
+      broadcast_locally(state, topic_name, event_name, payload)
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_message) ->
@@ -1649,6 +1655,7 @@ fn dispatch_socket_msg(
     // Not socket-scoped, so never deferred to this dispatcher.
     AdmitSocket(..)
     | Broadcast(..)
+    | LocalBroadcast(..)
     | RemoteBroadcast(..)
     | CheckHeartbeats
     | GetStats(..)
@@ -5903,6 +5910,28 @@ fn emit_broadcast(
   )
 }
 
+/// Keep local delivery independent of pg recovery, and forward to other local
+/// runtimes without echoing to this router or sending to another node.
+fn broadcast_locally(
+  state: State(model, message),
+  topic_name: String,
+  event_name: String,
+  payload: Json,
+) -> Nil {
+  emit_broadcast(state, topic_name, event_name, payload, None, telemetry.Local)
+  case state.pubsub {
+    Some(pubsub_instance) ->
+      pubsub.local_broadcast_from(
+        pubsub_instance,
+        process.self(),
+        topic_name,
+        event_name,
+        payload,
+      )
+    None -> Nil
+  }
+}
+
 /// Local fan-out plus distributed forwarding when PubSub is configured.
 /// Used by the effect interpreter, which runs inside the runtime actor —
 /// the actor's own pid is the PubSub sender, so the runtime does not echo
@@ -7325,6 +7354,7 @@ fn resume_worker_close(
             | HandleBinary(..)
             | AppInfo(..)
             | Broadcast(..)
+            | LocalBroadcast(..)
             | RemoteBroadcast(..)
             | CheckHeartbeats
             | GetStats(..)
@@ -7419,6 +7449,7 @@ fn worker_termination_effects(
     | HandleBinary(..)
     | AppInfo(..)
     | Broadcast(..)
+    | LocalBroadcast(..)
     | RemoteBroadcast(..)
     | CheckHeartbeats
     | GetStats(..)

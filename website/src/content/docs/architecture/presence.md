@@ -88,7 +88,8 @@ PubSub copies presence state between nodes.
 
 | Function | Description |
 |---|---|
-| `diff(joins, leaves)` | Construct a diff from topic-grouped join and leave lists |
+| `diff(joins, leaves)` | Construct a `Cluster` application diff from topic-grouped join and leave lists |
+| `diff_scope(diff)` | Read `Cluster` or `LocalNode` delivery scope |
 | `diff_topics(diff)` | List every topic touched by this diff |
 | `diff_joins(diff, topic)` | Get joined entries for a topic |
 | `diff_leaves(diff, topic)` | Get departed entries for a topic |
@@ -128,6 +129,44 @@ Automated tests cover quiet bootstrap, partition repair, empty restart, and
 `pg` recovery across separate BEAM nodes, as well as same-node replication.
 [Issue #365](https://github.com/tylerbutler/beryl/issues/365) tracks the broader
 distributed PubSub and presence matrix.
+
+## Replica availability
+
+After a successful snapshot exchange, beryl associates the replica identity
+with the source actor's PID and monitors that process. A process exit or an
+Erlang distribution disconnection hides that replica's entries and emits
+matching leave diffs. Each repair tick also checks `pg` membership, so scope
+recovery or membership loss can hide an actor that still runs.
+
+beryl uses the CRDT's `replica_down` for these local visibility changes.
+It retains the entries and causal context. Peer snapshots cannot make an
+unavailable or unconfirmed replica visible. Diffs compare the visible state
+before and after the complete transition, so removing a hidden entry does
+not emit a second leave.
+
+Replica-view diffs have `LocalNode` scope. This includes remote merges,
+failure detection, and reconnects, even when one commit also contains causal
+data changes. `beryl.broadcast_presence_diff` keeps them on the observing node
+instead of publishing its availability decision to healthy peers. Application
+mutations and explicitly constructed diffs retain `Cluster` delivery.
+
+The runtime admits both kinds through its queue. Local-view delivery uses
+the same per-socket encoding path and forwards only to other local runtimes
+in the application PubSub scope. Phoenix frames and the PubSub wire tuple
+do not change. Custom callbacks must preserve `diff_scope`; see
+[sending presence diffs](/guides/presence/#send-phoenix-compatible-presence_diff-events).
+
+A temporary partition can make a remote session appear offline while its
+source node still lists it. Local tracking and local reads remain available.
+On reconnect, membership alone does not restore visibility: a fresh snapshot
+from the same actor first incorporates changes made during the partition,
+then restores its current entries with join diffs. This favors local
+availability over a single cluster-wide online/offline decision.
+
+Actor restart creates a new incarnation with empty local state and new
+tracking refs. Clients must re-track their local presence. Failure detection
+depends on Erlang process/distribution signals and actor progress; the repair
+interval does not bound node-failure detection time.
 
 ## Request and sync flow
 

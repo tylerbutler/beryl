@@ -620,11 +620,20 @@ pub fn restart_prune_updates_read_model_count_test() -> Nil {
   // The pruned ghost must not inflate the peer's count once it converges
   // on the restarted incarnation.
   test_helper.wait_until(
-    fn() { presence_count(tracker2, "room:lobby") == 1 },
+    fn() {
+      let identities =
+        presence_entries(tracker2, "room:lobby")
+        |> list.map(fn(entry) { #(entry.session_id, entry.key) })
+      presence_count(tracker2, "room:lobby") == 1
+      && identities == [#("socket-live", "user:live")]
+    },
     3000,
     10,
   )
   presence_count(tracker2, "room:lobby") |> should.equal(1)
+  presence_entries(tracker2, "room:lobby")
+  |> list.map(fn(entry) { #(entry.session_id, entry.key) })
+  |> should.equal([#("socket-live", "user:live")])
 }
 
 // ── Reads stay responsive while the actor mailbox is busy ────────────
