@@ -1404,8 +1404,10 @@ fn handle_message(
       handle_available_work(actor_state)
     }
     Track(topic, key, session_id, meta, reply) -> {
-      let #(new_state, ref, _meta) =
-        do_track(actor_state, topic, key, session_id, meta, SupersedeNothing)
+      use #(new_state, ref, _meta) <- continue_with_track(
+        actor_state,
+        do_track(actor_state, topic, key, session_id, meta, SupersedeNothing),
+      )
       log_tracked(logger, topic, key, session_id, ref)
       // The read model was published inside `do_track`, before this reply,
       // so a `track(); list()` caller always observes the entry it just
@@ -1417,7 +1419,8 @@ fn handle_message(
     Update(ref, meta, reply) -> {
       case dict.get(actor_state.refs, ref) {
         Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
-          let #(new_state, new_ref, _meta) =
+          use #(new_state, new_ref, _meta) <- continue_with_track(
+            actor_state,
             do_track(
               actor_state,
               topic,
@@ -1425,7 +1428,8 @@ fn handle_message(
               session_id,
               meta,
               SupersedePublicRef(ref),
-            )
+            ),
+          )
           log_tracked(logger, topic, key, session_id, new_ref)
           reply(Ok(new_ref))
           actor.continue(new_state)
@@ -1449,15 +1453,19 @@ fn handle_message(
       reply,
     ) ->
       case process.is_alive(owner) {
-        False -> {
-          let assert Ok(Nil) =
-            work_queue.activate_cleanup(actor_state.inbox, owner)
-          process.send(reply, MutationAck(tag, operation_id, Untracked))
-          actor.continue(actor_state)
-        }
+        False ->
+          handle_dead_track_owner(
+            actor_state,
+            owner,
+            tag,
+            operation_id,
+            reply,
+            logger,
+          )
         True -> {
           let actor_state = monitor_runtime_owner(actor_state, owner)
-          let #(new_state, ref, stored_meta) =
+          use #(new_state, ref, stored_meta) <- continue_with_track(
+            actor_state,
             do_track(
               actor_state,
               topic,
@@ -1465,7 +1473,8 @@ fn handle_message(
               session_id,
               meta,
               SupersedeSameKey(explicit: replace, owner: owner),
-            )
+            ),
+          )
           log_tracked(logger, topic, key, session_id, ref)
           process.send(
             reply,
@@ -1539,6 +1548,40 @@ fn handle_message(
       }
       actor.continue(retire_unavailable(actor_state))
     }
+  }
+}
+
+fn handle_dead_track_owner(
+  actor_state: ActorState,
+  owner: process.Pid,
+  tag: String,
+  operation_id: Int,
+  reply: Subject(MutationAck),
+  logger: log.Logger,
+) -> actor.Next(ActorState, Message) {
+  let actor_state = case work_queue.activate_cleanup(actor_state.inbox, owner) {
+    Ok(Nil) -> actor_state
+    Error(error) -> {
+      log.warn(logger, "Presence cleanup activation failed", [
+        #("reason", overload.describe(error)),
+      ])
+      // This actor owns the state, so direct cleanup is the safe fallback
+      // when its queue cannot schedule the obligation.
+      do_untrack_runtime_owner(actor_state, owner)
+    }
+  }
+  process.send(reply, MutationAck(tag, operation_id, Untracked))
+  actor.continue(actor_state)
+}
+
+fn continue_with_track(
+  actor_state: ActorState,
+  tracked: Result(value, Nil),
+  next: fn(value) -> actor.Next(ActorState, Message),
+) -> actor.Next(ActorState, Message) {
+  case tracked {
+    Ok(value) -> next(value)
+    Error(Nil) -> actor.continue(actor_state)
   }
 }
 
@@ -1734,7 +1777,8 @@ fn superseded_refs(
 
 /// Track one key, superseding previous refs for it (see `Supersede`) in the
 /// same turn. Returns the new actor state, the generated ref, and the meta
-/// as stored (the caller's meta with `phx_ref` merged in).
+/// as stored (the caller's meta with `phx_ref` merged in). Returns an error
+/// if the CRDT does not expose the local clock that `state.join` must create.
 fn do_track(
   actor_state: ActorState,
   topic: String,
@@ -1742,7 +1786,7 @@ fn do_track(
   session_id: String,
   meta: json.Json,
   supersede: Supersede,
-) -> #(ActorState, String, json.Json) {
+) -> Result(#(ActorState, String, json.Json), Nil) {
   let ref = generate_ref()
   let stored_meta = meta_with_phx_ref(meta, ref)
   // Superseding removes the old entries and adds the new one before
@@ -1762,7 +1806,17 @@ fn do_track(
     SupersedeSameKey(owner:, ..) -> RuntimeOwner(owner)
   }
   let replica = state.replica(new_crdt)
-  let assert Ok(clock) = dict.get(state.compacted_clocks(new_crdt), replica)
+  // state.join inserts this clock. Keep the lookup fallible so a dependency
+  // contract regression rejects the mutation instead of crashing the library.
+  use clock <- result.try(
+    dict.get(state.compacted_clocks(new_crdt), replica)
+    |> result.map_error(fn(error) {
+      log.error(internal.logger("beryl.presence"), "Local CRDT clock missing", [
+        #("replica", replica),
+      ])
+      error
+    }),
+  )
   maybe_invoke_on_diff(
     actor_state.config,
     Diff(
@@ -1793,7 +1847,11 @@ fn do_track(
     new_crdt,
     unique_strings([topic, ..removed.topics], set.new(), []),
   )
-  #(ActorState(..actor_state, crdt: new_crdt, refs: new_refs), ref, stored_meta)
+  Ok(#(
+    ActorState(..actor_state, crdt: new_crdt, refs: new_refs),
+    ref,
+    stored_meta,
+  ))
 }
 
 /// Remove every named ref in one turn. Unknown or already-removed refs are
@@ -1989,15 +2047,15 @@ fn merge_remote_sync(
               #("replica", sender),
             ],
           )
-          None
+          Error(Nil)
         }
         True -> merged_snapshot(actor_state, sender, remote_state)
       }
     })
   case processed {
-    Ok(Some(#(next_state, sender))) ->
+    Ok(Ok(#(next_state, sender))) ->
       actor.continue(watch_replica(next_state, sender, owner, round))
-    Ok(None) -> actor.continue(actor_state)
+    Ok(Error(Nil)) -> actor.continue(actor_state)
     Error(crash) -> {
       let logger = internal.logger("beryl.presence")
       logger
@@ -2031,22 +2089,31 @@ fn accepts_snapshot(
 
 /// Merge an accepted snapshot after retiring the sender's predecessors.
 ///
-/// Returns `None` when the sender claims this replica's identity, which
-/// means two live actors share one base name or the peer relayed stale
-/// local history. Dropping the round keeps local state authoritative.
+/// Returns an error when the sender conflicts with this replica's identity.
+/// Dropping the round keeps local state authoritative.
 fn merged_snapshot(
   actor_state: ActorState,
   sender: String,
   remote_state: State,
-) -> Option(#(ActorState, String)) {
-  // accepts_snapshot rejects same-base senders, which is the only supersede
-  // error. This assertion is inside rescue, so an invariant violation drops
-  // the sync without crashing the presence actor.
-  let assert Ok(#(crdt, _diff)) = state.supersede(actor_state.crdt, sender)
+) -> Result(#(ActorState, String), Nil) {
+  // accepts_snapshot rejects local-base senders first. Match the dependency
+  // error too, so this library remains total if either contract changes.
+  use #(crdt, _diff) <- result.try(
+    state.supersede(actor_state.crdt, sender)
+    |> result.map_error(fn(error) {
+      let state.CannotSupersedeLocalReplica(local_replica, remote_replica) =
+        error
+      internal.logger("beryl.presence")
+      |> log.error("Refused to retire the local presence replica", [
+        #("local_replica", local_replica),
+        #("remote_replica", remote_replica),
+      ])
+    }),
+  )
   case state.merge(crdt, owner_snapshot(remote_state)) {
     Ok(crdt) -> {
       let #(crdt, _diff) = state.replica_up(crdt, sender)
-      Some(#(commit_replication(actor_state, crdt), sender))
+      Ok(#(commit_replication(actor_state, crdt), sender))
     }
     Error(state.SameReplica(replica)) -> {
       telemetry.emit(
@@ -2059,7 +2126,7 @@ fn merged_snapshot(
         #("remote_replica", sender),
         #("conflicting_replica", replica),
       ])
-      None
+      Error(Nil)
     }
   }
 }
