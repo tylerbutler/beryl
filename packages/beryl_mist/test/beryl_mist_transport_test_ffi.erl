@@ -7,7 +7,8 @@
          attach_transport_events/0, detach_transport_events/1,
          receive_upgrade_event/1, receive_frame_event/1,
          receive_message_event/1, coalesced_upgrade_frames/0,
-         split_upgrade_frames/0]).
+         split_upgrade_frames/0, empty_text_control_frames/0,
+         empty_binary_frames/0]).
 
 attach_transport_events() ->
     HandlerId = {beryl_mist_transport_test, make_ref()},
@@ -341,7 +342,42 @@ split_upgrade_frames() ->
         ]
     ], 2).
 
+empty_text_control_frames() ->
+    run_upgrade_reader([[
+        upgrade_response(),
+        websocket_frame(<<>>),
+        <<16#89, 0>>,
+        <<16#8a, 0>>,
+        <<16#81, 16#80, 0, 0, 0, 0>>,
+        websocket_frame(<<"next">>),
+        <<16#88, 0>>
+    ]], fun(Socket) ->
+        case receive_text_frames(Socket, 3, []) of
+            {ok, Frames} ->
+                case read_frame(Socket, 1000) of
+                    closed -> {ok, Frames};
+                    _ -> {error, nil}
+                end;
+            {error, nil} ->
+                {error, nil}
+        end
+    end).
+
+empty_binary_frames() ->
+    run_upgrade_reader([[
+        upgrade_response(),
+        websocket_binary_frame(<<>>),
+        websocket_binary_frame(<<"next">>)
+    ]], fun(Socket) ->
+        receive_binary_frames(Socket, 2, [])
+    end).
+
 run_upgrade_server(Chunks, FrameCount) ->
+    run_upgrade_reader(Chunks, fun(Socket) ->
+        receive_text_frames(Socket, FrameCount, [])
+    end).
+
+run_upgrade_reader(Chunks, Reader) ->
     {ok, ListenSocket} = gen_tcp:listen(
         0,
         [binary, {active, false}, {reuseaddr, true}]
@@ -353,7 +389,7 @@ run_upgrade_server(Chunks, FrameCount) ->
     Result =
         case connect_websocket(Port, <<"/socket">>) of
             {ok, Socket} ->
-                Frames = receive_text_frames(Socket, FrameCount, []),
+                Frames = Reader(Socket),
                 close(Socket),
                 Frames;
             {error, nil} ->
@@ -395,6 +431,16 @@ receive_text_frames(Socket, Count, Acc) ->
             {error, nil}
     end.
 
+receive_binary_frames(_Socket, 0, Acc) ->
+    {ok, lists:reverse(Acc)};
+receive_binary_frames(Socket, Count, Acc) ->
+    case receive_binary(Socket, 1000) of
+        {ok, Data} ->
+            receive_binary_frames(Socket, Count - 1, [Data | Acc]);
+        {error, nil} ->
+            {error, nil}
+    end.
+
 upgrade_response() ->
     <<"HTTP/1.1 101 Switching Protocols\r\n",
       "Upgrade: websocket\r\n",
@@ -402,6 +448,9 @@ upgrade_response() ->
 
 websocket_frame(Payload) when byte_size(Payload) < 126 ->
     <<16#81, (byte_size(Payload)), Payload/binary>>.
+
+websocket_binary_frame(Payload) when byte_size(Payload) < 126 ->
+    <<16#82, (byte_size(Payload)), Payload/binary>>.
 
 encode_client_length(Len) when Len < 126 ->
     <<(16#80 bor Len)>>;
@@ -437,7 +486,7 @@ read_payload(Socket, Timeout, Masked, Len0) ->
         {ok, Len} ->
             case read_mask(Socket, Timeout, Masked) of
                 {ok, Mask} ->
-                    case gen_tcp:recv(Socket, Len, Timeout) of
+                    case read_payload_bytes(Socket, Timeout, Len) of
                         {ok, Payload} ->
                             case Mask of
                                 none -> {ok, Payload};
@@ -449,6 +498,11 @@ read_payload(Socket, Timeout, Masked, Len0) ->
             end;
         Error -> Error
     end.
+
+read_payload_bytes(_Socket, _Timeout, 0) ->
+    {ok, <<>>};
+read_payload_bytes(Socket, Timeout, Len) ->
+    gen_tcp:recv(Socket, Len, Timeout).
 
 read_length(_Socket, _Timeout, Len) when Len < 126 ->
     {ok, Len};
